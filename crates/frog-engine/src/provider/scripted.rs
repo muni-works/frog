@@ -16,6 +16,14 @@ pub enum Fail {
     Stream { partial: Vec<Block>, message: String },
     /// A non-2xx answer, before anything streams.
     Http { status: u16, body: String },
+    /// The edge's billing refusal: a 402 with its `x-frog-billing` header, as frog cloud
+    /// sends it.
+    Billing {
+        status: u16,
+        body: String,
+        /// The `x-frog-billing` header's value (`credit: <micros>`), when the edge said.
+        billing: Option<String>,
+    },
 }
 
 impl Fail {
@@ -40,6 +48,15 @@ impl Fail {
         Self::Http {
             status,
             body: body.into(),
+        }
+    }
+
+    /// frog cloud's billing refusal: a 402 with the edge's `x-frog-billing` header.
+    pub fn billing(body: &str, header: Option<&str>) -> Self {
+        Self::Billing {
+            status: 402,
+            body: body.into(),
+            billing: header.map(Into::into),
         }
     }
 }
@@ -96,7 +113,17 @@ impl Client {
                     return Err(StreamError { message }.into());
                 }
                 Fail::Http { status, body } => {
-                    return Err(HttpError { status, body }.into());
+                    return Err(HttpError { status, body, billing: None }.into());
+                }
+                Fail::Billing { status, body, billing } => {
+                    return Err(HttpError {
+                        status,
+                        body,
+                        billing: billing
+                            .as_deref()
+                            .and_then(super::Billing::from_header),
+                    }
+                    .into());
                 }
             }
         }

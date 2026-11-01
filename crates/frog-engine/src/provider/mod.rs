@@ -103,6 +103,9 @@ impl Stop {
 pub struct HttpError {
     pub status: u16,
     pub body: String,
+    /// The edge's billing verdict for this refusal, when it said (its `x-frog-billing`
+    /// response header). `None` from every other provider — then the body decides.
+    pub billing: Option<Billing>,
 }
 
 impl std::fmt::Display for HttpError {
@@ -121,6 +124,99 @@ impl HttpError {
             .ok()
             .and_then(|v| v["error"]["message"].as_str().map(str::to_string))
             .unwrap_or_else(|| format!("HTTP {}", self.status))
+    }
+}
+
+/// The edge's billing verdict for a 402 (its `x-frog-billing` response header):
+/// `credit: <micros>` = the wallet pays the next call at usage prices and the retry is
+/// admitted; `allowance` = the refusal isn't admitted (nothing can pay).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Billing {
+    /// The wallet pays for the next call at usage prices; `Some` is what's left when the
+    /// edge said, `None` when it didn't (a bare `credit`, or the body's credit semantics).
+    Credit { balance_micro: Option<u64> },
+    /// Not admitted: the wallet is empty, or the edge wouldn't transition this refusal.
+    Allowance,
+}
+
+impl Billing {
+    /// From the edge's `x-frog-billing` header: `credit: 5000000` or a bare `credit`.
+    pub fn from_header(v: &str) -> Option<Self> {
+        let v = v.trim();
+        let rest = v.strip_prefix("credit")?;
+        Some(match rest.strip_prefix(':') {
+            // `credit: 0` says the wallet is empty: not admitted.
+            Some(n) if n.trim().parse::<u64>().is_ok_and(|b| b > 0) => {
+                Self::Credit {
+                    balance_micro: n.trim().parse().ok(),
+                }
+            }
+            Some(_) => Self::Allowance,
+            None => Self::Credit { balance_micro: None },
+        })
+    }
+
+    /// The provider's error body decides when the header is missing (BYOK gateways, the edge
+    /// before it ships the header). OpenAI's shape (`error.type` `insufficient_quota`): a
+    /// refusal whose words say the session can keep going on credit is admitted; a bare
+    /// limit is not.
+    pub fn parse(body: &str) -> Option<Self> {
+        let v = serde_json::from_str::<Value>(body).ok()?;
+        let err = &v["error"];
+        let ty = err["type"].as_str().unwrap_or_default();
+        let code = err["code"]
+            .as_i64()
+            .or(err["code"].as_str().and_then(|c| c.parse().ok()));
+        if !matches!(ty, "insufficient_quota") && code != Some(402) {
+            return None;
+        }
+        let msg = err["message"].as_str().unwrap_or_default().to_lowercase();
+        // "add credit to keep going at usage prices": the edge's own promise that the
+        // wallet pays for the next call.
+        (msg.contains("credit to keep going") || msg.contains("billing credit"))
+            .then_some(Self::Credit { balance_micro: None })
+    }
+}
+
+impl HttpError {
+    /// A billing refusal (402, or a body the provider bills with): the transcript's typed
+    /// billing path instead of a provider error dump.
+    pub fn is_billing(&self) -> bool {
+        self.status == 402 || self.billing.is_some()
+    }
+
+    /// Whether the next call was admitted at usage prices: the edge's header when it said,
+    /// else the body's credit semantics.
+    pub fn billing_admitted(&self) -> bool {
+        match self.billing {
+            Some(b) => matches!(b, Billing::Credit { .. }),
+            None => Billing::parse(&self.body).is_some_and(|b| matches!(b, Billing::Credit { .. })),
+        }
+    }
+
+    /// The remaining credit when the edge said, in millionths of a dollar.
+    pub fn billing_balance(&self) -> Option<u64> {
+        match self.billing {
+            Some(Billing::Credit { balance_micro }) => balance_micro,
+            _ => None,
+        }
+    }
+
+    /// Which allowance this refusal names, from the provider's own words: the 5-hour window,
+    /// the weekly one, or the wallet itself.
+    pub fn billing_window(&self) -> &'static str {
+        let msg = serde_json::from_str::<Value>(&self.body)
+            .ok()
+            .and_then(|v| v["error"]["message"].as_str().map(str::to_string))
+            .unwrap_or_else(|| self.body.clone());
+        let msg = msg.to_lowercase();
+        if msg.contains("5-hour") || msg.contains("5 hour") {
+            "5h"
+        } else if msg.contains("week") {
+            "weekly"
+        } else {
+            "credit"
+        }
     }
 }
 
@@ -430,16 +526,61 @@ pub fn deep_merge(a: &mut Value, b: &Value) {
 
 #[cfg(test)]
 mod http_error_tests {
-    use super::HttpError;
+    use super::{Billing, HttpError};
 
     #[test]
     fn summary_is_the_providers_own_message() {
         let e = HttpError {
             status: 429,
             body: r#"{"error":{"message":"bull is busy right now","type":"rate_limit_error"}}"#.into(),
+            billing: None,
         };
         assert_eq!(e.summary(), "bull is busy right now");
-        let plain = HttpError { status: 502, body: "<html>bad gateway</html>".into() };
+        let plain = HttpError { status: 502, body: "<html>bad gateway</html>".into(), billing: None };
         assert_eq!(plain.summary(), "HTTP 502");
+    }
+
+    #[test]
+    fn the_edge_header_decides_the_admit_and_the_balance() {
+        let admitted = |v: &str| {
+            HttpError {
+                status: 402,
+                body: "{}".into(),
+                billing: Billing::from_header(v),
+            }
+        };
+        let yes = admitted("credit: 4200000");
+        assert!(yes.billing_admitted());
+        assert_eq!(yes.billing_balance(), Some(4_200_000));
+        assert_eq!(yes.billing_window(), "credit");
+        // A bare `credit`: admitted, no balance to show.
+        let bare = admitted("credit");
+        assert!(bare.billing_admitted());
+        assert_eq!(bare.billing_balance(), None);
+        // `credit: 0`: the wallet is empty — the edge won't bill a refusal to nothing.
+        let zero = admitted("credit: 0");
+        assert!(!zero.billing_admitted());
+        // A non-credit header (or none): the body decides.
+        assert!(!admitted("allowance").billing_admitted());
+        assert!(!HttpError { status: 402, body: "{}".into(), billing: None }.billing_admitted());
+    }
+
+    #[test]
+    fn the_body_admits_when_it_says_credit_semantics() {
+        let with = |body: &str| HttpError { status: 402, body: body.into(), billing: None };
+        // frog cloud's 5-hour window: credit semantics, admitted.
+        let five = with(
+            r#"{"error":{"message":"5-hour plan limit reached; add credit to keep going at usage prices","type":"insufficient_quota","code":402}}"#,
+        );
+        assert!(five.billing_admitted());
+        assert_eq!(five.billing_window(), "5h");
+        assert_eq!(five.summary(), "5-hour plan limit reached; add credit to keep going at usage prices");
+        // A bare wallet-empty refusal: not admitted, but still billing (typed, not a dump).
+        let empty = with(r#"{"error":{"message":"Insufficient credits","type":"insufficient_credits"}}"#);
+        assert!(!empty.billing_admitted());
+        assert!(empty.is_billing());
+        // Not billing at all.
+        let busy = with(r#"{"error":{"message":"bull is busy"}}"#);
+        assert!(!busy.is_billing());
     }
 }

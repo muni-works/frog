@@ -1050,11 +1050,12 @@ async fn an_auth_error_is_never_retried() {
     )));
 }
 
-/// A 402 is the wallet, not the network: the first answer fails the call, the fix goes up as
-/// ONE notice, and the turn ends with the honest provider error — no five retries
-/// (docs/design/model-policy.md, the vercel incident).
+/// A 402 is the wallet, not the network: the first answer fails the call, and the turn ends
+/// with the TYPED billing reason — "out of credit", never a raw provider dump, and no five
+/// retries on an empty wallet (docs/design/model-policy.md, the vercel incident; billing
+/// events).
 #[tokio::test(start_paused = true)]
-async fn out_of_credits_fails_at_once_with_the_fix() {
+async fn out_of_credits_ends_typed_with_the_fix() {
     let mut p = Profile::new(ProviderKind::Openai, "openai/gpt-5");
     p.base_url = Some("https://ai-gateway.vercel.sh/v1".into());
     p.tool_mode = ToolMode::Native;
@@ -1071,21 +1072,110 @@ async fn out_of_credits_fails_at_once_with_the_fix() {
     let evs = run(&mut h, "hi").await;
     // One attempt: no retry spends the budget on an empty wallet.
     assert_eq!(attempts.lock().unwrap().len(), 1);
-    // One notice, and it's the provider's fix line.
-    let notices = notices(&evs);
-    assert_eq!(notices.len(), 1, "{notices:?}");
-    assert!(notices[0].contains("credits are out"), "{notices:?}");
-    assert!(notices[0].contains("add credits at"), "{notices:?}");
-    assert!(!notices[0].contains("retrying"), "{notices:?}");
-    // The turn ends with the provider's own error, not a swallowed one.
+    // No billing-limit event: nothing admitted continuing, so there's no transition to
+    // announce — just the typed end.
+    assert!(!evs.iter().any(|e| matches!(e.event, Event::BillingLimit { .. })));
+    // The raw body's JSON envelope never reaches the transcript: no provider error, no JSON
+    // dump — the provider's own words ride in the typed reason's `reason` only.
+    for env in &evs {
+        let json = serde_json::to_string(&env.event).unwrap();
+        assert!(
+            !json.contains("insufficient_credits") && !json.contains("provider error"),
+            "raw provider body leaked: {json}"
+        );
+    }
+    // The turn ends with the typed billing reason, not a provider error.
     assert!(evs.iter().any(|e| matches!(
         &e.event,
         Event::TurnEnded {
-            reason: EndReason::Error {
-                error: EngineError::Provider { status: 402, .. }
-            },
+            reason: EndReason::BillingLimit { window, .. },
             ..
-        }
+        } if window == "credit"
+    )));
+    assert!(!evs.iter().any(|e| matches!(
+        &e.event,
+        Event::TurnEnded { reason: EndReason::Error { .. }, .. }
+    )));
+}
+
+/// The edge admitted the transition (its `x-frog-billing: credit: <micros>` header): one
+/// informational billing-limit line with the balance, then the step runs again at usage
+/// prices and the turn completes. The raw 402 body never surfaces.
+#[tokio::test(start_paused = true)]
+async fn an_admitted_billing_refusal_transitions_to_credit_and_continues() {
+    let mut p = Profile::new(ProviderKind::Openai, "openai/gpt-5");
+    p.base_url = Some("https://api.frog.toys/v1".into());
+    p.tool_mode = ToolMode::Native;
+    // The edge's body, as frog cloud's edge passes it through, plus the edge's admit
+    // header with the balance.
+    let refusal = scripted::Fail::billing(
+        "{\"error\":{\"message\":\"5-hour plan limit reached; add credit to keep going at usage prices\",\"type\":\"insufficient_quota\",\"code\":402}}",
+        Some("credit: 4200000"),
+    );
+    let (mut h, _, attempts) =
+        engine_profile_named(vec![refusal], vec![reply(vec![text("carried on")], Stop::End)], p, "cloud/bull");
+    let evs = run(&mut h, "hi").await;
+    // Two attempts: the refusal, then the admitted retry.
+    assert_eq!(attempts.lock().unwrap().len(), 2);
+    // ONE informational billing-limit event, with the window and the balance the edge sent.
+    let limits: Vec<&Event> = evs
+        .iter()
+        .map(|e| &e.event)
+        .filter(|e| matches!(e, Event::BillingLimit { .. }))
+        .collect();
+    assert_eq!(limits.len(), 1, "{limits:?}");
+    assert!(matches!(
+        limits[0],
+        Event::BillingLimit { window, balance_micro: Some(4_200_000), .. } if window == "5h"
+    ));
+    // The turn went on and completed.
+    assert!(evs.iter().any(|e| matches!(
+        &e.event,
+        Event::TurnEnded { reason: EndReason::Complete, .. }
+    )));
+    // The raw body's JSON envelope never reaches the transcript: no provider error, no JSON
+    // dump — the provider's clean message rides in the typed event's `reason` only.
+    for env in &evs {
+        let json = serde_json::to_string(&env.event).unwrap();
+        assert!(
+            !json.contains("insufficient_quota") && !json.contains("provider error"),
+            "raw provider body leaked: {json}"
+        );
+    }
+    assert!(!evs.iter().any(|e| matches!(&e.event, Event::Error { .. })));
+}
+
+/// The admitted retry came back refused again (the credit ran out or the admit didn't
+/// hold): the turn ends with the typed billing reason, ONE billing line total.
+#[tokio::test(start_paused = true)]
+async fn a_second_billing_refusal_ends_the_turn_typed() {
+    let mut p = Profile::new(ProviderKind::Openai, "openai/gpt-5");
+    p.base_url = Some("https://api.frog.toys/v1".into());
+    p.tool_mode = ToolMode::Native;
+    let refusal = scripted::Fail::billing(
+        "{\"error\":{\"message\":\"5-hour plan limit reached; add credit to keep going at usage prices\",\"type\":\"insufficient_quota\",\"code\":402}}",
+        Some("credit: 4200000"),
+    );
+    let (mut h, _, attempts) = engine_profile_named(
+        vec![refusal.clone(), refusal],
+        vec![],
+        p,
+        "cloud/bull",
+    );
+    let evs = run(&mut h, "hi").await;
+    assert_eq!(attempts.lock().unwrap().len(), 2);
+    let limits: Vec<&Event> = evs
+        .iter()
+        .map(|e| &e.event)
+        .filter(|e| matches!(e, Event::BillingLimit { .. }))
+        .collect();
+    assert_eq!(limits.len(), 1, "one line, not one per attempt: {limits:?}");
+    assert!(evs.iter().any(|e| matches!(
+        &e.event,
+        Event::TurnEnded {
+            reason: EndReason::BillingLimit { window, .. },
+            ..
+        } if window == "5h"
     )));
 }
 

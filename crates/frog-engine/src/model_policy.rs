@@ -319,10 +319,11 @@ mod tests {
         let e: anyhow::Error = HttpError {
             status: 402,
             body: json!({"error": {"message": "insufficient credits"}}).to_string(),
+            billing: None,
         }
         .into();
         assert!(fix_for("vercel/openai/gpt-5", &e).unwrap().contains("credits are out"));
-        let ok: anyhow::Error = HttpError { status: 429, body: String::new() }.into();
+        let ok: anyhow::Error = HttpError { status: 429, body: String::new(), billing: None }.into();
         assert!(fix_for("vercel/openai/gpt-5", &ok).is_none());
     }
 

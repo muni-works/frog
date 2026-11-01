@@ -437,6 +437,8 @@ impl EndState {
             // "stopped" — but it isn't complete either; no glyph until it resumes.
             EndReason::Suspended => return None,
             EndReason::Cancelled => return None,
+            // Out of credit: it stopped and needs the user (money), like a denial.
+            EndReason::BillingLimit { .. } => Self::Stopped,
         })
     }
 }
