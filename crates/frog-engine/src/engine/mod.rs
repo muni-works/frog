@@ -195,10 +195,10 @@ fn max_steps() -> u32 {
         .unwrap_or(u32::MAX)
 }
 /// How many times a turn carries on after a reply runs out of output room.
-const MAX_CONTINUES: u32 = 3;
+const MAX_CONTINUES: u32 = 2;
 /// Output budget requested from hosted APIs that don't set their own: well within what current
 /// frontier and open models accept, and far above the defaults that cut thinking short.
-const CLOUD_MAX_OUTPUT: u32 = 16_384;
+const CLOUD_MAX_OUTPUT: u32 = 32_768;
 /// The smallest useful tool-result cap: windows below this keep results whole.
 const MIN_RESULT_CAP: usize = 40_000;
 
@@ -2128,7 +2128,7 @@ impl Agent {
                     Some((NoticeKind::Errored, format!("turn errored: {error:?}")))
                 }
                 // Idle per the SendMessage contract: no turn running, nothing queued.
-                EndReason::Complete | EndReason::MaxTokens => {
+                EndReason::Complete | EndReason::MaxTokens { .. } => {
                     Some((NoticeKind::Idle, "idle".to_string()))
                 }
                 _ => None,

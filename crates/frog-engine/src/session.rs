@@ -428,7 +428,7 @@ impl EndState {
             EndReason::Error { .. } => Self::Failed,
             EndReason::Denied
             | EndReason::BlockedOnApproval { .. }
-            | EndReason::MaxTokens
+            | EndReason::MaxTokens { .. }
             | EndReason::StepLimit
             | EndReason::Looping => {
                 Self::Stopped
@@ -990,7 +990,7 @@ mod tests {
 
         for reason in [
             crate::protocol::EndReason::Denied,
-            crate::protocol::EndReason::MaxTokens,
+            crate::protocol::EndReason::MaxTokens { auto_continued: 0 },
             crate::protocol::EndReason::StepLimit,
             crate::protocol::EndReason::Looping,
         ] {

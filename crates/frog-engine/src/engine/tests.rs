@@ -1127,10 +1127,13 @@ async fn a_mid_stream_error_retries_only_up_to_budget() {
 
 #[tokio::test]
 async fn a_reply_cut_off_by_the_output_limit_is_continued() {
+    // Cut off twice, then finished: one reply, so ONE assistant message with every part, and
+    // no banner (the turn ends complete).
     let mut h = engine(
         vec![
-            reply(vec![text("part one")], Stop::Length),
-            reply(vec![text("part two")], Stop::End),
+            reply(vec![text("part one ")], Stop::Length),
+            reply(vec![text("part two ")], Stop::Length),
+            reply(vec![text("part three")], Stop::End),
         ],
         true,
     );
@@ -1142,6 +1145,74 @@ async fn a_reply_cut_off_by_the_output_limit_is_continued() {
             ..
         }
     )));
+    // One message item, and its completion carries the whole answer.
+    let msgs: Vec<String> = evs
+        .iter()
+        .filter_map(|e| match &e.event {
+            Event::ItemCompleted {
+                item: Item::Message { text },
+                ..
+            } => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(msgs.last().map(String::as_str), Some("part one part two part three"));
+    let started = evs
+        .iter()
+        .filter(|e| {
+            matches!(
+                e.event,
+                Event::ItemStarted {
+                    kind: ItemKind::Message,
+                    ..
+                }
+            )
+        })
+        .count();
+    assert_eq!(started, 1, "the continuation joins the same bubble");
+}
+
+#[tokio::test]
+async fn a_cut_off_reply_is_one_assistant_message_in_the_history() {
+    // The continuation steers one call without joining the history: the reply it continues
+    // stays a single assistant message there, with every part of it.
+    let dir = tmp_store();
+    let (mut h, sent) = engine_sent(
+        vec![
+            reply(vec![text("part one ")], Stop::Length),
+            reply(vec![text("part two")], Stop::End),
+        ],
+        Some(dir.clone()),
+        None,
+        None,
+        std::env::temp_dir(),
+    );
+    let sid = run(&mut h, "hi").await[0].session.clone();
+    // The continuation's own request carries the instruction...
+    {
+        let sent = sent.lock().unwrap();
+        let last = sent_messages(&sent[1]);
+        let tail = last.iter().rev().find(|m| m["role"] == "user").unwrap().to_string();
+        assert!(tail.contains("Continue exactly where you stopped"), "{tail}");
+    }
+    shutdown(h).await;
+    let loaded = session::load(&dir, &sid).unwrap();
+    let assistants: Vec<String> = loaded
+        .messages
+        .iter()
+        .filter(|m| m.role == Role::Assistant)
+        .map(|m| m.text())
+        .collect();
+    assert_eq!(assistants, ["part one part two"], "one message, every part");
+    // ...and the instruction never became a user message of the history.
+    assert!(
+        !loaded
+            .messages
+            .iter()
+            .any(|m| m.text().contains("cut off at the output limit")),
+        "{:?}",
+        loaded.messages.iter().map(|m| m.text()).collect::<Vec<_>>()
+    );
 }
 
 #[tokio::test]
@@ -1158,23 +1229,85 @@ async fn a_cut_off_tool_call_is_asked_for_in_pieces_not_continued() {
     let msgs = sent_messages(&sent[1]);
     let last = msgs.iter().rev().find(|m| m["role"] == "user").unwrap().to_string();
     assert!(last.contains("split it into smaller calls"), "{last}");
-    assert!(!last.contains("Continue exactly where you left off"), "{last}");
+    assert!(!last.contains("Continue exactly where you stopped"), "{last}");
 }
 
 #[tokio::test]
 async fn max_tokens_is_distinguished() {
-    // Continued MAX_CONTINUES times, then still cut off: the turn ends as MaxTokens.
+    // Continued MAX_CONTINUES times, then still cut off: the turn ends as MaxTokens, and the
+    // reason says how many continuations it got (the banner's "(auto-continued 2x)").
     let mut h = engine(
         (0..=MAX_CONTINUES)
-            .map(|_| reply(vec![text("cut off")], Stop::Length))
+            .map(|_| reply(vec![text("cut off ")], Stop::Length))
             .collect(),
         true,
     );
     let evs = run(&mut h, "hi").await;
+    let reason = evs
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::TurnEnded { reason, .. } => Some(reason.clone()),
+            _ => None,
+        })
+        .expect("a TurnEnded");
+    assert_eq!(
+        reason,
+        EndReason::MaxTokens {
+            auto_continued: MAX_CONTINUES
+        }
+    );
+    // The banner in both states.
+    assert_eq!(
+        crate::protocol::limit_banner(MAX_CONTINUES),
+        "Hit the output token limit (auto-continued 2x)"
+    );
+    assert_eq!(
+        crate::protocol::limit_banner(0),
+        "Hit the output token limit"
+    );
+}
+
+#[tokio::test]
+async fn a_cut_off_reply_with_a_pending_tool_call_is_not_continued() {
+    // The step asked to act AND ran out of room: the call is pending, so continuing the text
+    // would duplicate it. The call runs, and no continuation is asked for.
+    let call = Block::ToolUse {
+        id: "t1".into(),
+        name: "Read".into(),
+        input: json!({ "file_path": "/definitely/not/here.txt" }),
+    };
+    let mut h = engine(
+        vec![
+            reply(vec![text("let me look "), call], Stop::Length),
+            reply(vec![text("done")], Stop::End),
+        ],
+        true,
+    );
+    let evs = run(&mut h, "hi").await;
+    assert!(
+        !evs.iter().any(|e| matches!(
+            &e.event,
+            Event::Notice { message, .. } if message.contains("hit the output limit; continuing")
+        )),
+        "a step with a pending tool call never auto-continues"
+    );
+    // The one call ran, once: no duplicate from a continuation.
+    assert_eq!(
+        evs.iter()
+            .filter(|e| matches!(
+                &e.event,
+                Event::ItemCompleted {
+                    item: Item::ToolCall { .. },
+                    ..
+                }
+            ))
+            .count(),
+        1
+    );
     assert!(evs.iter().any(|e| matches!(
         e.event,
         Event::TurnEnded {
-            reason: EndReason::MaxTokens,
+            reason: EndReason::Complete,
             ..
         }
     )));

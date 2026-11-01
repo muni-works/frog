@@ -46,13 +46,13 @@ impl Agent {
         // diverges right after the system prompt and the whole history is prefilled again.
         let keep_prefix = matches!(self.harness.tool_mode, ToolMode::Native | ToolMode::Auto);
         let (mut resp, streamed) = self
-            .call("compacting", &msgs, true, keep_prefix, think, None)
+            .call("compacting", &msgs, true, keep_prefix, think, None, None)
             .await?;
         self.count_call(resp.usage.clone(), &streamed, true);
         // It called a tool instead of summarizing: ask again with none to call.
         if keep_prefix && resp.message.text().trim().is_empty() {
             let (r, streamed) = self
-                .call("compacting", &msgs, true, false, think, None)
+                .call("compacting", &msgs, true, false, think, None, None)
                 .await?;
             self.count_call(r.usage.clone(), &streamed, true);
             resp = r;

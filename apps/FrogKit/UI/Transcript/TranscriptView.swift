@@ -546,8 +546,14 @@ struct EndView: View {
             banner("Interrupted", symbol: "stop.circle", color: .secondary)
         case .suspended:
             banner("Suspended for app update", symbol: "pause.circle", color: .secondary)
-        case .maxTokens:
-            banner("Hit the output token limit", symbol: "text.append", color: .orange)
+        case .maxTokens(let autoContinued):
+            banner(
+                autoContinued == 0
+                    ? "Hit the output token limit"
+                    : "Hit the output token limit (auto-continued \(autoContinued)x)",
+                symbol: "text.append",
+                color: .orange
+            )
         case .looping:
             banner("Stopped: the model kept repeating the same tool call", symbol: "arrow.trianglehead.2.clockwise", color: .orange)
         case .stepLimit:

@@ -1,43 +1,38 @@
-# model-policy — notes
+# output-cap — notes
 
-Branch frog/model-policy, base d13ac864 (main, carries #230). One commit per piece (`git commit -s`),
-never push to main; push the branch and open a PR at the end. Edit tool only for Rust/Markdown.
-Target dir /private/tmp/mp-target (delete when the suite passes, ~11G).
+Branch frog/output-cap, base c374000c (main). One commit per fix (`git commit -s`), never push to
+main; push the branch and open a PR at the end. Edit tool only for Rust. Target dir
+/private/tmp/oc-target (delete when the suite passes, ~11G).
 
 ## Pieces
 0. This checkpoint.
-1. docs/design/model-policy.md — the two-tier spec, committed alone.
-2. auto.rs + engine/permit.rs — classifier chain = [apple/on-device, cloud/bull]; the
-   session-model leg and cross-tier hops gone; workers never degrade to rules-only on BYOK.
-3. engine/call.rs (+ provider/mod.rs hints) — one retry policy: 429/5xx backoff 1/2/4, max 3,
-   ONE notice; 401/402/404 fail fast with the provider's fix as a notice + honest turn_ended.
-4. model_policy.rs + engine/mod.rs + engine/permit.rs — spawn-time validation against the
-   gateway's /v1/models (60s cache); cloud/* and this Mac always valid.
-5. README — the two tiers in one paragraph.
-6. Tests (engine): 402 fail-fast, 429 timing, classifier never BYOK, spawn accept/reject,
-   plus the existing auto.rs chain tests rewritten to the new policy.
-7. FrogKit: served-tint left borders removed (ServedTint modifier + call site + any other
-   Color.served left edge); the markdown blockquote bar stays.
-8. SessionBroker.escalate: a child's pending card reaches its parent as STATUS (inform, one
-   line) instead of a delivered turn; the card lives in needs-you / ListApprovals / SessionStatus.
-   Test: the parent's transcript gains no turn, its pending count still updates.
-
-## Result
-Engine: 560 passed, 0 failed, 8 ignored (`cargo test -p frog-engine`, unsandboxed — the sandbox
-blocks the shell tests and swiftpm's manifest). SessionBrokerTests: 52 passed. App builds.
-App tests must run with `PRODUCT_BUNDLE_IDENTIFIER=toys.frog.testhost`, or the installed
-toys.frog.dev app makes the test host hand over and exit ("Early unexpected exit").
-
-## Diffed against #231 (8981fbd1 = main d13ac864 for auto.rs, empty diff)
-Nothing duplicated: this branch is only the delta — the session-model leg's removal, the retry
-policy, spawn validation, the README paragraph, the tint removal, the escalation change.
+1. CLOUD_MAX_OUTPUT 16_384 → 32_768 (engine/mod.rs). The other 16_384 hits
+   (background.rs:694 log tail, project.rs COMPACT_WINDOW, mcp_oauth.rs read buffer) are
+   unrelated sizes and stay.
+2. Bounded auto-continue on MaxTokens: a reply cut off with no tool call pending is re-called
+   with a continuation instruction, up to MAX_CONTINUES (2). The continuation APPENDS to the
+   same assistant message (one transcript bubble, one history message via Record::Extend).
+   EndReason::MaxTokens carries the count so the banner can say "(auto-continued 2x)".
 
 ## Where things are
-- crates/frog-engine/src/auto.rs: Classifier::new (chain), Classifier::fallback (second pass).
-- crates/frog-engine/src/engine/permit.rs: auto_judge, classifier_verdict, second_pass,
-  session_tool (StartSession reaches the client here).
-- crates/frog-engine/src/engine/call.rs: the retry loop (retry_budget, cloud_fallback,
-  QUIET_RETRIES, the notice).
-- crates/frog-engine/src/engine/mod.rs: retryable(), classify(), spawn() (policy::check).
-- crates/frog-engine/src/catalog.rs: cloud_models_fresh (10 min TTL) — the gateway list shape.
-- crates/frog-engine/src/providers.rs: PRESETS (key_url for the fix lines), canonical(), CLOUD.
+- crates/frog-engine/src/engine/mod.rs:201 — the cap; :198 — MAX_CONTINUES (now 2).
+- crates/frog-engine/src/engine/turn.rs — the step loop, the cut-off branch, message recording.
+  `steer` holds the continuation instruction for one call only; `continuing` makes the reply's
+  blocks join the message it continues (`extend_last`, i.e. the log's Extend record) instead of
+  a second Push. `reply_text` accumulates so the bubble's completion carries the whole answer.
+- crates/frog-engine/src/engine/call.rs — `call()` takes the message item id to stream into.
+- crates/frog-engine/src/protocol.rs — `EndReason::MaxTokens { auto_continued }` and
+  `limit_banner(n)`, one place for the banner copy.
+- apps/FrogKit/Core/Protocol.swift, UI/Transcript/{TranscriptView,Activity}.swift — the banner.
+
+## Decisions
+- The continuation instruction rides on ONE request (a user message built per call) and never
+  enters the history. That keeps the reply a single assistant message, which is what the brief
+  asks for, and avoids Anthropic rejecting text-then-thinking block order.
+- A continuation's own thinking block is not spliced into the joined message (the old block
+  stays exactly as it was); its text is what joins.
+- MAX_CONTINUES went 3 → 2 to match "at most 2 auto-continuations per turn".
+
+## Result
+Targeted: 6 passed (output_limit, a_cut_off, max_tokens filters).
+

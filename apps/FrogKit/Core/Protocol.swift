@@ -463,18 +463,21 @@ struct KeptTest: Decodable, Sendable, Equatable {
 }
 
 enum EndReason: Decodable, Sendable, Equatable {
-    case complete, maxTokens, denied, looping, stepLimit, cancelled, suspended
+    case complete, denied, looping, stepLimit, cancelled, suspended
+    /// Cut off at the output limit, after `autoContinued` replies were continued in place to
+    /// try to finish the answer (0 when frog didn't continue it).
+    case maxTokens(autoContinued: Int)
     /// A retry of a call already denied: frog didn't ask again and ended the turn with the denial.
     case blockedOnApproval(String)
     case error(EngineError)
 
-    private enum Key: String, CodingKey { case type, error, denial }
+    private enum Key: String, CodingKey { case type, error, denial, autoContinued = "auto_continued" }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Key.self)
         switch try c.decode(String.self, forKey: .type) {
         case "complete": self = .complete
-        case "max_tokens": self = .maxTokens
+        case "max_tokens": self = .maxTokens(autoContinued: (try? c.decode(Int.self, forKey: .autoContinued)) ?? 0)
         case "denied": self = .denied
         case "looping": self = .looping
         case "step_limit": self = .stepLimit

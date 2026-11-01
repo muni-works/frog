@@ -89,6 +89,9 @@ impl Agent {
         offer_tools: bool,
         think: Option<bool>,
         think_budget: Option<u32>,
+        // The message item this call's reply belongs to, when it continues one already
+        // streaming (`Streamed::message` is seeded with it, so its text joins that item).
+        message: Option<String>,
     ) -> Result<(Response, Streamed)> {
         let json_mode = self.harness.tool_mode == ToolMode::Json;
         // A JSON-mode reply is one object whose action comes last, so it's done by the time
@@ -157,6 +160,7 @@ impl Agent {
             let mut streamed = Streamed {
                 no_think: think == Some(false),
                 think_budget,
+                message: message.clone(),
                 extends,
                 reusable,
                 ..Default::default()
