@@ -46,3 +46,14 @@ comment still cites the old plan doc's order, which #224 superseded for launch.
 4. Full suite, same xcodebuild without -only-testing. TranscriptSwitchBenchmarkTests
    s400/s5000 = known-noisy. Report exact pass/fail counts.
 5. Commit the fix.
+
+## Result
+- Local failing run reproduced the CI diffs: actual ["frog cloud"] vs the 4/5-section
+  expectations; testOrderWithServersSignedIn also crashed the runner at `s[2]` (index out of
+  range). testSignedOutFrogCloudStaysWithSignInAction's state + stateLine asserts PASSED.
+- Fix: tests only. Order asserts → ["frog cloud"]; server/positional index asserts dropped;
+  sign-in state/line asserts kept. Header comment now cites #224 and the off-switch.
+- Targeted run: ModelSectionsTests 7/7 passed.
+- Full suite: Executed 363 tests, 0 failures, 4 skipped (359 passed, ~244 s). Zero test
+  failures; TranscriptSwitchBenchmarkTests included and quiet.
+- Commits: a5174ddd (notes checkpoint), 2c88732d (the fix). Not pushed.
