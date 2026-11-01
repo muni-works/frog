@@ -579,8 +579,12 @@ mod http_error_tests {
         let empty = with(r#"{"error":{"message":"Insufficient credits","type":"insufficient_credits"}}"#);
         assert!(!empty.billing_admitted());
         assert!(empty.is_billing());
-        // Not billing at all.
-        let busy = with(r#"{"error":{"message":"bull is busy"}}"#);
+        // A busy provider isn't billing, even with the same shape on another status.
+        let busy = HttpError {
+            status: 429,
+            body: r#"{"error":{"message":"bull is busy"}}"#.into(),
+            billing: None,
+        };
         assert!(!busy.is_billing());
     }
 }
