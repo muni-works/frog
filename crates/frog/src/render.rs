@@ -401,7 +401,7 @@ impl Renderer {
                     EndReason::Suspended => info("  ⎿  suspended for app update"),
                     EndReason::MaxTokens { auto_continued } => warn(&format!(
                         "\n  ⎿  {}",
-                        frog_engine::protocol::limit_banner(*auto_continued)
+                        frog_engine::protocol::limit_banner(auto_continued)
                     )),
                     EndReason::Looping => {
                         warn("\n  ⎿  stopped: the model kept repeating the same tool call")
