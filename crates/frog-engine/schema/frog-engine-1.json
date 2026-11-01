@@ -835,6 +835,37 @@
           "type": "object"
         },
         {
+          "description": "The turn ended on money, not a model failure: the wallet is empty and nothing admitted\ncontinuing. Typed so the client shows \"out of credit · add credit\" with a way to fix it,\nnot a red provider dump. The raw provider JSON stays in the engine log.",
+          "properties": {
+            "balance_micro": {
+              "description": "Remaining credit when the edge said; `None` (or 0) means none.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "reason": {
+              "description": "The provider's clean message (\"insufficient credits\"), for the transcript's line.",
+              "type": "string"
+            },
+            "type": {
+              "const": "billing_limit",
+              "type": "string"
+            },
+            "window": {
+              "description": "Which wall was hit: `credit` (the usual), or the window whose refusal the edge\ncouldn't admit (`5h`, `weekly`).",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "window"
+          ],
+          "type": "object"
+        },
+        {
           "properties": {
             "error": {
               "$ref": "#/$defs/EngineError"
@@ -869,6 +900,30 @@
             },
             "type": {
               "const": "provider",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "status",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A billing refusal (402 `insufficient_quota`) that isn't a credit transition: the\nprovider's own words, cleaned of its JSON envelope (the raw body stays in the engine\nlog). The credit-transition case never lands here — it's [`Event::BillingLimit`] and\n[`EndReason::BillingLimit`].",
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "status": {
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "billing",
               "type": "string"
             }
           },
@@ -1575,6 +1630,52 @@
           },
           "required": [
             "event",
+            "seq",
+            "session",
+            "created"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The plan's allowance ran out and the session transitions to credit at usage prices\n(\"make it obvious, don't throw an error\"): one informational line in the transcript,\nthen the call continues (the edge admitted it — the next turn is billed to credit).\nNot a warning, never a provider error. The provider's raw JSON never reaches the\ntranscript; `reason` is its clean message and `balance_micro` its credit balance when\nthe edge sent one. Durable, so a replaying client shows it too.",
+          "properties": {
+            "balance_micro": {
+              "description": "Remaining credit, in millionths of a dollar, when the edge said (`x-frog-billing`).",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "created": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "event": {
+              "const": "billing_limit",
+              "type": "string"
+            },
+            "reason": {
+              "description": "The provider's own words, cleaned: \"5-hour plan limit reached; add credit to keep\ngoing at usage prices\" becomes the client's typed row.",
+              "type": "string"
+            },
+            "seq": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session": {
+              "type": "string"
+            },
+            "window": {
+              "description": "Which allowance ran out: `5h` (the plan's 5-hour window), `weekly`, or `credit`\n(the wallet itself is empty — that one ends the turn, see\n[`EndReason::BillingLimit`]).",
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "window",
             "seq",
             "session",
             "created"
@@ -3530,6 +3631,37 @@
           },
           "required": [
             "event"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The plan's allowance ran out and the session transitions to credit at usage prices\n(\"make it obvious, don't throw an error\"): one informational line in the transcript,\nthen the call continues (the edge admitted it — the next turn is billed to credit).\nNot a warning, never a provider error. The provider's raw JSON never reaches the\ntranscript; `reason` is its clean message and `balance_micro` its credit balance when\nthe edge sent one. Durable, so a replaying client shows it too.",
+          "properties": {
+            "balance_micro": {
+              "description": "Remaining credit, in millionths of a dollar, when the edge said (`x-frog-billing`).",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "event": {
+              "const": "billing_limit",
+              "type": "string"
+            },
+            "reason": {
+              "description": "The provider's own words, cleaned: \"5-hour plan limit reached; add credit to keep\ngoing at usage prices\" becomes the client's typed row.",
+              "type": "string"
+            },
+            "window": {
+              "description": "Which allowance ran out: `5h` (the plan's 5-hour window), `weekly`, or `credit`\n(the wallet itself is empty — that one ends the turn, see\n[`EndReason::BillingLimit`]).",
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "window"
           ],
           "type": "object"
         },
