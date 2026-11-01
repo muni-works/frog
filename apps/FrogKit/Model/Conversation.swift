@@ -930,6 +930,10 @@ final class Conversation {
         case .compacted(let before, let after, let kept):
             carriedForward = kept
             note("Summarized the conversation to save context (\(before.tokens) → \(after.tokens) tokens)", warning: false)
+        case .billingLimit(let b):
+            // The transition to credit: one calm line in the turn (never a provider dump).
+            // The hard out-of-credit case has no event — it arrives as the turn's end reason.
+            note(b.line, warning: false)
         case .contextPruned(let n, let before, let after):
             note("Trimmed \(n) old tool result\(n == 1 ? "" : "s") to save context (\(before.tokens) → \(after.tokens) tokens)", warning: false)
         case .drained:
@@ -1156,6 +1160,7 @@ final class Conversation {
         case .looping: return "Stopped: the model kept repeating the same tool call"
         case .stepLimit: return "Stopped at the step limit"
         case .blockedOnApproval(let denial): return "Stopped: retried a call that was already denied (\(denial))"
+        case .billingLimit: return "Stopped: out of credit"
         default:
             let answer = turn.items.last { $0.kind == .message }?.text ?? ""
             let line = answer.split(separator: "\n").first.map(String.init) ?? "Done"

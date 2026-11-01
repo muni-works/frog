@@ -560,6 +560,8 @@ struct EndView: View {
             banner("Stopped at the step limit. Say “continue” to keep going.", symbol: "flag.checkered", color: .orange)
         case .blockedOnApproval(let denial):
             banner("Stopped: retried a call that was already denied (\(denial))", symbol: "hand.raised", color: .orange)
+        case .billingLimit(let b):
+            BillingEndView(limit: b)
         case .error(let e):
             banner(e.description, symbol: "exclamationmark.octagon", color: .red)
         }
@@ -570,6 +572,24 @@ struct EndView: View {
             .font(.callout)
             .foregroundStyle(color)
             .textSelection(.enabled)
+    }
+}
+
+/// Out of credit (`EndReason.billingLimit`): the one end that's about money, not a model
+/// failure. Styled like the calm system rows (muted, not red), with the fix right there:
+/// "add credit" opens the account page the settings use (BillingSettings' billing link).
+struct BillingEndView: View {
+    let limit: BillingLimit
+
+    var body: some View {
+        HStack(spacing: TurnSpace.Inset.row) {
+            Label("out of credit", systemImage: "creditcard")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+            Link("add credit", destination: URL(string: "https://frog.toys/?settings=billing")!)
+                .font(.callout)
+        }
     }
 }
 
