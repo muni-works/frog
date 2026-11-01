@@ -1,8 +1,9 @@
 import XCTest
 @testable import Frog
 
-/// The shared section order (docs/plans/2026-10-21-frog-account-design.md): This Mac, your
-/// servers, frog cloud, then other clouds. frog cloud is always there, signed in or not.
+/// Launch (#224, Cam 2026-10-30): every picker lists Frog Cloud's models only. The shared
+/// order (docs/plans/2026-10-21-frog-account-design.md: This Mac, your servers, frog cloud,
+/// then other clouds) returns when ModelSections.frogCloudOnly turns off.
 @MainActor
 final class ModelSectionsTests: XCTestCase {
     private var saved: (() -> [ProviderInfo])!
@@ -51,25 +52,26 @@ final class ModelSectionsTests: XCTestCase {
         return ModelSections.make(usable: entries.map(ModelIdentity.init), suggested: [])
     }
 
+    /// Only Frog Cloud's models are listed; with a server, nothing else changes.
     func testOrderWithServersSignedIn() {
         let s = sections(cloudKey: "keychain", server: true)
-        XCTAssertEqual(s.map(\.title), ["This Mac", "On mew", "frog cloud", "Cloud · Anthropic", "Cloud · OpenAI"])
-        XCTAssertEqual(s[2].models.map(\.state), [.ready])
+        XCTAssertEqual(s.map(\.title), ["frog cloud"])
+        XCTAssertEqual(s[0].models.map(\.state), [.ready])
     }
 
+    /// Only Frog Cloud's models are listed, signed in without a key source in play.
     func testOrderWithoutServersSignedIn() {
         let s = sections(cloudKey: "env", server: false)
-        XCTAssertEqual(s.map(\.title), ["This Mac", "frog cloud", "Cloud · Anthropic", "Cloud · OpenAI"])
+        XCTAssertEqual(s.map(\.title), ["frog cloud"])
     }
 
+    /// Signed out, Frog Cloud's listed models stay, asking to sign in.
     func testSignedOutFrogCloudStaysWithSignInAction() {
         for server in [true, false] {
             let s = sections(cloudKey: nil, server: server)
-            let cloud = s.first { $0.title == "frog cloud" }
-            XCTAssertNotNil(cloud)
-            XCTAssertEqual(s.map(\.title).firstIndex(of: "frog cloud"), server ? 2 : 1)
-            XCTAssertEqual(cloud?.models.first?.state, .needsKey(provider: "frog cloud"))
-            XCTAssertEqual(cloud?.models.first?.stateLine, "Sign in or add a key to use it")
+            XCTAssertEqual(s.map(\.title), ["frog cloud"])
+            XCTAssertEqual(s[0].models.first?.state, .needsKey(provider: "frog cloud"))
+            XCTAssertEqual(s[0].models.first?.stateLine, "Sign in or add a key to use it")
         }
     }
 
