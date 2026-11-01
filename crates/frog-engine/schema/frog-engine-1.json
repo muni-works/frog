@@ -735,8 +735,14 @@
           "type": "object"
         },
         {
-          "description": "The model hit its output token limit.",
+          "description": "The model hit its output token limit, after `auto_continued` replies were continued in\nplace to try to finish the answer. Zero when frog didn't continue it at all.",
           "properties": {
+            "auto_continued": {
+              "default": 0,
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
             "type": {
               "const": "max_tokens",
               "type": "string"

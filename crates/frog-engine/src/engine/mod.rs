@@ -2128,7 +2128,7 @@ impl Agent {
                     Some((NoticeKind::Errored, format!("turn errored: {error:?}")))
                 }
                 // Idle per the SendMessage contract: no turn running, nothing queued.
-                EndReason::Complete | EndReason::MaxTokens => {
+                EndReason::Complete | EndReason::MaxTokens { .. } => {
                     Some((NoticeKind::Idle, "idle".to_string()))
                 }
                 _ => None,

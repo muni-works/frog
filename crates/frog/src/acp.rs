@@ -489,7 +489,7 @@ async fn pump(
                 // this session, so from the outside it looks like it just stopped.
                 EndReason::Suspended => StopReason::Cancelled,
                 EndReason::Cancelled => StopReason::Cancelled,
-                EndReason::MaxTokens => StopReason::MaxTokens,
+                EndReason::MaxTokens { .. } => StopReason::MaxTokens,
                 EndReason::Looping | EndReason::StepLimit => StopReason::MaxTurnRequests,
                 EndReason::Error { error } => {
                     conn.update(

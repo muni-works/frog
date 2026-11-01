@@ -1048,13 +1048,26 @@ pub enum Delta {
     },
 }
 
+/// What a client shows when a turn ended [`EndReason::MaxTokens`]: the plain limit line, and
+/// how many times frog continued it in place before giving up.
+pub fn limit_banner(auto_continued: u32) -> String {
+    match auto_continued {
+        0 => "Hit the output token limit".into(),
+        n => format!("Hit the output token limit (auto-continued {n}x)"),
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum EndReason {
     /// The model finished its answer.
     Complete,
-    /// The model hit its output token limit.
-    MaxTokens,
+    /// The model hit its output token limit, after `auto_continued` replies were continued in
+    /// place to try to finish the answer. Zero when frog didn't continue it at all.
+    MaxTokens {
+        #[serde(default)]
+        auto_continued: u32,
+    },
     /// The user denied a tool call; the engine stopped to wait for instructions.
     Denied,
     /// The model kept repeating an identical tool call.

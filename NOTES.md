@@ -15,7 +15,24 @@ main; push the branch and open a PR at the end. Edit tool only for Rust. Target 
    EndReason::MaxTokens carries the count so the banner can say "(auto-continued 2x)".
 
 ## Where things are
-- crates/frog-engine/src/engine/mod.rs:201 — the cap; :198 — MAX_CONTINUES.
+- crates/frog-engine/src/engine/mod.rs:201 — the cap; :198 — MAX_CONTINUES (now 2).
 - crates/frog-engine/src/engine/turn.rs — the step loop, the cut-off branch, message recording.
-- crates/frog-engine/src/engine/call.rs — `call()`, which seeds the message item id to extend.
+  `steer` holds the continuation instruction for one call only; `continuing` makes the reply's
+  blocks join the message it continues (`extend_last`, i.e. the log's Extend record) instead of
+  a second Push. `reply_text` accumulates so the bubble's completion carries the whole answer.
+- crates/frog-engine/src/engine/call.rs — `call()` takes the message item id to stream into.
+- crates/frog-engine/src/protocol.rs — `EndReason::MaxTokens { auto_continued }` and
+  `limit_banner(n)`, one place for the banner copy.
 - apps/FrogKit/Core/Protocol.swift, UI/Transcript/{TranscriptView,Activity}.swift — the banner.
+
+## Decisions
+- The continuation instruction rides on ONE request (a user message built per call) and never
+  enters the history. That keeps the reply a single assistant message, which is what the brief
+  asks for, and avoids Anthropic rejecting text-then-thinking block order.
+- A continuation's own thinking block is not spliced into the joined message (the old block
+  stays exactly as it was); its text is what joins.
+- MAX_CONTINUES went 3 → 2 to match "at most 2 auto-continuations per turn".
+
+## Result
+Targeted: 6 passed (output_limit, a_cut_off, max_tokens filters).
+
