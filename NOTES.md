@@ -1,38 +1,48 @@
-# output-cap — notes
+# model-sections-red-fix — notes
 
-Branch frog/output-cap, base c374000c (main). One commit per fix (`git commit -s`), never push to
-main; push the branch and open a PR at the end. Edit tool only for Rust. Target dir
-/private/tmp/oc-target (delete when the suite passes, ~11G).
+Branch frog/model-sections-red-fix (worktree model-sections-red-fix), base = origin/main
+(76631850). Fixing frog's red macos-app CI test step on main (run 41318468435, 2026-11-01):
+ModelSectionsTests.{testOrderWithoutServersSignedIn, testOrderWithServersSignedIn,
+testSignedOutFrogCloudStaysWithSignInAction} fail. One commit per step (`git commit -s`),
+NEVER push (branch tracks origin/main). Edit tool only for source. xcodebuild derived data in
+/private/tmp/ms-dd only.
 
-## Pieces
-0. This checkpoint.
-1. CLOUD_MAX_OUTPUT 16_384 → 32_768 (engine/mod.rs). The other 16_384 hits
-   (background.rs:694 log tail, project.rs COMPACT_WINDOW, mcp_oauth.rs read buffer) are
-   unrelated sizes and stay.
-2. Bounded auto-continue on MaxTokens: a reply cut off with no tool call pending is re-called
-   with a continuation instruction, up to MAX_CONTINUES (2). The continuation APPENDS to the
-   same assistant message (one transcript bubble, one history message via Record::Extend).
-   EndReason::MaxTokens carries the count so the banner can say "(auto-continued 2x)".
+## What I know (verified from the commits)
+- #224 (f1eb8776, Oct 30, "Launch with Frog Cloud's models only") added
+  `ModelSections.frogCloudOnly = true`: `make()` filters the section list to Frog Cloud models
+  only, and hides the picker's "Cloud setup" row, "Manage Models…", and Settings' Models tab.
+  Cam's explicit launch decision, quoted in the commit message.
+- #225 (dc26cff2, Oct 30, later the same day) removed the `alwaysFrogCloud` fallback (nothing
+  built in fills the Frog Cloud section; the section exists only when the engine listed it) and
+  already updated ONE test for the new world (renamed testFrogCloudAlwaysPresent →
+  testNoFrogCloudSectionWhenNothingListedIt). It also switched the test fixture's cloud entry
+  to `cloud/tree`.
+- The three failing tests still assert the PRE-#224 section order: This Mac / On mew / frog
+  cloud / Cloud · Anthropic / Cloud · OpenAI. Under frogCloudOnly every non-Frog-Cloud model is
+  filtered out, so `make()` returns just ["frog cloud"].
 
-## Where things are
-- crates/frog-engine/src/engine/mod.rs:201 — the cap; :198 — MAX_CONTINUES (now 2).
-- crates/frog-engine/src/engine/turn.rs — the step loop, the cut-off branch, message recording.
-  `steer` holds the continuation instruction for one call only; `continuing` makes the reply's
-  blocks join the message it continues (`extend_last`, i.e. the log's Extend record) instead of
-  a second Push. `reply_text` accumulates so the bubble's completion carries the whole answer.
-- crates/frog-engine/src/engine/call.rs — `call()` takes the message item id to stream into.
-- crates/frog-engine/src/protocol.rs — `EndReason::MaxTokens { auto_continued }` and
-  `limit_banner(n)`, one place for the banner copy.
-- apps/FrogKit/Core/Protocol.swift, UI/Transcript/{TranscriptView,Activity}.swift — the banner.
+## Decision (before changing anything)
+INTENDED behavior change; update the tests, do not touch the code.
+Evidence: the filter is `if frogCloudOnly { all = all.filter(\.place.isFrogCloud) }`
+(ModelList.swift:44), added by #224 whose message says Cam asked for exactly this ("keep it
+simple for launch … every picker lists Frog Cloud's models and nothing else"), with a documented
+off-switch. #225 doubled down (no fallback section) and already migrated one test. Nothing in
+either commit suggests the pickers were meant to keep the full list. The test file's header
+comment still cites the old plan doc's order, which #224 superseded for launch.
 
-## Decisions
-- The continuation instruction rides on ONE request (a user message built per call) and never
-  enters the history. That keeps the reply a single assistant message, which is what the brief
-  asks for, and avoids Anthropic rejecting text-then-thinking block order.
-- A continuation's own thinking block is not spliced into the joined message (the old block
-  stays exactly as it was); its text is what joins.
-- MAX_CONTINUES went 3 → 2 to match "at most 2 auto-continuations per turn".
+## New expectations (launch behavior)
+- Signed in, servers or not: sections = ["frog cloud"] only.
+- Signed out: "frog cloud" section remains IF the engine listed a cloud model (fixture does:
+  cloud/tree), with the sign-in state/line unchanged ("Sign in or add a key to use it").
+- testSignedOutFrogCloudStaysWithSignInAction's positional index assert is meaningless with one
+  section; keep the state/line asserts, drop the index (or keep a ["frog cloud"] order check).
 
-## Result
-Targeted: 6 passed (output_limit, a_cut_off, max_tokens filters).
-
+## Plan
+1. This checkpoint, commit.
+2. Run the 3 failing tests locally (xcodegen generate --quiet first; -only-testing:
+   ModelSectionsTests; dd /private/tmp/ms-dd) and confirm the actual assertion diffs.
+3. Update the three tests to the launch expectations above. Only assertions change; no source
+   edits expected.
+4. Full suite, same xcodebuild without -only-testing. TranscriptSwitchBenchmarkTests
+   s400/s5000 = known-noisy. Report exact pass/fail counts.
+5. Commit the fix.
