@@ -24,15 +24,15 @@ Rust/Swift. Target dir /private/tmp/be-target (delete when the suite passes, ~11
    message }` (a clean line, never the raw dump). Session EndState gains the mapping.
 5. Engine tests — admit (event + one retry), hard refusal (typed end, no event), 5h-window
    admit, the raw body never surfaces, EndState wiring.
-6. FrogKit — Protocol.swift decode (billingLimit event + endReason case), Conversation row
-   (billingNote state), TranscriptView end-of-turn row (neutral notice / red banner with an
-   add-credit button → https://frog.toys/?settings=billing), Activity.done case, ProtocolTests +
-   BillingTests.
+6. FrogKit — Protocol.swift decode (billingLimit event + EndReason.billingLimit), Conversation
+   note() row, TranscriptView BillingEndView ("out of credit" + add-credit link →
+   https://frog.toys/?settings=billing), Activity.done case, ProtocolTests + BillingTests.
 
 ## Result
 (engine + app numbers land here)
 
 ## Strings
 - informational (credit available): "5-hour allowance used · billing credit at usage prices"
-  (balance appended when the edge sent one: " · $1.23 left")
-- hard out-of-credit: "out of credit · add credit" (banner, red accent, button → billing page)
+  (balance appended when the edge sent one: " · $4.20 left"; weekly: "Weekly allowance used · …")
+- hard out-of-credit: "out of credit" + "add credit" link (muted secondary, NOT red — the red
+  stays for real failures)
