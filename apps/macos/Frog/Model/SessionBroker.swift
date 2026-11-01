@@ -806,6 +806,10 @@ final class SessionBroker {
             switch env["event"] as? String {
             case "turn_started" where keeps("message"):
                 if let input = env["input"] as? String, !input.isEmpty { lines.append("USER: \(trim(input))") }
+            case "billing_limit" where keeps("notice"):
+                if let reason = env["reason"] as? String, !reason.isEmpty {
+                    lines.append("NOTICE: \(trim(reason))")
+                }
             case "item_completed":
                 guard let item = env["item"] as? [String: Any], let type = item["type"] as? String else { continue }
                 switch type {
