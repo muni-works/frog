@@ -112,4 +112,46 @@ final class WorktreeHoldTests: XCTestCase {
         let tree = try XCTUnwrap(freed.first { $0.name == worktree.lastPathComponent }, "still listed once free")
         XCTAssertNil(tree.owner)
     }
+
+    /// Bug 3, the agent's side: a `StartSession` into a held worktree is refused with the
+    /// owner named, and the asking session's transcript carries the same line (the user
+    /// reads that pane, not the model's tool result).
+    func testStartSessionIntoAHeldWorktreeIsRefusedWithTheOwnerNamed() async throws {
+        try hold(for: "eng-0009")
+        // The asking session: an engine-less conversation with one turn, so a note has a row
+        // to land on.
+        let parent = Conversation(preview: repo)
+        try parent.ingest(JSONDecoder.frog.decode(Envelope.self, from: Data(
+            #"{"seq":1,"session":"chief-0001","created":1,"event":"turn_started","turn":1,"input":"go"}"#.utf8)))
+        let broker = SessionBroker.shared
+        let req = SessionBroker.StartRequest(
+            title: "worker", prompt: "do the thing", cwd: worktree.path,
+            model: nil, mode: nil, worktree: false)
+        do {
+            _ = try await broker.starterForTesting(req, parent: parent)
+            XCTFail("a held worktree must not start a session")
+        } catch {
+            let message = error.localizedDescription
+            XCTAssertTrue(message.contains("session eng-0009"), message)
+            XCTAssertTrue(message.contains("already has an engine"), message)
+            XCTAssertTrue(message.contains("One engine per worktree"), message)
+        }
+        // The user sees it too, in the session they're watching.
+        let notes = parent.turns.flatMap(\.items).filter { if case .notice = $0.kind { true } else { false } }
+        let text = notes.map(\.text).joined(separator: "\n")
+        XCTAssertTrue(text.contains("session eng-0009"), "the asking session's transcript says why: \(text)")
+        XCTAssertTrue(text.contains("already has an engine"), text)
+    }
+
+    /// Bug 3, the other half: a fresh worktree is always the way out, so the refusal's
+    /// advice is one press away rather than a dead end.
+    func testAFreshWorktreeIsFreeEvenWhileAnotherIsHeld() throws {
+        try hold(for: "eng-0009")
+        let (dir, branch, _) = try SessionBroker.makeWorktree(from: repo, name: "another")
+        defer { try? SessionBroker.git(["worktree", "remove", "--force", dir.path], in: repo) }
+        XCTAssertNotEqual(dir.path, worktree.path)
+        XCTAssertEqual(branch, "frog/another")
+        XCTAssertNil(Workspace.worktreeOwner(of: dir, resumed: "eng-0002"),
+                     "the new tree has no engine in it")
+    }
 }

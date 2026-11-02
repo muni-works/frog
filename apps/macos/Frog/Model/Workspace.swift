@@ -434,8 +434,8 @@ final class Workspace {
         // same session's engine (adopted above) is the reuse; a different one means no
         // engine starts here — the reason shows in place of a transcript, and the session
         // opens fine once the owner stops.
-        if adopted == nil, let occupied = Self.worktreeHold(of: folder, resumed: resumed) {
-            return refused(why: occupied, session: resumed)
+        if adopted == nil, let owner = Self.worktreeOwner(of: folder, resumed: resumed) {
+            return refused(by: owner, session: resumed)
         }
         // A model or mode another session set while this one was stopped applies now, once.
         let stored = adopted == nil ? resumed.map { Library.shared.takeStored($0) } : nil
@@ -462,9 +462,11 @@ final class Workspace {
 
     /// The conversation shown in place of a session whose worktree another engine runs in:
     /// no engine, no history read (the owner's may change it), the reason where the
-    /// transcript goes.
-    private func refused(why: String, session: String?) -> Conversation {
+    /// transcript goes and the owner named so the transcript can offer it.
+    private func refused(by owner: String, session: String?) -> Conversation {
+        let why = SessionBroker.worktreeRefusal(top: folder, owner: owner)
         let c = Conversation(folder: folder, link: nil, replay: false, session: session, failure: why)
+        c.heldBy = owner
         c.onSessionChange = { [weak self] in Task { await self?.refresh() } }
         incoming?.stop(reason: "open superseded")
         incoming = c
@@ -472,14 +474,21 @@ final class Workspace {
         return c
     }
 
+    /// The session whose engine holds this folder's worktree, when it isn't the session
+    /// being opened. Nil when the tree is free (or the folder isn't in one).
+    nonisolated static func worktreeOwner(of folder: URL, resumed: String?) -> String? {
+        guard case .worktree(_, let gitDir) = SessionBroker.checkout(of: folder),
+              let owner = SessionBroker.worktreeOwner(gitDir: gitDir),
+              owner != resumed else { return nil }
+        return owner
+    }
+
     /// The line the app shows instead of spawning: whose engine runs in this folder's
     /// worktree, and that the session is resumable once it stops. Nil when the folder's
     /// worktree is free (or no worktree at all).
     nonisolated static func worktreeHold(of folder: URL, resumed: String?) -> String? {
-        guard case .worktree(let top, let gitDir) = SessionBroker.checkout(of: folder),
-              let owner = SessionBroker.worktreeOwner(gitDir: gitDir) else { return nil }
-        if owner == resumed { return nil }  // this session's own engine; resuming reuses it
-        return SessionBroker.worktreeRefusal(top: top, owner: owner)
+        guard let owner = worktreeOwner(of: folder, resumed: resumed) else { return nil }
+        return SessionBroker.worktreeRefusal(top: folder, owner: owner)
     }
 
     /// Put `c` on screen in place of the conversation there, unless another was opened since.

@@ -287,6 +287,9 @@ final class Panes {
     }
 
     /// Point a pane at another folder (nil: a plain chat), starting a fresh conversation there.
+    /// A folder whose worktree another engine holds still switches (the pane shows the reason
+    /// and a way to the owner, see `Workspace.worktreeOwner`), so this never silently does
+    /// nothing when the user picked it.
     func switchFolder(_ url: URL?, in pane: Pane) {
         setWorkspace(Workspace(folder: url ?? Frog.chatFolder, fresh: true), in: pane)
     }

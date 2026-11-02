@@ -855,6 +855,10 @@ final class SessionBroker {
     func statusForTesting(_ id: String) -> StatusInfo? {
         (Library.shared.conversation(id) ?? background[id]).flatMap(selfStatus(of:))
     }
+    /// Tests start a session the way `StartSession` does, without an engine asking.
+    func starterForTesting(_ req: StartRequest, parent: Conversation?) async throws -> Started {
+        try await start(req, parent: parent)
+    }
     #endif
 
     /// The conversation tracked for session `id`: on screen or in the broker's background
@@ -1315,6 +1319,13 @@ final class SessionBroker {
         }
     }
 
+    /// The line the asking session's transcript gets when `StartSession` was refused a
+    /// folder: the refusal itself (it already names the owner and the way out), prefaced
+    /// with what was being started, so it reads as a row and not a stray error.
+    nonisolated static func worktreeNotice(_ refusal: String, folder: URL) -> String {
+        "Couldn't start a session in \(folder.path): \(refusal)"
+    }
+
     /// A git worktree for a new session: `<repo>/.frog/worktrees/<name>` on a new branch
     /// `frog/<name>` from the remote default branch (a numbered name if taken). Returns its
     /// folder, branch, and the base ref it started from.
@@ -1623,7 +1634,15 @@ extension SessionBroker {
         // and never a worktree another engine already runs in.
         if !req.worktree {
             let at = folder
-            try await Task.detached { try Self.checkWorkerFolder(at, allowMainCheckout: req.allowMainCheckout) }.value
+            do {
+                try await Task.detached { try Self.checkWorkerFolder(at, allowMainCheckout: req.allowMainCheckout) }.value
+            } catch {
+                // The user watches the asking session, so the refusal goes there too: the
+                // model sees the error and can act on it, and the person reading sees the
+                // tree's owner by name instead of a silent "couldn't start".
+                parent?.note(Self.worktreeNotice(error.localizedDescription, folder: at), warning: true)
+                throw error
+            }
         }
         if req.worktree {
             let from = folder
