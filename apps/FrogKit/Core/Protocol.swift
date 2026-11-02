@@ -441,9 +441,9 @@ struct BillingLimit: Decodable, Equatable, Sendable {
 
     private enum Key: String, CodingKey {
         case window, reason
-        // The engine's field (protocol.rs's `balance_micro`); convertFromSnakeCase matches
-        // against this raw value, so the alias must be the JSON key itself.
-        case balanceMicros = "balance_micro"
+        // The engine's `balance_micro`: convertFromSnakeCase turns the JSON key into
+        // `balanceMicro` before matching, so the rawValue must be that camelCase form.
+        case balanceMicros = "balanceMicro"
     }
 
     /// From the engine's event body (an envelope's flattened fields) or a `turn_ended`
