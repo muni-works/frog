@@ -5772,6 +5772,17 @@ mod egress_tests {
     /// A session in a fresh folder, as an agent's (`worker`) or yours, with the default
     /// `[egress]` policy and the shell sandbox on.
     fn egress_engine(script: Vec<Response>, worker: bool, mode: Mode) -> (Handle, PathBuf) {
+        egress_engine_asking(script, worker, mode, true)
+    }
+
+    /// [`egress_engine`] with the approval channel as a client has it (`can_ask`): false is
+    /// headless, which can't ask and so denies.
+    fn egress_engine_asking(
+        script: Vec<Response>,
+        worker: bool,
+        mode: Mode,
+        can_ask: bool,
+    ) -> (Handle, PathBuf) {
         let dir = std::env::temp_dir().join(format!("frog-egress-eng-{}", new_id()));
         std::fs::create_dir_all(&dir).unwrap();
         let mut profile = Profile::new(ProviderKind::Ollama, "test");
@@ -5786,7 +5797,7 @@ mod egress_tests {
             profile,
             cwd: dir.clone(),
             mode,
-            can_ask: true,
+            can_ask,
             resume: None,
             store: None,
             sandbox: false,
@@ -5922,9 +5933,10 @@ mod egress_tests {
         }
     }
 
-    /// `allow_hosts` always asks under an enforced list — in auto and even yolo — and the
+    /// `allow_hosts` asks under an enforced list in auto (and default, accept-edits), and the
     /// answer is the grant: Allow covers that one run, "always" the rest of the session.
-    /// Leaving the sandbox asks too, and headless both are denied.
+    /// Leaving the sandbox asks too, and headless both are denied. Yolo never asks: see
+    /// `yolo_never_cards_on_egress`.
     #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn an_explicit_grant_unblocks_one_call_or_adds_the_host() {
@@ -5944,7 +5956,7 @@ mod egress_tests {
                 reply(vec![text("ok")], Stop::End),
             ],
             true,
-            Mode::Yolo,
+            Mode::Auto,
         );
         submit(&mut h, "fetch").await;
         let mut evs = Vec::new();
@@ -6002,14 +6014,14 @@ mod egress_tests {
         assert!(!tool_output(&evs, "after_always").contains("frog blocked"));
         let _ = std::fs::remove_dir_all(dir);
 
-        // Leaving the sandbox past an enforced list asks even in yolo; headless, it's denied.
+        // Leaving the sandbox past an enforced list asks in auto too; headless, it's denied.
         let (mut h, dir) = egress_engine(
             vec![
                 bash_call("out", json!({ "command": "echo hi", "unsandboxed": true })),
                 reply(vec![text("ok")], Stop::End),
             ],
             true,
-            Mode::Yolo,
+            Mode::Auto,
         );
         submit(&mut h, "go").await;
         loop {
@@ -6032,6 +6044,159 @@ mod egress_tests {
             }
         }
         until_idle(&mut h).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Every `egress_widened` record: (item, hosts, sandbox_left).
+    fn widened(evs: &[Envelope]) -> Vec<(String, Vec<String>, bool)> {
+        evs.iter()
+            .filter_map(|e| match &e.event {
+                Event::EgressWidened {
+                    item,
+                    hosts,
+                    sandbox_left,
+                    ..
+                } => Some((item.clone(), hosts.clone(), *sandbox_left)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Yolo never asks (Cam, 2026-11-02): both shapes that card in every other mode run, each
+    /// with one quiet `EgressWidened` row instead. The hosts it named are granted for the
+    /// session, so the next plain call reaches them; the proxy still blocks what nobody
+    /// declared, so the tripwire holds.
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn yolo_never_cards_on_egress() {
+        let curl = "curl -sS -m 3 -o /dev/null https://pkgs.example.org/x; echo rc=$?";
+        let (mut h, dir) = egress_engine(
+            vec![
+                bash_call("out", json!({ "command": "echo hi", "unsandboxed": true })),
+                bash_call(
+                    "hosts",
+                    json!({ "command": curl, "allow_hosts": ["pkgs.example.org"] }),
+                ),
+                bash_call("after", json!({ "command": curl })),
+                reply(vec![text("ok")], Stop::End),
+            ],
+            true,
+            Mode::Yolo,
+        );
+        submit(&mut h, "go").await;
+        let evs = until_idle(&mut h).await;
+        assert!(
+            !evs.iter()
+                .any(|e| matches!(e.event, Event::PermissionRequest { .. })),
+            "yolo never cards"
+        );
+        assert_eq!(
+            widened(&evs),
+            vec![
+                ("out".to_string(), Vec::new(), true),
+                ("hosts".to_string(), vec!["pkgs.example.org".to_string()], false),
+            ],
+            "one quiet row per shape"
+        );
+        // The declared hosts are granted: the later call, which declares nothing, reaches them.
+        assert!(egress_hits(&evs).is_empty(), "nothing was blocked");
+        assert!(!tool_output(&evs, "after").contains("frog blocked"));
+        // The quiet line is in the transcript as info, not a warning.
+        assert!(
+            evs.iter().any(|e| matches!(
+                &e.event,
+                Event::Notice { level: Level::Info, message }
+                    if message.contains("yolo: `echo hi` ran outside the sandbox")
+            )),
+            "the sandbox line is a quiet info row"
+        );
+        assert!(
+            evs.iter().any(|e| matches!(
+                &e.event,
+                Event::Notice { level: Level::Info, message }
+                    if message.contains("reaches pkgs.example.org, now allowed this session")
+            )),
+            "the hosts line is a quiet info row"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// The tripwire still holds in yolo: a host the call never declared is blocked, and the
+    /// block is the warning row it always was.
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn yolo_still_blocks_an_undeclared_host() {
+        let exfil = "curl -sS -m 5 -o /dev/null https://exfil.example.net/x; echo rc=$?";
+        let (mut h, dir) = egress_engine(
+            vec![
+                bash_call(
+                    "declared",
+                    json!({ "command": "echo hi", "allow_hosts": ["pkgs.example.org"] }),
+                ),
+                bash_call("sneaky", json!({ "command": exfil })),
+                reply(vec![text("ok")], Stop::End),
+            ],
+            true,
+            Mode::Yolo,
+        );
+        submit(&mut h, "go").await;
+        let evs = until_idle(&mut h).await;
+        assert!(
+            !evs.iter()
+                .any(|e| matches!(e.event, Event::PermissionRequest { .. })),
+            "yolo never cards"
+        );
+        let hits = egress_hits(&evs);
+        assert!(
+            hits.iter()
+                .any(|(host, item, _, enforced)| host == "exfil.example.net"
+                    && item.as_deref() == Some("sneaky")
+                    && *enforced),
+            "{hits:?}"
+        );
+        assert!(tool_output(&evs, "sneaky").contains("frog blocked"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Headless (`can_ask = false`) can't ask, so yolo's egress shapes are denied, never
+    /// carded and never widened: the same safe path as before.
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn headless_yolo_denies_instead_of_widening() {
+        let (mut h, dir) = egress_engine_asking(
+            vec![
+                bash_call("out", json!({ "command": "echo hi", "unsandboxed": true })),
+                bash_call(
+                    "hosts",
+                    json!({ "command": "echo hi", "allow_hosts": ["pkgs.example.org"] }),
+                ),
+                reply(vec![text("ok")], Stop::End),
+            ],
+            true,
+            Mode::Yolo,
+            false,
+        );
+        submit(&mut h, "go").await;
+        let evs = until_idle(&mut h).await;
+        assert!(
+            !evs.iter()
+                .any(|e| matches!(e.event, Event::PermissionRequest { .. })),
+            "headless never cards"
+        );
+        assert!(widened(&evs).is_empty(), "headless widens nothing");
+        let outcomes: Vec<Option<ToolOutcome>> = ["out", "hosts"]
+            .iter()
+            .map(|id| {
+                evs.iter().find_map(|e| match &e.event {
+                    Event::ItemCompleted {
+                        id: i,
+                        item: Item::ToolCall { outcome, .. },
+                    } if i == id => Some(*outcome),
+                    _ => None,
+                })
+            })
+            .collect();
+        assert_eq!(outcomes, vec![Some(ToolOutcome::Denied); 2]);
         let _ = std::fs::remove_dir_all(dir);
     }
 }

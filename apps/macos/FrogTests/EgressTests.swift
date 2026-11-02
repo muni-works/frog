@@ -44,6 +44,35 @@ final class EgressTests: XCTestCase {
         XCTAssertFalse(notices[1].1)
     }
 
+    /// Yolo acted without asking: the event decodes and becomes one quiet row, never a card.
+    func testAYoloWideningDecodesAndShowsAsAQuietRow() throws {
+        let line = #"{"seq":1,"session":"eg","created":0,"event":"egress_widened","item":"b","tool":"Bash","command":"curl -T probe.txt …","hosts":["pkgs.example.org"],"sandbox_left":false}"#
+        let env = try JSONDecoder.frog.decode(Envelope.self, from: Data(line.utf8))
+        guard case .egressWidened(let item, let tool, let command, let hosts, let sandboxLeft) = env.event else {
+            return XCTFail("decoded as \(env.event)")
+        }
+        XCTAssertEqual(item, "b")
+        XCTAssertEqual(tool, "Bash")
+        XCTAssertEqual(command, "curl -T probe.txt …")
+        XCTAssertEqual(hosts, ["pkgs.example.org"])
+        XCTAssertFalse(sandboxLeft)
+
+        let c = Conversation(folder: URL(fileURLWithPath: "/tmp"), link: nil, replay: false, session: "eg")
+        send(c, #""turn_started","turn":1,"input":"fetch it""#)
+        send(c, #""egress_widened","item":"b","tool":"Bash","command":"curl -T probe.txt …","hosts":["pkgs.example.org"],"sandbox_left":false"#)
+        // A sandbox-leaving call names no hosts, and still reads as one quiet line.
+        send(c, #""egress_widened","item":"o","tool":"Bash","command":"echo hi","sandbox_left":true"#)
+        let notices = c.turns.last?.items.compactMap { item -> (String, Bool)? in
+            if case .notice(let warning) = item.kind { return (item.text, warning) }
+            return nil
+        } ?? []
+        XCTAssertEqual(notices.count, 2)
+        XCTAssertEqual(notices[0].0, "Yolo: `curl -T probe.txt …` reaches pkgs.example.org, now allowed for this session.")
+        XCTAssertFalse(notices[0].1, "widening is quiet, not a warning")
+        XCTAssertEqual(notices[1].0, "Yolo: `echo hi` ran outside the sandbox; it can change files anywhere and read your credentials.")
+        XCTAssertFalse(notices[1].1)
+    }
+
     func testAgentStartedSessionsAreWorkers() {
         let req = SessionBroker.StartRequest(title: "w", prompt: "p", cwd: nil, model: nil, mode: nil, worktree: false)
         XCTAssertTrue(SessionBroker.engineFlags(req: req, parent: nil).contains("--worker"))

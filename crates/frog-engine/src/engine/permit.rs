@@ -54,9 +54,23 @@ impl Agent {
             tools::kind(name)
         };
         // A command that would widen an enforced egress allow-list (hosts beyond it, or
-        // leaving the sandbox it's enforced in) is a human's call in every mode: no rule,
-        // sandbox, classifier or yolo lets it through. `Some(hosts)`: the hosts it asks for.
+        // leaving the sandbox it's enforced in) is a human's call in every mode but yolo.
+        // `Some(hosts)`: the hosts it asks for.
         let egress_ask = self.egress_ask(name, input);
+        // Yolo never asks (Cam, 2026-11-02): the call runs, and the transcript gets one quiet
+        // line where every other mode would card. The hosts the agent named are its
+        // declaration; they're granted for the session, and the proxy still blocks anything it
+        // didn't declare, so the exfil tripwire keeps working. Headless (`can_ask = false`)
+        // keeps its path below: it can't ask, so it denies.
+        if self.mode == Mode::Yolo && self.can_ask && egress_ask.is_some() {
+            self.yolo_widen_egress(
+                item,
+                name,
+                input["command"].as_str().unwrap_or(""),
+                egress_ask.as_deref().unwrap_or_default(),
+            );
+            return Decision::Allow;
+        }
         if (kind == Kind::Read || self.mode == Mode::Yolo) && egress_ask.is_none() {
             return Decision::Allow;
         }
@@ -599,6 +613,41 @@ impl Agent {
             }
             d => d,
         }
+    }
+
+    /// Yolo ran a call that widened the egress fence: grant the hosts it declared for the
+    /// session and put the fact in the transcript as one quiet line, never a card. Yolo is
+    /// "act without asking", not "act silently": the row is the whole point. `hosts` is
+    /// [`Self::egress_ask`]'s answer: the hosts it named, or empty when it left the sandbox
+    /// (past the sandbox no list applies).
+    fn yolo_widen_egress(&mut self, item: &str, name: &str, command: &str, hosts: &[String]) {
+        let sandbox_left = hosts.is_empty();
+        if !sandbox_left && let Some(egress) = &self.ctx.egress {
+            egress.grant(hosts);
+        }
+        let head = crate::egress::head(command);
+        let line = if sandbox_left {
+            format!(
+                "yolo: `{head}` ran outside the sandbox; it can change files anywhere and read your credentials."
+            )
+        } else {
+            format!(
+                "yolo: `{head}` reaches {}, now allowed this session.",
+                hosts.join(", ")
+            )
+        };
+        if self.cfg.log_calls {
+            eprintln!("{line}");
+        }
+        self.notice(Level::Info, line);
+        self.decision(item, "yolo", "allow", "yolo: widened egress without asking", 0);
+        self.emit(Event::EgressWidened {
+            item: item.to_string(),
+            tool: name.to_string(),
+            command: head,
+            hosts: hosts.to_vec(),
+            sandbox_left,
+        });
     }
 
     /// Whether a shell command would widen an enforced egress allow-list: `Some(hosts)` when

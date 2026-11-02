@@ -536,6 +536,25 @@ pub enum Event {
         #[serde(default)]
         enforced: bool,
     },
+    /// In yolo mode a command ran past the sandbox's egress fence without a card, because
+    /// yolo never asks: it left the sandbox (`sandbox_left`), named hosts off the session's
+    /// allow-list, now granted for the session (`hosts`), or both. The quiet record of an
+    /// interruption that would have been a card in every other mode. Not
+    /// [`Self::EgressBlocked`]: nothing was blocked.
+    EgressWidened {
+        item: String,
+        /// `Bash` (a Monitor's command arrives as one).
+        tool: String,
+        /// The start of the command.
+        command: String,
+        /// Hosts beyond the allow-list that the call named; granted for the rest of the
+        /// session. Empty when it only left the sandbox.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        hosts: Vec<String>,
+        /// The call ran outside the sandbox (`unsandboxed: true`).
+        #[serde(default)]
+        sandbox_left: bool,
+    },
     /// How one permission check was decided, for measuring the ask rate:
     /// which layer answered (rule, classifier, fallback, user) and how long it took.
     PermissionDecision {
@@ -874,6 +893,7 @@ impl Event {
                 | Self::QuestionResolved { .. }
                 | Self::AutoApproved { .. }
                 | Self::EgressBlocked { .. }
+                | Self::EgressWidened { .. }
             | Self::PermissionDecision { .. }
                 | Self::Compacted { .. }
             | Self::CompactionFailed { .. }

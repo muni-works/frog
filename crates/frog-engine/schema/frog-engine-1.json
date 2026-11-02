@@ -1501,6 +1501,60 @@
           "type": "object"
         },
         {
+          "description": "In yolo mode a command ran past the sandbox's egress fence without a card, because\nyolo never asks: it left the sandbox (`sandbox_left`), named hosts off the session's\nallow-list, now granted for the session (`hosts`), or both. The quiet record of an\ninterruption that would have been a card in every other mode. Not\n[`Self::EgressBlocked`]: nothing was blocked.",
+          "properties": {
+            "command": {
+              "description": "The start of the command.",
+              "type": "string"
+            },
+            "created": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "event": {
+              "const": "egress_widened",
+              "type": "string"
+            },
+            "hosts": {
+              "description": "Hosts beyond the allow-list that the call named; granted for the rest of the\nsession. Empty when it only left the sandbox.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "item": {
+              "type": "string"
+            },
+            "sandbox_left": {
+              "default": false,
+              "description": "The call ran outside the sandbox (`unsandboxed: true`).",
+              "type": "boolean"
+            },
+            "seq": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session": {
+              "type": "string"
+            },
+            "tool": {
+              "description": "`Bash` (a Monitor's command arrives as one).",
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "item",
+            "tool",
+            "command",
+            "seq",
+            "session",
+            "created"
+          ],
+          "type": "object"
+        },
+        {
           "description": "How one permission check was decided, for measuring the ask rate:\nwhich layer answered (rule, classifier, fallback, user) and how long it took.",
           "properties": {
             "created": {
@@ -3538,6 +3592,45 @@
           "required": [
             "event",
             "host",
+            "tool",
+            "command"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "In yolo mode a command ran past the sandbox's egress fence without a card, because\nyolo never asks: it left the sandbox (`sandbox_left`), named hosts off the session's\nallow-list, now granted for the session (`hosts`), or both. The quiet record of an\ninterruption that would have been a card in every other mode. Not\n[`Self::EgressBlocked`]: nothing was blocked.",
+          "properties": {
+            "command": {
+              "description": "The start of the command.",
+              "type": "string"
+            },
+            "event": {
+              "const": "egress_widened",
+              "type": "string"
+            },
+            "hosts": {
+              "description": "Hosts beyond the allow-list that the call named; granted for the rest of the\nsession. Empty when it only left the sandbox.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "item": {
+              "type": "string"
+            },
+            "sandbox_left": {
+              "default": false,
+              "description": "The call ran outside the sandbox (`unsandboxed: true`).",
+              "type": "boolean"
+            },
+            "tool": {
+              "description": "`Bash` (a Monitor's command arrives as one).",
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "item",
             "tool",
             "command"
           ],
