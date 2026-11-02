@@ -73,6 +73,11 @@ pub struct Client {
     pub fails: Mutex<VecDeque<Fail>>,
     /// When each attempt started, for asserting a backoff sequence (paused-clock tests).
     pub attempts: std::sync::Arc<Mutex<Vec<tokio::time::Instant>>>,
+    /// When set (a `(enabled, release)` pair), every call pends here after its request was
+    /// recorded but before its reply streams — a slow provider, so a test can land an
+    /// interrupt mid-call deterministically. (A `Notify` permit set before the waiter
+    /// registers would be lost, so the gate is flags the call polls until the test flips it.)
+    pub hold: Option<Arc<(std::sync::atomic::AtomicBool, std::sync::atomic::AtomicBool)>>,
 }
 
 impl Client {
@@ -83,6 +88,7 @@ impl Client {
             tool_args: None,
             fails: Default::default(),
             attempts: Default::default(),
+            hold: None,
         }
     }
 
@@ -102,6 +108,16 @@ impl Client {
             req.system,
             serde_json::to_string(req.messages)?
         ));
+        // The request is in: the call is mid-flight now. Hold here if asked, until the test
+        // releases it, so an op racing the turn (a Shutdown, an interrupt) lands mid-call.
+        if let Some(gate) = &self.hold {
+            let (enabled, release) = (&gate.0, &gate.1);
+            while enabled.load(std::sync::atomic::Ordering::SeqCst)
+                && !release.load(std::sync::atomic::Ordering::SeqCst)
+            {
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
+        }
         if let Some(fail) = self.fails.lock().unwrap().pop_front() {
             match fail {
                 Fail::Stream { partial, message } => {
