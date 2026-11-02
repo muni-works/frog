@@ -1,5 +1,6 @@
 use super::*;
 use crate::config::{Profile, ProviderKind};
+use crate::provider::openai;
 use crate::protocol::{Answer, Image};
 use crate::provider::scripted;
 use serde_json::json;
@@ -174,6 +175,44 @@ fn engine_profile_named(
         sent,
         attempts,
     )
+}
+
+/// Like [`engine_profile_named`], but on a real provider (`Provider::OpenAi` against `base_url`),
+/// for tests against a live localhost server: the test's server produces every reply itself.
+fn engine_real_profile(profile: Profile) -> Handle {
+    let base = profile.base_url.clone().unwrap_or_default();
+    let model = profile.model.clone();
+    let opts = Options {
+        cfg: Config {
+            hermetic: true,
+            ..Config::default()
+        },
+        profile_name: "test".into(),
+        profile,
+        cwd: std::env::temp_dir(),
+        mode: Mode::Default,
+        can_ask: true,
+        resume: None,
+        store: None,
+        sandbox: false,
+        rich: false,
+        subagent: false,
+        chat: false,
+    };
+    start(opts, Provider::OpenAi(openai::Client {
+        http: reqwest::Client::builder()
+            // The host's proxy env must not intercept the test's localhost server.
+            .no_proxy()
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .build()
+            .unwrap(),
+        base,
+        model,
+        key: None,
+        extra: None,
+        anthropic: Default::default(),
+    }))
+    .unwrap()
 }
 
 /// Opus on Vercel's AI Gateway, as `vercel/anthropic/claude-opus-5.5` resolves.
@@ -1123,6 +1162,273 @@ async fn a_mid_stream_error_retries_only_up_to_budget() {
             ..
         }
     )));
+}
+
+/// A connection reset that breaks the reply's BODY (headers arrived, the stream died mid-sentence)
+/// is a reqwest `is_body()` error: the same class as a truncated stream. It retries, the partial is
+/// discarded (ItemsDiscarded), and the re-run's full answer completes the turn.
+#[tokio::test(start_paused = true)]
+async fn a_connection_reset_mid_body_is_retried() {
+    let mut h = engine_fail(
+        vec![scripted::Fail::partial(
+            "partial ans",
+            "connection reset by peer",
+        )],
+        vec![reply(vec![text("full answer")], Stop::End)],
+    );
+    let evs = run(&mut h, "hi").await;
+    let discarded = evs
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::ItemsDiscarded { ids } => Some(ids.clone()),
+            _ => None,
+        })
+        .expect("items_discarded");
+    assert_eq!(discarded.len(), 1);
+    assert!(evs.iter().any(|e| matches!(
+        &e.event,
+        Event::ItemDelta { id, .. } if discarded.contains(id)
+    )));
+    let answer = evs
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::ItemCompleted {
+                item: Item::Message { text },
+                ..
+            } => Some(text.clone()),
+            _ => None,
+        })
+        .expect("a completed message");
+    assert_eq!(answer, "full answer");
+    assert!(evs.iter().any(|e| matches!(
+        e.event,
+        Event::TurnEnded {
+            reason: EndReason::Complete,
+            ..
+        }
+    )));
+}
+
+/// The reset keeps killing the body: 3 retries with backoff inside the one retry budget, one
+/// notice for the storm, every partial discarded, then the existing failure path — the typed
+/// Provider error (classified from the stream error, status 502), not a new one.
+#[tokio::test(start_paused = true)]
+async fn a_connection_reset_exhausting_the_budget_ends_with_the_existing_failure_path() {
+    let fails = (0..=3)
+        .map(|_| scripted::Fail::partial("partial", "connection reset by peer"))
+        .collect();
+    let mut h = engine_fail(fails, vec![]);
+    let evs = run(&mut h, "hi").await;
+    let notices: Vec<&str> = evs
+        .iter()
+        .filter_map(|e| match &e.event {
+            Event::Notice { message, .. } => Some(message.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(notices.len(), 1, "{notices:?}");
+    assert!(notices[0].contains("retrying (up to 3 times)"), "{notices:?}");
+    assert_eq!(
+        evs.iter()
+            .filter(|e| matches!(e.event, Event::ItemsDiscarded { .. }))
+            .count(),
+        4,
+        "every failed attempt discarded its partial"
+    );
+    assert!(evs.iter().any(|e| matches!(
+        &e.event,
+        Event::TurnEnded {
+            reason: EndReason::Error {
+                error: EngineError::Provider { status: 502, .. }
+            },
+            ..
+        }
+    )));
+}
+
+/// The real thing, not the scripted stand-in: an OpenAI-wire server that answers 200, streams a
+/// fragment of the reply, then kills the socket mid-body. reqwest surfaces the broken read as a
+/// decode-kind error over a hyper body error, which `retryable()` now lets through: the engine
+/// retries (one backoff of 1 s) and the turn completes with the second attempt's whole reply.
+#[tokio::test(start_paused = true)]
+async fn a_real_reset_mid_body_is_retried_to_a_clean_reply() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    // Only chat completions count: the engine's startup probes (GET /props, /v1/models, 404 on
+    // unknown paths) hit the same listener and must not trip the reset script.
+    let hits = Arc::new(AtomicUsize::new(0));
+    let count = hits.clone();
+    tokio::spawn(async move {
+        while let Ok((mut s, _)) = listener.accept().await {
+            let count = count.clone();
+            tokio::spawn(async move {
+                let mut received = Vec::new();
+                loop {
+                    let mut buf = [0u8; 8192];
+                    let Ok(n) = s.read(&mut buf).await else {
+                        return;
+                    };
+                    if n == 0 {
+                        return;
+                    }
+                    received.extend_from_slice(&buf[..n]);
+                    if let Some(end) = received.windows(4).position(|w| w == b"\r\n\r\n") {
+                        let head = String::from_utf8_lossy(&received[..end]).to_ascii_lowercase();
+                        let len: usize = head
+                            .lines()
+                            .find_map(|l| l.strip_prefix("content-length: ").map(str::to_owned))
+                            .and_then(|l| l.trim().parse().ok())
+                            .unwrap_or(0);
+                        if received.len() >= end + 4 + len {
+                            break;
+                        }
+                    }
+                }
+                let head = String::from_utf8_lossy(&received);
+                let chat = head
+                    .lines()
+                    .next()
+                    .map(|l| l.contains("chat/completions"))
+                    .unwrap_or(false);
+                if !chat {
+                    // A probe (context window, capabilities): answer nothing useful, no reset.
+                    let _ = s
+                        .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{}")
+                        .await;
+                    return;
+                }
+                if count.fetch_add(1, Ordering::SeqCst) > 0 {
+                    // The retry: a whole, clean reply (the shape openai.rs's gateway test uses:
+                    // the terminal chunk carries the finish reason inside its single choice).
+                    let body = "data: {\"choices\":[{\"delta\":{\"content\":\"whole reply\"}}]}\n\n\
+                                data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n\
+                                data: [DONE]\n\n";
+                    let _ = s
+                        .write_all(
+                            format!(
+                                "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                                body.len()
+                            )
+                            .as_bytes(),
+                        )
+                        .await;
+                    return;
+                }
+                // Content-length longer than the fragment that follows: the client is still
+                // reading the body when the socket dies, so the error is a body failure, not a
+                // clean end of stream.
+                let _ = s
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: 500\r\nconnection: close\r\n\r\n\
+                          data: {\"choices\":[{\"delta\":{\"content\":\"half a rep\"}}]}\n\n",
+                    )
+                    .await;
+                let _ = s.flush().await;
+            });
+        }
+    });
+    let mut p = Profile::new(ProviderKind::Openai, "test");
+    p.base_url = Some(format!("http://{addr}/v1"));
+    p.tool_mode = ToolMode::Native;
+    let mut h = engine_real_profile(p);
+    let evs = run(&mut h, "hi").await;
+    // The turn makes its own number of model calls (warm prefill, the summary pass); the retry
+    // contract lives in the events: the reset did NOT end the turn, and the reply that
+    // completed it is the retried attempt's whole one, from the server's second chat answer.
+    assert!(
+        hits.load(Ordering::SeqCst) >= 2,
+        "the retry reached the server again: {}",
+        hits.load(Ordering::SeqCst)
+    );
+    let answer = evs
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::ItemCompleted {
+                item: Item::Message { text },
+                ..
+            } => Some(text.clone()),
+            _ => None,
+        })
+        .expect("a completed message");
+    assert_eq!(answer, "whole reply");
+    assert!(evs.iter().any(|e| matches!(
+        e.event,
+        Event::TurnEnded {
+            reason: EndReason::Complete,
+            ..
+        }
+    )));
+    shutdown(h).await;
+}
+
+/// The reqwest error the reset above produces, gathered once from a real server and asserted on
+/// directly: a decode-kind error over a body read (headers arrived, the body stream broke) is
+/// retryable and classifies as a Connection error; a connect failure (nothing answered) is
+/// neither.
+#[tokio::test(start_paused = true)]
+async fn a_broken_body_stream_is_retryable_and_a_connect_failure_is_not() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    // The real reset, captured at the sse layer's own shape: read the body from a server that
+    // dies mid-response. Decode over a hyper body error, is_body false (no client timeout here).
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let Ok((mut s, _)) = listener.accept().await else {
+            return;
+        };
+        let mut buf = vec![0u8; 65536];
+        let _ = s.read(&mut buf).await;
+        let _ = s
+            .write_all(
+                b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: 500\r\nconnection: close\r\n\r\n\
+                  data: {\"partial\":true}\n\n",
+            )
+            .await;
+        let _ = s.flush().await;
+    });
+    let http = reqwest::Client::builder()
+        // The host's proxy env would swallow both connections (a 127.0.0.1 target isn't in
+        // reqwest's system no-proxy); these tests need the direct socket.
+        .no_proxy()
+        .connect_timeout(Duration::from_secs(10))
+        .build()
+        .unwrap();
+    let resp = http
+        .get(format!("http://{addr}/v1/chat/completions"))
+        .send()
+        .await
+        .unwrap();
+    let mut stream = resp.bytes_stream();
+    // The first chunk arrives; the second read hits the dead socket.
+    let _ = futures_util::StreamExt::next(&mut stream).await.unwrap().unwrap();
+    let broken = futures_util::StreamExt::next(&mut stream)
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert!(
+        broken.is_decode() && !broken.is_body() && !broken.is_connect() && !broken.is_timeout(),
+        "{broken:#}"
+    );
+    assert!(retryable(&(broken.into())));
+    // Connect: the request never got anywhere — a dead server, not a broken reply.
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let dead = l.local_addr().unwrap();
+    drop(l);
+    let refused = http.get(format!("http://{dead}/v1")).send().await.unwrap_err();
+    assert!(
+        refused.is_connect() && !refused.is_decode() && !refused.is_body(),
+        "{refused:#}"
+    );
+    let refused: anyhow::Error = refused.into();
+    assert!(!retryable(&refused));
+    // Both are the network, not frog: a connect failure classifies as Connection, with the
+    // provider's own message underneath (the decode error was asserted retryable above).
+    assert!(matches!(
+        classify(&refused),
+        EngineError::Connection { .. }
+    ));
 }
 
 #[tokio::test]
