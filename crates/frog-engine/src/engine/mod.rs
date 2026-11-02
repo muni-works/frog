@@ -1172,10 +1172,14 @@ fn classify(e: &anyhow::Error) -> EngineError {
             message: c.0.clone(),
         };
     }
+    // The same transport classes retryable() accepts, plus a plain connect failure (which the
+    // retry arm handles through cloud_fallback): all of them are the network, not frog.
     let network = e
         .chain()
         .filter_map(|c| c.downcast_ref::<reqwest::Error>())
-        .any(|r| r.is_connect() || r.is_timeout() || r.is_request());
+        .any(|r| {
+            r.is_connect() || r.is_timeout() || r.is_request() || r.is_body() || r.is_decode()
+        });
     if network {
         return EngineError::Connection {
             message: format!("{e:#}"),
@@ -1199,9 +1203,14 @@ fn retryable(e: &anyhow::Error) -> bool {
     if e.is::<IncompleteStream>() {
         return true;
     }
+    // A body-stream failure (a reset while reading the reply, after the headers arrived) is the
+    // same class as a truncated stream: the partial is discarded by the retry arm and the step
+    // re-runs from scratch, so it's worth another try. `bytes_stream` wraps a body read error in
+    // reqwest's decode kind (is_decode), a reader with a timeout in the body kind (is_body) —
+    // both are "the body stream broke", and neither is a clean end or a bad request.
     e.chain()
         .filter_map(|c| c.downcast_ref::<reqwest::Error>())
-        .any(|r| r.is_timeout() || (r.is_request() && !r.is_connect()))
+        .any(|r| r.is_timeout() || r.is_body() || r.is_decode() || (r.is_request() && !r.is_connect()))
 }
 
 /// frog's local model server answers (it listens on 127.0.0.1:8911 when running).
