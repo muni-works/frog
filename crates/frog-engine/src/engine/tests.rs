@@ -2730,6 +2730,208 @@ async fn continue_after_a_crash_runs_a_new_turn_with_the_note() {
     shutdown(h).await;
 }
 
+/// A birth-death (the incident behind the broker's replay): a Shutdown raced turn 1 before
+/// its first model call, so the child ended `cancelled` with 0 calls. The engine's invariant,
+/// what the app's replay (births.json, read back through the log) stands on: whatever kills
+/// turn 1, the log keeps its `TurnStarted` input and the user's message, so the prompt can be
+/// replayed — here proven by a fresh engine on the same store, whose next turn carries the
+/// prompt (a `Continue` on the repaired history runs it).
+#[tokio::test]
+async fn a_birth_death_keeps_turn_ones_prompt_in_the_log_for_replay() {
+    let dir = tmp_store();
+    let mut profile = Profile::new(ProviderKind::Ollama, "test");
+    profile.tool_mode = ToolMode::Native;
+    let mut client = scripted::Client::new(vec![reply(vec![text("never seen")], Stop::End)]);
+    let hold = Arc::new((
+        std::sync::atomic::AtomicBool::new(true),
+        std::sync::atomic::AtomicBool::new(false),
+    ));
+    client.hold = Some(hold.clone());
+    let sent = client.sent.clone();
+    let opts = Options {
+        cfg: Config {
+            hermetic: true,
+            ..Config::default()
+        },
+        profile_name: "test".into(),
+        profile,
+        cwd: dir.clone(),
+        mode: Mode::AcceptEdits,
+        can_ask: true,
+        resume: None,
+        store: Some(dir.clone()),
+        sandbox: false,
+        rich: false,
+        subagent: false,
+        chat: false,
+    };
+    let mut h = start(opts, Provider::Scripted(client)).unwrap();
+    while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+    h.ops
+        .send(Op::Submit {
+            text: "the only prompt".into(),
+            images: Vec::new(),
+            more: Vec::new(),
+        })
+        .unwrap();
+    // Wait until the provider has the request (the call is mid-flight), then shut down while
+    // it runs, exactly as `frog -p` did to the two children on 2026-10-22.
+    while sent.lock().unwrap().is_empty() {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    h.ops.send(Op::Shutdown).unwrap();
+    // The cancelled turn's future still holds the gate: release it, so the call unwinds.
+    hold.1.store(true, std::sync::atomic::Ordering::SeqCst);
+    // The stream closes on shutdown; collect what was logged.
+    let mut evs = Vec::new();
+    while let Some(env) = h.events.recv().await {
+        evs.push(env);
+    }
+    let sid = evs[0].session.clone();
+    // Turn 1 died cancelled, before any model call completed (the incident's signature).
+    assert!(
+        evs.iter().any(|e| matches!(
+            &e.event,
+            Event::TurnEnded {
+                turn: 1,
+                reason: EndReason::Cancelled,
+                ..
+            }
+        )),
+        "{:?}",
+        evs.iter()
+            .filter_map(|e| match &e.event {
+                Event::TurnEnded { turn, reason, .. } => Some((turn, reason)),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(sent.lock().unwrap().len(), 1, "exactly the raced call");
+    // The log keeps the prompt, both as the event's input and as a message.
+    let loaded = session::load(&dir, &sid).unwrap();
+    assert!(loaded.events.iter().any(|e| matches!(
+        &e.event,
+        Event::TurnStarted { turn: 1, input, .. } if input == "the only prompt"
+    )));
+    assert!(
+        loaded
+            .messages
+            .iter()
+            .any(|m| m.role == Role::User
+                && m.content.iter().any(
+                    |b| matches!(b, Block::Text { text } if text.contains("the only prompt"))
+                )),
+        "the prompt survives in the history: {:?}",
+        loaded.messages
+    );
+    // A fresh engine on the same store (what a replay does) can run it.
+    let (mut h, sent) = engine_sent(
+        vec![reply(vec![text("ran the replayed prompt")], Stop::End)],
+        Some(dir.clone()),
+        Some(sid.clone()),
+        None,
+        dir.clone(),
+    );
+    until_idle(&mut h).await;
+    h.ops.send(Op::Continue { note: None }).unwrap();
+    let evs = until_idle(&mut h).await;
+    assert!(evs.iter().any(|e| matches!(
+        &e.event,
+        Event::TurnStarted { turn: 2, input, .. } if input == crate::protocol::CONTINUE_NOTE
+    )));
+    let req = sent.lock().unwrap().last().cloned().unwrap();
+    assert!(
+        req.contains("the only prompt"),
+        "the replay's request still carries the birth-death prompt: {req}"
+    );
+    shutdown(h).await;
+}
+
+/// The other half of the birth-death family: a message from another session arriving while a
+/// turn runs — even mid-model-call, the worst moment the two cancelled children died in —
+/// never cancels it. It queues (like any op) and runs at the turn boundary.
+#[tokio::test]
+async fn a_deliver_landing_mid_call_does_not_cancel_the_running_turn() {
+    let mut profile = Profile::new(ProviderKind::Ollama, "test");
+    profile.tool_mode = ToolMode::Native;
+    let client = scripted::Client::new(vec![
+        reply(vec![text("first turn's answer")], Stop::End),
+        reply(vec![text("got the message")], Stop::End),
+    ]);
+    let hold = Arc::new((
+        std::sync::atomic::AtomicBool::new(true),
+        std::sync::atomic::AtomicBool::new(false),
+    ));
+    let client = {
+        let mut c = client;
+        c.hold = Some(hold.clone());
+        c
+    };
+    let sent = client.sent.clone();
+    let opts = Options {
+        cfg: Config {
+            hermetic: true,
+            ..Config::default()
+        },
+        profile_name: "test".into(),
+        profile,
+        cwd: std::env::temp_dir(),
+        mode: Mode::AcceptEdits,
+        can_ask: true,
+        resume: None,
+        store: None,
+        sandbox: false,
+        rich: false,
+        subagent: false,
+        chat: false,
+    };
+    let mut h = start(opts, Provider::Scripted(client)).unwrap();
+    while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+    h.ops
+        .send(Op::Submit {
+            text: "work".into(),
+            images: Vec::new(),
+            more: Vec::new(),
+        })
+        .unwrap();
+    // The deliver lands while the first call is mid-flight (mid-call is where the cancelled
+    // children died) — queued, never an interrupt.
+    while sent.lock().unwrap().is_empty() {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    h.ops
+        .send(Op::Deliver {
+            from: "s1".into(),
+            from_name: "Chief".into(),
+            message: "status?".into(),
+        })
+        .unwrap();
+    hold.1.store(true, std::sync::atomic::Ordering::SeqCst);
+    let mut first_ended = false;
+    loop {
+        match h.events.recv().await.unwrap().event {
+            Event::TurnEnded { turn, reason, .. } => {
+                assert!(matches!(reason, EndReason::Complete), "{reason:?}");
+                if turn == 1 {
+                    first_ended = true;
+                }
+                if turn == 2 {
+                    break;
+                }
+            }
+            Event::TurnStarted { turn, input, .. } if turn == 2 => {
+                assert!(
+                    first_ended,
+                    "the delivered message started before the running turn ended"
+                );
+                assert!(input.contains("status?"), "{input}");
+            }
+            _ => {}
+        }
+    }
+    shutdown(h).await;
+}
+
 /// `drain_resume_continues`: after a drain suspends a turn, a resumed engine continues
 /// it with the update note (the app's job to send, as it will after a real update), on
 /// the session's stored model, and the work carries on from the repaired history —
