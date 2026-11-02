@@ -33,32 +33,45 @@ final class EngineEndTests: XCTestCase {
     }
 
     /// The engine's fatal error is printed on stdout after the events stop (render::error),
-    /// colored: "✗ this worktree (…) already has an engine: session …". That line, not the
-    /// status fallback, is the banner.
+    /// colored and marked ✗. The process keeps the line plain (see `keepOut`), and that line,
+    /// not the status fallback, is the banner.
+    @MainActor
     func testAFatalLineOnStdoutIsTheBanner() {
-        let out = "\u{1b}[38;5;9m✗\u{1b}[39m \u{1b}[38;5;9mthis worktree (/repo/.frog/worktrees/w) already has an engine: "
-            + "session eng-0002 (pid 60428) is running in it. One engine per worktree.\u{1b}[39m\n"
-        let line = EngineProcess.endDescription(stderr: "", out: out, signal: nil, exit: "status 1")
+        let process = EngineProcess(
+            binary: URL(fileURLWithPath: "/bin/true"), cwd: URL(fileURLWithPath: "/tmp"), arguments: [])
+        process.keepOutForTesting(#"{"seq":1,"session":"s","created":1,"event":"idle"}"#)
+        process.keepOutForTesting("\u{1b}[38;5;9m✗\u{1b}[39m \u{1b}[38;5;9mthis worktree (/repo/.frog/worktrees/w) already has an engine: "
+            + "session eng-0002 (pid 60428) is running in it. One engine per worktree.\u{1b}[39m\n")
+        let line = EngineProcess.endDescription(stderr: "", out: process.outText, signal: nil, exit: "status 1")
         XCTAssertEqual(line,
-            "this worktree (/repo/.frog/worktrees/w) already has an engine: session eng-0002 (pid 60428) is running in it. One engine per worktree.")    }
+            "this worktree (/repo/.frog/worktrees/w) already has an engine: session eng-0002 (pid 60428) is running in it. One engine per worktree.")
+    }
 
     /// Protocol event lines on stdout are never the banner, even when they're last.
+    @MainActor
     func testAnEventLineOnStdoutIsNotTheBanner() {
-        let out = #"{"seq":9,"session":"s","created":1,"event":"idle"}"#
-            + "\n✗ the model isn't on this gateway"
-        let line = EngineProcess.endDescription(stderr: "", out: out, signal: nil, exit: "status 1")
-        XCTAssertEqual(line, "✗ the model isn't on this gateway")
-    }
-    /// Stderr's real error still wins over stdout's non-error chatter when both are kept.
-    func testStderrErrorWinsOverStdoutChatter() {
-        let out = "frog 0.1.0"
-        let stderr = "error: no model configured"
-        let line = EngineProcess.endDescription(stderr: stderr, out: out, signal: nil, exit: "status 1")
-        XCTAssertEqual(line, "error: no model configured")
+        let process = EngineProcess(
+            binary: URL(fileURLWithPath: "/bin/true"), cwd: URL(fileURLWithPath: "/tmp"), arguments: [])
+        process.keepOutForTesting("half a line")  // a partial line before its rest arrives
+        process.keepOutForTesting(#"{"seq":9,"session":"s","created":1,"event":"idle"}"#)
+        process.keepOutForTesting("✗ the model isn't on this gateway")
+        let line = EngineProcess.endDescription(stderr: "", out: process.outText, signal: nil, exit: "status 1")
+        XCTAssertEqual(line, "the model isn't on this gateway")
     }
 
-    /// What the process itself keeps: event lines never land in `outLines`; the fatal line does,
-    /// stripped of its color, and the store stays bounded.
+    /// Both streams carry words: stdout's line wins. In `--serve` stdout's non-event lines
+    /// are only ever the dying engine's render::error, while stderr's non-trace content
+    /// (a panic) means the run died before render::error — mutually exclusive in practice,
+    /// and the freshest words are the cause.
+    func testStdoutFatalLineWinsOverStderrWords() {
+        let out = "this worktree is busy"
+        let stderr = "thread 'main' panicked: no model configured"
+        let line = EngineProcess.endDescription(stderr: stderr, out: out, signal: nil, exit: "status 1")
+        XCTAssertEqual(line, "this worktree is busy")
+    }
+
+    /// What the process keeps: event lines never land in `outLines`; the fatal line does,
+    /// stripped of its color and the ✗; the store stays bounded, newest last.
     @MainActor
     func testKeepOutStoresNonEventLinesStrippedAndBounded() {
         let process = EngineProcess(
@@ -66,7 +79,7 @@ final class EngineEndTests: XCTestCase {
         process.keepOutForTesting(#"{"seq":1,"session":"s","created":1,"event":"idle"}"#)
         XCTAssertEqual(process.outLines, [])
         process.keepOutForTesting("\u{1b}[38;5;9m✗\u{1b}[39m \u{1b}[38;5;9mboom\u{1b}[39m")
-        XCTAssertEqual(process.outLines, ["✗ boom"])
+        XCTAssertEqual(process.outLines, ["boom"])
         for i in 0..<20 { process.keepOutForTesting("line \(i)") }
         XCTAssertEqual(process.outLines.count, 8)
         XCTAssertEqual(process.outText.split(separator: "\n").last, "line 19")
