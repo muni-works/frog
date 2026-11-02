@@ -802,6 +802,42 @@ final class SessionBrokerTests: XCTestCase {
         XCTAssertNoThrow(try SessionBroker.checkWorkerFolder(wt, allowMainCheckout: false))
     }
 
+    /// Opening a session whose worktree another engine runs in spawns nothing: the hold is
+    /// named, the same session's own engine is a reuse, and a freed tree opens again.
+    func testAnOwnedWorktreeIsSteeredNotSpawnedInto() throws {
+        let repo = FileManager.default.temporaryDirectory.appending(path: "frog-broker-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: repo) }
+        try SessionBroker.git(["init", "-q", "-b", "main"], in: repo)
+        try "hi\n".write(to: repo.appending(path: "a.txt"), atomically: true, encoding: .utf8)
+        try SessionBroker.git(["add", "."], in: repo)
+        try SessionBroker.git(["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init"], in: repo)
+        let (wt, _, _) = try SessionBroker.makeWorktree(from: repo, name: "occupied")
+        guard case .worktree(_, let gitDir) = SessionBroker.checkout(of: wt) else { return XCTFail("not a worktree") }
+
+        // A free tree: no hold, a resume goes ahead (spawns).
+        XCTAssertNil(Workspace.worktreeHold(of: wt, resumed: "eng-0002"))
+
+        // Another engine's lock (as the engine writes it): the hold, naming the owner.
+        let lock = gitDir.appending(path: "frog-engine.lock")
+        try "eng-0002 4242\n".write(to: lock, atomically: true, encoding: .utf8)
+        let fd = open(lock.path, O_RDONLY)
+        XCTAssertEqual(flock(fd, LOCK_EX | LOCK_NB), 0)
+        defer { close(fd) }
+        let hold = Workspace.worktreeHold(of: wt, resumed: "eng-9999")
+        let named = try XCTUnwrap(hold, "another engine's tree is a hold")
+        XCTAssertTrue(named.contains("session eng-0002"), named)
+        XCTAssertTrue(named.contains("already has an engine"), named)
+        XCTAssertTrue(named.contains("already has an engine: session eng-0002"), named)
+        XCTAssertTrue(named.contains(".frog/worktrees/occupied"), named)
+        // The same session resuming into its own tree is a reuse, not a hold.
+        XCTAssertNil(Workspace.worktreeHold(of: wt, resumed: "eng-0002"),
+                     "the owner resuming its own tree reuses it")
+        // The refusal text is the one the composer and banner share.
+        let refusal = SessionBroker.worktreeRefusal(top: wt, owner: "eng-0002")
+        XCTAssertTrue(refusal.contains("stop or archive eng-0002"), refusal)
+    }
+
     /// A worktree bases on the repo's remote default branch (origin/HEAD → origin/main), not
     /// the checkout's current branch, so a session forked from a feature branch doesn't
     /// inherit its half-finished work.

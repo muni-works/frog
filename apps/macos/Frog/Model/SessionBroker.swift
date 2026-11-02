@@ -205,7 +205,9 @@ final class SessionBroker {
     private var pendingInbox: [String: [(String, String, String)]] = [:]
     /// When each session's current permission card arrived (ListApprovals reports its age).
     private var waitingSince: [String: Date] = [:]
-    /// The session that started session `id`, if one did (pending approvals escalate to it).
+    /// Why the last `conversation(for:)` couldn't start an engine (a held worktree), for the
+    /// send that triggered the restart to report.
+    private var lastHold: String?
     /// The session that started session `id`, if one did (pending approvals escalate to it).
     var parentOf: (_ id: String) -> String? = { _ in nil }
 
@@ -853,6 +855,10 @@ final class SessionBroker {
     func statusForTesting(_ id: String) -> StatusInfo? {
         (Library.shared.conversation(id) ?? background[id]).flatMap(selfStatus(of:))
     }
+    /// Tests start a session the way `StartSession` does, without an engine asking.
+    func starterForTesting(_ req: StartRequest, parent: Conversation?) async throws -> Started {
+        try await start(req, parent: parent)
+    }
     #endif
 
     /// The conversation tracked for session `id`: on screen or in the broker's background
@@ -934,12 +940,18 @@ final class SessionBroker {
         // Status only: read without a turn, so nothing sits in the inbox and no idle watch arms.
         if informational {
             guard inform(target.id, sender, name, message) else {
-                return .failure(BrokerError("Couldn't reach \(target.name): its folder may be gone."))
+                let hold = lastHold
+                lastHold = nil
+                return .failure(BrokerError(hold ?? "Couldn't reach \(target.name): its folder may be gone."))
             }
             return .success(target)
         }
         guard reach(target.id, sender, name, message) else {
-            return .failure(BrokerError("Couldn't reach \(target.name): its folder may be gone."))
+            // A spawn was needed (no live engine) and refused: its reason, if the worktree
+            // was the cause, beats the generic "folder may be gone".
+            let hold = lastHold
+            lastHold = nil
+            return .failure(BrokerError(hold ?? "Couldn't reach \(target.name): its folder may be gone."))
         }
         // The message sits in the target's inbox until its next turn boundary: a queued
         // message keeps it "running" in the status truth (bug 2d).
@@ -1080,6 +1092,16 @@ final class SessionBroker {
         // An engine that died mid-turn left it open: the fresh engine continues it, ahead of
         // anything new (the user may have stopped the old one; the report says which).
         let unfinished = background[id].map { c in c.turns.last.map { !$0.finished } ?? false } ?? false
+        // Another engine may own this folder's worktree: don't spawn one that dies at birth.
+        // The message is returned to the sender (the caller's error path); the session is
+        // resumable once the owner stops.
+        if let hold = Workspace.worktreeHold(of: folder, resumed: id) {
+            background[id] = nil
+            inbound[id] = 0
+            touch(id)
+            lastHold = hold
+            return nil
+        }
         // A model or mode set while no engine ran (SetSessionModel/Mode) applies now, once.
         let stored = Library.shared.takeStored(id)
         let c = Conversation(folder: folder, arguments: Self.resumeArguments(id, chat: info.isChat),
@@ -1233,7 +1255,12 @@ final class SessionBroker {
 
     nonisolated static func checkout(of folder: URL) -> Checkout {
         let fm = FileManager.default
-        var at = folder.standardizedFileURL
+        // `resolvingSymlinksInPath` is what makes this terminate: for a folder that doesn't
+        // exist, `standardizedFileURL` keeps ".." segments, and `deletingLastPathComponent`
+        // then grows the path forever (the walk below never reached a root). Resolved, the
+        // path is absolute and lexical, so each step is strictly shorter.
+        var at = folder.resolvingSymlinksInPath().standardizedFileURL
+        var last = at.path
         while true {
             let dot = at.appending(path: ".git")
             var isDir: ObjCBool = false
@@ -1250,7 +1277,9 @@ final class SessionBroker {
                 return .worktree(top: at, gitDir: gitDir.standardizedFileURL)
             }
             let up = at.deletingLastPathComponent()
-            if up.path == at.path { return .plain }
+            // Belt and braces: any path that stops getting shorter is a root we can't see.
+            guard up.path != last else { return .plain }
+            last = up.path
             at = up
         }
     }
@@ -1267,6 +1296,13 @@ final class SessionBroker {
         }
         let text = (try? String(contentsOf: gitDir.appending(path: "frog-engine.lock"), encoding: .utf8)) ?? ""
         return text.split(separator: " ").first.map(String.init) ?? "another session"
+    }
+
+    /// The line for starting something in a worktree another engine runs in: the tree, the
+    /// owner, and the way out. The app shows it instead of starting an engine that would die
+    /// at birth (the engine's own refusal, word for word, via `checkWorkerFolder`).
+    nonisolated static func worktreeRefusal(top: URL, owner: String) -> String {
+        "\(top.path) already has an engine: session \(owner) runs in it. One engine per worktree, so two sessions never mix uncommitted work: stop or archive \(owner) first, or start this one in its own worktree. It's resumable once \(owner) stops."
     }
 
     /// StartSession without `worktree:true`: refuse the user's main checkout (the repo root
@@ -1288,6 +1324,13 @@ final class SessionBroker {
                 throw BrokerError("\(top.path) already has an engine: session \(owner) runs in it. One engine per worktree: pass worktree:true for a fresh one, or stop or archive \(owner) first.")
             }
         }
+    }
+
+    /// The line the asking session's transcript gets when `StartSession` was refused a
+    /// folder: the refusal itself (it already names the owner and the way out), prefaced
+    /// with what was being started, so it reads as a row and not a stray error.
+    nonisolated static func worktreeNotice(_ refusal: String, folder: URL) -> String {
+        "Couldn't start a session in \(folder.path): \(refusal)"
     }
 
     /// A git worktree for a new session: `<repo>/.frog/worktrees/<name>` on a new branch
@@ -1598,7 +1641,15 @@ extension SessionBroker {
         // and never a worktree another engine already runs in.
         if !req.worktree {
             let at = folder
-            try await Task.detached { try Self.checkWorkerFolder(at, allowMainCheckout: req.allowMainCheckout) }.value
+            do {
+                try await Task.detached { try Self.checkWorkerFolder(at, allowMainCheckout: req.allowMainCheckout) }.value
+            } catch {
+                // The user watches the asking session, so the refusal goes there too: the
+                // model sees the error and can act on it, and the person reading sees the
+                // tree's owner by name instead of a silent "couldn't start".
+                parent?.note(Self.worktreeNotice(error.localizedDescription, folder: at), warning: true)
+                throw error
+            }
         }
         if req.worktree {
             let from = folder

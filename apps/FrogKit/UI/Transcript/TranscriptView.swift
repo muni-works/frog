@@ -33,6 +33,8 @@ struct TranscriptView: View {
     @State private var flows = FlowCache()
     @AppStorage(Verbosity.key) private var defaultVerbosity = Verbosity.standard.rawValue
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Opening the session a line names (a worktree's owner, a message's sender).
+    @Environment(\.openSessionID) private var openSessionID
 
     /// Rows built when the transcript opens, and added each time you reach its top.
     static var windowRows = 50
@@ -370,10 +372,22 @@ struct TranscriptView: View {
                         .transition(.opacity)
                 }
                 if let failure = conversation.failure {
-                    Label(failure, systemImage: "exclamationmark.octagon")
-                        .foregroundStyle(.red)
-                        .textSelection(.enabled)
-                        .padding(.top, space.turn)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label(failure, systemImage: "exclamationmark.octagon")
+                            .foregroundStyle(.red)
+                            .textSelection(.enabled)
+                        // A worktree another engine holds: one press goes to the session that
+                        // owns it (its window, or its transcript here) instead of leaving the
+                        // user to hunt for the id in the line above.
+                        if let owner = conversation.heldBy, openSessionID != nil {
+                            Button { openSessionID?(owner) } label: {
+                                Label("Open \(owner)", systemImage: "arrow.up.forward.square")
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        }
+                    }
+                    .padding(.top, space.turn)
                 }
                 if conversation.overflowRescue {
                     OverflowRescueView(conversation: conversation)

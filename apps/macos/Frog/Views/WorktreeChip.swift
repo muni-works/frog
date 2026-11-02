@@ -31,7 +31,10 @@ struct WorktreeChip: View {
                         }
                         .font(.frog(size: 12))
                     }
+                    // An engine already runs in it: picking it would start one that dies at
+                    // birth. "New Worktree…" below is the way out, one press away.
                     .disabled(tree.owner != nil)
+                    .help(tree.owner.map { "Session \($0)'s engine runs in this worktree. One engine per worktree: stop or archive \($0), or start a new worktree." } ?? "")
                 }
                 Divider()
             }

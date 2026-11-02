@@ -87,6 +87,10 @@ final class Conversation {
     let panes = PaneHub()
     @ObservationIgnored private var appCalls: [String: (JSONValue?, String?) -> Void] = [:]
     private(set) var failure: String?
+    /// The session whose engine holds the worktree this conversation would run in, when that
+    /// is why there's no engine (see `failure`). The transcript offers the owner instead of
+    /// leaving the user to find it; nil for every other failure.
+    var heldBy: String?
     /// A reopened session's history is on its way (until the engine's `synced`).
     private(set) var replaying = false
     /// The replay's history ended with a turn still open (another frog process is running

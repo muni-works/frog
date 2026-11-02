@@ -3,19 +3,22 @@ import Foundation
 /// A `frog --serve` process is how a conversation reaches its engine on the Mac.
 extension EngineProcess: ConversationLink {
     var endDescription: String {
-        Self.endDescription(stderr: stderr, signal: exitSignal, exit: exitDescription)
+        Self.endDescription(stderr: stderr, out: outText, signal: exitSignal, exit: exitDescription)
     }
 
-    /// Why an engine the app didn't stop is gone, for the transcript's red line: its last real
-    /// error output, never its per-call timing traces ("call 2 done in 12.6s · …", which read as
-    /// a crash when another session killed the process), and a signal from outside said so.
-    nonisolated static func endDescription(stderr: String, signal: Int32?, exit: String) -> String {
-        let lines = stderr.split(separator: "\n").map(String.init).filter { line in
-            let t = line.trimmingCharacters(in: .whitespaces)
-            return !t.isEmpty && t.firstMatch(of: /^call \d+ (done|thinking|failed)\b/) == nil
+    /// Why an engine the app didn't stop is gone, for the transcript's red line: its own last
+    /// words — the fatal error it printed before it died (a worktree another engine holds, a
+    /// bad config) ahead of a generic status. Its per-call timing traces ("call 2 done in
+    /// 12.6s · …", stderr's only content while it lives) read as a crash when another session
+    /// killed the process, so they're dropped; a signal from outside said so.
+    nonisolated static func endDescription(stderr: String, out: String, signal: Int32?, exit: String) -> String {
+        for source in [out, stderr] {
+            let lines = source.split(separator: "\n").map(String.init).filter { line in
+                let t = line.trimmingCharacters(in: .whitespaces)
+                return !t.isEmpty && t.firstMatch(of: /^call \d+ (done|thinking|failed)\b/) == nil
+            }
+            if let tail = lines.last { return tail }
         }
-        let tail = lines.suffix(3).joined(separator: "\n")
-        if !tail.isEmpty { return tail }
         if let signal {
             let name = [9: "SIGKILL", 15: "SIGTERM", 2: "SIGINT"][signal] ?? "signal \(signal)"
             return "The frog engine was stopped from outside frog (\(name))."
