@@ -99,6 +99,18 @@ final class WorktreeHoldTests: XCTestCase {
                       "the spawn was attempted, not refused: \(failure ?? "(none)")")
     }
 
+    /// A folder that doesn't exist must not hang the walk: `standardizedFileURL` keeps ".."
+    /// segments for a missing path, so `deletingLastPathComponent` grew it forever and
+    /// `checkout` never reached a root (every StartSession and every open goes through it).
+    func testAFolderThatDoesNotExistIsPlainAndReturns() {
+        let missing = FileManager.default.temporaryDirectory
+            .appending(path: "frog-missing-\(UUID().uuidString)/nested/deeper")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: missing.path))
+        XCTAssertEqual(SessionBroker.checkout(of: missing), .plain)
+        XCTAssertNil(Workspace.worktreeOwner(of: missing, resumed: nil))
+        XCTAssertNil(Workspace.worktreeHold(of: missing, resumed: nil))
+    }
+
     /// The composer's worktree menu: the owned tree is disabled and names its engine; a free
     /// tree is enabled again.
     func testTheWorktreeMenuDisablesOwnedTrees() throws {

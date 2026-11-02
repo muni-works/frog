@@ -1255,7 +1255,12 @@ final class SessionBroker {
 
     nonisolated static func checkout(of folder: URL) -> Checkout {
         let fm = FileManager.default
-        var at = folder.standardizedFileURL
+        // `resolvingSymlinksInPath` is what makes this terminate: for a folder that doesn't
+        // exist, `standardizedFileURL` keeps ".." segments, and `deletingLastPathComponent`
+        // then grows the path forever (the walk below never reached a root). Resolved, the
+        // path is absolute and lexical, so each step is strictly shorter.
+        var at = folder.resolvingSymlinksInPath().standardizedFileURL
+        var last = at.path
         while true {
             let dot = at.appending(path: ".git")
             var isDir: ObjCBool = false
@@ -1272,7 +1277,9 @@ final class SessionBroker {
                 return .worktree(top: at, gitDir: gitDir.standardizedFileURL)
             }
             let up = at.deletingLastPathComponent()
-            if up.path == at.path { return .plain }
+            // Belt and braces: any path that stops getting shorter is a root we can't see.
+            guard up.path != last else { return .plain }
+            last = up.path
             at = up
         }
     }
