@@ -2465,11 +2465,14 @@ async fn bash_falls_back_to_the_session_root_when_cwd_is_deleted() {
         outputs.iter().any(|o| o.contains("still-here")),
         "{outputs:?}"
     );
-    // The model's next request says why its paths changed (the note rides the turn's input).
-    let second = sent.lock().unwrap()[1].clone();
+    // The model's next request says why its paths changed. The fallback fires inside the
+    // echo call (turn 2's first tool call), so its note can't ride that turn's first request
+    // (sent[0..2] are turn 1's two calls and the echo call): it joins the next call in the
+    // SAME turn — sent[3], the step after the echo — not the turn after this one.
+    let fourth = sent.lock().unwrap()[3].clone();
     assert!(
-        second.contains("<system-note>") && second.contains("was deleted out from under"),
-        "the model doesn't see the cwd fallback: {second}"
+        fourth.contains("<system-note>") && fourth.contains("was deleted out from under"),
+        "the model doesn't see the cwd fallback: {fourth}"
     );
     shutdown(h).await;
     let _ = std::fs::remove_dir_all(&base);

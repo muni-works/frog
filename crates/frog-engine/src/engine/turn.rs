@@ -389,6 +389,15 @@ impl Agent {
                 }
             }
             self.sync_specs();
+            // What arrived while the last step ran (a session message, the cwd-gone note the
+            // fallback pushed mid-turn): it joins the history here, so the next call — the
+            // model's next look at the world — carries it, not the turn after this one. Turn
+            // start also drains `pending` into the user's message; this catches the ones that
+            // land between calls, where nothing else would pick them up.
+            let queued = std::mem::take(&mut self.conv.pending);
+            if !queued.is_empty() {
+                self.push_user(queued.join("\n"));
+            }
             // What the preview pane saw go wrong since the last call.
             let reports = self.shared.panes.take_queued();
             if !reports.is_empty() {
