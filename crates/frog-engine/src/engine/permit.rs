@@ -67,7 +67,8 @@ impl Agent {
                 item,
                 name,
                 input["command"].as_str().unwrap_or(""),
-                egress_ask.as_deref().unwrap_or_default(),
+                &egress_ask.unwrap_or_default(),
+                input["unsandboxed"].as_bool() == Some(true),
             );
             return Decision::Allow;
         }
@@ -618,23 +619,30 @@ impl Agent {
     /// Yolo ran a call that widened the egress fence: grant the hosts it declared for the
     /// session and put the fact in the transcript as one quiet line, never a card. Yolo is
     /// "act without asking", not "act silently": the row is the whole point. `hosts` is
-    /// [`Self::egress_ask`]'s answer: the hosts it named, or empty when it left the sandbox
-    /// (past the sandbox no list applies).
-    fn yolo_widen_egress(&mut self, item: &str, name: &str, command: &str, hosts: &[String]) {
-        let sandbox_left = hosts.is_empty();
-        if !sandbox_left && let Some(egress) = &self.ctx.egress {
+    /// [`Self::egress_ask`]'s answer — the hosts it named, empty when it only left the
+    /// sandbox (`leaves`, past which no list applies).
+    fn yolo_widen_egress(
+        &mut self,
+        item: &str,
+        name: &str,
+        command: &str,
+        hosts: &[String],
+        leaves: bool,
+    ) {
+        if !hosts.is_empty() && let Some(egress) = &self.ctx.egress {
             egress.grant(hosts);
         }
         let head = crate::egress::head(command);
-        let line = if sandbox_left {
-            format!(
+        // Past the sandbox no list applies, so `hosts` is empty there: the sandbox line is the
+        // whole fact, and naming hosts "allowed" would be a lie (nothing fences them).
+        let line = match (leaves, hosts.is_empty()) {
+            (true, _) => format!(
                 "yolo: `{head}` ran outside the sandbox; it can change files anywhere and read your credentials."
-            )
-        } else {
-            format!(
+            ),
+            (false, _) => format!(
                 "yolo: `{head}` reaches {}, now allowed this session.",
                 hosts.join(", ")
-            )
+            ),
         };
         if self.cfg.log_calls {
             eprintln!("{line}");
@@ -646,7 +654,7 @@ impl Agent {
             tool: name.to_string(),
             command: head,
             hosts: hosts.to_vec(),
-            sandbox_left,
+            sandbox_left: leaves,
         });
     }
 

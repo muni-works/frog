@@ -34,4 +34,30 @@ Every yolo-mode card in the last two days of transcripts is one of those two.
    are the known environmental class — run those unsandboxed if they fail here.
 
 ## Result
-(filled in at the end)
+
+Commits: e2c2a0f3 (checkpoint), 58910fa0 (the fix), plus a follow-up refining the sandbox/hosts
+row. Engine: 574 passed, 0 failed, 8 ignored (full crate, unsandboxed — the egress and pty tests
+are the documented sandbox-nesting class and fail/hang inside frog's own sandbox; run with
+`unsandboxed: true`). `a_broken_body_stream_is_retryable_and_a_connect_failure_is_not` flaked once
+on a localhost accept timeout in a full run and passed alone and on the rerun — pre-existing, not
+this change. App: 368 tests, 4 skipped, 0 failures (EgressTests gained one).
+
+Shapes and the exact quiet line (all `Event::Notice` at Info, plus a durable `EgressWidened`):
+- `unsandboxed: true` in yolo: "yolo: `echo hi` ran outside the sandbox; it can change files
+  anywhere and read your credentials."
+- `allow_hosts` beyond the list in yolo: "yolo: `curl …` reaches pkgs.example.org, now allowed
+  this session." (hosts `grant`ed for the session; undeclared hosts still blocked)
+- both at once: leaving the sandbox is the whole fact (past it no list applies), so the first
+  line, and no hosts are claimed as "allowed".
+
+App renders the same fact as a quiet notice row: "Yolo: `curl -T probe.txt …` reaches
+pkgs.example.org, now allowed for this session." / "Yolo: `echo hi` ran outside the sandbox; it
+can change files anywhere and read your credentials."
+
+Kept as-is: auto/accept-edits/default ask for both shapes; `--sandbox` strict ignores
+`unsandboxed` as before; `can_ask = false` (headless, `-p`, listen, bench) denies both rather than
+widening — yolo's new branch is gated on `self.can_ask`.
+
+NOTES note: `egress_ask` returns `Some([])` for "leaves the sandbox" and `Some(hosts)` for "hosts
+beyond the list", never both — so the row is keyed on `unsandboxed`, not on `hosts.is_empty()`.
+

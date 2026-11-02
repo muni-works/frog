@@ -6158,6 +6158,50 @@ mod egress_tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    /// Both at once: a call that leaves the sandbox AND names hosts. Leaving is the whole
+    /// fact — past the sandbox no list applies, so one quiet row says that and names nothing
+    /// "allowed" that nothing fences.
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn yolo_records_leaving_the_sandbox_over_the_hosts_it_named() {
+        let (mut h, dir) = egress_engine(
+            vec![
+                bash_call(
+                    "both",
+                    json!({
+                        "command": "echo hi",
+                        "unsandboxed": true,
+                        "allow_hosts": ["pkgs.example.org"],
+                    }),
+                ),
+                reply(vec![text("ok")], Stop::End),
+            ],
+            true,
+            Mode::Yolo,
+        );
+        submit(&mut h, "go").await;
+        let evs = until_idle(&mut h).await;
+        assert!(
+            !evs.iter()
+                .any(|e| matches!(e.event, Event::PermissionRequest { .. })),
+            "yolo never cards"
+        );
+        assert_eq!(
+            widened(&evs),
+            vec![("both".to_string(), Vec::new(), true)],
+            "one row: it left the sandbox"
+        );
+        assert!(
+            evs.iter().any(|e| matches!(
+                &e.event,
+                Event::Notice { level: Level::Info, message }
+                    if message.contains("`echo hi` ran outside the sandbox")
+            )),
+            "the row says what actually happened"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     /// Headless (`can_ask = false`) can't ask, so yolo's egress shapes are denied, never
     /// carded and never widened: the same safe path as before.
     #[cfg(target_os = "macos")]
