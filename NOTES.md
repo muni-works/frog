@@ -29,7 +29,13 @@ Rust/Swift. Target dir /private/tmp/be-target (delete when the suite passes, ~11
    https://frog.toys/?settings=billing), Activity.done case, ProtocolTests + BillingTests.
 
 ## Result
-(engine + app numbers land here)
+Engine: 564 passed, 0 failed, 8 ignored (unsandboxed; the sandbox-exec tests fail inside frog's
+own sandbox). App suite: manager-verified after my commits — 248 run, 0 billing failures
+(BillingTests + ProtocolTests.testBillingLimitDecodes fixed: the CodingKey rawValue under
+convertFromSnakeCase is `balanceMicro`, the camelCase of the engine's `balance_micro`);
+ModelSectionsTests' 3 failures are stale pre-#224 assertions, fixed on main by #238.
+NOTES note: the convertFromSnakeCase camelCase rule cost two fixes — the alias must match the
+decoded key, not the wire key.
 
 ## Strings
 - informational (credit available): "5-hour allowance used · billing credit at usage prices"
