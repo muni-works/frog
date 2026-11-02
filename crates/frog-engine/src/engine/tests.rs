@@ -2373,7 +2373,8 @@ async fn shutdown(mut h: Handle) {
 
 /// A working directory deleted out from under the session (a worktree cleaned up) would
 /// fail every Bash call with "No such file or directory", even `echo`. The tool falls back
-/// to the session root and says so.
+/// to the session root and says so — to the user as a notice, and to the model in its next
+/// request (its relative paths now resolve somewhere else).
 #[tokio::test]
 async fn bash_falls_back_to_the_session_root_when_cwd_is_deleted() {
     let base = std::env::temp_dir().join(format!("frog-cwd-gone-{}", session::new_id()));
@@ -2417,7 +2418,9 @@ async fn bash_falls_back_to_the_session_root_when_cwd_is_deleted() {
         subagent: false,
         chat: false,
     };
-    let mut h = start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap();
+    let client = scripted::Client::new(script);
+    let sent = client.sent.clone();
+    let mut h = start(opts, Provider::Scripted(client)).unwrap();
     // Turn 1: into the folder that's about to disappear.
     let evs = run(&mut h, "cd around").await;
     assert!(evs.iter().any(|e| matches!(
@@ -2461,6 +2464,12 @@ async fn bash_falls_back_to_the_session_root_when_cwd_is_deleted() {
     assert!(
         outputs.iter().any(|o| o.contains("still-here")),
         "{outputs:?}"
+    );
+    // The model's next request says why its paths changed (the note rides the turn's input).
+    let second = sent.lock().unwrap()[1].clone();
+    assert!(
+        second.contains("<system-note>") && second.contains("was deleted out from under"),
+        "the model doesn't see the cwd fallback: {second}"
     );
     shutdown(h).await;
     let _ = std::fs::remove_dir_all(&base);
