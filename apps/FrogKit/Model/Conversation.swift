@@ -887,6 +887,9 @@ final class Conversation {
         case .egressBlocked(let host, _, _, let tool, let command, let enforced):
             // The tripwire: a row in the transcript, warning-styled when it was blocked.
             note(Self.egressNotice(host: host, tool: tool, command: command, enforced: enforced), warning: enforced)
+        case .egressWidened(_, let tool, let command, let hosts, let sandboxLeft):
+            // Yolo acted without asking: one quiet row where another mode would have carded.
+            note(Self.widenedNotice(tool: tool, command: command, hosts: hosts, sandboxLeft: sandboxLeft), warning: false)
         case .permissionDecision:
             // Bookkeeping for the ask rate; nothing to show.
             break
@@ -1242,6 +1245,16 @@ final class Conversation {
         return enforced
             ? "Blocked a connection to \(host): it isn't on this session's network allow-list (\(what))."
             : "A command reached \(host), which isn't on the network allow-list (\(what))."
+    }
+
+    /// The transcript row for an `egress_widened` event: yolo ran what another mode would
+    /// have carded. One quiet line, never a warning.
+    nonisolated static func widenedNotice(tool: String, command: String, hosts: [String], sandboxLeft: Bool) -> String {
+        let what = command.isEmpty ? tool : "`\(command)`"
+        if sandboxLeft {
+            return "Yolo: \(what) ran outside the sandbox; it can change files anywhere and read your credentials."
+        }
+        return "Yolo: \(what) reaches \(hosts.joined(separator: ", ")), now allowed for this session."
     }
 
     func note(_ text: String, warning: Bool) {

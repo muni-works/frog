@@ -5,3 +5,4 @@ apps/macos/Frog.xcodeproj/
 site/dist/
 site/.wrangler/
 .be-target/
+.tt-target/

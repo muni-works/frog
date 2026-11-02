@@ -42,14 +42,23 @@ header (`worker: true`), so a resume or fork stays a worker. Subagents share the
 ## Grants
 
 `Bash { allow_hosts: [...] }` naming hosts off the list, or `unsandboxed: true` in an enforced
-session, always cards — no read-only rule, sandbox layer, classifier, session allow or yolo
-passes it; headless it's denied. Allow = `grant_once` (that exact command's next run);
-"always allow X this session" = `grant` (shared with subagents).
+session, cards in every asking mode — no read-only rule, sandbox layer, classifier or session
+allow passes it; headless (`can_ask = false`) it's denied. Allow = `grant_once` (that exact
+command's next run); "always allow X this session" = `grant` (shared with subagents).
+
+**Yolo never asks** (Cam, 2026-11-02). Both shapes run, with one quiet `EgressWidened` row in
+the transcript instead of a card: the hosts a call names are its declaration and are `grant`ed
+for the session, and a call that leaves the sandbox runs outside it. The proxy still refuses
+every host nobody declared, so the tripwire below keeps working; the row is what makes the
+widening visible rather than silent.
 
 ## Surfacing
 
 `Event::EgressBlocked { host, port, item?, tool, command, enforced }` is durable; the app
 renders it as a warning notice row. The tool result gets a note naming the hosts and how to ask.
+`Event::EgressWidened { item, tool, command, hosts, sandbox_left }` is durable too, and renders
+as one quiet (info) row: "Yolo: `cmd` reaches host, now allowed for this session." or "Yolo:
+`cmd` ran outside the sandbox; it can change files anywhere and read your credentials."
 The brief carries the day's `egress` digest (attempts, sessions, top hosts), and blocked egress
 alone makes the morning notice.
 

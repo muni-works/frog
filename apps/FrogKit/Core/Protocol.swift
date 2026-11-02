@@ -838,6 +838,10 @@ enum Event: Decodable, Sendable {
     /// A sandboxed command tried to reach a host off the session's egress allow-list:
     /// blocked at connect time (`enforced`), or only recorded (flag mode). Durable.
     case egressBlocked(host: String, port: Int, item: String?, tool: String, command: String, enforced: Bool)
+    /// Yolo ran a command that widened the egress fence without a card: it left the sandbox
+    /// (`sandboxLeft`), or named hosts off the allow-list, now granted for the session
+    /// (`hosts`). Durable; one quiet row, never a card.
+    case egressWidened(item: String, tool: String, command: String, hosts: [String], sandboxLeft: Bool)
     /// How one permission check was decided (rule, classifier, fallback, ask),
     /// for measuring the ask rate; not shown in the transcript.
     case permissionDecision(item: String, layer: String, outcome: String, reason: String, ms: UInt64)
@@ -908,7 +912,7 @@ extension Event {
         case stepsDone = "steps_done", jobs, jobLabels = "job_labels", inbox
         case url, cols, rows, lines, cursor, seq, exit, call, action, args, path, image, tool
         case command, gist, act
-        case host, port, enforced
+        case host, port, enforced, hosts, sandboxLeft
         case running
         case status, text, log, items, wakes
     }
@@ -1004,6 +1008,13 @@ extension Event {
                 tool: try c.decodeIfPresent(String.self, forKey: .tool) ?? "Bash",
                 command: try c.decodeIfPresent(String.self, forKey: .command) ?? "",
                 enforced: try c.decodeIfPresent(Bool.self, forKey: .enforced) ?? false)
+        case "egress_widened":
+            let item = try c.decode(String.self, forKey: .item)
+            let tool: String = try c.decodeIfPresent(String.self, forKey: .tool) ?? "Bash"
+            let command: String = try c.decodeIfPresent(String.self, forKey: .command) ?? ""
+            let hosts: [String] = try c.decodeIfPresent([String].self, forKey: .hosts) ?? []
+            let sandboxLeft: Bool = try c.decodeIfPresent(Bool.self, forKey: .sandboxLeft) ?? false
+            self = .egressWidened(item: item, tool: tool, command: command, hosts: hosts, sandboxLeft: sandboxLeft)
         case "permission_decision":
             let item = try c.decode(String.self, forKey: .item)
             let layer = try c.decode(String.self, forKey: .layer)
