@@ -166,6 +166,15 @@ final class EngineProcess {
     var onLine: (String) -> Void = { _ in }
     private(set) var stderr = ""
 
+    /// The engine's own words from stdout that aren't protocol events, newest last, bounded
+    /// (see `keepOut`). A dying engine's fatal error is among them: it prints to stdout
+    /// (`render::error`), after the events have stopped, while stderr is only the per-call
+    /// timing traces.
+    private(set) var outLines: [String] = []
+
+    /// `outLines` as one string, for the exit banner.
+    var outText: String { outLines.joined(separator: "\n") }
+
     /// How the process ended, for error messages.
     var exitDescription: String { Self.describeExit(process) }
 
@@ -222,7 +231,12 @@ final class EngineProcess {
             await withTaskGroup(of: Void.self) { group in
                 group.addTask {
                     for await line in lines {
-                        await MainActor.run { self?.onLine(line) }
+                        await MainActor.run {
+                            self?.onLine(line)
+                            if !line.contains(#""event":"#), !line.contains(#""type":"#) {
+                                self?.keepOut(line)
+                            }
+                        }
                         guard let env = try? JSONDecoder.frog.decode(Envelope.self, from: Data(line.utf8)) else { continue }
                         await MainActor.run {
                             if identity.session != env.session { identity.session = env.session }
@@ -279,6 +293,21 @@ final class EngineProcess {
         }
     }
 
+    /// Keep a stdout line that isn't an event for the exit banner. Non-events only (the
+    /// reader's JSON check), blank lines and ANSI coloring dropped; the newest ones win,
+    /// bounded, so a long replay can't grow it. Empty for a normal run: everything the engine
+    /// prints while it lives is events (or the progress dots, which are `#`-padded).
+    private func keepOut(_ line: String) {
+        let plain = line.ansiStripped.trimmingCharacters(in: .whitespaces)
+        guard !plain.isEmpty else { return }
+        outLines.append(plain)
+        if outLines.count > 8 { outLines.removeFirst(outLines.count - 8) }
+    }
+
+    /// Tests feed a stdout line through the same filter (the reader task's JSON check stays
+    /// out of the test's way).
+    func keepOutForTesting(_ line: String) { keepOut(line) }
+
     func send(_ op: Op) {
         guard process.isRunning, var data = try? encoder.encode(op) else { return }
         data.append(0x0A)
@@ -333,5 +362,23 @@ private final class LineBuffer: @unchecked Sendable {
     func drain() -> String? {
         defer { data.removeAll() }
         return data.isEmpty ? nil : String(decoding: data, as: UTF8.self)
+    }
+}
+
+extension String {
+    /// Without ANSI SGR escape sequences (`\u{1b}[…m`), as a terminal would render it.
+    var ansiStripped: String {
+        var out = ""
+        var escaped = false
+        for c in self {
+            if escaped {
+                if c.isLetter { escaped = false }
+            } else if c == "\u{1b}" {
+                escaped = true
+            } else {
+                out.append(c)
+            }
+        }
+        return out
     }
 }
