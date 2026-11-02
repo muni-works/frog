@@ -358,4 +358,33 @@ mod tests {
         assert!(check_spawn("vercel/openai/gpt-9", &gone).await.is_ok());
         TEST_LISTS.with(|l| *l.borrow_mut() = None);
     }
+
+    /// `StartSession`'s `model` goes through [`check_spawn_spec`]: resolved first (an unknown
+    /// spec fails before any session starts), then listed (a BYOK gateway's model the gateway
+    /// doesn't serve is refused with the fix, not turned into a session that dies on call 1).
+    #[tokio::test]
+    async fn spawn_spec_resolves_then_checks_a_named_models_gateway() {
+        let base = "https://gateway.test/v1";
+        TEST_LISTS.with(|l| {
+            *l.borrow_mut() = Some(HashMap::from([(
+                base.to_string(),
+                vec!["openai/gpt-5".to_string()],
+            )]))
+        });
+        let mut cfg = crate::config::Config::default();
+        for model in ["openai/gpt-5", "openai/gpt-9"] {
+            let mut p = Profile::new(ProviderKind::Openai, model);
+            p.base_url = Some(base.into());
+            cfg.models.insert(format!("gateway/{model}"), p);
+        }
+        // A listed profile starts.
+        assert!(check_spawn_spec(&cfg, "gateway/openai/gpt-5").await.is_ok());
+        // An unlisted one is refused with the fix.
+        let refused = check_spawn_spec(&cfg, "gateway/openai/gpt-9").await.unwrap_err();
+        assert!(format!("{refused}").contains("model not listed"), "{refused}");
+        // An unknown spec is refused before anything else (resolved first).
+        let unknown = check_spawn_spec(&cfg, "no-such-provider/x").await.unwrap_err();
+        assert!(format!("{unknown}").contains("unknown provider"), "{unknown}");
+        TEST_LISTS.with(|l| *l.borrow_mut() = None);
+    }
 }
