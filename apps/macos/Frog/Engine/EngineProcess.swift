@@ -233,9 +233,7 @@ final class EngineProcess {
                     for await line in lines {
                         await MainActor.run {
                             self?.onLine(line)
-                            if !line.contains(#""event":"#), !line.contains(#""type":"#) {
-                                self?.keepOut(line)
-                            }
+                            self?.keepOut(line)
                         }
                         guard let env = try? JSONDecoder.frog.decode(Envelope.self, from: Data(line.utf8)) else { continue }
                         await MainActor.run {
@@ -293,12 +291,14 @@ final class EngineProcess {
         }
     }
 
-    /// Keep a stdout line that isn't an event for the exit banner. Non-events only (the
-    /// reader's JSON check), blank lines and ANSI coloring dropped; the newest ones win,
-    /// bounded, so a long replay can't grow it. Empty for a normal run: everything the engine
-    /// prints while it lives is events (or the progress dots, which are `#`-padded).
+    /// Keep a stdout line that isn't an event for the exit banner. Blank lines, event
+    /// envelopes, ANSI coloring and render::error's ✗ dropped; the newest lines win, bounded,
+    /// so a long replay can't grow it. Empty for a normal run: everything the engine prints
+    /// while it lives is events.
     private func keepOut(_ line: String) {
-        let plain = line.ansiStripped.trimmingCharacters(in: .whitespaces)
+        guard !line.contains(#""event":"#), !line.contains(#""type":"#) else { return }
+        var plain = line.ansiStripped.trimmingCharacters(in: .whitespaces)
+        if plain.hasPrefix("✗") { plain = plain.dropFirst().trimmingCharacters(in: .whitespaces) }
         guard !plain.isEmpty else { return }
         outLines.append(plain)
         if outLines.count > 8 { outLines.removeFirst(outLines.count - 8) }

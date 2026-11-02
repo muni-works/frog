@@ -40,8 +40,7 @@ final class EngineEndTests: XCTestCase {
             + "session eng-0002 (pid 60428) is running in it. One engine per worktree.\u{1b}[39m\n"
         let line = EngineProcess.endDescription(stderr: "", out: out, signal: nil, exit: "status 1")
         XCTAssertEqual(line,
-            "this worktree (/repo/.frog/worktrees/w) already has an engine: session eng-0002 (pid 60428) is running in it. One engine per worktree.")
-    }
+            "this worktree (/repo/.frog/worktrees/w) already has an engine: session eng-0002 (pid 60428) is running in it. One engine per worktree.")    }
 
     /// Protocol event lines on stdout are never the banner, even when they're last.
     func testAnEventLineOnStdoutIsNotTheBanner() {
@@ -50,7 +49,6 @@ final class EngineEndTests: XCTestCase {
         let line = EngineProcess.endDescription(stderr: "", out: out, signal: nil, exit: "status 1")
         XCTAssertEqual(line, "✗ the model isn't on this gateway")
     }
-
     /// Stderr's real error still wins over stdout's non-error chatter when both are kept.
     func testStderrErrorWinsOverStdoutChatter() {
         let out = "frog 0.1.0"
