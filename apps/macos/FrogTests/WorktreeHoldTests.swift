@@ -116,7 +116,10 @@ final class WorktreeHoldTests: XCTestCase {
     /// alone leaves relative, so the walk went "." → ".." forever on the main thread. The
     /// timeout expectation is the guard — without the absolute-first fix this never returns.
     func testARelativeFolderURLIsPlainAndReturnsBeforeTheTimeout() {
-        let relative = URL(fileURLWithPath: "relative-folder-\(UUID().uuidString.prefix(6))/nested")
+        // Scheme-less: a restored window passes a URL that is neither file:-marked nor
+        // absolute (`URL(fileURLWithPath:)` would resolve against the CWD — absolute already).
+        let relative = URL(string: "relative-folder-\(UUID().uuidString.prefix(6))/nested")!
+        XCTAssertFalse(relative.isFileURL, "the case under test is a scheme-less relative URL")
         XCTAssertFalse(relative.path.hasPrefix("/"), "the case under test is a relative path")
         let returned = XCTestExpectation(description: "checkout of a relative URL returns")
         var result: SessionBroker.Checkout?

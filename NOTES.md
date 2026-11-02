@@ -48,7 +48,26 @@ d) new `testDotDotSegmentsResolveToTheRightAbsolutePlace` — a dotted path must
 
 ## Result
 
-(set after verification)
+Commits: c62edc6d (checkpoint: NOTES + the fix, swept in), 0265f620 (the regression tests).
+`git add -A` at the checkpoint caught the already-edited SessionBroker.swift, so the checkpoint
+holds the whole source change; the second commit is the tests.
+
+Verification: WorktreeHoldTests 9/9 passed (2 new), SessionBrokerTests 53/53 passed; full app
+suite 382 executed, 4 skipped, 4 failures — all four are one distinct test,
+`TranscriptSwitchBenchmarkTests.testScrollUpFillsOlderRowsInOrder` ("never reached the first
+row"), which fails identically with BASE b23479fd `checkout()` in this same worktree (37 s full
+run, 22 s alone): pre-existing flaky scroll benchmark, not this change. `cargo build -p frog -p
+frog-engine` finished clean (19.6 s, dev profile).
+
+The sandbox blocked SwiftPM's sidecar compile and Xcode's macro plugin server
+(swift-plugin-server "malformed response") — both run unsandboxed, with FROG_PREBUILT_DIR
+supplying the prebuilt engine binaries so build-engine.sh skips cargo/SwiftPM. The xcodeproj is
+xcodegen-generated (gitignored); regenerated with `xcodegen generate`. Scheme is `Frog` (no
+FrogTests scheme exists); `-only-testing:FrogTests/…` filters within it.
+
+Test-construction finding worth keeping: `URL(fileURLWithPath: "rel/nested")` is ALREADY
+absolute (resolved against the CWD), so the relative case under test must be built as
+`URL(string: "rel/nested")` — scheme-less, `isFileURL == false`, path without a leading "/".
 
 ## Lesson
 
