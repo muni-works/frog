@@ -1255,11 +1255,15 @@ final class SessionBroker {
 
     nonisolated static func checkout(of folder: URL) -> Checkout {
         let fm = FileManager.default
-        // `resolvingSymlinksInPath` is what makes this terminate: for a folder that doesn't
-        // exist, `standardizedFileURL` keeps ".." segments, and `deletingLastPathComponent`
-        // then grows the path forever (the walk below never reached a root). Resolved, the
-        // path is absolute and lexical, so each step is strictly shorter.
-        var at = folder.resolvingSymlinksInPath().standardizedFileURL
+        // Near-miss: two fixes for this same walk (the launch beachball), merged here.
+        // Launch passes a RELATIVE folder URL — a restored window — which
+        // `resolvingSymlinksInPath` alone leaves relative, so that fix still walked
+        // "." → ".." forever: make the path absolute FIRST, then resolve, then standardize.
+        // Resolution is still needed: for a missing folder `standardizedFileURL` alone keeps
+        // ".." segments, and `deletingLastPathComponent` then grew the path forever. Three
+        // belts below: an absolute resolved start, a guard that each step shortens the
+        // path, and a last stop if the walk can't go up or leaves "/"-rooted ground.
+        var at = URL(fileURLWithPath: folder.path).resolvingSymlinksInPath().standardizedFileURL
         var last = at.path
         while true {
             let dot = at.appending(path: ".git")
@@ -1277,9 +1281,11 @@ final class SessionBroker {
                 return .worktree(top: at, gitDir: gitDir.standardizedFileURL)
             }
             let up = at.deletingLastPathComponent()
-            // Belt and braces: any path that stops getting shorter is a root we can't see.
+            // Belt two: any path that stops getting shorter is a root we can't see.
             guard up.path != last else { return .plain }
             last = up.path
+            // Belt three: if the walk can't go up or has left "/"-rooted ground, stop.
+            if up.path == at.path || !up.path.hasPrefix("/") { return .plain }
             at = up
         }
     }
