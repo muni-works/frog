@@ -79,9 +79,11 @@ final class WorktreeIndex {
         trees = trees.map { t -> Worktree in
             let status = Git.run(t.folder, ["status", "--porcelain"]) ?? ""
             let dirty = !status.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            let gitDir: URL? = t.isMain
-                ? URL(fileURLWithPath: Git.run(t.folder, ["rev-parse", "--absolute-git-dir"]) ?? "")
-                : URL(fileURLWithPath: Git.run(t.folder, ["rev-parse", "--git-dir"]) ?? "").standardizedFileURL
+            // Trimmed: git answers with a trailing newline, and a path that carries one is a
+            // path that doesn't exist (so every tree read as free, whatever its lock said).
+            let raw = Git.run(t.folder, ["rev-parse", t.isMain ? "--absolute-git-dir" : "--git-dir"])?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let gitDir: URL? = (raw?.isEmpty == false) ? URL(fileURLWithPath: raw!).standardizedFileURL : nil
             let owner = gitDir.flatMap { SessionBroker.worktreeOwner(gitDir: $0) }
             return Worktree(folder: t.folder, branch: t.branch, sha: t.sha, dirty: dirty, owner: owner, isMain: t.isMain)
         }

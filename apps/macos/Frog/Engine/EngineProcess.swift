@@ -33,6 +33,7 @@ enum Frog {
 
     /// The bundled engine first; then an override; then a dev build; then PATH.
     static var binary: URL? {
+        if let forced = forcedBinaryForTesting { return forced }
         let fm = FileManager.default
         var candidates: [URL] = []
         if let bundled = Bundle.main.url(forResource: "frog", withExtension: nil) {
@@ -50,6 +51,11 @@ enum Frog {
         ]
         return candidates.first { fm.isExecutableFile(atPath: $0.path) }
     }
+
+    /// Tests that must never run an engine point this at a missing path: `Conversation`'s
+    /// start then fails with "Couldn't find the frog engine" instead of reaching the real
+    /// sessions (the bundled one ships in the test host's own bundle).
+    nonisolated(unsafe) static var forcedBinaryForTesting: URL?
 
     /// Apps launched from Finder get a bare PATH. Tools the model runs (cargo, python3, rg…)
     /// need the one a terminal would have.
