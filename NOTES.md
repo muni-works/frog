@@ -1,59 +1,84 @@
-# model-sections-red-fix — notes
+# stream-reset-retry — notes
 
-Branch frog/model-sections-red-fix (worktree model-sections-red-fix), base = origin/main
-(76631850). Fixing frog's red macos-app CI test step on main (run 41318468435, 2026-11-01):
-ModelSectionsTests.{testOrderWithoutServersSignedIn, testOrderWithServersSignedIn,
-testSignedOutFrogCloudStaysWithSignInAction} fail. One commit per step (`git commit -s`),
-NEVER push (branch tracks origin/main). Edit tool only for source. xcodebuild derived data in
-/private/tmp/ms-dd only.
+Branch frog/stream-reset-retry (worktree stream-reset-retry), base = origin/main. One commit per
+step (`git commit -s`), push over https to frog/stream-reset-retry, PR to main. Edit tool only for
+source.
 
-## What I know (verified from the commits)
-- #224 (f1eb8776, Oct 30, "Launch with Frog Cloud's models only") added
-  `ModelSections.frogCloudOnly = true`: `make()` filters the section list to Frog Cloud models
-  only, and hides the picker's "Cloud setup" row, "Manage Models…", and Settings' Models tab.
-  Cam's explicit launch decision, quoted in the commit message.
-- #225 (dc26cff2, Oct 30, later the same day) removed the `alwaysFrogCloud` fallback (nothing
-  built in fills the Frog Cloud section; the section exists only when the engine listed it) and
-  already updated ONE test for the new world (renamed testFrogCloudAlwaysPresent →
-  testNoFrogCloudSectionWhenNothingListedIt). It also switched the test fixture's cloud entry
-  to `cloud/tree`.
-- The three failing tests still assert the PRE-#224 section order: This Mac / On mew / frog
-  cloud / Cloud · Anthropic / Cloud · OpenAI. Under frogCloudOnly every non-Frog-Cloud model is
-  filtered out, so `make()` returns just ["frog cloud"].
+## The bug
+`crates/frog-engine/src/engine/mod.rs:1189 fn retryable()` — its reqwest predicate is
+`r.is_timeout() || (r.is_request() && !r.is_connect())`. A connection reset MID-BODY is a reqwest
+error with `is_body() == true` (response headers arrived; the body stream broke), so the predicate
+misses it → classified fatal → the turn dies with no retry. This killed two long-context workers
+today (105k ctx, 143k input): the entire prefill is discarded and the task restarts from zero.
 
-## Decision (before changing anything)
-INTENDED behavior change; update the tests, do not touch the code.
-Evidence: the filter is `if frogCloudOnly { all = all.filter(\.place.isFrogCloud) }`
-(ModelList.swift:44), added by #224 whose message says Cam asked for exactly this ("keep it
-simple for launch … every picker lists Frog Cloud's models and nothing else"), with a documented
-off-switch. #225 doubled down (no fallback section) and already migrated one test. Nothing in
-either commit suggests the pickers were meant to keep the full list. The test file's header
-comment still cites the old plan doc's order, which #224 superseded for launch.
+## Why the retry is safe for a body error
+The partial the broken attempt already streamed is discarded before the retry
+(`Event::ItemsDiscarded` in call.rs covers message+reasoning items on EVERY error arm, including
+the retry arm), and the step re-runs from scratch. Same class as the already-retried
+`IncompleteStream`/gateway-error-mid-stream cases. Nothing is duplicated; idempotent for the step.
 
-## New expectations (launch behavior)
-- Signed in, servers or not: sections = ["frog cloud"] only.
-- Signed out: "frog cloud" section remains IF the engine listed a cloud model (fixture does:
-  cloud/tree), with the sign-in state/line unchanged ("Sign in or add a key to use it").
-- testSignedOutFrogCloudStaysWithSignInAction's positional index assert is meaningless with one
-  section; keep the state/line asserts, drop the index (or keep a ["frog cloud"] order check).
+## Budget (chief's correction, verified by reading main)
+Current policy after #235: `MAX_RETRIES = 3` (4 attempts) with `retry_wait` 1/2/4 s
+(`model_policy.rs:17,80`), enforced once in `call.rs` (`attempt < model_policy::MAX_RETRIES`). The
+brief's "cloud gets 6 attempts / 1-2-4-8-16-20s" was the pre-#235 budget, gone. NO budget change —
+just make the reset retryable within the existing policy. Verified: `retry_wait` caps at 4 s
+(`1 << min(attempt-1, 2)`); one notice per call (`attempt == 1`), fail-fast (401/402/404) never
+reaches the retry arm; cloud→local fallback is separate and unchanged.
+
+## Live evidence (this worker)
+This session's own turn died on a connection reset mid-work — the exact bug being fixed killed the
+fixing session's turn. Best possible evidence the fix matters; recorded here per chief.
 
 ## Plan
 1. This checkpoint, commit.
-2. Run the 3 failing tests locally (xcodegen generate --quiet first; -only-testing:
-   ModelSectionsTests; dd /private/tmp/ms-dd) and confirm the actual assertion diffs.
-3. Update the three tests to the launch expectations above. Only assertions change; no source
-   edits expected.
-4. Full suite, same xcodebuild without -only-testing. TranscriptSwitchBenchmarkTests
-   s400/s5000 = known-noisy. Report exact pass/fail counts.
-5. Commit the fix.
+2. `retryable()`: add `r.is_body()` to the final predicate, keep everything else. Commit.
+3. Tests, extending the existing scripted harness (no scripted.rs changes; another worker owns a
+   `hold` gate on a different branch):
+   - `Fail::Stream` with a partial then success → one clean reply, ItemsDiscarded for the partial,
+     no error turn-end (this is the StreamError path, already covered by
+     tests.rs:932/1086; assert the new behavior explicitly against a reset-shaped message).
+   - The real gap: a `reqwest::Error` with `is_body() == true` must pass `retryable()` — unit test
+     on `retryable` itself, plus a budget-exhaustion test → existing failure path
+     (`EngineError::Provider { status: 502 }` via StreamError classify), not a new one.
+   - `Fail::before("connection reset by peer")` already exercised at tests.rs:4029.
+4. docs/design/stream-resume.md: one paragraph (design note, not built) — resume a lost stream
+   from the last complete item instead of restarting a 143k-token step. Commit.
+5. Verify: `cargo build -p frog -p frog-engine && cargo test -p frog-engine` (full crate),
+   CARGO_TARGET_DIR=<worktree>/.tt-target. Engine's sandbox-exec tests fail inside frog's sandbox
+   → run unsandboxed if so and say so.
+6. Push https + PR to main.
 
 ## Result
-- Local failing run reproduced the CI diffs: actual ["frog cloud"] vs the 4/5-section
-  expectations; testOrderWithServersSignedIn also crashed the runner at `s[2]` (index out of
-  range). testSignedOutFrogCloudStaysWithSignInAction's state + stateLine asserts PASSED.
-- Fix: tests only. Order asserts → ["frog cloud"]; server/positional index asserts dropped;
-  sign-in state/line asserts kept. Header comment now cites #224 and the off-switch.
-- Targeted run: ModelSectionsTests 7/7 passed.
-- Full suite: Executed 363 tests, 0 failures, 4 skipped (359 passed, ~244 s). Zero test
-  failures; TranscriptSwitchBenchmarkTests included and quiet.
-- Commits: a5174ddd (notes checkpoint), 2c88732d (the fix). Not pushed.
+- Commits: 201b6b20 (notes checkpoint), 846e2f0c (the fix), 2e35cb3e (tests), f9d314a2 (design note). Pushed; PR open.
+- The fix (846e2f0c), with one empirical correction to the brief: reqwest 0.13.5 surfaces a real
+  mid-body reset as **`is_decode()`** (`Kind::Decode` wrapping hyper's body error, e.g. "Connection
+  reset by peer (os error 54)"), NOT `is_body()` — `bytes_stream()` wraps every frame error with
+  `error::decode`, and `Kind::Body` appears only when a client timeout/read-timeout is configured
+  (our provider client sets none). Verified with a scratch probe against live sockets before
+  writing the final predicate, then deleted. Final predicate adds BOTH `r.is_body()` and
+  `r.is_decode()`. `classify()` now maps the same classes to `EngineError::Connection` (was
+  `Internal` for a body error) so the turn ends with the provider's message, not "internal error".
+- Tests (2e35cb3e), extending the existing harness only, no scripted.rs changes:
+  1. `a_connection_reset_mid_body_is_retried` — scripted partial + reset message → ItemsDiscarded
+     for the partial, clean reply, TurnEnded Complete.
+  2. `a_connection_reset_exhausting_the_budget_ends_with_the_existing_failure_path` — 4 failures →
+     4 discards, ONE retry notice, existing Provider 502 error path (no new one).
+  3. `a_real_reset_mid_body_is_retried_to_a_clean_reply` — a REAL localhost OpenAI-wire server that
+     answers 200, streams a fragment, kills the socket mid-body: the engine retries (2 chat hits),
+     the second attempt's reply completes the turn (model_calls 1). Proves the wire shape end to
+     end. Server routes by path so startup probes don't trip the reset script; test clients use
+     `.no_proxy()` (the host's proxy env would intercept localhost).
+  4. `a_broken_body_stream_is_retryable_and_a_connect_failure_is_not` — the live reqwest error
+     captured from the same server: `is_decode()` && !is_body && !is_connect && !is_timeout →
+     retryable true; a real connect-refused error → retryable false, classifies Connection.
+- Retry budget verified by reading (chief's correction confirmed): MAX_RETRIES=3 (4 attempts),
+  retry_wait 1/2/4 s capped, enforced once in call.rs, one notice per call; the "6 attempts"
+  figure was pre-#235. Unchanged.
+- Verification: `cargo build -p frog -p frog-engine` OK (in-worktree .tt-target, sandboxed).
+  Full `cargo test -p frog-engine`: INSIDE frog's sandbox it stalls forever at
+  `pane_lifecycle_is_logged_but_screens_are_not` (pty spawn denied — the same pre-documented
+  environmental hang as commit 348614f7; everything before it passed incl. all 4 new tests).
+  UNSANDBOXED: **574 tests, 566 passed, 0 failed, 8 ignored** in 89 s. The suite is judged
+  unsandboxed/CI, as the repo notes say.
+- Live evidence held from the checkpoint: this session's own earlier turn died on a connection
+  reset mid-work — the bug killed the session sent to fix it.
