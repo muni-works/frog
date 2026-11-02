@@ -164,6 +164,7 @@ fn reason_label(r: &EndReason) -> &'static str {
         EndReason::StepLimit => "stopped: step limit",
         EndReason::Suspended => "suspended for app update",
         EndReason::Cancelled => "cancelled",
+        EndReason::BillingLimit { .. } => "stopped: out of credit",
         EndReason::Error { .. } => "error",
     }
 }

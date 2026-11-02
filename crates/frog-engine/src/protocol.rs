@@ -572,6 +572,25 @@ pub enum Event {
         #[serde(default, skip_serializing_if = "String::is_empty")]
         detail: String,
     },
+    /// The plan's allowance ran out and the session transitions to credit at usage prices
+    /// ("make it obvious, don't throw an error"): one informational line in the transcript,
+    /// then the call continues (the edge admitted it — the next turn is billed to credit).
+    /// Not a warning, never a provider error. The provider's raw JSON never reaches the
+    /// transcript; `reason` is its clean message and `balance_micro` its credit balance when
+    /// the edge sent one. Durable, so a replaying client shows it too.
+    BillingLimit {
+        /// Which allowance ran out: `5h` (the plan's 5-hour window), `weekly`, or `credit`
+        /// (the wallet itself is empty — that one ends the turn, see
+        /// [`EndReason::BillingLimit`]).
+        window: String,
+        /// The provider's own words, cleaned: "5-hour plan limit reached; add credit to keep
+        /// going at usage prices" becomes the client's typed row.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        reason: String,
+        /// Remaining credit, in millionths of a dollar, when the edge said (`x-frog-billing`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        balance_micro: Option<u64>,
+    },
     /// Old tool output was trimmed (no LLM call) to stay inside the window.
     ContextPruned {
         results: usize,
@@ -858,6 +877,7 @@ impl Event {
             | Self::PermissionDecision { .. }
                 | Self::Compacted { .. }
             | Self::CompactionFailed { .. }
+                | Self::BillingLimit { .. }
                 | Self::ContextPruned { .. }
                 | Self::ModelChanged { .. }
                 | Self::FolderChanged { .. }
@@ -1086,6 +1106,20 @@ pub enum EndReason {
     /// relaunched app picks it up automatically.
     Suspended,
     Cancelled,
+    /// The turn ended on money, not a model failure: the wallet is empty and nothing admitted
+    /// continuing. Typed so the client shows "out of credit · add credit" with a way to fix it,
+    /// not a red provider dump. The raw provider JSON stays in the engine log.
+    BillingLimit {
+        /// Which wall was hit: `credit` (the usual), or the window whose refusal the edge
+        /// couldn't admit (`5h`, `weekly`).
+        window: String,
+        /// The provider's clean message ("insufficient credits"), for the transcript's line.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        reason: String,
+        /// Remaining credit when the edge said; `None` (or 0) means none.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        balance_micro: Option<u64>,
+    },
     Error {
         error: EngineError,
     },
@@ -1097,6 +1131,14 @@ pub enum EndReason {
 pub enum EngineError {
     /// The provider answered with an error status.
     Provider {
+        status: u16,
+        message: String,
+    },
+    /// A billing refusal (402 `insufficient_quota`) that isn't a credit transition: the
+    /// provider's own words, cleaned of its JSON envelope (the raw body stays in the engine
+    /// log). The credit-transition case never lands here — it's [`Event::BillingLimit`] and
+    /// [`EndReason::BillingLimit`].
+    Billing {
         status: u16,
         message: String,
     },
@@ -1119,6 +1161,7 @@ impl std::fmt::Display for EngineError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Self::Provider { status, message } => write!(f, "provider error ({status}): {message}"),
+            Self::Billing { status, message } => write!(f, "billing refused ({status}): {message}"),
             Self::Connection { message } => write!(f, "connection failed: {message}"),
             Self::IncompleteStream => write!(f, "the response stream ended early"),
             Self::Config { message } | Self::Internal { message } => write!(f, "{message}"),

@@ -58,6 +58,33 @@ final class ProtocolTests: XCTestCase {
         XCTAssertEqual(upto, 6)
     }
 
+    /// The billing transition decodes both ways it arrives: the informational event (the
+    /// turn goes on) and the typed end reason (out of credit). Old logs replay either way.
+    func testBillingLimitDecodes() throws {
+        let live = try decode(#"{"seq":12,"session":"s","created":0,"event":"billing_limit","window":"5h","reason":"5-hour plan limit reached; add credit to keep going at usage prices","balance_micro":4200000}"#)
+        guard case .billingLimit(let b) = live.event else { return XCTFail() }
+        XCTAssertEqual(b.window, "5h")
+        XCTAssertEqual(b.balanceMicros, 4_200_000)
+        XCTAssertEqual(b.line, "5-hour allowance used · billing credit at usage prices · $4.20 left")
+
+        // The end reason carries the same shape.
+        let ended = try decode(#"{"seq":13,"session":"s","created":0,"event":"turn_ended","turn":2,"reason":{"type":"billing_limit","window":"credit","reason":"Insufficient credits"},"usage":{"context_tokens":null,"input_tokens":0,"output_tokens":0,"model_calls":0,"tokens_per_sec":null}}"#)
+        guard case .turnEnded(_, .billingLimit(let hard), _) = ended.event else { return XCTFail() }
+        XCTAssertEqual(hard.window, "credit")
+        XCTAssertNil(hard.balanceMicros)
+        XCTAssertTrue(hard.isHardStop)
+
+        // Old logs (or a bare window) still decode; the engine never sent balance.
+        let old = try decode(#"{"seq":14,"session":"s","created":0,"event":"billing_limit","window":"weekly"}"#)
+        guard case .billingLimit(let w) = old.event else { return XCTFail() }
+        XCTAssertEqual(w.line, "Weekly allowance used · billing credit at usage prices")
+        XCTAssertNil(w.reason)
+
+        // No billing body ever renders as a provider dump.
+        let engine = EngineError(type: "billing", status: 402, message: "insufficient_quota")
+        XCTAssertEqual(engine.description, "Billing refused (402): insufficient_quota")
+    }
+
     func testTurnEnergy() throws {
         let local = try decode(#"{"seq":5,"session":"s","created":0,"event":"turn_ended","turn":1,"reason":{"type":"complete"},"usage":{"input_tokens":10,"output_tokens":5,"model_calls":1,"energy":{"local_wh":0.42}}}"#)
         guard case .turnEnded(_, _, let u) = local.event, let e = u.energy else { return XCTFail() }

@@ -7,10 +7,18 @@ pub async fn check(resp: reqwest::Response) -> Result<reqwest::Response> {
     if status.is_success() {
         return Ok(resp);
     }
+    // The edge's verdict for a billing refusal (its `x-frog-billing` header) rides along;
+    // other providers don't send it, and the body decides instead.
+    let billing = resp
+        .headers()
+        .get("x-frog-billing")
+        .and_then(|v| v.to_str().ok())
+        .and_then(super::Billing::from_header);
     let body = resp.text().await.unwrap_or_default();
     Err(super::HttpError {
         status: status.as_u16(),
         body: body.trim().to_string(),
+        billing,
     }
     .into())
 }

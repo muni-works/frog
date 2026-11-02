@@ -1020,6 +1020,14 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                 agent.repair();
                 let reason = if e.is::<Interrupted>() {
                     EndReason::Cancelled
+                } else if let Some(b) = e.downcast_ref::<crate::engine::call::BillingRefused>() {
+                    // A hard billing refusal ends the turn with the typed reason: the client
+                    // shows "out of credit · add credit", not a provider error.
+                    EndReason::BillingLimit {
+                        window: b.window.clone(),
+                        reason: b.reason.clone(),
+                        balance_micro: b.balance_micro,
+                    }
                 } else {
                     EndReason::Error {
                         error: classify(&e),
@@ -1152,7 +1160,24 @@ fn kept(s: crate::summary::Summary) -> crate::protocol::KeptSummary {
 }
 
 fn classify(e: &anyhow::Error) -> EngineError {
+    // A billing refusal the billing arm didn't take (an op outside a turn, say): the
+    // provider's clean message, never its raw JSON dump.
+    if let Some(b) = e.downcast_ref::<crate::engine::call::BillingRefused>() {
+        return EngineError::Billing {
+            status: 402,
+            message: b.reason.clone(),
+        };
+    }
     if let Some(h) = e.downcast_ref::<HttpError>() {
+        // The one billing case classify can still see is a refusal this path never promised
+        // to admit (a scripted provider's 402 outside a turn): typed as billing, with the
+        // provider's own words, not its JSON envelope.
+        if h.is_billing() {
+            return EngineError::Billing {
+                status: h.status,
+                message: h.summary(),
+            };
+        }
         return EngineError::Provider {
             status: h.status,
             message: h.body.clone(),
@@ -2136,6 +2161,11 @@ impl Agent {
                 EndReason::Error { error } => {
                     Some((NoticeKind::Errored, format!("turn errored: {error:?}")))
                 }
+                // Out of credit: waiting on the user (money), like a denial.
+                EndReason::BillingLimit { .. } => Some((
+                    NoticeKind::WaitingOnUser,
+                    "turn ended: out of credit, waiting on user".to_string(),
+                )),
                 // Idle per the SendMessage contract: no turn running, nothing queued.
                 EndReason::Complete | EndReason::MaxTokens { .. } => {
                     Some((NoticeKind::Idle, "idle".to_string()))

@@ -412,6 +412,7 @@ impl Renderer {
                     EndReason::BlockedOnApproval { denial } => warn(&format!(
                         "\n  ⎿  stopped: retried a call that was already denied ({denial})"
                     )),
+                    EndReason::BillingLimit { .. } => warn("\n  ⎿  stopped: out of credit"),
                     EndReason::Error { error: e } => error(&e.to_string()),
                     EndReason::Complete | EndReason::Denied => {}
                 }

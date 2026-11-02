@@ -125,6 +125,7 @@ struct ActivityLabel: View {
         )
         case .looping: ("Stopped: repeating itself", "arrow.trianglehead.2.clockwise", .orange)
         case .stepLimit: ("Stopped at the step limit", "flag.checkered", .orange)
+        case .billingLimit: ("Out of credit", "creditcard", .secondary)
         case .error: ("Failed", "exclamationmark.octagon.fill", .red)
         }
     }
