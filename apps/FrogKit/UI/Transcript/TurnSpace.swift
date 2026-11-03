@@ -2,25 +2,28 @@ import SwiftUI
 
 /// The transcript's measure and vertical rhythm, in one place. One narrow column of text;
 /// a turn is a paragraph of its own (the space between turns is the loudest), the rows within
-/// a turn step down from there, and an activity line hangs close under the text it follows.
+/// a turn step down from there, and an activity line is a margin note: closer than a paragraph
+/// to the prose it follows, but with air of its own.
 ///
 /// Comfortable / compact:
 ///
 /// | gap        | pt    | where                                                      |
 /// |------------|-------|------------------------------------------------------------|
-/// | line       | 6 / 5 | extra leading under every line (wrapped or last)           |
-/// | list       | 6 / 5 | between items of one list                                  |
-/// | paragraph  | 16/14 | between a message's paragraphs, and text rows in a turn    |
-/// | section    | 28/24 | above a heading                                            |
-/// | heading    | 6 / 5 | below a heading: it belongs to what follows                |
-/// | activity   | 6 / 4 | above an activity line: tight to the paragraph before it   |
+/// | line       | 7 / 6 | extra leading under every line (wrapped or last)           |
+/// | list       | 7 / 6 | between items of one list                                  |
+/// | paragraph  | 18/16 | between a message's paragraphs, and text rows in a turn    |
+/// | section    | 30/26 | above a heading                                            |
+/// | heading    | 7 / 6 | below a heading: it belongs to what follows                |
+/// | activity   | 12/8  | above an activity line that follows prose: a margin note   |
 /// | block      | 16/10 | other rows in a turn: prompt, cards, visuals, the tail     |
 /// | turn       | 32/16 | between turns                                              |
 /// | footer     | 4 / 2 | extra above the model/speed caption, on top of `block`     |
 ///
 /// Inside a message TextKit puts `line` under a paragraph's last line too, so what you see
-/// between blocks is `line` + the gap: ≈22 between paragraphs, ≈12 between list items (vs 6
-/// for a wrapped line), ≈34 above a heading and ≈12 below it.
+/// between blocks is `line` + the gap: ≈25 between paragraphs, ≈13 between list items (vs 7
+/// for a wrapped line), ≈37 above a heading and ≈13 below it. The line leading is set to the
+/// web's read (tokens.css `web-body`, 1.55): at the body's 14pt that's ≈22pt a line, SF's own
+/// is ≈17, and 7pt of leading lands there.
 ///
 /// Compact tightens the chrome (rows, turns, the footer), and the prose only a notch: a message
 /// is read the same way at either density, and a squeezed list reads as one wrapped paragraph.
@@ -73,11 +76,14 @@ enum TurnSpace {
         let block: CGFloat
         let turn: CGFloat
         let footer: CGFloat
+        /// Between two activity groups of one run of work (a long thought's line, then what it
+        /// did): a step tighter than the answer's own paragraph gap.
+        let rowGroup: CGFloat
 
-        static let comfortable = Scale(line: 6, list: 6, paragraph: 16, section: 28, heading: 6,
-                                       activity: 6, block: 16, turn: 32, footer: 4)
-        static let compact = Scale(line: 5, list: 5, paragraph: 14, section: 24, heading: 5,
-                                   activity: 4, block: 10, turn: 16, footer: 2)
+        static let comfortable = Scale(line: 7, list: 7, paragraph: 18, section: 30, heading: 7,
+                                       activity: 12, block: 16, turn: 32, footer: 4, rowGroup: 8)
+        static let compact = Scale(line: 6, list: 6, paragraph: 16, section: 26, heading: 6,
+                                   activity: 8, block: 10, turn: 16, footer: 2, rowGroup: 5)
 
         /// Space above a markdown block, from the block before it in the same message (nil: it's
         /// the first). The only gap between two blocks: nothing is added below a block, so two
@@ -97,7 +103,11 @@ enum TurnSpace {
             guard case .segment(let segment) = part else { return block }
             switch segment {
             case .activity:
-                return activity
+                // A group that follows prose is a margin note — closer than a paragraph, with
+                // air of its own. A group that leads the turn or follows another group is part
+                // of the same run of work: tight to it.
+                if case .segment(.text) = previous { return activity }
+                return rowGroup
             case .text:
                 if case .segment(.text) = previous { return paragraph }
                 if case .segment(.activity) = previous { return paragraph }

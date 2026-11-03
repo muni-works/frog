@@ -458,10 +458,12 @@ struct UserPrompt: View {
                     .font(.frog(size: TurnType.body))
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, TurnSpace.Inset.roomy + TurnSpace.Inset.hair)
-                    .padding(.vertical, TurnSpace.Inset.card)
+                    .padding(.horizontal, TurnSpace.Inset.roomy + TurnSpace.Inset.tight)
+                    .padding(.vertical, TurnSpace.Inset.snug + TurnSpace.Inset.tight)
                     // Neutral raised gray: the prompt is you, not the place that served
                     // you. Where it ran shows in the model pill and the turn's footer.
+                    // 14×10 padding: the bubble hugs closer than the web's `.me` (9×13 at
+                    // 12px text) scaled up, so a short prompt doesn't float in a grey slab.
                     .foregroundStyle(Tokens.text)
                     .background(Tokens.bubble, in: .rect(cornerRadius: Tokens.Radius.bubble, style: .continuous))
             }
