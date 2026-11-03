@@ -77,8 +77,10 @@ targets:
     sources:
       - path: FrogTests
         buildPhase: sources
-        excludes: ["*.jsonl"]
+        excludes: ["*.jsonl", "*.json"]
       - path: FrogTests/events.jsonl
+        buildPhase: resources
+      - path: FrogTests/diagram-folded.json
         buildPhase: resources
     dependencies:
       - target: Frog

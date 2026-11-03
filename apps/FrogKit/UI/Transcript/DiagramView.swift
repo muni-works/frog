@@ -16,6 +16,8 @@ struct DiagramCanvas: View {
     var onNode: ((Diagram.Node) -> Void)?
     /// Skip the entrance animation (exports, thumbnails).
     var animated = true
+    /// Draw the full layout rather than the compact inline one (the expand toggle, the window).
+    var expanded = false
     @Environment(\.projectFolder) private var folder
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.diagramStatic) private var isStatic
@@ -23,7 +25,7 @@ struct DiagramCanvas: View {
     @State private var hovered: String?
 
     var body: some View {
-        if let layout = diagram.layout {
+        if let layout = diagram.layout(expanded: expanded) {
             ZStack(alignment: .topLeading) {
                 ForEach(layout.groups ?? [], id: \.id) { g in groupFrame(g) }
                 if diagram.isSequence, let end = layout.lifelineEnd {
@@ -38,6 +40,7 @@ struct DiagramCanvas: View {
                 ForEach(Array(layout.edges.enumerated()), id: \.offset) { _, path in edge(path, layout) }
                 ForEach(layout.nodes, id: \.id) { b in
                     if let node = diagram.node(b.id) { nodeView(node, b) }
+                    else if let g = diagram.groups?.first(where: { $0.id == b.id }) { laneHeader(g, b) }
                 }
                 ForEach(Array(layout.edges.enumerated()), id: \.offset) { _, path in edgeLabel(path) }
             }
@@ -52,12 +55,35 @@ struct DiagramCanvas: View {
     /// Fully drawn: after the entrance, or from the start when static.
     private var on: Bool { shown || isStatic || !animated }
 
-    private var dense: Bool { diagram.edges.count > diagram.nodes.count * 3 / 2 && diagram.edges.count > 16 }
+    private var current: Diagram.Layout? { diagram.layout(expanded: expanded) }
 
-    private var maxRank: Int { diagram.layout?.nodes.map(\.rank).max() ?? 0 }
+    private var dense: Bool { (current?.edges.count ?? 0) > (current?.nodes.count ?? 0) * 3 / 2 && (current?.edges.count ?? 0) > 16 }
+
+    private var maxRank: Int { current?.nodes.map(\.rank).max() ?? 0 }
 
     /// Stagger by layer: earlier layers land first.
     private func delay(_ rank: Int) -> Double { animated && !reduceMotion && !isStatic ? Double(rank) * 0.07 : 0 }
+
+    /// A folded sequence's lane: a group header naming its members and count.
+    private func laneHeader(_ g: Diagram.Group, _ b: Diagram.Layout.NodeBox) -> some View {
+        let members = diagram.nodes.filter { $0.group == g.id }
+        let label = members.count > 1
+            ? "\(g.label ?? g.id) · \(members.map(\.label).joined(separator: ", ")) · \(members.count)"
+            : (g.label ?? g.id)
+        return Text(label)
+            .font(.frog(size: 13, weight: .medium))
+            .multilineTextAlignment(.center)
+            .lineLimit(2)
+            .minimumScaleFactor(0.85)
+            .frame(width: b.w, height: b.h)
+            .background { NodeShape(shape: .rounded).fill(.primary.opacity(0.06)) }
+            .overlay {
+                NodeShape(shape: .rounded).stroke(.primary.opacity(0.22), lineWidth: 1)
+            }
+            .opacity(on ? 1 : 0)
+            .position(x: b.x + b.w / 2, y: b.y + b.h / 2)
+            .help(members.map(\.label).joined(separator: ", "))
+    }
 
     // Groups
 
@@ -81,22 +107,24 @@ struct DiagramCanvas: View {
 
     // Edges
 
-    private func style(_ i: Int) -> Diagram.EdgeStyle { diagram.edges[safe: i]?.style ?? .solid }
+    private func style(_ path: Diagram.Layout.EdgePath) -> Diagram.EdgeStyle {
+        diagram.edge(of: path)?.style ?? .solid
+    }
 
-    private func isHot(_ i: Int) -> Bool {
-        guard let h = hovered, let e = diagram.edges[safe: i] else { return false }
+    private func isHot(_ path: Diagram.Layout.EdgePath) -> Bool {
+        guard let h = hovered, let e = diagram.edge(of: path) else { return false }
         return e.from == h || e.to == h
     }
 
     private func edge(_ path: Diagram.Layout.EdgePath, _ layout: Diagram.Layout) -> some View {
         let pts = path.cgPoints
-        let s = style(path.edge)
-        let hot = isHot(path.edge)
+        let s = style(path)
+        let hot = isHot(path)
         // Dense diagrams (code maps) draw edges faintly; hovering a node brings its own forward.
         let faint = dense && !hot
         let color: Color = hot ? .accentColor : faint ? .secondary.opacity(0.28) : (s == .thick ? .primary.opacity(0.75) : .secondary)
         let width: CGFloat = s == .thick ? 2.4 : (hot ? 1.8 : 1.3)
-        let from = diagram.edges[safe: path.edge].flatMap { e in layout.nodes.first { $0.id == e.from } }
+        let from = diagram.edge(of: path).flatMap { e in layout.nodes.first { $0.id == e.from } }
         return ZStack {
             EdgeShape(points: pts)
                 .trim(from: 0, to: on ? 1 : 0)
@@ -113,12 +141,42 @@ struct DiagramCanvas: View {
         .allowsHitTesting(false)
     }
 
+    /// A folded row: one compressed capsule carrying the hoisted numbers, with a count badge.
+    private func bundleRow(_ path: Diagram.Layout.EdgePath, _ bundle: Diagram.Layout.Bundle) -> some View {
+        HStack(spacing: 5) {
+            Text("⋯")
+                .font(.frog(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+            Text(bundle.label)
+                .font(.frog(size: 11, weight: .medium))
+                .monospacedDigit()
+                .lineLimit(1)
+            if bundle.count > 1 {
+                Text("×\(bundle.count)")
+                    .font(.frog(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(Color.windowBackground.opacity(0.94), in: .capsule)
+        .overlay { Capsule().stroke(.secondary.opacity(0.28), lineWidth: 0.8) }
+        .fixedSize()
+        .position(x: path.labelAt?.first.map { CGFloat($0) } ?? 0, y: path.labelAt?.last.map { CGFloat($0) } ?? 0)
+        .opacity(on ? 1 : 0)
+        .animation(.easeOut(duration: 0.3).delay(delay(maxRank) + 0.2), value: shown)
+        .allowsHitTesting(false)
+        .help("\(bundle.count) messages folded")
+    }
+
     @ViewBuilder
     private func edgeLabel(_ path: Diagram.Layout.EdgePath) -> some View {
-        if let at = path.labelAt, let text = diagram.edges[safe: path.edge]?.label {
+        if let bundle = path.bundle {
+            bundleRow(path, bundle)
+        } else if let at = path.labelAt, let text = diagram.edge(of: path)?.label {
             Text(text)
                 .font(.frog(size: 11))
-                .foregroundStyle(isHot(path.edge) ? .primary : .secondary)
+                .foregroundStyle(isHot(path) ? .primary : .secondary)
                 .lineLimit(1)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
@@ -379,24 +437,99 @@ struct DiagramCard: View {
     }
 }
 
-/// Scales the canvas down to the available width (never up), scrolling if still too tall.
+/// Draws a diagram at the transcript column: never below a readable scale. Above the floor it
+/// uses the engine's compact `inline` layout; when even that doesn't fit, it crops with a
+/// trailing fade and offers an expand toggle that swaps in the full layout at 1x, scrolling.
 struct FittedDiagram: View {
     let diagram: Diagram
     var maxHeight: CGFloat = .infinity
     var onNode: ((Diagram.Node) -> Void)?
+    /// The smallest scale the text may render at: 13pt node text stays above ~11pt.
+    static let minScale: CGFloat = 0.85
     @State private var width: CGFloat = 600
+    @State private var expanded = false
 
     var body: some View {
-        let w = diagram.layout?.width ?? 1
-        let h = diagram.layout?.height ?? 1
-        let scale = min(1, width / w)
-        DiagramCanvas(diagram: diagram, onNode: onNode)
-            .scaleEffect(scale, anchor: .topLeading)
-            .frame(width: w * scale, height: h * scale, alignment: .topLeading)
-            .frame(maxWidth: .infinity)
-            .frame(maxHeight: min(h * scale, maxHeight))
-            .clipped()
-            .onGeometryChange(for: CGFloat.self, of: \.size.width) { width = $0 }
+        let full = diagram.layout
+        // The compact form when the engine made one; the full layout when it already fits.
+        let shown = diagram.inlineLayout ?? full
+        let w = shown?.width ?? 1
+        let h = shown?.height ?? 1
+        let raw = width / max(w, 1)
+        let scale = min(1, max(Self.minScale, raw))
+        let fits = raw >= Self.minScale
+        // What we'd have to crop away at the floor: the fade width, capped at a third.
+        let overflow = max(0, w * scale - width)
+        let fade = min(24, overflow / 2)
+
+        VStack(alignment: .leading, spacing: 6) {
+            Group {
+                if expanded, let full {
+                    ScrollView(.horizontal) {
+                        DiagramCanvas(diagram: diagram, onNode: onNode, expanded: true)
+                            .frame(width: full.width, height: full.height, alignment: .topLeading)
+                            .frame(maxHeight: min(full.height, maxHeight), alignment: .topLeading)
+                    }
+                    .scrollIndicators(.visible)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxHeight: min(full.height, maxHeight))
+                } else {
+                    DiagramCanvas(diagram: diagram, onNode: onNode, expanded: false)
+                        .scaleEffect(scale, anchor: .topLeading)
+                        .frame(width: w * scale, height: h * scale, alignment: .topLeading)
+                        .frame(maxWidth: .infinity)
+                        .frame(maxHeight: min(h * scale, maxHeight))
+                        .clipped()
+                        .overlay(alignment: .trailing) {
+                            // A fade where the crop cuts, so it reads as "more", not "ends here".
+                            if !fits, fade > 0 {
+                                LinearGradient(
+                                    colors: [Color.windowBackground.opacity(0), Color.windowBackground],
+                                    startPoint: .leading, endPoint: .trailing
+                                )
+                                .frame(width: fade)
+                                .allowsHitTesting(false)
+                            }
+                        }
+                }
+            }
+            if full != nil, !fits {
+                HStack(spacing: 8) {
+                    if !expanded, let summary = foldSummary {
+                        Text(summary)
+                            .font(.frog(size: 11))
+                            .foregroundStyle(.tertiary)
+                    }
+                    Button {
+                        withAnimation(.snappy) { expanded.toggle() }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(expanded ? "collapse" : "expand")
+                            Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                                .font(.frog(size: 9, weight: .semibold))
+                        }
+                        .font(.frog(size: 11))
+                        .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.borderless)
+                    .help(expanded ? "Back to the compact view" : "See the whole diagram at full size")
+                }
+                .padding(.leading, 2)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .onGeometryChange(for: CGFloat.self, of: \.size.width) { width = $0 }
+        .onChange(of: diagram.inline != nil) { expanded = false }
+    }
+
+    /// What the compact form folded away, in the spec's words: "17 messages in 8 rows · 3
+    /// bundles". Nil unless there's an inline form to describe.
+    private var foldSummary: String? {
+        guard let inline = diagram.inline else { return nil }
+        let bundles = inline.edges.filter { $0.bundle != nil }
+        guard !bundles.isEmpty else { return nil }
+        let count = bundles.reduce(0) { $0 + ($1.bundle?.count ?? 0) }
+        return "\(diagram.edges.count) messages in \(inline.edges.count) rows · \(bundles.count) bundles (\(count))"
     }
 }
 
@@ -447,7 +580,8 @@ enum DiagramExport {
     enum Format { case png, svg, mermaid }
 
     static func image(_ d: Diagram, scale: CGFloat = 2) -> PlatformImage? {
-        let view = DiagramCanvas(diagram: d, animated: false)
+        // Exports always render the full layout, never the compact inline form.
+        let view = DiagramCanvas(diagram: d, animated: false, expanded: true)
             .padding(8)
             .background(FrogCanvas.color)
         let r = ImageRenderer(content: view)
@@ -512,16 +646,18 @@ enum DiagramExport {
             }
         }
         for p in l.edges {
-            let e = d.edges[safe: p.edge]
+            let e = d.edge(of: p)
             let pts = p.points.map { "\(f($0[0])),\(f($0[1]))" }.joined(separator: " ")
             let dash = e?.style == .dashed ? " stroke-dasharray=\"5 4\"" : ""
             let w = e?.style == .thick ? "2.4" : "1.3"
             out += "<polyline points=\"\(pts)\" fill=\"none\" stroke=\"#666\" stroke-width=\"\(w)\"\(dash) marker-end=\"url(#a)\"/>\n"
-            if let at = p.labelAt, let label = e?.label {
+            let label = p.bundle?.label ?? e?.label
+            if let at = p.labelAt, let label {
                 out += "<text x=\"\(f(at[0]))\" y=\"\(f(at[1] + 4))\" font-size=\"11\" text-anchor=\"middle\" fill=\"#555\" paint-order=\"stroke\" stroke=\"#fff\" stroke-width=\"4\">\(esc(label))</text>\n"
             }
         }
         for b in l.nodes {
+            // A folded lane header stands for a group, not a node.
             guard let n = d.node(b.id) else { continue }
             let rx = (n.shape == .rounded || n.shape == .actor) ? min(b.h / 2, 18) : 8
             let dash = n.shape == .external ? " stroke-dasharray=\"4 3\"" : ""
@@ -565,7 +701,7 @@ struct DiagramWindow: View {
         let d = document.diagram
         ScrollView([.horizontal, .vertical]) {
             let z = zoom * pinch
-            DiagramCanvas(diagram: d)
+            DiagramCanvas(diagram: d, expanded: true)
                 .scaleEffect(z, anchor: .topLeading)
                 .frame(width: (d.layout?.width ?? 0) * z, height: (d.layout?.height ?? 0) * z, alignment: .topLeading)
                 .padding(24)

@@ -42,7 +42,16 @@ struct Diagram: Codable, Hashable, Sendable {
             var edge: Int
             var points: [[Double]]
             var labelAt: [Double]?
+            /// A bundle row: several consecutive messages folded into one (folded sequences).
+            var bundle: Bundle?
             var cgPoints: [CGPoint] { points.map { CGPoint(x: $0[0], y: $0[1]) } }
+        }
+        /// A run of consecutive messages folded into one row. Lossy on structure, lossless on
+        /// numbers: `label` carries the numbers hoisted out of the folded messages.
+        struct Bundle: Codable, Hashable, Sendable {
+            var lane: Int
+            var count: Int
+            var label: String
         }
         struct GroupBox: Codable, Hashable, Sendable {
             var id: String
@@ -63,11 +72,26 @@ struct Diagram: Codable, Hashable, Sendable {
     var edges: [Edge]
     var groups: [Group]?
     var layout: Layout?
+    /// The compact form for the transcript column, when the full layout is too wide to read at
+    /// the scale floor. Draw it inline; draw `layout` when expanded, in the window and exports.
+    var inline: Layout?
     var mermaid: String?
 
     var isSequence: Bool { kind == .sequence }
     var hasHeat: Bool { nodes.contains { ($0.heat ?? 0) > 0 } }
     var displayTitle: String { (title?.isEmpty == false) ? title! : (isSequence ? "Sequence" : "Diagram") }
+
+    /// What the transcript column draws: the compact form when the engine made one.
+    var inlineLayout: Layout? { inline ?? layout }
+
+    /// The layout a drawing call should use for `expanded` state.
+    func layout(expanded: Bool) -> Layout? { expanded ? layout : inlineLayout }
+
+    /// The source edge behind a path, or nil for a folded bundle row.
+    func edge(of path: Layout.EdgePath) -> Edge? {
+        guard path.bundle == nil, path.edge >= 0, path.edge < edges.count else { return nil }
+        return edges[path.edge]
+    }
 
     func node(_ id: String) -> Node? { nodes.first { $0.id == id } }
 

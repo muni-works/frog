@@ -782,10 +782,10 @@ struct SessionTree: View {
             Label("Session tree", systemImage: "arrow.triangle.branch").font(.frog(size: 13, weight: .semibold))
             if let diagram, !diagram.nodes.isEmpty {
                 ScrollView([.horizontal, .vertical]) {
-                    DiagramCanvas(diagram: diagram) { node in
+                    DiagramCanvas(diagram: diagram, onNode: { node in
                         workspace.selection = node.id
                         dismiss()
-                    }
+                    }, expanded: true)
                 }
                 .frame(width: min(720, (diagram.layout?.width ?? 300) + 4), height: min(520, (diagram.layout?.height ?? 200) + 4))
             } else if loaded {
