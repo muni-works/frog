@@ -8,9 +8,18 @@ use anyhow::{Context, Result, bail};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// Overrides for every git frog runs here, outside the sandbox: a repo's own config or hooks
+/// (which a sandboxed command or a cloned repo may have planted) never run a command.
+const SAFE: &[&str] = &[
+    "-c",
+    "core.fsmonitor=false",
+    "-c",
+    "core.hooksPath=/dev/null",
+];
+
 fn git(root: &Path, index: Option<&Path>, args: &[&str]) -> Result<String> {
     let mut cmd = Command::new("git");
-    cmd.arg("-C").arg(root).args(args);
+    cmd.args(SAFE).arg("-C").arg(root).args(args);
     // Checkpoint commits need an identity even where none is configured (CI runners, fresh
     // containers); only fill in what the environment doesn't already provide.
     for (k, v) in [
@@ -182,6 +191,7 @@ pub fn apply_attempt(root: &Path, worktree: &Path, base: &str) -> Result<Vec<Str
     }
     let run = |args: &[&str]| -> Result<String> {
         let mut child = Command::new("git")
+            .args(SAFE)
             .arg("-C")
             .arg(root)
             .args(args)

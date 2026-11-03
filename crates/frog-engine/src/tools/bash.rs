@@ -727,6 +727,16 @@ pub fn git_dirs(cwd: &std::path::Path) -> Vec<std::path::PathBuf> {
     dirs
 }
 
+/// Inside git dirs, what sandboxed commands must never write: config (`core.fsmonitor`,
+/// `core.hooksPath`, filter drivers), hooks and `info/attributes`. frog runs git on the same
+/// repo unsandboxed (checkpoints, worktrees), so any of these would run a planted command
+/// outside the sandbox.
+fn git_protected(git: &[std::path::PathBuf]) -> Vec<std::path::PathBuf> {
+    git.iter()
+        .flat_map(|d| ["config", "config.worktree", "hooks", "info"].map(|f| d.join(f)))
+        .collect()
+}
+
 /// Seatbelt can only match `*` or localhost for network peers, so `network = "dev"` blocks all
 /// outbound except localhost and sends HTTPS through this allowlisting CONNECT proxy. Started
 /// once per process; returns its port.
@@ -843,6 +853,11 @@ fn seatbelt(
         .iter()
         .map(|p| format!("\n(allow file-read* (subpath \"{}\"))", quote(p)))
         .collect();
+    // Later rules win: git's config and hooks stay read-only inside its writable dirs.
+    let protected: String = git_protected(git)
+        .iter()
+        .map(|p| format!("\n(deny file-write* (subpath \"{}\"))", quote(p)))
+        .collect();
     let git: String = git
         .iter()
         .map(|p| format!("\n  (subpath \"{}\")", quote(p)))
@@ -880,7 +895,7 @@ fn seatbelt(
   (subpath "/private/var/folders")
   (literal "/dev/null")
   (literal "/dev/tty")
-  (regex #"^/dev/fd/"){caches}{git}{writes})
+  (regex #"^/dev/fd/"){caches}{git}{writes}){protected}
 (deny file-read* file-write*{secrets}){reads}{network}"#,
         quote(root),
         quote(&tmp)
@@ -924,6 +939,10 @@ fn bubblewrap(
     writable_paths.dedup();
     for p in &writable_paths {
         cmd.arg("--bind").arg(p).arg(p);
+    }
+    // Git's config and hooks read-only over its writable dirs (see `git_protected`).
+    for p in git_protected(git).iter().filter(|p| p.exists()) {
+        cmd.arg("--ro-bind").arg(p).arg(p);
     }
     // Credentials the user let commands read stay visible, read-only even inside a writable
     // bind (a project at `~`).
@@ -997,6 +1016,48 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
         false
+    }
+
+    /// A sandboxed command can commit, but can't touch git's config or hooks: frog runs git on
+    /// the same repo unsandboxed, so either would plant a command that escapes the sandbox.
+    #[tokio::test]
+    async fn sandbox_keeps_git_config_and_hooks_read_only() {
+        if !available() {
+            eprintln!("no OS sandbox here; skipping");
+            return;
+        }
+        let repo = std::env::temp_dir().join(format!("frog-gitcfg-{}", crate::session::new_id()));
+        std::fs::create_dir_all(&repo).unwrap();
+        assert!(
+            std::process::Command::new("git")
+                .args(["init", "-q"])
+                .current_dir(&repo)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let repo = repo.canonicalize().unwrap();
+        let mut ctx = Ctx::new(repo.clone());
+        ctx.sandbox = Some(repo.clone());
+        let out = run(
+            &json!({ "command": "echo a > a.txt && git add a.txt && git -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -qm ok && echo committed" }),
+            &mut ctx,
+        )
+        .await
+        .unwrap();
+        assert!(out.content.contains("committed"), "{}", out.content);
+        for cmd in [
+            "git config core.fsmonitor 'touch pwned'",
+            "echo x > .git/hooks/post-checkout",
+            "mkdir -p .git/info && echo x > .git/info/attributes",
+        ] {
+            let _ = run(&json!({ "command": cmd }), &mut ctx).await;
+        }
+        let config = std::fs::read_to_string(repo.join(".git/config")).unwrap();
+        assert!(!config.contains("fsmonitor"), "{config}");
+        assert!(!repo.join(".git/hooks/post-checkout").exists());
+        assert!(!repo.join(".git/info/attributes").exists());
+        let _ = std::fs::remove_dir_all(&repo);
     }
 
     /// A commit inside a linked worktree works (index.lock, refs, objects live outside the
