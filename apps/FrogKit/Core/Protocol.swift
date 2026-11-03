@@ -422,11 +422,64 @@ struct EngineError: Decodable, Equatable, Sendable, CustomStringConvertible {
     var description: String {
         switch type {
         case "provider": "Provider error (\(status ?? 0)): \(message ?? "")"
+        case "billing": "Billing refused (\(status ?? 0)): \(message ?? "")"
         case "connection": "Couldn't reach the model: \(message ?? "")"
         case "incomplete_stream": "The response stream ended early."
         default: message ?? type
         }
     }
+}
+
+/// The engine's billing transition (`Event.billingLimit`): the plan's allowance ran out and
+/// the session goes to credit at usage prices — one calm line, never a provider dump.
+/// `window` is "5h", "weekly" or "credit"; `reason` is the provider's clean message;
+/// `balanceMicros` is the remaining credit when the edge said.
+struct BillingLimit: Decodable, Equatable, Sendable {
+    var window: String
+    var reason: String?
+    var balanceMicros: UInt64?
+
+    private enum Key: String, CodingKey {
+        case window, reason
+        // The engine's `balance_micro`: convertFromSnakeCase turns the JSON key into
+        // `balanceMicro` before matching, so the rawValue must be that camelCase form.
+        case balanceMicros = "balanceMicro"
+    }
+
+    /// From the engine's event body (an envelope's flattened fields) or a `turn_ended`
+    /// reason: the same keys either way.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Key.self)
+        window = (try? c.decode(String.self, forKey: .window)) ?? "credit"
+        reason = try? c.decode(String.self, forKey: .reason)
+        balanceMicros = try? c.decode(UInt64.self, forKey: .balanceMicros)
+    }
+
+    init(window: String, reason: String?, balanceMicros: UInt64?) {
+        self.window = window
+        self.reason = reason
+        self.balanceMicros = balanceMicros
+    }
+
+    /// "5-hour allowance used · billing credit at usage prices" (with the balance when the
+    /// edge sent one); the out-of-credit case is the banner, not this line.
+    var line: String {
+        var text: String
+        switch window {
+        case "5h": text = "5-hour allowance used"
+        case "weekly": text = "Weekly allowance used"
+        case "credit": text = "Out of credit"
+        default: text = "Allowance used"
+        }
+        text += " · billing credit at usage prices"
+        if let c = balanceMicros, c > 0 {
+            text += " · $\(String(format: "%.2f", Double(c) / 1_000_000)) left"
+        }
+        return text
+    }
+
+    /// The hard case: the wallet is empty and nothing admitted continuing.
+    var isHardStop: Bool { balanceMicros == nil || balanceMicros == 0 }
 }
 
 /// What a compaction kept, as a receipt (`Event.compacted`'s `summary`): the structured
@@ -463,24 +516,34 @@ struct KeptTest: Decodable, Sendable, Equatable {
 }
 
 enum EndReason: Decodable, Sendable, Equatable {
-    case complete, maxTokens, denied, looping, stepLimit, cancelled, suspended
+    case complete, denied, looping, stepLimit, cancelled, suspended
+    /// Cut off at the output limit, after `autoContinued` replies were continued in place to
+    /// try to finish the answer (0 when frog didn't continue it).
+    case maxTokens(autoContinued: Int)
     /// A retry of a call already denied: frog didn't ask again and ended the turn with the denial.
     case blockedOnApproval(String)
+    /// Out of credit: the turn ended on money, not a model failure. The app renders
+    /// "out of credit · add credit" with a way to fix it, never a provider dump.
+    case billingLimit(BillingLimit)
     case error(EngineError)
 
-    private enum Key: String, CodingKey { case type, error, denial }
+    private enum Key: String, CodingKey { case type, error, denial, autoContinued = "auto_continued", window, reason, balanceMicros = "balanceMicro" }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Key.self)
         switch try c.decode(String.self, forKey: .type) {
         case "complete": self = .complete
-        case "max_tokens": self = .maxTokens
+        case "max_tokens": self = .maxTokens(autoContinued: (try? c.decode(Int.self, forKey: .autoContinued)) ?? 0)
         case "denied": self = .denied
         case "looping": self = .looping
         case "step_limit": self = .stepLimit
         case "cancelled": self = .cancelled
         case "suspended": self = .suspended
         case "blocked_on_approval": self = .blockedOnApproval((try? c.decode(String.self, forKey: .denial)) ?? "")
+        case "billing_limit": self = .billingLimit(BillingLimit(
+            window: (try? c.decode(String.self, forKey: .window)) ?? "credit",
+            reason: try? c.decode(String.self, forKey: .reason),
+            balanceMicros: try? c.decode(UInt64.self, forKey: .balanceMicros)))
         default: self = .error(try c.decode(EngineError.self, forKey: .error))
         }
     }
@@ -739,6 +802,10 @@ enum Event: Decodable, Sendable {
     /// The model's suggested next prompt, sent just before a completed turn ends. Live only.
     /// `act`: it acts outside the project (push, send, deploy), so it's a button, not ghost text.
     case nextSuggested(turn: UInt64, text: String, act: Bool)
+    /// The plan's allowance ran out and the session transitions to credit at usage prices:
+    /// one calm inline row ("5-hour allowance used · billing credit at usage prices"), the
+    /// turn goes on. The raw provider body is in the engine log, never here. Durable.
+    case billingLimit(BillingLimit)
     /// A retried model call's partial items (message/reasoning that streamed before the
     /// stream failed); drop them from the turn.
     case itemsDiscarded(ids: [String])
@@ -771,6 +838,10 @@ enum Event: Decodable, Sendable {
     /// A sandboxed command tried to reach a host off the session's egress allow-list:
     /// blocked at connect time (`enforced`), or only recorded (flag mode). Durable.
     case egressBlocked(host: String, port: Int, item: String?, tool: String, command: String, enforced: Bool)
+    /// Yolo ran a command that widened the egress fence without a card: it left the sandbox
+    /// (`sandboxLeft`), or named hosts off the allow-list, now granted for the session
+    /// (`hosts`). Durable; one quiet row, never a card.
+    case egressWidened(item: String, tool: String, command: String, hosts: [String], sandboxLeft: Bool)
     /// How one permission check was decided (rule, classifier, fallback, ask),
     /// for measuring the ask rate; not shown in the transcript.
     case permissionDecision(item: String, layer: String, outcome: String, reason: String, ms: UInt64)
@@ -841,7 +912,7 @@ extension Event {
         case stepsDone = "steps_done", jobs, jobLabels = "job_labels", inbox
         case url, cols, rows, lines, cursor, seq, exit, call, action, args, path, image, tool
         case command, gist, act
-        case host, port, enforced
+        case host, port, enforced, hosts, sandboxLeft
         case running
         case status, text, log, items, wakes
     }
@@ -877,6 +948,8 @@ extension Event {
                 act: try c.decodeIfPresent(Bool.self, forKey: .act) ?? false)
         case "chapter_titled":
             self = .chapterTitled(turn: try c.decode(UInt64.self, forKey: .turn), title: try c.decode(String.self, forKey: .title))
+        case "billing_limit":
+            self = .billingLimit(try BillingLimit(from: decoder))
         case "item_delta":
             self = .itemDelta(id: try c.decode(String.self, forKey: .id), delta: try c.decode(Delta.self, forKey: .delta))
         case "items_discarded":
@@ -935,6 +1008,13 @@ extension Event {
                 tool: try c.decodeIfPresent(String.self, forKey: .tool) ?? "Bash",
                 command: try c.decodeIfPresent(String.self, forKey: .command) ?? "",
                 enforced: try c.decodeIfPresent(Bool.self, forKey: .enforced) ?? false)
+        case "egress_widened":
+            let item = try c.decode(String.self, forKey: .item)
+            let tool: String = try c.decodeIfPresent(String.self, forKey: .tool) ?? "Bash"
+            let command: String = try c.decodeIfPresent(String.self, forKey: .command) ?? ""
+            let hosts: [String] = try c.decodeIfPresent([String].self, forKey: .hosts) ?? []
+            let sandboxLeft: Bool = try c.decodeIfPresent(Bool.self, forKey: .sandboxLeft) ?? false
+            self = .egressWidened(item: item, tool: tool, command: command, hosts: hosts, sandboxLeft: sandboxLeft)
         case "permission_decision":
             let item = try c.decode(String.self, forKey: .item)
             let layer = try c.decode(String.self, forKey: .layer)

@@ -205,7 +205,9 @@ final class SessionBroker {
     private var pendingInbox: [String: [(String, String, String)]] = [:]
     /// When each session's current permission card arrived (ListApprovals reports its age).
     private var waitingSince: [String: Date] = [:]
-    /// The session that started session `id`, if one did (pending approvals escalate to it).
+    /// Why the last `conversation(for:)` couldn't start an engine (a held worktree), for the
+    /// send that triggered the restart to report.
+    private var lastHold: String?
     /// The session that started session `id`, if one did (pending approvals escalate to it).
     var parentOf: (_ id: String) -> String? = { _ in nil }
 
@@ -806,6 +808,10 @@ final class SessionBroker {
             switch env["event"] as? String {
             case "turn_started" where keeps("message"):
                 if let input = env["input"] as? String, !input.isEmpty { lines.append("USER: \(trim(input))") }
+            case "billing_limit" where keeps("notice"):
+                if let reason = env["reason"] as? String, !reason.isEmpty {
+                    lines.append("NOTICE: \(trim(reason))")
+                }
             case "item_completed":
                 guard let item = env["item"] as? [String: Any], let type = item["type"] as? String else { continue }
                 switch type {
@@ -845,6 +851,14 @@ final class SessionBroker {
     /// Tests read the approval cards and their age tracking.
     var approvalsForTesting: [Approval] { approvals() }
     var waitingSinceForTesting: [String: Date] { waitingSince }
+    /// Tests read a tracked session's structured status (the same answer SessionStatus gives).
+    func statusForTesting(_ id: String) -> StatusInfo? {
+        (Library.shared.conversation(id) ?? background[id]).flatMap(selfStatus(of:))
+    }
+    /// Tests start a session the way `StartSession` does, without an engine asking.
+    func starterForTesting(_ req: StartRequest, parent: Conversation?) async throws -> Started {
+        try await start(req, parent: parent)
+    }
     #endif
 
     /// The conversation tracked for session `id`: on screen or in the broker's background
@@ -861,38 +875,26 @@ final class SessionBroker {
         background.values.filter { $0.isLive }
     }
 
-    /// A permission prompt opened in session `child`: tell the session that started it,
-    /// so a manager can decide (or tell the user) instead of the prompt sitting unseen.
-    /// The child waits on it until answered or its timeout takes the safe path.
+    /// A permission prompt opened in session `child`: the session that started it hears about
+    /// it as a STATUS message, never a turn. The parent's own attention surface already carries
+    /// the card (the child shows as waiting in the sidebar's needs-you lens, `ListApprovals`
+    /// lists it with its age, and `SessionStatus` reports `pending_approvals`), so a transcript
+    /// row per card was noise Cam kept clearing. `inform` records the one line without starting
+    /// a turn or waking anything; the parent sees it with its next turn, if it has one.
+    /// The child waits on the card until answered or its timeout takes the safe path.
     @discardableResult
     func escalate(_ req: PermissionRequest, from child: String, name: String) -> Bool {
         guard let parent = parentOf(child), parent != child else { return false }
-        return reach(parent, "system", "system", Self.escalation(req, session: child, name: name))
+        return inform(parent, "system", "system", Self.escalation(req, session: child, name: name))
     }
 
-    /// The structured notice a parent gets for a child's pending approval.
+    /// The one line a parent gets for a child's pending approval. The card itself is the
+    /// parent's to see structurally (needs-you, `ListApprovals`, `SessionStatus`); this is just
+    /// enough for an agent to say something useful if it's asked. `SessionBroker.escalation`
+    /// used to build a full card dump here, one transcript turn per prompt.
     static func escalation(_ req: PermissionRequest, session: String, name: String) -> String {
-        var lines = [
-            "Approval pending in session \"\(name)\" (\(session)).",
-            "card: \(req.id)",
-            "tool: \(req.name)",
-            "command: \(req.arg)",
-        ]
-        if let r = req.reason { lines.append("reason: \(r)") }
-        if let c = req.card {
-            if let a = c.agentReason { lines.append("agent says: \(a)") }
-            lines.append("trigger: \(c.trigger)")
-            for t in c.touches ?? [] {
-                let size = t.bytes.map { " \(ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file))" } ?? ""
-                let mine = t.createdHere == true ? " (made by this session)" : ""
-                lines.append("touches: \(t.path)\(size)\(mine)")
-            }
-            lines.append("risk: \(c.risk)")
-            lines.append("recommendation: \(c.recommendation)")
-            lines.append("If nobody answers in \(c.timeoutSecs / 60) min it's denied and the session carries on.")
-        }
-        lines.append("Only the user can answer it, in that session's window; tell them if it matters.")
-        return lines.joined(separator: "\n")
+        let what = "\(req.name) \(req.arg)".trimmingCharacters(in: .whitespaces)
+        return "Approval pending in \"\(name)\" (\(session)): \(what). It's in needs-you and ListApprovals (card \(req.id)); only the user can answer it, in that session's window."
     }
 
     /// Report session `child`'s next turn back to `parent` when it goes idle (the hand-back).
@@ -938,12 +940,18 @@ final class SessionBroker {
         // Status only: read without a turn, so nothing sits in the inbox and no idle watch arms.
         if informational {
             guard inform(target.id, sender, name, message) else {
-                return .failure(BrokerError("Couldn't reach \(target.name): its folder may be gone."))
+                let hold = lastHold
+                lastHold = nil
+                return .failure(BrokerError(hold ?? "Couldn't reach \(target.name): its folder may be gone."))
             }
             return .success(target)
         }
         guard reach(target.id, sender, name, message) else {
-            return .failure(BrokerError("Couldn't reach \(target.name): its folder may be gone."))
+            // A spawn was needed (no live engine) and refused: its reason, if the worktree
+            // was the cause, beats the generic "folder may be gone".
+            let hold = lastHold
+            lastHold = nil
+            return .failure(BrokerError(hold ?? "Couldn't reach \(target.name): its folder may be gone."))
         }
         // The message sits in the target's inbox until its next turn boundary: a queued
         // message keeps it "running" in the status truth (bug 2d).
@@ -1084,6 +1092,16 @@ final class SessionBroker {
         // An engine that died mid-turn left it open: the fresh engine continues it, ahead of
         // anything new (the user may have stopped the old one; the report says which).
         let unfinished = background[id].map { c in c.turns.last.map { !$0.finished } ?? false } ?? false
+        // Another engine may own this folder's worktree: don't spawn one that dies at birth.
+        // The message is returned to the sender (the caller's error path); the session is
+        // resumable once the owner stops.
+        if let hold = Workspace.worktreeHold(of: folder, resumed: id) {
+            background[id] = nil
+            inbound[id] = 0
+            touch(id)
+            lastHold = hold
+            return nil
+        }
         // A model or mode set while no engine ran (SetSessionModel/Mode) applies now, once.
         let stored = Library.shared.takeStored(id)
         let c = Conversation(folder: folder, arguments: Self.resumeArguments(id, chat: info.isChat),
@@ -1237,7 +1255,16 @@ final class SessionBroker {
 
     nonisolated static func checkout(of folder: URL) -> Checkout {
         let fm = FileManager.default
-        var at = folder.standardizedFileURL
+        // Near-miss: two fixes for this same walk (the launch beachball), merged here.
+        // Launch passes a RELATIVE folder URL — a restored window — which
+        // `resolvingSymlinksInPath` alone leaves relative, so that fix still walked
+        // "." → ".." forever: make the path absolute FIRST, then resolve, then standardize.
+        // Resolution is still needed: for a missing folder `standardizedFileURL` alone keeps
+        // ".." segments, and `deletingLastPathComponent` then grew the path forever. Three
+        // belts below: an absolute resolved start, a guard that each step shortens the
+        // path, and a last stop if the walk can't go up or leaves "/"-rooted ground.
+        var at = URL(fileURLWithPath: folder.path).resolvingSymlinksInPath().standardizedFileURL
+        var last = at.path
         while true {
             let dot = at.appending(path: ".git")
             var isDir: ObjCBool = false
@@ -1254,7 +1281,11 @@ final class SessionBroker {
                 return .worktree(top: at, gitDir: gitDir.standardizedFileURL)
             }
             let up = at.deletingLastPathComponent()
-            if up.path == at.path { return .plain }
+            // Belt two: any path that stops getting shorter is a root we can't see.
+            guard up.path != last else { return .plain }
+            last = up.path
+            // Belt three: if the walk can't go up or has left "/"-rooted ground, stop.
+            if up.path == at.path || !up.path.hasPrefix("/") { return .plain }
             at = up
         }
     }
@@ -1271,6 +1302,13 @@ final class SessionBroker {
         }
         let text = (try? String(contentsOf: gitDir.appending(path: "frog-engine.lock"), encoding: .utf8)) ?? ""
         return text.split(separator: " ").first.map(String.init) ?? "another session"
+    }
+
+    /// The line for starting something in a worktree another engine runs in: the tree, the
+    /// owner, and the way out. The app shows it instead of starting an engine that would die
+    /// at birth (the engine's own refusal, word for word, via `checkWorkerFolder`).
+    nonisolated static func worktreeRefusal(top: URL, owner: String) -> String {
+        "\(top.path) already has an engine: session \(owner) runs in it. One engine per worktree, so two sessions never mix uncommitted work: stop or archive \(owner) first, or start this one in its own worktree. It's resumable once \(owner) stops."
     }
 
     /// StartSession without `worktree:true`: refuse the user's main checkout (the repo root
@@ -1292,6 +1330,13 @@ final class SessionBroker {
                 throw BrokerError("\(top.path) already has an engine: session \(owner) runs in it. One engine per worktree: pass worktree:true for a fresh one, or stop or archive \(owner) first.")
             }
         }
+    }
+
+    /// The line the asking session's transcript gets when `StartSession` was refused a
+    /// folder: the refusal itself (it already names the owner and the way out), prefaced
+    /// with what was being started, so it reads as a row and not a stray error.
+    nonisolated static func worktreeNotice(_ refusal: String, folder: URL) -> String {
+        "Couldn't start a session in \(folder.path): \(refusal)"
     }
 
     /// A git worktree for a new session: `<repo>/.frog/worktrees/<name>` on a new branch
@@ -1602,7 +1647,15 @@ extension SessionBroker {
         // and never a worktree another engine already runs in.
         if !req.worktree {
             let at = folder
-            try await Task.detached { try Self.checkWorkerFolder(at, allowMainCheckout: req.allowMainCheckout) }.value
+            do {
+                try await Task.detached { try Self.checkWorkerFolder(at, allowMainCheckout: req.allowMainCheckout) }.value
+            } catch {
+                // The user watches the asking session, so the refusal goes there too: the
+                // model sees the error and can act on it, and the person reading sees the
+                // tree's owner by name instead of a silent "couldn't start".
+                parent?.note(Self.worktreeNotice(error.localizedDescription, folder: at), warning: true)
+                throw error
+            }
         }
         if req.worktree {
             let from = folder

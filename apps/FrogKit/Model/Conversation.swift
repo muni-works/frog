@@ -87,6 +87,10 @@ final class Conversation {
     let panes = PaneHub()
     @ObservationIgnored private var appCalls: [String: (JSONValue?, String?) -> Void] = [:]
     private(set) var failure: String?
+    /// The session whose engine holds the worktree this conversation would run in, when that
+    /// is why there's no engine (see `failure`). The transcript offers the owner instead of
+    /// leaving the user to find it; nil for every other failure.
+    var heldBy: String?
     /// A reopened session's history is on its way (until the engine's `synced`).
     private(set) var replaying = false
     /// The replay's history ended with a turn still open (another frog process is running
@@ -883,6 +887,9 @@ final class Conversation {
         case .egressBlocked(let host, _, _, let tool, let command, let enforced):
             // The tripwire: a row in the transcript, warning-styled when it was blocked.
             note(Self.egressNotice(host: host, tool: tool, command: command, enforced: enforced), warning: enforced)
+        case .egressWidened(_, let tool, let command, let hosts, let sandboxLeft):
+            // Yolo acted without asking: one quiet row where another mode would have carded.
+            note(Self.widenedNotice(tool: tool, command: command, hosts: hosts, sandboxLeft: sandboxLeft), warning: false)
         case .permissionDecision:
             // Bookkeeping for the ask rate; nothing to show.
             break
@@ -930,6 +937,10 @@ final class Conversation {
         case .compacted(let before, let after, let kept):
             carriedForward = kept
             note("Summarized the conversation to save context (\(before.tokens) → \(after.tokens) tokens)", warning: false)
+        case .billingLimit(let b):
+            // The transition to credit: one calm line in the turn (never a provider dump).
+            // The hard out-of-credit case has no event — it arrives as the turn's end reason.
+            note(b.line, warning: false)
         case .contextPruned(let n, let before, let after):
             note("Trimmed \(n) old tool result\(n == 1 ? "" : "s") to save context (\(before.tokens) → \(after.tokens) tokens)", warning: false)
         case .drained:
@@ -1156,6 +1167,7 @@ final class Conversation {
         case .looping: return "Stopped: the model kept repeating the same tool call"
         case .stepLimit: return "Stopped at the step limit"
         case .blockedOnApproval(let denial): return "Stopped: retried a call that was already denied (\(denial))"
+        case .billingLimit: return "Stopped: out of credit"
         default:
             let answer = turn.items.last { $0.kind == .message }?.text ?? ""
             let line = answer.split(separator: "\n").first.map(String.init) ?? "Done"
@@ -1233,6 +1245,16 @@ final class Conversation {
         return enforced
             ? "Blocked a connection to \(host): it isn't on this session's network allow-list (\(what))."
             : "A command reached \(host), which isn't on the network allow-list (\(what))."
+    }
+
+    /// The transcript row for an `egress_widened` event: yolo ran what another mode would
+    /// have carded. One quiet line, never a warning.
+    nonisolated static func widenedNotice(tool: String, command: String, hosts: [String], sandboxLeft: Bool) -> String {
+        let what = command.isEmpty ? tool : "`\(command)`"
+        if sandboxLeft {
+            return "Yolo: \(what) ran outside the sandbox; it can change files anywhere and read your credentials."
+        }
+        return "Yolo: \(what) reaches \(hosts.joined(separator: ", ")), now allowed for this session."
     }
 
     func note(_ text: String, warning: Bool) {

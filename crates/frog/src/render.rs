@@ -399,7 +399,10 @@ impl Renderer {
                 match reason {
                     EndReason::Cancelled => info("  ⎿  interrupted"),
                     EndReason::Suspended => info("  ⎿  suspended for app update"),
-                    EndReason::MaxTokens => warn("\n  ⎿  hit the output token limit"),
+                    EndReason::MaxTokens { auto_continued } => warn(&format!(
+                        "\n  ⎿  {}",
+                        frog_engine::protocol::limit_banner(auto_continued)
+                    )),
                     EndReason::Looping => {
                         warn("\n  ⎿  stopped: the model kept repeating the same tool call")
                     }
@@ -409,6 +412,7 @@ impl Renderer {
                     EndReason::BlockedOnApproval { denial } => warn(&format!(
                         "\n  ⎿  stopped: retried a call that was already denied ({denial})"
                     )),
+                    EndReason::BillingLimit { .. } => warn("\n  ⎿  stopped: out of credit"),
                     EndReason::Error { error: e } => error(&e.to_string()),
                     EndReason::Complete | EndReason::Denied => {}
                 }

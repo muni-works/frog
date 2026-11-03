@@ -152,6 +152,15 @@ impl Agent {
                     self.root.display()
                 ),
             );
+            // The user sees the notice; the model needs it too (its relative paths now land
+            // somewhere else): it rides the next turn's input, the same channel `!cmd` uses.
+            self.conv.pending.push(format!(
+                "<system-note>The working directory {} was deleted out from under this session \
+(cmds there failed with \"No such file or directory\"); the shell now runs in the session \
+root {}. Re-`cd` if you need the old location back.</system-note>",
+                gone.display(),
+                self.root.display()
+            ));
         }
         if name == crate::skills::TOOL {
             return crate::skills::run(&self.skills, &mut self.conv.skills_loaded, input);

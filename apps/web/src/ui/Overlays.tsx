@@ -1,7 +1,7 @@
 import { PLANS, TOP_UPS } from '../auth'
 import { useEffect, useMemo, useState } from 'react'
 import { notifyOn, notifySupported, setNotify } from '../alerts'
-import { billingHistory, billingPortal, createKey, firstName, listKeys, revokeKey, type Account, type KeyInfo, type Provider } from '../auth'
+import { billingHistory, billingPortal, createKey, firstName, listKeys, portalErrorMessage, revokeKey, type Account, type KeyInfo, type Provider } from '../auth'
 import type { Model } from '../models'
 import type { SessionSummary } from '../cloud/protocol'
 
@@ -63,6 +63,7 @@ export function dollars(d: number) {
 /** The plan and its allowance, or (without one) the plans to pick from. */
 function Subscription({ account, apiKey, onSubscribe }: { account: Account | null; apiKey?: string; onSubscribe?: (plan: string) => Promise<void> }) {
   const [busy, setBusy] = useState<string | null>(null)
+  const [portalError, setPortalError] = useState<string | null>(null)
   const sub = account?.subscription
   if (sub) return (
     <div className="bill-card">
@@ -77,7 +78,11 @@ function Subscription({ account, apiKey, onSubscribe }: { account: Account | nul
         )
       })}
       {apiKey && <button type="button" className="f-btn f-btn--plain f-btn--small" style={{ alignSelf: 'flex-start' }} disabled={busy === 'portal'}
-        onClick={() => { setBusy('portal'); billingPortal(apiKey).catch(() => setBusy(null)) }}>{busy === 'portal' ? 'Opening Stripe…' : 'Change or cancel your plan'}</button>}
+        onClick={() => {
+          setBusy('portal'); setPortalError(null)
+          billingPortal(apiKey).catch((e) => { setBusy(null); setPortalError(portalErrorMessage(e) ?? "couldn't open the billing portal — try again") })
+        }}>{busy === 'portal' ? 'Opening Stripe…' : 'Change or cancel your plan'}</button>}
+      {portalError && <div className="det wrap" style={{ color: 'var(--notice)' }}>{portalError}</div>}
     </div>
   )
   return (

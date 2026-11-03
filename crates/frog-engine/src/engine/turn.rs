@@ -354,6 +354,18 @@ impl Agent {
         let mut steps = 0;
         // Cut-off replies continued in a row (reset whenever a reply runs tools).
         let mut continued = 0;
+        // The message item a cut-off reply left open. The next call streams into it, so the
+        // continuation joins that bubble instead of starting another.
+        let mut reply_item: Option<String> = None;
+        // Every part of that reply so far: the bubble's text is the whole answer, not the last
+        // piece of it.
+        let mut reply_text = String::new();
+        // The continuation instruction for the next call. It steers that one call only and
+        // never joins the history: the reply it continues stays one assistant message.
+        let mut steer: Option<String> = None;
+        // Set while this step's reply is the tail of a cut-off one: its blocks join that
+        // message instead of starting another.
+        let mut continuing = false;
         // A reply asking for files it could Read is nudged once, before any tool has run.
         let (mut nudged, mut used_tools) = (false, false);
         let reason = loop {
@@ -377,6 +389,15 @@ impl Agent {
                 }
             }
             self.sync_specs();
+            // What arrived while the last step ran (a session message, the cwd-gone note the
+            // fallback pushed mid-turn): it joins the history here, so the next call — the
+            // model's next look at the world — carries it, not the turn after this one. Turn
+            // start also drains `pending` into the user's message; this catches the ones that
+            // land between calls, where nothing else would pick them up.
+            let queued = std::mem::take(&mut self.conv.pending);
+            if !queued.is_empty() {
+                self.push_user(queued.join("\n"));
+            }
             // What the preview pane saw go wrong since the last call.
             let reports = self.shared.panes.take_queued();
             if !reports.is_empty() {
@@ -404,8 +425,24 @@ impl Agent {
             } else {
                 "thinking".into()
             };
+            // A continued reply is steered by a note for this call only: it never joins the
+            // history, so the reply it continues stays one assistant message there.
+            let steered = steer.take().map(|note| {
+                let mut msgs = self.conv.messages.clone();
+                msgs.push(Message::user(note));
+                msgs
+            });
+            let messages: &[Message] = steered.as_deref().unwrap_or(&self.conv.messages);
             let (resp, streamed) = match self
-                .call(&activity, &self.conv.messages, false, true, think, budget)
+                .call(
+                    &activity,
+                    messages,
+                    false,
+                    true,
+                    think,
+                    budget,
+                    reply_item.clone(),
+                )
                 .await
             {
                 Ok(r) => r,
@@ -519,17 +556,39 @@ impl Agent {
             let nudge = (!nudged && !used_tools && resp.stop != Stop::Length)
                 .then(|| self.file_nudge(&answer, &named))
                 .flatten();
+            // A step that continues nothing starts a new bubble.
+            if !continuing {
+                reply_text.clear();
+            }
             if !answer.is_empty() {
                 self.conv.chapters.replied(&answer);
+                // A continued reply's item carries the whole answer, not just this part: the
+                // client sets its text from this, and the bubble is the same one.
+                reply_text.push_str(&answer);
                 self.complete_item(
-                    streamed.message,
+                    streamed.message.clone().or_else(|| reply_item.clone()),
                     ItemKind::Message,
-                    Item::Message { text: answer },
+                    Item::Message {
+                        text: reply_text.clone(),
+                    },
                 );
             }
 
             let uses = msg.tool_uses();
-            self.push_msg(msg);
+            // More of a cut-off reply joins the message it continues (one bubble, one history
+            // message, via the log's Extend); anything else starts its own. Its thinking stays
+            // out of the join: a provider wants thinking first in an assistant message, and the
+            // block already there is left exactly as it was.
+            if continuing {
+                let more: Vec<Block> = msg
+                    .content
+                    .into_iter()
+                    .filter(|b| !matches!(b, Block::Thinking { .. }))
+                    .collect();
+                self.extend_last(more);
+            } else {
+                self.push_msg(msg);
+            }
             // Safe point (the model's message closed and is in the log): an app update's
             // drain suspends the turn here, before any tool of this step runs, marking the
             // calls it never got to — never "[Request interrupted by user]".
@@ -567,18 +626,25 @@ impl Agent {
                 if resp.stop == Stop::Length && continued < MAX_CONTINUES {
                     continued += 1;
                     self.notice(Level::Info, "reply hit the output limit; continuing");
+                    // The reply goes on in the bubble it started (and the message it already
+                    // is in the history). The id only exists when text streamed; a reply cut
+                    // inside a tool call has nothing to append to.
+                    reply_item = streamed.message.clone().or(reply_item.take());
+                    continuing = reply_item.is_some();
                     // No text came back: the cut fell inside a tool call, which was dropped.
                     // "Continue" would only restart the same oversized call, so ask for smaller
                     // pieces instead.
-                    self.push_user(if silent {
+                    steer = Some(if silent {
                         CUT_TOOL_CALL.into()
                     } else {
-                        "Continue exactly where you left off.".into()
+                        CONTINUE_REPLY.into()
                     });
                     continue;
                 }
                 break if resp.stop == Stop::Length {
-                    EndReason::MaxTokens
+                    EndReason::MaxTokens {
+                        auto_continued: continued,
+                    }
                 } else {
                     EndReason::Complete
                 };
@@ -587,6 +653,10 @@ impl Agent {
             used_tools = true;
             // A reply that acted is progress: the next cut-off gets a fresh set of continues.
             continued = 0;
+            // Whatever came next starts its own bubble.
+            reply_item = None;
+            continuing = false;
+            reply_text.clear();
             match self.run_tools(uses, &mut guard, streamed.early).await? {
                 Batch::Continue => {}
                 Batch::Denied => break EndReason::Denied,
@@ -640,3 +710,8 @@ impl Agent {
 const CUT_TOOL_CALL: &str = "Your last reply hit the output limit partway through a tool call, so \
 that call was dropped and nothing ran. Don't repeat it in one piece: split it into smaller calls. \
 For a long file, Write the first part, then add the rest with Edit, a section at a time.";
+
+/// Steers the call that continues a reply cut off at the output limit. Sent with that one
+/// request only: the reply is one assistant message, so this never joins the history.
+const CONTINUE_REPLY: &str = "Your reply was cut off at the output limit. Continue exactly where \
+you stopped, with no preamble and no recap.";

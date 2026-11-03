@@ -120,8 +120,8 @@ final class Library {
 
     func togglePin(_ id: String) {
         // The chief keeps its pin (the folded strip and the phone show it as one); Remove
-        // Chief first to unpin it.
-        if id == chief { return }
+        // Chief first to unpin it. Flag off, it's a pin like any other.
+        if FeatureFlags.chief, id == chief { return }
         if pinned.remove(id) == nil { pinned.insert(id) }
         UserDefaults.standard.set(Array(pinned), forKey: "pinnedSessions")
     }
@@ -132,6 +132,7 @@ final class Library {
     var chiefSession: SessionInfo? { chief.flatMap { id in sessions.first { $0.id == id } } }
 
     /// Make session `id` the chief: pinned if it isn't already, never archived.
+    /// (Flag off, this stays reachable from the data layer but the UI never calls it.)
     func makeChief(_ id: String) {
         archived.remove(id)
         pinned.insert(id)
@@ -153,7 +154,7 @@ final class Library {
         // for it runs afterwards.
         if on { SessionBroker.shared.clearQueue(id) }
         if on { archived.insert(id); pinned.remove(id) } else { archived.remove(id) }
-        if on, chief == id { chief = nil; UserDefaults.standard.removeObject(forKey: "chiefSession") }
+        if on, FeatureFlags.chief, chief == id { chief = nil; UserDefaults.standard.removeObject(forKey: "chiefSession") }
         UserDefaults.standard.set(Array(archived), forKey: "archivedSessions")
         UserDefaults.standard.set(Array(pinned), forKey: "pinnedSessions")
     }

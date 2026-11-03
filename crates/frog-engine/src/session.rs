@@ -428,7 +428,7 @@ impl EndState {
             EndReason::Error { .. } => Self::Failed,
             EndReason::Denied
             | EndReason::BlockedOnApproval { .. }
-            | EndReason::MaxTokens
+            | EndReason::MaxTokens { .. }
             | EndReason::StepLimit
             | EndReason::Looping => {
                 Self::Stopped
@@ -437,6 +437,8 @@ impl EndState {
             // "stopped" — but it isn't complete either; no glyph until it resumes.
             EndReason::Suspended => return None,
             EndReason::Cancelled => return None,
+            // Out of credit: it stopped and needs the user (money), like a denial.
+            EndReason::BillingLimit { .. } => Self::Stopped,
         })
     }
 }
@@ -714,6 +716,21 @@ pub fn latest_for(dir: &Path, cwd: &Path) -> Result<String> {
         .with_context(|| format!("no previous session in {}", cwd.display()))
 }
 
+/// The model a session runs on: the last one it was switched to (`model_changed`), else the
+/// one it started on. What a resume should run on — `config.toml`'s default may name a model
+/// this session never used, or one whose key is gone (a 401 on every turn).
+pub fn model_of(dir: &Path, id: &str) -> Result<String> {
+    let l = load(dir, id)?;
+    Ok(l.events
+        .iter()
+        .rev()
+        .find_map(|e| match &e.event {
+            Event::ModelChanged { model } => Some(model.clone()),
+            _ => None,
+        })
+        .unwrap_or(l.header.model))
+}
+
 /// Copy a session up to and including event `upto` (default: all of it) into a new session.
 /// History records are kept in file order, so the copy's history matches the source at that point.
 pub fn fork(dir: &Path, id: &str, upto: Option<u64>) -> Result<String> {
@@ -802,6 +819,31 @@ mod tests {
                 event,
             },
         }
+    }
+
+    #[test]
+    fn model_of_reads_the_last_switch_else_the_header() {
+        let dir = tmp();
+        let mut log = Log::create(&dir, header("a")).unwrap();
+        log.append(&ev(
+            1,
+            Event::TurnStarted {
+                turn: 1,
+                input: "hi".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            },
+        ))
+        .unwrap();
+        // No switch yet: the header's model.
+        assert_eq!(model_of(&dir, "a").unwrap(), "m");
+        // Switches: the newest wins.
+        log.append(&ev(2, Event::ModelChanged { model: "n".into() }))
+            .unwrap();
+        log.append(&ev(3, Event::ModelChanged { model: "o".into() }))
+            .unwrap();
+        assert_eq!(model_of(&dir, "a").unwrap(), "o");
+        drop(log);
     }
 
     #[test]
@@ -950,7 +992,7 @@ mod tests {
 
         for reason in [
             crate::protocol::EndReason::Denied,
-            crate::protocol::EndReason::MaxTokens,
+            crate::protocol::EndReason::MaxTokens { auto_continued: 0 },
             crate::protocol::EndReason::StepLimit,
             crate::protocol::EndReason::Looping,
         ] {

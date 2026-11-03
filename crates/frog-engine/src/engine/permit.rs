@@ -54,9 +54,24 @@ impl Agent {
             tools::kind(name)
         };
         // A command that would widen an enforced egress allow-list (hosts beyond it, or
-        // leaving the sandbox it's enforced in) is a human's call in every mode: no rule,
-        // sandbox, classifier or yolo lets it through. `Some(hosts)`: the hosts it asks for.
+        // leaving the sandbox it's enforced in) is a human's call in every mode but yolo.
+        // `Some(hosts)`: the hosts it asks for.
         let egress_ask = self.egress_ask(name, input);
+        // Yolo never asks (Cam, 2026-11-02): the call runs, and the transcript gets one quiet
+        // line where every other mode would card. The hosts the agent named are its
+        // declaration; they're granted for the session, and the proxy still blocks anything it
+        // didn't declare, so the exfil tripwire keeps working. Headless (`can_ask = false`)
+        // keeps its path below: it can't ask, so it denies.
+        if self.mode == Mode::Yolo && self.can_ask && egress_ask.is_some() {
+            self.yolo_widen_egress(
+                item,
+                name,
+                input["command"].as_str().unwrap_or(""),
+                &egress_ask.unwrap_or_default(),
+                input["unsandboxed"].as_bool() == Some(true),
+            );
+            return Decision::Allow;
+        }
         if (kind == Kind::Read || self.mode == Mode::Yolo) && egress_ask.is_none() {
             return Decision::Allow;
         }
@@ -599,6 +614,48 @@ impl Agent {
         }
     }
 
+    /// Yolo ran a call that widened the egress fence: grant the hosts it declared for the
+    /// session and put the fact in the transcript as one quiet line, never a card. Yolo is
+    /// "act without asking", not "act silently": the row is the whole point. `hosts` is
+    /// [`Self::egress_ask`]'s answer — the hosts it named, empty when it only left the
+    /// sandbox (`leaves`, past which no list applies).
+    fn yolo_widen_egress(
+        &mut self,
+        item: &str,
+        name: &str,
+        command: &str,
+        hosts: &[String],
+        leaves: bool,
+    ) {
+        if !hosts.is_empty() && let Some(egress) = &self.ctx.egress {
+            egress.grant(hosts);
+        }
+        let head = crate::egress::head(command);
+        // Past the sandbox no list applies, so `hosts` is empty there: the sandbox line is the
+        // whole fact, and naming hosts "allowed" would be a lie (nothing fences them).
+        let line = match (leaves, hosts.is_empty()) {
+            (true, _) => format!(
+                "yolo: `{head}` ran outside the sandbox; it can change files anywhere and read your credentials."
+            ),
+            (false, _) => format!(
+                "yolo: `{head}` reaches {}, now allowed this session.",
+                hosts.join(", ")
+            ),
+        };
+        if self.cfg.log_calls {
+            eprintln!("{line}");
+        }
+        self.notice(Level::Info, line);
+        self.decision(item, "yolo", "allow", "yolo: widened egress without asking", 0);
+        self.emit(Event::EgressWidened {
+            item: item.to_string(),
+            tool: name.to_string(),
+            command: head,
+            hosts: hosts.to_vec(),
+            sandbox_left: leaves,
+        });
+    }
+
     /// Whether a shell command would widen an enforced egress allow-list: `Some(hosts)` when
     /// its `allow_hosts` names hosts the session doesn't allow yet, `Some([])` when it asks to
     /// leave the sandbox the list is enforced in, `None` otherwise.
@@ -711,6 +768,16 @@ impl Agent {
     ) -> Result<tools::Output> {
         use crate::tools::sessions;
         sessions::validate(name, input)?;
+        // A session starts on a model its gateway lists right now, or not at all
+        // (docs/design/model-policy.md): the check is here, once, so a model that dropped out
+        // of the gateway's list never becomes a session that dies on its first call.
+        if name == sessions::START
+            && let Some(spec) = input["model"].as_str().filter(|s| !s.trim().is_empty())
+        {
+            crate::model_policy::check_spawn_spec(&self.cfg, spec)
+                .await
+                .map_err(|e| anyhow::anyhow!("{e:#}"))?;
+        }
         let (id, rx) = self.shared.sessions.open();
         self.emit(Event::SessionRequest {
             id,
@@ -871,8 +938,20 @@ impl Agent {
             }
             Some(crate::auto::Verdict::Failed(why)) => Err(("classifier", why)),
             // Nothing could judge: the built-in rules decide alone. A down classifier never
-            // cards a call by itself; only a call no rule can prove harmless asks.
+            // cards a call by itself; only a call no rule can prove harmless asks. A worker on
+            // a BYOK model is the exception (docs/design/model-policy.md): it may not quietly
+            // degrade to rules, so the call stops and says how to fix the provider instead.
             None => match crate::auto::rules_fallback(name, input) {
+                Some(_) if !self.rules_may_decide_for_a_worker() => Err((
+                    "classifier",
+                    format!(
+                        "the classifier is down ({}) and a worker can't run on rules alone with a BYOK model; {}",
+                        self.classifier_down
+                            .as_ref()
+                            .map_or("no classifier answered", |(_, why)| why.as_str()),
+                        crate::model_policy::connect_line(&self.profile_name)
+                    ),
+                )),
                 Some(rule) => {
                     self.emit(Event::AutoApproved {
                         item: item.to_string(),
@@ -886,6 +965,17 @@ impl Agent {
                 None => Err(("fallback", CLASSIFIER_DOWN_ASK.into())),
             },
         }
+    }
+
+    /// Whether the built-in rules may decide alone for this session
+    /// (docs/design/model-policy.md): yes for an interactive session (a human is there to be
+    /// asked when a rule can't prove the call harmless), and for a worker on the platform's
+    /// own models — but a worker running on BYOK fails with the provider's fix instead of
+    /// quietly degrading to rules, because nobody is watching that key.
+    fn rules_may_decide_for_a_worker(&self) -> bool {
+        !self.cfg.worker
+            || crate::model_policy::tier(&self.profile_name, &self.profile)
+                != crate::model_policy::Tier::Byok
     }
 
     /// The second, context-rich classifier pass over a flagged call: the session's
@@ -1210,14 +1300,11 @@ impl Agent {
         };
         if !started {
             let built = if fallback {
-                // The fallback needs a model the first pass wasn't: when the first pass
-                // already runs on the session's model (the default chain's `apple` down,
-                // `cloud/bull` down), sending the same action to the same model again
-                // isn't a second opinion, so none is available and the rules decide.
-                let judged_by = self.classifier.as_ref().map(|c| c.profile_name.as_str());
-                let session = (judged_by != Some(self.profile_name.as_str()))
-                    .then_some(self.profile_name.as_str());
-                match crate::auto::Classifier::fallback(&self.cfg, &self.ctx.root, session) {
+                // The fallback is `auto_classifier_fallback` and nothing else
+                // (docs/design/model-policy.md): the session's own model is never a judge,
+                // so a dead BYOK key can't take auto mode down with it, and a cloud session
+                // doesn't get a judge that moves with it.
+                match crate::auto::Classifier::fallback(&self.cfg, &self.ctx.root) {
                     Some(b) => b,
                     None => return Err("no fallback classifier is configured".into()),
                 }

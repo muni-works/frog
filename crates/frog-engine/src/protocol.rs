@@ -536,6 +536,25 @@ pub enum Event {
         #[serde(default)]
         enforced: bool,
     },
+    /// In yolo mode a command ran past the sandbox's egress fence without a card, because
+    /// yolo never asks: it left the sandbox (`sandbox_left`), named hosts off the session's
+    /// allow-list, now granted for the session (`hosts`), or both. The quiet record of an
+    /// interruption that would have been a card in every other mode. Not
+    /// [`Self::EgressBlocked`]: nothing was blocked.
+    EgressWidened {
+        item: String,
+        /// `Bash` (a Monitor's command arrives as one).
+        tool: String,
+        /// The start of the command.
+        command: String,
+        /// Hosts beyond the allow-list that the call named; granted for the rest of the
+        /// session. Empty when it only left the sandbox.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        hosts: Vec<String>,
+        /// The call ran outside the sandbox (`unsandboxed: true`).
+        #[serde(default)]
+        sandbox_left: bool,
+    },
     /// How one permission check was decided, for measuring the ask rate:
     /// which layer answered (rule, classifier, fallback, user) and how long it took.
     PermissionDecision {
@@ -571,6 +590,25 @@ pub enum Event {
         /// The provider's rejection, for the engine log.
         #[serde(default, skip_serializing_if = "String::is_empty")]
         detail: String,
+    },
+    /// The plan's allowance ran out and the session transitions to credit at usage prices
+    /// ("make it obvious, don't throw an error"): one informational line in the transcript,
+    /// then the call continues (the edge admitted it — the next turn is billed to credit).
+    /// Not a warning, never a provider error. The provider's raw JSON never reaches the
+    /// transcript; `reason` is its clean message and `balance_micro` its credit balance when
+    /// the edge sent one. Durable, so a replaying client shows it too.
+    BillingLimit {
+        /// Which allowance ran out: `5h` (the plan's 5-hour window), `weekly`, or `credit`
+        /// (the wallet itself is empty — that one ends the turn, see
+        /// [`EndReason::BillingLimit`]).
+        window: String,
+        /// The provider's own words, cleaned: "5-hour plan limit reached; add credit to keep
+        /// going at usage prices" becomes the client's typed row.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        reason: String,
+        /// Remaining credit, in millionths of a dollar, when the edge said (`x-frog-billing`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        balance_micro: Option<u64>,
     },
     /// Old tool output was trimmed (no LLM call) to stay inside the window.
     ContextPruned {
@@ -855,9 +893,11 @@ impl Event {
                 | Self::QuestionResolved { .. }
                 | Self::AutoApproved { .. }
                 | Self::EgressBlocked { .. }
+                | Self::EgressWidened { .. }
             | Self::PermissionDecision { .. }
                 | Self::Compacted { .. }
             | Self::CompactionFailed { .. }
+                | Self::BillingLimit { .. }
                 | Self::ContextPruned { .. }
                 | Self::ModelChanged { .. }
                 | Self::FolderChanged { .. }
@@ -1048,13 +1088,26 @@ pub enum Delta {
     },
 }
 
+/// What a client shows when a turn ended [`EndReason::MaxTokens`]: the plain limit line, and
+/// how many times frog continued it in place before giving up.
+pub fn limit_banner(auto_continued: u32) -> String {
+    match auto_continued {
+        0 => "Hit the output token limit".into(),
+        n => format!("Hit the output token limit (auto-continued {n}x)"),
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum EndReason {
     /// The model finished its answer.
     Complete,
-    /// The model hit its output token limit.
-    MaxTokens,
+    /// The model hit its output token limit, after `auto_continued` replies were continued in
+    /// place to try to finish the answer. Zero when frog didn't continue it at all.
+    MaxTokens {
+        #[serde(default)]
+        auto_continued: u32,
+    },
     /// The user denied a tool call; the engine stopped to wait for instructions.
     Denied,
     /// The model kept repeating an identical tool call.
@@ -1073,6 +1126,20 @@ pub enum EndReason {
     /// relaunched app picks it up automatically.
     Suspended,
     Cancelled,
+    /// The turn ended on money, not a model failure: the wallet is empty and nothing admitted
+    /// continuing. Typed so the client shows "out of credit · add credit" with a way to fix it,
+    /// not a red provider dump. The raw provider JSON stays in the engine log.
+    BillingLimit {
+        /// Which wall was hit: `credit` (the usual), or the window whose refusal the edge
+        /// couldn't admit (`5h`, `weekly`).
+        window: String,
+        /// The provider's clean message ("insufficient credits"), for the transcript's line.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        reason: String,
+        /// Remaining credit when the edge said; `None` (or 0) means none.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        balance_micro: Option<u64>,
+    },
     Error {
         error: EngineError,
     },
@@ -1084,6 +1151,14 @@ pub enum EndReason {
 pub enum EngineError {
     /// The provider answered with an error status.
     Provider {
+        status: u16,
+        message: String,
+    },
+    /// A billing refusal (402 `insufficient_quota`) that isn't a credit transition: the
+    /// provider's own words, cleaned of its JSON envelope (the raw body stays in the engine
+    /// log). The credit-transition case never lands here — it's [`Event::BillingLimit`] and
+    /// [`EndReason::BillingLimit`].
+    Billing {
         status: u16,
         message: String,
     },
@@ -1106,6 +1181,7 @@ impl std::fmt::Display for EngineError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Self::Provider { status, message } => write!(f, "provider error ({status}): {message}"),
+            Self::Billing { status, message } => write!(f, "billing refused ({status}): {message}"),
             Self::Connection { message } => write!(f, "connection failed: {message}"),
             Self::IncompleteStream => write!(f, "the response stream ended early"),
             Self::Config { message } | Self::Internal { message } => write!(f, "{message}"),

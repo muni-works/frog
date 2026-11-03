@@ -16,6 +16,14 @@ pub enum Fail {
     Stream { partial: Vec<Block>, message: String },
     /// A non-2xx answer, before anything streams.
     Http { status: u16, body: String },
+    /// The edge's billing refusal: a 402 with its `x-frog-billing` header, as frog cloud
+    /// sends it.
+    Billing {
+        status: u16,
+        body: String,
+        /// The `x-frog-billing` header's value (`credit: <micros>`), when the edge said.
+        billing: Option<String>,
+    },
 }
 
 impl Fail {
@@ -42,6 +50,15 @@ impl Fail {
             body: body.into(),
         }
     }
+
+    /// frog cloud's billing refusal: a 402 with the edge's `x-frog-billing` header.
+    pub fn billing(body: &str, header: Option<&str>) -> Self {
+        Self::Billing {
+            status: 402,
+            body: body.into(),
+            billing: header.map(Into::into),
+        }
+    }
 }
 
 pub struct Client {
@@ -54,6 +71,13 @@ pub struct Client {
     pub tool_args: Option<Duration>,
     /// Calls that fail (see [`Fail`]), consumed before `responses`.
     pub fails: Mutex<VecDeque<Fail>>,
+    /// When each attempt started, for asserting a backoff sequence (paused-clock tests).
+    pub attempts: std::sync::Arc<Mutex<Vec<tokio::time::Instant>>>,
+    /// When set (a `(enabled, release)` pair), every call pends here after its request was
+    /// recorded but before its reply streams — a slow provider, so a test can land an
+    /// interrupt mid-call deterministically. (A `Notify` permit set before the waiter
+    /// registers would be lost, so the gate is flags the call polls until the test flips it.)
+    pub hold: Option<Arc<(std::sync::atomic::AtomicBool, std::sync::atomic::AtomicBool)>>,
 }
 
 impl Client {
@@ -63,6 +87,8 @@ impl Client {
             sent: Default::default(),
             tool_args: None,
             fails: Default::default(),
+            attempts: Default::default(),
+            hold: None,
         }
     }
 
@@ -76,11 +102,22 @@ impl Client {
             .iter()
             .map(|t| format!("<tool {}>", t.name))
             .collect();
+        self.attempts.lock().unwrap().push(tokio::time::Instant::now());
         self.sent.lock().unwrap().push(format!(
             "{}{tools}{}",
             req.system,
             serde_json::to_string(req.messages)?
         ));
+        // The request is in: the call is mid-flight now. Hold here if asked, until the test
+        // releases it, so an op racing the turn (a Shutdown, an interrupt) lands mid-call.
+        if let Some(gate) = &self.hold {
+            let (enabled, release) = (&gate.0, &gate.1);
+            while enabled.load(std::sync::atomic::Ordering::SeqCst)
+                && !release.load(std::sync::atomic::Ordering::SeqCst)
+            {
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
+        }
         if let Some(fail) = self.fails.lock().unwrap().pop_front() {
             match fail {
                 Fail::Stream { partial, message } => {
@@ -92,7 +129,17 @@ impl Client {
                     return Err(StreamError { message }.into());
                 }
                 Fail::Http { status, body } => {
-                    return Err(HttpError { status, body }.into());
+                    return Err(HttpError { status, body, billing: None }.into());
+                }
+                Fail::Billing { status, body, billing } => {
+                    return Err(HttpError {
+                        status,
+                        body,
+                        billing: billing
+                            .as_deref()
+                            .and_then(super::Billing::from_header),
+                    }
+                    .into());
                 }
             }
         }

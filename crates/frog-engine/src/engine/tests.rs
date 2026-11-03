@@ -1,5 +1,6 @@
 use super::*;
 use crate::config::{Profile, ProviderKind};
+use crate::provider::openai;
 use crate::protocol::{Answer, Image};
 use crate::provider::scripted;
 use serde_json::json;
@@ -119,6 +120,68 @@ fn engine_profile_failing(
     script: Vec<Response>,
     profile: Profile,
 ) -> (Handle, Arc<Mutex<Vec<String>>>) {
+    let (h, sent, _) = engine_profile_timed(fails, script, profile);
+    (h, sent)
+}
+
+/// [`engine_profile_failing`] that also keeps each attempt's start time, for backoff tests.
+fn engine_profile_timed(
+    fails: Vec<scripted::Fail>,
+    script: Vec<Response>,
+    profile: Profile,
+) -> (
+    Handle,
+    Arc<Mutex<Vec<String>>>,
+    Arc<Mutex<Vec<tokio::time::Instant>>>,
+) {
+    engine_profile_named(fails, script, profile, "test")
+}
+
+/// [`engine_profile_timed`] on a named spec (the fix lines name the provider, so tests that
+/// check them run on the spec a session really would).
+fn engine_profile_named(
+    fails: Vec<scripted::Fail>,
+    script: Vec<Response>,
+    profile: Profile,
+    spec: &str,
+) -> (
+    Handle,
+    Arc<Mutex<Vec<String>>>,
+    Arc<Mutex<Vec<tokio::time::Instant>>>,
+) {
+    let opts = Options {
+        cfg: Config {
+            hermetic: true,
+            ..Config::default()
+        },
+        profile_name: spec.into(),
+        profile,
+        cwd: std::env::temp_dir(),
+        mode: Mode::Default,
+        can_ask: true,
+        resume: None,
+        store: None,
+        sandbox: false,
+        rich: false,
+        subagent: false,
+        chat: false,
+    };
+    let client = scripted::Client::new(script);
+    *client.fails.lock().unwrap() = fails.into();
+    let sent = client.sent.clone();
+    let attempts = client.attempts.clone();
+    (
+        start(opts, Provider::Scripted(client)).unwrap(),
+        sent,
+        attempts,
+    )
+}
+
+/// Like [`engine_profile_named`], but on a real provider (`Provider::OpenAi` against `base_url`),
+/// for tests against a live localhost server: the test's server produces every reply itself.
+fn engine_real_profile(profile: Profile) -> Handle {
+    let base = profile.base_url.clone().unwrap_or_default();
+    let model = profile.model.clone();
     let opts = Options {
         cfg: Config {
             hermetic: true,
@@ -136,10 +199,20 @@ fn engine_profile_failing(
         subagent: false,
         chat: false,
     };
-    let client = scripted::Client::new(script);
-    *client.fails.lock().unwrap() = fails.into();
-    let sent = client.sent.clone();
-    (start(opts, Provider::Scripted(client)).unwrap(), sent)
+    start(opts, Provider::OpenAi(openai::Client {
+        http: reqwest::Client::builder()
+            // The host's proxy env must not intercept the test's localhost server.
+            .no_proxy()
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .build()
+            .unwrap(),
+        base,
+        model,
+        key: None,
+        extra: None,
+        anthropic: Default::default(),
+    }))
+    .unwrap()
 }
 
 /// Opus on Vercel's AI Gateway, as `vercel/anthropic/claude-opus-5.5` resolves.
@@ -835,7 +908,7 @@ async fn incomplete_stream_is_retried_before_failing() {
         .collect();
     let mut h = engine(script, true);
     let evs = run(&mut h, "hi").await;
-    // Three retries; the first two are quiet, the third says it's still trying.
+    // Three retries, and ONE notice for the whole storm (docs/design/model-policy.md).
     let notices: Vec<&str> = evs
         .iter()
         .filter_map(|e| match &e.event {
@@ -844,7 +917,7 @@ async fn incomplete_stream_is_retried_before_failing() {
         })
         .collect();
     assert_eq!(notices.len(), 1, "{notices:?}");
-    assert!(notices[0].ends_with("still trying (3/3)"), "{notices:?}");
+    assert!(notices[0].contains("retrying (up to 3 times)"), "{notices:?}");
     assert!(evs.iter().any(|e| matches!(
         &e.event,
         Event::TurnEnded {
@@ -866,9 +939,11 @@ async fn a_gateway_error_before_any_output_is_retried() {
         vec![reply(vec![text("all good")], Stop::End)],
     );
     let evs = run(&mut h, "hi").await;
-    // A retry happened, quietly (one retry is routine: no notice), and the turn completed
-    // with the good reply.
-    assert!(!evs.iter().any(|e| matches!(e.event, Event::Notice { .. })));
+    // A retry happened — ONE line says so, whether the storm is one retry or three
+    // (docs/design/model-policy.md) — and the turn completed with the good reply.
+    let notices = notices(&evs);
+    assert_eq!(notices.len(), 1, "{notices:?}");
+    assert!(notices[0].contains("retrying (up to 3 times)"), "{notices:?}");
     assert!(evs.iter().any(|e| matches!(
         e.event,
         Event::TurnEnded {
@@ -945,8 +1020,8 @@ async fn a_gateway_error_mid_stream_discards_the_partial_and_retries() {
 
 #[tokio::test(start_paused = true)]
 async fn an_auth_error_is_never_retried() {
-    // 401 from the provider: fail the turn at once — no retry notice, no discard, and
-    // the unused scripted reply stays unconsumed.
+    // 401 from the provider: fail the turn at once — one notice saying how to fix it, no
+    // retry, no discard, and the unused scripted reply stays unconsumed.
     let mut h = engine_fail(
         vec![scripted::Fail::http(401, "{\"error\":\"invalid api key\"}")],
         vec![reply(vec![text("never reached")], Stop::End)],
@@ -960,11 +1035,176 @@ async fn an_auth_error_is_never_retried() {
         !evs.iter()
             .any(|e| matches!(e.event, Event::ItemsDiscarded { .. }))
     );
+    // ONE notice, and it's the fix, not a retry count.
+    let notices = notices(&evs);
+    assert_eq!(notices.len(), 1, "{notices:?}");
+    assert!(notices[0].contains("rejected the key"), "{notices:?}");
     assert!(evs.iter().any(|e| matches!(
         &e.event,
         Event::TurnEnded {
             reason: EndReason::Error {
                 error: EngineError::Provider { status: 401, .. }
+            },
+            ..
+        }
+    )));
+}
+
+/// A 402 is the wallet, not the network: the first answer fails the call, and the turn ends
+/// with the TYPED billing reason — "out of credit", never a raw provider dump, and no five
+/// retries on an empty wallet (docs/design/model-policy.md, the vercel incident; billing
+/// events).
+#[tokio::test(start_paused = true)]
+async fn out_of_credits_ends_typed_with_the_fix() {
+    let mut p = Profile::new(ProviderKind::Openai, "openai/gpt-5");
+    p.base_url = Some("https://ai-gateway.vercel.sh/v1".into());
+    p.tool_mode = ToolMode::Native;
+    let fails = (0..5)
+        .map(|_| {
+            scripted::Fail::http(
+                402,
+                "{\"error\":{\"message\":\"Insufficient credits\",\"type\":\"insufficient_credits\"}}",
+            )
+        })
+        .collect();
+    let (mut h, _, attempts) =
+        engine_profile_named(fails, vec![], p, "vercel/openai/gpt-5");
+    let evs = run(&mut h, "hi").await;
+    // One attempt: no retry spends the budget on an empty wallet.
+    assert_eq!(attempts.lock().unwrap().len(), 1);
+    // No billing-limit event: nothing admitted continuing, so there's no transition to
+    // announce — just the typed end.
+    assert!(!evs.iter().any(|e| matches!(e.event, Event::BillingLimit { .. })));
+    // The raw body's JSON envelope never reaches the transcript: no provider error, no JSON
+    // dump — the provider's own words ride in the typed reason's `reason` only.
+    for env in &evs {
+        let json = serde_json::to_string(&env.event).unwrap();
+        assert!(
+            !json.contains("insufficient_credits") && !json.contains("provider error"),
+            "raw provider body leaked: {json}"
+        );
+    }
+    // The turn ends with the typed billing reason, not a provider error.
+    assert!(evs.iter().any(|e| matches!(
+        &e.event,
+        Event::TurnEnded {
+            reason: EndReason::BillingLimit { window, .. },
+            ..
+        } if window == "credit"
+    )));
+    assert!(!evs.iter().any(|e| matches!(
+        &e.event,
+        Event::TurnEnded { reason: EndReason::Error { .. }, .. }
+    )));
+}
+
+/// The edge admitted the transition (its `x-frog-billing: credit: <micros>` header): one
+/// informational billing-limit line with the balance, then the step runs again at usage
+/// prices and the turn completes. The raw 402 body never surfaces.
+#[tokio::test(start_paused = true)]
+async fn an_admitted_billing_refusal_transitions_to_credit_and_continues() {
+    let mut p = Profile::new(ProviderKind::Openai, "openai/gpt-5");
+    p.base_url = Some("https://api.frog.toys/v1".into());
+    p.tool_mode = ToolMode::Native;
+    // The edge's body, as frog cloud's edge passes it through, plus the edge's admit
+    // header with the balance.
+    let refusal = scripted::Fail::billing(
+        "{\"error\":{\"message\":\"5-hour plan limit reached; add credit to keep going at usage prices\",\"type\":\"insufficient_quota\",\"code\":402}}",
+        Some("credit: 4200000"),
+    );
+    let (mut h, _, attempts) =
+        engine_profile_named(vec![refusal], vec![reply(vec![text("carried on")], Stop::End)], p, "cloud/bull");
+    let evs = run(&mut h, "hi").await;
+    // Two attempts: the refusal, then the admitted retry.
+    assert_eq!(attempts.lock().unwrap().len(), 2);
+    // ONE informational billing-limit event, with the window and the balance the edge sent.
+    let limits: Vec<&Event> = evs
+        .iter()
+        .map(|e| &e.event)
+        .filter(|e| matches!(e, Event::BillingLimit { .. }))
+        .collect();
+    assert_eq!(limits.len(), 1, "{limits:?}");
+    assert!(matches!(
+        limits[0],
+        Event::BillingLimit { window, balance_micro: Some(4_200_000), .. } if window == "5h"
+    ));
+    // The turn went on and completed.
+    assert!(evs.iter().any(|e| matches!(
+        &e.event,
+        Event::TurnEnded { reason: EndReason::Complete, .. }
+    )));
+    // The raw body's JSON envelope never reaches the transcript: no provider error, no JSON
+    // dump — the provider's clean message rides in the typed event's `reason` only.
+    for env in &evs {
+        let json = serde_json::to_string(&env.event).unwrap();
+        assert!(
+            !json.contains("insufficient_quota") && !json.contains("provider error"),
+            "raw provider body leaked: {json}"
+        );
+    }
+    assert!(!evs.iter().any(|e| matches!(&e.event, Event::Error { .. })));
+}
+
+/// The admitted retry came back refused again (the credit ran out or the admit didn't
+/// hold): the turn ends with the typed billing reason, ONE billing line total.
+#[tokio::test(start_paused = true)]
+async fn a_second_billing_refusal_ends_the_turn_typed() {
+    let mut p = Profile::new(ProviderKind::Openai, "openai/gpt-5");
+    p.base_url = Some("https://api.frog.toys/v1".into());
+    p.tool_mode = ToolMode::Native;
+    let refusal = scripted::Fail::billing(
+        "{\"error\":{\"message\":\"5-hour plan limit reached; add credit to keep going at usage prices\",\"type\":\"insufficient_quota\",\"code\":402}}",
+        Some("credit: 4200000"),
+    );
+    let (mut h, _, attempts) = engine_profile_named(
+        vec![refusal.clone(), refusal],
+        vec![],
+        p,
+        "cloud/bull",
+    );
+    let evs = run(&mut h, "hi").await;
+    assert_eq!(attempts.lock().unwrap().len(), 2);
+    let limits: Vec<&Event> = evs
+        .iter()
+        .map(|e| &e.event)
+        .filter(|e| matches!(e, Event::BillingLimit { .. }))
+        .collect();
+    assert_eq!(limits.len(), 1, "one line, not one per attempt: {limits:?}");
+    assert!(evs.iter().any(|e| matches!(
+        &e.event,
+        Event::TurnEnded {
+            reason: EndReason::BillingLimit { window, .. },
+            ..
+        } if window == "5h"
+    )));
+}
+
+/// A busy provider retries 1 s, 2 s, 4 s and no further: four attempts, one notice for the
+/// whole storm (docs/design/model-policy.md).
+#[tokio::test(start_paused = true)]
+async fn a_rate_limited_provider_backs_off_one_two_four_and_stops() {
+    let mut p = Profile::new(ProviderKind::Ollama, "test");
+    p.tool_mode = ToolMode::Native;
+    let fails = (0..6)
+        .map(|_| scripted::Fail::http(429, "{\"error\":{\"message\":\"bull is busy\"}}"))
+        .collect();
+    let (mut h, _, attempts) = engine_profile_timed(fails, vec![], p);
+    let evs = run(&mut h, "hi").await;
+    let starts = attempts.lock().unwrap().clone();
+    assert_eq!(starts.len(), 4, "three retries after the first attempt");
+    let gaps: Vec<u64> = starts
+        .windows(2)
+        .map(|w| (w[1] - w[0]).as_secs())
+        .collect();
+    assert_eq!(gaps, [1, 2, 4], "{gaps:?}");
+    let notices = notices(&evs);
+    assert_eq!(notices.len(), 1, "one notice for the storm: {notices:?}");
+    assert!(notices[0].contains("retrying (up to 3 times)"), "{notices:?}");
+    assert!(evs.iter().any(|e| matches!(
+        &e.event,
+        Event::TurnEnded {
+            reason: EndReason::Error {
+                error: EngineError::Provider { status: 429, .. }
             },
             ..
         }
@@ -985,13 +1225,13 @@ async fn a_mid_stream_error_retries_only_up_to_budget() {
             .collect();
     let mut h = engine_fail(fails, vec![]);
     let evs = run(&mut h, "hi").await;
-    // Three retries, two of them quiet: one notice, on the third.
+    // Three retries, ONE notice for the whole storm (docs/design/model-policy.md).
     let retries = evs
         .iter()
         .filter(|e| {
             matches!(
                 e.event,
-                Event::Notice { message: ref m, .. } if m.contains("still trying (3/3)")
+                Event::Notice { message: ref m, .. } if m.contains("retrying (up to 3 times)")
             )
         })
         .count();
@@ -1014,12 +1254,282 @@ async fn a_mid_stream_error_retries_only_up_to_budget() {
     )));
 }
 
+/// A connection reset that breaks the reply's BODY (headers arrived, the stream died mid-sentence)
+/// is a reqwest `is_body()` error: the same class as a truncated stream. It retries, the partial is
+/// discarded (ItemsDiscarded), and the re-run's full answer completes the turn.
+#[tokio::test(start_paused = true)]
+async fn a_connection_reset_mid_body_is_retried() {
+    let mut h = engine_fail(
+        vec![scripted::Fail::partial(
+            "partial ans",
+            "connection reset by peer",
+        )],
+        vec![reply(vec![text("full answer")], Stop::End)],
+    );
+    let evs = run(&mut h, "hi").await;
+    let discarded = evs
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::ItemsDiscarded { ids } => Some(ids.clone()),
+            _ => None,
+        })
+        .expect("items_discarded");
+    assert_eq!(discarded.len(), 1);
+    assert!(evs.iter().any(|e| matches!(
+        &e.event,
+        Event::ItemDelta { id, .. } if discarded.contains(id)
+    )));
+    let answer = evs
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::ItemCompleted {
+                item: Item::Message { text },
+                ..
+            } => Some(text.clone()),
+            _ => None,
+        })
+        .expect("a completed message");
+    assert_eq!(answer, "full answer");
+    assert!(evs.iter().any(|e| matches!(
+        e.event,
+        Event::TurnEnded {
+            reason: EndReason::Complete,
+            ..
+        }
+    )));
+}
+
+/// The reset keeps killing the body: 3 retries with backoff inside the one retry budget, one
+/// notice for the storm, every partial discarded, then the existing failure path — the typed
+/// Provider error (classified from the stream error, status 502), not a new one.
+#[tokio::test(start_paused = true)]
+async fn a_connection_reset_exhausting_the_budget_ends_with_the_existing_failure_path() {
+    let fails = (0..=3)
+        .map(|_| scripted::Fail::partial("partial", "connection reset by peer"))
+        .collect();
+    let mut h = engine_fail(fails, vec![]);
+    let evs = run(&mut h, "hi").await;
+    let notices: Vec<&str> = evs
+        .iter()
+        .filter_map(|e| match &e.event {
+            Event::Notice { message, .. } => Some(message.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(notices.len(), 1, "{notices:?}");
+    assert!(notices[0].contains("retrying (up to 3 times)"), "{notices:?}");
+    assert_eq!(
+        evs.iter()
+            .filter(|e| matches!(e.event, Event::ItemsDiscarded { .. }))
+            .count(),
+        4,
+        "every failed attempt discarded its partial"
+    );
+    assert!(evs.iter().any(|e| matches!(
+        &e.event,
+        Event::TurnEnded {
+            reason: EndReason::Error {
+                error: EngineError::Provider { status: 502, .. }
+            },
+            ..
+        }
+    )));
+}
+
+/// The real thing, not the scripted stand-in: an OpenAI-wire server that answers 200, streams a
+/// fragment of the reply, then kills the socket mid-body. reqwest surfaces the broken read as a
+/// decode-kind error over a hyper body error, which `retryable()` now lets through: the engine
+/// retries (one backoff of 1 s) and the turn completes with the second attempt's whole reply.
+#[tokio::test(start_paused = true)]
+async fn a_real_reset_mid_body_is_retried_to_a_clean_reply() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    // Only chat completions count: the engine's startup probes (GET /props, /v1/models, 404 on
+    // unknown paths) hit the same listener and must not trip the reset script.
+    let hits = Arc::new(AtomicUsize::new(0));
+    let count = hits.clone();
+    tokio::spawn(async move {
+        while let Ok((mut s, _)) = listener.accept().await {
+            let count = count.clone();
+            tokio::spawn(async move {
+                let mut received = Vec::new();
+                loop {
+                    let mut buf = [0u8; 8192];
+                    let Ok(n) = s.read(&mut buf).await else {
+                        return;
+                    };
+                    if n == 0 {
+                        return;
+                    }
+                    received.extend_from_slice(&buf[..n]);
+                    if let Some(end) = received.windows(4).position(|w| w == b"\r\n\r\n") {
+                        let head = String::from_utf8_lossy(&received[..end]).to_ascii_lowercase();
+                        let len: usize = head
+                            .lines()
+                            .find_map(|l| l.strip_prefix("content-length: ").map(str::to_owned))
+                            .and_then(|l| l.trim().parse().ok())
+                            .unwrap_or(0);
+                        if received.len() >= end + 4 + len {
+                            break;
+                        }
+                    }
+                }
+                let head = String::from_utf8_lossy(&received);
+                let chat = head
+                    .lines()
+                    .next()
+                    .map(|l| l.contains("chat/completions"))
+                    .unwrap_or(false);
+                if !chat {
+                    // A probe (context window, capabilities): answer nothing useful, no reset.
+                    let _ = s
+                        .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{}")
+                        .await;
+                    return;
+                }
+                if count.fetch_add(1, Ordering::SeqCst) > 0 {
+                    // The retry: a whole, clean reply (the shape openai.rs's gateway test uses:
+                    // the terminal chunk carries the finish reason inside its single choice).
+                    let body = "data: {\"choices\":[{\"delta\":{\"content\":\"whole reply\"}}]}\n\n\
+                                data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n\
+                                data: [DONE]\n\n";
+                    let _ = s
+                        .write_all(
+                            format!(
+                                "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                                body.len()
+                            )
+                            .as_bytes(),
+                        )
+                        .await;
+                    return;
+                }
+                // Content-length longer than the fragment that follows: the client is still
+                // reading the body when the socket dies, so the error is a body failure, not a
+                // clean end of stream.
+                let _ = s
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: 500\r\nconnection: close\r\n\r\n\
+                          data: {\"choices\":[{\"delta\":{\"content\":\"half a rep\"}}]}\n\n",
+                    )
+                    .await;
+                let _ = s.flush().await;
+            });
+        }
+    });
+    let mut p = Profile::new(ProviderKind::Openai, "test");
+    p.base_url = Some(format!("http://{addr}/v1"));
+    p.tool_mode = ToolMode::Native;
+    let mut h = engine_real_profile(p);
+    let evs = run(&mut h, "hi").await;
+    // The turn makes its own number of model calls (warm prefill, the summary pass); the retry
+    // contract lives in the events: the reset did NOT end the turn, and the reply that
+    // completed it is the retried attempt's whole one, from the server's second chat answer.
+    assert!(
+        hits.load(Ordering::SeqCst) >= 2,
+        "the retry reached the server again: {}",
+        hits.load(Ordering::SeqCst)
+    );
+    let answer = evs
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::ItemCompleted {
+                item: Item::Message { text },
+                ..
+            } => Some(text.clone()),
+            _ => None,
+        })
+        .expect("a completed message");
+    assert_eq!(answer, "whole reply");
+    assert!(evs.iter().any(|e| matches!(
+        e.event,
+        Event::TurnEnded {
+            reason: EndReason::Complete,
+            ..
+        }
+    )));
+    shutdown(h).await;
+}
+
+/// The reqwest error the reset above produces, gathered once from a real server and asserted on
+/// directly: a decode-kind error over a body read (headers arrived, the body stream broke) is
+/// retryable and classifies as a Connection error; a connect failure (nothing answered) is
+/// neither.
+#[tokio::test(start_paused = true)]
+async fn a_broken_body_stream_is_retryable_and_a_connect_failure_is_not() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    // The real reset, captured at the sse layer's own shape: read the body from a server that
+    // dies mid-response. Decode over a hyper body error, is_body false (no client timeout here).
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let Ok((mut s, _)) = listener.accept().await else {
+            return;
+        };
+        let mut buf = vec![0u8; 65536];
+        let _ = s.read(&mut buf).await;
+        let _ = s
+            .write_all(
+                b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: 500\r\nconnection: close\r\n\r\n\
+                  data: {\"partial\":true}\n\n",
+            )
+            .await;
+        let _ = s.flush().await;
+    });
+    let http = reqwest::Client::builder()
+        // The host's proxy env would swallow both connections (a 127.0.0.1 target isn't in
+        // reqwest's system no-proxy); these tests need the direct socket.
+        .no_proxy()
+        .connect_timeout(Duration::from_secs(10))
+        .build()
+        .unwrap();
+    let resp = http
+        .get(format!("http://{addr}/v1/chat/completions"))
+        .send()
+        .await
+        .unwrap();
+    let mut stream = resp.bytes_stream();
+    // The first chunk arrives; the second read hits the dead socket.
+    let _ = futures_util::StreamExt::next(&mut stream).await.unwrap().unwrap();
+    let broken = futures_util::StreamExt::next(&mut stream)
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert!(
+        broken.is_decode() && !broken.is_body() && !broken.is_connect() && !broken.is_timeout(),
+        "{broken:#}"
+    );
+    assert!(retryable(&(broken.into())));
+    // Connect: the request never got anywhere — a dead server, not a broken reply.
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let dead = l.local_addr().unwrap();
+    drop(l);
+    let refused = http.get(format!("http://{dead}/v1")).send().await.unwrap_err();
+    assert!(
+        refused.is_connect() && !refused.is_decode() && !refused.is_body(),
+        "{refused:#}"
+    );
+    let refused: anyhow::Error = refused.into();
+    assert!(!retryable(&refused));
+    // Both are the network, not frog: a connect failure classifies as Connection, with the
+    // provider's own message underneath (the decode error was asserted retryable above).
+    assert!(matches!(
+        classify(&refused),
+        EngineError::Connection { .. }
+    ));
+}
+
 #[tokio::test]
 async fn a_reply_cut_off_by_the_output_limit_is_continued() {
+    // Cut off twice, then finished: one reply, so ONE assistant message with every part, and
+    // no banner (the turn ends complete).
     let mut h = engine(
         vec![
-            reply(vec![text("part one")], Stop::Length),
-            reply(vec![text("part two")], Stop::End),
+            reply(vec![text("part one ")], Stop::Length),
+            reply(vec![text("part two ")], Stop::Length),
+            reply(vec![text("part three")], Stop::End),
         ],
         true,
     );
@@ -1031,6 +1541,74 @@ async fn a_reply_cut_off_by_the_output_limit_is_continued() {
             ..
         }
     )));
+    // One message item, and its completion carries the whole answer.
+    let msgs: Vec<String> = evs
+        .iter()
+        .filter_map(|e| match &e.event {
+            Event::ItemCompleted {
+                item: Item::Message { text },
+                ..
+            } => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(msgs.last().map(String::as_str), Some("part one part two part three"));
+    let started = evs
+        .iter()
+        .filter(|e| {
+            matches!(
+                e.event,
+                Event::ItemStarted {
+                    kind: ItemKind::Message,
+                    ..
+                }
+            )
+        })
+        .count();
+    assert_eq!(started, 1, "the continuation joins the same bubble");
+}
+
+#[tokio::test]
+async fn a_cut_off_reply_is_one_assistant_message_in_the_history() {
+    // The continuation steers one call without joining the history: the reply it continues
+    // stays a single assistant message there, with every part of it.
+    let dir = tmp_store();
+    let (mut h, sent) = engine_sent(
+        vec![
+            reply(vec![text("part one ")], Stop::Length),
+            reply(vec![text("part two")], Stop::End),
+        ],
+        Some(dir.clone()),
+        None,
+        None,
+        std::env::temp_dir(),
+    );
+    let sid = run(&mut h, "hi").await[0].session.clone();
+    // The continuation's own request carries the instruction...
+    {
+        let sent = sent.lock().unwrap();
+        let last = sent_messages(&sent[1]);
+        let tail = last.iter().rev().find(|m| m["role"] == "user").unwrap().to_string();
+        assert!(tail.contains("Continue exactly where you stopped"), "{tail}");
+    }
+    shutdown(h).await;
+    let loaded = session::load(&dir, &sid).unwrap();
+    let assistants: Vec<String> = loaded
+        .messages
+        .iter()
+        .filter(|m| m.role == Role::Assistant)
+        .map(|m| m.text())
+        .collect();
+    assert_eq!(assistants, ["part one part two"], "one message, every part");
+    // ...and the instruction never became a user message of the history.
+    assert!(
+        !loaded
+            .messages
+            .iter()
+            .any(|m| m.text().contains("cut off at the output limit")),
+        "{:?}",
+        loaded.messages.iter().map(|m| m.text()).collect::<Vec<_>>()
+    );
 }
 
 #[tokio::test]
@@ -1047,23 +1625,85 @@ async fn a_cut_off_tool_call_is_asked_for_in_pieces_not_continued() {
     let msgs = sent_messages(&sent[1]);
     let last = msgs.iter().rev().find(|m| m["role"] == "user").unwrap().to_string();
     assert!(last.contains("split it into smaller calls"), "{last}");
-    assert!(!last.contains("Continue exactly where you left off"), "{last}");
+    assert!(!last.contains("Continue exactly where you stopped"), "{last}");
 }
 
 #[tokio::test]
 async fn max_tokens_is_distinguished() {
-    // Continued MAX_CONTINUES times, then still cut off: the turn ends as MaxTokens.
+    // Continued MAX_CONTINUES times, then still cut off: the turn ends as MaxTokens, and the
+    // reason says how many continuations it got (the banner's "(auto-continued 2x)").
     let mut h = engine(
         (0..=MAX_CONTINUES)
-            .map(|_| reply(vec![text("cut off")], Stop::Length))
+            .map(|_| reply(vec![text("cut off ")], Stop::Length))
             .collect(),
         true,
     );
     let evs = run(&mut h, "hi").await;
+    let reason = evs
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::TurnEnded { reason, .. } => Some(reason.clone()),
+            _ => None,
+        })
+        .expect("a TurnEnded");
+    assert_eq!(
+        reason,
+        EndReason::MaxTokens {
+            auto_continued: MAX_CONTINUES
+        }
+    );
+    // The banner in both states.
+    assert_eq!(
+        crate::protocol::limit_banner(MAX_CONTINUES),
+        "Hit the output token limit (auto-continued 2x)"
+    );
+    assert_eq!(
+        crate::protocol::limit_banner(0),
+        "Hit the output token limit"
+    );
+}
+
+#[tokio::test]
+async fn a_cut_off_reply_with_a_pending_tool_call_is_not_continued() {
+    // The step asked to act AND ran out of room: the call is pending, so continuing the text
+    // would duplicate it. The call runs, and no continuation is asked for.
+    let call = Block::ToolUse {
+        id: "t1".into(),
+        name: "Read".into(),
+        input: json!({ "file_path": "/definitely/not/here.txt" }),
+    };
+    let mut h = engine(
+        vec![
+            reply(vec![text("let me look "), call], Stop::Length),
+            reply(vec![text("done")], Stop::End),
+        ],
+        true,
+    );
+    let evs = run(&mut h, "hi").await;
+    assert!(
+        !evs.iter().any(|e| matches!(
+            &e.event,
+            Event::Notice { message, .. } if message.contains("hit the output limit; continuing")
+        )),
+        "a step with a pending tool call never auto-continues"
+    );
+    // The one call ran, once: no duplicate from a continuation.
+    assert_eq!(
+        evs.iter()
+            .filter(|e| matches!(
+                &e.event,
+                Event::ItemCompleted {
+                    item: Item::ToolCall { .. },
+                    ..
+                }
+            ))
+            .count(),
+        1
+    );
     assert!(evs.iter().any(|e| matches!(
         e.event,
         Event::TurnEnded {
-            reason: EndReason::MaxTokens,
+            reason: EndReason::Complete,
             ..
         }
     )));
@@ -1733,7 +2373,8 @@ async fn shutdown(mut h: Handle) {
 
 /// A working directory deleted out from under the session (a worktree cleaned up) would
 /// fail every Bash call with "No such file or directory", even `echo`. The tool falls back
-/// to the session root and says so.
+/// to the session root and says so — to the user as a notice, and to the model in its next
+/// request (its relative paths now resolve somewhere else).
 #[tokio::test]
 async fn bash_falls_back_to_the_session_root_when_cwd_is_deleted() {
     let base = std::env::temp_dir().join(format!("frog-cwd-gone-{}", session::new_id()));
@@ -1777,7 +2418,9 @@ async fn bash_falls_back_to_the_session_root_when_cwd_is_deleted() {
         subagent: false,
         chat: false,
     };
-    let mut h = start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap();
+    let client = scripted::Client::new(script);
+    let sent = client.sent.clone();
+    let mut h = start(opts, Provider::Scripted(client)).unwrap();
     // Turn 1: into the folder that's about to disappear.
     let evs = run(&mut h, "cd around").await;
     assert!(evs.iter().any(|e| matches!(
@@ -1821,6 +2464,15 @@ async fn bash_falls_back_to_the_session_root_when_cwd_is_deleted() {
     assert!(
         outputs.iter().any(|o| o.contains("still-here")),
         "{outputs:?}"
+    );
+    // The model's next request says why its paths changed. The fallback fires inside the
+    // echo call (turn 2's first tool call), so its note can't ride that turn's first request
+    // (sent[0..2] are turn 1's two calls and the echo call): it joins the next call in the
+    // SAME turn — sent[3], the step after the echo — not the turn after this one.
+    let fourth = sent.lock().unwrap()[3].clone();
+    assert!(
+        fourth.contains("<system-note>") && fourth.contains("was deleted out from under"),
+        "the model doesn't see the cwd fallback: {fourth}"
     );
     shutdown(h).await;
     let _ = std::fs::remove_dir_all(&base);
@@ -2078,6 +2730,208 @@ async fn continue_after_a_crash_runs_a_new_turn_with_the_note() {
         req.contains("t1"),
         "the repaired tool call is still in the history"
     );
+    shutdown(h).await;
+}
+
+/// A birth-death (the incident behind the broker's replay): a Shutdown raced turn 1 before
+/// its first model call, so the child ended `cancelled` with 0 calls. The engine's invariant,
+/// what the app's replay (births.json, read back through the log) stands on: whatever kills
+/// turn 1, the log keeps its `TurnStarted` input and the user's message, so the prompt can be
+/// replayed — here proven by a fresh engine on the same store, whose next turn carries the
+/// prompt (a `Continue` on the repaired history runs it).
+#[tokio::test]
+async fn a_birth_death_keeps_turn_ones_prompt_in_the_log_for_replay() {
+    let dir = tmp_store();
+    let mut profile = Profile::new(ProviderKind::Ollama, "test");
+    profile.tool_mode = ToolMode::Native;
+    let mut client = scripted::Client::new(vec![reply(vec![text("never seen")], Stop::End)]);
+    let hold = Arc::new((
+        std::sync::atomic::AtomicBool::new(true),
+        std::sync::atomic::AtomicBool::new(false),
+    ));
+    client.hold = Some(hold.clone());
+    let sent = client.sent.clone();
+    let opts = Options {
+        cfg: Config {
+            hermetic: true,
+            ..Config::default()
+        },
+        profile_name: "test".into(),
+        profile,
+        cwd: dir.clone(),
+        mode: Mode::AcceptEdits,
+        can_ask: true,
+        resume: None,
+        store: Some(dir.clone()),
+        sandbox: false,
+        rich: false,
+        subagent: false,
+        chat: false,
+    };
+    let mut h = start(opts, Provider::Scripted(client)).unwrap();
+    while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+    h.ops
+        .send(Op::Submit {
+            text: "the only prompt".into(),
+            images: Vec::new(),
+            more: Vec::new(),
+        })
+        .unwrap();
+    // Wait until the provider has the request (the call is mid-flight), then shut down while
+    // it runs, exactly as `frog -p` did to the two children on 2026-10-22.
+    while sent.lock().unwrap().is_empty() {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    h.ops.send(Op::Shutdown).unwrap();
+    // The cancelled turn's future still holds the gate: release it, so the call unwinds.
+    hold.1.store(true, std::sync::atomic::Ordering::SeqCst);
+    // The stream closes on shutdown; collect what was logged.
+    let mut evs = Vec::new();
+    while let Some(env) = h.events.recv().await {
+        evs.push(env);
+    }
+    let sid = evs[0].session.clone();
+    // Turn 1 died cancelled, before any model call completed (the incident's signature).
+    assert!(
+        evs.iter().any(|e| matches!(
+            &e.event,
+            Event::TurnEnded {
+                turn: 1,
+                reason: EndReason::Cancelled,
+                ..
+            }
+        )),
+        "{:?}",
+        evs.iter()
+            .filter_map(|e| match &e.event {
+                Event::TurnEnded { turn, reason, .. } => Some((turn, reason)),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(sent.lock().unwrap().len(), 1, "exactly the raced call");
+    // The log keeps the prompt, both as the event's input and as a message.
+    let loaded = session::load(&dir, &sid).unwrap();
+    assert!(loaded.events.iter().any(|e| matches!(
+        &e.event,
+        Event::TurnStarted { turn: 1, input, .. } if input == "the only prompt"
+    )));
+    assert!(
+        loaded
+            .messages
+            .iter()
+            .any(|m| m.role == Role::User
+                && m.content.iter().any(
+                    |b| matches!(b, Block::Text { text } if text.contains("the only prompt"))
+                )),
+        "the prompt survives in the history: {:?}",
+        loaded.messages
+    );
+    // A fresh engine on the same store (what a replay does) can run it.
+    let (mut h, sent) = engine_sent(
+        vec![reply(vec![text("ran the replayed prompt")], Stop::End)],
+        Some(dir.clone()),
+        Some(sid.clone()),
+        None,
+        dir.clone(),
+    );
+    until_idle(&mut h).await;
+    h.ops.send(Op::Continue { note: None }).unwrap();
+    let evs = until_idle(&mut h).await;
+    assert!(evs.iter().any(|e| matches!(
+        &e.event,
+        Event::TurnStarted { turn: 2, input, .. } if input == crate::protocol::CONTINUE_NOTE
+    )));
+    let req = sent.lock().unwrap().last().cloned().unwrap();
+    assert!(
+        req.contains("the only prompt"),
+        "the replay's request still carries the birth-death prompt: {req}"
+    );
+    shutdown(h).await;
+}
+
+/// The other half of the birth-death family: a message from another session arriving while a
+/// turn runs — even mid-model-call, the worst moment the two cancelled children died in —
+/// never cancels it. It queues (like any op) and runs at the turn boundary.
+#[tokio::test]
+async fn a_deliver_landing_mid_call_does_not_cancel_the_running_turn() {
+    let mut profile = Profile::new(ProviderKind::Ollama, "test");
+    profile.tool_mode = ToolMode::Native;
+    let client = scripted::Client::new(vec![
+        reply(vec![text("first turn's answer")], Stop::End),
+        reply(vec![text("got the message")], Stop::End),
+    ]);
+    let hold = Arc::new((
+        std::sync::atomic::AtomicBool::new(true),
+        std::sync::atomic::AtomicBool::new(false),
+    ));
+    let client = {
+        let mut c = client;
+        c.hold = Some(hold.clone());
+        c
+    };
+    let sent = client.sent.clone();
+    let opts = Options {
+        cfg: Config {
+            hermetic: true,
+            ..Config::default()
+        },
+        profile_name: "test".into(),
+        profile,
+        cwd: std::env::temp_dir(),
+        mode: Mode::AcceptEdits,
+        can_ask: true,
+        resume: None,
+        store: None,
+        sandbox: false,
+        rich: false,
+        subagent: false,
+        chat: false,
+    };
+    let mut h = start(opts, Provider::Scripted(client)).unwrap();
+    while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+    h.ops
+        .send(Op::Submit {
+            text: "work".into(),
+            images: Vec::new(),
+            more: Vec::new(),
+        })
+        .unwrap();
+    // The deliver lands while the first call is mid-flight (mid-call is where the cancelled
+    // children died) — queued, never an interrupt.
+    while sent.lock().unwrap().is_empty() {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    h.ops
+        .send(Op::Deliver {
+            from: "s1".into(),
+            from_name: "Chief".into(),
+            message: "status?".into(),
+        })
+        .unwrap();
+    hold.1.store(true, std::sync::atomic::Ordering::SeqCst);
+    let mut first_ended = false;
+    loop {
+        match h.events.recv().await.unwrap().event {
+            Event::TurnEnded { turn, reason, .. } => {
+                assert!(matches!(reason, EndReason::Complete), "{reason:?}");
+                if turn == 1 {
+                    first_ended = true;
+                }
+                if turn == 2 {
+                    break;
+                }
+            }
+            Event::TurnStarted { turn, input, .. } if turn == 2 => {
+                assert!(
+                    first_ended,
+                    "the delivered message started before the running turn ended"
+                );
+                assert!(input.contains("status?"), "{input}");
+            }
+            _ => {}
+        }
+    }
     shutdown(h).await;
 }
 
@@ -4918,6 +5772,17 @@ mod egress_tests {
     /// A session in a fresh folder, as an agent's (`worker`) or yours, with the default
     /// `[egress]` policy and the shell sandbox on.
     fn egress_engine(script: Vec<Response>, worker: bool, mode: Mode) -> (Handle, PathBuf) {
+        egress_engine_asking(script, worker, mode, true)
+    }
+
+    /// [`egress_engine`] with the approval channel as a client has it (`can_ask`): false is
+    /// headless, which can't ask and so denies.
+    fn egress_engine_asking(
+        script: Vec<Response>,
+        worker: bool,
+        mode: Mode,
+        can_ask: bool,
+    ) -> (Handle, PathBuf) {
         let dir = std::env::temp_dir().join(format!("frog-egress-eng-{}", new_id()));
         std::fs::create_dir_all(&dir).unwrap();
         let mut profile = Profile::new(ProviderKind::Ollama, "test");
@@ -4932,7 +5797,7 @@ mod egress_tests {
             profile,
             cwd: dir.clone(),
             mode,
-            can_ask: true,
+            can_ask,
             resume: None,
             store: None,
             sandbox: false,
@@ -5068,9 +5933,10 @@ mod egress_tests {
         }
     }
 
-    /// `allow_hosts` always asks under an enforced list — in auto and even yolo — and the
+    /// `allow_hosts` asks under an enforced list in auto (and default, accept-edits), and the
     /// answer is the grant: Allow covers that one run, "always" the rest of the session.
-    /// Leaving the sandbox asks too, and headless both are denied.
+    /// Leaving the sandbox asks too, and headless both are denied. Yolo never asks: see
+    /// `yolo_never_cards_on_egress`.
     #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn an_explicit_grant_unblocks_one_call_or_adds_the_host() {
@@ -5090,7 +5956,7 @@ mod egress_tests {
                 reply(vec![text("ok")], Stop::End),
             ],
             true,
-            Mode::Yolo,
+            Mode::Auto,
         );
         submit(&mut h, "fetch").await;
         let mut evs = Vec::new();
@@ -5148,14 +6014,14 @@ mod egress_tests {
         assert!(!tool_output(&evs, "after_always").contains("frog blocked"));
         let _ = std::fs::remove_dir_all(dir);
 
-        // Leaving the sandbox past an enforced list asks even in yolo; headless, it's denied.
+        // Leaving the sandbox past an enforced list asks in auto too; headless, it's denied.
         let (mut h, dir) = egress_engine(
             vec![
                 bash_call("out", json!({ "command": "echo hi", "unsandboxed": true })),
                 reply(vec![text("ok")], Stop::End),
             ],
             true,
-            Mode::Yolo,
+            Mode::Auto,
         );
         submit(&mut h, "go").await;
         loop {
@@ -5178,6 +6044,203 @@ mod egress_tests {
             }
         }
         until_idle(&mut h).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Every `egress_widened` record: (item, hosts, sandbox_left).
+    fn widened(evs: &[Envelope]) -> Vec<(String, Vec<String>, bool)> {
+        evs.iter()
+            .filter_map(|e| match &e.event {
+                Event::EgressWidened {
+                    item,
+                    hosts,
+                    sandbox_left,
+                    ..
+                } => Some((item.clone(), hosts.clone(), *sandbox_left)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Yolo never asks (Cam, 2026-11-02): both shapes that card in every other mode run, each
+    /// with one quiet `EgressWidened` row instead. The hosts it named are granted for the
+    /// session, so the next plain call reaches them; the proxy still blocks what nobody
+    /// declared, so the tripwire holds.
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn yolo_never_cards_on_egress() {
+        let curl = "curl -sS -m 3 -o /dev/null https://pkgs.example.org/x; echo rc=$?";
+        let (mut h, dir) = egress_engine(
+            vec![
+                bash_call("out", json!({ "command": "echo hi", "unsandboxed": true })),
+                bash_call(
+                    "hosts",
+                    json!({ "command": curl, "allow_hosts": ["pkgs.example.org"] }),
+                ),
+                bash_call("after", json!({ "command": curl })),
+                reply(vec![text("ok")], Stop::End),
+            ],
+            true,
+            Mode::Yolo,
+        );
+        submit(&mut h, "go").await;
+        let evs = until_idle(&mut h).await;
+        assert!(
+            !evs.iter()
+                .any(|e| matches!(e.event, Event::PermissionRequest { .. })),
+            "yolo never cards"
+        );
+        assert_eq!(
+            widened(&evs),
+            vec![
+                ("out".to_string(), Vec::new(), true),
+                ("hosts".to_string(), vec!["pkgs.example.org".to_string()], false),
+            ],
+            "one quiet row per shape"
+        );
+        // The declared hosts are granted: the later call, which declares nothing, reaches them.
+        assert!(egress_hits(&evs).is_empty(), "nothing was blocked");
+        assert!(!tool_output(&evs, "after").contains("frog blocked"));
+        // The quiet line is in the transcript as info, not a warning.
+        assert!(
+            evs.iter().any(|e| matches!(
+                &e.event,
+                Event::Notice { level: Level::Info, message }
+                    if message.contains("yolo: `echo hi` ran outside the sandbox")
+            )),
+            "the sandbox line is a quiet info row"
+        );
+        assert!(
+            evs.iter().any(|e| matches!(
+                &e.event,
+                Event::Notice { level: Level::Info, message }
+                    if message.contains("reaches pkgs.example.org, now allowed this session")
+            )),
+            "the hosts line is a quiet info row"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// The tripwire still holds in yolo: a host the call never declared is blocked, and the
+    /// block is the warning row it always was.
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn yolo_still_blocks_an_undeclared_host() {
+        let exfil = "curl -sS -m 5 -o /dev/null https://exfil.example.net/x; echo rc=$?";
+        let (mut h, dir) = egress_engine(
+            vec![
+                bash_call(
+                    "declared",
+                    json!({ "command": "echo hi", "allow_hosts": ["pkgs.example.org"] }),
+                ),
+                bash_call("sneaky", json!({ "command": exfil })),
+                reply(vec![text("ok")], Stop::End),
+            ],
+            true,
+            Mode::Yolo,
+        );
+        submit(&mut h, "go").await;
+        let evs = until_idle(&mut h).await;
+        assert!(
+            !evs.iter()
+                .any(|e| matches!(e.event, Event::PermissionRequest { .. })),
+            "yolo never cards"
+        );
+        let hits = egress_hits(&evs);
+        assert!(
+            hits.iter()
+                .any(|(host, item, _, enforced)| host == "exfil.example.net"
+                    && item.as_deref() == Some("sneaky")
+                    && *enforced),
+            "{hits:?}"
+        );
+        assert!(tool_output(&evs, "sneaky").contains("frog blocked"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Both at once: a call that leaves the sandbox AND names hosts. Leaving is the whole
+    /// fact — past the sandbox no list applies, so one quiet row says that and names nothing
+    /// "allowed" that nothing fences.
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn yolo_records_leaving_the_sandbox_over_the_hosts_it_named() {
+        let (mut h, dir) = egress_engine(
+            vec![
+                bash_call(
+                    "both",
+                    json!({
+                        "command": "echo hi",
+                        "unsandboxed": true,
+                        "allow_hosts": ["pkgs.example.org"],
+                    }),
+                ),
+                reply(vec![text("ok")], Stop::End),
+            ],
+            true,
+            Mode::Yolo,
+        );
+        submit(&mut h, "go").await;
+        let evs = until_idle(&mut h).await;
+        assert!(
+            !evs.iter()
+                .any(|e| matches!(e.event, Event::PermissionRequest { .. })),
+            "yolo never cards"
+        );
+        assert_eq!(
+            widened(&evs),
+            vec![("both".to_string(), Vec::new(), true)],
+            "one row: it left the sandbox"
+        );
+        assert!(
+            evs.iter().any(|e| matches!(
+                &e.event,
+                Event::Notice { level: Level::Info, message }
+                    if message.contains("`echo hi` ran outside the sandbox")
+            )),
+            "the row says what actually happened"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Headless (`can_ask = false`) can't ask, so yolo's egress shapes are denied, never
+    /// carded and never widened: the same safe path as before.
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn headless_yolo_denies_instead_of_widening() {
+        let (mut h, dir) = egress_engine_asking(
+            vec![
+                bash_call("out", json!({ "command": "echo hi", "unsandboxed": true })),
+                bash_call(
+                    "hosts",
+                    json!({ "command": "echo hi", "allow_hosts": ["pkgs.example.org"] }),
+                ),
+                reply(vec![text("ok")], Stop::End),
+            ],
+            true,
+            Mode::Yolo,
+            false,
+        );
+        submit(&mut h, "go").await;
+        let evs = until_idle(&mut h).await;
+        assert!(
+            !evs.iter()
+                .any(|e| matches!(e.event, Event::PermissionRequest { .. })),
+            "headless never cards"
+        );
+        assert!(widened(&evs).is_empty(), "headless widens nothing");
+        let outcomes: Vec<Option<ToolOutcome>> = ["out", "hosts"]
+            .iter()
+            .map(|id| {
+                evs.iter().find_map(|e| match &e.event {
+                    Event::ItemCompleted {
+                        id: i,
+                        item: Item::ToolCall { outcome, .. },
+                    } if i == id => Some(*outcome),
+                    _ => None,
+                })
+            })
+            .collect();
+        assert_eq!(outcomes, vec![Some(ToolOutcome::Denied); 2]);
         let _ = std::fs::remove_dir_all(dir);
     }
 }
@@ -9806,4 +10869,110 @@ async fn a_frog_cloud_turn_records_who_served_it() {
     }
     // Anything else stays unknown.
     assert!(served("testprov/m", Some("workers-ai")).await.is_none());
+}
+
+/// `StartSession` names a model: the engine checks it against that gateway's `/v1/models`
+/// before the client starts anything (docs/design/model-policy.md). A model the gateway
+/// doesn't list is refused with the fix; `cloud/*` always starts.
+#[tokio::test]
+async fn start_session_refuses_a_model_its_gateway_does_not_list() {
+    use std::collections::HashMap;
+    let base = "https://gateway.test/v1";
+    crate::model_policy::TEST_LISTS.with(|l| {
+        *l.borrow_mut() = Some(HashMap::from([(
+            base.to_string(),
+            vec!["openai/gpt-5".to_string()],
+        )]))
+    });
+    let start = |id: &str, model: &str| {
+        reply(
+            vec![Block::ToolUse {
+                id: id.into(),
+                name: "StartSession".into(),
+                input: json!({ "title": "a worker", "prompt": "do it", "model": model }),
+            }],
+            Stop::ToolUse,
+        )
+    };
+    let script = vec![
+        start("s1", "gateway/openai/gpt-9"),
+        start("s2", "gateway/openai/gpt-5"),
+        reply(vec![text("done")], Stop::End),
+    ];
+    // The gateway and its two models as config profiles, so nothing goes looking for a key:
+    // the check reads the list alone.
+    let mut cfg = Config {
+        hermetic: true,
+        ..Config::default()
+    };
+    for model in ["openai/gpt-9", "openai/gpt-5"] {
+        let mut p = Profile::new(ProviderKind::Openai, model);
+        p.base_url = Some(base.into());
+        p.tool_mode = ToolMode::Native;
+        cfg.models.insert(format!("gateway/{model}"), p);
+    }
+    let mut h = engine_perm_cfg(script, Mode::Default, cfg);
+    caps(&h, true);
+    while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+    h.ops
+        .send(Op::Submit {
+            text: "start three".into(),
+            images: Vec::new(),
+            more: Vec::new(),
+        })
+        .unwrap();
+    // The client answers every request it's actually given (the unlisted model's never is).
+    let mut evs = Vec::new();
+    loop {
+        let env = h.events.recv().await.unwrap();
+        let idle = matches!(env.event, Event::TurnEnded { .. });
+        if let Event::SessionRequest { id, tool, .. } = &env.event {
+            assert_eq!(tool, "StartSession");
+            h.ops
+                .send(Op::SessionReply {
+                    id: id.clone(),
+                    result: Some(json!({ "id": "child-1", "name": "a worker" })),
+                    error: None,
+                })
+                .unwrap();
+        }
+        evs.push(env);
+        if idle {
+            break;
+        }
+    }
+    shutdown(h).await;
+    crate::model_policy::TEST_LISTS.with(|l| *l.borrow_mut() = None);
+
+    let outcome = |id: &str| {
+        evs.iter().find_map(|e| match &e.event {
+            Event::ItemCompleted {
+                id: i,
+                item: Item::ToolCall { outcome, output, .. },
+            } if i == id => Some((*outcome, output.clone())),
+            _ => None,
+        })
+    };
+    // The unlisted model never reached the client: refused here, with the fix.
+    let (refused, why) = outcome("s1").expect("the refused call completed");
+    assert_eq!(refused, ToolOutcome::Error);
+    assert!(why.contains("model not listed"), "{why}");
+    assert!(why.contains("/v1/models"), "{why}");
+    // The listed one went through.
+    assert_eq!(outcome("s2").map(|o| o.0), Some(ToolOutcome::Ok));
+    // One request reached the client; the unlisted one never did.
+    let asked: Vec<&str> = evs
+        .iter()
+        .filter_map(|e| match &e.event {
+            Event::SessionRequest { tool, .. } if tool == "StartSession" => Some(tool.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(asked.len(), 1, "{asked:?}");
+    // cloud/* is the platform's to serve: no gateway list is consulted, so it always starts.
+    assert!(
+        crate::model_policy::check_spawn_spec(&Config::default(), "cloud/bull")
+            .await
+            .is_ok()
+    );
 }

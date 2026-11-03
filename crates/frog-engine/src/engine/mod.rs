@@ -195,10 +195,10 @@ fn max_steps() -> u32 {
         .unwrap_or(u32::MAX)
 }
 /// How many times a turn carries on after a reply runs out of output room.
-const MAX_CONTINUES: u32 = 3;
+const MAX_CONTINUES: u32 = 2;
 /// Output budget requested from hosted APIs that don't set their own: well within what current
 /// frontier and open models accept, and far above the defaults that cut thinking short.
-const CLOUD_MAX_OUTPUT: u32 = 16_384;
+const CLOUD_MAX_OUTPUT: u32 = 32_768;
 /// The smallest useful tool-result cap: windows below this keep results whole.
 const MIN_RESULT_CAP: usize = 40_000;
 
@@ -558,6 +558,15 @@ pub fn spawn(opts: Options) -> Result<Handle> {
     crate::policy::check(&opts.cwd, &opts.profile_name, &opts.profile)?;
     let provider = Provider::new(&opts.profile)?.with_cwd(&opts.cwd);
     start(opts, provider)
+}
+
+/// Start the engine on a model its gateway currently lists (docs/design/model-policy.md):
+/// `cloud/*` and this machine's models always start, a hosted BYOK model only while its
+/// gateway's `/v1/models` (cached for a minute) has it. Checked here, once, at spawn — never
+/// per call. Clients that can await should use this; [`spawn`] is the unchecked form.
+pub async fn spawn_checked(opts: Options) -> Result<Handle> {
+    crate::model_policy::check_spawn(&opts.profile_name, &opts.profile).await?;
+    spawn(opts)
 }
 
 /// Start a subagent's engine. Tests script it via `tests::child_script`.
@@ -1011,6 +1020,14 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                 agent.repair();
                 let reason = if e.is::<Interrupted>() {
                     EndReason::Cancelled
+                } else if let Some(b) = e.downcast_ref::<crate::engine::call::BillingRefused>() {
+                    // A hard billing refusal ends the turn with the typed reason: the client
+                    // shows "out of credit · add credit", not a provider error.
+                    EndReason::BillingLimit {
+                        window: b.window.clone(),
+                        reason: b.reason.clone(),
+                        balance_micro: b.balance_micro,
+                    }
                 } else {
                     EndReason::Error {
                         error: classify(&e),
@@ -1143,7 +1160,24 @@ fn kept(s: crate::summary::Summary) -> crate::protocol::KeptSummary {
 }
 
 fn classify(e: &anyhow::Error) -> EngineError {
+    // A billing refusal the billing arm didn't take (an op outside a turn, say): the
+    // provider's clean message, never its raw JSON dump.
+    if let Some(b) = e.downcast_ref::<crate::engine::call::BillingRefused>() {
+        return EngineError::Billing {
+            status: 402,
+            message: b.reason.clone(),
+        };
+    }
     if let Some(h) = e.downcast_ref::<HttpError>() {
+        // The one billing case classify can still see is a refusal this path never promised
+        // to admit (a scripted provider's 402 outside a turn): typed as billing, with the
+        // provider's own words, not its JSON envelope.
+        if h.is_billing() {
+            return EngineError::Billing {
+                status: h.status,
+                message: h.summary(),
+            };
+        }
         return EngineError::Provider {
             status: h.status,
             message: h.body.clone(),
@@ -1163,10 +1197,14 @@ fn classify(e: &anyhow::Error) -> EngineError {
             message: c.0.clone(),
         };
     }
+    // The same transport classes retryable() accepts, plus a plain connect failure (which the
+    // retry arm handles through cloud_fallback): all of them are the network, not frog.
     let network = e
         .chain()
         .filter_map(|c| c.downcast_ref::<reqwest::Error>())
-        .any(|r| r.is_connect() || r.is_timeout() || r.is_request());
+        .any(|r| {
+            r.is_connect() || r.is_timeout() || r.is_request() || r.is_body() || r.is_decode()
+        });
     if network {
         return EngineError::Connection {
             message: format!("{e:#}"),
@@ -1190,9 +1228,14 @@ fn retryable(e: &anyhow::Error) -> bool {
     if e.is::<IncompleteStream>() {
         return true;
     }
+    // A body-stream failure (a reset while reading the reply, after the headers arrived) is the
+    // same class as a truncated stream: the partial is discarded by the retry arm and the step
+    // re-runs from scratch, so it's worth another try. `bytes_stream` wraps a body read error in
+    // reqwest's decode kind (is_decode), a reader with a timeout in the body kind (is_body) —
+    // both are "the body stream broke", and neither is a clean end or a bad request.
     e.chain()
         .filter_map(|c| c.downcast_ref::<reqwest::Error>())
-        .any(|r| r.is_timeout() || (r.is_request() && !r.is_connect()))
+        .any(|r| r.is_timeout() || r.is_body() || r.is_decode() || (r.is_request() && !r.is_connect()))
 }
 
 /// frog's local model server answers (it listens on 127.0.0.1:8911 when running).
@@ -2118,8 +2161,13 @@ impl Agent {
                 EndReason::Error { error } => {
                     Some((NoticeKind::Errored, format!("turn errored: {error:?}")))
                 }
+                // Out of credit: waiting on the user (money), like a denial.
+                EndReason::BillingLimit { .. } => Some((
+                    NoticeKind::WaitingOnUser,
+                    "turn ended: out of credit, waiting on user".to_string(),
+                )),
                 // Idle per the SendMessage contract: no turn running, nothing queued.
-                EndReason::Complete | EndReason::MaxTokens => {
+                EndReason::Complete | EndReason::MaxTokens { .. } => {
                     Some((NoticeKind::Idle, "idle".to_string()))
                 }
                 _ => None,

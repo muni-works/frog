@@ -157,13 +157,14 @@ fn merge(list: &mut Vec<(String, u32, u32)>, path: &str, added: u32, removed: u3
 fn reason_label(r: &EndReason) -> &'static str {
     match r {
         EndReason::Complete => "complete",
-        EndReason::MaxTokens => "cut off at max tokens",
+        EndReason::MaxTokens { .. } => "cut off at max tokens",
         EndReason::Denied => "stopped: tool call denied",
         EndReason::BlockedOnApproval { .. } => "stopped: blocked on an approval already denied",
         EndReason::Looping => "stopped: looping",
         EndReason::StepLimit => "stopped: step limit",
         EndReason::Suspended => "suspended for app update",
         EndReason::Cancelled => "cancelled",
+        EndReason::BillingLimit { .. } => "stopped: out of credit",
         EndReason::Error { .. } => "error",
     }
 }

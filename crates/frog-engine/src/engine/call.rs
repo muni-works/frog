@@ -1,9 +1,54 @@
 //! Calling the model: the request on the wire, retries and fallbacks.
+//!
+//! One retry policy for every call (docs/design/model-policy.md): a busy provider (429, 5xx, a
+//! dropped stream) gets three retries at 1 s, 2 s and 4 s, with one notice in the transcript and
+//! no card; a wrong key, an empty wallet or a model the gateway doesn't serve (401/402/404) gets
+//! none, and the one line saying how to fix it goes up before the turn ends with the provider's
+//! own error.
 
 use super::*;
+use crate::model_policy::{self, is_fail_fast};
 
-/// Retries that pass without a word: the first ones are routine (2 s and 4 s of waiting).
-const QUIET_RETRIES: u32 = 2;
+/// The engine's own error for a hard billing refusal, so the turn's end is the typed
+/// [`EndReason::BillingLimit`] — "out of credit", never a provider dump. The engine catches
+/// it in the same place it catches everything else and classifies it straight through.
+#[derive(Debug)]
+pub(crate) struct BillingRefused {
+    pub window: String,
+    pub reason: String,
+    pub balance_micro: Option<u64>,
+}
+
+impl std::fmt::Display for BillingRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "out of credit ({})", self.reason)
+    }
+}
+
+impl std::error::Error for BillingRefused {}
+
+/// What a billing refusal means, read off the [`HttpError`]: which window, the provider's
+/// clean message, the remaining credit, and whether the next call was admitted at usage
+/// prices.
+struct BillingRefusal {
+    window: &'static str,
+    reason: String,
+    balance_micro: Option<u64>,
+    admitted: bool,
+}
+
+fn billing(e: &anyhow::Error) -> Option<BillingRefusal> {
+    let h = e.downcast_ref::<HttpError>()?;
+    if !h.is_billing() {
+        return None;
+    }
+    Some(BillingRefusal {
+        window: h.billing_window(),
+        reason: h.summary(),
+        balance_micro: h.billing_balance(),
+        admitted: h.billing_admitted(),
+    })
+}
 
 impl Agent {
     /// One model request. Streams item events (unless `quiet`) and retries transient errors
@@ -20,6 +65,12 @@ impl Agent {
                 .map_err(|e| ConfigError(format!("{e:#}")))?;
         }
         crate::policy::check(&self.root, &name, &profile)
+            .map_err(|e| ConfigError(format!("{e:#}")))?;
+        // A switch is a start for this session's purposes: the model has to be one its gateway
+        // lists now, or the next call is the 404 this check exists to prevent
+        // (docs/design/model-policy.md).
+        crate::model_policy::check_spawn(&name, &profile)
+            .await
             .map_err(|e| ConfigError(format!("{e:#}")))?;
         self.provider = Provider::new(&profile)
             .map_err(|e| ConfigError(format!("{e:#}")))?
@@ -42,18 +93,9 @@ impl Agent {
         Ok(())
     }
 
-    /// frog cloud is unreachable (offline) or out of capacity, credit or hours (503, 402, 502):
-    /// carry on with a local model instead of failing the turn. `FROG_FALLBACK_MODEL` picks
-    /// which.
-    /// How many times to retry a failed call: frog cloud gets longer (busy, or a tunnel blip).
-    pub(super) fn retry_budget(&self, _e: &anyhow::Error) -> u32 {
-        let cloud = self
-            .profile_name
-            .split_once('/')
-            .is_some_and(|(p, _)| crate::providers::canonical(p) == crate::providers::CLOUD);
-        if cloud { 6 } else { 3 }
-    }
-
+    /// frog cloud is unreachable (offline) or out of capacity (503, 502): carry on with a local
+    /// model instead of failing the turn. `FROG_FALLBACK_MODEL` picks which. A credit error
+    /// (402) is not this: the fix is money, not another model (docs/design/model-policy.md).
     pub(super) fn cloud_fallback(&self, e: &anyhow::Error) -> Option<String> {
         let prov = self.profile_name.split_once('/')?.0;
         if crate::providers::canonical(prov) != crate::providers::CLOUD {
@@ -65,7 +107,7 @@ impl Agent {
             .any(|r| r.is_connect());
         let unavailable = e
             .downcast_ref::<HttpError>()
-            .is_some_and(|h| matches!(h.status, 402 | 502 | 503));
+            .is_some_and(|h| matches!(h.status, 502 | 503));
         if !offline && !unavailable {
             return None;
         }
@@ -88,6 +130,9 @@ impl Agent {
         offer_tools: bool,
         think: Option<bool>,
         think_budget: Option<u32>,
+        // The message item this call's reply belongs to, when it continues one already
+        // streaming (`Streamed::message` is seeded with it, so its text joins that item).
+        message: Option<String>,
     ) -> Result<(Response, Streamed)> {
         let json_mode = self.harness.tool_mode == ToolMode::Json;
         // A JSON-mode reply is one object whose action comes last, so it's done by the time
@@ -146,6 +191,9 @@ impl Agent {
             r
         };
         let mut attempt = 0;
+        // One billing line per turn, however many calls: the transition to credit is one
+        // fact, not one per step.
+        let mut billing_line = false;
         loop {
             self.emit(Event::Progress {
                 label: label.into(),
@@ -156,6 +204,7 @@ impl Agent {
             let mut streamed = Streamed {
                 no_think: think == Some(false),
                 think_budget,
+                message: message.clone(),
                 extends,
                 reusable,
                 ..Default::default()
@@ -333,12 +382,81 @@ impl Agent {
                     });
                 }
                 Ok(resp) => return Ok((resp, streamed)),
+                // A billing refusal is a state transition, not an error: "transition to
+                // credits, but make it obvious". One typed, informational line names the
+                // window and the credit balance; the provider's raw JSON never goes up. When
+                // the edge admitted the next call at usage prices (`x-frog-billing: credit`,
+                // or the body reads like credit semantics), the step continues past the
+                // fail-fast wall — once; a second refusal (the credit spent or the admit
+                // withdrawn) ends the turn below. A hard refusal (nothing admitted it) ends
+                // the turn with the typed billing reason, never a provider error.
+                Err(e) if billing(&e).is_some() => {
+                    let billing = billing(&e).unwrap();
+                    let ids: Vec<String> = streamed
+                        .message
+                        .iter()
+                        .chain(streamed.reasoning.iter())
+                        .cloned()
+                        .collect();
+                    if !ids.is_empty() {
+                        self.emit(Event::ItemsDiscarded { ids });
+                    }
+                    if !billing.admitted {
+                        return Err(BillingRefused {
+                            window: billing.window.to_string(),
+                            reason: billing.reason,
+                            balance_micro: billing.balance_micro,
+                        }
+                        .into());
+                    }
+                    if !billing_line {
+                        billing_line = true;
+                        self.emit(Event::BillingLimit {
+                            window: billing.window.to_string(),
+                            reason: billing.reason.clone(),
+                            balance_micro: billing.balance_micro,
+                        });
+                    }
+                    // One credit-billed attempt after the refusal: a second 402 means the
+                    // admit didn't hold (or the credit ran out), and the turn ends with the
+                    // honest typed reason instead of spinning.
+                    if attempt > 0 {
+                        return Err(BillingRefused {
+                            window: billing.window.to_string(),
+                            reason: billing.reason,
+                            balance_micro: billing.balance_micro,
+                        }
+                        .into());
+                    }
+                    attempt += 1;
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                }
+                // A wrong key, an empty wallet or a model the gateway doesn't serve is the
+                // first answer, not a hiccup: no retry spends the rest of the budget on it. The
+                // one line saying how to fix it goes up here, and the turn ends with the
+                // provider's own error underneath (docs/design/model-policy.md).
+                Err(e) if is_fail_fast(&e) => {
+                    let ids: Vec<String> = streamed
+                        .message
+                        .iter()
+                        .chain(streamed.reasoning.iter())
+                        .cloned()
+                        .collect();
+                    if !ids.is_empty() {
+                        self.emit(Event::ItemsDiscarded { ids });
+                    }
+                    if let Some(fix) = model_policy::fix_for(&self.profile_name, &e) {
+                        self.notice(Level::Warn, fix);
+                    }
+                    return Err(e);
+                }
                 // A busy or briefly unreachable provider is retried before anything falls
                 // back: one 503, dropped connection or mid-stream gateway error shouldn't end
                 // a long task. When the broken attempt had already streamed a partial reply,
-                // its items are discarded and the step runs again from scratch.
+                // its items are discarded and the step runs again from scratch. Three retries
+                // at 1 s, 2 s and 4 s, and ONE line for the whole storm.
                 Err(e)
-                    if attempt < self.retry_budget(&e)
+                    if attempt < model_policy::MAX_RETRIES
                         && (retryable(&e) || self.cloud_fallback(&e).is_some()) =>
                 {
                     attempt += 1;
@@ -351,22 +469,22 @@ impl Agent {
                     if !ids.is_empty() {
                         self.emit(Event::ItemsDiscarded { ids });
                     }
-                    let wait = Duration::from_secs((1u64 << attempt.min(5)).min(20));
-                    let budget = self.retry_budget(&e);
-                    // Quiet at first: a retry or two (a busy upstream, a rate limit) is routine
-                    // and usually over in seconds. Once it lasts, one plain line says so; the
-                    // raw error shows only if the step finally fails.
-                    if attempt > QUIET_RETRIES {
+                    // One notice total, on the first retry: a storm is one line, not one per
+                    // attempt and not a card.
+                    if attempt == 1 {
                         let why = e
                             .downcast_ref::<HttpError>()
                             .map(HttpError::summary)
                             .unwrap_or_else(|| format!("{e:#}"));
                         self.notice(
                             Level::Info,
-                            format!("{why} — still trying ({attempt}/{budget})"),
+                            format!(
+                                "{why} — retrying (up to {} times)",
+                                model_policy::MAX_RETRIES
+                            ),
                         );
                     }
-                    tokio::time::sleep(wait).await;
+                    tokio::time::sleep(model_policy::retry_wait(attempt)).await;
                 }
                 Err(e) => {
                     // The last attempt (or one that isn't retryable) may leave a streamed

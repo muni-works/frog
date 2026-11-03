@@ -154,7 +154,7 @@ pub async fn serve(
                         subagent: false,
                         chat: false,
                     };
-                    match frog_engine::spawn(opts) {
+                    match frog_engine::spawn_checked(opts).await {
                         Ok(handle) => {
                             let session_id = frog_engine::session::new_id();
                             let turn = Arc::new(Mutex::new(None));
@@ -485,11 +485,23 @@ async fn pump(
                 EndReason::Complete | EndReason::Denied | EndReason::BlockedOnApproval { .. } => {
                     StopReason::EndTurn
                 }
+                // Out of credit: the turn stopped for the user (money), like a denial.
+                EndReason::BillingLimit { window, .. } => {
+                    conn.update(
+                        &session,
+                        SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::Text(
+                            TextContent::new(format!(
+                                "\n\nfrog stopped: out of credit ({window}); add credit to keep going"
+                            )),
+                        ))),
+                    );
+                    StopReason::EndTurn
+                }
                 // An app update suspended the turn; it carries on when the host resumes
                 // this session, so from the outside it looks like it just stopped.
                 EndReason::Suspended => StopReason::Cancelled,
                 EndReason::Cancelled => StopReason::Cancelled,
-                EndReason::MaxTokens => StopReason::MaxTokens,
+                EndReason::MaxTokens { .. } => StopReason::MaxTokens,
                 EndReason::Looping | EndReason::StepLimit => StopReason::MaxTurnRequests,
                 EndReason::Error { error } => {
                     conn.update(

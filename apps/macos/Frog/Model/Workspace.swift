@@ -48,6 +48,19 @@ final class Workspace {
     private(set) var files: [String] = []
     /// The folder's git branch and uncommitted changes (nil outside a repository, and for chats).
     private(set) var git: GitInfo?
+    /// The repo this folder belongs to: the checkout a worktree hangs off, or the folder
+    /// itself when it's the main checkout. Nil for chats and non-repos. Asked once (a git
+    /// subprocess — not on the composer's body pass).
+    private(set) var repoRoot: URL?
+
+    private func resolveRepoRoot() {
+        guard !isChat else { return }
+        // The sidebar's convention first: a worktree path names its repo with no git run.
+        if SessionList.repoRoot(folder) != folder { repoRoot = SessionList.repoRoot(folder); return }
+        guard let top = Git.run(folder, ["rev-parse", "--show-toplevel"])?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !top.isEmpty else { return }
+        repoRoot = URL(fileURLWithPath: top)
+    }
     /// Agent Skills this folder sees, for `/skill` completion.
     private(set) var skills: [SkillInfo] = []
 
@@ -119,8 +132,13 @@ final class Workspace {
         if let explicitModelChoice { return explicitModelChoice }
         if let preferredModel,
            conversation?.turns.isEmpty != false { return preferredModel }
+        // The model the last turn that actually ran used. A turn that never reached the model
+        // (a provider error, a 401, an unreachable server) carries that model in its usage with
+        // no calls behind it: inheriting it would hand the next message the same dead model.
         if UserDefaults.standard.string(forKey: "newMessageModelPolicy") != "fixed",
-           let model = conversation?.turns.reversed().compactMap({ $0.usage?.model }).first { return model }
+           let model = conversation?.turns.reversed()
+            .compactMap({ $0.usage.flatMap { $0.modelCalls > 0 ? $0.model : nil } })
+            .first { return model }
         return conversation?.status?.model ?? preferredModel
     }
 
@@ -208,6 +226,7 @@ final class Workspace {
         let restoring = SessionRegistry.shared.hasPending
         let last = resume ?? (Self.restored || fresh || chat || restoring ? nil : UserDefaults.standard.string(forKey: Self.lastSessionKey(folder)))
         Self.restored = true
+        resolveRepoRoot()
         let replay = Replay.arguments
         isReplay = replay != nil
         let wait = waitLock ? ["--wait-lock", "5"] : []
@@ -410,6 +429,14 @@ final class Workspace {
         // picked up as is; a second engine can't open its log.
         let resumed = arguments.first == "-r" && arguments.count > 1 ? arguments[1] : nil
         let adopted = resumed.flatMap { SessionBroker.shared.adopt($0) }
+        // Another engine may already own this folder's worktree (its lock names the session):
+        // showing the session means restarting its engine, which would die at birth. The
+        // same session's engine (adopted above) is the reuse; a different one means no
+        // engine starts here — the reason shows in place of a transcript, and the session
+        // opens fine once the owner stops.
+        if adopted == nil, let owner = Self.worktreeOwner(of: folder, resumed: resumed) {
+            return refused(by: owner, session: resumed)
+        }
         // A model or mode another session set while this one was stopped applies now, once.
         let stored = adopted == nil ? resumed.map { Library.shared.takeStored($0) } : nil
         let launch = Self.launch(arguments, chat: isChat, model: stored?.model ?? startupModel)
@@ -431,6 +458,37 @@ final class Workspace {
         // log, and the rest fill in where you're looking.
         show(c)
         return c
+    }
+
+    /// The conversation shown in place of a session whose worktree another engine runs in:
+    /// no engine, no history read (the owner's may change it), the reason where the
+    /// transcript goes and the owner named so the transcript can offer it.
+    private func refused(by owner: String, session: String?) -> Conversation {
+        let why = SessionBroker.worktreeRefusal(top: folder, owner: owner)
+        let c = Conversation(folder: folder, link: nil, replay: false, session: session, failure: why)
+        c.heldBy = owner
+        c.onSessionChange = { [weak self] in Task { await self?.refresh() } }
+        incoming?.stop(reason: "open superseded")
+        incoming = c
+        show(c)
+        return c
+    }
+
+    /// The session whose engine holds this folder's worktree, when it isn't the session
+    /// being opened. Nil when the tree is free (or the folder isn't in one).
+    nonisolated static func worktreeOwner(of folder: URL, resumed: String?) -> String? {
+        guard case .worktree(_, let gitDir) = SessionBroker.checkout(of: folder),
+              let owner = SessionBroker.worktreeOwner(gitDir: gitDir),
+              owner != resumed else { return nil }
+        return owner
+    }
+
+    /// The line the app shows instead of spawning: whose engine runs in this folder's
+    /// worktree, and that the session is resumable once it stops. Nil when the folder's
+    /// worktree is free (or no worktree at all).
+    nonisolated static func worktreeHold(of folder: URL, resumed: String?) -> String? {
+        guard let owner = worktreeOwner(of: folder, resumed: resumed) else { return nil }
+        return SessionBroker.worktreeRefusal(top: folder, owner: owner)
     }
 
     /// Put `c` on screen in place of the conversation there, unless another was opened since.

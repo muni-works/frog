@@ -7,7 +7,8 @@
 // The key is per browser ("frog.toys web · <4 chars>"), so it can be revoked on its own
 // from Settings › Account. Signing in again on the same browser replaces it.
 
-export const API = (import.meta.env.VITE_API as string | undefined) ?? 'https://api.frog.toys'
+// (cast: under node --test there's no vite env, so this reads undefined rather than throwing)
+export const API = (import.meta as unknown as { env?: { VITE_API?: string } }).env?.VITE_API ?? 'https://api.frog.toys'
 
 /** The account shape every app gets from the edge (accounts-ux §5). */
 export interface Account {
@@ -131,10 +132,25 @@ export const revokeKey = (key: string, id: string) => call<{ ok: true }>(`/v1/ke
 export const billingHistory = async (key: string) =>
   (await call<{ topups: { at: string; amount_micro_usd: number; status: string }[] }>('/v1/billing/history', {}, key)).topups
 
-/** Leaves for Stripe's portal: change or cancel the plan, or the card. */
+/** Leaves for Stripe's portal: change or cancel the plan, or the card. Throws an AuthError
+ * (409 stale_subscription, 400 no_customer/no_subscription, 401 invalid_key) instead of
+ * navigating when the edge won't make one. */
 export async function billingPortal(key: string) {
   const r = await call<{ url: string }>('/v1/billing/portal', { method: 'POST', body: JSON.stringify({ return: location.origin }) }, key)
   location.assign(r.url)
+}
+
+/** Why the portal didn't open, in words to act on; null when it wasn't an AuthError (the
+ * network, say), so a caller can tell "no portal" from "no idea". */
+export function portalErrorMessage(e: unknown): string | null {
+  if (!(e instanceof AuthError)) return null
+  switch (e.code) {
+    case 'stale_subscription': return "your plan isn't linked to Stripe — subscribe again below to manage it"
+    case 'no_subscription': return 'no plan to manage'
+    case 'no_customer': return 'cancel and resubscribe to manage this plan'
+    case 'invalid_key': return 'your session expired — sign in again'
+    default: return e.code
+  }
 }
 
 export async function me(key: string): Promise<Account> {

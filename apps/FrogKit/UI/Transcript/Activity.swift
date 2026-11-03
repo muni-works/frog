@@ -118,9 +118,14 @@ struct ActivityLabel: View {
         case .blockedOnApproval: ("Stopped: retried a denied call", "hand.raised.fill", .orange)
         case .cancelled: ("Interrupted", "stop.circle.fill", .secondary)
         case .suspended: ("Suspended for app update", "pause.circle.fill", .secondary)
-        case .maxTokens: ("Hit the output limit", "text.append", .orange)
+        case .maxTokens(let autoContinued): (
+            autoContinued == 0 ? "Hit the output limit" : "Hit the output limit (\(autoContinued)x)",
+            "text.append",
+            .orange
+        )
         case .looping: ("Stopped: repeating itself", "arrow.trianglehead.2.clockwise", .orange)
         case .stepLimit: ("Stopped at the step limit", "flag.checkered", .orange)
+        case .billingLimit: ("Out of credit", "creditcard", .secondary)
         case .error: ("Failed", "exclamationmark.octagon.fill", .red)
         }
     }

@@ -107,6 +107,12 @@ struct ComposerView: View {
                 // Its hover plate's margin, so the text lines up with the git bar's.
                 FolderChip(folder: workspace.folder, choose: switchFolder)
                     .padding(.leading, -7)
+                // Work on a branch without disturbing the checkout the folder is in: pick an
+                // existing worktree or make one; the conversation starts there.
+                if let repo = workspace.repoRoot {
+                    WorktreeChip(repo: repo) { url in switchFolder?(url) }
+                        .padding(.leading, -6)
+                }
                 Spacer(minLength: 0)
             }
         } else if !workspace.isChat, let git = workspace.git {
