@@ -83,7 +83,13 @@ final class RemotePush {
         switch obj["event"] as? String {
         case "permission_request": asked(obj, session: session)
         case "question": choosing(obj, session: session)
-        case "turn_ended": finished(obj, session: session)
+        // A finished turn is not a push: it's already on the Mac's screen, and the model
+        // decides what's worth reaching a phone with. Its `Notify` goes out through
+        // `MacEffects.notified` (which has the conversation's title), not from this line:
+        // one path, one push.
+        // The Live Activity still follows the turn, because it's the lock screen's state, not
+        // an alert.
+        case "turn_ended": activityEnded(obj, session: session)
         case "item_started", "item_completed", "turn_started": activityUpdate(obj, session: session)
         default: break
         }
@@ -159,8 +165,56 @@ final class RemotePush {
         ], collapse: "ask-\(session)")
     }
 
-    private func finished(_ obj: [String: Any], session: String) {
-        let (title, _) = title(session)
+    /// The model asked for the person's attention (its `Notify` tool), from `MacEffects`: the
+    /// only alert a turn can raise on the phone. A finished reply isn't one, so nothing arrives
+    /// unless the model said it mattered. Urgency picks the interruption level — `attention`
+    /// is time-sensitive with a sound, `done` is active (a banner, no breakthrough), `silent`
+    /// is passive with no sound: a quiet entry in Notification Center, no interruption at all.
+    func notify(_ note: NotifyNote, session: String?, project: String?) {
+        guard let session, !devices.isEmpty else { return }
+        sendNotify(title: note.title ?? title(session).title, body: note.body,
+                   urgency: note.urgency, folder: project ?? title(session).folder, session: session)
+    }
+
+    /// One `Notify` to every paired phone. Each is its own news, so they don't collapse into
+    /// one another the way a permission card's refreshes do.
+    private func sendNotify(title: String, body: String, urgency: NotifyUrgency,
+                            folder: String?, session: String) {
+        guard let payload = Self.notifyPayload(title: title, body: body, urgency: urgency,
+                                               folder: folder, session: session)
+        else { return }
+        send(payload, collapse: nil)
+    }
+
+    /// The APNs body for a `Notify`, as iOS reads it: the category the phone registered
+    /// (NOTIFY), the interruption level each urgency maps to, and no sound at all for
+    /// `silent`. Pure, so the mapping is testable without a phone.
+    static func notifyPayload(title: String, body: String, urgency: NotifyUrgency,
+                              folder: String?, session: String) -> [String: Any]? {
+        let body = String(body.prefix(300))
+        guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        let (level, sound): (String, String?) = switch urgency {
+        case .attention: ("time-sensitive", "default")
+        case .done: ("active", "default")
+        case .silent: ("passive", nil)
+        }
+        var alert: [String: Any] = ["title": title, "body": body]
+        if let folder { alert["subtitle"] = "frog in \(folder)" }
+        var aps: [String: Any] = [
+            "alert": alert,
+            "category": "NOTIFY",
+            "thread-id": session,
+            "interruption-level": level,
+        ]
+        // `silent` carries no sound at all: that's what "no interruption" means on iOS.
+        if let sound { aps["sound"] = sound }
+        return ["aps": aps, "session": session, "urgency": urgency.rawValue]
+    }
+
+    /// The turn ended: close its Live Activity (the lock screen's state), and push nothing.
+    /// A Live Activity only exists because the person added it to that session, so ending it
+    /// is what they asked for; an alert on every turn end is what they didn't.
+    private func activityEnded(_ obj: [String: Any], session: String) {
         let reason = (obj["reason"] as? [String: Any])?["type"] as? String ?? "complete"
         let answer = Library.shared.conversation(session)?.turns.last?.items.last { $0.kind == .message }?.text ?? ""
         let line = answer.split(separator: "\n").first { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.map(String.init) ?? ""
@@ -174,10 +228,6 @@ final class RemotePush {
             body = "Stopped: " + ((e?["message"] as? String) ?? "something went wrong")
         default: body = "Stopped."
         }
-        send([
-            "aps": ["alert": ["title": title, "body": body], "category": "DONE", "thread-id": session, "sound": "default"],
-            "session": session,
-        ], collapse: "done-\(session)")
         activityEnd(session: session, summary: body)
     }
 

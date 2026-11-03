@@ -53,6 +53,14 @@ struct FrogApp: App {
         MorningNotice.start()
         _ = Updates.shared
         RemoteBridge.shared.startIfEnabled()
+        // `open Frog.app --args --test-notification`: fire one notification of every category,
+        // so delivery can be proven rather than assumed (a dev build's notifications fail
+        // silently when the system never authorized it). Logs what the system said.
+        if CommandLine.arguments.contains("--test-notification") {
+            Task { @MainActor in
+                Notifier.shared.testDeliver { note in print(note) }
+            }
+        }
     }
 
     var body: some Scene {

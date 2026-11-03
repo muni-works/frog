@@ -21,6 +21,9 @@ final class Notifications: NSObject, UNUserNotificationCenterDelegate {
         static let done = "DONE"
         /// frog's own question: tap to answer (in the app, or on the watch).
         static let ask = "ASK"
+        /// The model's `Notify`: its urgency decides how loudly it arrived; tapping opens
+        /// the conversation it came from.
+        static let notify = "NOTIFY"
     }
 
     enum Action {
@@ -44,6 +47,8 @@ final class Notifications: NSObject, UNUserNotificationCenterDelegate {
                                    options: [.customDismissAction]),
             UNNotificationCategory(identifier: Category.done, actions: [reply], intentIdentifiers: [], options: []),
             UNNotificationCategory(identifier: Category.ask, actions: [], intentIdentifiers: [], options: []),
+            // No actions: a Notify is news to read, not a question to answer.
+            UNNotificationCategory(identifier: Category.notify, actions: [], intentIdentifiers: [], options: []),
         ])
     }
 

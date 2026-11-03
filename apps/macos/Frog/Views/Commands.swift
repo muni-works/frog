@@ -73,6 +73,11 @@ struct FrogCommands: Commands {
                     NSApp.terminate(nil)
                 }
             }
+            // Proves notifications actually deliver: one of every category, plus what the
+            // system says about authorization (a dev build's alerts fail silently otherwise).
+            Button("Test Notifications") {
+                Notifier.shared.testDeliver { note in EngineProcess.log(note) }
+            }
         }
         #endif
 
