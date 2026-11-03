@@ -73,10 +73,7 @@ pub struct Context {
 /// arguments are not parsed, so a read verb with an odd argument still only reads.
 pub fn read_tool(name: &str, input: &Value) -> bool {
     match name {
-        "WebFetch" => {
-            crate::tools::web::public_host(input["url"].as_str().unwrap_or(""))
-        }
-        "WebSearch" => true,
+        "WebFetch" | "WebSearch" => crate::tools::web::plain_read(name, input),
         _ if name.starts_with("mcp__") => {
             let tool = name.rsplit("__").next().unwrap_or("");
             let tool = tool.trim_start_matches(['-', '_']);
@@ -87,7 +84,10 @@ pub fn read_tool(name: &str, input: &Value) -> bool {
                         || tool.starts_with(&format!("{v}-"))
                         || tool.starts_with(&format!("{v}_"))
                 });
+            // The same words that keep `mcp_read` from calling it a read: one that writes,
+            // runs or hands out a secret (`get-secret`, `show_credentials`) still asks.
             read && !DESTRUCTIVE_TOOL.iter().any(|d| tool.contains(d))
+                && !words(tool).any(|w| NOT_READ.contains(&w.as_str()))
         }
         _ => false,
     }
@@ -232,8 +232,8 @@ pub fn rules_fallback(name: &str, input: &Value) -> Option<&'static str> {
 /// MCP connections, which run one call at a time.
 pub fn parallel_read(name: &str, input: &Value) -> bool {
     match name {
-        "Read" | "Grep" | "Glob" | "WebSearch" => true,
-        "WebFetch" => crate::tools::web::public_host(input["url"].as_str().unwrap_or("")),
+        "Read" | "Grep" | "Glob" => true,
+        "WebFetch" | "WebSearch" => crate::tools::web::plain_read(name, input),
         "Bash" => {
             let cmd = input["command"].as_str().unwrap_or("").trim();
             input["unsandboxed"].as_bool() != Some(true)
@@ -1028,6 +1028,9 @@ mod tests {
             "mcp__x__update-record",
             "mcp__y__remove-file",
             "mcp__z__list-and-delete", // read prefix, destructive substring
+            "mcp__runpod__get-secret",  // read prefix, hands out a secret
+            "mcp__x__get_api_token",
+            "mcp__x__show_credentials",
         ] {
             assert!(!read_tool(bad, &json!({})), "{bad} should NOT read");
         }

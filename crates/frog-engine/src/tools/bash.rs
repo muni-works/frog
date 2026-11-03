@@ -306,6 +306,15 @@ pub fn shell_call(
         // a `cd` into another checkout doesn't open its refs and objects for writing.
         Some(root) => sandboxed(root, &shell, extra, &git_dirs(&ctx.root))?,
     };
+    // The sandbox hides frog's key files, so it hides the same keys in its environment:
+    // `env | curl …` would otherwise send ANTHROPIC_API_KEY anywhere the network allows.
+    if jail.is_some() {
+        for (k, _) in std::env::vars_os() {
+            if k.to_str().is_some_and(|k| k.ends_with("_API_KEY")) {
+                command.env_remove(k);
+            }
+        }
+    }
     let cmd = input["command"].as_str().unwrap_or("");
     let mut call = None;
     if let Some(e) = egress {
@@ -565,6 +574,33 @@ const CACHES: &[&str] = &[
     ".hex",
 ];
 
+/// Inside CACHES, what runs later outside the sandbox: installed binaries and toolchains on
+/// PATH, and config that names a command (cargo's `runner`, gradle init scripts). Read-only,
+/// so a command can fill caches but can't replace `~/.cargo/bin/cargo` for the user's next run.
+const CACHE_EXEC: &[&str] = &[
+    ".cargo/bin",
+    ".cargo/config",
+    ".cargo/config.toml",
+    ".rustup/toolchains",
+    ".rustup/settings.toml",
+    "go/bin",
+    ".bun/bin",
+    ".deno/bin",
+    ".elan/bin",
+    ".elan/toolchains",
+    ".gradle/init.d",
+    ".gradle/init.gradle",
+    ".gradle/gradle.properties",
+    ".m2/settings.xml",
+    ".yarn/bin",
+    ".gem/bin",
+    ".mix/escripts",
+    ".cabal/bin",
+    ".cabal/config",
+    ".opam/default/bin",
+    ".local/share/pnpm/pnpm",
+];
+
 /// Non-secret config that sandboxed commands may read by default (under $HOME). Everything a
 /// build or a read-only git command routinely looks at, and nothing that holds a credential:
 /// the credential paths stay in SECRETS and only open with `allow_read`.
@@ -727,6 +763,16 @@ pub fn git_dirs(cwd: &std::path::Path) -> Vec<std::path::PathBuf> {
     dirs
 }
 
+/// Inside git dirs, what sandboxed commands must never write: config (`core.fsmonitor`,
+/// `core.hooksPath`, filter drivers), hooks and `info/attributes`. frog runs git on the same
+/// repo unsandboxed (checkpoints, worktrees), so any of these would run a planted command
+/// outside the sandbox.
+fn git_protected(git: &[std::path::PathBuf]) -> Vec<std::path::PathBuf> {
+    git.iter()
+        .flat_map(|d| ["config", "config.worktree", "hooks", "info"].map(|f| d.join(f)))
+        .collect()
+}
+
 /// Seatbelt can only match `*` or localhost for network peers, so `network = "dev"` blocks all
 /// outbound except localhost and sends HTTPS through this allowlisting CONNECT proxy. Started
 /// once per process; returns its port.
@@ -843,6 +889,13 @@ fn seatbelt(
         .iter()
         .map(|p| format!("\n(allow file-read* (subpath \"{}\"))", quote(p)))
         .collect();
+    // Later rules win: git's config and hooks, and the toolchains in the caches, stay
+    // read-only inside their writable dirs.
+    let protected: String = git_protected(git)
+        .into_iter()
+        .chain(CACHE_EXEC.iter().map(|c| home.join(c)))
+        .map(|p| format!("\n(deny file-write* (subpath \"{}\"))", quote(&p)))
+        .collect();
     let git: String = git
         .iter()
         .map(|p| format!("\n  (subpath \"{}\")", quote(p)))
@@ -880,7 +933,7 @@ fn seatbelt(
   (subpath "/private/var/folders")
   (literal "/dev/null")
   (literal "/dev/tty")
-  (regex #"^/dev/fd/"){caches}{git}{writes})
+  (regex #"^/dev/fd/"){caches}{git}{writes}){protected}
 (deny file-read* file-write*{secrets}){reads}{network}"#,
         quote(root),
         quote(&tmp)
@@ -924,6 +977,16 @@ fn bubblewrap(
     writable_paths.dedup();
     for p in &writable_paths {
         cmd.arg("--bind").arg(p).arg(p);
+    }
+    // Git's config and hooks, and the caches' toolchains, read-only over their writable dirs
+    // (see `git_protected`, `CACHE_EXEC`).
+    let exec = CACHE_EXEC.iter().filter_map(|c| real(&home.join(c)));
+    for p in git_protected(git)
+        .into_iter()
+        .chain(exec)
+        .filter(|p| p.exists())
+    {
+        cmd.arg("--ro-bind").arg(&p).arg(&p);
     }
     // Credentials the user let commands read stay visible, read-only even inside a writable
     // bind (a project at `~`).
@@ -997,6 +1060,73 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
         false
+    }
+
+    /// Provider keys in frog's environment don't reach sandboxed commands.
+    #[tokio::test]
+    async fn sandbox_strips_api_keys_from_the_environment() {
+        if !available() {
+            eprintln!("no OS sandbox here; skipping");
+            return;
+        }
+        // A name no other test or tool reads, so setting it can't race anything.
+        unsafe { std::env::set_var("FROG_SANDBOX_TEST_API_KEY", "sk-leak") };
+        let ws = std::env::temp_dir().join(format!("frog-envkey-{}", crate::session::new_id()));
+        std::fs::create_dir_all(&ws).unwrap();
+        let ws = ws.canonicalize().unwrap();
+        let mut ctx = Ctx::new(ws.clone());
+        ctx.sandbox = Some(ws.clone());
+        let out = run(
+            &json!({ "command": "echo \"key=[${FROG_SANDBOX_TEST_API_KEY:-}]\"" }),
+            &mut ctx,
+        )
+        .await
+        .unwrap();
+        unsafe { std::env::remove_var("FROG_SANDBOX_TEST_API_KEY") };
+        assert!(out.content.contains("key=[]"), "{}", out.content);
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    /// A sandboxed command can commit, but can't touch git's config or hooks: frog runs git on
+    /// the same repo unsandboxed, so either would plant a command that escapes the sandbox.
+    #[tokio::test]
+    async fn sandbox_keeps_git_config_and_hooks_read_only() {
+        if !available() {
+            eprintln!("no OS sandbox here; skipping");
+            return;
+        }
+        let repo = std::env::temp_dir().join(format!("frog-gitcfg-{}", crate::session::new_id()));
+        std::fs::create_dir_all(&repo).unwrap();
+        assert!(
+            std::process::Command::new("git")
+                .args(["init", "-q"])
+                .current_dir(&repo)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let repo = repo.canonicalize().unwrap();
+        let mut ctx = Ctx::new(repo.clone());
+        ctx.sandbox = Some(repo.clone());
+        let out = run(
+            &json!({ "command": "echo a > a.txt && git add a.txt && git -c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -qm ok && echo committed" }),
+            &mut ctx,
+        )
+        .await
+        .unwrap();
+        assert!(out.content.contains("committed"), "{}", out.content);
+        for cmd in [
+            "git config core.fsmonitor 'touch pwned'",
+            "echo x > .git/hooks/post-checkout",
+            "mkdir -p .git/info && echo x > .git/info/attributes",
+        ] {
+            let _ = run(&json!({ "command": cmd }), &mut ctx).await;
+        }
+        let config = std::fs::read_to_string(repo.join(".git/config")).unwrap();
+        assert!(!config.contains("fsmonitor"), "{config}");
+        assert!(!repo.join(".git/hooks/post-checkout").exists());
+        assert!(!repo.join(".git/info/attributes").exists());
+        let _ = std::fs::remove_dir_all(&repo);
     }
 
     /// A commit inside a linked worktree works (index.lock, refs, objects live outside the
@@ -1419,6 +1549,22 @@ mod tests {
             profile.contains(&format!("(subpath \"{home_s}/.config/frog/config.toml\")")),
             "frog config.toml read missing:\n{profile}"
         );
+        // Toolchain binaries and git's config stay read-only after the writable caches.
+        for denied in [
+            format!("{home_s}/.cargo/bin"),
+            format!("{home_s}/.rustup/toolchains"),
+            "/definitely/not/home/.git/config".into(),
+            "/definitely/not/home/.git/hooks".into(),
+        ] {
+            let rule = format!("(deny file-write* (subpath \"{denied}\"))");
+            let at = profile
+                .find(&rule)
+                .unwrap_or_else(|| panic!("{rule} missing:\n{profile}"));
+            assert!(
+                at > profile.find("(allow file-write*").unwrap(),
+                "{profile}"
+            );
+        }
         // allow_write became a writable subpath.
         assert!(
             profile.contains(&format!("(subpath \"{home_s}/Developer/.shared-target\")")),
