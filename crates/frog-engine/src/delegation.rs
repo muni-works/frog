@@ -415,6 +415,25 @@ mod tests {
     }
 
     #[test]
+    fn an_egress_ask_is_its_own_soft_class() {
+        // Either shape — hosts beyond the list, or leaving the sandbox (no hosts) — is
+        // the same class; the grant decides whether it routes.
+        assert_eq!(soft_egress(&["pkgs.example.org".into()]), Some("egress-widen"));
+        assert_eq!(soft_egress(&[]), Some("egress-widen"));
+        assert!(crate::config::grant::ALL.contains(&"egress-widen"));
+        // Never-delegable still wins where it applies, whatever the egress ask: the
+        // caller checks `hard_class` first, so `rm -rf` outside scratch never reaches here.
+        assert!(hard_class(
+            "Bash",
+            &json!({ "command": "rm -rf ~/Documents", "allow_hosts": ["x.example"] }),
+            Path::new("/work/proj"),
+            Path::new("/work/proj"),
+            &HashSet::new()
+        )
+        .is_some());
+    }
+
+    #[test]
     fn mcp_hard_classes_go_by_verb() {
         assert_eq!(hard_mcp("mcp__runpod__delete-pod"), Some("deletes outside the session's scratch"));
         assert_eq!(hard_mcp("mcp__gmail__send-email"), Some("posts or messages people"));

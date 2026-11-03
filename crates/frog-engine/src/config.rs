@@ -798,9 +798,16 @@ mod delegation_tests {
         assert!(cfg.delegation.grants("ssh-scratch"));
         assert!(!cfg.delegation.grants("scratch-deletes"), "not granted");
         assert!(!cfg.delegation.grants("not-a-class"), "unknown classes never grant");
+        assert!(!cfg.delegation.grants("egress-widen"), "not in this list");
         assert_eq!(cfg.delegation.unknown_classes(), vec!["not-a-class"]);
         assert_eq!(cfg.delegation.chief_timeout_secs, 60);
         assert!(!cfg.delegation.digest);
+        // Egress widening is in the vocabulary, so it grants when named.
+        let cfg: Config =
+            toml::from_str("[delegation]\nchief = [\"x\"]\nchief_classes = [\"egress-widen\"]")
+                .unwrap();
+        assert!(cfg.delegation.grants("egress-widen"));
+        assert!(cfg.delegation.unknown_classes().is_empty());
         // Defaults: 300s, digest on.
         let cfg: Config = toml::from_str("[delegation]\nchief = [\"x\"]").unwrap();
         assert_eq!(cfg.delegation.chief_timeout_secs, 300);
