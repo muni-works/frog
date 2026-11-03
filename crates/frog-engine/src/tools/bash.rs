@@ -306,6 +306,15 @@ pub fn shell_call(
         // a `cd` into another checkout doesn't open its refs and objects for writing.
         Some(root) => sandboxed(root, &shell, extra, &git_dirs(&ctx.root))?,
     };
+    // The sandbox hides frog's key files, so it hides the same keys in its environment:
+    // `env | curl …` would otherwise send ANTHROPIC_API_KEY anywhere the network allows.
+    if jail.is_some() {
+        for (k, _) in std::env::vars_os() {
+            if k.to_str().is_some_and(|k| k.ends_with("_API_KEY")) {
+                command.env_remove(k);
+            }
+        }
+    }
     let cmd = input["command"].as_str().unwrap_or("");
     let mut call = None;
     if let Some(e) = egress {
@@ -1051,6 +1060,31 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
         false
+    }
+
+    /// Provider keys in frog's environment don't reach sandboxed commands.
+    #[tokio::test]
+    async fn sandbox_strips_api_keys_from_the_environment() {
+        if !available() {
+            eprintln!("no OS sandbox here; skipping");
+            return;
+        }
+        // A name no other test or tool reads, so setting it can't race anything.
+        unsafe { std::env::set_var("FROG_SANDBOX_TEST_API_KEY", "sk-leak") };
+        let ws = std::env::temp_dir().join(format!("frog-envkey-{}", crate::session::new_id()));
+        std::fs::create_dir_all(&ws).unwrap();
+        let ws = ws.canonicalize().unwrap();
+        let mut ctx = Ctx::new(ws.clone());
+        ctx.sandbox = Some(ws.clone());
+        let out = run(
+            &json!({ "command": "echo \"key=[${FROG_SANDBOX_TEST_API_KEY:-}]\"" }),
+            &mut ctx,
+        )
+        .await
+        .unwrap();
+        unsafe { std::env::remove_var("FROG_SANDBOX_TEST_API_KEY") };
+        assert!(out.content.contains("key=[]"), "{}", out.content);
+        let _ = std::fs::remove_dir_all(&ws);
     }
 
     /// A sandboxed command can commit, but can't touch git's config or hooks: frog runs git on

@@ -80,7 +80,10 @@ pub fn read_tool(name: &str, input: &Value) -> bool {
                         || tool.starts_with(&format!("{v}-"))
                         || tool.starts_with(&format!("{v}_"))
                 });
+            // The same words that keep `mcp_read` from calling it a read: one that writes,
+            // runs or hands out a secret (`get-secret`, `show_credentials`) still asks.
             read && !DESTRUCTIVE_TOOL.iter().any(|d| tool.contains(d))
+                && !words(tool).any(|w| NOT_READ.contains(&w.as_str()))
         }
         _ => false,
     }
@@ -1028,6 +1031,9 @@ mod tests {
             "mcp__x__update-record",
             "mcp__y__remove-file",
             "mcp__z__list-and-delete", // read prefix, destructive substring
+            "mcp__runpod__get-secret",  // read prefix, hands out a secret
+            "mcp__x__get_api_token",
+            "mcp__x__show_credentials",
         ] {
             assert!(!read_tool(bad, &json!({})), "{bad} should NOT read");
         }
