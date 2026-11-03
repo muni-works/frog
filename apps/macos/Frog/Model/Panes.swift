@@ -111,6 +111,16 @@ indirect enum PaneLayout: Equatable {
         return .split(axis, children, weights: weights)
     }
 
+    /// The split at `path` (the divider's parent), if the path lands on one.
+    func navigating(_ path: [Int]) -> PaneLayout? {
+        var here = self
+        for i in path {
+            guard case .split(_, let children, _) = here, children.indices.contains(i) else { return nil }
+            here = children[i]
+        }
+        return here
+    }
+
     /// The split at `path` with its children sharing evenly again.
     func equalizing(at path: [Int]) -> PaneLayout {
         guard case .split(let axis, var children, let weights) = self else { return self }
@@ -430,6 +440,18 @@ final class Panes {
         let length = d.axis == .horizontal ? d.parent.width : d.parent.height
         guard length > 0 else { return }
         layout = layout.moving(divider: d.index, at: d.path, to: t, minimum: minimum / length)
+    }
+
+    /// The smallest either pane beside this divider may get. A pane showing tools (terminal or
+    /// preview) is useful at 260 — the card is the point of the pane — while a transcript needs
+    /// its readable floor; the tighter of the two wins, so one side's floor doesn't pin the
+    /// other when the canvas is narrow.
+    func minimum(paneWidth floor: CGFloat, forToolPanes toolFloor: CGFloat, beside d: PaneLayout.Divider) -> CGFloat {
+        guard case .split(_, let children, _) = layout.navigating(d.path) else { return floor }
+        let at = d.index + 1 < children.count ? [children[d.index], children[d.index + 1]] : [children[d.index]]
+        let neighbors = at.flatMap(\.leaves).compactMap { id in items.first { $0.id == id } }
+        let tools = neighbors.contains { $0.toolCount > 0 }
+        return tools ? toolFloor : floor
     }
 
     func equalize(_ d: PaneLayout.Divider) {

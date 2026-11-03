@@ -146,6 +146,9 @@ struct WorkspaceView: View {
     /// Smallest a pane may be dragged to, across a divider.
     /// Smaller is unreadable even with a narrow pane's slimmed chrome.
     static let minPane: CGFloat = 360
+    /// Smallest a pane showing a terminal or preview may get: the card is the pane's point, and
+    /// a preview reads fine at this width. (A conversation pane keeps `minPane`.)
+    static let minToolPane: CGFloat = 260
     /// The canvas's coordinate space, for dragging dividers.
     static let canvasSpace = "frog-canvas"
 
@@ -400,7 +403,7 @@ struct WorkspaceView: View {
 
             ForEach(panes.layout.dividers(in: region(sessions: docked.sessions), maximizing: panes.maximized)) { d in
                 PaneDividerHandle(divider: d, resizing: $resizing) { t in
-                    panes.moveDivider(d, to: t, minimum: Self.minPane)
+                    panes.moveDivider(d, to: t, minimum: panes.minimum(paneWidth: Self.minPane, forToolPanes: Self.minToolPane, beside: d))
                 } equalize: {
                     panes.equalize(d)
                 }

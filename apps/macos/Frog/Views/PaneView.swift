@@ -344,8 +344,9 @@ struct PaneView: View {
     }
 }
 
-/// The line between two panes: invisible until hovered, then a small glass grip; drag it to
-/// resize the panes beside it, double-click to share the space evenly again.
+/// The line between two panes: a faint hairline at rest (something to aim at), a brighter grip
+/// on hover, tinted while dragging; drag it to resize the panes beside it, double-click to share
+/// the space evenly again.
 struct PaneDividerHandle: View {
     let divider: PaneLayout.Divider
     @Binding var resizing: Bool
@@ -371,6 +372,14 @@ struct PaneDividerHandle: View {
                     .frame(width: horizontal ? 4 : 44, height: horizontal ? 44 : 4)
                     .glassEffect(.regular, in: .capsule)
                     .opacity(hovering || dragging ? 1 : 0)
+            }
+            .overlay {
+                // The grip at rest: a hairline down (or across) the hit area, always faintly
+                // there so the divider reads as draggable before the pointer reaches it.
+                Capsule()
+                    .fill(.primary.opacity(hovering || dragging ? 0 : 0.28))
+                    .frame(width: horizontal ? 1 : 28, height: horizontal ? 28 : 1)
+                    .allowsHitTesting(false)
             }
             .frame(width: frame.width, height: frame.height)
             .offset(x: frame.minX, y: frame.minY)
