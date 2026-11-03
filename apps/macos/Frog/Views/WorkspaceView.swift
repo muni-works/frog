@@ -150,9 +150,12 @@ struct WorkspaceView: View {
     static let canvasSpace = "frog-canvas"
 
     /// A pane's frame in the window and the insets that keep its column clear of the cards.
+    /// A maximized pane takes the whole canvas region; the others are empty (their contents
+    /// step aside, cut to nothing), and the layout comes back exactly on restore.
     private func placement(_ pane: Pane, sessions open: Bool, changes: Bool) -> (frame: CGRect, insets: EdgeInsets) {
         let ext = extent(sessions: open)
-        var r = panes.layout.frames(in: region(sessions: open))[pane.id] ?? .zero
+        var r = panes.layout.frames(in: region(sessions: open), maximizing: panes.maximized)[pane.id] ?? .zero
+        if r == .zero { return (r, EdgeInsets()) }
         let leftmost = r.minX <= ext + 0.5
         if leftmost {
             r.size.width += r.minX
@@ -395,7 +398,7 @@ struct WorkspaceView: View {
             .environment(\.startConversation) { panes.start($1, in: $0, pane: focused) }
             .environment(\.paneNumbers, numbers)
 
-            ForEach(panes.layout.dividers(in: region(sessions: docked.sessions))) { d in
+            ForEach(panes.layout.dividers(in: region(sessions: docked.sessions), maximizing: panes.maximized)) { d in
                 PaneDividerHandle(divider: d, resizing: $resizing) { t in
                     panes.moveDivider(d, to: t, minimum: Self.minPane)
                 } equalize: {
@@ -453,11 +456,14 @@ struct WorkspaceView: View {
         .animation(Motion.panel(reduced: reduceMotion), value: sessionsVisible)
         .animation(Motion.panel(reduced: reduceMotion), value: docked)
         .animation(resizing ? nil : Motion.panel(reduced: reduceMotion), value: panes.layout)
+        .animation(Motion.panel(reduced: reduceMotion), value: panes.maximized)
         .animation(Motion.quick(reduced: reduceMotion), value: focused.ui.paletteShown)
         .onChange(of: workspace.selection) { peekSessions = false }
         .onChange(of: panes.focusedID) { peekSessions = false }
         .onExitCommand {
-            if focused.ui.findShown {
+            if let maxed = panes.maximizedPane {
+                panes.toggleMaximized(maxed)
+            } else if focused.ui.findShown {
                 focused.ui.findShown = false
             } else {
                 peekSessions = false

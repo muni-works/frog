@@ -207,8 +207,11 @@ struct PaneView: View {
                     .glassEffect(.regular, in: .capsule)
             }
         }
-        // The handle: drag it onto another pane's edge to move this pane there.
+        // The handle: drag it onto another pane's edge to move this pane there; double-click
+        // fills the canvas with this pane (and again, or Escape, puts the layout back).
         .paneDraggable(.pane(pane.id), title: conversation?.title ?? workspace.name)
+        .onTapGesture(count: 2) { panes.toggleMaximized(pane) }
+        .help("Double-click to \(panes.maximized == pane.id ? "restore" : "maximize") this pane")
         .opacity(focused ? 1 : 0.8)
     }
 
