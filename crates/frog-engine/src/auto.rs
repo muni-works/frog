@@ -73,10 +73,7 @@ pub struct Context {
 /// arguments are not parsed, so a read verb with an odd argument still only reads.
 pub fn read_tool(name: &str, input: &Value) -> bool {
     match name {
-        "WebFetch" => {
-            crate::tools::web::public_host(input["url"].as_str().unwrap_or(""))
-        }
-        "WebSearch" => true,
+        "WebFetch" | "WebSearch" => crate::tools::web::plain_read(name, input),
         _ if name.starts_with("mcp__") => {
             let tool = name.rsplit("__").next().unwrap_or("");
             let tool = tool.trim_start_matches(['-', '_']);
@@ -232,8 +229,8 @@ pub fn rules_fallback(name: &str, input: &Value) -> Option<&'static str> {
 /// MCP connections, which run one call at a time.
 pub fn parallel_read(name: &str, input: &Value) -> bool {
     match name {
-        "Read" | "Grep" | "Glob" | "WebSearch" => true,
-        "WebFetch" => crate::tools::web::public_host(input["url"].as_str().unwrap_or("")),
+        "Read" | "Grep" | "Glob" => true,
+        "WebFetch" | "WebSearch" => crate::tools::web::plain_read(name, input),
         "Bash" => {
             let cmd = input["command"].as_str().unwrap_or("").trim();
             input["unsandboxed"].as_bool() != Some(true)
