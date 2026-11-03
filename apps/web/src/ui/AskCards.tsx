@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { Elicitation, Question } from '../engine/thread'
+import { safeHref } from './href'
 
 // Ports of FrogKit's QuestionCard (AskViews.swift) and ElicitationCard (McpViews.swift).
 
@@ -46,11 +47,12 @@ export function ElicitationCard({ e, onReply }: { e: Elicitation; onReply: (acti
     Object.fromEntries(props.flatMap(([k, p]) => (p.default !== undefined ? [[k, p.default as Value]] : p.type === 'boolean' ? [[k, false]] : []))))
   const set = (k: string, v: Value) => setValues({ ...values, [k]: v })
   const missing = [...required].some((k) => values[k] === undefined || values[k] === '')
+  const link = safeHref(e.url)
   return (
     <section className="cardx ask-card" aria-label={`${e.server} needs your input`}>
       <b>{e.server} needs your input</b>
       <div className="wrap" style={{ fontSize: 13 }}>{e.message}</div>
-      {e.url && <a href={e.url} target="_blank" rel="noreferrer" className="f-btn f-btn--bordered" style={{ alignSelf: 'flex-start', textDecoration: 'none' }}>Open {new URL(e.url).host}</a>}
+      {link ? <a href={link.href} target="_blank" rel="noreferrer" className="f-btn f-btn--bordered" style={{ alignSelf: 'flex-start', textDecoration: 'none' }}>Open {link.host}</a> : e.url && <div className="det wrap">{e.url}</div>}
       {props.map(([k, p]) => (
         <label key={k} className="ask-field">
           <span>{p.title ?? k}{required.has(k) ? '' : ' (optional)'}</span>

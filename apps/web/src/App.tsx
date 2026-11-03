@@ -13,6 +13,7 @@ import { SessionList } from './ui/SessionList'
 import { Starting } from './ui/Starting'
 import { creditLine, Palette, Settings, type Command, type SettingsTab } from './ui/Overlays'
 import { Transcript } from './ui/Transcript'
+import { safeHref } from './ui/href'
 
 /** `pick`: open the composer's repo menu (back from sign-in, or ⌘K Connect a repo). */
 /** Placeholder session ids, shown while POST /v1/sessions is in flight. */
@@ -450,7 +451,7 @@ export default function App() {
 
         {view.kind === 'session' && current && ct && (<>
           <div className="scroll" ref={(el) => { if (el) el.scrollTop = el.scrollHeight }}><div className="col">
-            {cs?.state === 'refused' && <div role="status" className="banner warn"><span style={{ flex: 1 }}>Update Frog to continue. This sandbox speaks a different protocol than this page.</span>{cs.refused.upgrade ? <a className="f-btn f-btn--bordered f-btn--small" href={cs.refused.upgrade} style={{ textDecoration: 'none' }}>Update</a> : <button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => location.reload()}>Reload</button>}</div>}
+            {cs?.state === 'refused' && <div role="status" className="banner warn"><span style={{ flex: 1 }}>Update Frog to continue. This sandbox speaks a different protocol than this page.</span>{safeHref(cs.refused.upgrade) ? <a className="f-btn f-btn--bordered f-btn--small" href={safeHref(cs.refused.upgrade)!.href} style={{ textDecoration: 'none' }}>Update</a> : <button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => location.reload()}>Reload</button>}</div>}
             {cs?.state === 'closed' && cs.code === 4004 && <div role="status" className="banner warn">This session was deleted.</div>}
             {ct.turns.length === 0 && !opening[current.id] && cs?.state !== 'refused' && current.state !== 'error' && (
               <div className="ghost" role="status" aria-label={current.state === 'starting' ? 'Starting the sandbox' : 'Loading'}>
