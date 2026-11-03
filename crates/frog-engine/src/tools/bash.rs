@@ -565,6 +565,33 @@ const CACHES: &[&str] = &[
     ".hex",
 ];
 
+/// Inside CACHES, what runs later outside the sandbox: installed binaries and toolchains on
+/// PATH, and config that names a command (cargo's `runner`, gradle init scripts). Read-only,
+/// so a command can fill caches but can't replace `~/.cargo/bin/cargo` for the user's next run.
+const CACHE_EXEC: &[&str] = &[
+    ".cargo/bin",
+    ".cargo/config",
+    ".cargo/config.toml",
+    ".rustup/toolchains",
+    ".rustup/settings.toml",
+    "go/bin",
+    ".bun/bin",
+    ".deno/bin",
+    ".elan/bin",
+    ".elan/toolchains",
+    ".gradle/init.d",
+    ".gradle/init.gradle",
+    ".gradle/gradle.properties",
+    ".m2/settings.xml",
+    ".yarn/bin",
+    ".gem/bin",
+    ".mix/escripts",
+    ".cabal/bin",
+    ".cabal/config",
+    ".opam/default/bin",
+    ".local/share/pnpm/pnpm",
+];
+
 /// Non-secret config that sandboxed commands may read by default (under $HOME). Everything a
 /// build or a read-only git command routinely looks at, and nothing that holds a credential:
 /// the credential paths stay in SECRETS and only open with `allow_read`.
@@ -853,10 +880,12 @@ fn seatbelt(
         .iter()
         .map(|p| format!("\n(allow file-read* (subpath \"{}\"))", quote(p)))
         .collect();
-    // Later rules win: git's config and hooks stay read-only inside its writable dirs.
+    // Later rules win: git's config and hooks, and the toolchains in the caches, stay
+    // read-only inside their writable dirs.
     let protected: String = git_protected(git)
-        .iter()
-        .map(|p| format!("\n(deny file-write* (subpath \"{}\"))", quote(p)))
+        .into_iter()
+        .chain(CACHE_EXEC.iter().map(|c| home.join(c)))
+        .map(|p| format!("\n(deny file-write* (subpath \"{}\"))", quote(&p)))
         .collect();
     let git: String = git
         .iter()
@@ -940,9 +969,15 @@ fn bubblewrap(
     for p in &writable_paths {
         cmd.arg("--bind").arg(p).arg(p);
     }
-    // Git's config and hooks read-only over its writable dirs (see `git_protected`).
-    for p in git_protected(git).iter().filter(|p| p.exists()) {
-        cmd.arg("--ro-bind").arg(p).arg(p);
+    // Git's config and hooks, and the caches' toolchains, read-only over their writable dirs
+    // (see `git_protected`, `CACHE_EXEC`).
+    let exec = CACHE_EXEC.iter().filter_map(|c| real(&home.join(c)));
+    for p in git_protected(git)
+        .into_iter()
+        .chain(exec)
+        .filter(|p| p.exists())
+    {
+        cmd.arg("--ro-bind").arg(&p).arg(&p);
     }
     // Credentials the user let commands read stay visible, read-only even inside a writable
     // bind (a project at `~`).
@@ -1480,6 +1515,22 @@ mod tests {
             profile.contains(&format!("(subpath \"{home_s}/.config/frog/config.toml\")")),
             "frog config.toml read missing:\n{profile}"
         );
+        // Toolchain binaries and git's config stay read-only after the writable caches.
+        for denied in [
+            format!("{home_s}/.cargo/bin"),
+            format!("{home_s}/.rustup/toolchains"),
+            "/definitely/not/home/.git/config".into(),
+            "/definitely/not/home/.git/hooks".into(),
+        ] {
+            let rule = format!("(deny file-write* (subpath \"{denied}\"))");
+            let at = profile
+                .find(&rule)
+                .unwrap_or_else(|| panic!("{rule} missing:\n{profile}"));
+            assert!(
+                at > profile.find("(allow file-write*").unwrap(),
+                "{profile}"
+            );
+        }
         // allow_write became a writable subpath.
         assert!(
             profile.contains(&format!("(subpath \"{home_s}/Developer/.shared-target\")")),
