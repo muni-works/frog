@@ -1,7 +1,7 @@
 use super::*;
 use crate::config::{Profile, ProviderKind};
 use crate::provider::openai;
-use crate::protocol::{Answer, Image};
+use crate::protocol::{Answer, Image, NotifyUrgency};
 use crate::provider::scripted;
 use serde_json::json;
 
@@ -1769,6 +1769,90 @@ async fn set_title_tool_names_the_session_and_disables_the_fallback() {
         })
         .collect();
     assert_eq!(titles, ["fix login timeout"]);
+}
+
+#[tokio::test]
+async fn notify_tool_emits_its_event_with_the_urgency_it_was_given() {
+    let call = |input: serde_json::Value| Block::ToolUse {
+        id: "nt".into(),
+        name: crate::tools::notify::TOOL.into(),
+        input,
+    };
+    let mut h = engine(
+        vec![
+            reply(
+                vec![call(json!({
+                    "title": "build",
+                    "body": "The 40-minute build finished.",
+                    "urgency": "attention"
+                }))],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("done")], Stop::End),
+            reply(
+                vec![call(json!({ "body": "All green.", "urgency": "silent" }))],
+                Stop::ToolUse,
+            ),
+            reply(vec![text("done")], Stop::End),
+            // No urgency at all: the quiet default, a long job finished.
+            reply(vec![call(json!({ "body": "tests pass" }))], Stop::ToolUse),
+            reply(vec![text("done")], Stop::End),
+        ],
+        true,
+    );
+    let evs = run(&mut h, "run the build").await;
+    let notes: Vec<_> = evs
+        .iter()
+        .filter_map(|e| match &e.event {
+            Event::Notify {
+                title,
+                body,
+                urgency,
+            } => Some((title.clone(), body.clone(), *urgency)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        notes,
+        [(
+            Some("build".to_string()),
+            "The 40-minute build finished.".to_string(),
+            NotifyUrgency::Attention
+        )]
+    );
+    // Its row comes first, then the alert: the transcript shows what the model did.
+    let at = evs
+        .iter()
+        .position(|e| matches!(&e.event, Event::Notify { .. }))
+        .unwrap();
+    assert!(matches!(
+        &evs[at - 1].event,
+        Event::ItemCompleted { item: Item::ToolCall { name, .. }, .. } if name == crate::tools::notify::TOOL
+    ));
+
+    let evs = run_now(&mut h, "check").await;
+    let urgency = evs.iter().find_map(|e| match &e.event {
+        Event::Notify { urgency, .. } => Some(*urgency),
+        _ => None,
+    });
+    assert_eq!(urgency, Some(NotifyUrgency::Silent));
+
+    let evs = run_now(&mut h, "again").await;
+    let note = evs.iter().find_map(|e| match &e.event {
+        Event::Notify { title, urgency, .. } => Some((title.clone(), *urgency)),
+        _ => None,
+    });
+    assert_eq!(note, Some((None, NotifyUrgency::Done)));
+}
+
+/// A turn ending is not news: nothing the engine does on its own alerts the person. The only
+/// source is the model's `Notify` call — the fix for an alert per reply.
+#[tokio::test]
+async fn a_turn_ending_emits_no_notification() {
+    let mut h = engine(vec![reply(vec![text("All done.")], Stop::End)], true);
+    let evs = run(&mut h, "say something").await;
+    assert!(evs.iter().any(|e| matches!(e.event, Event::TurnEnded { .. })));
+    assert!(!evs.iter().any(|e| matches!(e.event, Event::Notify { .. })));
 }
 
 #[tokio::test]

@@ -821,6 +821,22 @@ pub enum Event {
         level: Level,
         message: String,
     },
+    /// The model asked for the person's attention (its `Notify` tool): a banner, a Dock bounce,
+    /// a push to the phone — whatever the client does with a notification. The engine never
+    /// sends one on its own (a finished reply is already on screen); this is only ever the
+    /// model's deliberate call. Live only: a replaying client shows the tool call's row, not a
+    /// second alert for something that happened hours ago.
+    Notify {
+        /// A few words, like a session title; absent means the client names the session.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        body: String,
+        /// `attention` (needs them now), `done` (a long job finished) or `silent` (no
+        /// interruption at all). Absent in nothing the engine writes; defaulted so a client
+        /// built before it decodes.
+        #[serde(default)]
+        urgency: NotifyUrgency,
+    },
     /// The answer to [`Op::ApprovalDigest`]: today's approvals roll-up.
     ApprovalDigest {
         summary: String,
@@ -1194,6 +1210,41 @@ impl std::fmt::Display for EngineError {
 pub enum Level {
     Info,
     Warn,
+}
+
+/// How much a [`Event::Notify`] may interrupt. Clients map it: a Dock bounce and a
+/// time-sensitive banner for `attention`, a quiet banner for `done`, nothing at all (a line to
+/// read later) for `silent`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum NotifyUrgency {
+    /// Needs the person now: a decision, something broken, work stopped.
+    Attention,
+    /// A long job finished. Worth a banner, not an interruption.
+    #[default]
+    Done,
+    /// No interruption at all.
+    Silent,
+}
+
+impl NotifyUrgency {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Attention => "attention",
+            Self::Done => "done",
+            Self::Silent => "silent",
+        }
+    }
+
+    /// From the wire, as the model spelled it (case and padding forgiven).
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "attention" => Some(Self::Attention),
+            "done" => Some(Self::Done),
+            "silent" => Some(Self::Silent),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]

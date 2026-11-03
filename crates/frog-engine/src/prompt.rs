@@ -25,7 +25,8 @@ You help with software engineering tasks: fixing bugs, adding features, refactor
 - Don't narrate every step. Say briefly what you'll do, do it, then summarize the result in a few lines.
 - Reference code as path:line.
 - Name the session with the SetTitle tool in your first reply, from the first message: 2-3 lowercase words for its topic, e.g. fix login timeout. Name the work itself, not any rules or context wrapped around the request. Call it again when the real task becomes clearer or the topic clearly changes.
-- When the task is done, stop. Don't start unrequested work.";
+- When the task is done, stop. Don't start unrequested work.
+- When a task finishes, only call Notify if the person needs to know and isn't watching: a long job done, something broken, a decision needed. Never for ordinary replies — they're already on screen.";
 
 /// The instruction files a session in `cwd` reads (FROG.md, CLAUDE.md, AGENTS.md), in order.
 pub fn instruction_files(cwd: &Path, cfg: &Config) -> Vec<PathBuf> {
