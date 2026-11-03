@@ -232,7 +232,7 @@ enum InstanceDecision {
 /// ids, and is dropped by the kernel when the holder exits — so a dead holder never keeps a
 /// live frog out. (Touched only at launch and in tests; `@unchecked` for the static let.)
 final class LockHolder: @unchecked Sendable {
-    struct Held {
+    struct Held: Equatable {
         let pid: pid_t
         let bundleIdentifier: String?
     }
@@ -242,7 +242,7 @@ final class LockHolder: @unchecked Sendable {
 
     private var isFree: Bool { if case .free = state { true } else { false } }
 
-    enum Outcome {
+    enum Outcome: Equatable {
         case free, took, held(Held)
     }
 
