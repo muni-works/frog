@@ -111,6 +111,44 @@ final class WorktreeHoldTests: XCTestCase {
         XCTAssertNil(Workspace.worktreeHold(of: missing, resumed: nil))
     }
 
+    /// The beachball at launch, pinned so a regression fails fast instead of hanging the
+    /// suite: a restored window can pass a RELATIVE folder URL, which `resolvingSymlinksInPath`
+    /// alone leaves relative, so the walk went "." → ".." forever on the main thread. The
+    /// timeout expectation is the guard — without the absolute-first fix this never returns.
+    func testARelativeFolderURLIsPlainAndReturnsBeforeTheTimeout() {
+        // Scheme-less: a restored window passes a URL that is neither file:-marked nor
+        // absolute (`URL(fileURLWithPath:)` would resolve against the CWD — absolute already).
+        let relative = URL(string: "relative-folder-\(UUID().uuidString.prefix(6))/nested")!
+        XCTAssertFalse(relative.isFileURL, "the case under test is a scheme-less relative URL")
+        XCTAssertFalse(relative.path.hasPrefix("/"), "the case under test is a relative path")
+        let returned = XCTestExpectation(description: "checkout of a relative URL returns")
+        var result: SessionBroker.Checkout?
+        DispatchQueue.global().async {
+            result = SessionBroker.checkout(of: relative)
+            returned.fulfill()
+        }
+        wait(for: [returned], timeout: 5)
+        XCTAssertEqual(result, .plain, "a relative folder outside any repo is .plain")
+    }
+
+    /// ".." segments must land on the right absolute place, not just terminate: the walk
+    /// above a dotted path must reach the repo that lives there.
+    func testDotDotSegmentsResolveToTheRightAbsolutePlace() throws {
+        let base = FileManager.default.temporaryDirectory
+            .appending(path: "frog-dotdot-\(UUID().uuidString.prefix(6))")
+        try FileManager.default.createDirectory(at: base.appending(path: "repo/sub"), withIntermediateDirectories: true)
+        try SessionBroker.git(["init", "-q", "-b", "main"], in: base.appending(path: "repo"))
+        // `.frog/worktrees` is what makes the repo count as a main checkout for `checkout`.
+        try FileManager.default.createDirectory(at: base.appending(path: "repo/.frog/worktrees"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let dotted = base.appending(path: "repo/sub/../inside")
+        guard case .main(let top) = SessionBroker.checkout(of: dotted) else {
+            return XCTFail("the walk above the .. should reach the repo")
+        }
+        XCTAssertEqual(top.resolvingSymlinksInPath().path,
+                       base.appending(path: "repo").resolvingSymlinksInPath().path)
+    }
+
     /// The composer's worktree menu: the owned tree is disabled and names its engine; a free
     /// tree is enabled again.
     func testTheWorktreeMenuDisablesOwnedTrees() throws {
