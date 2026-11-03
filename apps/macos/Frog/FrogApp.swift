@@ -292,7 +292,7 @@ final class LockHolder: @unchecked Sendable {
         var bundle: String?
         if let text = try? String(contentsOf: lock, encoding: .utf8) {
             let lines = text.split(separator: "\n", omittingEmptySubsequences: true)
-            pid = lines.first.flatMap { pid_t($0) } ?? -1
+            pid = lines.first.flatMap { line in Int(line).map { pid_t($0) } } ?? -1
             bundle = lines.count > 1 && lines[1] != "-" ? String(lines[1]) : nil
         }
         return Held(pid: pid, bundleIdentifier: bundle)
