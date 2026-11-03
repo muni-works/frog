@@ -68,6 +68,14 @@ final class Library {
     /// with a thousand sessions, and a streaming session asks for one every second.
     @ObservationIgnored private var lastListed = ContinuousClock.now - .seconds(60)
     static let listInterval = Duration.seconds(3)
+    /// The last full listing, kept so a watcher refresh only fetches what changed: the ids the
+    /// watcher names go out as `--sessions --ids` and their rows merge in here. Refreshing one
+    /// session costs ~5 ms instead of the full 1.5 MB listing's 0.05 s + 1,026 stat calls.
+    @ObservationIgnored private var listed: [String: SessionInfo] = [:]
+    /// cwd → whether it exists, cached (folders rarely appear or disappear): the listing filter
+    /// used to stat one per session, 1,026 `fileExists` on the main actor per refresh.
+    @ObservationIgnored private var existingFolders: [String: (exists: Bool, at: ContinuousClock.Instant)] = [:]
+    static let folderCacheTTL: Duration = .seconds(60)
 
     private init() {
         pinned = Set(UserDefaults.standard.stringArray(forKey: "pinnedSessions") ?? [])
@@ -78,8 +86,10 @@ final class Library {
         refresh()
     }
 
-    /// Reload the list (coalesced: a burst of calls makes one `frog --sessions --all`).
-    func refresh() {
+    /// Reload the list (coalesced: a burst of calls makes one `frog --sessions`). With `ids`
+    /// (the watcher's changed set), only those sessions are re-listed (`--sessions --ids`) and
+    /// merged into the cached full listing; without, the full `--sessions --all` runs.
+    func refresh(ids: Set<String> = []) {
         #if DEBUG
         dispatchPrecondition(condition: .onQueue(.main))  // see Conversation.apply
         if staged { return }
@@ -91,29 +101,53 @@ final class Library {
             guard !Task.isCancelled else { return }
             lastListed = .now
             let home = FileManager.default.homeDirectoryForCurrentUser
-            if let all = try? await Frog.json([SessionInfo].self, args: ["--sessions", "--all", "--json"], cwd: home) {
+            // A partial refresh with no cached listing has nothing to merge into: full then.
+            let known = !ids.isEmpty && !listed.isEmpty
+            let args = known ? ["--sessions", "--ids", ids.sorted().joined(separator: ","), "--all", "--json"]
+                             : ["--sessions", "--all", "--json"]
+            if let rows = try? await Frog.json([SessionInfo].self, args: args, cwd: home) {
                 #if DEBUG
                 if staged { return }  // a listing already in flight when a snapshot staged its own
                 #endif
-                // A conversation whose folder is gone can't be reopened.
-                // Race attempts live in their own worktrees and are shown in the race, not here.
-                // Worker worktrees (`<repo>/.frog/worktrees/`, `<repo>/.claude/worktrees/`) are
-                // shown under their repo (see `Sidebar.home`).
-                let listed = all.filter { s in
-                    guard let cwd = s.cwd, !cwd.contains("/.local/share/frog/attempts/") else { return false }
-                    // Documents, Desktop and Downloads ask macOS's permission on first touch: a
-                    // listing never touches them, only opening that conversation does.
-                    return FrogPaths.isPrivacyProtected(cwd) || FileManager.default.fileExists(atPath: cwd)
+                // Unchanged ids stay as the full listing read them: a partial refresh's rows
+                // replace only their own. Race attempts live in their own worktrees and are
+                // shown in the race, not here; worker worktrees are shown under their repo
+                // (see `Sidebar.home`).
+                if known {
+                    var merged = listed
+                    for id in ids { merged.removeValue(forKey: id) }  // keep only refreshed rows
+                    for row in rows { merged[row.id] = row }
+                    apply(merged.values.filter { present($0) })
+                } else {
+                    apply(rows.filter { present($0) })
                 }
-                // Unchanged, it isn't written: every view of the list would rebuild for nothing.
-                guard listed != local else { return }
-                local = listed
-                sessions = listed + cloud
-                GitIndex.shared.listingChanged(listed)
-                archiveQuietChats()
-                RemoteBridge.shared.listChanged()
             }
         }
+    }
+
+    /// Write a listing: only when it changed (every view of the list would rebuild for nothing).
+    private func apply(_ listed: [SessionInfo]) {
+        guard listed != local else { return }
+        local = listed
+        sessions = listed + cloud
+        self.listed = Dictionary(listed.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        GitIndex.shared.listingChanged(listed)
+        archiveQuietChats()
+        RemoteBridge.shared.listChanged()
+    }
+
+    /// Whether a session's folder exists, from the cache (fresh for `folderCacheTTL`): a
+    /// Documents/Desktop/Downloads session can't be stat'd without a TCC prompt anyway.
+    private func present(_ s: SessionInfo) -> Bool {
+        guard let cwd = s.cwd, !cwd.contains("/.local/share/frog/attempts/") else { return false }
+        if FrogPaths.isPrivacyProtected(cwd) { return true }
+        let now = ContinuousClock.now
+        if let cached = existingFolders[cwd], now < cached.at + Self.folderCacheTTL {
+            return cached.exists
+        }
+        let exists = FileManager.default.fileExists(atPath: cwd)
+        existingFolders[cwd] = (exists, now)
+        return exists
     }
 
     // MARK: Pins and archive

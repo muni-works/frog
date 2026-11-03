@@ -2106,7 +2106,7 @@ async fn use_folder_moves_a_chat_into_a_project() {
         })
         .expect("Bash ran after the move");
     assert!(pwd_out.contains(project.to_str().unwrap()), "{pwd_out}");
-    let session = session::list(&store, Some(&project)).unwrap();
+    let session = session::list(&store, Some(&project), None).unwrap();
     assert_eq!(session.len(), 1, "the session file moved to the project");
     shutdown(h).await;
     let _ = std::fs::remove_dir_all(base);

@@ -133,6 +133,10 @@ struct Cli {
     /// List sessions started in this directory and exit.
     #[arg(long)]
     sessions: bool,
+    /// With --sessions: only these session ids (comma-separated). Refreshes just those logs
+    /// instead of walking the store.
+    #[arg(long, requires = "sessions", value_delimiter = ',')]
+    ids: Vec<String>,
     /// Today's delegation roll-up (docs/design/delegation.md) across this directory's
     /// (or --all) sessions, from their logs, and exit.
     #[arg(long, requires = "sessions")]
@@ -473,7 +477,8 @@ async fn run() -> Result<bool> {
         return Ok(true);
     }
     if cli.sessions {
-        list_sessions(&store, &cwd, cli.all, cli.json)?;
+        let ids = (!cli.ids.is_empty()).then_some(cli.ids.as_slice());
+        list_sessions(&store, &cwd, cli.all, ids, cli.json)?;
         return Ok(true);
     }
     if cli.session_tree {
@@ -857,7 +862,7 @@ fn session_tree(
     cwd: &std::path::Path,
 ) -> Result<frog_engine::diagram::Diagram> {
     use frog_engine::diagram::{Diagram, Edge, Node, Shape};
-    let mut sessions = session::list(store, Some(cwd))?;
+    let mut sessions = session::list(store, Some(cwd), None)?;
     sessions.sort_by_key(|s| s.header.created);
     let ids: std::collections::HashSet<&str> = sessions.iter().map(|s| s.id.as_str()).collect();
     let mut d = Diagram {
@@ -1068,7 +1073,7 @@ fn digest(
     cwd: &std::path::Path,
     all: bool,
 ) -> Result<()> {
-    let sessions = session::list(store, (!all).then_some(cwd))?;
+    let sessions = session::list(store, (!all).then_some(cwd), None)?;
     let today = chrono::Utc::now().date_naive();
     let mut auto_allowed = 0u32;
     let mut second_pass = 0u32;
@@ -1110,9 +1115,10 @@ fn list_sessions(
     store: &std::path::Path,
     cwd: &std::path::Path,
     all: bool,
+    ids: Option<&[String]>,
     json: bool,
 ) -> Result<()> {
-    let sessions = session::list(store, (!all).then_some(cwd))?;
+    let sessions = session::list(store, (!all).then_some(cwd), ids)?;
     if json {
         let rows: Vec<serde_json::Value> = sessions
             .iter()
