@@ -417,6 +417,66 @@ impl Agent {
                 }
             }
         }
+        // An egress ask (hosts beyond the session's allow-list, or leaving the sandbox
+        // it's enforced in) doesn't go through the classifier — its harm is fixed, not a
+        // judgment call — so the chief route lives here instead. Egress widening is a
+        // delegable class (docs/design/delegation.md): a chief `[delegation]` grants, the
+        // chief decides; without one, the card goes up exactly as before. A never-delegable
+        // call never routes, whatever it also asks: `auto_judge` (which checks `hard_class`)
+        // is skipped for an egress ask, so the check is repeated here and the card wins.
+        if let Some(hosts) = &egress_ask
+            && self.mode == Mode::Auto
+            && self.can_ask
+        {
+            if let Some(why) = crate::delegation::hard_class(
+                name,
+                input,
+                &self.ctx.cwd,
+                &self.ctx.root,
+                &self.created,
+            ) {
+                let why = format!("it {why} (never delegated)");
+                self.decision(item, "never-delegable", "ask", &why, 0);
+                self.digest.count(crate::digest::Which::NeverDelegable);
+                reason = Some(why);
+            } else {
+                let reason = match hosts.len() {
+                    0 => "It would run outside the sandbox, past the session's network allow-list."
+                        .to_string(),
+                    _ => format!(
+                        "It would reach {}, which isn't on this session's network allow-list.",
+                        hosts.join(", ")
+                    ),
+                };
+                match self.delegate_flagged(item, name, arg, input, reason).await {
+                    Chief::Decided(decision) => {
+                        // The same grant an answered card makes: these hosts for the run,
+                        // or for the rest of the session.
+                        if let (Some(egress), true) = (&self.ctx.egress, !hosts.is_empty()) {
+                            match &decision {
+                                Decision::Allow => egress.grant_once(cmd, hosts.clone()),
+                                Decision::AllowAlways | Decision::AllowPrefix => {
+                                    egress.grant(hosts);
+                                    self.notice(
+                                        Level::Info,
+                                        format!(
+                                            "Network allow-list: {} allowed for the rest of this session.",
+                                            hosts.join(", ")
+                                        ),
+                                    );
+                                }
+                                Decision::Deny => {}
+                            }
+                        }
+                        return decision;
+                    }
+                    // Counted and audited (delegated:chief fell back) already; it cards.
+                    Chief::Fallback => {}
+                    // No chief, class not granted, or not interactive: the card, as before.
+                    Chief::NoRoute => self.digest.count(crate::digest::Which::Blocked),
+                }
+            }
+        }
         if !self.can_ask {
             self.decision(
                 item,
@@ -1022,9 +1082,11 @@ impl Agent {
                 "never-delegable",
                 format!("{flag}; with context: {why} (never delegated)"),
             )),
-            // Fail closed: the flag stands, the card goes up.
+            // Fail closed: the flag stands, the card goes up. Layer `fallback`, not
+            // `second-pass`: an outage is never a delegation route, so this always
+            // reaches the user (docs/design/delegation.md).
             crate::auto::Verdict::Failed(why) => Err((
-                "second-pass",
+                "fallback",
                 format!("{flag}; the second pass couldn't finish ({why})"),
             )),
         }
@@ -1050,14 +1112,23 @@ impl Agent {
         let Some(chief) = chiefs.first().cloned() else {
             return Chief::NoRoute;
         };
-        let Some(class) = crate::delegation::soft_class(
-            name,
-            input,
-            &self.ctx.cwd,
-            &self.ctx.root,
-            &self.created,
-            &self.cfg,
-        ) else {
+        // Egress asks (the yolo/unsandboxed/allow_hosts cards) have their own shape:
+        // widening the fence, classified by what the call asks, not by the command's
+        // paths. `soft_egress` is checked before `soft_class`, which knows nothing
+        // about hosts.
+        let hosts = self.egress_ask(name, input);
+        let class = match &hosts {
+            Some(hosts) => crate::delegation::soft_egress(hosts),
+            None => crate::delegation::soft_class(
+                name,
+                input,
+                &self.ctx.cwd,
+                &self.ctx.root,
+                &self.created,
+                &self.cfg,
+            ),
+        };
+        let Some(class) = class else {
             return Chief::NoRoute;
         };
         if !self.cfg.delegation.grants(class) {

@@ -5783,16 +5783,30 @@ mod egress_tests {
         mode: Mode,
         can_ask: bool,
     ) -> (Handle, PathBuf) {
+        egress_engine_with(script, worker, mode, can_ask, |_| {})
+    }
+
+    /// [`egress_engine_asking`] with the config adjusted before the engine starts (a
+    /// `[delegation]` grant, say).
+    fn egress_engine_with(
+        script: Vec<Response>,
+        worker: bool,
+        mode: Mode,
+        can_ask: bool,
+        adjust: impl FnOnce(&mut Config),
+    ) -> (Handle, PathBuf) {
         let dir = std::env::temp_dir().join(format!("frog-egress-eng-{}", new_id()));
         std::fs::create_dir_all(&dir).unwrap();
         let mut profile = Profile::new(ProviderKind::Ollama, "test");
         profile.tool_mode = ToolMode::Native;
+        let mut cfg = Config {
+            hermetic: true,
+            worker,
+            ..Config::default()
+        };
+        adjust(&mut cfg);
         let opts = Options {
-            cfg: Config {
-                hermetic: true,
-                worker,
-                ..Config::default()
-            },
+            cfg,
             profile_name: "test".into(),
             profile,
             cwd: dir.clone(),
@@ -6242,6 +6256,196 @@ mod egress_tests {
             .collect();
         assert_eq!(outcomes, vec![Some(ToolOutcome::Denied); 2]);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// One turn, answering every `DelegateApproval` with `chief` (None: the broker
+    /// errors, the chief is unreachable) and every card with `card`. Returns the events,
+    /// how many times the chief was asked, and how many cards reached the user.
+    async fn run_turn(
+        h: &mut Handle,
+        chief: Option<Value>,
+        card: Decision,
+    ) -> (Vec<Envelope>, usize, usize) {
+        submit(h, "go").await;
+        let mut evs = Vec::new();
+        let (mut asked_chief, mut carded) = (0, 0);
+        // `SetClientCaps` also ends in an `Idle`; only the one after this turn counts.
+        let mut started = false;
+        loop {
+            let env = h.events.recv().await.unwrap();
+            started |= matches!(env.event, Event::TurnStarted { .. });
+            match &env.event {
+                Event::SessionRequest { id, tool, .. } if tool == "DelegateApproval" => {
+                    asked_chief += 1;
+                    let (result, error) = match &chief {
+                        Some(a) => (Some(a.clone()), None),
+                        None => (None, Some("chief folder is gone".to_string())),
+                    };
+                    h.ops
+                        .send(Op::SessionReply {
+                            id: id.clone(),
+                            result,
+                            error,
+                        })
+                        .unwrap();
+                }
+                Event::PermissionRequest { id, .. } => {
+                    carded += 1;
+                    h.ops
+                        .send(Op::Permission {
+                            id: id.clone(),
+                            decision: card,
+                            note: None,
+                        })
+                        .unwrap();
+                }
+                _ => {}
+            }
+            let idle = started && matches!(env.event, Event::Idle);
+            evs.push(env);
+            if idle {
+                return (evs, asked_chief, carded);
+            }
+        }
+    }
+
+    /// An egress ask (hosts beyond the list, or leaving the sandbox) in auto mode is
+    /// `egress-widen`, a soft class: with the chief's grant it goes to the chief, and the
+    /// chief's approval runs the call — no card. The hosts it named are granted for the run.
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn an_egress_ask_routes_to_the_chief_when_the_class_is_granted() {
+        let (mut h, dir) = egress_engine_with(
+            vec![
+                bash_call(
+                    "hosts",
+                    json!({ "command": "echo hi", "allow_hosts": ["pkgs.example.org"] }),
+                ),
+                bash_call("out", json!({ "command": "echo hi", "unsandboxed": true })),
+                reply(vec![text("ok")], Stop::End),
+            ],
+            true,
+            Mode::Auto,
+            true,
+            |cfg| {
+                cfg.delegation.chief = vec!["chief".into()];
+                cfg.delegation.chief_classes = vec!["egress-widen".into()];
+            },
+        );
+        caps(&h, true);
+        let (evs, asked_chief, carded) =
+            run_turn(&mut h, Some(json!("approve — its own package host")), Decision::Deny).await;
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
+        assert_eq!((asked_chief, carded), (2, 0), "{:?}", names(&evs));
+        for item in ["hosts", "out"] {
+            assert!(
+                layers(&evs, item).contains(&("delegated".into(), "allow".into())),
+                "{item}: {:?}",
+                layers(&evs, item)
+            );
+            assert_eq!(outcome_of(&evs, item), Some(ToolOutcome::Ok), "{item}");
+        }
+        // The audit line names the chief and the class.
+        assert!(
+            evs.iter().any(|e| matches!(
+                &e.event,
+                Event::Notice { message, .. }
+                    if message.contains("delegated:chief: `Bash")
+                        && message.contains("approved by chief")
+            )),
+            "{:?}",
+            names(&evs)
+        );
+        let why = evs.iter().find_map(|e| match &e.event {
+            Event::PermissionDecision { item, layer, reason, .. }
+                if item == "hosts" && layer == "delegated" =>
+            {
+                Some(reason.clone())
+            }
+            _ => None,
+        });
+        assert_eq!(
+            why.as_deref(),
+            Some("chief approved it (— its own package host) [egress-widen]")
+        );
+    }
+
+    /// Without the grant (no chief, or a chief that doesn't hold `egress-widen`) the
+    /// egress card reaches the user exactly as before.
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn an_egress_ask_cards_the_user_without_the_grant() {
+        for classes in [Vec::new(), vec!["scratch-deletes".to_string()]] {
+            let (mut h, dir) = egress_engine_with(
+                vec![
+                    bash_call(
+                        "hosts",
+                        json!({ "command": "echo hi", "allow_hosts": ["pkgs.example.org"] }),
+                    ),
+                    reply(vec![text("ok")], Stop::End),
+                ],
+                true,
+                Mode::Auto,
+                true,
+                |cfg| {
+                    cfg.delegation.chief = vec!["chief".into()];
+                    cfg.delegation.chief_classes = classes.clone();
+                },
+            );
+            caps(&h, true);
+            let (evs, asked_chief, carded) = run_turn(&mut h, None, Decision::Deny).await;
+            shutdown(h).await;
+            let _ = std::fs::remove_dir_all(dir);
+            assert_eq!((asked_chief, carded), (0, 1), "{classes:?}");
+            assert_eq!(
+                layers(&evs, "hosts").first(),
+                Some(&("ask".to_string(), "ask".to_string())),
+                "{classes:?}"
+            );
+        }
+    }
+
+    /// A call that both widens egress and is never-delegable (`rm -rf` outside the
+    /// session's scratch) cards the user even with `egress-widen` granted: the hard class
+    /// wins, and the chief is never asked.
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn a_never_delegable_egress_ask_still_cards_the_user() {
+        let theirs = format!("/var/tmp/deleg-egress-{}", new_id());
+        let (mut h, dir) = egress_engine_with(
+            vec![
+                bash_call(
+                    "rm",
+                    json!({
+                        "command": format!("rm -rf {theirs}"),
+                        "allow_hosts": ["pkgs.example.org"],
+                    }),
+                ),
+                reply(vec![text("ok")], Stop::End),
+            ],
+            true,
+            Mode::Auto,
+            true,
+            |cfg| {
+                cfg.delegation.chief = vec!["chief".into()];
+                cfg.delegation.chief_classes =
+                    vec!["egress-widen".into(), "scratch-deletes".into()];
+            },
+        );
+        caps(&h, true);
+        let (evs, asked_chief, carded) = run_turn(&mut h, Some(json!("approve")), Decision::Deny).await;
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(dir);
+        assert_eq!(asked_chief, 0, "the chief was asked about a never-delegable call");
+        assert_eq!(carded, 1);
+        assert_eq!(outcome_of(&evs, "rm"), Some(ToolOutcome::Denied));
+        assert_eq!(
+            layers(&evs, "rm").first(),
+            Some(&("never-delegable".to_string(), "ask".to_string())),
+            "{:?}",
+            layers(&evs, "rm")
+        );
     }
 }
 
@@ -10563,7 +10767,8 @@ async fn ssh_into_its_own_scratch_runs_and_ssh_elsewhere_cards() {
     assert_eq!(layers(&evs, "other").first(), Some(&("second-pass".to_string(), "ask".to_string())));
 }
 
-/// A second pass that errors keeps the flag: the card goes up (never fail-open).
+/// A second pass that errors keeps the flag: the card goes up (never fail-open), even
+/// when the chief's grants cover the call's soft class — an outage is not a route.
 #[tokio::test]
 async fn a_failed_second_pass_cards() {
     let dir = scratch_path("err");
@@ -10576,15 +10781,22 @@ async fn a_failed_second_pass_cards() {
         bash_call("rm", &format!("rm -rf {}", dir.display())),
         reply(vec![text("done")], Stop::End),
     ];
-    let mut h = engine_deleg(script, None);
-    let evs = turn_answering(&mut h, |_| Some((Decision::Deny, None))).await;
+    let mut cfg = Config { hermetic: true, sandbox_shell: false, ..Config::default() };
+    cfg.delegation.chief = vec!["chief".into()];
+    cfg.delegation.chief_classes = vec!["scratch-deletes".into()];
+    cfg.delegation.chief_timeout_secs = 1;
+    let mut h = engine_deleg(script, Some(cfg));
+    caps(&h, true);
+    let mut asked_chief = false;
+    let evs = loop_collect(&mut h, |_, tool| asked_chief |= tool == "DelegateApproval").await;
     shutdown(h).await;
     let kept = dir.exists();
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(asked(&evs), 1);
     assert!(kept);
+    assert!(!asked_chief, "the chief was asked about a call the second pass couldn't judge");
     let reason = evs.iter().find_map(|e| match &e.event {
-        Event::PermissionDecision { item, layer, reason, .. } if item == "rm" && layer == "second-pass" => Some(reason.clone()),
+        Event::PermissionDecision { item, layer, reason, .. } if item == "rm" && layer == "fallback" => Some(reason.clone()),
         _ => None,
     });
     assert!(reason.as_deref().is_some_and(|r| r.contains("couldn't finish")), "{reason:?}");

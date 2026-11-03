@@ -262,6 +262,14 @@ pub fn soft_class(
     }
 }
 
+/// The soft class for a call that widens the egress fence — `hosts` is what it asks
+/// beyond the session's allow-list (empty: it leaves the sandbox the list is enforced
+/// in). Never called for a hard class: deletes, credentials and deploys are checked
+/// first and always card the user.
+pub fn soft_egress(_hosts: &[String]) -> Option<&'static str> {
+    Some(crate::config::grant::EGRESS)
+}
+
 fn soft_command(
     cmd: &str,
     cwd: &Path,

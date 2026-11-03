@@ -396,6 +396,9 @@ pub mod grant {
     pub const MCP_WRITE_GRANTED: &str = "mcp-write-granted";
     /// Long multi-step commands whose segments are individually ordinary.
     pub const LONG_COMMANDS: &str = "long-commands";
+    /// Widens the session's egress fence: `allow_hosts` beyond the session's list, or a
+    /// command leaving the sandbox the list is enforced in (the yolo/unsandboxed cards).
+    pub const EGRESS: &str = "egress-widen";
 
     /// Every class the vocabulary defines, for config validation.
     pub const ALL: &[&str] = &[
@@ -406,6 +409,7 @@ pub mod grant {
         NETWORK_READ_WRITES,
         MCP_WRITE_GRANTED,
         LONG_COMMANDS,
+        EGRESS,
     ];
 }
 
