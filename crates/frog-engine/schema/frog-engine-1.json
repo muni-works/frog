@@ -292,6 +292,33 @@
         }
       ]
     },
+    "Bundle": {
+      "description": "A bundle row: several consecutive messages folded into one (folded sequences only). A bundle\nhas no single source edge, so clients must check `bundle` before reading `edge`.",
+      "properties": {
+        "count": {
+          "description": "How many messages were folded.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "label": {
+          "default": "",
+          "description": "The numbers hoisted from the folded messages.",
+          "type": "string"
+        },
+        "lane": {
+          "description": "The lifeline the bundle sits on (a participant or folded group).",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "lane",
+        "count"
+      ],
+      "type": "object"
+    },
     "CallTiming": {
       "description": "One model request.",
       "properties": {
@@ -562,6 +589,17 @@
           },
           "type": "array"
         },
+        "inline": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Layout"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The compact form for the transcript column, computed by [`Diagram::finish`] when the full\nlayout is too wide to read at the column's scale floor. Clients draw `inline` when present\nand `layout` when expanded (the pop-out, exports). Old transcripts without it still decode."
+        },
         "kind": {
           "$ref": "#/$defs/Kind",
           "default": "flow"
@@ -661,6 +699,17 @@
     },
     "EdgePath": {
       "properties": {
+        "bundle": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Bundle"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "A bundle row: several consecutive messages folded into one (folded sequences only)."
+        },
         "edge": {
           "description": "Index into `edges`.",
           "format": "uint",
