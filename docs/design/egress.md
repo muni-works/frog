@@ -46,6 +46,10 @@ session, cards in every asking mode — no read-only rule, sandbox layer, classi
 allow passes it; headless (`can_ask = false`) it's denied. Allow = `grant_once` (that exact
 command's next run); "always allow X this session" = `grant` (shared with subagents).
 
+In auto mode the card is first offered to the chief of staff when `[delegation]` grants it the
+`egress-widen` class (docs/design/delegation.md): the chief's approval makes the same grant an
+answered card does, and its denial denies. Without that grant the card is the user's, as before.
+
 **Yolo never asks** (Cam, 2026-11-02). Both shapes run, with one quiet `EgressWidened` row in
 the transcript instead of a card: the hosts a call names are its declaration and are `grant`ed
 for the session, and a call that leaves the sandbox runs outside it. The proxy still refuses
