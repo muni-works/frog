@@ -2468,6 +2468,38 @@ mod inline_tests {
     }
 
     #[test]
+    fn an_inline_form_is_never_wider_than_the_column_allows() {
+        // Whatever the input, `inline` either fits at the floor or isn't there at all: the
+        // client's crop-and-expand is the fallback, never a tiny drawing.
+        let mut cases = vec![case1(), case2(true), case2(false)];
+        // Seven groups: too many lanes, so it must refuse rather than emit a wide fold.
+        let mut seven = case2(true);
+        seven.groups.push(Group { id: "extra".into(), label: "Extra".into() });
+        seven.nodes.push(Node {
+            id: "spare".into(),
+            label: "spare".into(),
+            group: Some("extra".into()),
+            ..Default::default()
+        });
+        cases.push(seven);
+        // A top-down flow too wide to fit: no rerun helps, so no inline form.
+        let mut down = case1();
+        down.direction = Direction::Down;
+        cases.push(down);
+        for mut d in cases {
+            d.finish(Path::new("/"));
+            if let Some(l) = &d.inline {
+                assert!(
+                    l.width * MIN_SCALE <= INLINE_W + 0.01,
+                    "inline {}pt is too wide ({} nodes)",
+                    l.width,
+                    l.nodes.len()
+                );
+            }
+        }
+    }
+
+    #[test]
     fn six_lanes_with_compact_columns_fit_under_704() {
         // Six participants, no groups: compact columns alone bring it under the column.
         let mut d: Diagram = serde_json::from_value(serde_json::json!({
