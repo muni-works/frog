@@ -156,8 +156,8 @@ pub struct EdgePath {
     pub bundle: Option<Bundle>,
 }
 
-/// A run of consecutive messages, folded into one row so a wide sequence stays readable. Lossy
-/// on structure, lossless on numbers: labels that carry measurements are hoisted into `label`.
+/// A bundle row: several consecutive messages folded into one (folded sequences only). A bundle
+/// has no single source edge, so clients must check `bundle` before reading `edge`.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct Bundle {
     /// The lifeline the bundle sits on (a participant or folded group).
@@ -335,7 +335,22 @@ impl Diagram {
             }
             Kind::Sequence => match self.foldable_lanes() {
                 Some(lanes) if lanes.len() <= MAX_INLINE_LANES => {
-                    Some(sequence_layout_folded(self, &lanes))
+                    let l = sequence_layout_folded(self, &lanes);
+                    // Tell the model what's on screen, so its prose can refer to it.
+                    let bundles = l.edges.iter().filter(|p| p.bundle.is_some()).count();
+                    warnings.push(format!(
+                        "Shown folded: {} participants in {} lanes, {} messages in {} rows{}.",
+                        self.nodes.len(),
+                        lanes.len(),
+                        self.edges.len(),
+                        l.edges.len(),
+                        if bundles > 0 {
+                            format!(" ({bundles} bundles)")
+                        } else {
+                            String::new()
+                        }
+                    ));
+                    Some(l)
                 }
                 _ => {
                     warnings.push(format!(
@@ -1302,7 +1317,7 @@ fn flush_bundle(
     };
     let w = (bundle.label.chars().count() as f32 * CHAR_W + 60.0).max(96.0);
     paths.push(EdgePath {
-        edge: usize::MAX,
+        edge: 0,
         points: vec![[cx[lane] - w / 2.0, y + 9.0], [cx[lane] + w / 2.0, y + 9.0]],
         label_at: Some([cx[lane], y]),
         bundle: Some(bundle),
@@ -2434,6 +2449,22 @@ mod inline_tests {
             Some("40 ms · 8 tok/s")
         );
         assert_eq!(hoist_numbers("1000+ tok/s").as_deref(), Some("1000+ tok/s"));
+    }
+
+    #[test]
+    fn folding_tells_the_model_what_it_shows() {
+        let mut d = case2(true);
+        let warnings = d.finish(Path::new("/"));
+        let note = warnings
+            .iter()
+            .find(|w| w.starts_with("Shown folded:"))
+            .expect("the model is told what's on screen");
+        assert_eq!(note, "Shown folded: 13 participants in 4 lanes, 11 messages in 7 rows (3 bundles).");
+        // A too-wide flow says nothing about folding; it just comes back as a different form.
+        let mut flow = case1();
+        let warnings = flow.finish(Path::new("/"));
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(flow.inline.is_some());
     }
 
     #[test]
