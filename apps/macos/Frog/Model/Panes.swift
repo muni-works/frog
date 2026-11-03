@@ -491,6 +491,14 @@ final class Panes {
         if let first = items.first, first !== firstBefore { onPrimaryFolder?(first.workspace.folder) }
     }
 
+    /// Tests only: set the layout and keep `items` in its reading order, as `setLayout` does
+    /// but without touching the maximized state (the tests arrange first, maximize after).
+    func reorderForTesting(_ new: PaneLayout) {
+        let byID = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
+        layout = new
+        items = new.leaves.compactMap { byID[$0] }
+    }
+
     func close(_ pane: Pane) {
         guard isSplit, let rest = layout.removing(pane.id) else { return }
         let wasFirst = pane === items.first
