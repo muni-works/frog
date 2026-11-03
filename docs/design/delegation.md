@@ -1,6 +1,6 @@
 # Delegated approvals
 
-Status: design, direction from Cam 2026-10-25 · 2026-10-25
+Status: design, direction from Cam 2026-10-25 · 2026-10-25 · egress-widen and pending cards 2026-11-03
 
 Auto mode's failure mode isn't sloppiness, it's noise: the classifier flags anything unusual and the session cards the user, so a day of agents is a day of cards. Cam's rule: **we only care about irreparable harm.** `rm -rf` outside scratch and `ssh` deserve a double-check; everything else should flow. And when a call *is* flagged, the answer usually isn't Cam — it's more context, then the chief of staff. Cam is the last resort, not the default.
 
@@ -37,6 +37,7 @@ Key properties:
 3. **The chief comes before Cam.** Cam's card only fires when the class is never-delegable, or the chief couldn't take it.
 4. **Hard classes override every allow.** A never-delegable call (see below) goes to Cam even when the classifier said allow; soft classes only choose between the chief and Cam.
 5. **rm and ssh always double-check** — the second pass at minimum — in every mode, not just auto.
+6. **An egress ask is a class, not a wall.** A call that widens the session's network fence (below) never reaches the classifier — its harm is fixed — so it routes to the chief on its own, in auto mode, when `egress-widen` is granted. Without the grant it cards exactly as before.
 
 ## Grant classes
 
@@ -51,6 +52,7 @@ The vocabulary the classifier's reason and the config share. A class is a *shape
 | `network-read-writes` | network calls that send the session's own data out but to a first-party endpoint | pushing to the project's own remote, API writes for the task's own resources |
 | `mcp-write-granted` | MCP writes on a server already granted in `[mcp_trust]` but flagged for another reason | `mcp__runpod__pod-action` on a session-created pod |
 | `long-commands` | long multi-step commands that are individually ordinary | the 12-command deploy script, all segments routine, all paths own-scope |
+| `egress-widen` | widens the session's egress fence: `allow_hosts` beyond its list, or a command leaving the sandbox the list is enforced in | the yolo/unsandboxed card, `curl --allow-hosts pkgs.example.org` |
 
 There are two kinds of class, and they do different jobs:
 
@@ -83,6 +85,7 @@ chief = ["chief", "chief-of-staff"]
 chief_classes = [
   "ssh-scratch", "pod-spend", "own-scope-writes", "scratch-deletes",
   "network-read-writes", "mcp-write-granted", "long-commands",
+  "egress-widen",
 ]
 
 # One approvals roll-up notice per day, at most (default true).
@@ -93,6 +96,23 @@ chief_timeout_secs = 300
 ```
 
 Absent `[delegation]`: today's behavior, plus the second pass. `chief = []` disables delegation entirely (everything flagged twice cards Cam).
+
+## Egress widening
+
+A shell call that widens the session's egress fence asks in every mode but yolo, and it never reaches the classifier: its harm is fixed (what it can reach), not a judgment call about context. Two shapes (`permit::egress_ask`):
+
+- `allow_hosts` naming hosts beyond the session's allow-list;
+- `unsandboxed: true` leaving the sandbox the list is enforced in (past it, no list applies).
+
+That made it the one card class with no route anywhere but the user — 90 of them in two days. It is now the soft class **`egress-widen`**: in auto mode, with the grant, the ask goes to the chief exactly like a second-pass flag (`DelegateApproval`, `class: "egress-widen"`), and the chief's approval grants the hosts the way an answered card would — `allow` for that one run, `allow_always` for the session. A denial denies the call and records it. Without the grant (no chief, or `egress-widen` not in `chief_classes`) the card goes up unchanged.
+
+Never-delegable still wins: an ask that is *also* a hard class (`rm -rf` outside scratch, a force-push, credentials) is checked with `delegation::hard_class` before any routing and always cards Cam. A classifier outage never routes either — a second pass that fails reports layer `fallback`, not `second-pass`, so it can't be delegated.
+
+## The chief may answer a pending card
+
+Routing only covers calls an engine offered. A card can still be *pending* in a session with nothing routing it: egress asks in a mode that doesn't delegate, a class outside the grant list, an engine older than this change. The chief can decide those directly — `ResolveDelegated` with the card's `approval_id` (which `ListApprovals` reports) — and the broker answers it in that session as the user's decision would, with a `delegated:chief` row in the asker's transcript.
+
+**Authority.** Only two sessions may answer a pending card: the chief named in `[delegation]`, or the session that started the asking one (its parent). Everyone else is refused, and a session may never answer its own card. A card that nobody with authority answers is the user's, in their window — the pending list is not up for grabs.
 
 ## Second classifier pass
 
@@ -117,14 +137,17 @@ The engine already asks the client to carry session tools (`Event::SessionReques
 
 **Built:** the broker handles `DelegateApproval` (resolve the chief from `chiefs`, a system message carrying the card and the `approval_id`, the reply held) and the chief answers with the `ResolveDelegated` session tool (`approval_id`, `decision` approve/deny, `note`) — only the session it was sent to, once. No such chief, the chief asking about its own call, a chief waiting on the user, or unreachable: an error at once, and the asker cards Cam. A client that doesn't know `DelegateApproval` errors or never answers; the wait times out and the card falls back.
 
+An `approval_id` the broker never routed falls through to the pending list (`approvals()`), answered under the authority rule above: the chief or the session's parent, and no one else.
+
 ## Audit
 
 Extends #95's notice pattern (`mcp_trust` at engine.rs:4318 — `self.notice(Level::Info, line)` plus a durable `PermissionDecision`):
 
 - every second-pass upgrade: notice + decision `layer: "second-pass"`, outcome `allow`, the reason in `reason`.
-- every chief delegation: notice tagged `delegated:chief:` + decision `layer: "delegated"`, `reason` naming the chief and the class.
+- every chief delegation: notice tagged `delegated:chief:` + decision `layer: "delegated"`, `reason` naming the chief and the class. An egress ask reads `chief approved it (— its own package host) [egress-widen]`, and the notice is `delegated:chief: \`Bash curl …\` — approved by chief (— its own package host)`.
 - every never-delegable card: decision `layer: "never-delegable"` so the approvals roll-up can separate them.
 - chief fallbacks (unreachable, timeout): notice `delegated:chief: fell back to the user (<why>)`, decision `layer: "delegated"`, outcome `ask`.
+- a pending card the chief answered: a `delegated:chief: <chief> approved \`<tool> <arg>\`` row in the asking session's transcript (warning on a denial).
 
 ## Cam's approvals roll-up
 
@@ -159,3 +182,8 @@ Per class, in `engine.rs`'s test harness (`engine_perm_cfg`, scripted classifier
 6. chief unreachable (session reply errors) → card Cam.
 7. roll-up counts: one of each path → `Op::ApprovalDigest` returns 1/1/1 (+ never-delegable).
 8. all #95 approval tests still pass unchanged.
+9. egress ask in auto with `egress-widen` granted → `DelegateApproval` to the chief, no card; the approval runs the call with the hosts granted (`egress_tests::an_egress_ask_routes_to_the_chief_when_the_class_is_granted`).
+10. egress ask with no grant, or a grant list without `egress-widen` → the card, no chief (`…::an_egress_ask_cards_the_user_without_the_grant`).
+11. `rm -rf` outside scratch that also names `allow_hosts` → Cam's card, chief never asked, even with both grants (`…::a_never_delegable_egress_ask_still_cards_the_user`).
+12. second pass fails → `fallback` layer, card, chief never asked (`a_failed_second_pass_cards`).
+13. broker: the chief answers a pending card (decision reaches the engine, `delegated:chief` row), a stranger is refused, a session can't answer its own (`SessionBrokerTests.testTheChiefAnswersAPendingCardAndNobodyElseCan`, `testAParentAnswersItsChildsPendingCard`).

@@ -210,6 +210,9 @@ final class SessionBroker {
     private var lastHold: String?
     /// The session that started session `id`, if one did (pending approvals escalate to it).
     var parentOf: (_ id: String) -> String? = { _ in nil }
+    /// The chief of staff's session, if one is set (docs/design/delegation.md): besides the
+    /// classes its engine routes to it, it may answer any card still pending in a session.
+    var chiefOf: () -> String? = { nil }
 
 
     /// Sends since the user last did something, per sending session.
@@ -502,10 +505,12 @@ final class SessionBroker {
                 c.replySession(r.id, error: e.message)
             }
         case "ListApprovals":
-            // Read-only: pending permission cards across every session. Approving stays the
-            // user's job — the caller sees what's waiting, it never answers it.
+            // Read-only: pending permission cards across every session. The user answers
+            // them in their window; the chief (or the session's parent) may also decide one
+            // with `ResolveDelegated`, naming its `approval_id`.
             let rows: [JSONValue] = approvals().map { row in
                 .object([
+                    "approval_id": .string(row.request),
                     "session": .string(row.id),
                     "name": .string(row.name),
                     "command": .string(row.command),
@@ -516,7 +521,7 @@ final class SessionBroker {
             }
             let note = rows.isEmpty
                 ? "No pending approvals."
-                : "\(rows.count) pending approval\(rows.count == 1 ? "" : "s"). Approving is the user's job; don't answer them yourself."
+                : "\(rows.count) pending approval\(rows.count == 1 ? "" : "s"). The user answers them in their window; the chief of staff (or the session's parent) may decide one with ResolveDelegated, naming its approval_id. Anyone else can't."
             c.replySession(r.id, result: .object(["approvals": .array(rows), "note": .string(note)]))
         case "RenameSession":
             switch resolve(input["id"]?.string ?? "", includeArchived: true) {
@@ -627,28 +632,67 @@ final class SessionBroker {
         delegated[approval] = Delegated(asker: c, request: r.id, chief: chief.id)
     }
 
-    /// The chief's answer: only the session it was sent to may give it, once.
+    /// The chief's answer. Two shapes:
+    ///
+    /// - An approval it was delegated (`delegated`): only that chief may answer it, once.
+    /// - A card merely *pending* in some session (`approvals()`), which no engine routed:
+    ///   the chief named in `[delegation]` (or the session's parent) may decide it directly,
+    ///   and the decision goes to that session's engine as the user's answer would. Anyone
+    ///   else is refused — a card waiting on the user isn't up for grabs.
+    ///
+    /// Either way the audit line names the chief (`delegated:chief`).
     private func resolveDelegated(_ r: SessionRequest, from c: Conversation) {
         let sender = c.sessionID ?? ""
         let approval = r.input["approval_id"]?.string ?? ""
-        guard let d = delegated[approval] else {
-            return c.replySession(r.id, error: "No delegated approval \(approval) is waiting: it may have timed out and gone to the user.")
-        }
-        guard d.chief == sender else {
-            return c.replySession(r.id, error: "Only the session it was delegated to can answer it.")
-        }
         let decision = r.input["decision"]?.string?.lowercased() ?? ""
         guard decision == "approve" || decision == "deny" else {
             return c.replySession(r.id, error: "`decision` must be approve or deny.")
         }
-        delegated[approval] = nil
-        guard let asker = d.asker else {
-            return c.replySession(r.id, error: "The asking session is gone.")
+        if let d = delegated[approval] {
+            guard d.chief == sender else {
+                return c.replySession(r.id, error: "Only the session it was delegated to can answer it.")
+            }
+            delegated[approval] = nil
+            guard let asker = d.asker else {
+                return c.replySession(r.id, error: "The asking session is gone.")
+            }
+            var out: [String: JSONValue] = ["decision": .string(decision == "approve" ? "allow" : "deny")]
+            if let n = r.input["note"]?.string, !n.isEmpty { out["note"] = .string(n) }
+            asker.replySession(d.request, result: .object(out))
+            return c.replySession(r.id, result: .string("Recorded: \(decision) for \(approval)."))
         }
-        var out: [String: JSONValue] = ["decision": .string(decision == "approve" ? "allow" : "deny")]
-        if let n = r.input["note"]?.string, !n.isEmpty { out["note"] = .string(n) }
-        asker.replySession(d.request, result: .object(out))
-        c.replySession(r.id, result: .string("Recorded: \(decision) for \(approval)."))
+        resolvePending(r, approval: approval, decision: decision, sender: sender, from: c)
+    }
+
+    /// A card pending in a session no delegation routed (the `approvals()` list): the chief
+    /// named in `[delegation]` may answer it, or the session's own parent. Everyone else —
+    /// including the session asking about its own card — is refused.
+    private func resolvePending(
+        _ r: SessionRequest, approval: String, decision: String, sender: String, from c: Conversation
+    ) {
+        guard let row = approvals().first(where: { $0.request == approval || $0.id == approval }),
+              let target = Library.shared.conversation(row.id) ?? background[row.id]
+        else {
+            return c.replySession(r.id, error: "No approval \(approval) is pending: it may have been answered or timed out.")
+        }
+        guard sender != row.id else {
+            return c.replySession(r.id, error: "A session can't answer its own card.")
+        }
+        let chief = chiefOf() ?? ""
+        let parent = parentOf(row.id) ?? ""
+        let allowed = (!chief.isEmpty && sender == chief) || (!parent.isEmpty && sender == parent)
+        guard allowed else {
+            return c.replySession(
+                r.id,
+                error: "Only the chief (\(chief.isEmpty ? "none set" : chief)) or the session's parent can answer a pending card; it's the user's otherwise.")
+        }
+        let note = r.input["note"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines)
+        target.answer(decision == "approve" ? .allow : .deny, note: note)
+        let who = name(of: c)
+        target.flash(
+            "delegated:chief: \(who) \(decision == "approve" ? "approved" : "declined") `\(row.tool) \(row.command)`\(note.map { " — \($0)" } ?? "")",
+            warning: decision != "approve")
+        c.replySession(r.id, result: .string("Recorded: \(decision) for \(approval) in \(row.name)."))
     }
 
     /// The message a chief gets for a delegated approval.
@@ -667,9 +711,11 @@ final class SessionBroker {
         return lines.joined(separator: "\n")
     }
 
-    /// One pending approval, as ListApprovals reports it.
+    /// One pending approval, as ListApprovals reports it. `request` is the engine's own
+    /// permission id (what a decision answers); `id` the session it's waiting in.
     struct Approval: Equatable {
         var id: String
+        var request: String
         var name: String
         var command: String
         var tool: String
@@ -684,7 +730,7 @@ final class SessionBroker {
                   let p = conv.permission else { return nil }
             let since = waitingSince[entry.id] ?? now()
             return Approval(
-                id: entry.id, name: entry.name, command: p.arg, tool: p.name,
+                id: entry.id, request: p.id, name: entry.name, command: p.arg, tool: p.name,
                 reason: p.reason ?? "", ageSeconds: Int(now().timeIntervalSince(since)))
         }
     }
@@ -1522,6 +1568,7 @@ extension SessionBroker {
         }
         Conversation.userActivity = { [unowned self] c in if let id = c.sessionID { userActivity(id) } }
         parentOf = { id in Library.shared.parents[id] }
+        chiefOf = { FeatureFlags.chief ? Library.shared.chief : nil }
         Conversation.permissionRequests = { [unowned self] c, req in
             guard let id = c.sessionID else { return }
             escalate(req, from: id, name: name(of: c))

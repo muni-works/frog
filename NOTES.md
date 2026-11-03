@@ -1,75 +1,82 @@
-# checkout-both-fixes — notes
+# chief-approvals — notes
 
-Branch frog/checkout-both-fixes, base b23479fd (current main). Cam's brief: two people fixed the
-same beachball bug in `SessionBroker.checkout(of:)` and only one covered the launch path —
-reconcile both fixes into one, commit `-s`, never push. Edit tool only for source. One commit
-checkpoint, then the fix, then local suites as the gate (Actions billing is rejecting every run).
+Branch frog/chief-approvals, base b23479fd (origin/main). Cam: the chief of staff can approve or
+deny ANY pending card in a session it started, and egress asks route to the chief as a delegable
+class. Why: 90 yolo egress cards in two days all went to Cam because egress asks were excluded
+from delegation. One commit per unit (`git commit -s`), never push. Edit tool only for source.
 
-## The near-miss, verified
+## Diagnosis (chief's brief, verified in source)
+- `permit.rs:394`: `delegate_flagged` is called only `if layer == "second-pass"`. An egress ask
+  (yolo/unsandboxed/allow_hosts card) never reaches auto's judge at all in auto mode? No — in
+  auto, `egress_ask.is_some()` skips provenance and the auto branch (permit.rs:364 gates on
+  `egress_ask.is_none()`), so the egress card goes straight to the user, bypassing the chief.
+- `delegation.rs soft_class` has no egress shape; `config.rs grant::ALL` has no egress constant.
+- `SessionBroker.resolveDelegated` refuses any approval not in its `delegated` map ("No
+  delegated approval … is waiting"), so a card that merely sits PENDING in a child can't be
+  decided by the chief that started it.
 
-`SessionBroker.checkout(of:)` (apps/macos/Frog/Model/SessionBroker.swift) walks up looking for
-`.git`. A RELATIVE folder URL — what a restored window passes at launch — never reaches "/":
-`deletingLastPathComponent` walks "." → ".." → "../.." forever, beachballing the app after a
-reboot. Two fixes existed, each incomplete alone:
-
-- main from #242: `folder.resolvingSymlinksInPath().standardizedFileURL` + the non-shortening
-  guard (`var last` / `guard up.path != last`). Resolution terminates the MISSING-folder case
-  (standardized keeps ".." segments for a missing path). But for a relative URL, resolution
-  STAYS relative (experiment: `URL(fileURLWithPath:"rel/nested").resolvingSymlinksInPath()` is
-  still relative — unlike `URL(string:)`, the fileURLWithPath initializer is already absolute,
-  so the relative case must arrive as a scheme-less `URL(string:)`) — the walk still never
-  terminates.
-- 61683fd2 (Claude's, on claude/frog-beachball-reboot-1209da, not on main):
-  `URL(fileURLWithPath: folder.path).standardizedFileURL` — absolute first — plus a third
-  belt `if up.path == at.path || !up.path.hasPrefix("/") { return .plain }`. But without
-  resolution, a missing folder's kept ".." segments make `deletingLastPathComponent` grow the
-  path forever again: belt two (main's guard) is what catches that.
-
-## The combined fix (all three belts kept)
-
-1. `var at = URL(fileURLWithPath: folder.path).resolvingSymlinksInPath().standardizedFileURL`
-   — absolute FIRST, then resolve, then standardize.
-2. Belt two from main kept: `var last = at.path` before the loop; `guard up.path != last else
-   { return .plain }` then `last = up.path`.
-3. Belt three from 61683fd2 kept: the exit condition is
-   `if up.path == at.path || !up.path.hasPrefix("/") { return .plain }`.
-
-A comment at the setup names the near-miss and why each belt is there.
-
-## Tests (apps/macos/FrogTests/WorktreeHoldTests.swift)
-
-a) `testARelativeFolderURLIsPlainAndReturnsBeforeTheTimeout` — a scheme-less relative URL on a
-   background queue, guarded by a 5 s timeout expectation so a regression fails fast instead of
-   hanging the suite (this is the beachball case: launch passes a relative URL).
-b) the existing missing-nested-ABSOLUTE test from #242 stays;
-c) the existing real-worktree coverage stays;
-d) new `testDotDotSegmentsResolveToTheRightAbsolutePlace` — a dotted path must reach the real
-   repo above it (`.main(top:)` at the right absolute top), not merely terminate.
+## Plan
+1. This checkpoint.
+2. Engine: `grant::EGRESS` = "egress-widen" in the vocabulary + `ALL`; `soft_class` returns it
+   for the `egress_ask` shape (hosts beyond the list and/or leaving the sandbox); permit.rs
+   routes egress-flagged auto cards to `delegate_flagged` too (layer "egress"). Hard classes,
+   classifier outages (layer "classifier"/"fallback") and `can_ask = false` unchanged — never
+   delegable always cards Cam.
+3. Broker: `resolveDelegated` falls back to the PENDING card list (`approvals()`) when the id
+   isn't in `delegated`: found → forward the decision to that session's asker as
+   `Op::Permission` via `conv.answer`. Authority: only a chief named in `[delegation]` (or the
+   session's parent) may answer an unrouted card; anyone else gets the refusal. Same
+   `delegated:chief` audit shape in the reply copy.
+4. Docs: delegation.md — egress-widen is chief-delegable; the chief may answer a pending card
+   directly (authority rule).
+5. Tests: engine (a) egress ask routes to chief when granted, cards when not; (b)
+   never-delegable still cards with the grant; (c) is broker-side; (d) classifier outage cards.
+   Broker: (c) chief accepts a pending-unrouted approval, others refused.
+6. Verify: `cargo build -p frog -p frog-engine`, full `cargo test -p frog-engine` with
+   CARGO_TARGET_DIR=<worktree>/.tt-target; app tests via xcodebuild test if the app builds
+   (PRODUCT_BUNDLE_IDENTIFIER=toys.frog.testhost, FROG_PREBUILT_DIR=/private/tmp/be-prebuilt2,
+   derived data /private/tmp/ca-dd).
 
 ## Result
 
-Commits: c62edc6d (checkpoint: NOTES + the fix, swept in), 0265f620 (the regression tests).
-`git add -A` at the checkpoint caught the already-edited SessionBroker.swift, so the checkpoint
-holds the whole source change; the second commit is the tests.
+Commits: 323e67cd (checkpoint), 50a1e5a9 (engine), 24cec2d0 (engine tests), 1283299d (broker),
+409670ea + 02c7aede (docs).
 
-Verification: WorktreeHoldTests 9/9 passed (2 new), SessionBrokerTests 53/53 passed; full app
-suite 382 executed, 4 skipped, 4 failures — all four are one distinct test,
-`TranscriptSwitchBenchmarkTests.testScrollUpFillsOlderRowsInOrder` ("never reached the first
-row"), which fails identically with BASE b23479fd `checkout()` in this same worktree (37 s full
-run, 22 s alone): pre-existing flaky scroll benchmark, not this change. `cargo build -p frog -p
-frog-engine` finished clean (19.6 s, dev profile).
+Engine: `grant::EGRESS` = "egress-widen" in `grant::ALL`; `delegation::soft_egress` returns it
+for either egress shape; `delegate_flagged` checks `soft_egress` before `soft_class`, so the
+chief's `DelegateApproval` carries `class: "egress-widen"`. permit.rs routes an auto-mode egress
+ask to the chief before the card (hosts granted on approval exactly as an answered card does).
 
-The sandbox blocked SwiftPM's sidecar compile and Xcode's macro plugin server
-(swift-plugin-server "malformed response") — both run unsandboxed, with FROG_PREBUILT_DIR
-supplying the prebuilt engine binaries so build-engine.sh skips cargo/SwiftPM. The xcodeproj is
-xcodegen-generated (gitignored); regenerated with `xcodegen generate`. Scheme is `Frog` (no
-FrogTests scheme exists); `-only-testing:FrogTests/…` filters within it.
+Two safety holes the predecessor's half-done edit had, both closed here:
+- an egress ask skips `auto_judge`, so `hard_class` wasn't consulted: `rm -rf ~/Documents
+  {allow_hosts:[…]}` would have routed to the chief. It's checked now, before routing, and cards
+  as `never-delegable`.
+- a failed second pass reported layer `second-pass` and would have routed on an outage. It now
+  reports `fallback`, which no route accepts (`a_failed_second_pass_cards` proves no chief is
+  asked, even with the grant).
 
-Test-construction finding worth keeping: `URL(fileURLWithPath: "rel/nested")` is ALREADY
-absolute (resolved against the CWD), so the relative case under test must be built as
-`URL(string: "rel/nested")` — scheme-less, `isFileURL == false`, path without a leading "/".
+Broker: `resolveDelegated` falls through to `resolvePending`, which finds the card in
+`approvals()` by engine request id or session id and answers it in that session
+(`conv.answer`, so the engine sees a normal `Op::Permission`), with a `delegated:chief: …`
+row. Authority: the chief (`SessionBroker.chiefOf`, wired to `Library.shared.chief`) or the
+session's parent; a session's own card and everyone else are refused. `ListApprovals` now
+reports `approval_id` (the engine request id) so a caller knows what to name; its note says who
+may answer.
 
-## Lesson
+Tests added: engine `egress_tests::an_egress_ask_routes_to_the_chief_when_the_class_is_granted`,
+`::an_egress_ask_cards_the_user_without_the_grant`, `::a_never_delegable_egress_ask_still_cards_the_user`,
+`a_failed_second_pass_cards` (rewritten for the fallback layer + no chief);
+`delegation::tests::an_egress_ask_is_its_own_soft_class`; config grant assertions.
+App: `SessionBrokerTests.testTheChiefAnswersAPendingCardAndNobodyElseCan`,
+`testAParentAnswersItsChildsPendingCard` — SessionBrokerTests 55/55 green.
 
-Two fixes for the same function — reconcile before merging, and test the RELATIVE-URL case,
-which is what launch passes.
+Audit copy for a chief-decided egress card:
+  notice:  delegated:chief: `Bash curl -sS -m 3 -o /dev/null https://pkgs.example.org/x; echo rc=$?` — approved by chief (— its own package host)
+  decision: layer "delegated", outcome "allow", reason "chief approved it (— its own package host) [egress-widen]"
+  a pending card answered directly: transcript row `delegated:chief: <chief> approved `Bash cargo build``
+
+Sandbox note: `sandbox-exec` nesting fails inside frog's sandbox here ("sandbox_apply: Operation
+not permitted"), so the `#[cfg(target_os = "macos")]` egress tests and the pty/terminal-pane
+tests only pass unsandboxed — the documented environmental class. Everything else runs in the
+sandbox.
+
