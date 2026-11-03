@@ -108,6 +108,11 @@ pub struct Diagram {
     /// Computed by [`Diagram::layout`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub layout: Option<Layout>,
+    /// The compact form for the transcript column, computed by [`Diagram::finish`] when the full
+    /// layout is too wide to read at the column's scale floor. Clients draw `inline` when present
+    /// and `layout` when expanded (the pop-out, exports). Old transcripts without it still decode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inline: Option<Layout>,
     /// The same diagram as Mermaid, for export.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub mermaid: String,
@@ -146,6 +151,22 @@ pub struct EdgePath {
     pub points: Vec<[f32; 2]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label_at: Option<[f32; 2]>,
+    /// A bundle row: several consecutive messages folded into one (folded sequences only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bundle: Option<Bundle>,
+}
+
+/// A run of consecutive messages, folded into one row so a wide sequence stays readable. Lossy
+/// on structure, lossless on numbers: labels that carry measurements are hoisted into `label`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct Bundle {
+    /// The lifeline the bundle sits on (a participant or folded group).
+    pub lane: usize,
+    /// How many messages were folded.
+    pub count: usize,
+    /// The numbers hoisted from the folded messages.
+    #[serde(default)]
+    pub label: String,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -160,6 +181,31 @@ pub struct GroupBox {
 const MAX_NODES: usize = 60;
 const MAX_LABEL: usize = 60;
 
+// The inline transcript column (720pt minus card padding) and the smallest scale its text may
+// render at: 13pt node text never goes below ~11pt. Layouts wider than `INLINE_W / MIN_SCALE`
+// don't fit, so the engine changes their form instead of shrinking them.
+const INLINE_W: f32 = 704.0;
+const MIN_SCALE: f32 = 0.85;
+/// The most lanes (folded groups or participants) a sequence may use inline.
+const MAX_INLINE_LANES: usize = 6;
+
+/// One folded lane in the inline form of a sequence: a group (its members share the lane) or a
+/// lone participant.
+struct FoldLane {
+    label: String,
+    members: Vec<usize>,
+}
+
+/// A label that carries a measurement (`8 tok/s`, `1000+`, `40 ms`): bundles hoist it out of the
+/// messages they fold so the numbers survive the fold.
+fn carries_number(label: &str) -> bool {
+    use std::sync::LazyLock;
+    static NUMBER: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r"\d[\d.,]*\s?(ms|s|µs|%|x|×|tok/s|GB|k)\b").unwrap()
+    });
+    NUMBER.is_match(label)
+}
+
 // MARK: - Validation
 
 impl Diagram {
@@ -167,6 +213,7 @@ impl Diagram {
     /// and `file` links (kept only if the file exists under `cwd`). Returns warnings for the
     /// model.
     pub fn prepare(&mut self, cwd: &Path) -> Vec<String> {
+        self.inline = None;
         let mut warnings = Vec::new();
         self.title = self.title.trim().to_string();
         if self.nodes.len() > MAX_NODES {
@@ -259,9 +306,74 @@ impl Diagram {
     /// Validate, lay out, and render the Mermaid version.
     pub fn finish(&mut self, cwd: &Path) -> Vec<String> {
         let w = self.prepare(cwd);
+        let w = self.fit(w);
         self.layout = Some(self.layout());
         self.mermaid = self.to_mermaid();
         w
+    }
+
+    /// The fit pass: make sure the diagram reads at the transcript column (720pt) with the text
+    /// no smaller than [`MIN_SCALE`]. The full layout stays untouched in `layout`; the compact
+    /// form that does fit goes in `inline`. Warnings tell the model what was folded.
+    fn fit(&mut self, mut warnings: Vec<String>) -> Vec<String> {
+        let natural = self.layout();
+        if natural.width * MIN_SCALE <= INLINE_W {
+            return warnings; // It already reads at the column.
+        }
+        let candidate = match self.kind {
+            Kind::Flow => {
+                // A right-ward chain lays out too wide: try the same diagram top-down before
+                // giving up on the inline form.
+                if self.direction != Direction::Right {
+                    None
+                } else {
+                    let mut down = self.clone();
+                    down.direction = Direction::Down;
+                    let l = down.layout();
+                    (l.width * MIN_SCALE <= INLINE_W).then_some(l)
+                }
+            }
+            Kind::Sequence => match self.foldable_lanes() {
+                Some(lanes) if lanes.len() <= MAX_INLINE_LANES => {
+                    Some(sequence_layout_folded(self, &lanes))
+                }
+                _ => {
+                    warnings.push(format!(
+                        "{} participants won't fit at 720pt. Give nodes a `group` (≤{MAX_INLINE_LANES} groups) or split the diagram.",
+                        self.nodes.len()
+                    ));
+                    None
+                }
+            },
+        };
+        self.inline = candidate;
+        warnings
+    }
+
+    /// Participants folded into lanes for the inline form: one per group (in declaration order),
+    /// ungrouped participants stay individual. Only when every node has a group; with strays the
+    /// fold wouldn't shrink below [`MAX_INLINE_LANES`] lanes, so no inline form is offered.
+    fn foldable_lanes(&self) -> Option<Vec<FoldLane>> {
+        if self.nodes.iter().any(|n| n.group.is_none()) {
+            return None;
+        }
+        let mut lanes: Vec<FoldLane> = Vec::new();
+        for g in &self.groups {
+            let members: Vec<usize> = self
+                .nodes
+                .iter()
+                .enumerate()
+                .filter(|(_, n)| n.group.as_deref() == Some(&g.id))
+                .map(|(i, _)| i)
+                .collect();
+            if !members.is_empty() {
+                lanes.push(FoldLane {
+                    label: g.label.clone(),
+                    members,
+                });
+            }
+        }
+        (!lanes.is_empty()).then_some(lanes)
     }
 }
 
@@ -747,6 +859,7 @@ fn flow_layout(d: &Diagram) -> Layout {
                 edge: k,
                 label_at: Some(to_xy(c + cw / 2.0 + 30.0, m)),
                 points: pts,
+                bundle: None,
             });
             continue;
         }
@@ -786,6 +899,7 @@ fn flow_layout(d: &Diagram) -> Layout {
             edge: k,
             points: pts,
             label_at,
+            bundle: None,
         });
     }
 
@@ -928,6 +1042,8 @@ fn sequence_layout(d: &Diagram) -> Layout {
             .unwrap_or(60.0);
         need[lo] = need[lo].max(w);
     }
+    // Compact columns: at least what the participant's own label needs, and 110pt minimum, but
+    // no longer a fixed 150pt — six lanes stay under the 720pt column.
     let mut cx = vec![0f32; n];
     let mut x = MARGIN;
     for i in 0..n {
@@ -935,7 +1051,8 @@ fn sequence_layout(d: &Diagram) -> Layout {
             cx[i] = x + sizes[i].0 / 2.0;
         } else {
             let min = cx[i - 1] + sizes[i - 1].0 / 2.0 + 36.0 + sizes[i].0 / 2.0;
-            cx[i] = min.max(cx[i - 1] + need[i - 1]).max(cx[i - 1] + 150.0);
+            let label_need = (sizes[i - 1].0 / 2.0 + sizes[i].0 / 2.0 + 36.0).max(110.0);
+            cx[i] = min.max(cx[i - 1] + need[i - 1]).max(cx[i - 1] + label_need);
         }
         x = cx[i] + sizes[i].0 / 2.0;
     }
@@ -970,6 +1087,7 @@ fn sequence_layout(d: &Diagram) -> Layout {
                     [x0, y + 18.0],
                 ],
                 label_at: e.label.as_ref().map(|_| [x0 + 44.0, y + 9.0]),
+                bundle: None,
             });
             y += 48.0;
         } else {
@@ -977,6 +1095,7 @@ fn sequence_layout(d: &Diagram) -> Layout {
                 edge: k,
                 points: vec![[cx[a], y], [cx[b], y]],
                 label_at: e.label.as_ref().map(|_| [(cx[a] + cx[b]) / 2.0, y - 10.0]),
+                bundle: None,
             });
             y += 38.0;
         }
@@ -990,6 +1109,221 @@ fn sequence_layout(d: &Diagram) -> Layout {
         groups: Vec::new(),
         lifeline_end: Some(end),
     }
+}
+
+/// The folded inline form of a sequence: each [`FoldLane`] is one column (its header lists the
+/// group's members), messages between different lanes are kept, and a run of ≥2 consecutive
+/// messages inside one lane — or any single message whose label carries a number — folds into a
+/// bundle row (`EdgePath.bundle`). Numbers are hoisted into the bundle label; single numberless
+/// messages drop out. Lossy on structure, lossless on numbers.
+fn sequence_layout_folded(d: &Diagram, lanes: &[FoldLane]) -> Layout {
+    // Which lane each participant sits in (every node has a group when we fold).
+    let mut lane_of: HashMap<&str, usize> = HashMap::new();
+    for (li, l) in lanes.iter().enumerate() {
+        for &i in &l.members {
+            lane_of.insert(d.nodes[i].id.as_str(), li);
+        }
+    }
+    let lane_of_edge: Vec<Option<usize>> = d
+        .edges
+        .iter()
+        .map(|e| {
+            let (a, b) = (
+                lane_of.get(e.from.as_str()).copied(),
+                lane_of.get(e.to.as_str()).copied(),
+            );
+            match (a, b) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                _ => None,
+            }
+        })
+        .collect();
+    let lane_group: Vec<usize> = lanes
+        .iter()
+        .map(|l| {
+            d.nodes
+                .get(*l.members.first().unwrap_or(&0))
+                .and_then(|n| n.group.as_deref())
+                .and_then(|g| d.groups.iter().position(|x| x.id == g))
+                .unwrap_or(0)
+        })
+        .collect();
+
+    // Columns: each lane is as wide as its header label (with a member count) and the widest
+    // participant label inside it; message labels between two neighbors add room.
+    let mut need = vec![0f32; lanes.len().saturating_sub(1)];
+    for e in &d.edges {
+        let (Some(a), Some(b)) = (
+            lane_of.get(e.from.as_str()).copied(),
+            lane_of.get(e.to.as_str()).copied(),
+        ) else {
+            continue;
+        };
+        if b != a + 1 {
+            continue;
+        }
+        let w = e
+            .label
+            .as_ref()
+            .map(|l| l.chars().count() as f32 * CHAR_W + 32.0)
+            .unwrap_or(60.0);
+        need[a] = need[a].max(w);
+    }
+    let sizes: Vec<(f32, f32)> = lanes
+        .iter()
+        .map(|l| {
+            let header = if l.members.len() > 1 {
+                format!("{} · {}", l.label, l.members.len())
+            } else {
+                l.label.clone()
+            };
+            let widest = l
+                .members
+                .iter()
+                .filter_map(|&i| d.nodes.get(i))
+                .map(|n| n.label.chars().count())
+                .max()
+                .unwrap_or(0) as f32;
+            let (w, h) = measure(&Node {
+                label: clip(&header, MAX_LABEL),
+                ..Default::default()
+            });
+            (w.max(widest * CHAR_W + 24.0), h)
+        })
+        .collect();
+    let mut cx = vec![0f32; lanes.len()];
+    let mut x = MARGIN;
+    for i in 0..lanes.len() {
+        if i == 0 {
+            cx[i] = x + sizes[i].0 / 2.0;
+        } else {
+            let min = cx[i - 1] + sizes[i - 1].0 / 2.0 + 36.0 + sizes[i].0 / 2.0;
+            cx[i] = min.max(cx[i - 1] + need[i - 1]).max(cx[i - 1] + 110.0);
+        }
+        x = cx[i] + sizes[i].0 / 2.0;
+    }
+    let header_h = sizes.iter().map(|s| s.1).fold(0f32, f32::max);
+    // Lane headers are NodeBoxes keyed by the group's id, so the client resolves the label (the
+    // group's members and count) and the hover detail through `diagram.groups` / `diagram.nodes`.
+    let nodes: Vec<NodeBox> = lanes
+        .iter()
+        .enumerate()
+        .map(|(i, _l)| NodeBox {
+            id: d.groups[lane_group[i]].id.clone(),
+            x: cx[i] - sizes[i].0 / 2.0,
+            y: MARGIN,
+            w: sizes[i].0,
+            h: header_h,
+            rank: i,
+        })
+        .collect();
+
+    // Rows: messages in time order. A run of consecutive same-lane messages folds into one
+    // bundle; between-lane messages draw as themselves.
+    let mut paths: Vec<EdgePath> = Vec::new();
+    let mut y = MARGIN + header_h + 34.0;
+    let mut run: Vec<(usize, &Edge)> = Vec::new();
+    let mut run_lane: Option<usize> = None;
+    for (k, e) in d.edges.iter().enumerate() {
+        let (Some(a), Some(b)) = (
+            lane_of.get(e.from.as_str()).copied(),
+            lane_of.get(e.to.as_str()).copied(),
+        ) else {
+            continue;
+        };
+        if a == b {
+            // A self-message (or within-lane hop): part of the lane's current run.
+            if run_lane == Some(a) {
+                run.push((k, e));
+                continue;
+            }
+            y = flush_bundle(&mut run, &mut run_lane, y, &mut paths, &cx);
+            run_lane = Some(a);
+            run.push((k, e));
+        } else {
+            // Between lanes: kept as its own arrow, breaking any run.
+            y = flush_bundle(&mut run, &mut run_lane, y, &mut paths, &cx);
+            let x0 = cx[a.min(b)];
+            let x1 = cx[a.max(b)];
+            paths.push(EdgePath {
+                edge: k,
+                points: vec![[x0, y], [x1, y]],
+                label_at: e.label.as_ref().map(|_| [(x0 + x1) / 2.0, y - 10.0]),
+                bundle: None,
+            });
+            y += 38.0;
+        }
+    }
+    y = flush_bundle(&mut run, &mut run_lane, y, &mut paths, &cx);
+    let end = y + 4.0;
+    Layout {
+        width: x + MARGIN,
+        height: end + MARGIN,
+        nodes,
+        edges: paths,
+        groups: Vec::new(),
+        lifeline_end: Some(end),
+    }
+}
+
+/// Draws a finished run of same-lane messages as one row and returns the next row's y. A single
+/// numberless message drops out; a single numbered one or a run of ≥2 becomes a bundle row with
+/// the numbers hoisted into its label.
+fn flush_bundle(
+    run: &mut Vec<(usize, &Edge)>,
+    run_lane: &mut Option<usize>,
+    y: f32,
+    paths: &mut Vec<EdgePath>,
+    cx: &[f32],
+) -> f32 {
+    let Some(lane) = *run_lane else { return y };
+    run_lane.take();
+    let numbered = run
+        .iter()
+        .any(|(_, e)| e.label.as_deref().is_some_and(carries_number));
+    let label = run
+        .iter()
+        .filter_map(|(_, e)| e.label.as_deref().and_then(hoist_numbers))
+        .collect::<Vec<_>>()
+        .join(" · ");
+    if run.len() == 1 && !numbered {
+        // Says nothing measurable: dropped (the footer counts it).
+        run.clear();
+        return y;
+    }
+    let bundle = Bundle {
+        lane,
+        count: run.len(),
+        label: if label.is_empty() {
+            format!("×{}", run.len())
+        } else {
+            label
+        },
+    };
+    let w = (bundle.label.chars().count() as f32 * CHAR_W + 60.0).max(96.0);
+    paths.push(EdgePath {
+        edge: usize::MAX,
+        points: vec![[cx[lane] - w / 2.0, y + 9.0], [cx[lane] + w / 2.0, y + 9.0]],
+        label_at: Some([cx[lane], y]),
+        bundle: Some(bundle),
+    });
+    run.clear();
+    y + 44.0
+}
+
+/// The measured values in a label ("batch 40 ms, 8 tok/s" → "40 ms · 8 tok/s", "1000+ tok/s"
+/// → "1000+ tok/s"), or None when it carries none.
+fn hoist_numbers(label: &str) -> Option<String> {
+    use std::sync::LazyLock;
+    static NUMBERS: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r"\d[\d.,]*\s?(?:ms|s|µs|%|x|×|tok/s|GB|k)?\+?(?:\s?(?:ms|s|µs|%|x|×|tok/s|GB|k))?\b").unwrap()
+    });
+    let found: Vec<String> = NUMBERS
+        .find_iter(label)
+        .map(|m| m.as_str().trim().to_string())
+        .filter(|m| m.chars().any(|c| c.is_ascii_digit()))
+        .collect();
+    (!found.is_empty()).then(|| found.join(" · "))
 }
 
 // MARK: - Mermaid
@@ -1923,5 +2257,219 @@ mod tests {
                 assert!(!overlaps(a, b), "{} overlaps {}", a.id, b.id);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod inline_tests {
+    use super::*;
+
+    /// The screenshot's case 2, rebuilt: 13 participants, numbered messages. Used both with and
+    /// without groups.
+    fn case2(with_groups: bool) -> Diagram {
+        let groups = [
+            ("request", "Request", &["client", "gateway"][..]),
+            ("batch", "Batcher", &["batcher", "router"][..]),
+            ("step", "Decode step", &["attn", "kv", "moe", "mhc", "sampler"][..]),
+            ("out", "Output", &["detok", "stream", "tail", "peer"][..]),
+        ];
+        let names: Vec<&str> = groups.iter().flat_map(|g| g.2.iter().copied()).collect();
+        let mut d = Diagram {
+            kind: Kind::Sequence,
+            title: "Decode step".into(),
+            ..Default::default()
+        };
+        for n in names {
+            d.nodes.push(Node {
+                id: n.into(),
+                label: n.into(),
+                group: if with_groups {
+                    groups
+                        .iter()
+                        .find(|g| g.2.contains(&n))
+                        .map(|g| g.0.to_string())
+                } else {
+                    None
+                },
+                ..Default::default()
+            });
+        }
+        for g in groups {
+            d.groups.push(Group {
+                id: g.0.into(),
+                label: g.1.into(),
+            });
+        }
+        let msgs = [
+            ("client", "gateway", "open stream"),
+            ("gateway", "batcher", "enqueue"),
+            ("batcher", "router", "schedule batch 40 ms"),
+            ("router", "attn", "prefill 8 tok/s"),
+            ("attn", "kv", "write 1.3 GB"),
+            ("kv", "moe", "route 4x"),
+            ("moe", "mhc", "gather 1550 ms"),
+            ("mhc", "sampler", "sample 36 ms"),
+            ("sampler", "detok", "detokenize 12 ms"),
+            ("detok", "stream", "emit chunk 8 tok/s"),
+            ("stream", "client", "render 1000+ tok/s"),
+        ];
+        for (from, to, label) in msgs {
+            d.edges.push(Edge {
+                from: from.into(),
+                to: to.into(),
+                label: Some(label.into()),
+                style: EdgeStyle::Solid,
+            });
+        }
+        d
+    }
+
+    /// The screenshot's case 1: a right-ward chain too wide for the column.
+    fn case1() -> Diagram {
+        let mut d: Diagram = serde_json::from_value(serde_json::json!({
+            "kind": "flow", "direction": "right",
+            "nodes": [
+                {"id": "pre", "label": "Prefill 1.7 s"},
+                {"id": "mla", "label": "MLA attention 1550 ms"},
+                {"id": "kda", "label": "KDA 57 ms"},
+                {"id": "lm", "label": "LM head 36 ms"},
+                {"id": "moe", "label": "MoE 13 ms"},
+                {"id": "mhc", "label": "MHC 10 ms"},
+                {"id": "end", "label": "Sample 10 ms"}
+            ],
+            "edges": [
+                {"from": "pre", "to": "mla"}, {"from": "mla", "to": "kda"},
+                {"from": "kda", "to": "lm"}, {"from": "lm", "to": "moe"},
+                {"from": "moe", "to": "mhc"}, {"from": "mhc", "to": "end"}
+            ]
+        }))
+        .unwrap();
+        d
+    }
+
+    #[test]
+    fn a_too_wide_flow_right_reruns_as_down_and_fits() {
+        let mut d = case1();
+        d.finish(Path::new("/"));
+        let full = d.layout.as_ref().unwrap();
+        assert!(full.width * MIN_SCALE > INLINE_W, "fixture is too wide at {}", full.width);
+        let inline = d.inline.as_ref().expect("a rerun as down should fit");
+        assert!(inline.width * MIN_SCALE <= INLINE_W, "inline width {}", inline.width);
+        // Same nodes in the compact form, laid out top-down.
+        assert_eq!(inline.nodes.len(), 7);
+        let xs: Vec<f32> = inline.nodes.iter().map(|b| b.x).collect();
+        let ys: Vec<f32> = inline.nodes.iter().map(|b| b.y).collect();
+        assert!(ys.windows(2).all(|w| w[1] >= w[0]), "stacks downward: {ys:?}");
+        assert!(xs.windows(2).any(|w| w[1] < w[0]), "not one long right-ward row");
+    }
+
+    #[test]
+    fn thirteen_participants_without_groups_warns_and_crops() {
+        let mut d = case2(false);
+        let warnings = d.finish(Path::new("/"));
+        assert!(
+            warnings.iter().any(|w| w == "13 participants won't fit at 720pt. Give nodes a `group` (≤6 groups) or split the diagram."),
+            "{warnings:?}"
+        );
+        assert!(d.inline.is_none());
+        // The full layout is untouched: the client crops it and offers expand.
+        assert!(d.layout.as_ref().unwrap().width * MIN_SCALE > INLINE_W);
+    }
+
+    #[test]
+    fn thirteen_participants_with_six_groups_fold_into_lanes() {
+        let mut d = case2(true);
+        d.finish(Path::new("/"));
+        let inline = d.inline.as_ref().expect("groups fold into lanes");
+        assert!(inline.width * MIN_SCALE <= INLINE_W, "width {}", inline.width);
+        // 4 lanes (request, batch, step, out) - the spec's folded form.
+        assert_eq!(inline.nodes.len(), 4);
+        // Between-group messages kept: open stream, enqueue, schedule batch, detokenize, render.
+        // In-group runs fold into bundle rows with the numbers hoisted.
+        let bundles: Vec<&Bundle> = inline.edges.iter().filter_map(|p| p.bundle.as_ref()).collect();
+        assert!(bundles.len() >= 2, "the in-group runs bundle: {bundles:?}");
+        let bundle_label = bundles.iter().map(|b| b.label.as_str()).collect::<Vec<_>>().join("|");
+        assert!(bundle_label.contains("8 tok/s"), "{bundle_label}");
+        // Every number survives the fold, in bundles or on kept arrows.
+        let all_text = inline
+            .edges
+            .iter()
+            .map(|p| {
+                p.bundle.as_ref().map(|b| b.label.clone()).unwrap_or_else(|| {
+                    d.edges[p.edge].label.clone().unwrap_or_default()
+                })
+            })
+            .collect::<Vec<_>>()
+            .join("|");
+        assert!(all_text.contains("40 ms"), "{all_text}");
+        assert!(all_text.contains("1000+ tok/s"), "{all_text}");
+        // Between-lane messages stay as plain arrows.
+        assert!(inline.edges.iter().any(|p| p.bundle.is_none()), "between-lane messages stay");
+        // Lanes ordered as the groups were declared, left to right.
+        let xs: Vec<f32> = inline.nodes.iter().map(|b| b.x).collect();
+        assert!(xs.windows(2).all(|w| w[1] > w[0]));
+    }
+
+    #[test]
+    fn a_run_of_numbered_in_group_messages_bundles_with_its_numbers() {
+        let mut d = case2(true);
+        // Trim to a small grouped sequence so the fold is exercised directly.
+        d.finish(Path::new("/"));
+        let inline = d.inline.as_ref().unwrap();
+        // The decode-step lane (attn, kv, moe, mhc, sampler) holds a run of 4 numbered
+        // messages: one bundle, all four numbers in its label, in order.
+        let b = inline
+            .edges
+            .iter()
+            .filter_map(|p| p.bundle.as_ref())
+            .find(|b| b.count == 4)
+            .expect("the 4-message run folds into one bundle");
+        assert_eq!(
+            b.label, "1.3 GB · 4x · 1550 ms · 36 ms",
+            "numbers hoisted in order"
+        );
+        assert!(carries_number("1550 ms") && !carries_number("no number here"));
+        assert_eq!(
+            hoist_numbers("batch 40 ms then 8 tok/s").as_deref(),
+            Some("40 ms · 8 tok/s")
+        );
+        assert_eq!(hoist_numbers("1000+ tok/s").as_deref(), Some("1000+ tok/s"));
+    }
+
+    #[test]
+    fn six_lanes_with_compact_columns_fit_under_704() {
+        // Six participants, no groups: compact columns alone bring it under the column.
+        let mut d: Diagram = serde_json::from_value(serde_json::json!({
+            "kind": "sequence",
+            "nodes": [
+                {"id": "a", "label": "Client"}, {"id": "b", "label": "Gateway"},
+                {"id": "c", "label": "Batcher"}, {"id": "d", "label": "Router"},
+                {"id": "e", "label": "Sampler"}, {"id": "f", "label": "Detok"}
+            ],
+            "edges": [
+                {"from": "a", "to": "b", "label": "open"},
+                {"from": "b", "to": "c", "label": "enqueue"},
+                {"from": "c", "to": "d", "label": "schedule"},
+                {"from": "d", "to": "e", "label": "prefill 8 tok/s"},
+                {"from": "e", "to": "f", "label": "emit 1000+"}
+            ]
+        }))
+        .unwrap();
+        d.finish(Path::new("/"));
+        let l = d.layout.as_ref().unwrap();
+        assert!(l.width * MIN_SCALE <= INLINE_W, "6 lanes: {}pt wide", l.width);
+        // A small sequence still fits and keeps its full layout unchanged.
+        assert!(d.inline.is_none());
+    }
+
+    #[test]
+    fn an_old_transcript_without_inline_still_decodes() {
+        let old = r#"{"kind":"sequence","title":"t","nodes":[{"id":"a","label":"A"},{"id":"b","label":"B"}],"edges":[{"from":"a","to":"b","label":"hi"}],"layout":{"width":400.0,"height":200.0,"nodes":[],"edges":[]},"mermaid":"sequenceDiagram"}"#;
+        let d: Diagram = serde_json::from_str(old).unwrap();
+        assert!(d.inline.is_none());
+        assert_eq!(d.nodes.len(), 2);
+        // And a fresh one round-trips with the field.
+        let d2: Diagram = serde_json::from_str(r#"{"kind":"flow","nodes":[{"id":"a","label":"A"}],"edges":[],"inline":{"width":1.0,"height":1.0,"nodes":[],"edges":[]}}"#).unwrap();
+        assert!(d2.inline.is_some());
     }
 }
