@@ -1405,6 +1405,84 @@ final class SessionBrokerTests: XCTestCase {
         XCTAssertTrue(delivered.isEmpty, "nothing was sent")
     }
 
+    /// A card merely *pending* in a session (no engine routed it) can be answered by the
+    /// chief named in `[delegation]`, or the session's parent, and nobody else: the decision
+    /// reaches that session's engine as the user's answer would, and the audit row says so.
+    @MainActor
+    func testTheChiefAnswersAPendingCardAndNobodyElseCan() throws {
+        let b = broker([chief, eng, ops])
+        b.chiefOf = { [chief = self.chief] in chief.id }
+        let targetLink = QueueLink(), chiefLink = QueueLink(), opsLink = QueueLink()
+        let target = Conversation(folder: URL(fileURLWithPath: "/tmp/pend-target"), link: targetLink, replay: false, session: eng.id)
+        b.track(target, as: eng.id)
+        // A card arrives mid-turn, as it does in a real session.
+        target.ingest(try JSONDecoder.frog.decode(Envelope.self, from: Data(
+            #"{"seq":0,"session":"eng-0002","created":0,"event":"turn_started","turn":1,"input":"build it"}"#.utf8)))
+        target.ingest(try JSONDecoder.frog.decode(Envelope.self, from: Data(
+            #"{"seq":1,"session":"eng-0002","created":1,"event":"permission_request","id":"p1","item":"t1","name":"Bash","arg":"cargo build","always":"","reason":"leaves the sandbox"}"#.utf8)))
+        b.observe(eng.id, running: true, waiting: true)
+        let chiefConv = Conversation(folder: URL(fileURLWithPath: "/tmp/pend-chief"), link: chiefLink, replay: true, session: chief.id)
+        let opsConv = Conversation(folder: URL(fileURLWithPath: "/tmp/pend-ops"), link: opsLink, replay: true, session: ops.id)
+        let ask = { (id: String, decision: String, note: String?) in
+            var input: [String: JSONValue] = ["approval_id": .string(id), "decision": .string(decision)]
+            if let note { input["note"] = .string(note) }
+            return SessionRequest(id: "r-\(id)", item: "t", tool: "ResolveDelegated", input: .object(input))
+        }
+        // Anyone else is refused, and the card stays pending.
+        b.handle(ask("p1", "approve", nil), from: opsConv)
+        XCTAssertNotNil(opsLink.sent.last?["error"])
+        XCTAssertNotNil(target.permission)
+        XCTAssertTrue(targetLink.sent.isEmpty)
+        // The chief answers it: the engine gets the decision, and the row is on the record.
+        b.handle(ask("p1", "approve", "its own build"), from: chiefConv)
+        XCTAssertNil(chiefLink.sent.last?["error"])
+        let op = try XCTUnwrap(targetLink.sent.last)
+        XCTAssertEqual(op["op"] as? String, "permission")
+        XCTAssertEqual(op["decision"] as? String, "allow")
+        XCTAssertEqual(op["note"] as? String, "its own build")
+        XCTAssertNil(target.permission, "the card is answered")
+        let audit = target.turns.last?.items.first { item in
+            if case .notice = item.kind { return item.text.contains("delegated:chief") }
+            return false
+        }?.text ?? ""
+        XCTAssertTrue(audit.contains("delegated:chief") && audit.contains("cargo build"),
+                      "the audit row is on the record: \(audit)")
+        // A card nobody is waiting on can't be answered.
+        b.handle(ask("p-nope", "deny", nil), from: chiefConv)
+        XCTAssertNotNil(chiefLink.sent.last?["error"])
+    }
+
+    /// The parent of a session may also answer its pending card; the chief's own card is the
+    /// user's (a session can't decide its own call).
+    @MainActor
+    func testAParentAnswersItsChildsPendingCard() throws {
+        let b = broker([chief, eng, ops])
+        b.parentOf = { $0 == self.eng.id ? self.chief.id : nil }
+        let engLink = QueueLink(), chiefLink = QueueLink()
+        let target = Conversation(folder: URL(fileURLWithPath: "/tmp/pend-child"), link: engLink, replay: false, session: eng.id)
+        b.track(target, as: eng.id)
+        target.ingest(try JSONDecoder.frog.decode(Envelope.self, from: Data(
+            #"{"seq":1,"session":"eng-0002","created":1,"event":"permission_request","id":"c1","item":"t1","name":"Bash","arg":"rm -rf build","always":"","reason":"leaves the sandbox"}"#.utf8)))
+        b.observe(eng.id, running: true, waiting: true)
+        let chiefConv = Conversation(folder: URL(fileURLWithPath: "/tmp/pend-chief2"), link: chiefLink, replay: true, session: chief.id)
+        b.handle(SessionRequest(id: "r1", item: "t", tool: "ResolveDelegated", input: .object([
+            "approval_id": .string("c1"), "decision": .string("deny"),
+        ])), from: chiefConv)
+        XCTAssertNil(chiefLink.sent.last?["error"])
+        XCTAssertEqual(engLink.sent.last?["decision"] as? String, "deny")
+        // Its own card: refused even for the chief.
+        let own = Conversation(folder: URL(fileURLWithPath: "/tmp/pend-own"), link: chiefLink, replay: false, session: chief.id)
+        b.track(own, as: chief.id)
+        b.directory = { [self.chief, self.eng, self.ops] }
+        own.ingest(try JSONDecoder.frog.decode(Envelope.self, from: Data(
+            #"{"seq":1,"session":"chief-0001","created":1,"event":"permission_request","id":"own-1","item":"t1","name":"Bash","arg":"git push","always":"","reason":"x"}"#.utf8)))
+        b.handle(SessionRequest(id: "r2", item: "t", tool: "ResolveDelegated", input: .object([
+            "approval_id": .string("own-1"), "decision": .string("approve"),
+        ])), from: own)
+        XCTAssertEqual(chiefLink.sent.last?["error"] as? String, "A session can't answer its own card.")
+        XCTAssertNotNil(own.permission)
+    }
+
     /// Switching away from any session (not only agents') keeps a turn in flight running; an
     /// engine still starting up with nothing asked of it is let go. A message sent before the
     /// engine named its session is held until it does, then it's that session's engine.
