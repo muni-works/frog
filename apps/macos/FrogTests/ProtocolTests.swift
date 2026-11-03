@@ -21,6 +21,16 @@ final class ProtocolTests: XCTestCase {
         guard case .nextSuggested(3, "push it", true) = act.event else { return XCTFail() }
     }
 
+    func testNotifyDecodesWithItsUrgencyAndForgivingDefaults() throws {
+        let loud = try decode(#"{"seq":1,"session":"s","created":0,"event":"notify","title":"build","body":"The build finished.","urgency":"attention"}"#)
+        guard case .notify("build", "The build finished.", .attention) = loud.event else { return XCTFail() }
+        let silent = try decode(#"{"seq":2,"session":"s","created":0,"event":"notify","body":"All green.","urgency":"silent"}"#)
+        guard case .notify(nil, "All green.", .silent) = silent.event else { return XCTFail() }
+        // An older engine (or a hand-written line) without the urgency is the quiet default.
+        let bare = try decode(#"{"seq":3,"session":"s","created":0,"event":"notify","body":"tests pass"}"#)
+        guard case .notify(nil, "tests pass", .done) = bare.event else { return XCTFail() }
+    }
+
     func testFixturesAllDecode() throws {
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "events", withExtension: "jsonl"))
         let lines = try String(contentsOf: url, encoding: .utf8).split(separator: "\n")

@@ -61,7 +61,7 @@ private struct GeneralSettings: View {
                     .tag(e.id)
                 }
             }
-            Toggle("Notify me when a turn finishes while I'm in another app", isOn: $notifyWhenDone)
+            Toggle("Let frog notify me when I'm in another app", isOn: $notifyWhenDone)
             Section {
                 Toggle("Pause agents for app updates and resume them", isOn: $gracefulUpdates)
                 if gracefulUpdates {

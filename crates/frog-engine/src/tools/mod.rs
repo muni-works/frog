@@ -4,6 +4,7 @@ pub mod diagram;
 pub mod docs;
 pub mod fs;
 pub mod image;
+pub mod notify;
 pub mod rank;
 pub mod screenshot;
 pub mod search;
@@ -242,6 +243,9 @@ pub struct Output {
     pub images: Vec<crate::protocol::Image>,
     /// An MCP App to host for this result.
     pub app: Option<Box<crate::protocol::AppView>>,
+    /// A notification the model asked for, for `Notify`: the engine turns it into
+    /// [`crate::protocol::Event::Notify`] after the call's item, so the row comes first.
+    pub notify: Option<notify::Note>,
 }
 
 impl Output {
@@ -254,6 +258,7 @@ impl Output {
             present: None,
             images: Vec::new(),
             app: None,
+            notify: None,
         }
     }
 }
@@ -267,6 +272,7 @@ pub fn specs() -> Vec<ToolSpec> {
         search::glob_spec(),
         search::grep_spec(),
         todo::spec(),
+        notify::spec(),
         diagram::spec(),
         image::spec(),
         screenshot::spec(),
@@ -292,6 +298,8 @@ pub fn kind(name: &str) -> Kind {
         // A subagent can only read.
         crate::subagent::TOOL => Kind::Read,
         crate::skills::TOOL => Kind::Read,
+        // It changes nothing (it only asks the client to alert the person), so it never asks.
+        notify::TOOL => Kind::Read,
         // Writes ask like an edit; list/get are let through (`compiled_memory::is_read`).
         crate::compiled_memory::TOOL => Kind::Edit,
         // Moving into a folder hands over its files and shell: always asks.
@@ -312,6 +320,7 @@ pub async fn run(name: &str, input: &Value, ctx: &mut Ctx) -> Result<Output> {
         "Glob" => search::glob(input, ctx).await,
         "Grep" => search::grep(input, ctx).await,
         "TodoWrite" => todo::run(input, ctx),
+        notify::TOOL => notify::run(input, ctx),
         "Diagram" => diagram::run(input, ctx),
         "Image" => image::run(input, ctx).await,
         "Screenshot" => screenshot::run(input, ctx).await,
@@ -346,6 +355,7 @@ pub fn label(name: &str, input: &Value, ctx: &Ctx) -> (String, String) {
             .collect::<Vec<_>>()
             .join(": "),
         "Task" => s("description"),
+        notify::TOOL => s("title"),
         crate::title::TOOL => s("title"),
         crate::next::TOOL => s("text"),
         "Monitor" => {

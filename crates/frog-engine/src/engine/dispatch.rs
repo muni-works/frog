@@ -709,6 +709,16 @@ Don't repeat it. Change the arguments or try a different approach.",
                     app: out.app,
                 },
             });
+            // The model asked for the person's attention (its `Notify` tool): after its row, so
+            // the transcript shows the call first, and live only, so reopening the session
+            // doesn't re-alert for something that happened hours ago.
+            if let Some(note) = out.notify {
+                self.emit(Event::Notify {
+                    title: note.title,
+                    body: note.body,
+                    urgency: note.urgency,
+                });
+            }
             // Connections it tried past the allow-list, right under its row.
             self.flush_egress(Some(&item_id), &command);
             // Queue a gist for a finished shell command, written when the turn ends in one

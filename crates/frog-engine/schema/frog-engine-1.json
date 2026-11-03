@@ -2971,6 +2971,50 @@
           "type": "object"
         },
         {
+          "description": "The model asked for the person's attention (its `Notify` tool): a banner, a Dock bounce,\na push to the phone — whatever the client does with a notification. The engine never\nsends one on its own (a finished reply is already on screen); this is only ever the\nmodel's deliberate call. Live only: a replaying client shows the tool call's row, not a\nsecond alert for something that happened hours ago.",
+          "properties": {
+            "body": {
+              "type": "string"
+            },
+            "created": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "event": {
+              "const": "notify",
+              "type": "string"
+            },
+            "seq": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session": {
+              "type": "string"
+            },
+            "title": {
+              "description": "A few words, like a session title; absent means the client names the session.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "urgency": {
+              "$ref": "#/$defs/NotifyUrgency",
+              "default": "done",
+              "description": "`attention` (needs them now), `done` (a long job finished) or `silent` (no\ninterruption at all). Absent in nothing the engine writes; defaulted so a client\nbuilt before it decodes."
+            }
+          },
+          "required": [
+            "event",
+            "body",
+            "seq",
+            "session",
+            "created"
+          ],
+          "type": "object"
+        },
+        {
           "description": "The answer to [`Op::ApprovalDigest`]: today's approvals roll-up.",
           "properties": {
             "created": {
@@ -4573,6 +4617,35 @@
           "type": "object"
         },
         {
+          "description": "The model asked for the person's attention (its `Notify` tool): a banner, a Dock bounce,\na push to the phone — whatever the client does with a notification. The engine never\nsends one on its own (a finished reply is already on screen); this is only ever the\nmodel's deliberate call. Live only: a replaying client shows the tool call's row, not a\nsecond alert for something that happened hours ago.",
+          "properties": {
+            "body": {
+              "type": "string"
+            },
+            "event": {
+              "const": "notify",
+              "type": "string"
+            },
+            "title": {
+              "description": "A few words, like a session title; absent means the client names the session.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "urgency": {
+              "$ref": "#/$defs/NotifyUrgency",
+              "default": "done",
+              "description": "`attention` (needs them now), `done` (a long job finished) or `silent` (no\ninterruption at all). Absent in nothing the engine writes; defaulted so a client\nbuilt before it decodes."
+            }
+          },
+          "required": [
+            "event",
+            "body"
+          ],
+          "type": "object"
+        },
+        {
           "description": "The answer to [`Op::ApprovalDigest`]: today's approvals roll-up.",
           "properties": {
             "event": {
@@ -5366,6 +5439,26 @@
         "rank"
       ],
       "type": "object"
+    },
+    "NotifyUrgency": {
+      "description": "How much a [`Event::Notify`] may interrupt. Clients map it: a Dock bounce and a\ntime-sensitive banner for `attention`, a quiet banner for `done`, nothing at all (a line to\nread later) for `silent`.",
+      "oneOf": [
+        {
+          "const": "attention",
+          "description": "Needs the person now: a decision, something broken, work stopped.",
+          "type": "string"
+        },
+        {
+          "const": "done",
+          "description": "A long job finished. Worth a banner, not an interruption.",
+          "type": "string"
+        },
+        {
+          "const": "silent",
+          "description": "No interruption at all.",
+          "type": "string"
+        }
+      ]
     },
     "Op": {
       "description": "Client → engine.\n\n`Interrupt`, `ClearInbox`, `Permission`, `Answer`, `Elicit`, `AppCall`, `Drain`,\n`DrainAbort` and `StopSubagent` take effect immediately. Everything else is queued\nand handled in order; each queued op ends with [`Event::Idle`].",

@@ -141,6 +141,9 @@ final class PhoneEffects: ConversationEffects {
     func turnEnded(_ c: Conversation, turn: TurnState) {}
     func asked(_ c: Conversation, _ request: PermissionRequest) {}
     func answered(_ c: Conversation, permission id: String) {}
+    /// The model's `Notify` reaches the phone as a push (the Mac sends it); with the app open
+    /// the transcript's row is the whole story, so nothing fires here.
+    func notified(_ c: Conversation, _ note: NotifyNote) {}
     func live(_ c: Conversation, running: Bool, waiting: Bool) {
         LiveActivities.shared.follow(c)
     }

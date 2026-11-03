@@ -80,8 +80,22 @@ final class MacEffects: ConversationEffects {
     func turnEnded(_ c: Conversation, turn: TurnState) {
         if let id = c.cloudSession ?? c.sessionID { Library.shared.turnEnded(id) }
         if let usage = turn.usage { ModelStats.shared.record(usage, model: c.status?.model) }
-        Notifier.shared.turnFinished(project: c.folder.lastPathComponent, text: Conversation.summary(turn))
+        // No notification here: a finished reply is already on screen, and an alert per turn
+        // end is exactly the noise this replaced. The model asks for attention itself with
+        // its `Notify` tool (`notified`, below); the Dock badge only says "there's something
+        // new in here" for someone who switched away mid-turn.
+        Notifier.shared.turnFinishedAway()
         if c.title == nil, case .complete? = turn.end { nameSession(c, from: turn) }
+    }
+
+    func notified(_ c: Conversation, _ note: NotifyNote) {
+        let project = Frog.isChat(c.folder) ? nil : c.folder.lastPathComponent
+        Notifier.shared.note(
+            title: note.title ?? c.title ?? project ?? "frog",
+            body: note.body,
+            urgency: note.urgency,
+            project: project)
+        RemotePush.shared.notify(note, session: c.cloudSession ?? c.sessionID, project: project)
     }
 
     func asked(_ c: Conversation, _ request: PermissionRequest) {

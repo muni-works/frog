@@ -40,6 +40,16 @@ protocol ConversationEffects: AnyObject {
     func answered(_ c: Conversation, permission id: String)
     /// Running or waiting on you changed.
     func live(_ c: Conversation, running: Bool, waiting: Bool)
+    /// The model asked for the person's attention (its `Notify` tool), live.
+    func notified(_ c: Conversation, _ note: NotifyNote)
+}
+
+/// A `Notify` the model asked for: a banner, a bounce, a push — whatever this platform does.
+struct NotifyNote: Equatable, Sendable {
+    /// A few words, like a session title; nil means name the session.
+    var title: String?
+    var body: String
+    var urgency: NotifyUrgency
 }
 
 /// A session: folds its engine's events into turns, and sends it what you do.
@@ -836,6 +846,12 @@ final class Conversation {
         case .nextSuggested(_, let text, let act):
             // Live only: a replay never brings back a suggestion for a turn long gone.
             if isNews(env), !text.isEmpty { next = Next(text: text, act: act) }
+        case .notify(let title, let body, let urgency):
+            // The model asked for the person's attention (its `Notify` tool). Live only, so a
+            // reopened session never re-alerts for something that happened hours ago.
+            if isNews(env), !body.isEmpty {
+                Conversation.effects?.notified(self, NotifyNote(title: title, body: body, urgency: urgency))
+            }
         case .chapterTitled(let n, let title):
             // The model's name for the chapter starting at turn `n`: the rail shows it over
             // its heuristic one (which it showed meanwhile).

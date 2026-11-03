@@ -285,6 +285,12 @@ final class QuitGuard: NSObject, NSApplicationDelegate {
         exit(0)
     }
 
+    /// frog came forward: the "something finished while you were away" badge has been looked
+    /// at. (Pending permission requests keep their count — those are still blocked work.)
+    func applicationDidBecomeActive(_ notification: Notification) {
+        Notifier.shared.focus()
+    }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         let registry = SessionRegistry.shared
         let running = registry.running

@@ -515,6 +515,12 @@ struct KeptTest: Decodable, Sendable, Equatable {
     var passed: Bool
 }
 
+/// How much a `Notify` may interrupt. The engine's `NotifyUrgency`: `attention` needs the
+/// person now, `done` is a long job finishing, `silent` is no interruption at all.
+enum NotifyUrgency: String, Decodable, Sendable, Equatable {
+    case attention, done, silent
+}
+
 enum EndReason: Decodable, Sendable, Equatable {
     case complete, denied, looping, stepLimit, cancelled, suspended
     /// Cut off at the output limit, after `autoContinued` replies were continued in place to
@@ -802,6 +808,9 @@ enum Event: Decodable, Sendable {
     /// The model's suggested next prompt, sent just before a completed turn ends. Live only.
     /// `act`: it acts outside the project (push, send, deploy), so it's a button, not ghost text.
     case nextSuggested(turn: UInt64, text: String, act: Bool)
+    /// The model asked for the person's attention (its `Notify` tool). Live only: a replay
+    /// never re-alerts for something that happened hours ago.
+    case notify(title: String?, body: String, urgency: NotifyUrgency)
     /// The plan's allowance ran out and the session transitions to credit at usage prices:
     /// one calm inline row ("5-hour allowance used · billing credit at usage prices"), the
     /// turn goes on. The raw provider body is in the engine log, never here. Durable.
@@ -915,6 +924,7 @@ extension Event {
         case host, port, enforced, hosts, sandboxLeft
         case running
         case status, text, log, items, wakes
+        case urgency, body
     }
 
     init(from decoder: Decoder) throws {
@@ -946,6 +956,11 @@ extension Event {
                 turn: try c.decode(UInt64.self, forKey: .turn),
                 text: try c.decode(String.self, forKey: .text),
                 act: try c.decodeIfPresent(Bool.self, forKey: .act) ?? false)
+        case "notify":
+            self = .notify(
+                title: try c.decodeIfPresent(String.self, forKey: .title),
+                body: try c.decodeIfPresent(String.self, forKey: .body) ?? "",
+                urgency: try c.decodeIfPresent(NotifyUrgency.self, forKey: .urgency) ?? .done)
         case "chapter_titled":
             self = .chapterTitled(turn: try c.decode(UInt64.self, forKey: .turn), title: try c.decode(String.self, forKey: .title))
         case "billing_limit":
