@@ -59,6 +59,13 @@ final class PaneHub {
     var insert: String?
     /// The preview's inspect mode toggle, driven from the menu (⇧⌘I).
     var inspecting = false
+    /// Hubs with a popped-out preview, by pane id: the pop-out window finds its hub here (it's
+    /// a separate scene, so it can't reach the conversation's view otherwise). Entries drop
+    /// when the pop-out closes.
+    @ObservationIgnored nonisolated(unsafe) static var poppedOutHubs: [String: PaneHub] = [:]
+    /// Whether the preview's web view is presented in its own window instead of the card
+    /// (the pop-out reuses the one `PreviewHost`, so engine reads and screenshots keep working).
+    var poppedOut = false
     /// Recent reports per pane, for the engine's `console` request.
     private(set) var reports: [String: [PaneReport]] = [:]
     /// The turn the engine is on, so an in-app checkpoint screenshot is filed under it.
