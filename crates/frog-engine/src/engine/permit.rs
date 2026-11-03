@@ -68,14 +68,12 @@ impl Agent {
         let terminal_run = name == crate::panes::TERMINAL && pane_action == "run";
         let pane = !terminal_run && matches!(name, crate::panes::TERMINAL | crate::panes::PREVIEW);
         // Web reads change nothing and show on their tool card, like reads — in every
-        // mode (Cam's decision 2026-10-23): WebSearch always, WebFetch when the host is
-        // a plain public domain (the fetch itself still re-checks every resolved IP
-        // against private ranges, and a non-public host keeps asking as before). A
-        // public-host GET sends nothing the request itself doesn't show.
-        if kind == Kind::Net
-            && (name == "WebSearch"
-                || crate::tools::web::public_host(input["url"].as_str().unwrap_or("")))
-        {
+        // mode (Cam's decision 2026-10-23): WebSearch, and WebFetch when the host is a
+        // plain public domain (the fetch itself still re-checks every resolved IP against
+        // private ranges, and a non-public host keeps asking as before). Only plain ones,
+        // though: a long query, path segment or search term could carry what the agent
+        // read out past the sandbox, so those go on to the classifier or a card.
+        if kind == Kind::Net && crate::tools::web::plain_read(name, input) {
             self.decision(item, "rule", "allow", "read-only web call", 0);
             return Decision::Allow;
         }
