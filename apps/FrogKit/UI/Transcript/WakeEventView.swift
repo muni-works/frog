@@ -108,10 +108,7 @@ struct EventLine: Equatable {
     init(wake: WakeEvent, job: BackgroundJob?) {
         let firstLine = wake.body.split(whereSeparator: \.isNewline).first
             .map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
-        var detail = job.map(\.label).flatMap { $0.isEmpty ? nil : $0 } ?? firstLine
-        // The line says it once: when the detail is the payload's own first line, it doesn't
-        // repeat it (a "Background command …" row that shows the command three times).
-        if detail == firstLine { detail = "" }
+        let detail = job.map(\.label).flatMap { $0.isEmpty ? nil : $0 } ?? firstLine
         let (glyph, kind): (String, String) = switch wake.kind {
         case .job: ("terminal", "job")
         case .monitor: ("eye", "monitor")
