@@ -86,6 +86,12 @@ struct AgentReport: View {
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
+            if let claims = item.subagent?.claims {
+                // The worker's claims (review-ux step 2, read-only): what it says about the
+                // world and the commands that check each — under the report it came with.
+                OutcomeCard(claims: claims)
+                    .equatable()
+            }
             if let run = item.subagent, run.steps > 0 {
                 Button("Show its \(run.steps) step\(run.steps == 1 ? "" : "s")") { showRun = true }
                     .linkButton()

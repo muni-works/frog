@@ -191,7 +191,8 @@ struct TurnView: View {
         let loading = running ? modelLoading : nil
         let status = running && loading == nil ? liveStatus : nil
         let plan = running && !parts.plan.isEmpty
-        if plan || loading != nil || status != nil || !parts.changes.isEmpty || turn.end != nil {
+        if plan || loading != nil || status != nil || !parts.changes.isEmpty || turn.end != nil
+            || (FeatureFlags.outcomeCard && turn.claims != nil) {
             VStack(alignment: .leading, spacing: space.block) {
                 if plan {
                     PlanView(todos: parts.plan)
@@ -206,6 +207,14 @@ struct TurnView: View {
                 if !parts.changes.isEmpty {
                     ChangesStrip(changes: parts.changes)
                         .equatable()
+                }
+                if FeatureFlags.outcomeCard, let claims = turn.claims {
+                    // The outcome card (review-ux step 2): the worker's claims, read-only, in
+                    // place of the changes strip for delegated work. Diffs stay one click away
+                    // in the Changes tab — the strip above (when it's there) is untouched.
+                    OutcomeCard(claims: claims)
+                        .equatable()
+                        .transition(.opacity)
                 }
                 if let end = turn.end {
                     // An unpinned footer keeps its place and fades in on hover, so it neither
