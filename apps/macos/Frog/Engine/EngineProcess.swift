@@ -146,6 +146,24 @@ enum FrogError: LocalizedError {
     }
 }
 
+/// A scratch root for tests that touch real files under `$HOME` (the app's own Application
+/// Support, caches), with a restore for the value it swaps.
+enum TestHome {
+    /// Point `$HOME` (C, and every Foundation call that reads it) at a fresh temp dir for the
+    /// test's duration.
+    static func scoped(_ body: () -> Void) {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory
+            .appending(path: "frog-home-\(UUID().uuidString.prefix(6))").resolvingSymlinksInPath()
+        try? fm.createDirectory(at: home, withIntermediateDirectories: true)
+        let original = getenv("HOME")
+        setenv("HOME", home.path, 1)
+        body()
+        if let original { setenv("HOME", original, 1) } else { unsetenv("HOME") }
+        try? fm.removeItem(at: home)
+    }
+}
+
 /// One `frog --serve` process: ops in over stdin, event envelopes out over stdout.
 @MainActor
 final class EngineProcess {
