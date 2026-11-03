@@ -552,7 +552,55 @@ fn scan(p: &Path) -> Option<Scanned> {
 }
 
 /// Sessions started in `cwd` (every folder's, with `None`), most recently active first.
-pub fn list(dir: &Path, cwd: Option<&Path>) -> Result<Vec<Info>> {
+/// With `ids`, only those sessions' logs are touched at all: the app calls this for just the
+/// ones its watcher saw change (a full listing reads and stats 1,000+ logs it didn't ask about).
+pub fn list(dir: &Path, cwd: Option<&Path>, ids: Option<&[String]>) -> Result<Vec<Info>> {
+    // Named ids skip the directory walk. They share the full walk's list index, so a refresh
+    // of an unchanged id costs one `metadata` and a changed one re-reads only its own log.
+    if let Some(ids) = ids {
+        let index_path = dir.join(LIST_INDEX);
+        let mut old: ListIndex = std::fs::read(&index_path)
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default();
+        let mut dirty = false;
+        let mut out = Vec::new();
+        for id in ids {
+            let p = path(dir, id);
+            let Some((len, mtime)) = p.metadata().ok().as_ref().and_then(stamp) else {
+                // Gone: the index entry drops so the next full walk doesn't resurrect it.
+                if old.entries.remove(id.as_str()).is_some() {
+                    dirty = true;
+                }
+                continue;
+            };
+            let scanned = match old.entries.get(id.as_str()) {
+                Some((l, m, s)) if *l == len && *m == mtime => s.clone(),
+                _ => {
+                    dirty = true;
+                    let Some(s) = scan(&p) else { continue };
+                    s
+                }
+            };
+            old.entries.insert(id.clone(), (len, mtime, scanned.clone()));
+            if cwd.is_some_and(|c| scanned.header.cwd != c) {
+                continue;
+            }
+            out.push(info(id.clone(), scanned, dir));
+        }
+        if dirty {
+            // Written whole and renamed in, as the full walk writes it, so a concurrent
+            // listing reads one or the other whole.
+            let tmp = dir.join(format!("{LIST_INDEX}.{}", std::process::id()));
+            if let Ok(bytes) = serde_json::to_vec(&old)
+                && std::fs::write(&tmp, bytes).is_ok()
+            {
+                let _ = std::fs::rename(&tmp, &index_path);
+            }
+        }
+        out.sort_by_key(|i| std::cmp::Reverse(i.modified));
+        return Ok(out);
+    }
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Ok(Vec::new());
     };
@@ -587,31 +635,7 @@ pub fn list(dir: &Path, cwd: Option<&Path>) -> Result<Vec<Info>> {
         if cwd.is_some_and(|c| scanned.header.cwd != c) {
             continue;
         }
-        let Scanned {
-            header,
-            first_input,
-            title,
-            end,
-            open,
-            active,
-        } = scanned;
-        let modified =
-            std::time::UNIX_EPOCH + std::time::Duration::from_millis(active.max(0) as u64);
-        out.push(Info {
-            id: id.to_string(),
-            modified,
-            header,
-            first_input,
-            title,
-            // A turn still open with nobody holding the log died mid-run (the engine is
-            // gone): that's a failure, not work in progress. A newer open turn wins over an
-            // older turn's end.
-            end: if open {
-                Some(if Log::in_use(dir, id) { EndState::Open } else { EndState::Failed })
-            } else {
-                end
-            },
-        });
+        out.push(info(id.to_string(), scanned, dir));
     }
     // Deleted logs drop out too. Written whole and renamed in, so a concurrent listing reads
     // the old index or the new one, never half; a failed write only costs the next a rescan.
@@ -627,9 +651,31 @@ pub fn list(dir: &Path, cwd: Option<&Path>) -> Result<Vec<Info>> {
     Ok(out)
 }
 
+/// One listing row from a log's `Scanned` summary: the turn-open check (a flock probe)
+/// folded in, since it's per session rather than per file.
+fn info(id: String, scanned: Scanned, dir: &Path) -> Info {
+    let in_use = Log::in_use(dir, &id);
+    let Scanned { header, first_input, title, end, open, active } = scanned;
+    let modified = std::time::UNIX_EPOCH + std::time::Duration::from_millis(active.max(0) as u64);
+    Info {
+        id,
+        modified,
+        header,
+        first_input,
+        title,
+        // A turn still open with nobody holding the log died mid-run (the engine is
+        // gone): that's a failure, not work in progress. A newer open turn wins over an
+        // older turn's end.
+        end: if open {
+            Some(if in_use { EndState::Open } else { EndState::Failed })
+        } else {
+            end
+        },
+    }
+}
+
 /// Name a session that isn't open (an open one takes `Op::SetTitle`).
-pub fn retitle(dir: &Path, id: &str, title: &str) -> Result<()> {
-    let title: String = title.trim().chars().take(80).collect();
+pub fn retitle(dir: &Path, id: &str, title: &str) -> Result<()> {    let title: String = title.trim().chars().take(80).collect();
     if title.is_empty() {
         anyhow::bail!("the title is empty");
     }
@@ -709,7 +755,7 @@ pub fn rewind(dir: &Path, id: &str, turn: u64) -> Result<Rewound> {
 }
 
 pub fn latest_for(dir: &Path, cwd: &Path) -> Result<String> {
-    list(dir, Some(cwd))?
+    list(dir, Some(cwd), None)?
         .into_iter()
         .next()
         .map(|i| i.id)
@@ -968,13 +1014,13 @@ mod tests {
         ))
         .unwrap();
         // Open while an engine holds the log...
-        let listed = list(&dir, None).unwrap();
+        let listed = list(&dir, None, None).unwrap();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].end, Some(EndState::Open));
         assert_eq!(listed[0].id, "a");
         // ...and dead once nobody does: the engine died mid-turn.
         drop(log);
-        assert_eq!(list(&dir, None).unwrap()[0].end, Some(EndState::Failed));
+        assert_eq!(list(&dir, None, None).unwrap()[0].end, Some(EndState::Failed));
 
         // A turn that finished completes it; a later open turn reopens it.
         let mut log = Log::open(&dir, "a").unwrap();
@@ -988,7 +1034,7 @@ mod tests {
         ))
         .unwrap();
         drop(log);
-        assert_eq!(list(&dir, None).unwrap()[0].end, Some(EndState::Complete));
+        assert_eq!(list(&dir, None, None).unwrap()[0].end, Some(EndState::Complete));
 
         for reason in [
             crate::protocol::EndReason::Denied,
@@ -1007,7 +1053,7 @@ mod tests {
             ))
             .unwrap();
             drop(log);
-            assert_eq!(list(&dir, None).unwrap()[0].end, Some(EndState::Stopped));
+            assert_eq!(list(&dir, None, None).unwrap()[0].end, Some(EndState::Stopped));
         }
 
         let mut log = Log::open(&dir, "a").unwrap();
@@ -1021,12 +1067,12 @@ mod tests {
         ))
         .unwrap();
         drop(log);
-        assert_eq!(list(&dir, None).unwrap()[0].end, None);
+        assert_eq!(list(&dir, None, None).unwrap()[0].end, None);
 
         // A session that never ran a turn has no end state.
         let _log = Log::create(&dir, header("quiet")).unwrap();
         assert_eq!(
-            list(&dir, None).unwrap().iter().find(|i| i.id == "quiet").unwrap().end,
+            list(&dir, None, None).unwrap().iter().find(|i| i.id == "quiet").unwrap().end,
             None
         );
     }
