@@ -457,7 +457,10 @@ struct FittedDiagram: View {
         let h = shown?.height ?? 1
         let raw = width / max(w, 1)
         let scale = min(1, max(Self.minScale, raw))
-        let fits = raw >= Self.minScale
+        // Whether what's drawn needs cropping. A compact form that fits is complete on its own,
+        // but there is still a full layout to offer, so expand stays available.
+        let cropped = raw < Self.minScale
+        let fuller = diagram.inline != nil && (diagram.layout?.width ?? 0) > w
         // What we'd have to crop away at the floor: the fade width, capped at a third.
         let overflow = max(0, w * scale - width)
         let fade = min(24, overflow / 2)
@@ -482,7 +485,7 @@ struct FittedDiagram: View {
                         .clipped()
                         .overlay(alignment: .trailing) {
                             // A fade where the crop cuts, so it reads as "more", not "ends here".
-                            if !fits, fade > 0 {
+                            if cropped, fade > 0 {
                                 LinearGradient(
                                     colors: [Color.windowBackground.opacity(0), Color.windowBackground],
                                     startPoint: .leading, endPoint: .trailing
@@ -493,7 +496,7 @@ struct FittedDiagram: View {
                         }
                 }
             }
-            if full != nil, !fits {
+            if full != nil, cropped || fuller {
                 HStack(spacing: 8) {
                     if !expanded, let summary = foldSummary {
                         Text(summary)
@@ -519,7 +522,7 @@ struct FittedDiagram: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .onGeometryChange(for: CGFloat.self, of: \.size.width) { width = $0 }
-        .onChange(of: diagram.inline != nil) { expanded = false }
+        .onChange(of: diagram) { expanded = false }
     }
 
     /// What the compact form folded away, in the spec's words: "17 messages in 8 rows · 3
