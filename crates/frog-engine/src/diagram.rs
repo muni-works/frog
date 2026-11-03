@@ -189,9 +189,10 @@ const MIN_SCALE: f32 = 0.85;
 /// The most lanes (folded groups or participants) a sequence may use inline.
 const MAX_INLINE_LANES: usize = 6;
 
-/// One folded lane in the inline form of a sequence: a group (its members share the lane) or a
-/// lone participant.
+/// One folded lane in the inline form of a sequence: a group (its members share the lane).
 struct FoldLane {
+    /// Index into `Diagram.groups` — the lane header's identity.
+    group: usize,
     label: String,
     members: Vec<usize>,
 }
@@ -365,15 +366,15 @@ impl Diagram {
         warnings
     }
 
-    /// Participants folded into lanes for the inline form: one per group (in declaration order),
-    /// ungrouped participants stay individual. Only when every node has a group; with strays the
-    /// fold wouldn't shrink below [`MAX_INLINE_LANES`] lanes, so no inline form is offered.
+    /// Participants folded into lanes for the inline form: one per group, in declaration order.
+    /// Only when every node has a group; with strays the fold wouldn't shrink the lane count, so
+    /// no inline form is offered.
     fn foldable_lanes(&self) -> Option<Vec<FoldLane>> {
         if self.nodes.iter().any(|n| n.group.is_none()) {
             return None;
         }
         let mut lanes: Vec<FoldLane> = Vec::new();
-        for g in &self.groups {
+        for (gi, g) in self.groups.iter().enumerate() {
             let members: Vec<usize> = self
                 .nodes
                 .iter()
@@ -383,6 +384,7 @@ impl Diagram {
                 .collect();
             if !members.is_empty() {
                 lanes.push(FoldLane {
+                    group: gi,
                     label: g.label.clone(),
                     members,
                 });
@@ -1139,30 +1141,7 @@ fn sequence_layout_folded(d: &Diagram, lanes: &[FoldLane]) -> Layout {
             lane_of.insert(d.nodes[i].id.as_str(), li);
         }
     }
-    let lane_of_edge: Vec<Option<usize>> = d
-        .edges
-        .iter()
-        .map(|e| {
-            let (a, b) = (
-                lane_of.get(e.from.as_str()).copied(),
-                lane_of.get(e.to.as_str()).copied(),
-            );
-            match (a, b) {
-                (Some(a), Some(b)) => Some(a.min(b)),
-                _ => None,
-            }
-        })
-        .collect();
-    let lane_group: Vec<usize> = lanes
-        .iter()
-        .map(|l| {
-            d.nodes
-                .get(*l.members.first().unwrap_or(&0))
-                .and_then(|n| n.group.as_deref())
-                .and_then(|g| d.groups.iter().position(|x| x.id == g))
-                .unwrap_or(0)
-        })
-        .collect();
+    let lane_group: Vec<usize> = lanes.iter().map(|l| l.group).collect();
 
     // Columns: each lane is as wide as its header label (with a member count) and the widest
     // participant label inside it; message labels between two neighbors add room.
