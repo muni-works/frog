@@ -59,4 +59,13 @@ hairline at rest, brighter on hover, tinted while dragging — hit area and poin
   keep working (the engine talks to `hub.handlers[paneID]`, which stays registered).
 
 ## Test counts
-(filled in after the run)
+
+Full suite (this branch, `toys.frog.testhost`, pe-dd, prebuilt sidecar): **443 executed, 5 skipped,
+1 unexpected failure** — `TranscriptSwitchBenchmarkTests/testScrollUpFillsOlderRowsInOrder`
+(peak mounted rows 41 > 30). That test never touches anything this branch changes (transcript
+only; diff checked) and its own history says flaky (~1 in 3, per dda4320e; CI skips it via
+`TestRunner.isCI`, 4b76df45). **Proven pre-existing:** a control run of the same class at the
+base commit `034d920d` (throwaway worktree, otherwise identical flags) fails the same test the
+same way (worktree removed after). `PaneExpandTests`: 11/11 pass. The other briefed-noisy class,
+`InkRevealTests`, passed in the suite (not in the tail-200 log window, and not among the
+failures). No gateway 401s or connection resets at any point.
