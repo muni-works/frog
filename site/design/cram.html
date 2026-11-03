@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cram</title>
+<meta name="description" content="cram: error-bounded lossy compression for scientific f32/f64 data. Fewer bits at the same quality; byte-identical decode on CPU, GPU and the browser.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* tang site language (Plex, 720px column, hairlines, one pilot-light flame), hue rotated
+   from tang: warm stone + orange flame → cram: cool slate + cyan flame + amber links. */
+:root {
+  --bg: #ffffff; --fg: oklch(0.17 0.012 230); --muted: oklch(0.52 0.03 230);
+  --surface: oklch(0.975 0.008 220); --border: oklch(0.84 0.02 225); --border-muted: oklch(0.92 0.012 225);
+  --flame: oklch(0.62 0.15 205); --flame-ink: oklch(0.45 0.11 205);
+  --link: oklch(0.50 0.12 75);
+  --c2: oklch(0.55 0.03 230); --c3: oklch(0.65 0.21 25);
+  --s-xs: 10.5px; --s-sm: 12.5px; --s-body: 15px; --s-md: 17px; --s-lg: 21px; --s-xl: 26px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #07090b; --fg: #d6e2e8; --muted: #7d93a2; --surface: #0e1418;
+    --border: #2a3a46; --border-muted: #17222a;
+    --flame: #00e5ff; --flame-ink: #00e5ff; --link: #ffc24a;
+    --c2: #5b7180; --c3: oklch(0.72 0.21 25);
+  }
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { background: var(--bg); color: var(--fg); }
+body { font: 400 var(--s-body)/1.62 "IBM Plex Sans", system-ui, sans-serif; font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased; }
+code, pre, .mono { font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; }
+::selection { background: color-mix(in oklab, var(--flame) 25%, transparent); }
+.wrap { max-width: 720px; margin: 0 auto; padding: 0 16px; }
+section { padding: clamp(4.5rem, 10vw, 8rem) 0; }
+section.hero-s { padding-top: clamp(4rem, 12vw, 8rem); padding-bottom: clamp(3rem, 7vw, 5rem); }
+h2 { font-size: var(--s-lg); font-weight: 600; letter-spacing: -0.01em; line-height: 1.3; margin-bottom: 1rem; }
+.lead { max-width: 60ch; margin-bottom: 3rem; }
+a { color: var(--link); text-decoration: none; padding: 0 2px; margin: 0 -2px; transition: background .12s, color .12s; }
+a:hover { background: var(--link); color: #000; }
+
+/* hero */
+.hero h1 { font-size: clamp(56px, 13vw, 72px); line-height: 1; letter-spacing: -0.035em; font-weight: 600; margin-bottom: 2rem; }
+.hero h1 span { color: var(--flame); }
+.hero-claim { font-size: var(--s-xl); font-weight: 600; line-height: 1.25; letter-spacing: -0.01em; margin-bottom: 1.1rem; }
+.hero-sub { color: var(--muted); font-weight: 500; }
+.flame-rule { width: 22%; height: 2px; background: var(--flame); margin-bottom: 1.1rem; }
+.hero-note { color: var(--muted); margin-bottom: 2rem; max-width: 62ch; }
+.actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.btn { display: inline-flex; align-items: center; gap: 10px; height: 40px; padding: 0 14px; margin: 0; background: var(--surface); color: var(--fg); font-size: var(--s-sm); border: 0; cursor: pointer; font-family: inherit; }
+.btn:hover { background: var(--link); color: #000; }
+.btn code { font-size: 13px; }
+.btn .dollar { color: var(--muted); }
+.btn .hint { color: var(--muted); font-size: var(--s-xs); }
+.btn:hover .dollar, .btn:hover .hint { color: #000; }
+
+/* proof strip */
+.proof { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 28px; }
+@media (max-width: 640px) { .proof { grid-template-columns: 1fr; gap: 36px; } }
+.proof-val { font-size: var(--s-xl); font-weight: 500; line-height: 1.1; }
+.proof-val small { font-size: var(--s-sm); color: var(--muted); font-weight: 400; }
+.proof-label { font-size: var(--s-sm); color: var(--muted); line-height: 1.5; min-height: 3em; margin: 6px 0 10px; }
+.gauge { position: relative; height: 8px; background: var(--surface); }
+.gauge i { position: absolute; inset: 0 auto 0 0; width: var(--w); background: var(--flame); }
+.gauge b { position: absolute; top: -3px; bottom: -3px; left: 100%; width: 1px; background: var(--muted); }
+.scale { display: flex; justify-content: space-between; font-size: var(--s-xs); color: var(--muted); margin-top: 6px; }
+.dots { display: flex; flex-wrap: wrap; gap: 6px; }
+.dots span { font-size: var(--s-xs); padding: 3px 9px; color: var(--flame-ink); background: color-mix(in oklab, var(--flame) 14%, transparent); }
+.footnote { font-size: var(--s-xs); color: var(--muted); margin-top: 14px; }
+
+/* figs, mech, pipe */
+.fig { margin: 2rem 0 0.5rem; }
+.fig-cap { font-size: var(--s-sm); color: var(--muted); margin-top: 14px; max-width: 72ch; line-height: 1.6; }
+.mech { margin-top: 3rem; }
+.mech-h { position: relative; font-size: var(--s-md); font-weight: 600; margin-bottom: .7rem; display: flex; gap: .75rem; align-items: baseline; }
+.mech-n { color: var(--flame); font-weight: 500; }
+@media (min-width: 900px) { .mech-n { position: absolute; right: calc(100% + 1.1rem); } }
+.mech p { max-width: 62ch; }
+.mech code { font-size: .9em; color: var(--flame-ink); }
+.pipe { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 2.5rem 0 0; font-size: var(--s-sm); }
+.pipe span { background: var(--surface); padding: 6px 10px; }
+.pipe span.on { background: color-mix(in oklab, var(--flame) 16%, transparent); color: var(--flame-ink); }
+.pipe b { color: var(--flame); font-weight: 400; }
+pre { background: var(--surface); padding: 16px 18px; font-size: 13px; line-height: 1.7; overflow-x: auto; }
+pre .kw { color: oklch(0.58 0.2 300); } pre .fn { color: var(--flame-ink); } pre .cm { color: var(--muted); } pre .num { color: var(--c3); } pre .ty { color: var(--link); }
+
+/* comparison bars (Fig 1) */
+.bars { display: grid; grid-template-columns: 88px 1fr 52px; gap: 10px 12px; align-items: center; font-size: var(--s-sm); }
+.bars .n { color: var(--muted); }
+.bars .n.me { color: var(--fg); font-weight: 600; }
+.bars i { display: block; height: 10px; width: var(--w); background: var(--c2); }
+.bars i.me { background: var(--flame); }
+.bars em { font-style: normal; text-align: right; color: var(--muted); }
+.bars em.me { color: var(--fg); font-weight: 500; }
+
+/* readouts */
+.readouts { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 0 1.25rem; margin-top: 2rem; }
+@media (max-width: 640px) { .readouts { grid-template-columns: repeat(2, minmax(0,1fr)); gap: 1.25rem; } }
+.ro { border-left: 0.5px solid var(--border); padding-left: 12px; }
+.ro .l { font-size: 10px; color: var(--muted); font-weight: 500; letter-spacing: .02em; }
+.ro .v { font-size: var(--s-lg); font-weight: 500; margin-top: 4px; }
+.ro .v span { color: var(--muted); font-size: var(--s-sm); }
+
+/* examples */
+.ex-tabs { display: flex; flex-wrap: wrap; gap: 16px; font-size: var(--s-sm); margin-bottom: 14px; }
+.ex-tabs button { background: none; border: 0; color: var(--muted); cursor: pointer; font: inherit; padding: 0; }
+.ex-tabs button.on { color: var(--fg); text-decoration: underline; text-decoration-color: var(--flame); text-underline-offset: 5px; }
+.ex-grid { display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap: 8px; }
+@media (max-width: 640px) { .ex-grid { grid-template-columns: repeat(2, minmax(0,1fr)); } .ex-grid figure:first-child { grid-column: span 2; } }
+.ex-grid figure img { width: 100%; height: auto; aspect-ratio: 1; display: block; background: var(--bg); }
+.ex-grid figcaption { font-size: var(--s-xs); color: var(--muted); margin-top: 6px; line-height: 1.45; }
+.ex-grid figcaption b { color: var(--fg); font-weight: 500; }
+.ex-table { width: 100%; border-collapse: collapse; font-size: var(--s-sm); margin-top: 18px; }
+.ex-table th { text-align: left; font-weight: 500; font-size: var(--s-xs); color: var(--muted); padding: 0 8px 6px 0; }
+.ex-table td { padding: 6px 8px 6px 0; }
+.ex-table td:not(:first-child), .ex-table th:not(:first-child) { text-align: right; }
+.ex-table tr.me td { color: var(--fg); font-weight: 600; }
+.ex-table tr.me td:first-child { color: var(--flame-ink); }
+.ex-note { font-size: var(--s-sm); color: var(--muted); margin-top: 12px; }
+.demo-cta { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-top: 2.5rem; padding: 18px 20px; background: color-mix(in oklab, var(--flame) 10%, transparent); }
+.demo-cta p { color: var(--fg); max-width: 50ch; }
+
+/* footer */
+.foot { text-align: center; padding: clamp(4.5rem, 10vw, 8rem) 16px 4rem; color: var(--muted); font-size: var(--s-sm); }
+.foot .logo { font-size: 40px; font-weight: 600; letter-spacing: -0.03em; color: var(--fg); margin-bottom: 1rem; }
+.foot .logo span { color: var(--flame); }
+.foot p { max-width: 52ch; margin: 0 auto .6rem; }
+</style>
+</head>
+<body>
+
+<section class="hero-s"><div class="wrap hero">
+  <h1>cram<span>.</span></h1>
+  <p class="hero-claim">Fewer bits at the same quality.<br><span class="hero-sub">Error-bounded compression for float data, decoded bit-for-bit on CPU, GPU and the browser.</span></p>
+  <div class="flame-rule"></div>
+  <p class="hero-note">You set an RMSE, a PSNR or a pointwise bound, and that is the bound you get. Every byte counts toward the reported rate, and every error is measured on the decoder's actual output.</p>
+  <div class="actions">
+    <button class="btn" id="copy"><span class="dollar mono">$</span><code>cargo add cram-codec</code><span class="hint">copy</span></button>
+    <a class="btn" href="https://github.com/muni-works/tang/tree/main/crates/cram-codec">GitHub →</a>
+  </div>
+</div></section>
+
+<section style="padding-top:1rem"><div class="wrap">
+  <div class="proof">
+    <div>
+      <div class="proof-val">4.1× <small>fewer bytes</small></div>
+      <div class="proof-label">than the best of zstd-19 / xz-9 / brotli-11 on a KV-cache-like f32 field, at RMSE&nbsp;0.01</div>
+      <div class="gauge" style="--w:24%"><i></i><b></b></div>
+      <div class="scale"><span>0</span><span>best lossless arm = 1</span></div>
+    </div>
+    <div>
+      <div class="proof-val">155× <small>on real weights</small></div>
+      <div class="proof-label">an embedding-scale tensor at 0.21 bits/value, RMSE&nbsp;0.01 — xz-9 manages 2.2 bits/value</div>
+      <div class="gauge" style="--w:3%"><i></i><b></b></div>
+      <div class="scale"><span>0</span><span>xz-9 = 1</span></div>
+    </div>
+    <div>
+      <div class="proof-val">8.57 <small>G values/s</small></div>
+      <div class="proof-label">compressed-KV restore on a datacenter H200, bit-identical to the CPU decoder (2.7–3.7 in the plain-lane config)</div>
+      <div class="gauge" style="--w:86%"><i></i><b></b></div>
+      <div class="scale"><span>0</span><span>of 8.57 G val/s (lane-32 K)</span></div>
+    </div>
+    <div>
+      <div class="proof-val">1 <small>stream, two machines</small></div>
+      <div class="proof-label">the same input produced byte-identical output on an M4 Max and an i9-12900K — and on Metal and Vulkan GPUs</div>
+      <div class="dots"><span>M4 Max</span><span>i9-12900K</span><span>Metal</span><span>Vulkan</span><span>WASM</span><span>CUDA</span></div>
+    </div>
+  </div>
+  <p class="footnote">Measured twice on 2026-11-03 — an M4 Max and an i9-12900K with an RTX 3090 — and <b>both machines produced byte-identical streams</b>. Arrays: two synthetic KV-like fields and real weights from a Qwen3-1.7B checkpoint. The held-out SDRBench study (cram at 0.67× SPERR's bits at 80&nbsp;dB) ran earlier in October and is <a href="https://github.com/muni-works/tang/tree/main/docs/compression-math-survey">documented there</a>.</p>
+</div></section>
+
+<section><div class="wrap">
+  <h2>The honest bar</h2>
+  <p class="lead">Bytes kept at the same RMSE 0.01 bound, as a fraction of the raw field. On float arrays with continuous structure, byte-oriented compressors barely compress — the mantissa noise defeats LZ. That gap is the product.</p>
+  <div class="fig">
+    <div class="bars">
+      <span class="n me">cram (lossy)</span><i class="me" style="--w:calc(100% * 0.223 / 1.0)"></i><em class="me">0.935 MB</em>
+      <span class="n">zstd-3</span><i style="--w:calc(100% * 0.920 / 1.0)"></i><em>3.86 MB</em>
+      <span class="n">zstd-19</span><i style="--w:calc(100% * 0.920 / 1.0)"></i><em>3.86 MB</em>
+      <span class="n">xz-9</span><i style="--w:calc(100% * 0.915 / 1.0)"></i><em>3.84 MB</em>
+      <span class="n">brotli-11</span><i style="--w:calc(100% * 0.913 / 1.0)"></i><em>3.83 MB</em>
+    </div>
+  </div>
+  <p class="fig-cap">KV-K, 8×1024×128 f32, 4.19 MB raw. Lossless arms compress <b>exactly</b>; cram reconstructs within the stated bound. That's the trade, and it's the whole point. On text or already-compressed bytes cram doesn't pretend: the container ties the best arm and adds 13 header bytes.</p>
+
+  <div class="readouts">
+    <div class="ro"><div class="l">cram encode</div><div class="v">0.3–1.1<span> MB/s</span></div></div>
+    <div class="ro"><div class="l">cram decode (1 core)</div><div class="v">42–133<span> MB/s</span></div></div>
+    <div class="ro"><div class="l">GPU kernels, 512³</div><div class="v">5.6<span> GB/s</span></div></div>
+    <div class="ro"><div class="l">KV stream append</div><div class="v">+0.6<span>% bits</span></div></div>
+  </div>
+
+  <div class="fig" style="margin-top:2.5rem">
+    <div class="bars">
+      <span class="n me">GPU 16³ bricks</span><i class="me" style="--w:calc(100% * 5.60 / 5.6)"></i><em class="me">5.60 GB/s</em>
+      <span class="n">GPU 32³</span><i style="--w:calc(100% * 4.51 / 5.6)"></i><em>4.51 GB/s</em>
+      <span class="n">GPU 64³</span><i style="--w:calc(100% * 3.58 / 5.6)"></i><em>3.58 GB/s</em>
+      <span class="n">GPU 128³</span><i style="--w:calc(100% * 0.79 / 5.6)"></i><em>0.79 GB/s</em>
+      <span class="n">CPU 16 threads</span><i style="--w:calc(100% * 0.48 / 5.6)"></i><em>0.48 GB/s</em>
+    </div>
+  </div>
+  <p class="fig-cap">Decoding a 512³ f32 field (512 MiB) on an RTX 3090 through wgpu/Vulkan, at 60 dB. Brick size dominates: 16³ bricks run <b>11× the 16-thread CPU decode</b>. End-to-end (including the 512 MiB readback over PCIe) plateaus near 1.1 GB/s — that ceiling is the host copy, not the codec. GPU output is bit-identical to the CPU decoder on every configuration.</p>
+</div></section>
+
+<section><div class="wrap">
+  <h2>KV cache restore on a datacenter GPU</h2>
+  <p class="lead">The compressed-KV decoder, ported to CUDA and measured on a rented H200 (60 streams per dispatch — about one cache step of values; every line <b>bit-identical to the CPU reference decoder</b>). The kernel is integer/branch-bound, so this is a restore-overhead number — the cost of decompressing once on a prefix-cache hit or a node handoff — not a memory-bandwidth one.</p>
+  <div class="fig">
+    <div class="bars">
+      <span class="n me">H200 · K, lane 32</span><i class="me" style="--w:calc(100% * 8.57 / 8.57)"></i><em class="me">8.57 G val/s</em>
+      <span class="n">H200 · V, lane 32</span><i style="--w:calc(100% * 7.45 / 8.57)"></i><em>7.45 G val/s</em>
+      <span class="n">H200 · K</span><i style="--w:calc(100% * 3.66 / 8.57)"></i><em>3.66 G val/s</em>
+      <span class="n">H200 · V</span><i style="--w:calc(100% * 2.70 / 8.57)"></i><em>2.70 G val/s</em>
+      <span class="n">RTX 3090 · K</span><i style="--w:calc(100% * 2.44 / 8.57)"></i><em>2.44 G val/s</em>
+      <span class="n">RTX 3090 · V</span><i style="--w:calc(100% * 2.38 / 8.57)"></i><em>2.38 G val/s</em>
+      <span class="n">CPU decoder (1 core)</span><i style="--w:calc(100% * 0.028 / 8.57)"></i><em>~0.028 G val/s</em>
+    </div>
+  </div>
+  <p class="fig-cap">8×2048×128 f32, RMSE 0.01, bit-identical on every run. The plain-lane configs are 2.7–3.7 G val/s on the H200 — the lane-32 config is the headline and the plain one is the same breath. A consumer RTX 3090 does 2.4–2.5 on the same shapes (an M4 Max's Metal numbers: 2.12–3.20). The CUDA port matches or beats Metal per GPU class at wide lanes and loses at narrow ones. One bar's caveat, on the record: the in-loop verdict above still stands — this number is for restoring caches, not decoding inside attention.</p>
+</div></section>
+
+<section><div class="wrap">
+  <h2>See it on real data</h2>
+  <p class="lead">Each slice below comes from an actual encode and decode, with every codec tuned to its cheapest setting that reaches 60 dB PSNR on the decoded volume. All error maps for a field share one color scale, so brighter means larger error.</p>
+  <div class="ex-tabs" id="ex-tabs"></div>
+  <div class="fig"><div class="ex-grid" id="ex-grid"></div></div>
+  <table class="ex-table" id="ex-table"></table>
+  <p class="ex-note" id="ex-note"></p>
+</div></section>
+
+<section><div class="wrap">
+  <h2>How it works</h2>
+  <div class="pipe"><span>f32 field</span><b>→</b><span>CDF 9/7 wavelet</span><b>→</b><span>integer prediction</span><b>→</b><span>quantize</span><b>→</b><span class="on">context-mixed rANS</span><b>→</b><span>stream</span></div>
+  <div class="mech">
+    <div class="mech-h"><span class="mech-n">1</span>Predict, then pay only for surprise</div>
+    <p>A wavelet concentrates the field's energy. Per-band integer predictors and a deadzone quantizer leave small residuals; a sparse correction stream enforces the pointwise bound where it's needed. An encoder portfolio also tries Tucker, SZ-style interpolation, Lorenzo and tensor-train candidates, and keeps whichever stream is smallest.</p>
+  </div>
+  <div class="mech">
+    <div class="mech-h"><span class="mech-n">2</span>Learned contexts, integer arithmetic</div>
+    <p>Symbol probabilities come from hand-designed contexts or from a small integer MLP. The MLP is integer-only end to end, so every machine computes the same probabilities — the coder's output, and the decoded field, are identical down to the last bit.</p>
+  </div>
+  <div class="mech">
+    <div class="mech-h"><span class="mech-n">3</span>Where it belongs in inference</div>
+    <p><b>Storing and moving caches</b>: weights, KV blocks, prefix-cache handoffs between nodes. The KV codec streams one token at a time (+0.6% bits), and the in-loop verdict is on record: decoding inside the attention step ran 1.8–5.5× slower than bf16, so cram is for storage and transit, decompressed once on load. Any claim that it speeds up your context window would be wrong, and we're not making it. The KV decode kernel runs on Metal and CUDA (a straight port of the same tables); on a datacenter H200 it restores a compressed cache at 2.7–8.6&nbsp;billion values/s, <b>bit-identical to the CPU decoder</b> — a restore number (prefix-cache hit, node migration), not an in-loop one.</p>
+  </div>
+  <pre style="margin-top:2.5rem"><span class="kw">use</span> cram_codec::{<span class="fn">decode</span>, <span class="fn">encode_f32</span>, <span class="ty">Config</span>, <span class="ty">ErrorBound</span>};
+
+<span class="cm">// encode at a bound; every byte counts toward the reported rate</span>
+<span class="kw">let</span> (bytes, stats) = <span class="fn">encode_f32</span>(&amp;x, &amp;[<span class="num">64</span>, <span class="num">64</span>], &amp;<span class="ty">Config</span>::<span class="fn">new</span>(<span class="ty">ErrorBound</span>::<span class="fn">Rmse</span>(<span class="num">1e-3</span>)));
+<span class="kw">let</span> <span class="ty">Decoded</span>::<span class="ty">F32</span> { data, .. } = <span class="fn">decode</span>(&amp;bytes).<span class="fn">unwrap</span>() <span class="kw">else</span> { <span class="fn">unreachable</span>() };</pre>
+</div></section>
+
+<footer class="foot">
+  <div class="logo">cram<span>.</span></div>
+  <p>Part of <a href="https://github.com/muni-works/tang">tang</a> by <a href="https://muni.works">Municipal Robotics</a>. MIT OR Apache-2.0. Every number on this page traces to a report in the repository.</p>
+  <p><a href="https://github.com/muni-works/tang/tree/main/crates/cram-codec">source</a> · <a href="https://github.com/muni-works/tang/blob/main/crates/cram-codec/bench/ma-gate.md">bench gates</a></p>
+</footer>
+
+<script src="examples/examples.js"></script>
+<script>
+document.getElementById("copy").onclick = async (e) => {
+  const h = e.currentTarget.querySelector(".hint");
+  try { await navigator.clipboard.writeText("cargo add cram-codec"); h.textContent = "copied"; } catch { h.textContent = "select + copy"; }
+  setTimeout(() => (h.textContent = "copy"), 1500);
+};
+
+const C = { cram: "cram", sperr: "SPERR", sz3: "SZ3", zfp: "ZFP" };
+const kb = (b) => b < 1e6 ? (b / 1024).toFixed(1) + " KB" : (b / 1048576).toFixed(1) + " MB";
+const tabs = document.getElementById("ex-tabs");
+const show = (i) => {
+  const f = EX.fields[i], im = f.images, c = f.codecs;
+  [...tabs.children].forEach((b, j) => b.classList.toggle("on", j === i));
+  const cap = { original: `<b>original</b> ${kb(f.original_bytes)}`, cram: `<b>cram</b> ${kb(c.cram.bytes)}, ${c.cram.psnr.toFixed(1)} dB`,
+    "cram-err": "<b>cram</b> |error|", "sz3-err": "<b>SZ3</b> |error|", "zfp-err": "<b>ZFP</b> |error|" };
+  document.getElementById("ex-grid").innerHTML = Object.keys(cap).map((k) =>
+    `<figure><img loading="lazy" decoding="async" width="480" height="480" src="examples/${im[k]}" alt="${f.name} ${k}"><figcaption>${cap[k]}</figcaption></figure>`).join("");
+  const rows = Object.keys(C).filter((k) => c[k]).sort((a, b) => c[a].bytes - c[b].bytes);
+  document.getElementById("ex-table").innerHTML =
+    `<tr><th>${f.name} · ${f.dims.join("×")}</th><th>size</th><th>ratio</th><th>PSNR</th><th>vs SPERR</th></tr>` +
+    rows.map((k) => `<tr class="${k === "cram" ? "me" : ""}"><td>${C[k]}</td><td>${kb(c[k].bytes)}</td><td>${c[k].ratio.toFixed(0)}×</td><td>${c[k].psnr.toFixed(1)} dB</td><td>${(1 / c[k].vs_sperr).toFixed(2)}× bits</td></tr>`).join("");
+  const best = rows[0];
+  document.getElementById("ex-note").textContent = best === "cram"
+    ? `cram is the smallest stream here, at ${(c.sperr.bytes / c.cram.bytes).toFixed(2)}× less data than SPERR.`
+    : `On this field ${C[best]} is ${((1 - c[best].bytes / c.cram.bytes) * 100).toFixed(0)}% smaller than cram. We show it because it's measured; cram doesn't win everywhere.`;
+};
+EX.fields.forEach((f, i) => { const b = document.createElement("button"); b.textContent = f.name; b.onclick = () => show(i); tabs.appendChild(b); });
+show(0);
+</script>
+</body>
+</html>
