@@ -345,11 +345,13 @@ struct ComposerView: View {
         // The keys are under the field (`hint`), at rest too; the placeholder just says so.
         if conversation.busy { return "Working… type a follow-up" }
         // A new conversation's placeholder is its only hint (the empty page is just a question).
+        // One vocabulary everywhere (Settings › Shortcuts): @ mentions a file, ! runs a command.
         let new = !conversation.started && !conversation.replaying
         if workspace.isChat {
             return new ? "Ask anything, or pick a folder to work on code" : "Ask anything"
         }
-        return new ? "Ask about the code or describe a change · @ a file · ! a command" : "Ask frog to do something · @ mentions a file"
+        return new ? "Ask about the code or describe a change · @ mentions a file · ! runs a command"
+                   : "Ask frog to do something · @ mentions a file · ! runs a command"
     }
 
     private var sendButton: some View {

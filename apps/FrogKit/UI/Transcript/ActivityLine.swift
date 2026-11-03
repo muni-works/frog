@@ -228,6 +228,9 @@ struct ActivitySteps: View {
     let steps: [ItemState]
     let conversation: Conversation
 
+    /// Steps that failed or were refused, as the group's sentence counts them ("…, 1 failed").
+    private var failures: Int { ActivityGroup(steps: steps).failures }
+
     var body: some View {
         Group {
             if steps.count == 1, let thought = steps.first, thought.kind == .reasoning {
@@ -250,7 +253,7 @@ struct ActivitySteps: View {
                                 .padding(.horizontal, TurnSpace.Inset.card)
                                 .padding(.vertical, TurnSpace.Inset.snug)
                         } else {
-                            ActivityStepRow(item: step, conversation: conversation)
+                            ActivityStepRow(item: step, conversation: conversation, groupFailures: failures)
                         }
                     }
                 }
@@ -265,8 +268,15 @@ struct ActivitySteps: View {
 struct ActivityStepRow: View {
     let item: ItemState
     let conversation: Conversation
+    /// How many failures the step's group carries (the collapsed line ends "N failed"): when
+    /// this step is the only one, its own "· failed" would say it again. 0 outside a group.
+    var groupFailures: Int = 0
     /// Opened. Not private so snapshots can render it open.
     @State var expanded = false
+
+    /// The row stays quiet about a failure the group's sentence already carries: one failure,
+    /// this step, in a group whose sentence ends "1 failed".
+    private var groupSaysFailed: Bool { groupFailures == 1 }
 
     private var name: String {
         if case .tool(let name, _) = item.kind { name } else { "" }
@@ -363,7 +373,9 @@ struct ActivityStepRow: View {
         }
     }
 
-    /// How it went, after the name: "· passed", "+3 −1", "Read 8 lines".
+    /// How it went, after the name: "· passed", "+3 −1", "Read 8 lines". A failure is said
+    /// once: when this step is the only failure of its group, the group's sentence already
+    /// ends "1 failed" and the row's red word would say it again — the row stays quiet.
     @ViewBuilder
     private var outcome: some View {
         if name == "Task", !item.done, let plan = item.subagent?.plan {
@@ -374,8 +386,12 @@ struct ActivityStepRow: View {
             switch r.outcome {
             case .denied: Text("· denied").foregroundStyle(.orange)
             case .skipped: Text("· skipped").foregroundStyle(.tertiary)
+            case .error where r.display?.hasPrefix("refused") == true:
+                Text("· repeated call refused").foregroundStyle(.red)
+            case .error where groupSaysFailed:
+                EmptyView()
             case .error:
-                Text(r.display?.hasPrefix("refused") == true ? "· repeated call refused" : "· failed").foregroundStyle(.red)
+                Text("· failed").foregroundStyle(.red)
             case .ok:
                 if let d = r.diff {
                     ActivityText(pieces: [.diff(added: d.added, removed: d.removed)]).text

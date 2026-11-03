@@ -453,12 +453,14 @@ enum MessageStyle {
         for (r, row) in ([header] + rows).enumerated() {
             for c in 0..<columns {
                 let cell = NSTextTableBlock(table: table, startingRow: r, rowSpan: 1, startingColumn: c, columnSpan: 1)
-                cell.setWidth(0.5, type: .absoluteValueType, for: .border)
-                cell.setBorderColor(.separatorColor)
-                cell.setWidth(10, type: .absoluteValueType, for: .padding, edge: .minX)
-                cell.setWidth(10, type: .absoluteValueType, for: .padding, edge: .maxX)
-                cell.setWidth(6, type: .absoluteValueType, for: .padding, edge: .minY)
-                cell.setWidth(6, type: .absoluteValueType, for: .padding, edge: .maxY)
+                // Quiet, like claude.ai: no cell borders at all (a bordered grid is the
+                // loudest thing in the column) — the header's wash and the row padding do
+                // the separating.
+                cell.setWidth(0, type: .absoluteValueType, for: .border)
+                cell.setWidth(8, type: .absoluteValueType, for: .padding, edge: .minX)
+                cell.setWidth(8, type: .absoluteValueType, for: .padding, edge: .maxX)
+                cell.setWidth(5, type: .absoluteValueType, for: .padding, edge: .minY)
+                cell.setWidth(5, type: .absoluteValueType, for: .padding, edge: .maxY)
                 if r == 0 { cell.backgroundColor = NSColor.labelColor.withAlphaComponent(0.05) }
                 let a = align[safe: c] ?? .leading
                 let style = NSMutableParagraphStyle()
@@ -483,7 +485,14 @@ enum MessageStyle {
             var attrs: [NSAttributedString.Key: Any] = [.paragraphStyle: style, .foregroundColor: NSColor.labelColor]
             if let intent = run.inlinePresentationIntent {
                 var traits: NSFontDescriptor.SymbolicTraits = []
-                if intent.contains(.stronglyEmphasized) { traits.insert(.bold) }
+                if intent.contains(.stronglyEmphasized) {
+                    // Medium, not bold: an emphasized run mid-sentence ("**1. The watcher
+                    // rescans…**" with a full stop) reads as a false heading in bold, fighting
+                    // the paragraph. Headings and table headers keep their semibold, set at
+                    // the font level.
+                    f = NSFont.systemFont(ofSize: font.pointSize, weight: .medium)
+                    traits.insert(.bold)
+                }
                 if intent.contains(.emphasized) { traits.insert(.italic) }
                 if intent.contains(.code) {
                     f = .monospacedSystemFont(ofSize: font.pointSize - 1, weight: .regular)
