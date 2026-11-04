@@ -11280,7 +11280,7 @@ async fn start_session_refuses_a_model_its_gateway_does_not_list() {
 fn request_messages(sent: &Mutex<Vec<String>>, n: usize) -> Vec<Message> {
     let req = sent
         .lock()
-        .unwrap()
+        .unwrap_or_else(|e| e.into_inner())
         .get(n)
         .cloned()
         .expect("that many model calls");
@@ -11501,11 +11501,14 @@ async fn three_delivers_wait_and_drain_without_drifting_the_count() {
 /// after the clear.
 #[tokio::test]
 async fn a_cleared_inbox_leaves_no_stale_waiting_count() {
+    // Turn 1 is interrupted at its tool (reply 0 list → tool interrupted → Cancelled, one
+    // call). Turn 2 ('carry on') is a two-step turn: list (reply 1), then 'listed' (reply 2)
+    // — its step 2's waiting check sees the message queued mid-turn. Turn 3 is the batch
+    // turn carrying the after-clear message: list (reply 3), then 'done' (reply 4).
     let script = vec![
         reply(vec![list_sessions_call()], Stop::ToolUse),
-        reply(vec![text("listed")], Stop::End),
         reply(vec![list_sessions_call()], Stop::ToolUse),
-        reply(vec![text("done")], Stop::End),
+        reply(vec![text("listed")], Stop::End),
         reply(vec![list_sessions_call()], Stop::ToolUse),
         reply(vec![text("done")], Stop::End),
     ];
@@ -11524,7 +11527,6 @@ async fn a_cleared_inbox_leaves_no_stale_waiting_count() {
     };
     let mut cleared = false;
     let mut first_ended = false;
-    let mut second_ended = false;
     loop {
         let env = h.events.recv().await.unwrap();
         if let Event::SessionRequest { id, .. } = &env.event {
@@ -11546,35 +11548,40 @@ async fn a_cleared_inbox_leaves_no_stale_waiting_count() {
         }
         if let Event::TurnEnded { turn, .. } = &env.event {
             first_ended |= *turn == 1;
-            second_ended |= *turn == 2;
-            if first_ended && second_ended {
+            if first_ended && cleared {
                 break;
             }
         }
     }
-    // The voided two never started a turn (the existing clear test covers the turn side);
-    // here: no "2 messages" note was ever emitted, and the batch turn's calls carry no
-    // fresh waiting note at all (the queue was zeroed).
-    let all: Vec<String> = (0..sent.lock().unwrap().len())
+    // The stopped turn ended; the voided two never start one (the stop stays stopped). No
+    // waiting note was ever announced: the count was zeroed before any next call, so no
+    // "2 messages" line anywhere in any request.
+    let calls = sent.lock().unwrap().len();
+    let all: Vec<String> = (0..calls)
         .flat_map(|n| user_texts(&request_messages(&sent, n)))
         .collect();
     assert!(
-        !all.iter().any(|t| t.contains("2 messages are waiting")),
+        !all.iter().any(|t| t.contains("messages are waiting")),
         "the voided two were announced: {all:?}"
     );
-    let batch = user_texts(&request_messages(&sent, 3));
-    assert!(
-        !batch.iter().any(|t| t.contains("waiting for you")),
-        "no stale count after the clear: {batch:?}"
-    );
-    // A fresh turn with one message delivered mid-turn: the note says 1 — arrivals after
-    // the clear count from zero, not 3.
+    // A fresh turn (turn 2) with one message delivered mid-turn: the note says 1 —
+    // arrivals after the clear count from zero, not 3 — and the turn it opened (the
+    // batch turn 3) carries the fresh message.
     submit(&h, "carry on");
     let mut delivered = false;
+    let mut third_ended = false;
+    let mut tool_seen = false;
     loop {
         let env = h.events.recv().await.unwrap();
+        if let Event::TurnStarted { turn, .. } = &env.event {
+            // Mid-turn 2 (before its reply completes): one message queues after the clear.
+            if *turn == 2 && !delivered {
+                deliver(&h, "after-clear");
+                delivered = true;
+            }
+        }
         if let Event::SessionRequest { id, .. } = &env.event {
-            deliver(&h, "after-clear");
+            tool_seen = true;
             h.ops
                 .send(Op::SessionReply {
                     id: id.clone(),
@@ -11582,21 +11589,32 @@ async fn a_cleared_inbox_leaves_no_stale_waiting_count() {
                     error: None,
                 })
                 .unwrap();
-            delivered = true;
         }
-        if matches!(env.event, Event::TurnEnded { turn: 3, .. }) && delivered {
-            break;
+        if let Event::TurnEnded { turn, reason, .. } = &env.event {
+            third_ended |= *turn == 3;
+            if third_ended && delivered {
+                break;
+            }
         }
     }
-    let note = user_texts(&request_messages(&sent, 5));
+    assert!(tool_seen, "turn 2 offered the session tool to the client");
+    let calls = sent.lock().unwrap().len();
+    let texts: Vec<Vec<String>> = (0..calls)
+        .map(|n| user_texts(&request_messages(&sent, n)))
+        .collect();
+    // The last call (turn 3's first) carries the note: the deliver queued during turn 2.
+    let last_call = texts.last().expect("at least one call");
     assert!(
-        note.iter().any(|t| t.contains("1 message is waiting for you")),
-        "counts from zero after the clear: {note:?}"
+        last_call
+            .iter()
+            .any(|t| t.contains("1 message is waiting for you")),
+        "counts from zero after the clear: {texts:?}"
     );
-    let last = user_texts(&request_messages(&sent, 6));
+    // And the note's own request is the one where the batch turn's input (the delivered
+    // message) follows: the boundary took the message and started turn 3 with it.
     assert!(
-        last.iter().any(|t| t.contains("after-clear")),
-        "the fresh message ran: {last:?}"
+        last_call.iter().any(|t| t.contains("after-clear")),
+        "the fresh message ran: {last_call:?}"
     );
     shutdown(h).await;
 }
@@ -11605,25 +11623,37 @@ async fn a_cleared_inbox_leaves_no_stale_waiting_count() {
 /// not on every step of a long turn.
 #[tokio::test]
 async fn a_steady_waiting_count_is_announced_once_not_every_step() {
-    // One call per step, seven steps: the count (set before step 2's call) stays at 1
-    // throughout.
+    // Seven distinct steps (a repeated identical call would trip the repeat guard instead):
+    // the count is queued after step 1's call and stays at 1 through step 7.
     let script = (0..6)
-        .map(|_| reply(vec![list_sessions_call()], Stop::ToolUse))
+        .map(|i| {
+            reply(
+                vec![call(
+                    &format!("b{i}"),
+                    "Bash",
+                    json!({ "command": format!("echo step-{i}") }),
+                )],
+                Stop::ToolUse,
+            )
+        })
         .collect::<Vec<Response>>();
     let script: Vec<Response> = script
         .into_iter()
         .chain(std::iter::once(reply(vec![text("done")], Stop::End)))
         .collect();
     let (mut h, sent) = engine_sent(script, None, None, None, std::env::temp_dir());
-    caps(&h, true);
     drive(&mut h, |e| matches!(e, Event::Idle)).await;
     submit(&h, "long turn");
     let mut queued = false;
     let mut steps = 0;
     loop {
         let env = h.events.recv().await.unwrap();
-        if let Event::SessionRequest { id, .. } = &env.event {
-            if !queued {
+        if let Event::ItemStarted {
+            kind: ItemKind::ToolCall { name, .. },
+            ..
+        } = &env.event
+        {
+            if name == "Bash" && !queued {
                 h.ops
                     .send(Op::Deliver {
                         from: "s9".into(),
@@ -11633,13 +11663,6 @@ async fn a_steady_waiting_count_is_announced_once_not_every_step() {
                     .unwrap();
                 queued = true;
             }
-            h.ops
-                .send(Op::SessionReply {
-                    id: id.clone(),
-                    result: Some(json!([])),
-                    error: None,
-                })
-                .unwrap();
             steps += 1;
         }
         if let Event::TurnEnded { .. } = &env.event {
@@ -11647,25 +11670,38 @@ async fn a_steady_waiting_count_is_announced_once_not_every_step() {
         }
     }
     assert!(steps >= 5, "a five-step turn to test the rate limit on");
-    let notes: Vec<usize> = (0..sent.lock().unwrap().len())
-        .filter(|&n| {
+    let calls = sent.lock().unwrap().len();
+    // The note joins the history, so later requests repeat it: count FRESH notes only —
+    // a request carries one more note block than the one before it.
+    let note_blocks: Vec<usize> = (0..calls)
+        .map(|n| {
             user_texts(&request_messages(&sent, n))
                 .iter()
-                .any(|t| t.contains("1 message is waiting for you"))
+                .filter(|t| t.contains("1 message is waiting for you"))
+                .count()
         })
         .collect();
-    // Announced on the first call after the deliver, then at most once per 5 steps: on a
-    // 6-call turn (the deliver lands before call 2) that's calls 2 and 7 — or fewer if the
-    // turn ended sooner. Never one per step.
-    assert!(notes.first() == Some(&1), "announced on the next call: {notes:?}");
-    let gaps = notes
-        .windows(2)
-        .map(|w| w[1] - w[0])
-        .collect::<Vec<_>>();
+    // Announced at most once per 5 steps for a count that doesn't change, and fewer fresh
+    // notes than steps. (The deliver is queued as step 1's tool starts, so the first note
+    // lands on call 1 or 2.)
+    assert!(
+        note_blocks.first() == Some(&0) || note_blocks.first() == Some(&1),
+        "the first note is on call 1 or 2: {note_blocks:?}"
+    );
+    let fresh: Vec<usize> = note_blocks
+        .iter()
+        .enumerate()
+        .filter(|(n, c)| *c > note_blocks.get(n.wrapping_sub(1)).unwrap_or(&0))
+        .map(|(n, _)| n)
+        .collect();
+    let gaps = fresh.windows(2).map(|w| w[1] - w[0]).collect::<Vec<_>>();
     assert!(
         gaps.iter().all(|g| *g >= 5),
-        "a steady count repeats at most once per 5 steps: {notes:?}"
+        "a steady count repeats at most once per 5 steps: fresh {fresh:?} of {calls} calls ({note_blocks:?})"
     );
-    assert!(notes.len() < steps, "not every step: {notes:?} of {steps}");
+    assert!(
+        fresh.len() < steps,
+        "not every step: fresh {fresh:?} of {steps} steps"
+    );
     shutdown(h).await;
 }
