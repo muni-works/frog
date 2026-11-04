@@ -158,3 +158,21 @@ delta, changes-strip walks per pass) — the remaining sources and the per-pass 
   (`testScrollUpFillsOlderRowsInOrder`: peak mounted 41 > 30, p50 24.7 ms > 25 ms) and was
   verified at base: checked out b99a7a81 with the same flags, the SAME test failed the SAME way
   (peak 41). Pre-existing, as the brief said; not this branch's.
+
+## Full-suite verification, concluded
+
+- The suite's single failure (`ProtocolTests.testFixturesAllDecode`) is a **stale build artifact**,
+  not code: the derived data that run used had lost its `FrogTests.xctest` resources entirely
+  (the error path points at a bundle that no longer exists on disk). A fresh build runs
+  `ProtocolTests` **13/13 passed** (`/private/tmp/ps-dd2`). Full suite re-run in the fresh
+  derived data: results below when it lands.
+- `cargo build -p frog -p frog-engine`: clean. No Rust touched on this branch.
+
+## Post-fix live-app sample (for the record — same binary caveat as before)
+
+Cam's app still runs the shipped binary, so this sample is environment, not the fix: 10 s idle,
+wall 4,947 ms, main awake **21.5% of a core** (the pre-branch window sampled 86.9% — its timing
+caught a `Library.refresh` burst; idle varies 21–57%), 7 sampled layout passes, `RemoteBridge`
+frames 7 rows vs 13 in the pre-branch sample. The after-state of this branch is proven in the
+test window (boundary test) and by the removed root reads, not by sampling a binary that doesn't
+contain it.
