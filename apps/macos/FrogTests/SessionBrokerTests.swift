@@ -932,19 +932,20 @@ final class SessionBrokerTests: XCTestCase {
         XCTAssertNil(prefix?["note"])
     }
 
-    func testChildModeInheritsCappedAndNeverSilentYolo() {
-        // Inherits the parent's mode.
+    func testChildModeInheritsCapped() {
+        // Inherits the parent's mode — including yolo (Cam, 2026-11-03: a yolo parent is the
+        // explicit grant; workers born in auto carded all day).
         XCTAssertEqual(SessionBroker.childMode(asked: nil, parent: .auto), .auto)
         XCTAssertEqual(SessionBroker.childMode(asked: nil, parent: .acceptEdits), .acceptEdits)
         XCTAssertEqual(SessionBroker.childMode(asked: nil, parent: .default), .default)
-        // Yolo is never inherited silently: a yolo parent's children start in auto.
-        XCTAssertEqual(SessionBroker.childMode(asked: nil, parent: .yolo), .auto)
+        XCTAssertEqual(SessionBroker.childMode(asked: nil, parent: .yolo), .yolo)
         // An explicit mode is honored when it's not above the parent's…
         XCTAssertEqual(SessionBroker.childMode(asked: "auto", parent: .auto), .auto)
         XCTAssertEqual(SessionBroker.childMode(asked: "default", parent: .auto), .default)
         XCTAssertEqual(SessionBroker.childMode(asked: "yolo", parent: .yolo), .yolo)
-        // …and capped when it is.
+        // …and capped when it is: a default/auto parent never silently produces a yolo child.
         XCTAssertEqual(SessionBroker.childMode(asked: "yolo", parent: .auto), .auto)
+        XCTAssertEqual(SessionBroker.childMode(asked: "yolo", parent: .default), .default)
         XCTAssertEqual(SessionBroker.childMode(asked: "auto", parent: .default), .default)
         // Unknown strings and a missing parent both fall back safely.
         XCTAssertEqual(SessionBroker.childMode(asked: "nonsense", parent: .auto), .auto)

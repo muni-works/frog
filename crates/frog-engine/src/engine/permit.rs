@@ -34,6 +34,9 @@ impl Agent {
         arg: &str,
         input: &Value,
     ) -> Decision {
+        // The client's last `Op::SetMode` applies here, at this decision, not at some later
+        // turn boundary (see `Shared::mode`); the durable `ModeChanged` follows in `handle`.
+        self.sync_mode();
         // A monitor's command is a shell command like any other; a bare timer runs nothing.
         let name = match name {
             crate::background::MONITOR

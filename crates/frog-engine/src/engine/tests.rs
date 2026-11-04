@@ -3737,6 +3737,78 @@ async fn a_flag_started_mode_survives_an_engine_restart() {
     assert_eq!(logged_modes(&dir, &sid), [Mode::Auto]);
 }
 
+/// A mode set mid-turn applies at the next permission decision, not the next turn
+/// boundary (a worker inside a long build never reaches one): deny the first Write,
+/// set AcceptEdits while the turn is still waiting on the second, and the second Write
+/// runs without a card. The durable `ModeChanged` is logged when the queued op is handled.
+#[tokio::test]
+async fn a_mode_set_mid_turn_governs_the_next_permission_decision() {
+    let dir = tmp_store();
+    let write = |id: &str, path: &str| Block::ToolUse {
+        id: id.into(),
+        name: "Write".into(),
+        input: json!({ "file_path": path, "content": "x\n" }),
+    };
+    let script = vec![
+        reply(vec![write("w1", "one.py"), write("w2", "two.py")], Stop::ToolUse),
+        reply(vec![text("done")], Stop::End),
+    ];
+    let mut h = engine_with(script, true, Some(dir.clone()), None, None, dir.clone());
+    while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+    h.ops
+        .send(Op::Submit {
+            text: "write both".into(),
+            images: Vec::new(),
+            more: Vec::new(),
+        })
+        .unwrap();
+    let mut evs = Vec::new();
+    let mut asked = 0;
+    loop {
+        let env = h.events.recv().await.unwrap();
+        match &env.event {
+            Event::PermissionRequest { id, item, .. } => {
+                asked += 1;
+                assert_eq!(item, "w1", "only the first write cards");
+                // Mid-turn: the turn is still waiting on w2's permit when this lands.
+                h.ops
+                    .send(Op::SetMode {
+                        mode: Mode::AcceptEdits,
+                    })
+                    .unwrap();
+                h.ops
+                    .send(Op::Permission {
+                        id: id.clone(),
+                        decision: Decision::Deny,
+                        note: None,
+                    })
+                    .unwrap();
+            }
+            _ => {}
+        }
+        let done = matches!(env.event, Event::TurnEnded { .. });
+        evs.push(env);
+        if done {
+            break;
+        }
+    }
+    assert_eq!(asked, 1, "the write after the mid-turn SetMode never cards");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("two.py")).unwrap(),
+        "x\n",
+        "w2 ran under the new mode"
+    );
+    let changed = evs
+        .iter()
+        .position(|e| matches!(e.event, Event::ModeChanged { mode: Mode::AcceptEdits }));
+    assert!(
+        changed.is_some(),
+        "the durable ModeChanged is logged (when the queued op is handled)"
+    );
+    shutdown(h).await;
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 /// A log with no mode on record (written before modes were logged at start) resumed by
 /// an engine with a mode flag: that start is a change from the log's implicit Default,
 /// so it's logged, and the next flagless restart keeps it.

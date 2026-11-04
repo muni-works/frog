@@ -95,7 +95,7 @@ final class SessionBroker {
         var prompt: String
         var cwd: String?
         var model: String?
-        /// "default", "accept-edits", "auto" or "yolo" (only when asked for explicitly).
+        /// "default", "accept-edits", "auto" or "yolo" (defaults to the parent's mode, capped).
         var mode: String?
         var worktree: Bool
         /// Run in the user's main checkout anyway (worker sessions belong in worktrees).
@@ -484,7 +484,7 @@ final class SessionBroker {
                     return c.replySession(r.id, result: .string("\(e.name) (\(e.id)) set to \(wanted.rawValue) mode; persisted (applies next start)."))
                 }
                 target.setMode(wanted)
-                c.replySession(r.id, result: .string("\(e.name) (\(e.id)) is now in \(wanted.rawValue) mode (from its next turn)."))
+                c.replySession(r.id, result: .string("\(e.name) (\(e.id)) is now in \(wanted.rawValue) mode; its next permission decision runs in it."))
             case .failure(let e):
                 c.replySession(r.id, error: e.message)
             }
@@ -1743,8 +1743,10 @@ extension SessionBroker {
         return started
     }
 
-    /// The permission mode a started session runs in: its parent's by default,
-    /// never above it, and yolo only when asked for explicitly.
+    /// The permission mode a started session runs in: its parent's, never above it. The
+    /// parent's mode is the grant — a yolo parent's children start yolo (Cam, 2026-11-03:
+    /// workers born in auto carded all day) — so nothing else is required to reach what the
+    /// parent already has, and a default/auto parent can't produce a yolo child.
     static func childMode(asked: String?, parent: Mode?) -> Mode {
         // Modes by how much they allow; a child's mode can't outrank its parent's.
         func rank(_ m: Mode) -> Int { switch m { case .default: 0; case .acceptEdits: 1; case .auto: 2; case .yolo: 3 } }
@@ -1752,8 +1754,7 @@ extension SessionBroker {
         if let asked = asked.flatMap(Mode.init(rawValue:)) {
             return rank(asked) <= rank(parentMode) ? asked : parentMode
         }
-        // Inherit, except yolo is never passed on silently.
-        return parentMode == .yolo ? .auto : parentMode
+        return parentMode
     }
 
     /// The engine flags for a session started by another session: its permission
