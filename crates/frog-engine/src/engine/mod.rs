@@ -21,7 +21,7 @@ use anyhow::Result;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot};
@@ -385,6 +385,11 @@ struct Shared {
     /// with the queue by `Op::ClearInbox` — the voided ones never run, so they stop
     /// counting. Saturating down: a clear that races a pop must not go negative.
     inbox_waiting: AtomicUsize,
+    /// The mode the client asked for ([`Op::SetMode`]), as a [`Mode`] discriminant. The router
+    /// stores it immediately (a safety setting, not conversation state), the permit path picks
+    /// it up per decision, and the agent's `handle` reconciles its own copy and logs
+    /// `ModeChanged` — so a turn that never reaches a boundary still obeys the change.
+    mode: AtomicU8,
     /// The user stopped a running turn: background wakes already waiting don't start a turn
     /// of their own (a stop stays stopped); they go along with the next turn instead, which
     /// clears this.
@@ -616,6 +621,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         inbox_sent: Default::default(),
         inbox_void: Default::default(),
         inbox_waiting: Default::default(),
+        mode: AtomicU8::new(opts.mode as u8),
         wake_hold: Default::default(),
         journal,
         panes,
@@ -632,6 +638,10 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             .map_err(|e| ConfigError(format!("{e:#}")))?
     };
     let mut agent = Agent::new(opts, provider, shared.clone())?;
+    // The atomic starts from the flag, but a resumed engine's mode is its log's last one:
+    // seed it from the agent, or the first permit would "correct" the session back to the
+    // flag (downgrading a session that resumed in yolo).
+    shared.mode.store(agent.mode as u8, Ordering::SeqCst);
     if let Some(mut lock) = worktree_lock {
         lock.set_owner(&agent.conv.session_id);
         agent.worktree_lock = Some(lock);
@@ -690,6 +700,14 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                     router.inbox_waiting.store(0, Ordering::Relaxed);
                 }
                 Op::DismissWakes => router.bg.dismiss(),
+                // A permission mode is a safety setting, not conversation state: it applies at
+                // the next permission decision, not the next turn boundary. Stored here, where
+                // the permit path reads it (see `Shared::mode`); the agent reconciles its copy
+                // and logs `ModeChanged` at its next chance.
+                Op::SetMode { mode } => {
+                    router.mode.store(mode as u8, Ordering::SeqCst);
+                    let _ = work_tx.send(Op::SetMode { mode });
+                }
                 op @ Op::Deliver { .. } => {
                     router.inbox_sent.fetch_add(1, Ordering::SeqCst);
                     if work_tx.send(op).is_err() {
@@ -1976,10 +1994,42 @@ impl Agent {
         self.emit(Event::ModeChanged { mode: self.mode });
     }
 
+    /// What [`Op::SetMode`] last asked for (see `Shared::mode`): the permit path checks it
+    /// per decision, so a mid-turn change takes effect at the next tool call. The agent's
+    /// copy catches up in `handle` — that's where the durable `ModeChanged` is logged.
+    fn live_mode(&self) -> Mode {
+        match self.shared.mode.load(Ordering::SeqCst) {
+            0 => Mode::Default,
+            1 => Mode::AcceptEdits,
+            2 => Mode::Auto,
+            _ => Mode::Yolo,
+        }
+    }
+
+    /// Adopt `Shared::mode` into `self.mode`, and log it if the log doesn't say it yet. A
+    /// mode set mid-turn applies immediately (the permit path reads `Shared::mode`) and the
+    /// agent's copy follows per tool call, so a status, a resume or a log written after the
+    /// change is still exact.
+    fn sync_mode(&mut self) {
+        let mode = self.live_mode();
+        if self.mode == mode {
+            return;
+        }
+        self.mode = mode;
+        self.log_mode();
+    }
+
     fn emit_status(&self) {
+        // The mode the permit path is running in (the client's last `Op::SetMode`, even
+        // mid-turn); `self.mode` lags it until the next decision adopts it.
+        let mode = if self.mode == self.live_mode() {
+            self.mode
+        } else {
+            self.live_mode()
+        };
         self.emit(Event::Status(Status {
             model: self.profile_name.clone(),
-            mode: self.mode,
+            mode,
             cwd: self.ctx.root.clone(),
             messages: self.conv.messages.len(),
             context_tokens: self.context_tokens(),
@@ -2337,9 +2387,15 @@ impl Agent {
             }
             Op::Wake => self.wake(Vec::new()).await?,
             Op::SetMode { mode } => {
-                self.mode = mode;
-                self.mode_logged = Some(mode);
-                self.emit(Event::ModeChanged { mode });
+                // The router already applied it (see `Shared::mode`), so the permit path has
+                // been running in it since the call; this reconciles the agent's copy. Kept
+                // idempotent so a re-delivered op logs nothing new.
+                if self.mode != mode {
+                    self.mode = mode;
+                    self.log_mode();
+                } else {
+                    self.mode_logged = Some(mode);
+                }
             }
             Op::SetModel { spec } => {
                 self.set_model(&spec).await?;
