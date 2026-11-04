@@ -31,6 +31,46 @@ day. Three bugs:
 - Branch confirmed, no uncommitted changes.
 - Next: read engine/mod.rs op dispatch, permit.rs, SessionBroker.swift, then edit + tests.
 
+## Units
+
+- **U1 — SetMode applies at the next decision (BUG 1).** `Op::SetMode` was a queued op:
+  the router passed it to the work loop, which takes one op at a time, so a turn inside a
+  20-minute build never saw it. Now the router stores the mode into `Shared::mode` (an
+  `AtomicU8` discriminant on the shared state, seeded from the agent's real mode after
+  `Agent::new` so a resume can't be downgraded to the flag) and still forwards the op; the
+  agent's `handle` reconciles `self.mode` and keeps the durable `ModeChanged` exactly as
+  before (idempotent: no re-log for a repeated op). The permit path syncs per decision
+  (`permit` → `sync_mode` → `live_mode()`), so the very next tool call obeys the change, and
+  `log_mode` writes the `mode_changed` at that first governed decision. `emit_status`
+  reports the live mode, so the sidebar is exact mid-turn.
+- **U2 — children inherit the parent's mode (BUG 2).** `SessionBroker.childMode` dropped
+  its "yolo is never passed on silently" exception: the child inherits the parent's mode
+  exactly, still capped (`rank`) so it can never exceed it. A yolo parent is Cam's explicit
+  grant, so its workers are born yolo; a default/auto parent still can't produce a yolo
+  child. Tool docs updated: StartSession no longer says "yolo never inherited implicitly";
+  SetSessionMode now says it applies "at its next permission decision, even mid-turn".
+  Swift tests: `testChildModeInheritsCapped` (renamed from
+  `testChildModeInheritsCappedAndNeverSilentYolo`).
+- **U3 — the yolo egress guard is the mode (BUG 3).** The branch read
+  `mode == Yolo && can_ask`; `can_ask` was the only thing routing a headless yolo call to
+  the deny below — the brief's "headless already denies earlier in the flow" is not true
+  for egress (there is no earlier deny). Now the guard is `mode == Yolo` alone, with the
+  headless deny made explicit inside the branch (decision row `egress/ask/"yolo, not
+  interactive: widening denied"`, then `Deny`). Interactive yolo unchanged (one quiet
+  `EgressWidened` row); headless still denies, never cards.
+
 ## Test counts
 
-*(filled at the end)*
+- **Rust (unsandboxed, per the brief):** `cargo build -p frog -p frog-engine` clean; full
+  `cargo test -p frog-engine` **599 passed, 0 failed, 8 ignored**, three consecutive runs.
+  Targeted: `a_mode_set_mid_turn_governs_the_next_permission_decision`,
+  `yolo_never_cards_on_egress`, `headless_yolo_denies_instead_of_widening`,
+  `yolo_still_blocks_an_undeclared_host`, all pass.
+  Gotchas hit: (a) the egress tests sandbox-exec their commands, so running cargo inside
+  frog's own sandbox fails them all with `sandbox-exec: sandbox_apply: Operation not
+  permitted` (sandbox-on-sandbox) — unsandboxed they pass, exactly as the brief warned;
+  (b) `a_broken_body_stream_is_retryable…` passes in full-suite runs but can fail when the
+  filter isolates it repeatedly (its `127.0.0.1` server connection times out) —
+  environmental, not related to this branch; (c) disk hit 100% mid-verify (~116 MB free)
+  and stalls looked like test hangs until space freed — commit-first saved the work.
+- **Swift:** *(filled below)*
