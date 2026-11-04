@@ -1,89 +1,34 @@
-# mode-applies — notes
+# perf-structural — notes
 
-Branch `frog/mode-applies`, worktree `/Users/cam/Developer/frog/.frog/worktrees/mode-applies`,
-off `7841fa2d` (post #255 merge, tracks origin/main). One commit per unit (`git commit -s`),
-never push. Edit tool only for source. `| head -60` caps. Never launch a Frog build.
+Branch `frog/perf-structural`, worktree `/Users/cam/Developer/frog/.frog/worktrees/perf-structural`,
+off `b99a7a81` (post #257 merge, tracks origin/main). One commit per unit (`git commit -s`), never
+push (the chief pushes and opens the PR). Edit tool only for source. `| head -60` caps. Never launch
+a Frog build (`open`/`open -n` forbidden — Cam's app is running). Swift verify via `xcodebuild test`,
+test host bundle id `PRODUCT_BUNDLE_IDENTIFIER=toys.frog.testhost`, engines prebuilt
+(`FROG_PREBUILT_DIR=/private/tmp/be-prebuilt2`), build dir `/private/tmp/ps-dd`, unsandboxed (SwiftUI
+macro plugin server is blocked in the sandbox; see perf-audit notes), disk watched (>15G free).
 
-## The bug (chief's evidence)
+Brief: the perf audit (9f291edb, measurement-only) ranked two costs to fix here:
 
-Cam set five workers to yolo with SetSessionMode; transcripts still read `mode=auto` ten
-minutes later. Workers dispatched by a yolo manager are also born auto. He approves cards all
-day. Three bugs:
+- **Cost #1 — whole-window SwiftUI layout.** One `NSDisplayCycleFlush → NSWindow layoutIfNeeded →
+  NSHostingView.layout` pass costs 0.5–1.3 s of main-thread CPU in the live app; passes arrive
+  0.5–1.9×/s idle, 0.7–1.0×/s streaming; **no frog frames inside a pass** — the framework re-runs the
+  whole window's view graph because sidebar + transcript + workspace live in ONE NSHostingView.
+- **Cost #2 — transcript.** 253 `TurnView` body evaluations per streamed row (126,674 bodies for a
+  500-row turn). Hot lines: `TurnView.swift:87` (probe), `TranscriptView.swift:178` (`rows` re-derived)
+  and `:1027` (`FlowCache.segments` cached only for `turn.finished`, so the live turn rebuilds its
+  segments every chunk). Deltas already coalesced to 30 Hz (`Conversation.swift:1039/1047`).
 
-1. **SetSessionMode waits for a turn boundary.** A mode is a safety setting, not conversation
-   state: it must apply at the next tool call (next permission decision), not the next turn.
-   `Op::SetMode` is handled in `crates/frog-engine/src/engine/mod.rs`; the permit path reads
-   `self.mode` in `crates/frog-engine/src/engine/permit.rs`. Fix: a live value the permit path
-   reads per decision (AtomicU8 on the shared state), durable `mode_changed` event logging
-   unchanged.
-2. **Children born in auto.** `apps/macos/Frog/Model/SessionBroker.swift` ~:461-473 handles the
-   `mode` param with a cap. Default becomes: child inherits the parent's mode (capped so it can
-   never exceed the parent). yolo needs no explicit `yolo: true` when the parent is already
-   yolo (the parent's grant is Cam's); a default/auto parent must never silently produce yolo.
-   Then the StartSession tool description in `crates/frog-engine/src/tools/sessions.rs`
-   (~:100-115): "yolo never inherited implicitly" is the behaviour being changed.
-3. **Yolo egress path.** Merged yolo fix reads `if self.mode == Mode::Yolo && self.can_ask &&
-   egress_ask.is_some()`. If `can_ask` is the only remaining guard, drop it (headless already
-   denies earlier in the flow).
+Order per the brief: STEP 1 (streaming turn, cheaper) measured before/after, then STEP 2 (window
+graph) with sample/signpost proof, then a before/after table. If a step doesn't move its number, say
+so and revert it rather than shipping noise. The TranscriptSwitchBenchmarkTests flake
+(peak mounted 41 > 30, ready > budget) is pre-existing at base — verify against b99a7a81 before
+blaming this branch.
 
 ## Checkpoint (before first edit)
 
 - Branch confirmed, no uncommitted changes.
-- Next: read engine/mod.rs op dispatch, permit.rs, SessionBroker.swift, then edit + tests.
-
-## Units
-
-- **U1 — SetMode applies at the next decision (BUG 1).** `Op::SetMode` was a queued op:
-  the router passed it to the work loop, which takes one op at a time, so a turn inside a
-  20-minute build never saw it. Now the router stores the mode into `Shared::mode` (an
-  `AtomicU8` discriminant on the shared state, seeded from the agent's real mode after
-  `Agent::new` so a resume can't be downgraded to the flag) and still forwards the op; the
-  agent's `handle` reconciles `self.mode` and keeps the durable `ModeChanged` exactly as
-  before (idempotent: no re-log for a repeated op). The permit path syncs per decision
-  (`permit` → `sync_mode` → `live_mode()`), so the very next tool call obeys the change, and
-  `log_mode` writes the `mode_changed` at that first governed decision. `emit_status`
-  reports the live mode, so the sidebar is exact mid-turn.
-- **U2 — children inherit the parent's mode (BUG 2).** `SessionBroker.childMode` dropped
-  its "yolo is never passed on silently" exception: the child inherits the parent's mode
-  exactly, still capped (`rank`) so it can never exceed it. A yolo parent is Cam's explicit
-  grant, so its workers are born yolo; a default/auto parent still can't produce a yolo
-  child. Tool docs updated: StartSession no longer says "yolo never inherited implicitly";
-  SetSessionMode now says it applies "at its next permission decision, even mid-turn".
-  Swift tests: `testChildModeInheritsCapped` (renamed from
-  `testChildModeInheritsCappedAndNeverSilentYolo`).
-- **U3 — the yolo egress guard is the mode (BUG 3).** The branch read
-  `mode == Yolo && can_ask`; `can_ask` was the only thing routing a headless yolo call to
-  the deny below — the brief's "headless already denies earlier in the flow" is not true
-  for egress (there is no earlier deny). Now the guard is `mode == Yolo` alone, with the
-  headless deny made explicit inside the branch (decision row `egress/ask/"yolo, not
-  interactive: widening denied"`, then `Deny`). Interactive yolo unchanged (one quiet
-  `EgressWidened` row); headless still denies, never cards.
-
-## Test counts
-
-- **Rust (unsandboxed, per the brief):** `cargo build -p frog -p frog-engine` clean; full
-  `cargo test -p frog-engine` **599 passed, 0 failed, 8 ignored**, three consecutive runs.
-  Targeted: `a_mode_set_mid_turn_governs_the_next_permission_decision`,
-  `yolo_never_cards_on_egress`, `headless_yolo_denies_instead_of_widening`,
-  `yolo_still_blocks_an_undeclared_host`, all pass.
-  Gotchas hit: (a) the egress tests sandbox-exec their commands, so running cargo inside
-  frog's own sandbox fails them all with `sandbox-exec: sandbox_apply: Operation not
-  permitted` (sandbox-on-sandbox) — unsandboxed they pass, exactly as the brief warned;
-  (b) `a_broken_body_stream_is_retryable…` passes in full-suite runs but can fail when the
-  filter isolates it repeatedly (its `127.0.0.1` server connection times out) —
-  environmental, not related to this branch; (c) disk hit 100% mid-verify (~116 MB free)
-  and stalls looked like test hangs until space freed — commit-first saved the work.
-- **Swift** (`xcodegen generate`, `FROG_PREBUILT_DIR=/private/tmp/be-prebuilt2`, dd
-  `/private/tmp/ma-dd`, `CODE_SIGN_IDENTITY="-"`, `PRODUCT_BUNDLE_IDENTIFIER=toys.frog.testhost`):
-  `SessionBrokerTests` **54/54 passed** (includes the renamed `testChildModeInheritsCapped`
-  and `testSetSessionModeCeilingAndYoloFlag`, which still pins the yolo-flag rule for
-  SetSessionMode — unchanged, that rule stays). Full suite: **445 executed, 5 skipped, 2
-  failed** — both `TranscriptSwitchBenchmarkTests`
-  (`testScrollUpFillsOlderRowsInOrder` peak mounted 41 > 30; `testSwitchTo5000RowSession`
-  ready 0.494 s > 0.25 s budget). **Proven pre-existing:** a control run of the same class
-  at the base commit `7841fa2d` (throwaway worktree, xcodegen + identical flags) fails
-  `testScrollUpFillsOlderRowsInOrder` the same way (peak 41, plus a p50 0.0257 vs 0.025
-  frame assertion) and passes `testSwitchTo5000RowSession` that run — the class is the
-  documented display/geometry flake (its own history: dda4320e "~1 in 3", CI skips via
-  `TestRunner.isCI`). Nothing this branch touches is on its path (diff: engine ops, permit,
-  SessionBroker mode, sessions.rs docs — no transcript files). No gateway 401s or resets.
+- Read: TranscriptView.swift (rows/FlowCache), TurnView.swift (probe, SegmentRow equatable),
+  Conversation.swift (apply/upsert/flushDeltas), PaneView/WorkspaceView/FrogApp (window composition),
+  both benchmark tests.
+- Next: baseline benchmark run, then STEP 1.
