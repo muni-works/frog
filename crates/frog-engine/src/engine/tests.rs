@@ -3738,9 +3738,10 @@ async fn a_flag_started_mode_survives_an_engine_restart() {
 }
 
 /// A mode set mid-turn applies at the next permission decision, not the next turn
-/// boundary (a worker inside a long build never reaches one): deny the first Write,
-/// set AcceptEdits while the turn is still waiting on the second, and the second Write
-/// runs without a card. The durable `ModeChanged` is logged when the queued op is handled.
+/// boundary (a worker inside a long build never reaches one): answer the first Write's
+/// card while the turn is still waiting, and the second Write — the very next decision —
+/// runs in the new mode without a card. The durable `ModeChanged` is logged when the
+/// queued op is handled, after the turn.
 #[tokio::test]
 async fn a_mode_set_mid_turn_governs_the_next_permission_decision() {
     let dir = tmp_store();
@@ -3779,16 +3780,16 @@ async fn a_mode_set_mid_turn_governs_the_next_permission_decision() {
                 h.ops
                     .send(Op::Permission {
                         id: id.clone(),
-                        decision: Decision::Deny,
+                        decision: Decision::Allow,
                         note: None,
                     })
                     .unwrap();
             }
             _ => {}
         }
-        let done = matches!(env.event, Event::TurnEnded { .. });
+        let idle = matches!(env.event, Event::Idle);
         evs.push(env);
-        if done {
+        if idle {
             break;
         }
     }
@@ -3798,12 +3799,22 @@ async fn a_mode_set_mid_turn_governs_the_next_permission_decision() {
         "x\n",
         "w2 ran under the new mode"
     );
+    let ended = evs
+        .iter()
+        .position(|e| matches!(e.event, Event::TurnEnded { .. }))
+        .expect("the turn ended");
+    // The durable ModeChanged lands at the first decision taken in the new mode (the
+    // permit path adopts it, and the log follows there) — inside the turn, where the old
+    // boundary rule would have left it for the next turn.
     let changed = evs
         .iter()
-        .position(|e| matches!(e.event, Event::ModeChanged { mode: Mode::AcceptEdits }));
+        .position(|e| matches!(e.event, Event::ModeChanged { mode: Mode::AcceptEdits }))
+        .expect("the durable ModeChanged is logged at the first governed decision");
     assert!(
-        changed.is_some(),
-        "the durable ModeChanged is logged (when the queued op is handled)"
+        changed < ended,
+        "the mode is logged at the decision that first ran in it, not at the boundary; \
+         ended={ended}, changed={changed}, evs={:?}",
+        evs.iter().map(|e| format!("{:?}", std::mem::discriminant(&e.event))).collect::<Vec<_>>()
     );
     shutdown(h).await;
     let _ = std::fs::remove_dir_all(dir);
