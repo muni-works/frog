@@ -463,7 +463,8 @@ final class SessionBroker {
             }
         case "SetSessionMode":
             // Never above the caller's own mode (a child can't grant itself more than its
-            // parent has), and yolo additionally needs an explicit flag.
+            // parent has), and yolo additionally needs an explicit flag. Applies at the
+            // target's next permission decision, even mid-turn.
             switch resolve(input["id"]?.string ?? "") {
             case .success(let e):
                 guard let raw = input["mode"]?.string, let wanted = Mode(rawValue: raw) else {
@@ -1190,7 +1191,8 @@ final class SessionBroker {
 
     /// A stored override's part an engine takes after it starts: the mode. (The model goes in
     /// as `-m`, which a resumed engine honors; it resumes in its log's last mode whatever the
-    /// flags say, so the mode is an op it takes at its first turn boundary.)
+    /// flags say, so the mode is an op it takes at startup, and it governs from the session's
+    /// next permission decision.)
     static func apply(_ stored: (model: String?, mode: Mode?), to c: Conversation) {
         if let mode = stored.mode { c.setMode(mode) }
     }
