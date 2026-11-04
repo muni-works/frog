@@ -1026,10 +1026,10 @@ struct TranscriptRow: Identifiable {
 
 /// Finished turns' flows, by turn: a finished turn's rows only change when items are added
 /// to it (a notice) or the thinking setting changes. The running turn's is cached too, keyed
-/// by a cheap walk of its items: re-deriving the segments (the activity groups, the visual
-/// scan) on every streamed chunk put the whole `rows` derivation at O(turn) per 30 Hz batch,
-/// per mounted turn (see the perf-structural notes). The signature is identity and sizes —
-/// what the segmentation can depend on — never the text itself.
+/// by a signature of what the segmentation can depend on (identity, kinds, done, text
+/// emptiness, the visual flags): re-deriving the segments (the activity groups, the visual
+/// scan) on every streamed chunk was O(turn) per 30 Hz batch per mounted turn (see the
+/// perf-structural notes). Never the streaming text itself.
 @MainActor
 final class FlowCache {
     private struct Entry {
