@@ -176,3 +176,20 @@ caught a `Library.refresh` burst; idle varies 21–57%), 7 sampled layout passes
 frames 7 rows vs 13 in the pre-branch sample. The after-state of this branch is proven in the
 test window (boundary test) and by the removed root reads, not by sampling a binary that doesn't
 contain it.
+
+## Full-suite verification, final
+
+- Fresh derived data (`/private/tmp/ps-dd2`, `xcodegen generate`, identical flags):
+  **446 executed, 5 skipped, 2 failures — both `TranscriptSwitchBenchmarkTests`**
+  (`testScrollUpFillsOlderRowsInOrder` only: p50 25.7 ms vs 25 ms and peak mounted 41 > 30).
+  Everything else passed, including `ProtocolTests` (13/13), `TranscriptStreamBenchmarkTests`
+  (both, with the new bounded turn-body assertion), and `RemoteBridgeTests`.
+- **Flake re-verified at base b99a7a81** earlier on this branch: same test, same shape (peak 41,
+  p50 25.7/24.7 ms straddling the 25 ms line across runs — a hair under or over run to run,
+  exactly the display-timing flake its own comments and dda4320e describe). Both failures are in
+  that one class; nothing this branch touches (TurnView equatable, FlowCache signature, root
+  reads, Library/RemoteBridge guards) is on its scroll-geometry path, and the streaming + switch
+  400/5000 tests that DO touch those paths all pass.
+- Suite tally across runs: first run 1 failure was the stale test bundle (missing xctest
+  resources in that derived data; ProtocolTests 13/13 fresh). Second run 2 failures, both the
+  known scroll-up flake. `cargo build -p frog -p frog-engine` clean.
