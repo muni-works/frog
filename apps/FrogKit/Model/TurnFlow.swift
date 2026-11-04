@@ -106,6 +106,19 @@ extension ItemState {
                          ok: result?.outcome == .ok, needsPermission: needsPermission, preview: imagePreview != nil,
                          subagentItems: subagent?.items.count ?? 0, subagentEnded: subagent?.endedAt)
     }
+
+    /// What a turn's tail row (plan, live status, changes, footer) reads from one item, cheaply
+    /// comparable — kind and size, not the strings themselves (see `TurnView.==`).
+    var itemKey: String {
+        let kind: String
+        switch self.kind {
+        case .message: kind = "m"
+        case .reasoning: kind = "r"
+        case .tool(let name, _): kind = "t:" + name
+        case .notice(let warning): kind = warning ? "nw" : "n"
+        }
+        return "\(id)|\(kind)|\(done ? "d" : "u")|\(text.utf8.count)|\(output.utf8.count)|\(result != nil ? (result?.outcome == .ok ? "ok" : "no") : "-")|\(needsPermission ? "p" : "-")"
+    }
 }
 
 extension TurnFlow.Segment {

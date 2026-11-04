@@ -14,6 +14,8 @@ import XCTest
 ///      `ActivityLine` + `ItemView`) stay linear in rows. A relayout of the whole turn per insert
 ///      builds every row again each time: rows²/2 ≈ 125k bodies for 500 rows. The budget is
 ///      8 per row (the inserted row, its re-render as it finishes, the live tail);
+///      (b′) the same for `TurnView` bodies (`TranscriptProbe.turnBodies`), which before the
+///      equatable row ran 254× per streamed row — a delta re-evaluated every mounted turn.
 ///  (c) the view stays anchored to the bottom (within 24 pt, the transcript's own "at bottom");
 ///  (d) the whole stream renders within a wall-clock budget (`budget`, below): one frame of the
 ///      real layout per row, at 60 Hz a 500-row turn must keep up with a stream.
@@ -190,6 +192,13 @@ final class TranscriptStreamBenchmarkTests: XCTestCase {
         XCTAssertTrue(blankPixels.isEmpty, "blank frames at rows \(blankPixels.prefix(20))")
         XCTAssertGreaterThan(finalInk, 0.002, "blank after the stream")
         XCTAssertLessThanOrEqual(rowBodies, rows * 8, "row bodies grew faster than rows: a full relayout per insert")
+        // Every mounted turn's body per streamed row was the old shape (measured 254/row,
+        // 126,674 for 500 rows, before TurnView was equatable and the live turn's segments
+        // cached): a streamed delta must invalidate ONE row, not every mounted turn. Bounded
+        // small — the inserted row, its re-render as it finishes, the live tail — like row
+        // bodies, so a regression back to the quadratic fails here.
+        let turnBodies = TranscriptProbe.turnBodies
+        XCTAssertLessThanOrEqual(turnBodies, rows * 8, "turn bodies grew faster than rows: every mounted turn rebuilt per streamed row")
         XCTAssertTrue(unanchored.isEmpty, "left the bottom at rows \(unanchored.prefix(20)) (worst \(worstBelow) pt)")
         XCTAssertLessThan(below(scroll), 24, "not at the bottom after the stream")
         XCTAssertLessThan(total, Self.budget, "stream render over budget")
