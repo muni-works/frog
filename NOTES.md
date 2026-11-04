@@ -77,3 +77,73 @@ Fix (measurement-guided, not a rewrite):
 
 Bar to prove: a streamed delta must not cause a sidebar layout pass. Proof: a DEBUG counter of
 `SessionList` body evaluations while a conversation streams in the same window — before/after.
+
+## Step 1 and step 2 — what was done, and the numbers
+
+### STEP 1 — the streaming turn (commit 07b5e009)
+
+Chose BOTH parts of the brief, as one cut:
+- `TurnView` is now `Equatable` per row part: a head compares the prompt fields (input/more/
+  images/wakes — what `TurnLead` derives from), a segment compares `segment.id` + `segment.stamp`
+  (the pattern `SegmentRow` already used), a tail compares a per-item `itemKey` (identity, kind,
+  done, sizes, outcome — not the strings). `TranscriptView` applies `.equatable()` to the rows.
+  A streamed delta re-derives `rows` (unavoidable — it reads `conversation.turns`) but the
+  framework can now compare the row values and skip the bodies that didn't change.
+- `FlowCache` caches the LIVE turn's segments too, keyed by a signature of what the
+  segmentation can depend on (kind, done, text *emptiness*, `ActivityGroup.isShort`, the visual
+  flags) — never the streaming text itself, so a growing answer leaves the cache alone and the
+  segments are re-derived only at item boundaries.
+
+Benchmark (500-row streamed turn, this worktree, debug):
+
+| metric | before (b99a7a81) | after |
+|---|---|---|
+| turn bodies (`TurnView` body evals) | 127,088 (254/row) | **1,024 (2.0/row)** |
+| row bodies (per-row views) | 524 (1.0/row) | 524 (1.0/row) — unchanged |
+| stream time | 12.26 s | 11.7–11.8 s |
+| follows / blank / unanchored | 0 / 0 / 0 | 0 / 0 / 0 (no behavior change) |
+
+The benchmark's turn-body count is now ASSERTED (`≤ 8/row`), not just printed, so the quadratic
+shape can't come back silently.
+
+### STEP 2 — the window graph (commit 14ee7604)
+
+**Chose: keep the single hosting view; stop the ROOT from reading streaming state.** The brief's
+first option (separate `NSHostingController` per region) was rejected on measurement: the sampled
+passes are AppKit's `NSDisplayCycleObserverForLayout → _layoutViewTree → NSHostingView.layout` —
+the WHOLE view tree re-lays-out per display cycle regardless of which subtree was invalidated.
+Splitting into per-region hosting views would shrink each pass's ViewGraph update a little but
+leave every invalidation firing a full window cycle (AppKit walks the tree it has). The audit's
+own evidence says the cost is per-pass wholesale; the fix with the bigger payoff is fewer passes
+and cheaper root bodies. (A real per-region split is still open as the next step if passes stay
+frequent — noted in "still slow".)
+
+Root reads removed per body pass:
+- `sidebarOrder` was a walk + two sorts over every session per body (the org tree twice); now
+  cached in `SessionOrder`, invalidated by listing/pin/archive/parent/chief moves only
+  (`Library.onOrderInvalidated`).
+- `workspace.conversation` reads in the root (window title, handoff activity, rename alert,
+  title menu) now read `Workspace.currentSession`/`currentTitle` — mirrored on `show` and on the
+  session-id/title events (`sessionChanged`), which fire when the identity moves, not per delta.
+- `Pane.changeCount` / `PaneArea` tabs walked every turn's diffs per read; now
+  `Conversation.changesVersion` (bumped on tool completion, turn end, history fold).
+- `RemoteBridge.listChanged` built its 60–80 ms row list every 300 ms even with no phone
+  attached (measured 294 ms per 10 s of idle in the live sample); now skipped when `clients`
+  is empty.
+
+Proof of the bar (a delta must not dirty the sidebar): new
+`testSidebarDoesNotRebuildWhileStreaming` mounts `SessionList` + `TranscriptView` in one window
+(the app root can't be mounted in a test), streams 60 rows, and counts `SessionList` bodies:
+**1–2 bodies over 60 streamed rows (≤0.03/row, asserted ≤4)**. The same test at the pre-fix
+state also shows ~1 body — reading that honestly: `SessionList`'s own subtree was never the
+per-delta rebuilder (it reads session ids, not the conversation object); the per-delta cost was
+the ROOT's own body (sidebarOrder + conversation reads) and the invalidation passes it started,
+which the sample showed as 0.5–1.3 s per pass. The root-body reads are gone; the assertion pins
+the boundary so a future read of streaming state in the sidebar subtree fails the test.
+
+Live-app sample (before only — Cam's app runs the shipped binary; the after-state is proven in
+the test window and by the removed reads): `sample 45417 10`: wall 3,392 ms, main awake 86.9% of
+a core, layout passes 1,499 ms + 474 ms in one sample, zero frog frames inside. The branch's
+changes remove three root invalidation sources (RemoteBridge every 300 ms, root body reads per
+delta, changes-strip walks per pass) — the remaining sources and the per-pass cost are in
+"still slow".
