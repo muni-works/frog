@@ -147,3 +147,14 @@ a core, layout passes 1,499 ms + 474 ms in one sample, zero frog frames inside. 
 changes remove three root invalidation sources (RemoteBridge every 300 ms, root body reads per
 delta, changes-strip walks per pass) — the remaining sources and the per-pass cost are in
 "still slow".
+
+## Full-suite verification
+
+- `cargo build -p frog -p frog-engine`: clean (53 s). No Rust touched anywhere on this branch.
+- App suite (`xcodebuild test`, toys.frog.testhost, FROG_PREBUILT_DIR, /private/tmp/ps-dd):
+  first run **446 executed, 5 skipped, 1 failure** — identifying the failing case, then checking
+  it at base b99a7a81 (the brief's flake discipline). Second run's result below.
+- The switch-bench flake reproduced DURING this branch's verification
+  (`testScrollUpFillsOlderRowsInOrder`: peak mounted 41 > 30, p50 24.7 ms > 25 ms) and was
+  verified at base: checked out b99a7a81 with the same flags, the SAME test failed the SAME way
+  (peak 41). Pre-existing, as the brief said; not this branch's.
