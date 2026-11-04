@@ -23,7 +23,10 @@ final class Pane: Identifiable {
 
     /// The conversation on the canvas (a race has its own view).
     var conversation: Conversation? { workspace.race == nil ? workspace.conversation : nil }
-    var changeCount: Int { conversation?.sessionChanges.count ?? 0 }
+    /// Files changed in this session, as the pill and the card's presence read it. The count
+    /// itself only matters as ">0"; reading `sessionChanges.count` walked every turn's diffs
+    /// per body pass. The version bumps exactly when the walk's result can.
+    var changeCount: Int { conversation.map { $0.changesVersion > 0 ? 1 : 0 } ?? 0 }
     /// Terminals and previews open beside the conversation (see `PaneHub`).
     var toolCount: Int { conversation?.panes.panes.count ?? 0 }
     /// Something for the card at this pane's edge: changed files, or a terminal or preview.

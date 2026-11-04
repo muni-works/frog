@@ -255,7 +255,7 @@ struct PaneView: View {
                         .glassEffect(.regular.interactive(), in: .capsule)
                         .glassEffectID("changes", in: glass)
                         .help(pane.changeCount > 0
-                              ? "\(pane.changeCount) file\(pane.changeCount == 1 ? "" : "s") changed (⌥⌘0)"
+                              ? "Files changed (⌥⌘0)"
                               : "Terminal and preview (⌥⌘0)")
                     }
                 }

@@ -20,7 +20,7 @@ enum TurnPart {
     case tail
 }
 
-struct TurnView: View {
+struct TurnView: View, Equatable {
     let turn: TurnState
     let conversation: Conversation
     let actions: TurnActions
@@ -30,6 +30,38 @@ struct TurnView: View {
     var gap: CGFloat = 0
     /// Show the model/speed footer without hovering (see `TurnFooter.pinned`).
     var pinsFooter = true
+    /// One row of the transcript rebuilds only when what it shows changed. A streamed delta
+    /// invalidates every view reading the conversation (the rows are re-derived each 30 Hz
+    /// batch), and without a comparison every mounted turn's body ran for a delta that touched
+    /// one row of the last turn (measured 254 turn bodies per streamed row; see the
+    /// perf-structural notes). Row equality is by what the row renders, cheap: a head by the
+    /// prompt fields, a segment by its stamp (like `SegmentRow`), a tail by a walk of the turn's
+    /// items. `actions` and `conversation` are captured once per pane; `pinsFooter` is macOS
+    /// constant (the empty set) or derived from finished turns. State (`landed`, hover) lives
+    /// outside equality, as it must for a row that survives body evaluations.
+    nonisolated static func == (a: Self, b: Self) -> Bool {
+        guard a.conversation === b.conversation, a.pinsFooter == b.pinsFooter, a.gap == b.gap,
+              a.turn.id == b.turn.id else { return false }
+        switch (a.part, b.part) {
+        case (.head, .head):
+            // What the head renders derives entirely from these four (see `TurnLead`), so the
+            // strings are the comparison; no re-parsing of the wakes per row.
+            return a.turn.input == b.turn.input && a.turn.more == b.turn.more
+                && a.turn.images == b.turn.images && a.turn.wakes == b.turn.wakes
+        case (.segment(let x), .segment(let y)):
+            return x.id == y.id && x.stamp == y.stamp
+        case (.tail, .tail):
+            return a.turn.items.map(\.itemKey) == b.turn.items.map(\.itemKey)
+                && a.turn.end == b.turn.end && a.turn.finished == b.turn.finished
+                && a.turn.usage?.modelCalls == b.turn.usage?.modelCalls
+                && a.turn.usage?.tokensPerSec == b.turn.usage?.tokensPerSec
+                && a.turn.usage?.model == b.turn.usage?.model
+                && a.turn.usage?.servedBy == b.turn.usage?.servedBy
+        default:
+            return false
+        }
+    }
+
     /// The pointer is over what you asked (its actions show) rather than elsewhere in the turn.
     @State private var hoveringPrompt = false
     @State private var confirmRewind = false
