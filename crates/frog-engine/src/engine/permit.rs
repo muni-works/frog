@@ -64,8 +64,18 @@ impl Agent {
         // line where every other mode would card. The hosts the agent named are its
         // declaration; they're granted for the session, and the proxy still blocks anything it
         // didn't declare, so the exfil tripwire keeps working. Headless (`can_ask = false`)
-        // keeps its path below: it can't ask, so it denies.
-        if self.mode == Mode::Yolo && self.can_ask && egress_ask.is_some() {
+        // has nobody to owe the widening to, so it denies instead — before widening, not after.
+        if self.mode == Mode::Yolo && egress_ask.is_some() {
+            if !self.can_ask {
+                self.decision(
+                    item,
+                    "egress",
+                    "ask",
+                    "yolo, not interactive: widening denied",
+                    0,
+                );
+                return Decision::Deny;
+            }
             self.yolo_widen_egress(
                 item,
                 name,
