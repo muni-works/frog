@@ -15,6 +15,14 @@ final class Workspace {
     /// The session being opened in this workspace's place (here, or another folder's), which
     /// the sidebar selects straight away.
     var opening: String?
+    /// The conversation's session id, mirrored (below) so views that only need WHICH session
+    /// is showing — the sidebar's selected row, the window title — don't observe the
+    /// conversation itself. A streamed turn rewrites `conversation` every 30 Hz batch; a view
+    /// reading `conversation?.sessionID` re-evaluated per delta for a value that never moves.
+    private(set) var currentSession: String?
+    /// The conversation's title, mirrored like `currentSession` (the engine's `titled` sets
+    /// both): the window title without the root body reading the streaming conversation.
+    private(set) var currentTitle: String?
     var selection: String?
     var preferredModel: String?
     /// A choice made in this workspace's picker. Unlike the startup default, this must win
@@ -500,7 +508,30 @@ final class Workspace {
         if let old = conversation, !SessionBroker.shared.keep(old) { old.stop(reason: "replaced on screen") }
         cloudForThisConversation = false
         explicitModelChoice = nil
-        Motion.cut { conversation = c }
+        Motion.cut {
+            conversation = c
+            currentSession = c.cloudSession ?? c.sessionID
+            currentTitle = c.title
+            // The id lands when the engine names the session (its first logged event); mirror
+            // it here. `onSessionChange` stays the workspace's own hook; this chains beside it
+            // and only writes the id when it moved (the writes are on the id, not the turn).
+            c.sessionChanged = { [weak self, weak c] in
+                guard let self, let c else { return }
+                if self.currentSession != (c.cloudSession ?? c.sessionID) {
+                    self.currentSession = c.cloudSession ?? c.sessionID
+                }
+                if self.currentTitle != c.title {
+                    self.currentTitle = c.title
+                }
+            }
+        }
+    }
+
+    /// Show `c` without the open-wait dance (`incoming`), for tests that mount the workspace's
+    /// views directly (the sidebar-boundary benchmark).
+    func testShow(_ c: Conversation) {
+        incoming = c
+        show(c)
     }
 }
 

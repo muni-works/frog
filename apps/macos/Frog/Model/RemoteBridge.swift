@@ -145,10 +145,15 @@ final class RemoteBridge {
 
     /// Tell every phone what changed in the list, soon: they no longer ask every few seconds.
     func listChanged() {
+        // Nothing attached (no phone, no watch): the rows would go nowhere, so don't build
+        // them. The build is 60–80 ms of main thread on a full sidebar and ran every 300 ms
+        // while anything flipped a session's live state (see the perf-structural notes).
+        guard !clients.isEmpty else { return }
         guard listener != nil, listDue == nil else { return }
         listDue = Task {
             try? await Task.sleep(for: .milliseconds(300))
             listDue = nil
+            guard !clients.isEmpty else { return }
             let rows = sessionList()
             for c in clients.values where c.authed { c.send(["type": "sessions", "sessions": rows]) }
         }

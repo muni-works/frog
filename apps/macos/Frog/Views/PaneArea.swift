@@ -13,11 +13,13 @@ struct PaneArea: View {
     static let maxWidth: CGFloat = 560
 
     private var hub: PaneHub { conversation.panes }
-    private var changeCount: Int { conversation.sessionChanges.count }
+    /// Any changed file at all. The count would walk every turn's diffs per body pass; the
+    /// card's tab list only needs whether there are any (see `Conversation.changesVersion`).
+    private var hasChanges: Bool { conversation.changesVersion > 0 && !conversation.sessionChanges.isEmpty }
 
     /// Tabs in order: Changes (when there are any), then panes as they opened.
     var tabs: [PaneHub.Tab] {
-        (changeCount > 0 ? [.changes] : []) + hub.panes.map { .pane($0.id) }
+        (hasChanges ? [.changes] : []) + hub.panes.map { .pane($0.id) }
     }
 
     private var current: PaneHub.Tab? {
