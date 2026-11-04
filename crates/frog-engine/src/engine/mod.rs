@@ -21,7 +21,7 @@ use anyhow::Result;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot};
@@ -378,6 +378,13 @@ struct Shared {
     /// Counting works because the router forwards them in the order the loop takes them.
     inbox_sent: AtomicU64,
     inbox_void: AtomicU64,
+    /// Deliveries sitting in the work queue right now: the non-destructive twin of
+    /// `work_rx`'s depth, since its `try_recv` consumes and a running turn must be able to
+    /// look without stealing. Incremented where the router pushes a `Deliver`, taken down
+    /// wherever the work loop pops one (the boundary arm and the batch drain), and zeroed
+    /// with the queue by `Op::ClearInbox` — the voided ones never run, so they stop
+    /// counting. Saturating down: a clear that races a pop must not go negative.
+    inbox_waiting: AtomicUsize,
     /// The user stopped a running turn: background wakes already waiting don't start a turn
     /// of their own (a stop stays stopped); they go along with the next turn instead, which
     /// clears this.
@@ -608,6 +615,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         draining: Default::default(),
         inbox_sent: Default::default(),
         inbox_void: Default::default(),
+        inbox_waiting: Default::default(),
         wake_hold: Default::default(),
         journal,
         panes,
@@ -677,6 +685,9 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                 Op::ClearInbox => {
                     let sent = router.inbox_sent.load(Ordering::SeqCst);
                     router.inbox_void.store(sent, Ordering::SeqCst);
+                    // The queued deliveries are voided now: they never run, so they stop
+                    // counting (and anything sent after the clear counts from zero).
+                    router.inbox_waiting.store(0, Ordering::Relaxed);
                 }
                 Op::DismissWakes => router.bg.dismiss(),
                 op @ Op::Deliver { .. } => {
@@ -684,6 +695,9 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                     if work_tx.send(op).is_err() {
                         break;
                     }
+                    // Queued behind whatever turn is running: the model sees this count at
+                    // its next step (see `turn`), before the delivery itself arrives.
+                    router.inbox_waiting.fetch_add(1, Ordering::Relaxed);
                 }
                 // An update is coming: set the flag the work loop checks between calls and
                 // after the one in flight. Nothing running: ack now, a no-op.
@@ -894,6 +908,17 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             let woke = matches!(op, Op::Wake);
             let op = match op {
                 op @ (Op::Deliver { .. } | Op::Wake) => {
+                    // Off the queue: the waiting count goes down, voided or not (a clear
+                    // already zeroed it; saturating keeps the doomed ones from going
+                    // negative).
+                    if matches!(op, Op::Deliver { .. }) {
+                        shared
+                            .inbox_waiting
+                            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+                                Some(n.saturating_sub(1))
+                            })
+                            .ok();
+                    }
                     if let Op::Deliver {
                         from,
                         from_name,
@@ -914,6 +939,12 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                                 from_name,
                                 message,
                             } => {
+                                shared
+                                    .inbox_waiting
+                                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
+                                        Some(n.saturating_sub(1))
+                                    })
+                                    .ok();
                                 if voided(&mut inbox_taken) {
                                     dropped += 1;
                                 } else {
@@ -1389,6 +1420,10 @@ struct Agent {
     model_ready: bool,
     /// Model calls in a row this turn with thinking switched off.
     quiet: u32,
+    /// The last note the turn loop made about the waiting inbox: (count, step). `None` at
+    /// a turn start, so each turn announces fresh; kept so the note is rate-limited to
+    /// changed counts, else one per 5 steps (see `turn`).
+    inbox_told: Option<(usize, u32)>,
     /// Running totals for the current turn.
     turn_usage: TurnUsage,
     /// Where the current turn's time went, and when it started.
@@ -1703,6 +1738,7 @@ impl Agent {
             harness,
             model_ready: false,
             quiet: 0,
+            inbox_told: None,
             turn_usage: TurnUsage::default(),
             timing: TurnTiming::default(),
             turn_clock: None,
@@ -1845,6 +1881,23 @@ impl Agent {
             level,
             message: message.into(),
         });
+    }
+
+    /// Session messages queued behind a running turn ([`Op::Deliver`]s in the work queue,
+    /// counted where they're pushed and popped — see [`Shared::inbox_waiting`]). Zero
+    /// between turns; read mid-turn before each model call to tell the model what will
+    /// arrive when it's done.
+    fn waiting_inbox(&self) -> usize {
+        self.shared.inbox_waiting.load(Ordering::Relaxed)
+    }
+
+    /// The one line the model sees about its waiting inbox, with the count in words.
+    fn waiting_note(n: usize) -> String {
+        if n == 1 {
+            "1 message is waiting for you (it'll be delivered when this turn ends).".into()
+        } else {
+            format!("{n} messages are waiting for you (they'll be delivered when this turn ends).")
+        }
     }
 
     /// Turn the egress hits since the last flush into events. A hit from `command` (the tool

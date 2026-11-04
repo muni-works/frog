@@ -254,6 +254,8 @@ impl Agent {
         }
         self.timing = TurnTiming::default();
         self.quiet = 0;
+        // A new turn announces its waiting inbox fresh, not carrying the last turn's count.
+        self.inbox_told = None;
         self.checkpoint(turn);
         self.turn_usage = TurnUsage::default();
         // A new turn may ask again what the last one was denied (the session's breaker still holds).
@@ -402,6 +404,24 @@ impl Agent {
             let reports = self.shared.panes.take_queued();
             if !reports.is_empty() {
                 self.push_user(reports.join("\n"));
+            }
+            // What's queued behind this turn (session messages): the queue is drained only
+            // at the boundary, so a long turn would otherwise never know it has mail. One
+            // line as a user message — the system prompt is static and cached, so it can't
+            // carry a live count — and the same line as a notice, the transcript's quiet
+            // activity row. Rate-limited to changed counts, else once per 5 steps.
+            let waiting = self.waiting_inbox();
+            if waiting > 0 {
+                let told = match self.inbox_told {
+                    Some((count, step)) => count != waiting || steps.saturating_sub(step) >= 5,
+                    None => true,
+                };
+                if told {
+                    self.inbox_told = Some((waiting, steps));
+                    let note = Agent::waiting_note(waiting);
+                    self.notice(Level::Info, note.clone());
+                    self.push_user(note);
+                }
             }
             // Between turns, pruning starts at PRUNE_AT; inside one, only once the window is
             // nearly full, since a prune rewrites the prefix the server has cached.
