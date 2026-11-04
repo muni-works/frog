@@ -93,7 +93,9 @@ indirect enum PaneLayout: Equatable {
     }
 
     /// The divider after child `index` of the split at `path`, moved to `t` (0...1 along that
-    /// split). Neither neighbor gets less than `minimum` of it.
+    /// split). Neither neighbor gets less than `minimum` of it — and never more than a quarter
+    /// of the pair, so a drag can always take a pane to twice even-share even on a narrow
+    /// canvas (where an absolute floor for both panes would pin them at nearly even shares).
     func moving(divider index: Int, at path: [Int], to t: CGFloat, minimum: CGFloat) -> PaneLayout {
         guard case .split(let axis, var children, var weights) = self else { return self }
         if let first = path.first {
@@ -103,10 +105,20 @@ indirect enum PaneLayout: Equatable {
         guard index + 1 < weights.count else { return self }
         let before = weights[..<index].reduce(0, +)
         let pair = weights[index] + weights[index + 1]
-        let lo = min(minimum, pair / 2), hi = pair - lo
+        let lo = min(minimum, pair / 4), hi = pair - lo
         weights[index] = min(max(t - before, lo), hi)
         weights[index + 1] = pair - weights[index]
         return .split(axis, children, weights: weights)
+    }
+
+    /// The split at `path` (the divider's parent), if the path lands on one.
+    func navigating(_ path: [Int]) -> PaneLayout? {
+        var here = self
+        for i in path {
+            guard case .split(_, let children, _) = here, children.indices.contains(i) else { return nil }
+            here = children[i]
+        }
+        return here
     }
 
     /// The split at `path` with its children sharing evenly again.
@@ -153,15 +165,23 @@ indirect enum PaneLayout: Equatable {
         }
     }
 
-    /// Each leaf's rectangle within `rect`.
-    func frames(in rect: CGRect) -> [Pane.ID: CGRect] {
+    /// Each leaf's rectangle within `rect`. With `maximized`, the leaf it names (anywhere in
+    /// the tree) takes all of `rect` and its siblings nothing — a view over the layout, so
+    /// restoring is just passing nil again.
+    func frames(in rect: CGRect, maximizing maximized: Pane.ID? = nil) -> [Pane.ID: CGRect] {
         switch self {
         case .leaf(let id):
             return [id: rect]
         case .split(let axis, let children, let weights):
             var out: [Pane.ID: CGRect] = [:]
+            if let maximized, leaves.contains(maximized) {
+                for child in children {
+                    out.merge(child.frames(in: child.leaves.contains(maximized) ? rect : .zero, maximizing: maximized)) { a, _ in a }
+                }
+                return out
+            }
             for (child, r) in zip(children, Self.slices(rect, axis, weights)) {
-                out.merge(child.frames(in: r)) { a, _ in a }
+                out.merge(child.frames(in: r, maximizing: maximized)) { a, _ in a }
             }
             return out
         }
@@ -181,8 +201,10 @@ indirect enum PaneLayout: Equatable {
         var id: String { path.map(String.init).joined(separator: ".") + "/\(index)" }
     }
 
-    func dividers(in rect: CGRect, path: [Int] = []) -> [Divider] {
+    func dividers(in rect: CGRect, path: [Int] = [], maximizing maximized: Pane.ID? = nil) -> [Divider] {
         guard case .split(let axis, let children, let weights) = self else { return [] }
+        // Nothing to drag while a pane of this split is maximized (its siblings are empty).
+        if let maximized, leaves.contains(maximized) { return [] }
         let slices = Self.slices(rect, axis, weights)
         var out: [Divider] = []
         for i in children.indices {
@@ -190,7 +212,7 @@ indirect enum PaneLayout: Equatable {
                 let pos = axis == .horizontal ? slices[i].maxX : slices[i].maxY
                 out.append(Divider(path: path, index: i, axis: axis, parent: rect, position: pos))
             }
-            out += children[i].dividers(in: slices[i], path: path + [i])
+            out += children[i].dividers(in: slices[i], path: path + [i], maximizing: maximized)
         }
         return out
     }
@@ -221,6 +243,11 @@ final class Panes {
     private(set) var items: [Pane]
     private(set) var layout: PaneLayout
     var focusedID: Pane.ID
+    /// The pane filling the canvas, if any. The layout is untouched while it's up (its weights
+    /// come back exactly on restore); the frames just resolve to the maximized pane's rect.
+    private(set) var maximized: Pane.ID?
+    /// The layout as it was when the pane was maximized, put back on restore.
+    private(set) var savedLayout: PaneLayout?
     /// Tells the window its first pane moved to another folder (restored on relaunch).
     @ObservationIgnored var onPrimaryFolder: ((URL) -> Void)?
 
@@ -415,8 +442,61 @@ final class Panes {
         layout = layout.moving(divider: d.index, at: d.path, to: t, minimum: minimum / length)
     }
 
+    /// The smallest either pane beside this divider may get. A pane showing tools (terminal or
+    /// preview) is useful at 260 — the card is the point of the pane — while a transcript needs
+    /// its readable floor; the tighter of the two wins, so one side's floor doesn't pin the
+    /// other when the canvas is narrow.
+    func minimum(paneWidth floor: CGFloat, forToolPanes toolFloor: CGFloat, beside d: PaneLayout.Divider) -> CGFloat {
+        guard case .split(_, let children, _) = layout.navigating(d.path) else { return floor }
+        let at = d.index + 1 < children.count ? [children[d.index], children[d.index + 1]] : [children[d.index]]
+        let neighbors = at.flatMap(\.leaves).compactMap { id in items.first { $0.id == id } }
+        let tools = neighbors.contains { $0.toolCount > 0 }
+        return tools ? toolFloor : floor
+    }
+
     func equalize(_ d: PaneLayout.Divider) {
         layout = layout.equalizing(at: d.path)
+    }
+
+    // MARK: Maximizing
+
+    var maximizedPane: Pane? { maximized.flatMap { id in items.first { $0.id == id } } }
+
+    /// Toggle a pane between filling the canvas and its share of the layout. The weights go
+    /// away and come back exactly: maximizing is a view over the layout, not a change to it.
+    func toggleMaximized(_ pane: Pane) {
+        if maximized == pane.id {
+            maximized = nil
+            if let saved = savedLayout { layout = saved; savedLayout = nil }
+        } else {
+            if maximized == nil { savedLayout = layout }
+            maximized = pane.id
+        }
+        focus(pane)
+    }
+
+    /// Maximize the focused pane, or restore when one is up.
+    func toggleMaximizedFocused() {
+        toggleMaximized(focused)
+    }
+
+    /// Keep `items` in the layout's reading order, and the window's folder with the first pane.
+    private func setLayout(_ new: PaneLayout) {
+        let firstBefore = items.first
+        layout = new
+        // A pane that left (closed, or its pane replaced by another arrangement) can't stay up.
+        if let id = maximized, new.leaves.first(where: { $0 == id }) == nil { maximized = nil; savedLayout = nil }
+        let byID = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
+        items = new.leaves.compactMap { byID[$0] }
+        if let first = items.first, first !== firstBefore { onPrimaryFolder?(first.workspace.folder) }
+    }
+
+    /// Tests only: set the layout and keep `items` in its reading order, as `setLayout` does
+    /// but without touching the maximized state (the tests arrange first, maximize after).
+    func reorderForTesting(_ new: PaneLayout) {
+        let byID = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
+        layout = new
+        items = new.leaves.compactMap { byID[$0] }
     }
 
     func close(_ pane: Pane) {
@@ -431,14 +511,6 @@ final class Panes {
     }
 
     /// Keep `items` in the layout's reading order, and the window's folder with the first pane.
-    private func setLayout(_ new: PaneLayout) {
-        let firstBefore = items.first
-        layout = new
-        let byID = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
-        items = new.leaves.compactMap { byID[$0] }
-        if let first = items.first, first !== firstBefore { onPrimaryFolder?(first.workspace.folder) }
-    }
-
     func stopAll() {
         Library.shared.register(window: nil, panes: self)
         items.forEach {

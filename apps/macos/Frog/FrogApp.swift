@@ -85,6 +85,16 @@ struct FrogApp: App {
         .defaultLaunchBehavior(.suppressed)
         .restorationBehavior(.disabled)
 
+        WindowGroup("Preview", for: PreviewDocument.self) { $doc in
+            if let doc, let hub = PaneHub.poppedOutHubs[doc.paneID] {
+                PreviewWindow(hub: hub, document: doc)
+            }
+        }
+        .defaultSize(width: 960, height: 720)
+        // Only ever opened from a preview card, never at launch or by restoration.
+        .defaultLaunchBehavior(.suppressed)
+        .restorationBehavior(.disabled)
+
         Settings {
             SettingsView()
                 .containerBackground(FrogCanvas.color, for: .window)
