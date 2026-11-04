@@ -73,4 +73,17 @@ day. Three bugs:
   filter isolates it repeatedly (its `127.0.0.1` server connection times out) —
   environmental, not related to this branch; (c) disk hit 100% mid-verify (~116 MB free)
   and stalls looked like test hangs until space freed — commit-first saved the work.
-- **Swift:** *(filled below)*
+- **Swift** (`xcodegen generate`, `FROG_PREBUILT_DIR=/private/tmp/be-prebuilt2`, dd
+  `/private/tmp/ma-dd`, `CODE_SIGN_IDENTITY="-"`, `PRODUCT_BUNDLE_IDENTIFIER=toys.frog.testhost`):
+  `SessionBrokerTests` **54/54 passed** (includes the renamed `testChildModeInheritsCapped`
+  and `testSetSessionModeCeilingAndYoloFlag`, which still pins the yolo-flag rule for
+  SetSessionMode — unchanged, that rule stays). Full suite: **445 executed, 5 skipped, 2
+  failed** — both `TranscriptSwitchBenchmarkTests`
+  (`testScrollUpFillsOlderRowsInOrder` peak mounted 41 > 30; `testSwitchTo5000RowSession`
+  ready 0.494 s > 0.25 s budget). **Proven pre-existing:** a control run of the same class
+  at the base commit `7841fa2d` (throwaway worktree, xcodegen + identical flags) fails
+  `testScrollUpFillsOlderRowsInOrder` the same way (peak 41, plus a p50 0.0257 vs 0.025
+  frame assertion) and passes `testSwitchTo5000RowSession` that run — the class is the
+  documented display/geometry flake (its own history: dda4320e "~1 in 3", CI skips via
+  `TestRunner.isCI`). Nothing this branch touches is on its path (diff: engine ops, permit,
+  SessionBroker mode, sessions.rs docs — no transcript files). No gateway 401s or resets.
