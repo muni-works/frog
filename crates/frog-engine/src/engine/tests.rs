@@ -11272,3 +11272,400 @@ async fn start_session_refuses_a_model_its_gateway_does_not_list() {
             .is_ok()
     );
 }
+
+// -- the waiting inbox, visible to the model mid-turn (docs/design/mid-turn-events.md) --
+
+/// The messages JSON of request `n` the scripted provider was sent (each `sent` entry is
+/// system + tools + messages; the messages start at the first `[{"role"`).
+fn request_messages(sent: &Mutex<Vec<String>>, n: usize) -> Vec<Message> {
+    let req = sent
+        .lock()
+        .unwrap()
+        .get(n)
+        .cloned()
+        .expect("that many model calls");
+    let json = &req[req.rfind("[{\"role\"").expect("messages in the request")..];
+    serde_json::from_str(json).expect("messages parse")
+}
+
+/// The text of every user block in `messages`.
+fn user_texts(messages: &[Message]) -> Vec<String> {
+    messages
+        .iter()
+        .filter(|m| m.role == Role::User)
+        .flat_map(|m| {
+            m.content.iter().filter_map(|b| match b {
+                Block::Text { text } => Some(text.trim().to_string()),
+                _ => None,
+            })
+        })
+        .collect()
+}
+
+/// A deliver queued behind a running turn is announced to the model on its next call: one
+/// user line ("N messages are waiting…") and the same line as a transcript notice — before
+/// the delivery itself lands at the boundary.
+#[tokio::test]
+async fn a_deliver_waiting_mid_turn_is_announced_on_the_next_call() {
+    let script = vec![
+        reply(vec![list_sessions_call()], Stop::ToolUse),
+        reply(vec![text("done")], Stop::End),
+        reply(vec![text("got the message")], Stop::End),
+    ];
+    let (mut h, sent) = engine_sent(script, None, None, None, std::env::temp_dir());
+    caps(&h, true);
+    drive(&mut h, |e| matches!(e, Event::Idle)).await;
+    submit(&h, "work");
+    let mut delivered = false;
+    let mut first_turn_started = false;
+    let mut evs = Vec::new();
+    loop {
+        let env = h.events.recv().await.unwrap();
+        first_turn_started |= matches!(env.event, Event::TurnStarted { turn: 1, .. });
+        if let Event::SessionRequest { id, .. } = &env.event {
+            assert!(
+                first_turn_started,
+                "the deliver ran before the turn: {env:?}"
+            );
+            // Mid-turn: queues behind the running turn, never interrupts it.
+            h.ops
+                .send(Op::Deliver {
+                    from: "s9".into(),
+                    from_name: "Chief".into(),
+                    message: "status?".into(),
+                })
+                .unwrap();
+            h.ops
+                .send(Op::SessionReply {
+                    id: id.clone(),
+                    result: Some(json!([{ "id": "s9", "name": "Chief" }])),
+                    error: None,
+                })
+                .unwrap();
+            delivered = true;
+        }
+        let idle = matches!(env.event, Event::Idle);
+        evs.push(env);
+        if idle && delivered {
+            break;
+        }
+    }
+    // The first turn's second call (after the tool ran) must carry the waiting note; the
+    // first turn's first call (before the deliver) must not.
+    let first = user_texts(&request_messages(&sent, 0));
+    assert!(
+        !first.iter().any(|t| t.contains("waiting for you")),
+        "no deliver had arrived: {first:?}"
+    );
+    let second = user_texts(&request_messages(&sent, 1));
+    assert!(
+        second
+            .iter()
+            .any(|t| t.contains("1 message is waiting for you")),
+        "{second:?}"
+    );
+    // The batch turn's call carries the delivered message. The first turn's note is in
+    // history and stays, but it was said once: no second waiting block.
+    let third = user_texts(&request_messages(&sent, 2));
+    assert!(
+        third.iter().any(|t| t.contains("status?")),
+        "the deliver ran: {third:?}"
+    );
+    let waiting: Vec<&String> = third
+        .iter()
+        .filter(|t| t.contains("waiting for you"))
+        .collect();
+    assert_eq!(waiting.len(), 1, "said once, not again: {third:?}");
+    // The same line went up as a notice (the quiet activity row).
+    let notices: Vec<String> = evs
+        .iter()
+        .filter_map(|e| match &e.event {
+            Event::Notice { message, .. } => Some(message.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        notices
+            .iter()
+            .any(|n| n.contains("1 message is waiting for you")),
+        "{notices:?}"
+    );
+    shutdown(h).await;
+}
+
+/// Three delivers queue behind one turn and drain together at the boundary: the count
+/// never drifts — the note mid-turn 1 says 3 for the three queued (not more), the batch
+/// turn adds no fresh note, and a later turn's note counts only its own fresh message.
+#[tokio::test]
+async fn three_delivers_wait_and_drain_without_drifting_the_count() {
+    let script = vec![
+        reply(vec![list_sessions_call()], Stop::ToolUse),
+        reply(vec![text("listed")], Stop::End),
+        reply(vec![list_sessions_call()], Stop::ToolUse),
+        reply(vec![text("done")], Stop::End),
+        reply(vec![list_sessions_call()], Stop::ToolUse),
+        reply(vec![text("done")], Stop::End),
+    ];
+    let (mut h, sent) = engine_sent(script, None, None, None, std::env::temp_dir());
+    caps(&h, true);
+    drive(&mut h, |e| matches!(e, Event::Idle)).await;
+    submit(&h, "first turn");
+    // Mid-turn 1: three messages queue behind it.
+    let deliver = |h: &Handle, m: &str| {
+        h.ops
+            .send(Op::Deliver {
+                from: "s9".into(),
+                from_name: "Chief".into(),
+                message: m.into(),
+            })
+            .unwrap();
+    };
+    let mut round = 0;
+    let mut first_done = false;
+    let mut second_done = false;
+    loop {
+        let env = h.events.recv().await.unwrap();
+        if let Event::SessionRequest { id, .. } = &env.event {
+            if round == 0 {
+                // Queued before the tool's reply, so the count is up before step 2.
+                for m in ["one", "two", "three"] {
+                    deliver(&h, m);
+                }
+            }
+            round += 1;
+            h.ops
+                .send(Op::SessionReply {
+                    id: id.clone(),
+                    result: Some(json!([])),
+                    error: None,
+                })
+                .unwrap();
+        }
+        if let Event::TurnEnded { turn, .. } = &env.event {
+            first_done |= *turn == 1;
+            second_done |= *turn == 2;
+            if first_done && second_done {
+                break;
+            }
+        }
+    }
+    // Turn 1's step 2 saw all three: "3 messages are waiting for you" — exactly three.
+    let mid = user_texts(&request_messages(&sent, 1));
+    assert!(
+        mid.iter()
+            .any(|t| t.contains("3 messages are waiting for you")),
+        "{mid:?}"
+    );
+    // Turn 2 was the batch carrying all three; its calls repeat the one earlier note in
+    // history but add no fresh one (the queue is empty after the boundary drain).
+    let batch = user_texts(&request_messages(&sent, 3));
+    for m in ["one", "two", "three"] {
+        assert!(batch.iter().any(|t| t.contains(m)), "{batch:?}");
+    }
+    let waiting: Vec<&String> = batch
+        .iter()
+        .filter(|t| t.contains("waiting for you"))
+        .collect();
+    assert_eq!(waiting.len(), 1, "no fresh note after the drain: {batch:?}");
+    // A fresh turn, and mid-turn of it one more message queues: the note it triggers says
+    // 1, not 4 — the three that drained are gone, not still counting.
+    submit(&h, "second request");
+    let mut delivered = false;
+    loop {
+        let env = h.events.recv().await.unwrap();
+        if let Event::SessionRequest { id, .. } = &env.event {
+            deliver(&h, "four");
+            h.ops
+                .send(Op::SessionReply {
+                    id: id.clone(),
+                    result: Some(json!([])),
+                    error: None,
+                })
+                .unwrap();
+            delivered = true;
+        }
+        if matches!(env.event, Event::TurnEnded { turn: 3, .. }) && delivered {
+            break;
+        }
+    }
+    let note = user_texts(&request_messages(&sent, 5));
+    assert!(
+        note.iter().any(|t| t.contains("1 message is waiting for you")),
+        "the drained three stopped counting: {note:?}"
+    );
+    shutdown(h).await;
+}
+
+/// A clear of the inbox (a stop) leaves no stale count: messages queued before it are
+/// voided, and the note a later turn's mid-turn deliver triggers counts only what arrived
+/// after the clear.
+#[tokio::test]
+async fn a_cleared_inbox_leaves_no_stale_waiting_count() {
+    let script = vec![
+        reply(vec![list_sessions_call()], Stop::ToolUse),
+        reply(vec![text("listed")], Stop::End),
+        reply(vec![list_sessions_call()], Stop::ToolUse),
+        reply(vec![text("done")], Stop::End),
+        reply(vec![list_sessions_call()], Stop::ToolUse),
+        reply(vec![text("done")], Stop::End),
+    ];
+    let (mut h, sent) = engine_sent(script, None, None, None, std::env::temp_dir());
+    caps(&h, true);
+    drive(&mut h, |e| matches!(e, Event::Idle)).await;
+    submit(&h, "work");
+    let deliver = |h: &Handle, m: &str| {
+        h.ops
+            .send(Op::Deliver {
+                from: "s2".into(),
+                from_name: "Manager".into(),
+                message: m.into(),
+            })
+            .unwrap();
+    };
+    let mut cleared = false;
+    let mut first_ended = false;
+    let mut second_ended = false;
+    loop {
+        let env = h.events.recv().await.unwrap();
+        if let Event::SessionRequest { id, .. } = &env.event {
+            if !cleared {
+                // Two queue up mid-turn, then the stop clears them.
+                deliver(&h, "queued-one");
+                deliver(&h, "queued-two");
+                h.ops.send(Op::Interrupt).unwrap();
+                h.ops.send(Op::ClearInbox).unwrap();
+                cleared = true;
+            }
+            h.ops
+                .send(Op::SessionReply {
+                    id: id.clone(),
+                    result: Some(json!([])),
+                    error: None,
+                })
+                .unwrap();
+        }
+        if let Event::TurnEnded { turn, .. } = &env.event {
+            first_ended |= *turn == 1;
+            second_ended |= *turn == 2;
+            if first_ended && second_ended {
+                break;
+            }
+        }
+    }
+    // The voided two never started a turn (the existing clear test covers the turn side);
+    // here: no "2 messages" note was ever emitted, and the batch turn's calls carry no
+    // fresh waiting note at all (the queue was zeroed).
+    let all: Vec<String> = (0..sent.lock().unwrap().len())
+        .flat_map(|n| user_texts(&request_messages(&sent, n)))
+        .collect();
+    assert!(
+        !all.iter().any(|t| t.contains("2 messages are waiting")),
+        "the voided two were announced: {all:?}"
+    );
+    let batch = user_texts(&request_messages(&sent, 3));
+    assert!(
+        !batch.iter().any(|t| t.contains("waiting for you")),
+        "no stale count after the clear: {batch:?}"
+    );
+    // A fresh turn with one message delivered mid-turn: the note says 1 — arrivals after
+    // the clear count from zero, not 3.
+    submit(&h, "carry on");
+    let mut delivered = false;
+    loop {
+        let env = h.events.recv().await.unwrap();
+        if let Event::SessionRequest { id, .. } = &env.event {
+            deliver(&h, "after-clear");
+            h.ops
+                .send(Op::SessionReply {
+                    id: id.clone(),
+                    result: Some(json!([])),
+                    error: None,
+                })
+                .unwrap();
+            delivered = true;
+        }
+        if matches!(env.event, Event::TurnEnded { turn: 3, .. }) && delivered {
+            break;
+        }
+    }
+    let note = user_texts(&request_messages(&sent, 5));
+    assert!(
+        note.iter().any(|t| t.contains("1 message is waiting for you")),
+        "counts from zero after the clear: {note:?}"
+    );
+    let last = user_texts(&request_messages(&sent, 6));
+    assert!(
+        last.iter().any(|t| t.contains("after-clear")),
+        "the fresh message ran: {last:?}"
+    );
+    shutdown(h).await;
+}
+
+/// The note is rate-limited: a count that doesn't change is announced once per 5 steps,
+/// not on every step of a long turn.
+#[tokio::test]
+async fn a_steady_waiting_count_is_announced_once_not_every_step() {
+    // One call per step, seven steps: the count (set before step 2's call) stays at 1
+    // throughout.
+    let script = (0..6)
+        .map(|_| reply(vec![list_sessions_call()], Stop::ToolUse))
+        .collect::<Vec<Response>>();
+    let script: Vec<Response> = script
+        .into_iter()
+        .chain(std::iter::once(reply(vec![text("done")], Stop::End)))
+        .collect();
+    let (mut h, sent) = engine_sent(script, None, None, None, std::env::temp_dir());
+    caps(&h, true);
+    drive(&mut h, |e| matches!(e, Event::Idle)).await;
+    submit(&h, "long turn");
+    let mut queued = false;
+    let mut steps = 0;
+    loop {
+        let env = h.events.recv().await.unwrap();
+        if let Event::SessionRequest { id, .. } = &env.event {
+            if !queued {
+                h.ops
+                    .send(Op::Deliver {
+                        from: "s9".into(),
+                        from_name: "Chief".into(),
+                        message: "still here".into(),
+                    })
+                    .unwrap();
+                queued = true;
+            }
+            h.ops
+                .send(Op::SessionReply {
+                    id: id.clone(),
+                    result: Some(json!([])),
+                    error: None,
+                })
+                .unwrap();
+            steps += 1;
+        }
+        if let Event::TurnEnded { .. } = &env.event {
+            break;
+        }
+    }
+    assert!(steps >= 5, "a five-step turn to test the rate limit on");
+    let notes: Vec<usize> = (0..sent.lock().unwrap().len())
+        .filter(|&n| {
+            user_texts(&request_messages(&sent, n))
+                .iter()
+                .any(|t| t.contains("1 message is waiting for you"))
+        })
+        .collect();
+    // Announced on the first call after the deliver, then at most once per 5 steps: on a
+    // 6-call turn (the deliver lands before call 2) that's calls 2 and 7 — or fewer if the
+    // turn ended sooner. Never one per step.
+    assert!(notes.first() == Some(&1), "announced on the next call: {notes:?}");
+    let gaps = notes
+        .windows(2)
+        .map(|w| w[1] - w[0])
+        .collect::<Vec<_>>();
+    assert!(
+        gaps.iter().all(|g| *g >= 5),
+        "a steady count repeats at most once per 5 steps: {notes:?}"
+    );
+    assert!(notes.len() < steps, "not every step: {notes:?} of {steps}");
+    shutdown(h).await;
+}
