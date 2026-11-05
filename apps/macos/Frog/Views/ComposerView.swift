@@ -20,6 +20,8 @@ struct ComposerView: View {
     @State private var drafts = DraftStore.shared
     /// The keystroke save, restarted on every change (about ⅓ s of quiet writes).
     @State private var draftSave: Task<Void, Never>?
+    /// The draft the last warm-up carried (`.some(nil)`: the conversation alone; nil: none yet).
+    @State private var warmed: String?? = nil
     @Environment(\.switchFolder) private var switchFolder
 
     private var canSend: Bool {
@@ -327,17 +329,28 @@ struct ComposerView: View {
             guard !Task.isCancelled else { return }
             warm()
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in warm() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in warm(again: true) }
     }
 
     /// Ask the engine to prefill the conversation and the draft. `/skill` and `!command` are
     /// rewritten before they're sent, so they warm the conversation alone.
-    private func warm() {
+    ///
+    /// The engine prefills the draft as the start of the next message, so only a prefix of it can
+    /// ever be reused: a long draft warms its first `warmLimit` characters, which typing at the
+    /// end leaves unchanged, and an unchanged draft isn't sent again after a pause. Coming back to
+    /// Frog (`again`) re-sends it, since the server's cache may have let it go.
+    private func warm(again: Bool = false) {
         guard !conversation.busy else { return }
-        let draft = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let usable = !draft.isEmpty && !draft.hasPrefix("/") && !draft.hasPrefix("!")
-        conversation.send(.warm(draft: usable ? text : nil))
+        let first = text.first { !$0.isWhitespace }
+        let usable = first != nil && first != "/" && first != "!"
+        let draft = usable ? String(text.prefix(Self.warmLimit)) : nil
+        guard again || warmed != .some(draft) else { return }
+        warmed = .some(draft)
+        conversation.send(.warm(draft: draft))
     }
+
+    /// The most of a draft a warm-up carries (about 8K tokens).
+    static let warmLimit = 32_768
 
     /// The model's suggested next prompt, as ghost text Tab accepts; outward ones are a button.
     private var ghost: String? {
