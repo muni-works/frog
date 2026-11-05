@@ -81,8 +81,13 @@ function patch(t: Thread, id: string, f: (e: Entry) => Entry): Thread {
 
 function apply(t: Thread, ev: Event, created: number): Thread {
   switch (ev.event) {
-    case 'turn_started':
+    case 'turn_started': {
+      // A repeat of the turn still in progress (a replayed or doubled envelope) is the same
+      // turn, not a second one: keep its items so no stale card shows up beside it.
+      const last = t.turns[t.turns.length - 1]
+      if (last && last.turn === ev.turn && !last.reason) return { ...t, running: true, ended: null }
       return { ...t, running: true, ended: null, next: null, startedAt: created, turns: [...t.turns, { turn: ev.turn, input: ev.input, images: ev.images, more: ev.more, entries: [], at: created }] }
+    }
     case 'compacted':
       return { ...t, compacting: false, marks: [...(t.marks ?? []), { after: t.turns.length, text: `Compacted · ${kilo(ev.tokens_before)} → ${kilo(ev.tokens_after)} tokens` }] }
     case 'compaction_failed':
@@ -92,7 +97,9 @@ function apply(t: Thread, ev: Event, created: number): Thread {
     case 'next_suggested':
       return { ...t, next: { text: ev.text, act: !!ev.act } }
     case 'turn_ended': {
-      const turns = t.turns.map((u) => (u.turn === ev.turn ? { ...u, usage: ev.usage, reason: ev.reason } : u))
+      // The latest turn with that number: an older one that shares it has already ended.
+      const at = t.turns.map((u) => u.turn).lastIndexOf(ev.turn)
+      const turns = t.turns.map((u, i) => (i === at ? { ...u, usage: ev.usage, reason: ev.reason } : u))
       return { ...t, turns, running: false, ask: null, question: null, elicitation: null, ended: ev.reason, activity: null }
     }
     case 'progress':

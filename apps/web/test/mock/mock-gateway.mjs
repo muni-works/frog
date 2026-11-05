@@ -62,6 +62,8 @@ export function startMock({ port = 8788, fixture = new URL("./demo.jsonl", impor
         rec.emit(e.event === "turn_started" ? { ...e, input: "(recorded)" } : e);
         if (e.event === "permission_request") rec.permission({ id: e.id, decision: "allow" });
       }
+      // Live turns number on from the recorded one, as a real session's would.
+      rec.turn = Math.max(0, ...events.filter((e) => e.event === "turn_started").map((e) => e.turn ?? 0));
       sessions.set(id, { info, rec });
       const origin = `ws://${req.headers.host}`;
       return json(res, 201, { ...summary({ info }), ws: `${origin}/v1/sessions/${id}/ws` });

@@ -108,11 +108,12 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
   /** What a sent message is waiting on, in a few words ("waking the sandbox"). */
   waiting?: string
 }) {
-  const lastTurn = thread.turns[thread.turns.length - 1]?.turn
+  // The live turn is the last one by position: turn numbers can repeat after a resume.
+  const lastIdx = thread.turns.length - 1
   return (
     <>
       {(thread.marks ?? []).filter((m) => m.after === 0).map((m, i) => <Mark key={`m0-${i}`} m={m} />)}
-      {thread.turns.map((turn, ti) => (<Fragment key={turn.turn}>
+      {thread.turns.map((turn, ti) => (<Fragment key={`${ti}-${turn.turn}`}>
         <div className="turn">
           <div className="ask-block">
             {[{ text: turn.input, images: turn.images }, ...(turn.more ?? [])].map((m, i) => (
@@ -135,8 +136,8 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
               <div key={e.id} className="decided"><b>Decided</b> · {e.text}</div>
             )
             if (e.kind === 'message') return <div key={e.id} className={`say ${servedClass(turn.usage?.served_by)}`} title={turn.usage?.served_by ? `Served by ${turn.usage.served_by.name}` : undefined}><Markdown text={e.text} />{!e.done && <span className="caret" />}</div>
-            if (turn.turn === lastTurn && thread.question?.item === e.id) return <QuestionCard key={e.id} q={thread.question} onAnswer={onAnswer} />
-            const asking = turn.turn === lastTurn && thread.ask?.item === e.id ? thread.ask : null
+            if (ti === lastIdx && thread.question?.item === e.id) return <QuestionCard key={e.id} q={thread.question} onAnswer={onAnswer} />
+            const asking = ti === lastIdx && thread.ask?.item === e.id ? thread.ask : null
             const diff = e.diff ?? asking?.preview
             if (diff && e.outcome !== 'denied') return (
               <DiffCard key={e.id} diff={diff} ask={asking} onDecide={onDecide}
@@ -159,7 +160,7 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
           {turn.usage && (turn.reason?.type === 'complete' || turn.reason?.type === 'denied') && (
             <TurnFooter usage={turn.usage} models={models} pinned={false}
               answer={[...turn.entries].reverse().find((e) => e.kind === 'message')?.text ?? ''}
-              onRetry={turn.turn === lastTurn && !thread.running ? onRetry : undefined} />
+              onRetry={ti === lastIdx && !thread.running ? onRetry : undefined} />
           )}
           </div>
           {/* How the turn ended stays with the turn: stopping a later one doesn't clear it. */}
@@ -168,13 +169,13 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
           {turn.reason && !['complete', 'cancelled', 'error', 'denied'].includes(turn.reason.type) && (
             <div role="status" className="banner warn">
               <span style={{ flex: 1 }}>{ending(turn.reason.type, turn.usage)}</span>
-              {turn.turn === lastTurn && !thread.running && onContinue && <button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={onContinue}>Continue</button>}
+              {ti === lastIdx && !thread.running && onContinue && <button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={onContinue}>Continue</button>}
             </div>
           )}
           {endError(turn.reason) && !/insufficient_credit|out_of_credits|402/.test(JSON.stringify(turn.reason)) && (
             <div role="status" className="banner warn">
               <span style={{ flex: 1 }}>{endError(turn.reason)}</span>
-              {turn.turn === lastTurn && !thread.running && onRetry && <button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={onRetry}>Try again</button>}
+              {ti === lastIdx && !thread.running && onRetry && <button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={onRetry}>Try again</button>}
             </div>
           )}
         </div>
