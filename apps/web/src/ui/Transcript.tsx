@@ -1,6 +1,6 @@
-import { Fragment, useEffect, useState } from 'react'
+import { Fragment, memo, useEffect, useMemo, useRef, useState } from 'react'
 import { servedClass, type FileDiff, type Image } from '../cloud/protocol'
-import type { Ask, Entry, Thread } from '../engine/thread'
+import type { Ask, Entry, Question, Thread } from '../engine/thread'
 import type { Model } from '../models'
 import { ElicitationCard, QuestionCard } from './AskCards'
 import { Markdown } from './Markdown'
@@ -90,7 +90,9 @@ function ToolLine({ e }: { e: Entry }) {
   )
 }
 
-export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, models = [], outbox = [], onResend, onEdit, waiting, onContinue }: {
+const NO_MODELS: Model[] = []
+
+export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, models = NO_MODELS, outbox = [], onResend, onEdit, waiting, onContinue }: {
   thread: Thread
   onDecide: (allow: boolean) => void
   onAnswer: (choices: string[], other?: string) => void
@@ -110,75 +112,24 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
 }) {
   // The live turn is the last one by position: turn numbers can repeat after a resume.
   const lastIdx = thread.turns.length - 1
+  // Handlers change identity every render; turns read them through one stable ref so a
+  // streamed delta redraws only the turn it touched.
+  const latest = useRef({ onDecide, onAnswer, onRetry, onEdit, onContinue })
+  latest.current = { onDecide, onAnswer, onRetry, onEdit, onContinue }
+  const cb = useMemo<TurnCallbacks>(() => ({
+    onDecide: (a) => latest.current.onDecide(a),
+    onAnswer: (c, o) => latest.current.onAnswer(c, o),
+    onRetry: () => latest.current.onRetry?.(),
+    onEdit: (t) => latest.current.onEdit?.(t),
+    onContinue: () => latest.current.onContinue?.(),
+  }), [])
+  const has = { retry: !!onRetry, edit: !!onEdit, cont: !!onContinue }
   return (
     <>
       {(thread.marks ?? []).filter((m) => m.after === 0).map((m, i) => <Mark key={`m0-${i}`} m={m} />)}
       {thread.turns.map((turn, ti) => (<Fragment key={`${ti}-${turn.turn}`}>
-        <div className="turn">
-          <div className="ask-block">
-            {[{ text: turn.input, images: turn.images }, ...(turn.more ?? [])].map((m, i) => (
-              <div key={i} className="me">
-                {m.images?.length ? <div className="me-imgs">{m.images.map((im, j) => <img key={j} src={`data:${im.mime};base64,${im.data}`} alt="" />)}</div> : null}
-                {m.text}
-              </div>
-            ))}
-            <div className="hover-row mine">
-              <Ticks n={2} />
-              {turn.at ? <span className="when" title={new Date(turn.at).toLocaleString()}>{ago(turn.at)}</span> : null}
-              <span className="sep" aria-hidden="true">·</span>
-              <CopyButton text={[turn.input, ...(turn.more ?? []).map((m) => m.text)].join('\n\n')} />
-              {onEdit && <IconButton label="Edit (back to the composer)" onClick={() => onEdit([turn.input, ...(turn.more ?? []).map((m) => m.text)].join('\n\n'))} icon="edit" />}
-            </div>
-          </div>
-          <div className="reply-block">
-          {turn.entries.map((e) => {
-            if (e.kind === 'reasoning') return (
-              <div key={e.id} className="decided"><b>Decided</b> · {e.text}</div>
-            )
-            if (e.kind === 'message') return <div key={e.id} className={`say ${servedClass(turn.usage?.served_by)}`} title={turn.usage?.served_by ? `Served by ${turn.usage.served_by.name}` : undefined}><Markdown text={e.text} />{!e.done && <span className="caret" />}</div>
-            if (ti === lastIdx && thread.question?.item === e.id) return <QuestionCard key={e.id} q={thread.question} onAnswer={onAnswer} />
-            const asking = ti === lastIdx && thread.ask?.item === e.id ? thread.ask : null
-            const diff = e.diff ?? asking?.preview
-            if (diff && e.outcome !== 'denied') return (
-              <DiffCard key={e.id} diff={diff} ask={asking} onDecide={onDecide}
-                note="Runs in your cloud sandbox. Nothing is pushed until you say so." />
-            )
-            const ask = asking
-            if (ask) return (
-              <div key={e.id} className="cardx">
-                <div style={{ padding: '10px 14px 6px' }}><b>Can I {ask.name.toLowerCase()} this?</b>{ask.reason && <div className="det wrap">{ask.reason}</div>}</div>
-                <div className="diff">{ask.arg}</div>
-                <div className="diff-acts">
-                  <span style={{ flex: 1 }} className="det">Runs in your cloud sandbox.</span>
-                  <button type="button" className="f-btn f-btn--bordered" onClick={() => onDecide(false)}>Deny ⌘.</button>
-                  <button type="button" className="f-btn f-btn--prominent" onClick={() => onDecide(true)}>Allow ⌘↩</button>
-                </div>
-              </div>
-            )
-            return <ToolLine key={e.id} e={e} />
-          })}
-          {turn.usage && (turn.reason?.type === 'complete' || turn.reason?.type === 'denied') && (
-            <TurnFooter usage={turn.usage} models={models} pinned={false}
-              answer={[...turn.entries].reverse().find((e) => e.kind === 'message')?.text ?? ''}
-              onRetry={ti === lastIdx && !thread.running ? onRetry : undefined} />
-          )}
-          </div>
-          {/* How the turn ended stays with the turn: stopping a later one doesn't clear it. */}
-          {turn.reason?.type === 'cancelled' && <div className="tool">Stopped</div>}
-          {/* Any other ending that isn't a finished answer says so, never silence. */}
-          {turn.reason && !['complete', 'cancelled', 'error', 'denied'].includes(turn.reason.type) && (
-            <div role="status" className="banner warn">
-              <span style={{ flex: 1 }}>{ending(turn.reason.type, turn.usage)}</span>
-              {ti === lastIdx && !thread.running && onContinue && <button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={onContinue}>Continue</button>}
-            </div>
-          )}
-          {endError(turn.reason) && !/insufficient_credit|out_of_credits|402/.test(JSON.stringify(turn.reason)) && (
-            <div role="status" className="banner warn">
-              <span style={{ flex: 1 }}>{endError(turn.reason)}</span>
-              {ti === lastIdx && !thread.running && onRetry && <button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={onRetry}>Try again</button>}
-            </div>
-          )}
-        </div>
+        <TurnView turn={turn} live={ti === lastIdx} ask={ti === lastIdx ? thread.ask : null} question={ti === lastIdx ? thread.question : null}
+          running={ti === lastIdx && thread.running} models={models} cb={cb} hasRetry={has.retry} hasEdit={has.edit} hasContinue={has.cont} />
         {(thread.marks ?? []).filter((m) => m.after === ti + 1).map((m, k) => <Mark key={`m${ti}-${k}`} m={m} />)}
       </Fragment>))}
       {thread.question && !thread.turns[thread.turns.length - 1]?.entries.some((e) => e.id === thread.question?.item) && (
@@ -206,6 +157,90 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
     </>
   )
 }
+
+type Turn = Thread['turns'][number]
+interface TurnCallbacks {
+  onDecide: (allow: boolean) => void
+  onAnswer: (choices: string[], other?: string) => void
+  onRetry: () => void
+  onEdit: (text: string) => void
+  onContinue: () => void
+}
+
+/** One turn. Memoized: the reducer keeps untouched turns the same object, so while the last
+ * turn streams the others don't redraw (or re-parse their markdown). Only the live turn gets
+ * the session's ask, question and running state. */
+const TurnView = memo(function TurnView({ turn, live, ask, question, running, models, cb, hasRetry, hasEdit, hasContinue }: {
+  turn: Turn; live: boolean; ask: Ask | null; question: Question | null; running: boolean; models: Model[]
+  cb: TurnCallbacks; hasRetry: boolean; hasEdit: boolean; hasContinue: boolean
+}) {
+  return (
+    <div className="turn">
+      <div className="ask-block">
+        {[{ text: turn.input, images: turn.images }, ...(turn.more ?? [])].map((m, i) => (
+          <div key={i} className="me">
+            {m.images?.length ? <div className="me-imgs">{m.images.map((im, j) => <img key={j} src={`data:${im.mime};base64,${im.data}`} alt="" />)}</div> : null}
+            {m.text}
+          </div>
+        ))}
+        <div className="hover-row mine">
+          <Ticks n={2} />
+          {turn.at ? <span className="when" title={new Date(turn.at).toLocaleString()}>{ago(turn.at)}</span> : null}
+          <span className="sep" aria-hidden="true">·</span>
+          <CopyButton text={[turn.input, ...(turn.more ?? []).map((m) => m.text)].join('\n\n')} />
+          {hasEdit && <IconButton label="Edit (back to the composer)" onClick={() => cb.onEdit([turn.input, ...(turn.more ?? []).map((m) => m.text)].join('\n\n'))} icon="edit" />}
+        </div>
+      </div>
+      <div className="reply-block">
+      {turn.entries.map((e) => {
+        if (e.kind === 'reasoning') return (
+          <div key={e.id} className="decided"><b>Decided</b> · {e.text}</div>
+        )
+        if (e.kind === 'message') return <div key={e.id} className={`say ${servedClass(turn.usage?.served_by)}`} title={turn.usage?.served_by ? `Served by ${turn.usage.served_by.name}` : undefined}><Markdown text={e.text} />{!e.done && <span className="caret" />}</div>
+        if (question?.item === e.id) return <QuestionCard key={e.id} q={question} onAnswer={cb.onAnswer} />
+        const asking = ask?.item === e.id ? ask : null
+        const diff = e.diff ?? asking?.preview
+        if (diff && e.outcome !== 'denied') return (
+          <DiffCard key={e.id} diff={diff} ask={asking} onDecide={cb.onDecide}
+            note="Runs in your cloud sandbox. Nothing is pushed until you say so." />
+        )
+        if (asking) return (
+          <div key={e.id} className="cardx">
+            <div style={{ padding: '10px 14px 6px' }}><b>Can I {asking.name.toLowerCase()} this?</b>{asking.reason && <div className="det wrap">{asking.reason}</div>}</div>
+            <div className="diff">{asking.arg}</div>
+            <div className="diff-acts">
+              <span style={{ flex: 1 }} className="det">Runs in your cloud sandbox.</span>
+              <button type="button" className="f-btn f-btn--bordered" onClick={() => cb.onDecide(false)}>Deny ⌘.</button>
+              <button type="button" className="f-btn f-btn--prominent" onClick={() => cb.onDecide(true)}>Allow ⌘↩</button>
+            </div>
+          </div>
+        )
+        return <ToolLine key={e.id} e={e} />
+      })}
+      {turn.usage && (turn.reason?.type === 'complete' || turn.reason?.type === 'denied') && (
+        <TurnFooter usage={turn.usage} models={models} pinned={false}
+          answer={[...turn.entries].reverse().find((e) => e.kind === 'message')?.text ?? ''}
+          onRetry={live && !running && hasRetry ? cb.onRetry : undefined} />
+      )}
+      </div>
+      {/* How the turn ended stays with the turn: stopping a later one doesn't clear it. */}
+      {turn.reason?.type === 'cancelled' && <div className="tool">Stopped</div>}
+      {/* Any other ending that isn't a finished answer says so, never silence. */}
+      {turn.reason && !['complete', 'cancelled', 'error', 'denied'].includes(turn.reason.type) && (
+        <div role="status" className="banner warn">
+          <span style={{ flex: 1 }}>{ending(turn.reason.type, turn.usage)}</span>
+          {live && !running && hasContinue && <button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={cb.onContinue}>Continue</button>}
+        </div>
+      )}
+      {endError(turn.reason) && !/insufficient_credit|out_of_credits|402/.test(JSON.stringify(turn.reason)) && (
+        <div role="status" className="banner warn">
+          <span style={{ flex: 1 }}>{endError(turn.reason)}</span>
+          {live && !running && hasRetry && <button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={cb.onRetry}>Try again</button>}
+        </div>
+      )}
+    </div>
+  )
+})
 
 /** WhatsApp-style receipts on your messages: a clock while sending, one tick on the wire, two
  * once Frog has started on it. */

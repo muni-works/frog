@@ -1,4 +1,4 @@
-import { Fragment, useState, type ReactNode } from 'react'
+import { Fragment, memo, useMemo, useState, type ReactNode } from 'react'
 
 // Replies as Markdown: fenced code (with Copy), headings, lists, quotes, rules, tables and
 // inline code, bold, italics and links. Built as React elements, never HTML strings, so model
@@ -117,10 +117,12 @@ function Code({ lang, text }: { lang: string; text: string }) {
   )
 }
 
-export function Markdown({ text }: { text: string }) {
+/** Memoized on the text: a finished message isn't parsed again while another one streams. */
+export const Markdown = memo(function Markdown({ text }: { text: string }) {
+  const blocks = useMemo(() => parse(text), [text])
   return (
     <div className="md">
-      {parse(text).map((b, i) => {
+      {blocks.map((b, i) => {
         switch (b.k) {
           case 'code': return <Code key={i} lang={b.lang} text={b.text} />
           case 'h': {
@@ -144,4 +146,4 @@ export function Markdown({ text }: { text: string }) {
       })}
     </div>
   )
-}
+})

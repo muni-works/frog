@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Gateway } from './cloud/client'
-import type { EndReason, RepoList, SessionSummary } from './cloud/protocol'
+import type { EndReason, Envelope, RepoList, SessionSummary } from './cloud/protocol'
 import { CloudEngine } from './engine/cloud'
 import { emptyThread, reduce, type Thread } from './engine/thread'
 
@@ -132,13 +132,31 @@ export function useThreads(cloud: CloudEngine | null, ids: string[]) {
   const key = ids.join(',')
   useEffect(() => {
     if (!cloud) return
+    // Envelopes are folded once per animation frame, not one render per streamed token. A
+    // hidden tab gets no frames, so a timer backs the frame up.
+    const queued: { id: string; env: Envelope; known: Thread | null }[] = []
+    let frame = 0
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const flush = () => {
+      if (frame) cancelAnimationFrame(frame)
+      clearTimeout(timer)
+      frame = 0
+      const batch = queued.splice(0)
+      if (batch.length) setThreads((all) => {
+        const next = { ...all }
+        for (const q of batch) next[q.id] = reduce(next[q.id] ?? q.known ?? emptyThread, q.env)
+        return next
+      })
+    }
     const offs = ids.map((id) => {
       const known = cache.current[id] ?? loadThread(id)
       if (known && !cache.current[id]) setThreads((all) => ({ ...all, [id]: known }))
-      return cloud.subscribe(id, known?.lastSeq ?? 0, (env) =>
-        setThreads((all) => ({ ...all, [id]: reduce(all[id] ?? known ?? emptyThread, env) })))
+      return cloud.subscribe(id, known?.lastSeq ?? 0, (env) => {
+        queued.push({ id, env, known })
+        if (!frame) { frame = requestAnimationFrame(flush); timer = setTimeout(flush, 200) }
+      })
     })
-    return () => offs.forEach((off) => off())
+    return () => { flush(); offs.forEach((off) => off()) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cloud, key])
   // Saved a moment after it settles, not on every streamed token.
