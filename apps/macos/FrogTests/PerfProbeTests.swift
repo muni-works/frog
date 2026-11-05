@@ -64,13 +64,14 @@ final class PerfProbeTests: XCTestCase {
         let ingest = ms { for t in 1...300 { turn(c, t) } }
         let firstLayout = ms { pump(0.001); host.layoutSubtreeIfNeeded(); w.displayIfNeeded() }
         pump(0.5); let m300 = mem()
-        // scroll: 60 jumps, per-jump layout+display time
-        var sc: [Double] = []
+        // scroll: 60 jumps, per-jump layout+display time, and the frame after (work a jump defers)
+        var sc: [Double] = [], after: [Double] = []
         let s = scrolls(host).max { ($0.documentView?.frame.height ?? 0) < ($1.documentView?.frame.height ?? 0) }!
         for i in 0..<60 {
             let doc = s.documentView!; let maxY = max(0, doc.frame.height - s.contentView.bounds.height)
             let y = i % 2 == 0 ? CGFloat(i) / 60 * maxY : maxY * CGFloat(60 - i) / 60
             sc.append(ms { s.contentView.scroll(to: NSPoint(x: 0, y: y)); s.reflectScrolledClipView(s.contentView); host.layoutSubtreeIfNeeded(); w.displayIfNeeded() })
+            after.append(ms { pump(0.001); host.layoutSubtreeIfNeeded(); w.displayIfNeeded() })
             pump(0.005)
         }
         // smooth scroll: 200 small steps of 40pt from top
@@ -90,7 +91,7 @@ final class PerfProbeTests: XCTestCase {
         func p(_ a: [Double]) -> String { let s = a.sorted(); return String(format: "p50 %.1f p95 %.1f max %.1f ms (>16.7ms: %d/%d)", s[s.count/2], s[Int(Double(s.count)*0.95)], s.last!, a.filter { $0 > 16.7 }.count, a.count) }
         print(String(format: "PROBE mem start %.0f MB, empty view %.0f MB, 300 turns %.0f MB, end %.0f MB", m0, mEmpty, m300, mEnd))
         print(String(format: "PROBE ingest 300 turns %.0f ms; first layout %.0f ms", ingest, firstLayout))
-        print("PROBE jump-scroll " + p(sc)); print("PROBE smooth-scroll " + p(sm)); print("PROBE resize " + p(rs))
+        print("PROBE jump-scroll " + p(sc)); print("PROBE jump next frame " + p(after)); print("PROBE smooth-scroll " + p(sm)); print("PROBE resize " + p(rs))
         print(String(format: "PROBE streaming 5 turns at tail: wall %.1fs cpu %.1fs (%.0f%% of a core)", wall, used, used / wall * 100))
     }
 

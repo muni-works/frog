@@ -29,6 +29,10 @@ struct MessageText: NSViewRepresentable {
         view.linkTextAttributes = [.foregroundColor: NSColor.controlAccentColor, .cursor: NSCursor.pointingHand]
         view.setContentHuggingPriority(.defaultLow, for: .horizontal)
         view.layoutManager?.delegate = view
+        // Every NSTextView in the window hears every view's frame change (AppKit looks for an
+        // enclosing clip view), so in a long transcript each row placed paid for all the others.
+        // Nothing here tracks frames: the container width is set from `setFrameSize`.
+        view.postsFrameChangedNotifications = false
         return view
     }
 
@@ -51,17 +55,22 @@ final class MessageTextView: NSTextView, @MainActor NSLayoutManagerDelegate {
     private var shown: [MarkdownBlock] = []
     /// Where each shown block's text sits in the storage, separator included.
     private var ranges: [NSRange] = []
-    /// The code blocks laid over their attachments, in order.
-    private var codeViews: [NSHostingView<CodeOverlay>] = []
+    /// The code blocks laid over their attachments, in order. Nil until the block comes near
+    /// the visible rect: a hosting view per code block is a large part of building a row, and a
+    /// jump through a long transcript builds rows it never shows.
+    private var codeViews: [NSHostingView<CodeOverlay>?] = []
     private var placePending = false
     lazy var reveal = InkReveal(view: self)
-    /// Measures code blocks: one SwiftUI graph for the view's life, rather than a new one built
-    /// and torn down for every streamed token.
-    private lazy var sizer: NSHostingController<CodeOverlay> = {
+    /// Measures code blocks: one SwiftUI graph for every message, rather than one per view (a
+    /// row a jump lands on is a new view) or a new one for every streamed token.
+    private static let sizer: NSHostingController<CodeOverlay> = {
         let c = NSHostingController(rootView: CodeOverlay(language: "", code: ""))
         c.sizingOptions = []
         return c
     }()
+    private struct CodeKey: Hashable { let language: String, code: String, width: CGFloat, line: CGFloat }
+    /// Code block heights by content and width, so a row that comes back doesn't measure again.
+    private static var codeHeights: [CodeKey: CGFloat] = [:]
     /// Inside `MessageText.updateNSView`, i.e. inside SwiftUI's update of the transcript.
     /// Invalidating this view's size from there changes an input of the graph mid-update (an
     /// AttributeGraph corruption suspect, docs/design/attributegraph-corruption.md); SwiftUI
@@ -106,7 +115,7 @@ final class MessageTextView: NSTextView, @MainActor NSLayoutManagerDelegate {
         let incoming = Self.attachments(in: tail, range: NSRange(location: 0, length: tail.length))
         while codeViews.count > before + incoming.count {
             // Not torn down mid-update: hidden now, gone once SwiftUI's update is over.
-            let gone = codeViews.removeLast()
+            guard let gone = codeViews.removeLast() else { continue }
             gone.isHidden = true
             DispatchQueue.main.async { gone.removeFromSuperview() }
         }
@@ -126,17 +135,45 @@ final class MessageTextView: NSTextView, @MainActor NSLayoutManagerDelegate {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         reveal.windowChanged()
+        stopHearingFrames()
+        NotificationCenter.default.removeObserver(self, name: NSView.boundsDidChangeNotification, object: nil)
+        guard window != nil, let clip = enclosingScrollView?.contentView else { return }
+        clip.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(self, selector: #selector(clipScrolled), name: NSView.boundsDidChangeNotification, object: clip)
+    }
+
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        stopHearingFrames()
+    }
+
+    /// NSTextView listens to every view's frame change in the process (it's looking for a clip
+    /// view to adopt), so every frame change in the transcript paid once per row's text view.
+    /// This view never scrolls itself; it doesn't need to.
+    private func stopHearingFrames() {
+        NotificationCenter.default.removeObserver(self, name: NSView.frameDidChangeNotification, object: nil)
+    }
+
+    /// The transcript scrolled: code blocks coming into view get their views.
+    @objc private func clipScrolled(_ note: Notification) {
+        if codeViews.contains(where: { $0 == nil }) { placeCode() }
+    }
+
+    override func viewWillDraw() {
+        if codeViews.contains(where: { $0 == nil }) { placeCode() }
+        super.viewWillDraw()
     }
 
     /// A code block shows once the pen reaches it.
     func syncCodeVisibility() {
         for (i, item) in codeAttachments().enumerated() where i < codeViews.count {
+            guard let host = codeViews[i] else { continue }
             let visible = reveal.codeVisible(at: item.range.location)
             let alpha: CGFloat = visible ? 1 : 0
-            guard codeViews[i].alphaValue != alpha else { continue }
+            guard host.alphaValue != alpha else { continue }
             NSAnimationContext.runAnimationGroup { ctx in
                 ctx.duration = visible ? 0.3 : 0
-                codeViews[i].animator().alphaValue = alpha
+                host.animator().alphaValue = alpha
             }
         }
     }
@@ -202,31 +239,67 @@ final class MessageTextView: NSTextView, @MainActor NSLayoutManagerDelegate {
         return out
     }
 
-    /// Puts the block's view in place `index` (making it if needed) and returns its height.
+    /// Updates the block's view in place `index` if it has one (holding the place if not) and
+    /// returns its height.
     private func measure(_ cell: CodeAttachmentCell, at index: Int) -> CGFloat {
         let overlay = CodeOverlay(language: cell.language, code: cell.code)
         if index < codeViews.count {
-            codeViews[index].rootView = overlay
+            codeViews[index]?.rootView = overlay
         } else {
-            let host = NSHostingView(rootView: overlay)
-            host.sizingOptions = []
-            addSubview(host)
-            codeViews.append(host)
+            codeViews.append(nil)
         }
-        let width = textContainer?.containerSize.width ?? 0
-        sizer.rootView = overlay
-        let size = sizer.sizeThatFits(in: CGSize(width: width > 0 && width < 10_000 ? width : 600, height: .greatestFiniteMagnitude))
-        return ceil(size.height)
+        cell.placeholder = codeViews[index] == nil
+        let container = textContainer?.containerSize.width ?? 0
+        let width = container > 0 && container < 10_000 ? container : 600
+        let key = CodeKey(language: cell.language, code: cell.code, width: width, line: MessageStyle.lineHeight)
+        if let height = Self.codeHeights[key] { return height }
+        Self.sizer.rootView = overlay
+        let height = ceil(Self.sizer.sizeThatFits(in: CGSize(width: width, height: .greatestFiniteMagnitude)).height)
+        if Self.codeHeights.count > 4096 { Self.codeHeights.removeAll() }
+        Self.codeHeights[key] = height
+        return height
     }
 
-    private func placeCode() {
+    private var makePending = false
+
+    /// Places the code views; one that's missing and near the visible rect is made `now`, or
+    /// on the next turn of the run loop, after the frame that brought its row in.
+    private func placeCode(now: Bool = false) {
         guard let layout = layoutManager, let container = textContainer else { return }
+        // Only what's on screen: making blocks ahead (measured: half a screen) put a jump's
+        // neighbours into the frame after it. A block scrolled into view shows its placeholder
+        // for one frame instead.
+        let near = visibleRect
         for (i, item) in codeAttachments().enumerated() where i < codeViews.count {
             let glyphs = layout.glyphRange(forCharacterRange: item.range, actualCharacterRange: nil)
             layout.ensureLayout(forGlyphRange: glyphs)
             let rect = layout.boundingRect(forGlyphRange: glyphs, in: container)
-            codeViews[i].frame = NSRect(x: rect.minX, y: rect.maxY - item.cell.height, width: bounds.width - rect.minX,
-                                        height: item.cell.height)
+            let frame = NSRect(x: rect.minX, y: rect.maxY - item.cell.height, width: bounds.width - rect.minX,
+                               height: item.cell.height)
+            if let host = codeViews[i] {
+                host.frame = frame
+            } else if !near.isEmpty, frame.intersects(near) {
+                guard now else {
+                    if !makePending {
+                        makePending = true
+                        DispatchQueue.main.async { [weak self] in
+                            self?.makePending = false
+                            self?.placeCode(now: true)
+                        }
+                    }
+                    continue
+                }
+                let host = NSHostingView(rootView: CodeOverlay(language: item.cell.language, code: item.cell.code,
+                                                               selected: isSelected(item.range)))
+                host.sizingOptions = []
+                host.postsFrameChangedNotifications = false
+                host.alphaValue = reveal.codeVisible(at: item.range.location) ? 1 : 0
+                host.frame = frame
+                addSubview(host)
+                codeViews[i] = host
+                item.cell.placeholder = false
+                setNeedsDisplay(frame)
+            }
         }
     }
 
@@ -238,9 +311,10 @@ final class MessageTextView: NSTextView, @MainActor NSLayoutManagerDelegate {
     override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
         super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
         for (i, item) in codeAttachments().enumerated() where i < codeViews.count {
+            guard let host = codeViews[i] else { continue }
             let selected = isSelected(item.range)
-            if codeViews[i].rootView.selected != selected {
-                codeViews[i].rootView = CodeOverlay(language: item.cell.language, code: item.cell.code, selected: selected)
+            if host.rootView.selected != selected {
+                host.rootView = CodeOverlay(language: item.cell.language, code: item.cell.code, selected: selected)
             }
         }
     }
@@ -309,6 +383,30 @@ final class CodeAttachmentCell: NSTextAttachmentCell {
 
     override func cellSize() -> NSSize { NSSize(width: 1, height: height) }
     override func draw(withFrame cellFrame: NSRect, in controlView: NSView?) {}
+
+    /// No view laid over it yet (it's made the run-loop turn after its row comes in; see
+    /// `MessageTextView.placeCode`): draw the block's card and plain code, for that frame.
+    var placeholder = true
+
+    override func draw(withFrame cellFrame: NSRect, in controlView: NSView?, characterIndex charIndex: Int,
+                       layoutManager: NSLayoutManager) {
+        guard placeholder, (controlView as? MessageTextView)?.reveal.codeVisible(at: charIndex) ?? true else { return }
+        NSColor.quaternaryLabelColor.withAlphaComponent(0.35).setFill()
+        NSBezierPath(roundedRect: cellFrame, xRadius: TurnSpace.Card.radius, yRadius: TurnSpace.Card.radius).fill()
+        let caption = NSFont.preferredFont(forTextStyle: .caption1)
+        let head = NSAttributedString(string: language, attributes: [
+            .font: NSFont.systemFont(ofSize: caption.pointSize, weight: .medium), .foregroundColor: NSColor.secondaryLabelColor,
+        ])
+        let top = cellFrame.minY + TurnSpace.Inset.snug
+        head.draw(at: NSPoint(x: cellFrame.minX + TurnSpace.Inset.roomy, y: top))
+        let mono = NSFont.monospacedSystemFont(ofSize: NSFont.preferredFont(forTextStyle: .callout).pointSize, weight: .regular)
+        let body = NSAttributedString(string: code, attributes: [.font: mono, .foregroundColor: NSColor.labelColor])
+        let y = top + ceil(head.size().height) + TurnSpace.Inset.snug + 1 + TurnSpace.Inset.roomy
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(rect: cellFrame).addClip()
+        body.draw(at: NSPoint(x: cellFrame.minX + TurnSpace.Inset.roomy, y: y))
+        NSGraphicsContext.restoreGraphicsState()
+    }
     override func wantsToTrackMouse() -> Bool { false }
 }
 

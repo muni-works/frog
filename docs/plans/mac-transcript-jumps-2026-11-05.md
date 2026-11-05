@@ -34,3 +34,16 @@ and 59 of 60 go over the 16.7 ms frame budget (Debug, PerfProbeTests.testLongTra
 
 Expect steps 2 and 3 to get jumps under budget in Release. Check against the probe before
 going further.
+
+## Done (contained, 2026-11-05)
+Steps 3 plus two findings from sampling the jump loop, all in `MessageTextView`:
+- Code-block hosting views are made only for blocks in `visibleRect`, on the run-loop turn after
+  the row comes in. Until then the attachment cell draws a placeholder (card, language, plain
+  monospaced code). Making views half a screen ahead put a jump's neighbours into the next
+  frame (21 ms p50), so it doesn't do that.
+- One shared code-block sizer plus a height cache, instead of one `NSHostingController` per view.
+- `MessageTextView` stops listening for every view's frame change. NSTextView registers for all
+  of them, and that cost scales with the number of rows.
+Probe (Debug): jump p50 44.8 → ~16 ms; the frame after a jump 16.3 → 13.2 ms; small scrolls
+1.6 → 0.8 ms. Step 2 (caching styled text) was skipped: `MessageStyle.piece` was about 2% of a jump.
+Step 4 (`NSTableView`) is still the fix for p95 and live resize.
