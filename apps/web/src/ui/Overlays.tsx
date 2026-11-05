@@ -2,6 +2,7 @@ import { PLANS, TOP_UPS } from '../auth'
 import { useEffect, useMemo, useState } from 'react'
 import { notifyOn, notifySupported, setNotify } from '../alerts'
 import { billingHistory, billingPortal, createKey, firstName, listKeys, portalErrorMessage, revokeKey, type Account, type KeyInfo, type Provider } from '../auth'
+import { friendly } from '../cloud/client'
 import type { Model } from '../models'
 import type { SessionSummary } from '../cloud/protocol'
 
@@ -115,7 +116,7 @@ function TopUp({ onTopUp }: { onTopUp: (dollars: number) => Promise<void> }) {
         {TOP_UPS.map((d) => <button key={d} type="button" role="radio" aria-checked={amount === d} className={amount === d ? 'on' : ''} onClick={() => setAmount(d)}>${d}</button>)}
       </div>
       <button type="button" className="f-btn f-btn--prominent" disabled={busy} style={{ justifyContent: 'center' }}
-        onClick={() => { setBusy(true); setError(null); onTopUp(amount).catch((e) => { setBusy(false); setError(e instanceof Error ? e.message : String(e)) }) }}>
+        onClick={() => { setBusy(true); setError(null); onTopUp(amount).catch((e) => { setBusy(false); setError(friendly(e)) }) }}>
         {busy ? 'Opening Stripe…' : `Add $${amount}`}
       </button>
       {error && <div className="det" style={{ color: 'var(--warn)' }}>Couldn't start checkout ({error}). Try again.</div>}

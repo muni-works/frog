@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Gateway } from './cloud/client'
+import { friendly, Gateway } from './cloud/client'
 import type { EndReason, Envelope, RepoList, SessionSummary } from './cloud/protocol'
 import { CloudEngine } from './engine/cloud'
 import { emptyThread, reduce, type Thread } from './engine/thread'
@@ -59,17 +59,20 @@ export function useCloud(key: string | null) {
 export function useSessions(cloud: CloudEngine | null) {
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [error, setError] = useState<string | null>(null)
+  /** The list has come back at least once, so a session missing from it is really gone. */
+  const [loaded, setLoaded] = useState(false)
   const refresh = useCallback(async () => {
     if (!cloud) return
     try {
       setSessions((await cloud.gateway.list()).sort((a, b) => b.updated - a.updated))
+      setLoaded(true)
       setError(null)
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(friendly(e))
     }
   }, [cloud])
   useEffect(() => {
-    if (!cloud) return setSessions([])
+    if (!cloud) { setLoaded(false); return setSessions([]) }
     // Near-live while you're looking (every 3s), slow when the tab is hidden, and at once on
     // coming back. One cheap read of the account's session index each time.
     refresh()
@@ -81,7 +84,7 @@ export function useSessions(cloud: CloudEngine | null) {
     addEventListener('focus', back)
     return () => { clearInterval(t); document.removeEventListener('visibilitychange', back); removeEventListener('focus', back) }
   }, [cloud, refresh])
-  return { sessions, error, refresh, setSessions }
+  return { sessions, loaded, error, refresh, setSessions }
 }
 
 /** Subscribe to these sessions' streams and keep a folded `Thread` per session. */

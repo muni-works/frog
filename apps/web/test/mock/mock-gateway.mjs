@@ -56,7 +56,7 @@ export function startMock({ port = 8788, fixture = new URL("./demo.jsonl", impor
       if (b.repo != null && (typeof b.repo !== "string" || !/^[\w.-]+\/[\w.-]+$/.test(b.repo))) return json(res, 400, { error: "repo must be owner/name" });
       const id = "s_" + randomBytes(10).toString("hex");
       const now = Date.now();
-      const info = { id, account, repo: b.repo ?? null, branch: b.repo ? b.branch ?? `frog/${b.repo.split("/")[1]}-${id.slice(2, 8)}` : null, title: b.repo ?? "New session", state: "running", created: now, updated: now };
+      const info = { id, account, repo: b.repo ?? "", branch: b.repo ? b.branch ?? `frog/${b.repo.split("/")[1]}-${id.slice(2, 8)}` : "", title: b.repo ?? "New session", state: "running", created: now, updated: now };
       const rec = new Recorded(id, events);
       // One recorded turn already in the log, so a fresh attach has something to replay.
       for (const e of events) {

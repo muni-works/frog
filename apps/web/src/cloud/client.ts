@@ -31,6 +31,28 @@ export class GatewayError extends Error {
   }
 }
 
+/** An error from Frog Cloud (or the network on the way to it) as a sentence for the UI. The raw
+ * server text is for logs and tooltips, never the message itself. */
+export function friendly(e: unknown): string {
+  const status = typeof (e as { status?: unknown })?.status === "number" ? (e as { status: number }).status : null;
+  const raw = e instanceof Error ? e.message : String(e ?? "");
+  if (status === null) {
+    // fetch rejects with a TypeError ("Failed to fetch", "Load failed") when it can't connect.
+    if (e instanceof TypeError || /fetch|network/i.test(raw)) return "Frog Cloud is unreachable. Check your connection and try again.";
+    return "Something went wrong. Try again.";
+  }
+  if (status === 401) return "Your sign-in expired. Sign in again.";
+  if (status === 402) return "You're out of Frog Cloud credit. Top up to keep going.";
+  if (status === 403) return "Your account doesn't have access to that.";
+  if (status === 404) return "That session doesn't exist any more.";
+  if (status === 429) return "Too many requests at once. Wait a moment and try again.";
+  if (status >= 500 || status === 0) return "Frog Cloud is unreachable. Try again in a moment.";
+  // 400 and friends name the field that was wrong.
+  if (/repo/i.test(raw)) return "That repo doesn't look right. Use owner/name, like ecto/frog.";
+  if (/model/i.test(raw)) return "That model isn't available. Pick another one.";
+  return raw && raw.length < 120 && !/[{}<>]/.test(raw) ? `${raw[0].toUpperCase()}${raw.slice(1).replace(/\.?$/, ".")}` : "Frog Cloud couldn't do that. Try again.";
+}
+
 export class Gateway {
   readonly origin: string;
   private readonly fetch: typeof fetch;
@@ -47,8 +69,12 @@ export class Gateway {
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     const text = await res.text();
+    if (!res.ok) {
+      let json: { error?: string } | undefined;
+      try { json = text ? JSON.parse(text) : undefined; } catch { /* an HTML error page from a proxy */ }
+      throw new GatewayError(res.status, json?.error ?? res.statusText);
+    }
     const json = text ? JSON.parse(text) : undefined;
-    if (!res.ok) throw new GatewayError(res.status, json?.error ?? res.statusText);
     return json as T;
   }
 
