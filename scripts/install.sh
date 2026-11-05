@@ -6,6 +6,11 @@ set -eu
 # Public GitHub repo. Change once the name is final.
 FROG_REPO="${FROG_REPO:-muni-works/frog}"
 
+# minisign public key for release signatures (the second line of minisign.pub, "RW...").
+# PLACEHOLDER: empty until the release signing key exists; set it to the public half of the
+# MINISIGN_SECRET_KEY secret release.yml signs with. While empty, signatures aren't checked.
+FROG_MINISIGN_PUBKEY=""
+
 err() { printf 'frog-install: error: %s\n' "$*" >&2; exit 1; }
 info() { printf 'frog-install: %s\n' "$*"; }
 need() { command -v "$1" >/dev/null 2>&1 || err "missing required command: $1"; }
@@ -66,6 +71,34 @@ sha256_of() {
   fi
 }
 
+# Returns 1 quietly when the URL isn't there (e.g. an unsigned release).
+fetch_optional() {
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$1" -o "$2" 2>/dev/null
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO "$2" "$1" 2>/dev/null
+  else
+    return 1
+  fi
+}
+
+# The checksum comes from the same host as the tarball; the signature proves who built it.
+# A signature that's present but doesn't verify is fatal.
+verify_signature() {
+  [ -n "$FROG_MINISIGN_PUBKEY" ] || return 0
+  if ! fetch_optional "$2.minisig" "$1.minisig"; then
+    info "warning: no signature published for $(basename "$1"); checksum only"
+    return 0
+  fi
+  if ! command -v minisign >/dev/null 2>&1; then
+    info "warning: minisign not installed; skipping signature check (checksum verified)"
+    return 0
+  fi
+  minisign -Vqm "$1" -x "$1.minisig" -P "$FROG_MINISIGN_PUBKEY" \
+    || err "signature verification failed for $(basename "$1"); not installing"
+  info "signature verified"
+}
+
 main() {
   need uname
   need tar
@@ -92,6 +125,7 @@ main() {
   if [ -z "$want" ] || [ "$want" != "$got" ]; then
     err "checksum mismatch for $name.tar.gz (want $want, got $got)"
   fi
+  verify_signature "$tmp/$name.tar.gz" "$base/$name.tar.gz"
 
   tar -xzf "$tmp/$name.tar.gz" -C "$tmp" || err "failed to extract $name.tar.gz"
   [ -f "$tmp/$name/frog" ] || err "archive missing frog binary"

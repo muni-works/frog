@@ -352,7 +352,14 @@ async fn pump(
             let _ = tx.send(reason);
         }
     };
+    // The session's `provider/model`, so an error can name the service to fix.
+    let mut model: Option<String> = None;
     while let Some(env) = handle.events.recv().await {
+        match &env.event {
+            Event::Status(s) => model = Some(s.model.clone()),
+            Event::ModelChanged { model: m } => model = Some(m.clone()),
+            _ => {}
+        }
         match env.event {
             // A memory command's whole answer is one notice.
             Event::Notice { message, .. } if command.lock().unwrap().is_some() => {
@@ -507,7 +514,10 @@ async fn pump(
                     conn.update(
                         &session,
                         SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::Text(
-                            TextContent::new(format!("\n\nfrog stopped with an error: {error:?}")),
+                            TextContent::new(format!(
+                                "\n\nfrog stopped: {}",
+                                crate::render::describe_error(&error, model.as_deref())
+                            )),
                         ))),
                     );
                     StopReason::EndTurn
@@ -517,7 +527,10 @@ async fn pump(
                 conn.update(
                     &session,
                     SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::Text(
-                        TextContent::new(format!("frog error: {error:?}")),
+                        TextContent::new(format!(
+                            "frog error: {}",
+                            crate::render::describe_error(&error, model.as_deref())
+                        )),
                     ))),
                 );
                 finish(StopReason::EndTurn);

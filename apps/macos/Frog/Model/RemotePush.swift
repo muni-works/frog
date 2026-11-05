@@ -22,8 +22,14 @@ final class RemotePush {
     }
 
     /// Where pushes for real phones go.
+    static let defaultRelay = URL(string: "https://frog.toys/api/push")!
+    /// A malformed FROG_PUSH_RELAY falls back to the default instead of crashing.
     static var relay: URL {
-        URL(string: ProcessInfo.processInfo.environment["FROG_PUSH_RELAY"] ?? "https://frog.toys/api/push")!
+        relay(ProcessInfo.processInfo.environment["FROG_PUSH_RELAY"])
+    }
+    static func relay(_ override: String?) -> URL {
+        guard let s = override, !s.isEmpty, let url = URL(string: s), url.scheme != nil else { return defaultRelay }
+        return url
     }
 
     /// What the relay wants to hear from a Mac (`PUSH_RELAY_SECRET` there): Settings › General,

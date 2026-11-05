@@ -137,4 +137,12 @@ final class NotifierTests: XCTestCase {
         Notifier.shared.focus()
         XCTAssertNil(NSApp.dockTile.badgeLabel)
     }
+
+    /// A malformed or empty FROG_PUSH_RELAY falls back to the default relay, never crashes.
+    func testABadRelayOverrideFallsBack() {
+        XCTAssertEqual(RemotePush.relay(nil), RemotePush.defaultRelay)
+        XCTAssertEqual(RemotePush.relay(""), RemotePush.defaultRelay)
+        XCTAssertEqual(RemotePush.relay("not a url"), RemotePush.defaultRelay)
+        XCTAssertEqual(RemotePush.relay("http://localhost:8787/push"), URL(string: "http://localhost:8787/push"))
+    }
 }
