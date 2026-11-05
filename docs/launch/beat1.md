@@ -108,22 +108,21 @@ With the four bugs fixed, the all-GPU path on one B300 produces the same greedy 
 CPU oracle, 8 of 8 (`785 1196 6801 264 6386 38038 911 279`). That's a correctness result, not a
 speed result. Those kernels were naive on purpose, and decode ran at 0.52 tok/s. We're now
 replacing them one at a time (a dequant-reuse GEMV, grouped MoE, CUDA graphs, a fused mixer, split-K
-prefill), and every replacement has to pass the same harness before it merges. As of this post:
-**{{TREE_DECODE}} tok/s decode** on {{TREE_HW}}, still matching the oracle. The trajectory, with
-every intermediate number, is on the [bench page](https://frog.toys/bench). We'll keep updating it.
-<!-- if TREE_DECODE isn't measured by publish time, replace the sentence with: "Faster kernels are
-landing this week. Each one has to match the oracle before it merges." Never publish a target as a result. -->
+prefill), and every replacement has to pass the same harness before it merges. Faster kernels are
+landing now. The trajectory, with every
+intermediate number, is on the [bench page](https://frog.toys/bench).
 
-## frog cloud: Qwen3-Coder-Next on tang
+## Frog Cloud: Qwen3-Coder-Next on tang
 
 If your machine is slow, `frog -m cloud/qwen3-coder-next` runs the same agent against
-Qwen3-Coder-Next (80B total, 3B active) served by tang on an H200. Measured through the public API:
+Qwen3-Coder-Next (80B total, 3B active) served by tang on an H200. Engine-level, measured
+2026-11-05:
 
-- **{{API_1STREAM}} tok/s** decode, single stream, ~1.2k-token prompt (engine-level: {{ENGINE_1STREAM}})
-- **{{API_10K}} tok/s** at a ~10k-token agent prompt
-- cached-prefix time to first token: **{{TTFT_CACHED}}**
+- **234 tok/s** decode, single stream (up to **402 tok/s** with MTP drafts)
+- **1,078 tok/s** total serving 64 concurrent decode-heavy streams
+- **6.6k–7.6k tok/s** prefill
 
-<!-- Oct 21 values for reference: 224.7 / ~215 via api.frog.toys, 234.4 engine, 190 at 10k, 18-95 ms cached TTFT. Re-measure on Oct 29. -->
+<!-- API-level numbers (through api.frog.toys) haven't been re-measured since Oct 21. Add them only once measured; never invent. -->
 
 Method and raw logs are on the bench page. We're not claiming to be the fastest provider. We'll say
 that when a same-day head-to-head and an independent listing back it up.
