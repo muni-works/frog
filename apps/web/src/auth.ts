@@ -23,10 +23,8 @@ export interface Account {
   google?: string | null
   email: string | null
   /** Live credit in cents (may be fractional): Frog Cloud bills per token, at each model's
-   * prices, against this. The edge still sends tasks_left (credit / $0.25), which no app shows. */
+   * prices, against this. */
   credit_cents: number
-  tasks_left: number
-  tasks_limit: number | null
   resets_at: string | null
   /** The plan, if subscribed: its allowance windows and whether it's past them (then credit
    * pays at usage prices). Null on usage pricing alone. Older edges leave it out. */
