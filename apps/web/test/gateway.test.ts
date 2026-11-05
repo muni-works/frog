@@ -140,3 +140,18 @@ test("permission round trip: first answer wins and every client sees it", async 
   a.conn.close();
   b.conn.close();
 });
+
+test("errors reach the UI as sentences, not server text", async () => {
+  const { friendly, GatewayError } = await import("../src/cloud/client.ts");
+  assert.equal(friendly(new GatewayError(400, "repo must be owner/name")), "That repo doesn't look right. Use owner/name, like ecto/frog.");
+  assert.equal(friendly(new GatewayError(500, "Internal Server Error")), "Frog Cloud is unreachable. Try again in a moment.");
+  assert.equal(friendly(new TypeError("Failed to fetch")), "Frog Cloud is unreachable. Check your connection and try again.");
+  assert.equal(friendly(new GatewayError(401, "missing or invalid key")), "Your sign-in expired. Sign in again.");
+  assert.match(friendly(new GatewayError(402, "insufficient_credit")), /credit/);
+});
+
+test("a session needs no repo, but a repo given must be owner/name", async () => {
+  const s = await gateway().create({});
+  assert.equal(s.repo, "");
+  await assert.rejects(gateway().create({ repo: "not a repo" }), { status: 400 });
+});

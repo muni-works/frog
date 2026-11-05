@@ -137,3 +137,17 @@ test("compaction leaves a mark after the turn it followed", () => {
   ].reduce((t, e) => reduce(t, env(e as Event)), emptyThread);
   assert.deepEqual(t.marks, [{ after: 1, text: "Compacted · 82k → 9k tokens" }]);
 });
+
+test("a repeated turn_started is the same turn, and a reused number after an ending is a new one", () => {
+  let t = reduce(emptyThread, env({ event: "turn_started", turn: 1, input: "go" }));
+  t = reduce(t, env({ event: "item_started", id: "i1", kind: { type: "tool_call", name: "Bash", arg: "ls" } }));
+  t = reduce(t, env({ event: "turn_started", turn: 1, input: "go" }));
+  assert.equal(t.turns.length, 1);
+  assert.equal(t.turns[0].entries.length, 1);
+  t = reduce(t, env({ event: "turn_ended", turn: 1, reason: { type: "complete" } }));
+  t = reduce(t, env({ event: "turn_started", turn: 1, input: "again" }));
+  assert.equal(t.turns.length, 2);
+  t = reduce(t, env({ event: "turn_ended", turn: 1, reason: { type: "cancelled" } }));
+  assert.equal(t.turns[0].reason?.type, "complete");
+  assert.equal(t.turns[1].reason?.type, "cancelled");
+});

@@ -126,13 +126,10 @@ struct RootView: View {
         .gesture(WindowDragGesture())
         .allowsWindowActivationEvents(true)
         .onAppear {
-            if folder == nil { folder = LaunchFolder.take() ?? Frog.chatFolder }
-        }
-        // A second copy of frog handed over its folder: open it here, in a window of its own.
-        .onReceive(DistributedNotificationCenter.default().publisher(for: SingleInstance.openFolder)) { note in
-            guard let token = note.object as? String, SingleInstance.answered.insert(token).inserted,
-                  let path = token.split(separator: "|", maxSplits: 1).last.map(String.init) else { return }
-            openWindow(value: URL(fileURLWithPath: path))
+            // Folders handed over (a second copy, Finder, the Dock) open in a window of their
+            // own; the app-level listener reaches windows through the latest openWindow.
+            FolderOpener.window = { openWindow(value: $0) }
+            if folder == nil { folder = FolderOpener.takePending() ?? LaunchFolder.take() ?? Frog.chatFolder }
         }
         .onChange(of: folder, initial: true) { _, url in
             guard let url else { return }
@@ -203,14 +200,13 @@ enum SingleInstance {
         }
     }
 
+    /// The running copy answers a hand-off with this, so the sender knows it can go.
+    static let openFolderAck = Notification.Name("\(Bundle.main.bundleIdentifier ?? "toys.frog").openFolder.ack")
+
     /// The running copy has the lock (same bundle id): pass the folder over, bring it
     /// forward, and leave.
     private static func handOff(to holder: LockHolder.Held) {
-        if let path = UserDefaults.standard.string(forKey: "FrogFolder") {
-            // A token, so only one of the running copy's windows answers it.
-            DistributedNotificationCenter.default().postNotificationName(
-                openFolder, object: "\(UUID().uuidString)|\(path)", deliverImmediately: true)
-        }
+        passFolder()
         // The holder's app object: activating by pid works across bundle ids and when the
         // running copy has no NSRunningApplication of its own visible to us yet.
         let running = NSRunningApplication(processIdentifier: holder.pid)
@@ -218,8 +214,60 @@ enum SingleInstance {
         exit(0)
     }
 
-    /// Tokens already answered, across the running copy's windows.
+    /// Posts this launch's `-FrogFolder` to the running copy and waits (briefly) for it to say
+    /// it has it, so quitting right after can't lose it.
+    static func passFolder() {
+        guard let path = UserDefaults.standard.string(forKey: "FrogFolder") else { return }
+        // A token, so the running copy opens it once however often it's delivered.
+        let token = "\(UUID().uuidString)|\(path)"
+        let center = DistributedNotificationCenter.default()
+        final class Ack: @unchecked Sendable { var done = false }
+        let ack = Ack()
+        let observer = center.addObserver(forName: openFolderAck, object: token, queue: nil) { _ in ack.done = true }
+        center.postNotificationName(openFolder, object: token, deliverImmediately: true)
+        let deadline = Date.now.addingTimeInterval(2)
+        while !ack.done, Date.now < deadline { RunLoop.current.run(mode: .default, before: .now + 0.05) }
+        center.removeObserver(observer)
+    }
+
+    /// The running copy's side: every hand-off opens its folder, window or no window.
+    @MainActor static func listen() {
+        DistributedNotificationCenter.default().addObserver(forName: openFolder, object: nil, queue: .main) { note in
+            guard let token = note.object as? String else { return }
+            MainActor.assumeIsolated {
+                DistributedNotificationCenter.default().postNotificationName(openFolderAck, object: token, deliverImmediately: true)
+                guard answered.insert(token).inserted,
+                      let path = token.split(separator: "|", maxSplits: 1).last.map(String.init) else { return }
+                FolderOpener.open(URL(fileURLWithPath: path))
+            }
+        }
+    }
+
+    /// Tokens already answered.
     @MainActor static var answered: Set<String> = []
+}
+
+/// Opens a folder in a window of its own, from outside any window (a hand-off, Finder, the
+/// Dock), through the latest window's openWindow, which still works once that window has
+/// closed. Before any window has appeared, the folder waits for the first one.
+@MainActor
+enum FolderOpener {
+    /// The latest window's openWindow, which outlives that window.
+    static var window: ((URL) -> Void)?
+    private static var pending: URL?
+
+    static func open(_ url: URL) {
+        NSApp.activate()
+        if let window { return window(url) }
+        // No window has appeared yet: ask for one; its RootView takes `pending`.
+        pending = url
+        NSApp.sendAction(Selector(("newWindowForTab:")), to: nil, from: nil)
+    }
+
+    static func takePending() -> URL? {
+        defer { pending = nil }
+        return pending
+    }
 }
 
 /// Whether this launch should take the lock, hand the folder over, or leave — everything
@@ -277,7 +325,7 @@ final class LockHolder: @unchecked Sendable {
         // The holder writes its pid right after it takes the lock, so a failed acquire can
         // briefly read a stale (dead) pid — retry while the file still names a dead one.
         for _ in 0..<5 {
-            let f = open(lock.path, O_CREAT | O_RDWR, 0o644)
+            let f = open(lock.path, O_CREAT | O_RDWR | O_CLOEXEC, 0o644)
             guard f >= 0 else { return state }
             guard flock(f, LOCK_EX | LOCK_NB) != 0 else {
                 // We hold it. Write who we are (pid first, for the dead-holder check) and keep

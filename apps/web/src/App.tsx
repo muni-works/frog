@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAlerts } from './alerts'
 import { finishSignIn, firstName, me, savedKey, signIn, signOut, subscribe, topUp, AuthError, type Account, type Provider } from './auth'
-import type { ConnectionState } from './cloud/client'
+import { friendly, type ConnectionState } from './cloud/client'
 import type { SessionSummary } from './cloud/protocol'
 import type { Image, Mode } from './cloud/protocol'
 import { defaultModel, idOf, spec, useModels } from './models'
@@ -113,7 +113,7 @@ export default function App() {
   // runs): otherwise the default, never a model nothing would answer.
   const chosenModel = newModel && models.some((m) => m.id === idOf(newModel)) ? newModel : defaultModel(models)
   const repoList = useRepos(cloud)
-  const { sessions, error: listError, setSessions, refresh: refreshSessions } = useSessions(cloud)
+  const { sessions, loaded: sessionsLoaded, error: listError, setSessions, refresh: refreshSessions } = useSessions(cloud)
   const current = view.kind === 'session' ? sessions.find((s) => s.id === view.id) : undefined
   useEffect(() => setMenuOpen(false), [view])
   // Stream only the open session. Attaching to a session wakes its sandbox, and the sockets
@@ -203,7 +203,7 @@ export default function App() {
       setAccount(await me(k))
     }).catch((e) => {
       if (e instanceof AuthError && e.status === 401) { signOut(); clearThreads(); setKey(null); return }
-      setAuthError(e instanceof AuthError ? e.code : String(e))
+      setAuthError(e instanceof AuthError ? e.code : friendly(e))
     })
   }, [])
 
@@ -244,7 +244,7 @@ export default function App() {
       setOpening(({ [temp]: _, ...rest }) => rest)
       setView((v) => (v.kind === 'session' && v.id === temp ? { kind: 'new', repo } : v))
       setDraft(text)
-      say(`Couldn't start a sandbox: ${e instanceof Error ? e.message : e}`)
+      say(`Couldn't start a sandbox: ${friendly(e)}`)
     }
   }, [cloud, send, setSessions, chosenModel, newMode])
   useEffect(() => { if (pending && cloud) { setPending(null); start(pending) } }, [pending, cloud, start])
@@ -268,7 +268,7 @@ export default function App() {
       setSessions((all) => all.filter((x) => x.id !== s.id))
       setView((v) => (v.kind === 'session' && v.id === s.id ? { kind: 'new' } : v))
     } catch (e) {
-      say(`Couldn't delete: ${e instanceof Error ? e.message : e}`)
+      say(`Couldn't delete: ${friendly(e)}`)
     }
   }
 
@@ -278,7 +278,7 @@ export default function App() {
       setSessions((all) => all.map((x) => (x.id === s.id ? { ...x, ...next } : x)))
       say(archived ? 'Archived. Find it under View options → Archived.' : 'Moved back to your sessions.')
     } catch (e) {
-      say(`Couldn't ${archived ? 'archive' : 'restore'} it: ${e instanceof Error ? e.message : e}`)
+      say(`Couldn't ${archived ? 'archive' : 'restore'} it: ${friendly(e)}`)
     }
   }
 
@@ -449,6 +449,17 @@ export default function App() {
           </button>}
         </div>) : <>{collapsed && <div className="side-float">{sideToggle(false)}</div>}<div className="phone-bar floating"><Burger /><b>Frog</b></div></>}
 
+        {/* A link to a session this account doesn't have (deleted, or never was) says so. */}
+        {view.kind === 'session' && !current && sessionsLoaded && (
+          <div className="main home">
+            <div className="home-hero">
+              <Mark size={56} />
+              <h1>Session not found</h1>
+              <div className="det wrap" style={{ textAlign: 'center' }}>It may have been deleted, or it belongs to another account.</div>
+              <button type="button" className="f-btn f-btn--prominent" onClick={() => setView({ kind: 'new' })}>New session</button>
+            </div>
+          </div>
+        )}
         {view.kind === 'session' && current && ct && (<>
           <div className="scroll" ref={(el) => { if (el) el.scrollTop = el.scrollHeight }}><div className="col">
             {cs?.state === 'refused' && <div role="status" className="banner warn"><span style={{ flex: 1 }}>Update Frog to continue. This sandbox speaks a different protocol than this page.</span>{safeHref(cs.refused.upgrade) ? <a className="f-btn f-btn--bordered f-btn--small" href={safeHref(cs.refused.upgrade)!.href} style={{ textDecoration: 'none' }}>Update</a> : <button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => location.reload()}>Reload</button>}</div>}

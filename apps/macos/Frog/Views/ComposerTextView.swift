@@ -6,9 +6,15 @@ import SwiftUI
 final class ComposerController {
     weak var textView: NSTextView?
 
+    /// The text view's characters without a copy: `tv.string` bridges the whole draft into a new
+    /// Swift string, which a keystroke in a multi-megabyte paste can't afford.
+    static func chars(_ tv: NSTextView) -> NSString {
+        tv.textStorage?.mutableString ?? (tv.string as NSString)
+    }
+
     /// The `@query` token touching the cursor, if any.
     static func mentionRange(in tv: NSTextView) -> NSRange? {
-        let s = tv.string as NSString
+        let s = chars(tv)
         let cursor = tv.selectedRange().location
         guard cursor != NSNotFound, cursor <= s.length else { return nil }
         var i = cursor
@@ -33,7 +39,7 @@ final class ComposerController {
     /// Replace everything typed so far (e.g. with a picked `/skill`).
     func replaceAll(_ text: String) {
         guard let tv = textView else { return }
-        tv.insertText(text, replacementRange: NSRange(location: 0, length: (tv.string as NSString).length))
+        tv.insertText(text, replacementRange: NSRange(location: 0, length: Self.chars(tv).length))
     }
 
     /// Insert text at the cursor (e.g. `@path` mentions for dropped files).
@@ -42,6 +48,10 @@ final class ComposerController {
         tv.window?.makeFirstResponder(tv)
         tv.insertText(text, replacementRange: tv.selectedRange())
     }
+
+    /// Hands what's typed to the binding now. A big draft reaches it after a pause in typing
+    /// (see `Coordinator.textDidChange`), so whatever reads it to act (send, save) flushes first.
+    var flush: () -> Void = {}
 
     func focus() {
         guard let tv = textView else { return }
@@ -64,7 +74,7 @@ final class ComposerController {
     /// Dictated text goes at the cursor (after any selection), leaving what's typed alone.
     func beginDictation() {
         guard let tv = textView else { return }
-        let length = (tv.string as NSString).length
+        let length = Self.chars(tv).length
         let sel = tv.selectedRange()
         let at = sel.location == NSNotFound ? length : min(sel.location + sel.length, length)
         dictated = (NSRange(location: at, length: 0), "")
@@ -74,7 +84,7 @@ final class ComposerController {
     /// field changed under it (sent, cleared or typed over), so dictation should stop.
     func showDictation(_ transcript: DictationTranscript) -> Bool {
         guard let tv = textView, let storage = tv.textStorage, let d = dictated else { return false }
-        let s = tv.string as NSString
+        let s = Self.chars(tv)
         guard d.range.location + d.range.length <= s.length, s.substring(with: d.range) == d.text else {
             endDictation()
             return false
@@ -116,7 +126,7 @@ final class ComposerController {
     func endDictation() {
         dictated = nil
         guard let tv = textView else { return }
-        tv.layoutManager?.removeTemporaryAttribute(.foregroundColor, forCharacterRange: NSRange(location: 0, length: (tv.string as NSString).length))
+        tv.layoutManager?.removeTemporaryAttribute(.foregroundColor, forCharacterRange: NSRange(location: 0, length: Self.chars(tv).length))
     }
 
     /// Someone edited the field: keep track of where dictated text went, or let it go if they
@@ -192,7 +202,13 @@ struct ComposerTextView: NSViewRepresentable {
         tv.isAutomaticDashSubstitutionEnabled = false
         tv.isAutomaticTextReplacementEnabled = false
         tv.string = text
+        // Lays out only what's on screen: a keystroke in a long draft doesn't re-lay the rest.
+        tv.layoutManager?.allowsNonContiguousLayout = true
         controller.textView = tv
+        controller.flush = { [weak coordinator = context.coordinator, weak tv] in
+            guard let coordinator, let tv else { return }
+            coordinator.flush(tv)
+        }
         DispatchQueue.main.async {
             // A pane that comes back (a switch, a split) mustn't pull the caret out of whatever
             // the user is already in — a search field, the terminal, another pane's composer.
@@ -207,7 +223,11 @@ struct ComposerTextView: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         context.coordinator.parent = self
         guard let tv = scroll.documentView as? NSTextView else { return }
-        if tv.string != text {
+        // `pushed` is the binding's own value back while nothing else wrote it, so this compare
+        // is an identity check, not a scan of the draft.
+        if text != context.coordinator.pushed {
+            context.coordinator.cancelPush()
+            context.coordinator.pushed = text
             tv.string = text
             tv.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
             context.coordinator.fitHeightNow(tv)
@@ -218,13 +238,52 @@ struct ComposerTextView: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: ComposerTextView
 
+        /// What was last written to the binding, or read from it into the text view.
+        var pushed: String
+        /// A big draft's write to the binding, waiting for a pause in typing.
+        private var pendingPush: DispatchWorkItem?
+
+        /// Up to this many UTF-16 units, every keystroke reaches the binding at once (the
+        /// placeholder, `/skill` suggestions and the send button follow it). Past it, copying the
+        /// draft out and re-rendering the composer per key would cost in proportion to the
+        /// draft, so the write waits for a pause; the text view stays the source of truth.
+        static let liveLimit = 32_768
+
         init(_ parent: ComposerTextView) {
             self.parent = parent
+            self.pushed = parent.text
+        }
+
+        func flush(_ tv: NSTextView) {
+            guard pendingPush != nil else { return }
+            push(tv)
+        }
+
+        func cancelPush() {
+            pendingPush?.cancel()
+            pendingPush = nil
+        }
+
+        private func push(_ tv: NSTextView) {
+            cancelPush()
+            let s = tv.string
+            pushed = s
+            parent.text = s
         }
 
         func textDidChange(_ notification: Notification) {
             guard let tv = notification.object as? NSTextView else { return }
-            parent.text = tv.string
+            if ComposerController.chars(tv).length <= Self.liveLimit {
+                push(tv)
+            } else {
+                pendingPush?.cancel()
+                let work = DispatchWorkItem { [weak self, weak tv] in
+                    guard let self, let tv else { return }
+                    self.push(tv)
+                }
+                pendingPush = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
+            }
             // The mention check comes first: it's a scan of the token under the cursor, where the
             // height is a full layout pass, and the suggestion list should answer the keystroke.
             reportMention(tv)
@@ -245,7 +304,7 @@ struct ComposerTextView: NSViewRepresentable {
 
         private func reportMention(_ tv: NSTextView) {
             let query = ComposerController.mentionRange(in: tv).map {
-                (tv.string as NSString).substring(with: NSRange(location: $0.location + 1, length: $0.length - 1))
+                ComposerController.chars(tv).substring(with: NSRange(location: $0.location + 1, length: $0.length - 1))
             }
             parent.onMention(query)
         }
@@ -302,7 +361,10 @@ struct ComposerTextView: NSViewRepresentable {
 
         private func applyHeight(_ tv: NSTextView) {
             guard let container = tv.textContainer, let layout = tv.layoutManager else { return }
-            layout.ensureLayout(for: container)
+            // Only as far down as the field can grow: past `maxHeight` it scrolls, and laying out
+            // the rest of a long draft to learn that would cost in proportion to its length.
+            let bound = NSRect(x: 0, y: 0, width: container.size.width, height: parent.maxHeight + 1)
+            layout.ensureLayout(forBoundingRect: bound, in: container)
             let used = layout.usedRect(for: container).height + tv.textContainerInset.height * 2
             let h = min(max(used, parent.minHeight), parent.maxHeight)
             if abs(h - parent.height) > 0.5 {

@@ -281,8 +281,23 @@ final class QuitGuard: NSObject, NSApplicationDelegate {
         guard let other = NSRunningApplication.runningApplications(withBundleIdentifier: id)
             .first(where: { $0.processIdentifier != me && !$0.isTerminated })
         else { return }
+        SingleInstance.passFolder()
         other.activate()
         exit(0)
+    }
+
+    /// Hand-offs from a second copy reach the app, not a window, so none is lost with every
+    /// window closed.
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        guard !SingleInstance.isTesting else { return }
+        SingleInstance.listen()
+    }
+
+    /// A folder opened from Finder or dropped on the Dock icon while Frog runs: its own window.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls where url.hasDirectoryPath || (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
+            FolderOpener.open(url)
+        }
     }
 
     /// frog came forward: the "something finished while you were away" badge has been looked

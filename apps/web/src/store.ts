@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Gateway } from './cloud/client'
-import type { EndReason, RepoList, SessionSummary } from './cloud/protocol'
+import { friendly, Gateway } from './cloud/client'
+import type { EndReason, Envelope, RepoList, SessionSummary } from './cloud/protocol'
 import { CloudEngine } from './engine/cloud'
 import { emptyThread, reduce, type Thread } from './engine/thread'
 
@@ -59,17 +59,20 @@ export function useCloud(key: string | null) {
 export function useSessions(cloud: CloudEngine | null) {
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [error, setError] = useState<string | null>(null)
+  /** The list has come back at least once, so a session missing from it is really gone. */
+  const [loaded, setLoaded] = useState(false)
   const refresh = useCallback(async () => {
     if (!cloud) return
     try {
       setSessions((await cloud.gateway.list()).sort((a, b) => b.updated - a.updated))
+      setLoaded(true)
       setError(null)
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(friendly(e))
     }
   }, [cloud])
   useEffect(() => {
-    if (!cloud) return setSessions([])
+    if (!cloud) { setLoaded(false); return setSessions([]) }
     // Near-live while you're looking (every 3s), slow when the tab is hidden, and at once on
     // coming back. One cheap read of the account's session index each time.
     refresh()
@@ -81,7 +84,7 @@ export function useSessions(cloud: CloudEngine | null) {
     addEventListener('focus', back)
     return () => { clearInterval(t); document.removeEventListener('visibilitychange', back); removeEventListener('focus', back) }
   }, [cloud, refresh])
-  return { sessions, error, refresh, setSessions }
+  return { sessions, loaded, error, refresh, setSessions }
 }
 
 /** Subscribe to these sessions' streams and keep a folded `Thread` per session. */
@@ -132,13 +135,31 @@ export function useThreads(cloud: CloudEngine | null, ids: string[]) {
   const key = ids.join(',')
   useEffect(() => {
     if (!cloud) return
+    // Envelopes are folded once per animation frame, not one render per streamed token. A
+    // hidden tab gets no frames, so a timer backs the frame up.
+    const queued: { id: string; env: Envelope; known: Thread | null }[] = []
+    let frame = 0
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const flush = () => {
+      if (frame) cancelAnimationFrame(frame)
+      clearTimeout(timer)
+      frame = 0
+      const batch = queued.splice(0)
+      if (batch.length) setThreads((all) => {
+        const next = { ...all }
+        for (const q of batch) next[q.id] = reduce(next[q.id] ?? q.known ?? emptyThread, q.env)
+        return next
+      })
+    }
     const offs = ids.map((id) => {
       const known = cache.current[id] ?? loadThread(id)
       if (known && !cache.current[id]) setThreads((all) => ({ ...all, [id]: known }))
-      return cloud.subscribe(id, known?.lastSeq ?? 0, (env) =>
-        setThreads((all) => ({ ...all, [id]: reduce(all[id] ?? known ?? emptyThread, env) })))
+      return cloud.subscribe(id, known?.lastSeq ?? 0, (env) => {
+        queued.push({ id, env, known })
+        if (!frame) { frame = requestAnimationFrame(flush); timer = setTimeout(flush, 200) }
+      })
     })
-    return () => offs.forEach((off) => off())
+    return () => { flush(); offs.forEach((off) => off()) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cloud, key])
   // Saved a moment after it settles, not on every streamed token.

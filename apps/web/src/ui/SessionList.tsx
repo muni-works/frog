@@ -235,7 +235,7 @@ export function SessionList(p: {
       </div>,
         slot,
       )}
-      {p.error && <div className="det wrap" style={{ padding: '10px 8px', color: 'var(--warn)' }}>Couldn't load sessions: {p.error}</div>}
+      {p.error && <div className="det wrap" style={{ padding: '10px 8px', color: 'var(--warn)' }}>Couldn't load sessions. {p.error}</div>}
       {view.archived && !groups.length && <div className="det wrap" style={{ padding: '14px 8px' }}>Nothing archived. Archive a session from its ⋯ menu.</div>}
       {!p.error && p.sessions.length === 0 && <div className="det wrap" style={{ padding: '14px 8px' }}>No sessions yet. Start one and it shows up here, and in Frog on your other devices.</div>}
       {groups.map((g) => {

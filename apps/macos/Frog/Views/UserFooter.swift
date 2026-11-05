@@ -5,7 +5,7 @@ import SwiftUI
 /// since everything on this Mac works without it.
 struct UserFooter: View {
     @State private var account = CloudAccount.shared
-    @State private var signingIn = false
+    @State private var signingIn: Task<Void, Never>?
     @State private var failure: String?
     @AppStorage("settingsTab") private var settingsTab = "general"
     @Environment(\.openSettings) private var openSettings
@@ -22,18 +22,23 @@ struct UserFooter: View {
                 .help("Account and billing")
             } else if account.signedIn && account.error == nil {
                 row(avatar: nil, title: "Frog Cloud", detail: "Loading…")
+            } else if let task = signingIn {
+                // Waiting on the browser: a click gives up, so a closed tab never leaves it spinning.
+                Button { task.cancel() } label: {
+                    row(avatar: nil, title: "Signing in…", detail: "Finish in your browser, or click to cancel")
+                }
+                .help("Cancel signing in")
             } else {
                 Menu {
                     Button("Continue with GitHub") { signIn("github") }
                     Button("Continue with Google") { signIn("google") }
                 } label: {
-                    row(avatar: nil, title: signingIn ? "Signing in…" : "Sign in to Frog Cloud",
+                    row(avatar: nil, title: "Sign in to Frog Cloud",
                         detail: failure ?? (account.signedIn ? "Access to more powerful models" : "Cloud sessions · $5 free to start"),
                         warn: failure != nil)
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
-                .disabled(signingIn)
                 .help("Sign in with GitHub or Google. Your conversations on this Mac don't need it.")
             }
         }
@@ -69,14 +74,13 @@ struct UserFooter: View {
     }
 
     private func signIn(_ provider: String) {
-        signingIn = true
         failure = nil
-        Task {
-            defer { signingIn = false }
+        signingIn = Task {
+            defer { signingIn = nil }
             do {
                 try await CloudAccount.signInAndSave(provider: provider)
             } catch {
-                failure = "Sign-in didn't finish. Try again."
+                failure = CloudAccount.signInFailure(error)
             }
         }
     }
@@ -94,6 +98,21 @@ struct UserFooter: View {
 }
 
 extension CloudAccount {
+    /// What a failed sign-in says, the same everywhere; nil when you cancelled it yourself.
+    static func signInFailure(_ error: Error) -> String? {
+        if error is CancellationError { return nil }
+        if let e = error as? URLError {
+            switch e.code {
+            case .cancelled: return nil
+            case .timedOut: return "Sign-in timed out. Try again."
+            case .notConnectedToInternet, .networkConnectionLost, .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed:
+                return "Can't reach Frog Cloud. Check your connection and try again."
+            default: break
+            }
+        }
+        return "Sign-in didn't finish. Try again."
+    }
+
     /// GitHub or Google in the browser, back with this Mac's own key, saved where frog reads it;
     /// then everything that shows the account catches up.
     static func signInAndSave(provider: String = "github") async throws {

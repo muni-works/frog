@@ -757,6 +757,8 @@ struct EmptyTranscript: View {
     @State private var hovering = false
     @State private var line = 0
     @State private var hop = 0
+    /// A hop is playing (it lasts one `FrogPose.hop` period).
+    @State private var hopping = false
 
     private var isChat: Bool { FrogPaths.isChat(conversation.folder) }
 
@@ -807,7 +809,9 @@ struct EmptyTranscript: View {
                     .fill(Color.accentColor.opacity(0.22))
                     .frame(width: 76, height: 26)
                     .offset(y: 4)
-                FrogFace(mood: .idle, size: 48, hop: hop)
+                // Still until hovered or hopping: its idle loop at 30 frames a second kept an
+                // empty window at about 10% of a core.
+                FrogFace(mood: .idle, size: 48, hop: hop, animating: hovering || hopping)
                     .anchorPreference(key: FrogAnchorKey.self, value: .bounds) { $0 }
             }
             .padding(.top, TurnSpace.Inset.tight)
@@ -831,6 +835,12 @@ struct EmptyTranscript: View {
         }
         .onChange(of: conversation.dropped) { _, urls in
             if !urls.isEmpty { hop += 1 }
+        }
+        .task(id: hop) {
+            guard hop > 0 else { return }
+            hopping = true
+            try? await Task.sleep(for: .seconds(2.5))
+            if !Task.isCancelled { hopping = false }
         }
     }
 }

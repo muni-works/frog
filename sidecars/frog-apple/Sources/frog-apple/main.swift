@@ -187,5 +187,18 @@ let server = try HTTPServer(port: port) { req, res in
 }
 server.start()
 FileHandle.standardError.write(Data("frog-apple: listening on http://127.0.0.1:\(port) (context \(ctx))\n".utf8))
+// Started for the Mac app (whose engines pass `FROG_APP_PID` down), it goes when the app does:
+// it's detached from the engine so later sessions reuse it, which left it running, ppid 1, after
+// the app quit or crashed. Started from the CLI, it outlives the engine as before.
+let appWatch: DispatchSourceProcess? = ProcessInfo.processInfo.environment["FROG_APP_PID"]
+    .flatMap { pid_t($0) }
+    .map { pid in
+        let source = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit, queue: .main)
+        source.setEventHandler { exit(0) }
+        source.resume()
+        // Already gone before the watch began (kqueue reports nothing for a dead pid).
+        if kill(pid, 0) != 0, errno == ESRCH { exit(0) }
+        return source
+    }
 NSApplication.shared.setActivationPolicy(.prohibited)
 NSApplication.shared.run()

@@ -279,7 +279,7 @@ extension SnapshotTests {
     /// frog cloud's card signed out, with a Keychain key and with FROG_API_KEY: `frog-cloud-card.png`.
     func testRenderFrogCloudCard() throws {
         func p(_ key: String?) -> ProviderInfo {
-            ProviderInfo(id: "cloud", name: "frog cloud", kind: "openai", baseUrl: "https://api.frog.toys/v1",
+            ProviderInfo(id: "cloud", name: "Frog Cloud", kind: "openai", baseUrl: "https://api.frog.toys/v1",
                          local: false, custom: false, key: key, keyUrl: "https://api.frog.toys/beta",
                          connected: key != nil, rank: 2, pinned: true)
         }

@@ -26,7 +26,7 @@ final class ModelSectionsTests: XCTestCase {
     private func providers(cloudKey: String?, server: Bool) -> [ProviderInfo] {
         var list = [
             provider("local", "This Mac", local: true),
-            provider("cloud", "frog cloud", key: cloudKey),
+            provider("cloud", "Frog Cloud", key: cloudKey),
             provider("anthropic", "Anthropic", key: "keychain"),
             provider("openai", "OpenAI", key: "env"),
         ]
@@ -55,22 +55,22 @@ final class ModelSectionsTests: XCTestCase {
     /// Only Frog Cloud's models are listed; with a server, nothing else changes.
     func testOrderWithServersSignedIn() {
         let s = sections(cloudKey: "keychain", server: true)
-        XCTAssertEqual(s.map(\.title), ["frog cloud"])
+        XCTAssertEqual(s.map(\.title), ["Frog Cloud"])
         XCTAssertEqual(s[0].models.map(\.state), [.ready])
     }
 
     /// Only Frog Cloud's models are listed, signed in without a key source in play.
     func testOrderWithoutServersSignedIn() {
         let s = sections(cloudKey: "env", server: false)
-        XCTAssertEqual(s.map(\.title), ["frog cloud"])
+        XCTAssertEqual(s.map(\.title), ["Frog Cloud"])
     }
 
     /// Signed out, Frog Cloud's listed models stay, asking to sign in.
     func testSignedOutFrogCloudStaysWithSignInAction() {
         for server in [true, false] {
             let s = sections(cloudKey: nil, server: server)
-            XCTAssertEqual(s.map(\.title), ["frog cloud"])
-            XCTAssertEqual(s[0].models.first?.state, .needsKey(provider: "frog cloud"))
+            XCTAssertEqual(s.map(\.title), ["Frog Cloud"])
+            XCTAssertEqual(s[0].models.first?.state, .needsKey(provider: "Frog Cloud"))
             XCTAssertEqual(s[0].models.first?.stateLine, "Sign in or add a key to use it")
         }
     }
@@ -78,7 +78,7 @@ final class ModelSectionsTests: XCTestCase {
     /// Frog Cloud's section is only what the engine listed: nothing built in fills it.
     func testNoFrogCloudSectionWhenNothingListedIt() {
         let s = sections(cloudKey: nil, server: false, listCloud: false)
-        XCTAssertFalse(s.map(\.title).contains("frog cloud"))
+        XCTAssertFalse(s.map(\.title).contains("Frog Cloud"))
     }
 
     /// Old ids in saved state mean the same providers.
@@ -92,7 +92,7 @@ final class ModelSectionsTests: XCTestCase {
 
     /// The engine's rank wins; without it, the same order falls out of id/local/custom.
     func testProviderOrder() {
-        let mixed = [provider("openai", "OpenAI"), provider("cloud", "frog cloud"),
+        let mixed = [provider("openai", "OpenAI"), provider("cloud", "Frog Cloud"),
                      provider("mew", "mew", local: true, custom: true), provider("tang", "tang", local: true)]
         XCTAssertEqual(ProviderInfo.sorted(mixed).map(\.id), ["tang", "mew", "cloud", "openai"])
         let ranked = mixed.enumerated().map { i, p in var p = p; p.rank = 10 - i; return p }

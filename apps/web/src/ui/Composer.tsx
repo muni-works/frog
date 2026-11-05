@@ -299,6 +299,7 @@ export function Composer(p: ComposerProps) {
             onChange={(e) => { setText(e.target.value); grow(e.target) }}
             onPaste={(e) => { const fs = [...e.clipboardData.files].filter((f) => f.type.startsWith('image/')); if (fs.length) { e.preventDefault(); attach(fs) } }}
             onKeyDown={(e) => {
+              if (e.nativeEvent.isComposing || e.keyCode === 229) return
               if (e.key === 'Enter' && !e.shiftKey && !e.metaKey) { e.preventDefault(); send() }
               if (e.key === 'Escape' && working) p.onStop?.()
             }}

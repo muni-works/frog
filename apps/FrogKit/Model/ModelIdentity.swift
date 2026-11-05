@@ -15,7 +15,7 @@ struct ModelIdentity: Hashable, Sendable {
         /// A cloud provider, by its name.
         case cloud(String)
 
-        /// "This Mac", "On mew (RTX 3090)", "frog cloud", "Cloud · Anthropic".
+        /// "This Mac", "On mew (RTX 3090)", "Frog Cloud", "Cloud · Anthropic".
         var label: String {
             switch self {
             case .mac, .apple: ProviderID.localName
