@@ -23,7 +23,13 @@ struct ComposerView: View {
     @Environment(\.switchFolder) private var switchFolder
 
     private var canSend: Bool {
-        !waitingForModel && (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty)
+        !waitingForModel && (Self.hasWords(text) || !attachments.isEmpty)
+    }
+
+    /// Anything but whitespace, stopping at the first such character (trimming copies the draft,
+    /// and this runs on every body pass).
+    static func hasWords(_ s: String) -> Bool {
+        s.unicodeScalars.contains { !CharacterSet.whitespacesAndNewlines.contains($0) }
     }
 
     private var waitingForModel: Bool {
@@ -275,6 +281,7 @@ struct ComposerView: View {
         }
         .onChange(of: skillSuggestions.map(\.name)) { picked = 0 }
         .onChange(of: window?.raceRequest) {
+            controller.flush()
             controller.focus()
             racing = true
         }
@@ -459,6 +466,7 @@ struct ComposerView: View {
     }
 
     private func send() {
+        controller.flush()
         guard canSend else { return }
         // A new conversation set to run in Frog Cloud starts its sandbox with this message.
         if !conversation.started, conversation.cloudSession == nil, let target = workspace.cloudTarget {
@@ -509,6 +517,7 @@ struct ComposerView: View {
     }
 
     private func saveDraftNow() {
+        controller.flush()
         draftSave?.cancel()
         draftSave = nil
         guard !text.isEmpty || !attachments.isEmpty else {
