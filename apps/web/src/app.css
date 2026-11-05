@@ -47,11 +47,11 @@ a { color: var(--frog); }
 .turn { display: flex; flex-direction: column; gap: 12px; }
 .dock { display: flex; justify-content: center; padding: 6px 18px 12px; }
 .dock > * { width: 100%; max-width: 680px; }
-.me { align-self: flex-end; max-width: 76%; background: var(--card); border-radius: 16px; padding: 9px 13px; }
+.me { align-self: flex-end; max-width: 76%; background: var(--card); border-radius: 16px; padding: 9px 13px; overflow-wrap: anywhere; }
 .tool { font: 12px/18px var(--font-mono); color: var(--muted); }
 .decided { font-size: 12px; color: var(--muted); border-left: 2px solid var(--line); padding-left: 10px; }
 .decided b { color: var(--fg); }
-.say { font-size: 14px; }
+.say { font-size: 14px; overflow-wrap: anywhere; }
 /* Who served a Frog Cloud answer: a rule in the margin, blue for Frog Cloud's GPUs, green for a third party. */
 .say.served-frog, .say.served-third { box-shadow: -8px 0 0 -6px var(--served); }
 .served-frog { --served: var(--place-local); } .served-third { --served: var(--place-cloud); }
