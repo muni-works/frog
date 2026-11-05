@@ -25,6 +25,10 @@ jobs:
       # No -D warnings yet: frog-engine has outstanding clippy warnings.
       - run: cargo clippy -p frog -p frog-engine
       - run: cargo test -p frog-engine -p frog
+      # schema.rs's artifact_matches_types rewrites schema/frog-engine-1.json from the
+      # protocol types; a diff here means the committed artifact is stale.
+      - name: protocol schema is regenerated and committed
+        run: git diff --exit-code -- crates/frog-engine/schema/frog-engine-1.json
 
   # cargo passing doesn't mean the app builds: compile the Swift app and run its unit tests.
   # PRs and main only (not every branch push), since macOS minutes are the expensive ones.
