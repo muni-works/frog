@@ -98,3 +98,66 @@ note: `apps/macos/Frog.xcodeproj` is generated and untracked. a stale local copy
 - sandbox container isolation below the edge
 - coder-next as the default in `apps/web/src/models.ts`
 - whether frog.toys / the Stripe live keys / repo-public steps (launch checklist C3, C5, C5b, C6) happened. there's no record in the repo.
+
+---
+
+## fix pass — 2026-11-05 (later)
+
+everything code-fixable is done. nothing pushed, tagged or deployed.
+
+### where the work is
+
+| repo | branch / worktree | commits |
+|---|---|---|
+| frog | this branch (merged from the two agent worktrees) | docs/site ×8, release/cli ×4, web `tasks_left` drop, schema key-sort fix |
+| zest | `launch-fixes` in `~/Developer/zest-wt-launchfix` (off main 2528f1f) | cf4211f, 8873636, a3d685c, b5c9708, 789a671, 8d8c371 |
+| tang | `frog/integrate-launch-fixes` in `~/Developer/tang-wt-launchfix` (off 99f8c6f9) | 57af86ec (revert deepseek WIP 35066e91 + 80f0d53f), e0743eeb (wide-check KL bars enforced) |
+
+### tests after fixes
+
+- frog `cargo test --workspace`: 645 / 0 fail
+- swift: 447 tests, 5 skipped, 0 fail
+- web: tsc clean, tests pass
+- site: 7/7
+- zest edge: 256/256
+- tang: `cargo check --features cuda` ok, deepseek lib tests 13/0. **no GPU run of the new KL bars yet**
+
+### status of each item
+
+- blocking 1-2 (tang): fixed on branch. needs a GPU wide-check run, then push + merge.
+- blocking 3-4 (privacy/terms): rewritten for the sandbox. **needs Cam/legal review**:
+  - RunPod is named as the GPU host
+  - usage retention is "as long as needed for billing"
+  - account deletion is by contacting us
+- blocking 5 (`tasks_left`): removed in zest and in the frog web type.
+- blocking 6 (placeholders): filled from the current engine numbers. API-level placeholders are cut because nothing has been measured since Oct 21. a few remain outside the gated lines: bench `{{HW}}`/`{{COVERAGE}}`, beat1 `{{COMMITS_DAY}}`/`{{NODES}}`.
+- blocking 7 (release): REPO is now muni-works/frog. brew formula is a release-filled template. minisign verification is in the installer. Developer ID signing + notarization for the darwin CLI is in release.yml.
+- risky 1 (refunds): `charge.refunded` claws back credit. `charge.dispute.created` disables the account (gap: disputes on subscription payments can't be matched to an account).
+- risky 2 (credit farming): $5 once per verified GitHub id. it was actually $7 per account before.
+- risky 3 (magic links): verified working in prod, left enabled.
+- risky 4 (overdraw): $0.05 reserve per open stream, else 429.
+- risky 5 (installer): see blocking 7.
+- risky 6 (CLI errors): clear copy for Frog Cloud 401/403, network down, model not loaded.
+- risky 7 (CLI login): there's no `frog login`. sign-in is `FROG_API_KEY` / `frog --set-key cloud` / the app. a fresh run now offers Frog Cloud.
+- risky 8 (MTP serve cost): **not measured.** mew's 3090 is busy and coder-next doesn't fit. no pods created.
+- risky 9 (mac failure paths): not exercised by hand.
+- risky 10 (site): footer + Frog Cloud pricing section + friendly 503 added.
+- risky 11 (schema): CI now `git diff`s the artifact. the artifact is key-sorted so it's stable across feature unification.
+- risky 12 (unwrap): guarded.
+- risky 13 (broker rescue op): left; it needs a structured session summary that doesn't exist yet.
+- docs/copy: done. status note at `docs/launch/status-2026-11-05.md`.
+
+### Cam to do
+
+1. legal review of zest privacy + terms
+2. confirm Frog Cloud prices ($0.60 in / $0.06 cached / $1.50 out per M — the only source is the Oct 26 /pricing probe) and the `api.frog.toys` footer host
+3. secrets:
+   - `minisign -G -W`, then `MINISIGN_SECRET_KEY` and paste the pubkey into `FROG_MINISIGN_PUBKEY` in site/install.sh + scripts/install.sh
+   - `APPLE_CERT_P12`, `APPLE_CERT_PASSWORD`, `APPLE_ID`, `APPLE_TEAM_ID`, `APPLE_APP_PASSWORD`
+   - create `muni-works/homebrew-muni` and add `HOMEBREW_TAP_TOKEN`
+4. decisions:
+   - $0.05 overdraw reserve
+   - hide email sign-in on /auth?
+   - gateway margin
+   - open plan questions (listed in the status note)
+5. GPU wide-check on the tang branch, then push tang, zest and frog, and cut a stable `vX.Y.Z` tag
