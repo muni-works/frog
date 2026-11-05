@@ -101,7 +101,7 @@ one) with a first prompt. Optionally in another folder (cwd), with another model
 git worktree on a new branch (worktree: true) based on the repo's remote default branch \
 (origin/HEAD, e.g. origin/main) so its edits don't collide with yours. mode starts it in a \
 permission mode (default, accept-edits, auto, yolo); it defaults to your own mode but is never \
-above it, and yolo only when you say so explicitly. When it goes idle you get a message from \
+above it, so a yolo session starts its children in yolo. When it goes idle you get a message from \
 \"system\" with its last reply (its report), unless report: false. Returns its id and name for \
 SendMessage, and for a worktree the branch it's on and the base ref it started from. Worker \
 sessions belong in worktrees: without worktree: true, a cwd in the user's main checkout (the repo \
@@ -115,7 +115,7 @@ an existing worktree path is reused as-is, and one another engine runs in is ref
                     "prompt": { "type": "string" },
                     "cwd": { "type": "string" },
                     "model": { "type": "string", "description": "the model the new session runs on (e.g. local/qwen3-4b, cloud/tree); default: this session's model" },
-                    "mode": { "type": "string", "enum": ["default", "accept-edits", "auto", "yolo"], "description": "permission mode for the new session (default: yours, capped; yolo never inherited implicitly)" },
+                    "mode": { "type": "string", "enum": ["default", "accept-edits", "auto", "yolo"], "description": "permission mode for the new session (default: yours, capped so it can never exceed yours)" },
                     "worktree": { "type": "boolean", "description": "its own git worktree on a new branch, based on the remote default branch (default false)" },
                     "allow_main_checkout": { "type": "boolean", "description": "run in the user's main repo checkout anyway; only when the user asked for it (default false)" },
                     "report": { "type": "boolean", "description": "send its last reply back here when it goes idle (default true)" }
@@ -196,8 +196,8 @@ runs next as usual, unless clear_queue: true cancels it, so the session stays st
             name: SET_MODE.into(),
             description: "Change a session's permission mode (default, accept-edits, auto, yolo); \
 the change persists across restarts. Can never raise the session above YOUR OWN mode; raising \
-to yolo additionally needs yolo: true. Applied at the next turn boundary — running turns keep \
-the mode they started with."
+to yolo additionally needs yolo: true. Applied at its next permission decision, even mid-turn — \
+a running turn obeys it at its next tool call."
                 .into(),
             schema: json!({
                 "type": "object",

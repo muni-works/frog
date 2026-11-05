@@ -41,6 +41,7 @@ enum TranscriptProbe {
         earlier = 0
         fillSettles = 0
         fillBlocked = ""
+        sidebarBodies = 0
     }
 
     static var mountedKeys: Set<String> { mounted }
@@ -55,5 +56,9 @@ enum TranscriptProbe {
     /// For `let _ = TranscriptProbe.row()` inside a view builder.
     @discardableResult static func row() -> Int { rowBodies += 1; return rowBodies }
     @discardableResult static func turn() -> Int { turnBodies += 1; return turnBodies }
+    /// `SessionList` body evaluations (the perf-structural branch: does a streamed delta
+    /// re-run the sidebar? The bar was: a delta must not dirty the sidebar's subtree).
+    static var sidebarBodies = 0
+    @discardableResult static func sidebar() -> Int { sidebarBodies += 1; return sidebarBodies }
 }
 #endif

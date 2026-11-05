@@ -23,6 +23,15 @@ struct SessionList: View {
         self.collapse = collapse
         _query = State(initialValue: query)
     }
+    #if DEBUG
+    var body: some View {
+        let _ = TranscriptProbe.sidebar()
+        listBody
+    }
+    #else
+    var body: some View { listBody }
+    #endif
+
     @State private var showArchived = false
     @State private var showTree = false
     @State private var renaming: SessionInfo?
@@ -89,7 +98,11 @@ struct SessionList: View {
     /// Conversations shown per project before "Show more".
     static let groupLimit = 5
 
-    private var current: String? { workspace.opening ?? workspace.conversation?.cloudSession ?? workspace.conversation?.sessionID }
+    /// The session this window shows. Reads the workspace's *ids* only: a streamed turn
+    /// changes `workspace.conversation`'s contents every 30 Hz batch, and a sidebar that
+    /// tracked that re-derived the whole list per delta (the workspace's `currentSession`
+    /// mirrors the id as the conversation opens and moves).
+    private var current: String? { workspace.opening ?? workspace.currentSession }
     private var folded: Set<String> { Set(foldedRaw.split(separator: "\n").map(String.init)) }
     private var filtering: Bool { showArchived || !query.trimmingCharacters(in: .whitespaces).isEmpty }
 
@@ -188,7 +201,7 @@ struct SessionList: View {
         active.filter { !library.pinned.contains($0.id) }
     }
 
-    var body: some View {
+    private var listBody: some View {
         VStack(spacing: 0) {
             header
             ScrollView {

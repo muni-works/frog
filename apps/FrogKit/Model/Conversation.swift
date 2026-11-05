@@ -219,6 +219,10 @@ final class Conversation {
     /// Counts of live happenings, for haptics and the frog's face.
     private(set) var stepsDone = 0
     private(set) var turnsDone = 0
+    /// Bumped when a change could add a file diff (an `item_completed` of a tool call, a turn
+    /// end). `sessionChanges` walks every turn's diffs; observers that only need "did the
+    /// changes list change" read this instead of the walk (the toolbar's pill, per body pass).
+    private(set) var changesVersion = 0
     /// A turn just finished: the frog is pleased (or sad) for a moment.
     private(set) var justFinished = false
     @ObservationIgnored private var finishedTask: Task<Void, Never>?
@@ -231,6 +235,9 @@ final class Conversation {
     @ObservationIgnored private var pendingFlash: (String, Bool)?
     /// Called when the session id changes or a turn ends, so the sidebar can refresh.
     @ObservationIgnored var onSessionChange: (() -> Void)?
+    /// Called alongside `onSessionChange` by a workspace that mirrors the session id (`Workspace.
+    /// currentSession`): the second link a conversation hands its pane after being shown.
+    @ObservationIgnored var sessionChanged: (() -> Void)?
     /// The engine exited on its own (not stopped).
     @ObservationIgnored var onExit: (() -> Void)?
 
@@ -323,6 +330,7 @@ final class Conversation {
         for t in turns.indices {
             for i in turns[t].items.indices { itemAt[turns[t].items[i].id] = (t, i) }
         }
+        changesVersion += 1
     }
 
     /// Something to show: the history is in, or its newest rows are.
@@ -750,6 +758,7 @@ final class Conversation {
             panes.sessionDir = URL.homeDirectory
                 .appending(path: ".local/share/frog/sessions/\(env.session)")
             onSessionChange?()
+            sessionChanged?()
         }
         defer { reportLive() }
         switch env.event {
@@ -792,6 +801,7 @@ final class Conversation {
                 turns[i].endedAt = Date(timeIntervalSince1970: Double(env.created) / 1000)
                 if isNews(env) {
                     turnsDone += 1
+                    changesVersion += 1
                     celebrate()
                     if case .complete = reason { FrogSounds.shared.play(.ribbit) }
                     Conversation.effects?.turnEnded(self, turn: turns[i])
@@ -838,6 +848,7 @@ final class Conversation {
                 }
             }
             if case .toolCall = item, isNews(env) { stepsDone += 1 }
+            changesVersion += 1
         case .commandGisted(_, let command, let gist):
             // A finished shell command's one-line summary, written in one batched side-model
             // call per turn flush (live only). Cached by command hash so identical rows share
@@ -1032,6 +1043,7 @@ final class Conversation {
         case .titled(let t):
             title = t
             onSessionChange?()
+            sessionChanged?()
         case .folderChanged(let cwd):
             let url = URL(fileURLWithPath: cwd)
             let here = folder.resolvingSymlinksInPath().standardizedFileURL.path

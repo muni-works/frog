@@ -134,7 +134,13 @@ final class Library {
         GitIndex.shared.listingChanged(listed)
         archiveQuietChats()
         RemoteBridge.shared.listChanged()
+        onOrderInvalidated?()
     }
+
+    /// Set by `SessionOrder` (the quick-switch shortcuts' cached sidebar order): the listing,
+    /// pins, archive or parents moved, so the cache re-derives. Nothing a streamed turn does
+    /// reaches it — its whole point is to leave the order alone per delta.
+    @ObservationIgnored var onOrderInvalidated: (() -> Void)?
 
     /// Whether a session's folder exists, from the cache (fresh for `folderCacheTTL`): a
     /// Documents/Desktop/Downloads session can't be stat'd without a TCC prompt anyway.
@@ -158,6 +164,7 @@ final class Library {
         if FeatureFlags.chief, id == chief { return }
         if pinned.remove(id) == nil { pinned.insert(id) }
         UserDefaults.standard.set(Array(pinned), forKey: "pinnedSessions")
+        onOrderInvalidated?()
     }
 
     // MARK: Chief
@@ -175,12 +182,14 @@ final class Library {
         let was = chief
         chief = id
         if was != id { UserDefaults.standard.set(id, forKey: "chiefSession") }
+        onOrderInvalidated?()
     }
 
     /// No chief, until one is made again.
     func removeChief() {
         chief = nil
         UserDefaults.standard.removeObject(forKey: "chiefSession")
+        onOrderInvalidated?()
     }
 
     func setArchived(_ id: String, _ on: Bool) {
@@ -191,6 +200,7 @@ final class Library {
         if on, FeatureFlags.chief, chief == id { chief = nil; UserDefaults.standard.removeObject(forKey: "chiefSession") }
         UserDefaults.standard.set(Array(archived), forKey: "archivedSessions")
         UserDefaults.standard.set(Array(pinned), forKey: "pinnedSessions")
+        onOrderInvalidated?()
     }
 
     /// Plain chats archive themselves after this long without activity, unless pinned, live or
@@ -250,6 +260,7 @@ final class Library {
             guard parents.removeValue(forKey: child) != nil else { return .success(nil) }
         }
         UserDefaults.standard.set(parents, forKey: "sessionParents")
+        onOrderInvalidated?()
         return .success(parent)
     }
 

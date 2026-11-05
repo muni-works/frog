@@ -82,37 +82,12 @@ struct WorkspaceView: View {
     /// pins, then one group per project folder (newest activity first), then chats — the
     /// started-by children are nested under their parents and don't count. What the
     /// quick-switch shortcuts (⌘1…9, ⇧⌘]/⇧⌘[) step through.
+    /// Derived by `SessionOrder` (below) from the listing, pins, archive and grouping — none of
+    /// which a streamed turn touches. The window root used to re-derive it on every body pass
+    /// (per streamed delta): the tree walk sorted every session, twice, per 30 Hz batch.
     private var sidebarOrder: [SessionInfo] {
-        let library = Library.shared
-        if sidebarGroup == .org {
-            // The attention tree: what needs you, then the org's top-level rows, then yours —
-            // the chief first only with the flag on.
-            let current = workspace.opening ?? workspace.conversation?.sessionID
-            let tree = SessionList.attention(library, sort: sidebarSort, scope: sidebarScope, current: current)
-            return (FeatureFlags.chief ? [library.chiefSession].compactMap(\.self) : []) + tree.layout.topLevels
-        }
-        let active = library.sessions.filter { !library.archived.contains($0.id) }
-        let pins = active.filter { library.pinned.contains($0.id) }
-        let unpinned = active.filter { !$0.isChat && !library.pinned.contains($0.id) && $0.folder != nil }
-        let byPath = Dictionary(grouping: unpinned) { home(of: $0).standardizedFileURL.path }
-        let projects = byPath.values
-            .map { items in items.sorted { $0.modified > $1.modified } }
-            .sorted { ($0.first?.modified ?? 0) > ($1.first?.modified ?? 0) }
-        let chats = active.filter { $0.isChat && !library.pinned.contains($0.id) }
-        return pins + projects.flatMap(\.self) + chats.sorted { $0.modified > $1.modified }
-    }
-
-    /// The folder a session is filed under: its own, or (for one started by another session,
-    /// say in a worktree) its topmost parent's repo (the sidebar's `home`).
-    private func home(of s: SessionInfo) -> URL {
-        var current = s
-        var seen: Set<String> = [s.id]
-        while let p = Library.shared.parents[current.id], !seen.contains(p),
-              let parent = Library.shared.sessions.first(where: { $0.id == p }), parent.folder != nil, !parent.isChat {
-            seen.insert(p)
-            current = parent
-        }
-        return SessionList.repoRoot(current.folder ?? s.folder!)
+        SessionOrder.order(group: sidebarGroup, sort: sidebarSort, scope: sidebarScope,
+                           current: workspace.opening ?? workspace.currentSession)
     }
     private var workspace: Workspace { focused.workspace }
     private var minColumn: CGFloat { panes.isSplit ? Self.minSplitColumn : Self.minColumn }
@@ -146,13 +121,19 @@ struct WorkspaceView: View {
     /// Smallest a pane may be dragged to, across a divider.
     /// Smaller is unreadable even with a narrow pane's slimmed chrome.
     static let minPane: CGFloat = 360
+    /// Smallest a pane showing a terminal or preview may get: the card is the pane's point, and
+    /// a preview reads fine at this width. (A conversation pane keeps `minPane`.)
+    static let minToolPane: CGFloat = 260
     /// The canvas's coordinate space, for dragging dividers.
     static let canvasSpace = "frog-canvas"
 
     /// A pane's frame in the window and the insets that keep its column clear of the cards.
+    /// A maximized pane takes the whole canvas region; the others are empty (their contents
+    /// step aside, cut to nothing), and the layout comes back exactly on restore.
     private func placement(_ pane: Pane, sessions open: Bool, changes: Bool) -> (frame: CGRect, insets: EdgeInsets) {
         let ext = extent(sessions: open)
-        var r = panes.layout.frames(in: region(sessions: open))[pane.id] ?? .zero
+        var r = panes.layout.frames(in: region(sessions: open), maximizing: panes.maximized)[pane.id] ?? .zero
+        if r == .zero { return (r, EdgeInsets()) }
         let leftmost = r.minX <= ext + 0.5
         if leftmost {
             r.size.width += r.minX
@@ -395,9 +376,9 @@ struct WorkspaceView: View {
             .environment(\.startConversation) { panes.start($1, in: $0, pane: focused) }
             .environment(\.paneNumbers, numbers)
 
-            ForEach(panes.layout.dividers(in: region(sessions: docked.sessions))) { d in
+            ForEach(panes.layout.dividers(in: region(sessions: docked.sessions), maximizing: panes.maximized)) { d in
                 PaneDividerHandle(divider: d, resizing: $resizing) { t in
-                    panes.moveDivider(d, to: t, minimum: Self.minPane)
+                    panes.moveDivider(d, to: t, minimum: panes.minimum(paneWidth: Self.minPane, forToolPanes: Self.minToolPane, beside: d))
                 } equalize: {
                     panes.equalize(d)
                 }
@@ -442,7 +423,9 @@ struct WorkspaceView: View {
         .modifier(FolderDocument(folder: workspace.isChat ? nil : workspace.folder))
         .navigationTitle(windowTitle)
         .navigationSubtitle(place)
-        .toolbarTitleMenu { if let c = workspace.conversation { titleMenu(c) } }
+        // The menu's content builds when it opens (a title menu is deferred by the system), but
+        // the toolbar's item body runs per body pass: read the mirror, not the conversation.
+        .toolbarTitleMenu { if workspace.currentSession != nil { titleMenu(workspace.conversation!) } }
         // One backdrop for the whole canvas, so the conversation reads as a single surface.
         .background(FrogCanvas.color.ignoresSafeArea())
         .background(WindowReader {
@@ -453,11 +436,14 @@ struct WorkspaceView: View {
         .animation(Motion.panel(reduced: reduceMotion), value: sessionsVisible)
         .animation(Motion.panel(reduced: reduceMotion), value: docked)
         .animation(resizing ? nil : Motion.panel(reduced: reduceMotion), value: panes.layout)
+        .animation(Motion.panel(reduced: reduceMotion), value: panes.maximized)
         .animation(Motion.quick(reduced: reduceMotion), value: focused.ui.paletteShown)
         .onChange(of: workspace.selection) { peekSessions = false }
         .onChange(of: panes.focusedID) { peekSessions = false }
         .onExitCommand {
-            if focused.ui.findShown {
+            if let maxed = panes.maximizedPane {
+                panes.toggleMaximized(maxed)
+            } else if focused.ui.findShown {
                 focused.ui.findShown = false
             } else {
                 peekSessions = false
@@ -509,10 +495,11 @@ struct WorkspaceView: View {
                 r.done(pane.conversation)
             }
         }
-        // Handoff: the phone offers the conversation you're reading here, and back.
-        .userActivity(Handoff.conversation, isActive: workspace.conversation?.sessionID != nil) { a in
-            a.title = workspace.conversation?.title ?? "Conversation"
-            a.userInfo = ["session": workspace.conversation?.sessionID ?? ""]
+        // Handoff: the phone offers the conversation you're reading here, and back. The id via
+        // the workspace's mirror, so the root body doesn't observe the streaming conversation.
+        .userActivity(Handoff.conversation, isActive: workspace.currentSession != nil) { a in
+            a.title = workspace.currentTitle ?? "Conversation"
+            a.userInfo = ["session": workspace.currentSession ?? ""]
             a.isEligibleForHandoff = true
         }
         .onContinueUserActivity(Handoff.conversation) { a in
@@ -521,7 +508,7 @@ struct WorkspaceView: View {
         .alert("Rename Conversation", isPresented: $renamingTitle) {
             TextField("Title", text: $newTitle)
             Button("Rename") {
-                if let id = workspace.conversation?.sessionID {
+                if let id = workspace.currentSession {
                     Task { await Library.shared.rename(id, to: newTitle) }
                 }
             }
@@ -606,6 +593,10 @@ extension WorkspaceView {
 
     private var windowTitle: String {
         if workspace.race != nil { return workspace.name }
+        // The mirror (see `Workspace.currentTitle`), not the conversation: the root body
+        // reading the streaming conversation re-evaluated per delta to redraw a title that
+        // only changes when the engine names the session.
+        if let t = workspace.currentTitle { return t }
         return workspace.conversation?.title ?? (workspace.isChat ? "New Chat" : "New Conversation")
     }
 

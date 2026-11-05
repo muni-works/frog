@@ -14,6 +14,8 @@ import XCTest
 ///      `ActivityLine` + `ItemView`) stay linear in rows. A relayout of the whole turn per insert
 ///      builds every row again each time: rows²/2 ≈ 125k bodies for 500 rows. The budget is
 ///      8 per row (the inserted row, its re-render as it finishes, the live tail);
+///      (b′) the same for `TurnView` bodies (`TranscriptProbe.turnBodies`), which before the
+///      equatable row ran 254× per streamed row — a delta re-evaluated every mounted turn.
 ///  (c) the view stays anchored to the bottom (within 24 pt, the transcript's own "at bottom");
 ///  (d) the whole stream renders within a wall-clock budget (`budget`, below): one frame of the
 ///      real layout per row, at 60 Hz a 500-row turn must keep up with a stream.
@@ -190,9 +192,63 @@ final class TranscriptStreamBenchmarkTests: XCTestCase {
         XCTAssertTrue(blankPixels.isEmpty, "blank frames at rows \(blankPixels.prefix(20))")
         XCTAssertGreaterThan(finalInk, 0.002, "blank after the stream")
         XCTAssertLessThanOrEqual(rowBodies, rows * 8, "row bodies grew faster than rows: a full relayout per insert")
+        // Every mounted turn's body per streamed row was the old shape (measured 254/row,
+        // 126,674 for 500 rows, before TurnView was equatable and the live turn's segments
+        // cached): a streamed delta must invalidate ONE row, not every mounted turn. Bounded
+        // small — the inserted row, its re-render as it finishes, the live tail — like row
+        // bodies, so a regression back to the quadratic fails here.
+        let turnBodies = TranscriptProbe.turnBodies
+        XCTAssertLessThanOrEqual(turnBodies, rows * 8, "turn bodies grew faster than rows: every mounted turn rebuilt per streamed row")
         XCTAssertTrue(unanchored.isEmpty, "left the bottom at rows \(unanchored.prefix(20)) (worst \(worstBelow) pt)")
         XCTAssertLessThan(below(scroll), 24, "not at the bottom after the stream")
         XCTAssertLessThan(total, Self.budget, "stream render over budget")
+        print("bench: sidebar bodies \(TranscriptProbe.sidebarBodies)")
+    }
+
+    /// The window-graph boundary (perf-structural step 2): the sidebar mounted in the same
+    /// window as a streaming transcript must not rebuild per streamed delta. Before the cut the
+    /// root's body re-derived `sidebarOrder` (a walk and two sorts over every session) and read
+    /// `workspace.conversation` per 30 Hz batch, which dirtied the sidebar subtree with the
+    /// transcript's invalidation. This window can't have the real root (a WorkspaceView needs a
+    /// full app session), so it mounts both children side by side under one host — the shape
+    /// whose boundary the fix establishes: the sidebar observes session ids and the cached
+    /// order, never the streaming conversation.
+    func testSidebarDoesNotRebuildWhileStreaming() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "frog-bench-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let w = Workspace(folder: dir, fresh: true)
+        defer { w.stop() }
+        let c = Conversation(preview: dir)
+        // On screen the pane shows the workspace's conversation (PaneView.detail); here the
+        // test mounts the same pair the root composes.
+        w.testShow(c)
+        let list = SessionList(workspace: w, maxHeight: 700)
+        let transcript = TranscriptView(conversation: c, actions: TurnActions(fork: { _ in }, rewind: { _ in }))
+        let host = NSHostingView(rootView: HStack(spacing: 0) {
+            list.frame(width: 250)
+            transcript.frame(maxWidth: .infinity)
+        })
+        host.frame = CGRect(x: 0, y: 0, width: 900, height: 700)
+        let window = NSWindow(contentRect: host.frame, styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named: .aqua)
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.close() }
+
+        send(c, #""turn_started","turn":1,"input":"Refactor the parser, file by file, and run the tests as you go""#)
+        pump(0.4)
+        TranscriptProbe.reset()
+        var sidebarBefore = 0
+        let rows = 60
+        for r in 0..<rows { row(r, into: c); pump() }
+        // A settle, then a quiet read: only genuinely streaming-driven rebuilds are counted.
+        pump(0.3)
+        sidebarBefore = TranscriptProbe.sidebarBodies
+        print("bench: sidebar bodies over \(rows) streamed rows: \(sidebarBefore) (\(String(format: "%.2f", Double(sidebarBefore) / Double(rows)))/row)")
+
+        XCTAssertEqual(c.turns.first?.items.count, rows)
+        XCTAssertLessThanOrEqual(sidebarBefore, 4, "the sidebar rebuilt per streamed delta: the transcript's invalidation reached its subtree")
     }
 }
 

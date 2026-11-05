@@ -331,6 +331,7 @@ struct TranscriptView: View {
                 ForEach(rows) { row in
                     TurnView(turn: row.turn, conversation: conversation, actions: actions, part: row.part,
                              gap: row.gap, pinsFooter: footers.contains(row.turn.id))
+                        .equatable()
                         .id(row.id)
                         .background {
                             if row.first, row.turn.id == lastTurn {
@@ -1034,17 +1035,55 @@ struct TranscriptRow: Identifiable {
 }
 
 /// Finished turns' flows, by turn: a finished turn's rows only change when items are added
-/// to it (a notice) or the thinking setting changes. The running turn's is derived each time.
+/// to it (a notice) or the thinking setting changes. The running turn's is cached too, keyed
+/// by a signature of what the segmentation can depend on (identity, kinds, done, text
+/// emptiness, the visual flags): re-deriving the segments (the activity groups, the visual
+/// scan) on every streamed chunk was O(turn) per 30 Hz batch per mounted turn (see the
+/// perf-structural notes). Never the streaming text itself.
 @MainActor
 final class FlowCache {
-    private var flows: [TurnState.ID: (count: Int, thinking: Bool, segments: [TurnFlow.Segment])] = [:]
+    private struct Entry {
+        var count: Int
+        var thinking: Bool
+        var signature: String?
+        var segments: [TurnFlow.Segment]
+    }
+    private var flows: [TurnState.ID: Entry] = [:]
 
     func segments(of turn: TurnState, showThinking: Bool) -> [TurnFlow.Segment] {
-        if turn.finished, let hit = flows[turn.id], hit.count == turn.items.count, hit.thinking == showThinking {
-            return hit.segments
+        if let hit = flows[turn.id], hit.count == turn.items.count, hit.thinking == showThinking {
+            if turn.finished, hit.signature == nil { return hit.segments }
+            if !turn.finished, hit.signature == Self.signature(of: turn) { return hit.segments }
         }
         let segments = TurnFlow(turn.items, showThinking: showThinking).segments
-        if turn.finished { flows[turn.id] = (turn.items.count, showThinking, segments) }
+        flows[turn.id] = Entry(count: turn.items.count, thinking: showThinking,
+                               signature: turn.finished ? nil : Self.signature(of: turn), segments: segments)
         return segments
+    }
+
+    /// What the segmentation can depend on, item by item: identity, kind, done, and the flags
+    /// `TurnFlow` reads. Text *emptiness* (a message that hasn't said anything doesn't break
+    /// the group) and a thought's `isShort` (a short one is dropped), not the text itself — so
+    /// a streaming answer's growing text leaves the signature alone and the segments stay
+    /// cached between item boundaries.
+    private static func signature(of turn: TurnState) -> String {
+        var out = ""
+        out.reserveCapacity(turn.items.count * 16)
+        for item in turn.items {
+            let kind: String
+            switch item.kind {
+            case .message: kind = item.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "me" : "M"
+            case .reasoning: kind = ActivityGroup.isShort(item) ? "rs" : "RL"
+            case .tool(let name, _): kind = "t:" + name
+            case .notice(let warning): kind = warning ? "nw" : "n"
+            }
+            out += "\(item.id)|\(kind)|\(item.done ? "d" : "u")|"
+            if item.imagePreview != nil { out += "v" }
+            if let r = item.result {
+                out += "\(r.present != nil ? "p" : "-")\(r.app != nil ? "a" : "-")\((r.images ?? []).isEmpty ? "-" : "i")\(r.diagram != nil ? "d" : "-")\(r.diff != nil ? "f" : "-")"
+            }
+            out += "|"
+        }
+        return out
     }
 }

@@ -67,60 +67,7 @@ struct PreviewPane: View {
     // MARK: Toolbar
 
     private var toolbar: some View {
-        HStack(spacing: 6) {
-            Button { host.goBack() } label: { Image(systemName: "chevron.left") }
-                .disabled(!host.canGoBack)
-                .help("Back")
-            Button { host.reload() } label: { Image(systemName: "arrow.clockwise") }
-                .disabled(host.currentURL == nil)
-                .help("Reload")
-            HStack(spacing: 5) {
-                if host.loading {
-                    ProgressView().controlSize(.mini)
-                } else {
-                    Image(systemName: "globe").foregroundStyle(.tertiary)
-                }
-                TextField("URL or port", text: $address)
-                    .textFieldStyle(.plain)
-                    .onSubmit { go() }
-            }
-            .font(.frog(size: 12))
-            .padding(.horizontal, 8)
-            .frame(height: 26)
-            .background(.quaternary.opacity(0.6), in: .rect(cornerRadius: 8))
-            Picker("Device", selection: $device) {
-                ForEach(Device.allCases) { d in Image(systemName: d.symbol).tag(d) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize()
-            .help("Device width")
-            Button {
-                hub.inspecting.toggle()
-            } label: {
-                Image(systemName: "cursorarrow.click.2")
-                    .foregroundStyle(hub.inspecting ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
-            }
-            .help("Inspect: click an element to mention it (⇧⌘I)")
-            if let m = hub.mention, hub.mentionInDraft {
-                Text(m)
-                    .font(.caption.monospaced())
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(.tint.opacity(0.18), in: .capsule)
-                    .lineLimit(1)
-                    .transition(.opacity)
-            }
-            Button {
-                if let u = host.currentURL.flatMap(URL.init) { NSWorkspace.shared.open(u) }
-            } label: { Image(systemName: "safari") }
-                .disabled(host.currentURL == nil)
-                .help("Open in Browser")
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        PreviewToolbar(host: host, hub: hub, popOut: true, device: $device)
     }
 
     /// Before (the turn's checkpoint) or after (the live page).
@@ -152,8 +99,17 @@ struct PreviewPane: View {
         GeometryReader { geo in
             let width = min(geo.size.width, device.width ?? geo.size.width)
             ZStack {
-                PreviewWebView(host: host)
-                    .opacity(pane.url == nil && host.currentURL == nil ? 0 : 1)
+                // The web view is one thing: while the pop-out window shows it, the card
+                // holds its place (the host keeps it; nothing renders twice).
+                if !hub.poppedOut {
+                    PreviewWebView(host: host)
+                        .opacity(pane.url == nil && host.currentURL == nil ? 0 : 1)
+                } else {
+                    Text("Open in its own window")
+                        .font(.frog(size: 12))
+                        .foregroundStyle(.tertiary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
                 if pane.url == nil, host.currentURL == nil {
                     hint
                 }
@@ -194,6 +150,108 @@ struct PreviewPane: View {
                 .frame(maxWidth: 260)
         }
         .padding()
+    }
+
+    /// Go to what's in the address field: a URL, a host without a scheme, or just a port.
+    private func go() {
+        let raw = address.trimmingCharacters(in: .whitespaces)
+        guard !raw.isEmpty else { return }
+        let url: String
+        if raw.allSatisfy(\.isNumber) { url = "http://localhost:\(raw)" }
+        else if raw.contains("://") { url = raw }
+        else if raw.hasPrefix(":") { url = "http://localhost\(raw)" }
+        else { url = "http://\(raw)" }
+        address = url
+        host.load(url)
+    }
+}
+
+/// The preview's toolbar, shared by the pane's card and the pop-out window: back, reload, the
+/// address field, the device-width picker, inspect, and (from the card only) the pop-out.
+struct PreviewToolbar: View {
+    let host: PreviewHost
+    @Bindable var hub: PaneHub
+    /// Whether this is the card's toolbar (which offers the pop-out) or the window's.
+    let popOut: Bool
+    @Binding var device: PreviewPane.Device
+    @State private var address = ""
+    /// The URL the field already mirrors, so an engine navigation rewrites it once.
+    @State private var last = ""
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Button { host.goBack() } label: { Image(systemName: "chevron.left") }
+                .disabled(!host.canGoBack)
+                .help("Back")
+            Button { host.reload() } label: { Image(systemName: "arrow.clockwise") }
+                .disabled(host.currentURL == nil)
+                .help("Reload")
+            HStack(spacing: 5) {
+                if host.loading {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    Image(systemName: "globe").foregroundStyle(.tertiary)
+                }
+                TextField("URL or port", text: $address)
+                    .textFieldStyle(.plain)
+                    .onSubmit { go() }
+            }
+            .font(.frog(size: 12))
+            .padding(.horizontal, 8)
+            .frame(height: 26)
+            .background(.quaternary.opacity(0.6), in: .rect(cornerRadius: 8))
+            Picker("Device", selection: $device) {
+                ForEach(PreviewPane.Device.allCases) { d in Image(systemName: d.symbol).tag(d) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .help("Device width")
+            Button {
+                hub.inspecting.toggle()
+            } label: {
+                Image(systemName: "cursorarrow.click.2")
+                    .foregroundStyle(hub.inspecting ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+            }
+            .help("Inspect: click an element to mention it (⇧⌘I)")
+            if let m = hub.mention, hub.mentionInDraft {
+                Text(m)
+                    .font(.caption.monospaced())
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(.tint.opacity(0.18), in: .capsule)
+                    .lineLimit(1)
+                    .transition(.opacity)
+            }
+            Button {
+                if let u = host.currentURL.flatMap(URL.init) { NSWorkspace.shared.open(u) }
+            } label: { Image(systemName: "safari") }
+                .disabled(host.currentURL == nil)
+                .help("Open in Browser")
+            if popOut {
+                Button {
+                    let id = host.paneID
+                    PaneHub.poppedOutHubs[id] = hub
+                    hub.poppedOut = true
+                    openWindow(value: PreviewDocument(paneID: id, title: hostTitle))
+                } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }
+                    .disabled(host.currentURL == nil)
+                    .help("Open in its own window")
+            }
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .onAppear { address = host.currentURL ?? ""; last = address }
+        .onChange(of: host.currentURL) { _, url in
+            if let url, url != last { address = url; last = url }
+        }
+    }
+
+    private var hostTitle: String {
+        host.title.isEmpty ? "Preview" : host.title
     }
 
     /// Go to what's in the address field: a URL, a host without a scheme, or just a port.
@@ -708,6 +766,43 @@ struct PreviewWebView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> WKWebView { host.makeWebView() }
     func updateNSView(_ web: WKWebView, context: Context) {}
+}
+
+/// What a popped-out preview window holds: the pane's own host, so the engine keeps reading,
+/// driving and screenshotting the same page while it's in its own window.
+struct PreviewDocument: Codable, Hashable {
+    var paneID: String
+    var title: String
+}
+
+/// A preview in its own window (pop-out from the card): the same toolbar and the same web view,
+/// with a button to put it back in the pane's card.
+struct PreviewWindow: View {
+    @Bindable var hub: PaneHub
+    let document: PreviewDocument
+    @State private var device = PreviewPane.Device.desktop
+
+    private var host: PreviewHost { hub.previewHost(document.paneID) }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            PreviewToolbar(host: host, hub: hub, popOut: false, device: $device)
+            PreviewWebView(host: host)
+                .opacity(host.currentURL == nil ? 0 : 1)
+                .overlay {
+                    if host.currentURL == nil {
+                        ContentUnavailableView("No Page", systemImage: "globe", description: Text("Enter a URL in the pane's preview."))
+                    }
+                }
+        }
+        .background(Color.black.opacity(0.18))
+        .frame(minWidth: 520, minHeight: 420)
+        .navigationTitle(document.title)
+        .onDisappear {
+            hub.poppedOut = false
+            PaneHub.poppedOutHubs[document.paneID] = nil
+        }
+    }
 }
 
 extension NSImage {
