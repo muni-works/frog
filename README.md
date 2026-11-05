@@ -42,31 +42,31 @@ frog -p --json "..."                 # every engine event as a JSON line
 
 More in [docs/quickstart.md](docs/quickstart.md).
 
-## Run on frog cloud
+## Run on Frog Cloud
 
-Local models are private and free, but slow on small machines. frog cloud hosts Qwen3-Coder-Next, powered by tang, for when you want speed. Sign in at [api.frog.toys](https://api.frog.toys) with GitHub or an email link — new accounts start with a small free credit, no card needed.
+Local models are private and free, but slow on small machines. Frog Cloud hosts Qwen3-Coder-Next, powered by tang, for when you want speed. Sign in at [api.frog.toys](https://api.frog.toys) with GitHub or an email link — new accounts start with a small free credit, no card needed.
 
 ```sh
-export FROG_API_KEY=...              # sign in at https://api.frog.toys to get one; the app's Settings → frog cloud sign-in mints it automatically
+export FROG_API_KEY=...              # sign in at https://api.frog.toys to get one; the app's Settings → Frog Cloud sign-in mints it automatically
 frog -m cloud/qwen3-coder-next
 ```
 
-If frog cloud is offline or out of capacity, frog says so and carries on with a local model: `FROG_FALLBACK_MODEL` if set, otherwise the default `local/qwen3-4b`. A credit error (402) doesn't fall back — the fix is money, not another model, so the turn stops with the one line saying where to add credits. `FROG_BASE_URL` points it at a different endpoint (a key saved in the app or Keychain only goes to `https://api.frog.toys`; elsewhere, only `FROG_API_KEY` is sent). `frog account` shows which key is in use. Old names (`frog-api/`, `tang/`) still work.
+If Frog Cloud is offline or out of capacity, frog says so and carries on with a local model: `FROG_FALLBACK_MODEL` if set, otherwise the default `local/qwen3-4b`. A credit error (402) doesn't fall back — the fix is money, not another model, so the turn stops with the one line saying where to add credits. `FROG_BASE_URL` points it at a different endpoint (a key saved in the app or Keychain only goes to `https://api.frog.toys`; elsewhere, only `FROG_API_KEY` is sent). `frog account` shows which key is in use. Old names (`frog-api/`, `tang/`) still work.
 
 ### Two kinds of model
 
-frog runs on two tiers ([docs/design/model-policy.md](docs/design/model-policy.md)). **frog cloud** (`cloud/*`) is the platform's: the default for worker sessions, subagents, the auto-mode classifier and a fresh install. **BYOK** is your own account or machine — `vercel/`, `anthropic/`, `openai/`, `openrouter/`, `cloudflare/`, `ollama/`, `lmstudio/` and servers you add — for the interactive session you're sitting in. Nothing hops between the two: a worker on your own provider fails fast with one line naming it and the fix, an interactive session may carry on without it because you're there to see the notice, and auto mode's classifier is always `apple/on-device` then `cloud/bull`, never the model the session runs on. A busy provider (429 or a 5xx) is retried three times at 1 s, 2 s and 4 s with a single notice; a wrong key, an empty wallet or a model your gateway doesn't list (401/402/404) fails at once with the provider's fix in the transcript. A session only starts on a model its gateway's `/v1/models` lists right now (checked once at spawn, from a list cached for a minute); `cloud/*` always starts.
+frog runs on two tiers ([docs/design/model-policy.md](docs/design/model-policy.md)). **Frog Cloud** (`cloud/*`) is the platform's: the default for worker sessions, subagents, the auto-mode classifier and a fresh install. **BYOK** is your own account or machine — `vercel/`, `anthropic/`, `openai/`, `openrouter/`, `cloudflare/`, `ollama/`, `lmstudio/` and servers you add — for the interactive session you're sitting in. Nothing hops between the two: a worker on your own provider fails fast with one line naming it and the fix, an interactive session may carry on without it because you're there to see the notice, and auto mode's classifier is always `apple/on-device` then `cloud/bull`, never the model the session runs on. A busy provider (429 or a 5xx) is retried three times at 1 s, 2 s and 4 s with a single notice; a wrong key, an empty wallet or a model your gateway doesn't list (401/402/404) fails at once with the provider's fix in the transcript. A session only starts on a model its gateway's `/v1/models` lists right now (checked once at spawn, from a list cached for a minute); `cloud/*` always starts.
 
 ### Other agents
 
-frog cloud's endpoint, frog api, is OpenAI-compatible, so other agents can use it too. Base URL
+Frog Cloud's endpoint, frog api, is OpenAI-compatible, so other agents can use it too. Base URL
 `https://api.frog.toys/v1`, model `qwen3-coder-next`, key `FROG_API_KEY` (sign in at
 [api.frog.toys](https://api.frog.toys)). If it's at capacity, you'll get a 503 and frog falls
 back to a local model.
 
 **opencode** (`opencode.json`)
 ```json
-{"provider":{"frog":{"npm":"@ai-sdk/openai-compatible","name":"frog cloud","options":{"baseURL":"https://api.frog.toys/v1","apiKey":"{env:FROG_API_KEY}"},"models":{"qwen3-coder-next":{"name":"Qwen3-Coder-Next (frog cloud)","limit":{"context":131072,"output":16384}}}}},"model":"frog/qwen3-coder-next"}
+{"provider":{"frog":{"npm":"@ai-sdk/openai-compatible","name":"Frog Cloud","options":{"baseURL":"https://api.frog.toys/v1","apiKey":"{env:FROG_API_KEY}"},"models":{"qwen3-coder-next":{"name":"Qwen3-Coder-Next (Frog Cloud)","limit":{"context":131072,"output":16384}}}}},"model":"frog/qwen3-coder-next"}
 ```
 
 **Cline, Roo Code, Kilo Code**: Settings → API Provider: **OpenAI Compatible** → Base URL
@@ -76,7 +76,7 @@ native tool calling. Context window 131072.
 **Continue** (`config.yaml`)
 ```yaml
 models:
-  - name: Qwen3-Coder-Next (frog cloud)
+  - name: Qwen3-Coder-Next (Frog Cloud)
     provider: openai
     model: qwen3-coder-next
     apiBase: https://api.frog.toys/v1

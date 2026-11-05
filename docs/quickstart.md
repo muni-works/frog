@@ -38,7 +38,7 @@ frog -m ollama/qwen3-coder:30b
 frog -m lmstudio/qwen3-coder-30b
 frog -m apple/on-device
 frog -m anthropic/claude-sonnet-5
-frog -m cloud/qwen3-coder-next       # frog cloud, hosted; needs FROG_API_KEY
+frog -m cloud/qwen3-coder-next       # Frog Cloud, hosted; needs FROG_API_KEY
 ```
 
 Inside a session, `/model` switches. `frog --providers` lists providers and whether each is connected. The [reference](reference.md#providers) has the full table.
