@@ -228,6 +228,10 @@ User code now passes through frog's infrastructure and then an upstream.
 
 ### Weights
 
+> **Note (2026-11-05):** the speeds in this plan are the Oct 21–29 measurements, kept as
+> written. Current engine numbers (234 tok/s single stream, up to 402 with MTP, B=64 1,817 tok/s,
+> serve C=64 1,078 tok/s, prefill 6.6k–7.6k) are in [docs/launch/bench.md](../launch/bench.md).
+
 | where | weights | notes |
 |---|---|---|
 | Frog Cloud (tang, H200) | unsloth `Qwen3-Coder-Next-UD-Q4_K_XL.gguf` (mixed 4-bit) | `zest/docs/runbooks/frog-cloud/node-up.sh`; 234 tok/s single stream |
@@ -304,7 +308,7 @@ When tang serves them, they launch under their frog names:
 
 - **tree**: tang takes over from the third-party GLM-5.3-Flash once GLM batching clears
   ~570 tok/s on a B300 and frog-bench matches the upstream.
-- **bull**: tang's single stream is already fast (193 tok/s, a 17k-token prompt prefills in
+- **bull**: tang's single stream is already fast (193 tok/s as of Oct 29; not re-measured, see the 2026-11-05 note under Weights, a 17k-token prompt prefills in
   ~35 s); it pays once batching gets ~24× single stream on 8× H100, or on reserved GPUs well
   under the rental estimate. Prefix reuse across turns matters as much as batching.
 
