@@ -222,7 +222,7 @@ Also:
 - **Decided against:** a public "contribute a GPU, get big models free" network. Datacenter prices, the speed of links over home internet, and privacy (nodes can recover prompts) all lose. See [inference networks](research/inference-network.md).
 
 ### Business (solo devs, no enterprise)
-- **frog Pro.** Credits for escalating to frontier models (never "unlimited"), reaching your GPU from anywhere through a relay, session sync, approving from your phone, background agents. Local stays free.
+- **frog Pro.** Credits for escalating to frontier models (never "unlimited"), session sync, approving from your phone, background agents in the Frog Cloud sandbox. Pay per token in dollars. The web app is cloud-only (sign-up + Frog Cloud sandbox); no relay to your own GPU for now. Local stays free.
 - **A gateway with tang behind it.** Sessions pinned to one server with their KV kept hot (logs show about 79% of input is cacheable, about 4.8x less prefill), prompt-lookup drafting (about 1.6x), handing a hot session from local to cloud without re-sending it, a model tuned on frog traces, privacy you can prove. Pitch cost per finished task, not price per token.
 - **Measure the escalation rate** (what fraction of steps needs a frontier model) with `frog bench`. A waitlist to test demand.
 

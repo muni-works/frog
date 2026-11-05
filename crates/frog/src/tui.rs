@@ -232,7 +232,10 @@ impl Tui {
                     r.idle();
                     return true;
                 }
-                Event::Status(s) => self.status = Some(s),
+                Event::Status(s) => {
+                    r.set_model(&s.model);
+                    self.status = Some(s)
+                }
                 Event::TurnEnded { .. } if !replay => {}
                 ev => r.event(ev),
             }
@@ -292,7 +295,10 @@ impl Tui {
                     self.since = Some(Instant::now());
                 }
             }
-            Event::Status(s) => self.status = Some(s),
+            Event::Status(s) => {
+                r.set_model(&s.model);
+                self.status = Some(s)
+            }
             Event::ModelChanged { model } => {
                 // A bare `frog` starts where you left off.
                 frog_engine::models::remember_last_used(&model);

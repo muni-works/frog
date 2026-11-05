@@ -87,14 +87,32 @@ fn envelope_schema(event: &Value) -> Value {
     })
 }
 
+/// The artifact's text: keys sorted, so it doesn't depend on whether serde_json's
+/// `preserve_order` feature got unified in (it does when frog builds alongside, via acp).
+pub fn artifact_json() -> serde_json::Result<String> {
+    Ok(serde_json::to_string_pretty(&sorted(protocol_schema()))? + "\n")
+}
+
+fn sorted(value: Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut entries: Vec<_> = map.into_iter().collect();
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
+            Value::Object(entries.into_iter().map(|(k, v)| (k, sorted(v))).collect())
+        }
+        Value::Array(items) => Value::Array(items.into_iter().map(sorted).collect()),
+        other => other,
+    }
+}
+
 /// Write the artifact.
 pub fn write_artifact() -> std::io::Result<()> {
-    let json = serde_json::to_string_pretty(&protocol_schema())?;
+    let json = artifact_json()?;
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(ARTIFACT);
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    std::fs::write(path, json + "\n")
+    std::fs::write(path, json)
 }
 
 #[cfg(test)]
@@ -137,7 +155,7 @@ mod tests {
     #[test]
     fn artifact_matches_types() {
         write_artifact().unwrap();
-        let fresh = serde_json::to_string_pretty(&protocol_schema()).unwrap() + "\n";
+        let fresh = artifact_json().unwrap();
         let committed = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(ARTIFACT),
         )

@@ -406,12 +406,26 @@
   footer a { color: inherit; text-decoration-color: var(--faint); text-underline-offset: 3px; }
   footer a:hover { color: var(--fg); }
   footer .end { margin-left: auto; font-family: var(--mono); font-size: 12px; color: var(--faint); }
+  footer nav { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+
+  /* Frog Cloud. */
+  .cloud { margin-top: 64px; }
+  .cloud h2 { font-size: 17px; margin: 0 0 4px; }
+  .cloud > p { color: var(--muted); font-size: 15px; margin: 0 0 14px; }
+  .cloud a { color: var(--accent); text-decoration: none; font-weight: 600; white-space: nowrap; }
+  .cloud a::after { content: " →"; }
+  .prices { list-style: none; margin: 0 0 12px; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .prices li { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+  .prices b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; }
+  .prices span { font-size: 12px; color: var(--muted); }
 
   @media (max-width: 560px) {
     main { padding-top: 40px; }
     h1 { font-size: 44px; }
     .lede { font-size: 19px; }
     .features { grid-template-columns: 1fr; }
+    .prices { grid-template-columns: 1fr; }
+    footer { flex-wrap: wrap; }
   }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { transition: none !important; animation: none !important; }
@@ -661,9 +675,27 @@
     </div>
   </section>
 
+  <section class="cloud" id="cloud">
+    <h2>Frog Cloud</h2>
+    <p>Slow machine? Run the same agent on Qwen3-Coder-Next, served by tang on H200s. Pay per token, in dollars. New accounts start with a small free credit, no card needed.</p>
+    <ul class="prices">
+      <li><b>$0.60</b><span>per million input tokens</span></li>
+      <li><b>$0.06</b><span>per million cached input tokens</span></li>
+      <li><b>$1.50</b><span>per million output tokens</span></li>
+    </ul>
+    <p><a href="https://api.frog.toys/pricing">Pricing</a></p>
+  </section>
+
   <footer>
     <svg viewBox="0 0 100 100" aria-hidden="true"><path fill-rule="evenodd" d="M12 30a18 18 0 1 0 36 0a18 18 0 1 0 -36 0Z M23.5 27a6.5 6.5 0 1 0 13 0a6.5 6.5 0 1 0 -13 0Z"/><path fill-rule="evenodd" d="M52 30a18 18 0 1 0 36 0a18 18 0 1 0 -36 0Z M63.5 27a6.5 6.5 0 1 0 13 0a6.5 6.5 0 1 0 -13 0Z"/><path fill-rule="evenodd" d="M8 62a42 29 0 1 0 84 0a42 29 0 1 0 -84 0Z M31 66Q50 82 69 66Q50 75 31 66Z M41.5 53a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0 -5 0Z M53.5 53a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0 -5 0Z"/></svg>
     <span>Made by <a href="https://campedersen.com">Cam Pedersen</a></span>
+    <nav aria-label="Site">
+      <a href="https://api.frog.toys/pricing">Pricing</a>
+      <a href="https://api.frog.toys/docs">Docs</a>
+      <a href="https://api.frog.toys/privacy">Privacy</a>
+      <a href="https://api.frog.toys/terms">Terms</a>
+      <a href="https://api.frog.toys/status">Status</a>
+    </nav>
     <span class="end">toys.frog</span>
   </footer>
 </main>

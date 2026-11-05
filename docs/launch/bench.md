@@ -50,33 +50,40 @@ and mark the rest "measuring now".
 
 ### 1. frog cloud: Qwen3-Coder-Next (what users get)
 
-| metric (through api.frog.toys) | value | range | n | date |
-|---|---|---|---|---|
-| decode tok/s, 1 stream, ~1.2k prompt | {{API_1STREAM}} | | 3×3 | |
-| decode tok/s, 1 stream, ~10k agent prompt | {{API_10K}} | | 3 | |
-| TTFT, 1.2k prompt, cold | {{TTFT_COLD}} | | | |
-| TTFT, cached prefix | {{TTFT_CACHED}} | | | |
-| 8 streams: per-stream / total tok/s | {{API_8S}} | | | |
-| 16 concurrent, 2-node fleet: per-stream / aggregate tok/s, queue depth | {{API_16S}} | | load test Oct 28-29 | |
-| production, last 24 h: p50 TTFT, p50 per-stream tok/s, error rate | {{PROD_24H}} | | Prometheus | |
+#### Current engine (2026-11-05)
+
+Qwen3-Coder-Next on tang, engine-level (not through api.frog.toys).
+
+| metric | tok/s |
+|---|---|
+| single stream, plain decode | 234 |
+| single stream, MTP drafts on | up to 402 |
+| batch B=64, aggregate decode | 1,817 |
+| serve, C=64 concurrent, decode-heavy | 1,078 |
+| prefill | 6.6k–7.6k |
+
+API-level numbers (through api.frog.toys: per-stream decode at 1.2k and 10k prompts, cold and
+cached TTFT, 8/16-stream load curve, production 24 h p50s) have no measurement since Oct 21.
+Publish that table only once it's re-measured on the deployed build; until then the page says
+"measuring now" for it.
 
 Load-test method (frog cloud manager, Oct 28-29): signed direct-to-router sweep against the
 2-node fleet, 8 streams/node plus queue pressure; exports p50 TTFT, per-stream and aggregate
-tok/s, error/reject rate, queue depth. Reference baselines (Oct 21, 1 node, 4 streams): 447 tok/s
+tok/s, error/reject rate, queue depth. Historical baselines, superseded (Oct 21, 1 node, 4 streams): 447 tok/s
 aggregate, 137/stream, TTFT ≤ 1.2 s; 8 streams: 588 aggregate. Publish the load curve honestly,
 not just the single-stream peak.
 
-Footnote, engine-level (labeled): single-stream 4-bit {{ENGINE_Q4}} (Oct 21: 234.4), 8-bit Q8_0
-{{ENGINE_Q8}} (Oct 21: 222.2). Quant quality: Q4 vs Q8_0 KL median 0.0005, top-1 agreement
+Footnote, engine-level (labeled): single-stream 4-bit 234 (2026-11-05; Oct 21: 234.4). 8-bit Q8_0
+was 222.2 on Oct 21 (historical, not re-measured). Quant quality: Q4 vs Q8_0 KL median 0.0005, top-1 agreement
 96.8-97.0%.
 
-Hardware: {{NODES}} nodes × 1 H200 141 GB each (expected Oct 28: 2 nodes, each carrying
+Hardware: N nodes (confirm from `/status` at publish) × 1 H200 141 GB each (expected Oct 28: 2 nodes, each carrying
 qwen3-coder-next 131072 ctx + qwen3-8b + qwen3-vl-8b, routed by prefix affinity). Weights:
 unsloth UD-Q4_K_XL GGUF. Method: 3 coding prompts (explain/refactor/write) from tang
 `docs/bench/qwen3next-aa/make_prompts.py`, 512 output tokens, greedy, drafts off, tok/s after the
 first token.
 
-<!-- Oct 21 reference values (re-measure Oct 29 on the deployed build, after any FA2 swap):
+<!-- HISTORICAL (superseded by the 2026-11-05 table above). Oct 21 reference values (re-measure Oct 29 on the deployed build, after any FA2 swap):
 API 224.7 (sampler fix) / ~215 via api.frog.toys; 10k 190; TTFT cold 1.8-2.2 s, cached 18-95 ms;
 8 streams 72.5/498 (no MTP). Prod Oct 25 metrics showed 86 tok/s per stream under real load:
 publish the load curve honestly, not just the single-stream peak. -->
@@ -85,7 +92,7 @@ publish the load curve honestly, not just the single-stream peak. -->
 
 | provider | single-stream tok/s | source | read on |
 |---|---|---|---|
-| Novita (FP8) | {{NOVITA_AA}} (Oct 20: 174) | AA provider page, linked | {{DATE}} |
+| Novita (FP8) | 174 (Oct 20; re-read before publishing) | AA provider page, linked | Oct 20 |
 | others listed by AA for Qwen3-Coder-Next | | AA | |
 
 One sentence: these are AA's measurements of other APIs over the internet; ours above are our

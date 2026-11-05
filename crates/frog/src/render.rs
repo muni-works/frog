@@ -178,6 +178,8 @@ pub struct Renderer {
     streamed: HashSet<String>,
     /// Re-rendering a past session: show each turn's input.
     replay: bool,
+    /// The session's `provider/model`, so errors can say which service to fix.
+    model: Option<String>,
 }
 
 impl Drop for Renderer {
@@ -195,7 +197,13 @@ impl Renderer {
             fresh: true,
             streamed: HashSet::new(),
             replay,
+            model: None,
         }
+    }
+
+    /// The session's model, from its `Status` (which doesn't pass through [`Self::event`]).
+    pub fn set_model(&mut self, model: &str) {
+        self.model = Some(model.to_string());
     }
 
     fn stop_spinner(&mut self) {
@@ -367,9 +375,12 @@ impl Renderer {
             }
             Event::Error { error: e } => {
                 self.idle();
-                error(&e.to_string());
+                error(&describe_error(&e, self.model.as_deref()));
             }
-            Event::ModelChanged { model } => info(&format!("  model: {model}")),
+            Event::ModelChanged { model } => {
+                info(&format!("  model: {model}"));
+                self.model = Some(model);
+            }
             Event::ContextPruned {
                 results,
                 tokens_before,
@@ -413,7 +424,9 @@ impl Renderer {
                         "\n  ⎿  stopped: retried a call that was already denied ({denial})"
                     )),
                     EndReason::BillingLimit { .. } => warn("\n  ⎿  stopped: out of credit"),
-                    EndReason::Error { error: e } => error(&e.to_string()),
+                    EndReason::Error { error: e } => {
+                        error(&describe_error(&e, self.model.as_deref()))
+                    }
                     EndReason::Complete | EndReason::Denied => {}
                 }
             }
@@ -520,6 +533,74 @@ pub fn warn(s: &str) {
 
 pub fn error(s: &str) {
     outln!("\n{} {}", "✗".red(), s.red());
+}
+
+/// An engine error as the user should read it, given the model (`provider/model`) it came
+/// from: what happened and what to do, with the provider's own words kept at the end.
+pub fn describe_error(e: &frog_engine::protocol::EngineError, model: Option<&str>) -> String {
+    use frog_engine::protocol::EngineError;
+    use frog_engine::providers::{self, CLOUD};
+    let provider = model
+        .and_then(|m| m.split_once('/'))
+        .map(|(p, _)| providers::canonical(p));
+    let cloud = provider == Some(CLOUD);
+    let local = provider
+        .and_then(providers::preset)
+        .is_some_and(|p| p.local);
+    match e {
+        EngineError::Provider {
+            status: 401 | 403,
+            message,
+        } if cloud => format!(
+            "signed out of Frog Cloud: your key was revoked or has expired. get a new key at {}, \
+             then run `frog --set-key cloud` and paste it (or set FROG_API_KEY) ({message})",
+            providers::preset(CLOUD).map_or("", |p| p.key_url)
+        ),
+        EngineError::Provider {
+            status: s @ (401 | 403),
+            message,
+        } => format!(
+            "{} rejected the API key ({s}); set a new one with `frog --set-key {}` ({message})",
+            provider.unwrap_or("the provider"),
+            provider.unwrap_or("<provider>")
+        ),
+        EngineError::Provider { status, message } if model_unavailable(*status, message) => {
+            format!(
+                "the model isn't loaded or its engine is unavailable ({status}); load it, or pick \
+                 another with `frog -m provider/model` (frog --models lists what's here) ({message})"
+            )
+        }
+        EngineError::Connection { message } if cloud => format!(
+            "can't reach Frog Cloud: check your network connection and try again ({message})"
+        ),
+        EngineError::Connection { message } if local => format!(
+            "can't reach the model server for {}: is it running? `frog setup` installs frog's \
+             own engine ({message})",
+            model.unwrap_or("this model")
+        ),
+        EngineError::Connection { message } => format!(
+            "can't reach {}: check your network connection and try again ({message})",
+            provider.unwrap_or("the model server")
+        ),
+        other => other.to_string(),
+    }
+}
+
+/// A provider status that means the model isn't there to serve: an overloaded or starting
+/// engine (503), or a model the server doesn't have loaded.
+fn model_unavailable(status: u16, message: &str) -> bool {
+    let m = message.to_ascii_lowercase();
+    status == 503
+        || (matches!(status, 400 | 404)
+            && [
+                "not loaded",
+                "model not found",
+                "no model",
+                "not found: model",
+                "does not exist",
+            ]
+            .iter()
+            .any(|p| m.contains(p)))
 }
 
 pub fn fmt_tokens(n: u64) -> String {
@@ -668,6 +749,70 @@ mod tests {
             "4 MCP servers unavailable · frog --mcp for details"
         );
         assert_eq!(super::shorten_notice("hello"), "hello");
+    }
+
+    #[test]
+    fn engine_errors_say_what_to_do() {
+        use super::describe_error;
+        use frog_engine::protocol::EngineError;
+        let provider = |status, message: &str| EngineError::Provider {
+            status,
+            message: message.into(),
+        };
+        let conn = || EngineError::Connection {
+            message: "dns error: failed to lookup address".into(),
+        };
+
+        // Frog Cloud auth: signed out, with the way back in.
+        for spec in ["cloud/tree", "frog/tree"] {
+            let s = describe_error(&provider(401, "invalid api key"), Some(spec));
+            assert!(s.starts_with("signed out of Frog Cloud"), "{s}");
+            assert!(
+                s.contains("frog --set-key cloud") && s.contains("FROG_API_KEY"),
+                "{s}"
+            );
+            assert!(s.contains("invalid api key"), "{s}");
+        }
+        let s = describe_error(&provider(401, "bad key"), Some("anthropic/claude-sonnet-5"));
+        assert!(s.contains("anthropic rejected the API key (401)"), "{s}");
+        assert!(s.contains("frog --set-key anthropic"), "{s}");
+
+        // Network down.
+        let s = describe_error(&conn(), Some("cloud/tree"));
+        assert!(
+            s.starts_with("can't reach Frog Cloud: check your network"),
+            "{s}"
+        );
+        let s = describe_error(&conn(), Some("openrouter/x"));
+        assert!(
+            s.starts_with("can't reach openrouter: check your network"),
+            "{s}"
+        );
+        let s = describe_error(&conn(), Some("local/qwen3-4b"));
+        assert!(
+            s.contains("is it running?") && s.contains("frog setup"),
+            "{s}"
+        );
+        let s = describe_error(&conn(), Some("ollama/qwen3"));
+        assert!(s.contains("model server for ollama/qwen3"), "{s}");
+
+        // Model not loaded / engine unavailable.
+        for e in [
+            provider(503, "Service Unavailable"),
+            provider(404, "model not found: qwen9"),
+            provider(400, "Model qwen9 is not loaded"),
+        ] {
+            let s = describe_error(&e, Some("lmstudio/qwen9"));
+            assert!(s.starts_with("the model isn't loaded"), "{s}");
+        }
+
+        // Everything else keeps the engine's wording.
+        let e = provider(500, "boom");
+        assert_eq!(describe_error(&e, Some("cloud/tree")), e.to_string());
+        assert_eq!(
+            describe_error(&provider(404, "no route"), None),
+            "provider error (404): no route"
+        );
     }
 }
 

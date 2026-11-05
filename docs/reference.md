@@ -34,9 +34,9 @@ The engine crate has no terminal dependencies, so the compiler enforces this bou
 | `vllm/<model>` | OpenAI-compatible, `localhost:8000/v1` |
 | `openai/<model>` | OpenAI, or `OPENAI_BASE_URL` / `--base-url` |
 | `anthropic/<model>` | Messages API with prompt caching |
-| `cloud/<model>` | frog cloud, hosted (`FROG_API_KEY` or a saved key; `FROG_BASE_URL` overrides `https://api.frog.toys/v1`, and then only `FROG_API_KEY` is sent) |
+| `cloud/<model>` | Frog Cloud, hosted (`FROG_API_KEY` or a saved key; `FROG_BASE_URL` overrides `https://api.frog.toys/v1`, and then only `FROG_API_KEY` is sent) |
 
-Old provider ids still work as input: `tang/` means `local/`; `frog-api/`, `frog/`, `tang-cloud/` and `zest/` mean `cloud/`. A bare model id resolves when only one provider has it (`frog -m qwen3-coder-next`). Providers are listed This Mac first, then your servers, then frog cloud, then other clouds (`--providers --json` carries `rank` and `pinned`). `frog account [--json]` shows frog cloud's key source and base URL without touching the network.
+Old provider ids still work as input: `tang/` means `local/`; `frog-api/`, `frog/`, `tang-cloud/` and `zest/` mean `cloud/`. A bare model id resolves when only one provider has it (`frog -m qwen3-coder-next`). Providers are listed This Mac first, then your servers, then Frog Cloud, then other clouds (`--providers --json` carries `rank` and `pinned`). `frog account [--json]` shows Frog Cloud's key source and base URL without touching the network.
 
 `local/` runs safetensors checkpoints (Qwen3 family today) from the Hugging Face cache or a directory, on [tang](https://github.com/muni-works/tang)'s Metal backend. It uses the checkpoint's own chat template, reuses the KV cache for the prefix a turn shares with the previous one, and logs to `~/.local/share/frog/tang-llm.log`. `local/` accepts bf16 checkpoints and `mlx-community` 4-bit ones. The binary is found through `FROG_TANG_BIN`, then next to `frog`, then on `PATH`.
 
@@ -103,7 +103,7 @@ Starting a message with `/skill-name` loads that skill directly. `frog --skills`
 - Its steps stream live into the parent's tool card.
 - Interrupting the parent stops the child.
 
-**IRC bus.** `Irc` reads and posts on the agent bus (see docs/design/agent-bus-irc.md), one IRC channel per team, one nick per session. Off by default — a client only declares it (`set_client_caps` with `irc: true`) when `[irc] enabled = true` in `config.toml`, which stays off until the frog cloud bus deploys.
+**IRC bus.** `Irc` reads and posts on the agent bus (see docs/design/agent-bus-irc.md), one IRC channel per team, one nick per session. Off by default — a client only declares it (`set_client_caps` with `irc: true`) when `[irc] enabled = true` in `config.toml`, which stays off until the Frog Cloud bus deploys.
 - `read` returns lines newer than the session's read marker, capped, each wrapped untrusted: peer data, no user authority, no approvals. `post` sends to the team channel or a DM, up to 4 KB (`draft/multiline`); longer content is a link.
 - The engine bridges the bus: it posts only minimal notices (waiting on cam, errored, idle), and a mention of a session's nick or a DM routes to that session's inbox — `Op::Deliver`, the SendMessage contract, delivered at the next turn boundary, never an interrupt.
 - Approvals never happen over IRC: a permission card becomes one notice line with a `frog://` link to the app. No secrets ever post: key-shaped text is refused (notices are redacted), and the SASL token is looked up by account name in the Keychain or `FROG_IRC_TOKEN`, never written down or logged.
@@ -140,7 +140,7 @@ searxng_url = "http://localhost:8888"   # SearXNG's JSON API (/search?format=jso
 **Auto mode.** `--auto`, or `/mode auto` in the terminal. Every step that would otherwise ask goes to a local classifier first.
 - **Edits:** in-project edits run without asking, since they're checkpointed and can be undone. Sandboxed commands already run without asking.
 - **Always asks:** hard rules, no model involved: `sudo`, pushes, `reset --hard`/`clean -f`/history rewrites, `curl | sh`, `rm -rf` outside the project, publishing, system settings, killing processes, and writes outside the project.
-- **The classifier:** a small model judges the rest against your recent messages — Apple's on-device model where it exists (the Mac), else frog cloud's small model (`cloud/bull`, or `cloud/qwen3-coder-next` when the gateway lists it); set `auto_classifier` to choose. It answers allow or ask, with a reason, in grammar-constrained JSON. The call's arguments are marked untrusted, so text in them aimed at the classifier doesn't count.
+- **The classifier:** a small model judges the rest against your recent messages — Apple's on-device model where it exists (the Mac), else Frog Cloud's small model (`cloud/bull`, or `cloud/qwen3-coder-next` when the gateway lists it); set `auto_classifier` to choose. It answers allow or ask, with a reason, in grammar-constrained JSON. The call's arguments are marked untrusted, so text in them aimed at the classifier doesn't count.
 - **When the classifier is down:** a timeout, an HTTP error, an unreachable server or an unreadable answer tries the next judge — `auto_classifier_fallback` (another model) if you set one, else the session's own model — then frog's built-in rules alone: reads (read-only commands, MCP read verbs, captures of public pages) and the session's own work still run; anything no rule covers asks. A down classifier is skipped for a minute rather than retried per call, shows one notice per session, and the session status says what's judging instead.
 - **Visible:** approved calls show "Auto: <reason>" on the tool card. When it asks, the permission card says why.
 - **Own scratch:** a Write or Edit of a fresh file under the shared temp dir (`/private/tmp/…`), or of a file this session created, runs without asking. Overwriting someone else's temp file still asks.
