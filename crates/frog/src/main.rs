@@ -813,6 +813,7 @@ frog didn't find a model to talk to. Any one of these works:
   frog setup                       install frog's own engine and Qwen3 4B (Apple silicon)
   ollama pull qwen3-coder:30b      then run frog again
   LM Studio                        load a model and start its server
+  export FROG_API_KEY=…            use Frog Cloud (key at https://api.frog.toys/beta)
   export ANTHROPIC_API_KEY=…       use Claude
   frog -m provider/model           anything else (frog --models lists what's here)";
 
