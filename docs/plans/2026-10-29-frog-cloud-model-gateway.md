@@ -23,10 +23,10 @@ accounts.
 ## Today
 
 - The engine has a preset list of providers (`crates/frog-engine/src/providers.rs`): This Mac,
-  frog cloud, OpenRouter, Vercel, Cloudflare, Anthropic, OpenAI, Ollama, LM Studio, plus custom
+  Frog Cloud, OpenRouter, Vercel, Cloudflare, Anthropic, OpenAI, Ollama, LM Studio, plus custom
   servers. The Mac app exposes them in Settings and the model picker (`ProviderStore`,
   `ModelPicker`), with keys in the Keychain.
-- frog cloud (`api.frog.toys/v1`) is OpenAI chat completions only, routed by the edge to tang's
+- Frog Cloud (`api.frog.toys/v1`) is OpenAI chat completions only, routed by the edge to tang's
   router.
 - Claude runs as `vercel/anthropic/claude-opus-5.5` on the user's own Vercel key, with
   special cases keyed on the URL: `gateway_claude` (Messages API on Vercel), `is_cloud`,
