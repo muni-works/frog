@@ -81,6 +81,11 @@ jobs:
           # tang checkout for the macOS bundle leg; build-engine.sh resolves TANG_DIR
           # directly (not relative to the repo), so this picks up the checkout above.
           TANG_DIR: ${{ matrix.bundle && format('{0}/tang', github.workspace) || '' }}
+          APPLE_CERT_P12: ${{ secrets.APPLE_CERT_P12 }}
+          APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
         run: |
           name="frog-${GITHUB_REF_NAME//\//-}-${TARGET}"
           mkdir -p "dist/$name"
@@ -88,6 +93,35 @@ jobs:
           # host strip can't read the aarch64 cross output
           if [ "$TARGET" != aarch64-unknown-linux-gnu ]; then strip "dist/$name/frog"; fi
           cp README.md "dist/$name/"
+          # Developer ID sign + notarize the darwin CLI when the Apple secrets are set
+          # (after strip, which would invalidate the signature). Without them the
+          # binary ships unsigned and install.sh ad-hoc signs it.
+          if [ "$TARGET" = aarch64-apple-darwin ] && [ -n "$APPLE_CERT_P12" ]; then
+            kc="$RUNNER_TEMP/frog-sign.keychain-db"
+            kcpw=$(openssl rand -hex 16)
+            echo "$APPLE_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+            security create-keychain -p "$kcpw" "$kc"
+            security set-keychain-settings -lut 21600 "$kc"
+            security unlock-keychain -p "$kcpw" "$kc"
+            security import "$RUNNER_TEMP/cert.p12" -k "$kc" -P "$APPLE_CERT_PASSWORD" -T /usr/bin/codesign
+            security set-key-partition-list -S apple-tool:,apple: -s -k "$kcpw" "$kc" >/dev/null
+            # shellcheck disable=SC2046 # one arg per existing keychain
+            security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
+            rm -f "$RUNNER_TEMP/cert.p12"
+            codesign --force --options runtime --timestamp --keychain "$kc" \
+              --sign "Developer ID Application" "dist/$name/frog"
+            codesign --verify --strict --verbose=2 "dist/$name/frog"
+            if [ -n "$APPLE_ID" ] && [ -n "$APPLE_TEAM_ID" ] && [ -n "$APPLE_APP_PASSWORD" ]; then
+              # a bare binary can't be stapled; Gatekeeper checks the ticket online
+              ditto -c -k "dist/$name/frog" "$RUNNER_TEMP/frog-notarize.zip"
+              xcrun notarytool submit "$RUNNER_TEMP/frog-notarize.zip" --wait \
+                --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD"
+            else
+              echo "::warning::APPLE_ID/APPLE_TEAM_ID/APPLE_APP_PASSWORD not set; skipping notarization"
+            fi
+          elif [ "$TARGET" = aarch64-apple-darwin ]; then
+            echo "::warning::APPLE_CERT_P12 not set; darwin CLI ships unsigned"
+          fi
           if [ "$BUNDLE" = "true" ]; then
             # For macOS, also build and package the app for unsigned releases
             # Signed releases use the full release.sh script
@@ -166,12 +200,41 @@ jobs:
     needs: [build, smoke-cloud]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
       - name: combined checksums
         run: cd dist && cat ./*.sha256 > SHA256SUMS
+      # install.sh verifies <tarball>.minisig against the key embedded in it. The secret is
+      # an unencrypted minisign key (`minisign -G -W`); without it, no .minisig is published.
+      - name: minisign tarballs
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          if [ -z "$MINISIGN_SECRET_KEY" ]; then
+            echo "::warning::MINISIGN_SECRET_KEY not set; release tarballs are unsigned"
+            exit 0
+          fi
+          sudo apt-get install -y -qq minisign >/dev/null
+          printf '%s\n' "$MINISIGN_SECRET_KEY" > "$RUNNER_TEMP/minisign.key"
+          for f in dist/*.tar.gz; do
+            minisign -S -s "$RUNNER_TEMP/minisign.key" -m "$f" -t "frog ${GITHUB_REF_NAME} $(basename "$f")"
+          done
+          rm -f "$RUNNER_TEMP/minisign.key"
+      # Render packaging/homebrew/frog.rb for this release (stable tags only).
+      - name: homebrew formula
+        if: ${{ !contains(github.ref_name, '-') }}
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          sha() { cut -d' ' -f1 < "dist/frog-${GITHUB_REF_NAME}-$1.tar.gz.sha256"; }
+          sed -e "s/@VERSION@/$v/" \
+              -e "s/@SHA256_AARCH64_APPLE_DARWIN@/$(sha aarch64-apple-darwin)/" \
+              -e "s/@SHA256_AARCH64_UNKNOWN_LINUX_GNU@/$(sha aarch64-unknown-linux-gnu)/" \
+              -e "s/@SHA256_X86_64_UNKNOWN_LINUX_GNU@/$(sha x86_64-unknown-linux-gnu)/" \
+              packaging/homebrew/frog.rb > dist/frog.rb
+          if grep -n '@[A-Z0-9_]*@' dist/frog.rb; then echo "unfilled placeholder"; exit 1; fi
       - name: check if prerelease
         id: prerelease
         run: |
@@ -186,6 +249,26 @@ jobs:
             dist/*.tar.gz
             dist/*.sha256
             dist/SHA256SUMS
+            dist/*.minisig
+            dist/frog.rb
             dist/Frog.zip
             dist/Frog.zip.sha256
           prerelease: ${{ steps.prerelease.outputs.prerelease == 'true' }}
+      # Push the rendered formula to the tap when a token for it is configured.
+      - name: update homebrew tap
+        if: ${{ !contains(github.ref_name, '-') }}
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
+            echo "::warning::HOMEBREW_TAP_TOKEN not set; formula attached to the release only"
+            exit 0
+          fi
+          git clone --depth 1 "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/muni-works/homebrew-muni.git" tap
+          mkdir -p tap/Formula
+          cp dist/frog.rb tap/Formula/frog.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/frog.rb
+          git diff --cached --quiet || { git commit -m "frog ${GITHUB_REF_NAME}" && git push; }
