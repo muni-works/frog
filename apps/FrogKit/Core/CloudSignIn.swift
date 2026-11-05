@@ -19,13 +19,17 @@ enum CloudSignIn {
         let challenge = b64url(Data(SHA256.hash(data: Data(verifier.utf8))))
         let state = random(16)
         let listener = try NWListener(using: .tcp, on: .any)
-        let code = try await withCheckedThrowingContinuation { (done: CheckedContinuation<String, Error>) in
+        let stop = Stop()
+        // Cancelling the task (the Cancel button) stops listening and ends the wait at once.
+        let code = try await withTaskCancellationHandler {
+          try await withCheckedThrowingContinuation { (done: CheckedContinuation<String, Error>) in
             let once = Once()
             let finish: @MainActor @Sendable (Result<String, Error>) -> Void = { r in
                 guard once.take() else { return }
                 listener.cancel()
                 done.resume(with: r)
             }
+            stop.arm { finish(.failure(CancellationError())) }
             listener.newConnectionHandler = { conn in
                 conn.start(queue: .main)
                 conn.receive(minimumIncompleteLength: 1, maximumLength: 16_384) { data, _, _, _ in
@@ -61,10 +65,13 @@ enum CloudSignIn {
                 }
             }
             listener.start(queue: .main)
-            // Ten minutes is plenty for GitHub or Google; past it, stop listening.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 600) {
+            // Three minutes is plenty for GitHub or Google; past it, stop listening.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 180) {
                 MainActor.assumeIsolated { finish(.failure(URLError(.timedOut))) }
             }
+          }
+        } onCancel: {
+            Task { @MainActor in stop.fire() }
         }
         var request = URLRequest(url: CloudAccount.origin.appending(path: "v1/auth/exchange"))
         request.httpMethod = "POST"
@@ -73,6 +80,14 @@ enum CloudSignIn {
         let (data, response) = try await URLSession.shared.data(for: request)
         guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw CloudAccount.CloudError.rejected }
         return try JSONDecoder().decode(Exchange.self, from: data).key
+    }
+
+    /// Ends the wait when the task is cancelled, even if that happens before the wait begins.
+    @MainActor private final class Stop: Sendable {
+        private var cancelled = false
+        private var action: (() -> Void)?
+        func arm(_ f: @escaping () -> Void) { if cancelled { f() } else { action = f } }
+        func fire() { cancelled = true; action?(); action = nil }
     }
 
     /// Resumes the sign-in exactly once: the redirect, a failure or the timeout, whichever first.

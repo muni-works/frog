@@ -6,7 +6,8 @@ import SwiftUI
 struct BillingSettings: View {
     @State private var account = CloudAccount.shared
     @State private var amount = 10
-    @State private var signingIn = false
+    @State private var signingIn: Task<Void, Never>?
+    @State private var failure: String?
 
     var body: some View {
         Form {
@@ -14,12 +15,12 @@ struct BillingSettings: View {
                 Section {
                     Text("Sign in to see your plan and credit. Everything on this Mac works without an account; Frog Cloud adds sessions in their own sandbox and hosted models, with $5 free to start.")
                         .foregroundStyle(.secondary)
-                    ForEach([("github", "Sign In with GitHub"), ("google", "Sign In with Google")], id: \.0) { provider, title in
-                        Button(signingIn ? "Signing In…" : title) {
-                            signingIn = true
-                            Task { defer { signingIn = false }; try? await CloudAccount.signInAndSave(provider: provider) }
+                    if let task = signingIn {
+                        LabeledContent("Signing In… Finish in your browser.") { Button("Cancel") { task.cancel() } }
+                    } else {
+                        ForEach([("github", "Sign In with GitHub"), ("google", "Sign In with Google")], id: \.0) { provider, title in
+                            Button(title) { start { try await CloudAccount.signInAndSave(provider: provider) } }
                         }
-                        .disabled(signingIn)
                     }
                 }
             } else if let me = account.me {
@@ -51,12 +52,21 @@ struct BillingSettings: View {
             } else if account.error == nil {
                 Section { ProgressView().frame(maxWidth: .infinity) }
             }
-            if let error = account.error {
+            if let error = failure ?? account.error {
                 Section { Text(error).foregroundStyle(.red) }
             }
         }
         .formStyle(.grouped)
         .task { await account.refresh() }
+    }
+
+    /// Runs a sign-in in the browser, cancellable, saying why if it doesn't finish.
+    private func start(_ run: @escaping @MainActor () async throws -> Void) {
+        failure = nil
+        signingIn = Task {
+            defer { signingIn = nil }
+            do { try await run() } catch { failure = CloudAccount.signInFailure(error) }
+        }
     }
 
     /// Forgets this Mac's Frog Cloud key, as signing out on the web forgets the browser's.
@@ -72,12 +82,10 @@ struct BillingSettings: View {
         LabeledContent {
             if who != nil {
                 Text("Connected").foregroundStyle(.secondary)
+            } else if let task = signingIn {
+                Button("Cancel") { task.cancel() }
             } else {
-                Button("Connect") {
-                    signingIn = true
-                    Task { defer { signingIn = false }; try? await CloudAccount.connect(provider) }
-                }
-                .disabled(signingIn)
+                Button("Connect") { start { try await CloudAccount.connect(provider) } }
             }
         } label: {
             Text(name)

@@ -504,17 +504,16 @@ struct FrogCloudCard: View {
     @State private var store = ProviderStore.shared
 
     static let getKeyURL = URL(string: "https://api.frog.toys/beta")!
-    @State private var signingIn = false
+    @State private var signingIn: Task<Void, Never>?
 
     /// GitHub or Google in the browser, back to this Mac with its own key, saved where frog reads it.
     private func signIn(_ provider: String = "github") {
-        signingIn = true
-        Task {
-            defer { signingIn = false }
+        signingIn = Task {
+            defer { signingIn = nil }
             do {
                 try await CloudAccount.signInAndSave(provider: provider)
             } catch {
-                store.error = error.localizedDescription
+                if let failure = CloudAccount.signInFailure(error) { store.error = failure }
             }
         }
     }
@@ -551,13 +550,18 @@ struct FrogCloudCard: View {
             }
             Spacer()
             if provider?.key == nil {
-                Menu(signingIn ? "Signing In…" : "Sign In") {
-                    Button("Continue with GitHub") { signIn("github") }
-                    Button("Continue with Google") { signIn("google") }
+                if let task = signingIn {
+                    Text("Signing In…").font(.frog(size: 11)).foregroundStyle(.secondary)
+                    Button("Cancel") { task.cancel() }
+                        .controlSize(.small)
+                } else {
+                    Menu("Sign In") {
+                        Button("Continue with GitHub") { signIn("github") }
+                        Button("Continue with Google") { signIn("google") }
+                    }
+                    .controlSize(.small)
+                    .fixedSize()
                 }
-                .controlSize(.small)
-                .fixedSize()
-                .disabled(signingIn)
                 Link("Get a Key", destination: Self.getKeyURL)
                     .controlSize(.small)
                 if let provider {
