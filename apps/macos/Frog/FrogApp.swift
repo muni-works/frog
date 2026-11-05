@@ -315,7 +315,7 @@ final class LockHolder: @unchecked Sendable {
         // The holder writes its pid right after it takes the lock, so a failed acquire can
         // briefly read a stale (dead) pid — retry while the file still names a dead one.
         for _ in 0..<5 {
-            let f = open(lock.path, O_CREAT | O_RDWR, 0o644)
+            let f = open(lock.path, O_CREAT | O_RDWR | O_CLOEXEC, 0o644)
             guard f >= 0 else { return state }
             guard flock(f, LOCK_EX | LOCK_NB) != 0 else {
                 // We hold it. Write who we are (pid first, for the dead-holder check) and keep

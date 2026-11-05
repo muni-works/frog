@@ -65,6 +65,8 @@ enum Frog {
         let extra = ["\(home)/.cargo/bin", "/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin"]
         let current = env["PATH", default: "/usr/bin:/bin:/usr/sbin:/sbin"]
         env["PATH"] = (extra + [current]).joined(separator: ":")
+        // Sidecars the engine starts (frog-apple) watch this pid and exit with the app.
+        env["FROG_APP_PID"] = String(getpid())
         return env.merging(overrides) { $1 }
     }
 
