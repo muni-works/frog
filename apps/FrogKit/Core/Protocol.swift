@@ -1406,10 +1406,10 @@ struct ProviderInfo: Codable, Sendable, Hashable, Identifiable {
 enum ProviderID {
     /// frog's engine on this Mac ("This Mac", powered by tang).
     static let local = "local"
-    /// frog's hosted service ("frog cloud").
+    /// frog's hosted service ("Frog Cloud").
     static let cloud = "cloud"
     static let localName = "This Mac"
-    static let cloudName = "frog cloud"
+    static let cloudName = "Frog Cloud"
 
     static func canonical(_ id: String) -> String {
         switch id {
