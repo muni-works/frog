@@ -419,14 +419,61 @@ struct EngineError: Decodable, Equatable, Sendable, CustomStringConvertible {
     var status: Int?
     var message: String?
 
+    /// What the transcript says: a plain line, never an HTTP body. The engine has already
+    /// retried a busy (429/503) or failing (5xx) provider by the time this arrives (its
+    /// "still trying (n/N)" notices), so these say "even after retrying". `detail` keeps the rest.
     var description: String {
         switch type {
-        case "provider": "Provider error (\(status ?? 0)): \(message ?? "")"
-        case "billing": "Billing refused (\(status ?? 0)): \(message ?? "")"
-        case "connection": "Couldn't reach the model: \(message ?? "")"
+        case "provider": providerLine
+        case "billing": "Billing refused" + (Self.readable(reason).map { ": \($0)" } ?? ".")
+        case "connection": "Couldn't reach the model. Check your connection and try again."
         case "incomplete_stream": "The response stream ended early."
-        default: message ?? type
+        default: Self.readable(reason) ?? "The turn stopped on an error."
         }
+    }
+
+    private var providerLine: String {
+        let busy = reason.map { $0.localizedCaseInsensitiveContains("capacity") || $0.localizedCaseInsensitiveContains("overloaded") } ?? false
+        if status == 503 || busy {
+            return "The model is busy right now (no capacity), even after retrying. Try again in a moment."
+        }
+        switch status ?? 0 {
+        case 429: return "Too many requests at once, even after retrying. Wait a moment and try again."
+        case 401: return "The model provider didn't accept the sign-in. Sign in again, or check the API key."
+        case 402: return "Out of credit. Add credit to keep going."
+        case 403: return "Your account doesn't have access to this model."
+        case 404: return "That model isn't available. Pick another one."
+        case 0, 500...: return "The model's server had a problem (\(status ?? 0)), even after retrying. Try again in a moment."
+        default:
+            return "The model call failed (\(status ?? 0))" + (Self.readable(reason).map { ": \($0)" } ?? ".")
+        }
+    }
+
+    /// The provider's own words: `error.message` from a JSON body (OpenAI's shape, which Frog
+    /// Cloud uses; or a bare `message`), else the message as sent.
+    var reason: String? {
+        guard let message, !message.isEmpty else { return nil }
+        if let data = message.data(using: .utf8),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            if let e = json["error"] as? [String: Any], let m = e["message"] as? String { return m }
+            if let m = json["error"] as? String { return m }
+            if let m = json["message"] as? String { return m }
+            return nil
+        }
+        return message
+    }
+
+    /// Short, and no markup or JSON: fit to show as is, sentence-cased with a full stop.
+    static func readable(_ s: String?) -> String? {
+        guard let s = s?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty, s.count < 160,
+              !s.contains(where: { "{}<>".contains($0) }) else { return nil }
+        let line = s.prefix(1).uppercased() + s.dropFirst()
+        return line.hasSuffix(".") ? line : line + "."
+    }
+
+    /// Everything the engine sent, for a disclosure and the log: type, status, raw message.
+    var detail: String {
+        [type, status.map { "HTTP \($0)" }, message].compactMap { $0 }.joined(separator: " · ")
     }
 }
 

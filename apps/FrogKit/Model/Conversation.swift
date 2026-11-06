@@ -956,6 +956,8 @@ final class Conversation {
                 fallbackNotice = message
             } else if level == "warn" { note(message, warning: true) } else { show(message) }
         case .error(let e):
+            // A plain line in the transcript; the raw provider body goes to the log.
+            NSLog("frog engine error: %@", e.detail)
             note(e.description, warning: true)
         case .compactionFailed:
             // The raw provider payload is in the engine log, never here: one line and a way

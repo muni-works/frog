@@ -580,7 +580,19 @@ struct EndView: View {
         case .billingLimit(let b):
             BillingEndView(limit: b)
         case .error(let e):
-            banner(e.description, symbol: "exclamationmark.octagon", color: .red)
+            VStack(alignment: .leading, spacing: 4) {
+                banner(e.description, symbol: "exclamationmark.octagon", color: .red)
+                // The raw provider reply, out of the way: for a bug report, not for reading.
+                DisclosureGroup("Details") {
+                    Text(e.detail)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
         }
     }
 
