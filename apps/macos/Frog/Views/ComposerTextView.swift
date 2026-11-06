@@ -58,10 +58,23 @@ final class ComposerController {
         tv.window?.makeFirstResponder(tv)
     }
 
-    /// Put the cursor (a zero-length range) somewhere, e.g. where a restored draft left it.
+    /// Put the cursor (a zero-length range) somewhere, e.g. where a restored draft left it. Before
+    /// the text view exists (a draft restored on appear, ahead of `makeNSView`) it's kept for it.
     func select(_ range: NSRange) {
-        guard let tv = textView else { return }
-        tv.setSelectedRange(range)
+        guard let tv = textView else {
+            pendingSelection = range
+            return
+        }
+        tv.setSelectedRange(Self.clamp(range, to: Self.chars(tv).length))
+    }
+
+    /// A selection asked for before the text view was made.
+    var pendingSelection: NSRange?
+
+    static func clamp(_ range: NSRange, to length: Int) -> NSRange {
+        guard range.location != NSNotFound else { return NSRange(location: length, length: 0) }
+        let location = min(range.location, length)
+        return NSRange(location: location, length: min(range.length, length - location))
     }
 
     // MARK: Dictation
@@ -202,6 +215,13 @@ struct ComposerTextView: NSViewRepresentable {
         tv.isAutomaticDashSubstitutionEnabled = false
         tv.isAutomaticTextReplacementEnabled = false
         tv.string = text
+        // A fresh NSTextView leaves the caret at 0: typing on into a view made with text already
+        // in it (a restored draft, a composer rebuilt mid-typing) would land ahead of that text.
+        tv.setSelectedRange(ComposerController.clamp(
+            controller.pendingSelection ?? NSRange(location: NSNotFound, length: 0),
+            to: (text as NSString).length
+        ))
+        controller.pendingSelection = nil
         // Lays out only what's on screen: a keystroke in a long draft doesn't re-lay the rest.
         tv.layoutManager?.allowsNonContiguousLayout = true
         controller.textView = tv
@@ -225,13 +245,17 @@ struct ComposerTextView: NSViewRepresentable {
         guard let tv = scroll.documentView as? NSTextView else { return }
         // `pushed` is the binding's own value back while nothing else wrote it, so this compare
         // is an identity check, not a scan of the draft.
-        if text != context.coordinator.pushed {
-            context.coordinator.cancelPush()
-            context.coordinator.pushed = text
-            tv.string = text
-            tv.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
-            context.coordinator.fitHeightNow(tv)
-        }
+        guard text != context.coordinator.pushed else { return }
+        // Mid-composition (IME, accents): replacing the string would drop the marked text and
+        // move the caret. The next update, once it's committed, catches up.
+        guard !tv.hasMarkedText() else { return }
+        context.coordinator.cancelPush()
+        context.coordinator.pushed = text
+        // Already showing it (a write that echoes what's typed): leave the caret where it is.
+        guard ComposerController.chars(tv) as String != text else { return }
+        tv.string = text
+        tv.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
+        context.coordinator.fitHeightNow(tv)
     }
 
     @MainActor
