@@ -276,7 +276,7 @@ struct BiggerModelLine: View {
     static func reason(model name: String, window: UInt64, turns: [TurnState], inProject: Bool) -> String? {
         guard window < smallWindow else { return nil }
         switch turns.last?.end {
-        case .error(let e) where e.description.localizedCaseInsensitiveContains("context"):
+        case .error(let e) where e.detail.localizedCaseInsensitiveContains("context"):
             return "This conversation outgrew \(name)."
         case .looping, .stepLimit, .maxTokens:
             return "\(name) is struggling with this."

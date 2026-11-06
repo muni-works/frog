@@ -93,7 +93,7 @@ struct ComposerView: View {
     private func draftHooks(_ view: some View) -> some View {
         view
             .onAppear { restoreDraft() }
-            .onChange(of: text) { saveDraftSoon() }
+            .onChange(of: text) { noteDraft(); saveDraftSoon() }
             .onChange(of: attachments) { saveDraftSoon() }
             // Out for good: saved (the willTerminate read comes before the write below it).
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
@@ -515,7 +515,26 @@ struct ComposerView: View {
         attachments = draft.images
         // The selection is best-effort: the text view clamps it to its length.
         controller.focus()
-        controller.select(NSRange(location: min(draft.cursor, max(draft.text.utf16.count - 1, 0)), length: 0))
+        controller.select(NSRange(location: min(draft.cursor, draft.text.utf16.count), length: 0))
+    }
+
+    /// Where the caret was, for the draft. With no text view (saved on the way out, after the
+    /// field is gone) it's the end: 0 put the composer that took over mid-typing at the start,
+    /// and what was typed next landed ahead of what was already there.
+    static func draftCursor(_ tv: NSTextView?, text: String) -> Int {
+        guard let tv, tv.selectedRange().location != NSNotFound else { return text.utf16.count }
+        return min(tv.selectedRange().location, text.utf16.count)
+    }
+
+    /// Every keystroke, in memory: a composer that replaces this one before its save on the way
+    /// out (SwiftUI can run the new one's onAppear first) still restores everything typed.
+    private func noteDraft() {
+        guard !text.isEmpty || !attachments.isEmpty else { return }
+        drafts.note(
+            ComposerDraft(text: text, images: attachments, cursor: Self.draftCursor(controller.textView, text: text), saved: .now),
+            id: conversation.sessionID,
+            folder: workspace.folder
+        )
     }
 
     /// Typing settles for ⅓ s before the draft is written; every keystroke restarts the wait.
@@ -537,9 +556,8 @@ struct ComposerView: View {
             drafts.clear(id: conversation.sessionID, folder: workspace.folder)
             return
         }
-        let cursor = controller.textView.map { $0.selectedRange().location == NSNotFound ? 0 : $0.selectedRange().location } ?? 0
         drafts.save(
-            ComposerDraft(text: text, images: attachments, cursor: cursor, saved: .now),
+            ComposerDraft(text: text, images: attachments, cursor: Self.draftCursor(controller.textView, text: text), saved: .now),
             id: conversation.sessionID,
             folder: workspace.folder
         )

@@ -956,6 +956,8 @@ final class Conversation {
                 fallbackNotice = message
             } else if level == "warn" { note(message, warning: true) } else { show(message) }
         case .error(let e):
+            // A plain line in the transcript; the raw provider body goes to the log.
+            NSLog("frog engine error: %@", e.detail)
             note(e.description, warning: true)
         case .compactionFailed:
             // The raw provider payload is in the engine log, never here: one line and a way
@@ -1192,7 +1194,7 @@ final class Conversation {
         case .cancelled: return "Interrupted"
         case .suspended: return "Suspended for app update"
         case .error(let e): return e.description
-        case .looping: return "Stopped: the model kept repeating the same tool call"
+        case .looping: return "Stopped: the model kept making tool calls that couldn't help"
         case .stepLimit: return "Stopped at the step limit"
         case .blockedOnApproval(let denial): return "Stopped: retried a call that was already denied (\(denial))"
         case .billingLimit: return "Stopped: out of credit"
