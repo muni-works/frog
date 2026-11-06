@@ -134,4 +134,85 @@ final class ComposerCaretTests: XCTestCase {
         XCTAssertTrue(tv.hasMarkedText())
         XCTAssertEqual(tv.string, "a´")
     }
+
+    // MARK: Existing conversation: the composer swapped mid-typing
+
+    final class Current { var controller: ComposerController? }
+
+    /// What `ComposerView` does with drafts, around the real text view: restore on appear, note
+    /// every keystroke. The old composer's save on the way out is left out — SwiftUI can run it
+    /// after the new composer's onAppear, so the handover can't count on it.
+    struct Handover: View {
+        let store: DraftStore
+        let current: Current
+        @State var text = ""
+        @State var height: CGFloat = 22
+        @State var controller = ComposerController()
+        static let folder = URL(fileURLWithPath: "/tmp/frog-caret-tests")
+        var body: some View {
+            ComposerTextView(text: $text, height: $height, controller: controller, onSubmit: {}, onEscape: { false })
+                .frame(width: 500, height: 120)
+                .onAppear {
+                    current.controller = controller
+                    guard let d = store.draft(for: "s1", folder: Self.folder), text.isEmpty, !d.text.isEmpty else { return }
+                    text = d.text
+                    controller.focus()
+                    controller.select(NSRange(location: min(d.cursor, d.text.utf16.count), length: 0))
+                }
+                .onChange(of: text) {
+                    store.note(ComposerDraft(text: text, images: [], cursor: ComposerView.draftCursor(controller.textView, text: text), saved: .now), id: "s1", folder: Self.folder)
+                }
+        }
+    }
+
+    struct Swapper: View {
+        @Bindable var model: Model
+        let store: DraftStore
+        let current: Current
+        var body: some View {
+            // `tick` is the conversation's identity: PaneView's `.id(ObjectIdentifier(conversation))`.
+            Handover(store: store, current: current).id(model.tick)
+        }
+    }
+
+    /// The repro from an existing chat with a failed turn: a burst of typing, a pause long enough
+    /// for the draft to be saved, more typing, then the composer is rebuilt (the conversation
+    /// swapped under it, error to idle) before the old one saves on its way out. Typing goes on
+    /// at the end with all of it there — not "b(n: u64) … tests.Write a Rust function fi".
+    func testExistingConversationComposerSwappedMidTypingKeepsEverything() {
+        let wasEnabled = DraftStore.enabled, wasDir = DraftStore.dir
+        DraftStore.enabled = true
+        DraftStore.dir = FileManager.default.temporaryDirectory.appending(path: "caret-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: DraftStore.dir); DraftStore.enabled = wasEnabled; DraftStore.dir = wasDir }
+        let prompt = "Write a Rust function fib(n: u64) -> u64 that returns the nth Fibonacci number iteratively, with two unit tests."
+        let store = DraftStore(), current = Current(), model = Model()
+        let host = NSHostingView(rootView: Swapper(model: model, store: store, current: current))
+        host.frame = CGRect(x: 0, y: 0, width: 500, height: 140)
+        let w = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        w.isReleasedWhenClosed = false
+        w.contentView = host
+        w.orderFront(nil)
+        defer { w.close() }
+        host.layoutSubtreeIfNeeded()
+        pump(0.05)
+        current.controller?.focus()
+        let pause = prompt.index(prompt.startIndex, offsetBy: 16), swap = prompt.index(prompt.startIndex, offsetBy: 24)
+        type(prompt[..<pause], into: current.controller!) { self.pump(0.001) }
+        // The ⅓ s save: what's on disk lags what's typed from here on.
+        store.save(ComposerDraft(text: String(prompt[..<pause]), images: [], cursor: 16, saved: .now), id: "s1", folder: Handover.folder)
+        type(prompt[pause..<swap], into: current.controller!) { self.pump(0.001) }
+        let old = current.controller
+        model.tick += 1
+        host.layoutSubtreeIfNeeded()
+        pump(0.05)
+        XCTAssertFalse(current.controller === old, "the composer was rebuilt")
+        let controller = current.controller!
+        type(prompt[swap...], into: controller) {
+            model.text = model.text
+            host.layoutSubtreeIfNeeded()
+            self.pump(0.001)
+        }
+        XCTAssertEqual(controller.textView?.string, prompt)
+        XCTAssertEqual(controller.textView?.selectedRange(), NSRange(location: (prompt as NSString).length, length: 0))
+    }
 }

@@ -46,6 +46,15 @@ final class DraftStore {
         write(draft, key: key)
     }
 
+    /// What's typed right now, kept in memory only (every keystroke; the file waits for a pause).
+    /// A composer that takes over mid-typing (the conversation swapped under it, a pane rebuilt)
+    /// can appear before the old one's save on the way out: it reads this, so it gets all of
+    /// what was typed, not the last pause's draft with the caret ahead of the rest.
+    func note(_ draft: ComposerDraft, id: String?, folder: URL) {
+        guard Self.enabled else { return }
+        cache[Self.keys(id: id, folder: folder)[0]] = draft
+    }
+
     /// The draft is gone (it was sent).
     func clear(id: String?, folder: URL) {
         for key in Self.keys(id: id, folder: folder) {
