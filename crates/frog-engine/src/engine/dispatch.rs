@@ -389,6 +389,8 @@ root {}. Re-`cd` if you need the old location back.</system-note>",
         let mut denied = false;
         let mut blocked: Option<String> = None;
         let mut looping = false;
+        // Too many calls to tools this conversation doesn't have (see `LOOP_UNAVAILABLE`).
+        let mut stranded = false;
         let mut replan: Option<String> = None;
         let uses_len = uses.len();
         // Parallel reads: the reply's leading run of calls that change nothing all start now,
@@ -499,13 +501,13 @@ Don't repeat it. Change the arguments or try a different approach.",
                 )
             } else if !self.offers(&name) {
                 // Only what this step offered runs: a chat has no Bash however it's asked for.
-                text(
-                    ToolOutcome::Error,
-                    format!(
-                        "There's no `{name}` tool in this conversation. Use only the tools you were given."
-                    ),
-                    Some("refused: not an available tool"),
-                )
+                // A model that keeps reaching for tools that aren't there stops the turn.
+                guard.unavailable += 1;
+                if guard.unavailable >= LOOP_UNAVAILABLE {
+                    stranded = true;
+                }
+                let (msg, display) = unavailable_tool(&name, self.chat);
+                text(ToolOutcome::Error, msg, Some(display))
             } else if let Decision::Deny = self.timed_permit(&id, &name, &arg, &input).await {
                 if let Some(denial) = self.blocked.clone() {
                     // A retry of a call already denied this turn: no second card. The turn
@@ -748,6 +750,16 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             );
             self.notice(Level::Warn, why.clone());
             self.extend_last(vec![Block::Text { text: why }]);
+        } else if stranded {
+            let why = if self.chat {
+                "[frog] Turn stopped: the model kept calling file and shell tools, and this conversation has no folder. Ask for the answer in chat, or pick a folder to work in.".to_string()
+            } else {
+                format!(
+                    "[frog] Turn stopped: {LOOP_UNAVAILABLE} calls to tools this conversation doesn't have. Everything done so far is kept."
+                )
+            };
+            self.notice(Level::Warn, why.clone());
+            self.extend_last(vec![Block::Text { text: why }]);
         } else if let Some(r) = replan {
             self.extend_last(vec![Block::Text { text: r }]);
         }
@@ -755,7 +767,7 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             Batch::Blocked(denial)
         } else if denied {
             Batch::Denied
-        } else if looping {
+        } else if looping || stranded {
             Batch::Looping
         } else if waiting {
             Batch::Waiting

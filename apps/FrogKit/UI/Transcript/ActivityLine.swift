@@ -386,8 +386,13 @@ struct ActivityStepRow: View {
             switch r.outcome {
             case .denied: Text("· denied").foregroundStyle(.orange)
             case .skipped: Text("· skipped").foregroundStyle(.tertiary)
-            case .error where r.display?.hasPrefix("refused") == true:
+            case .error where r.display?.hasPrefix("refused: repeated") == true:
                 Text("· repeated call refused").foregroundStyle(.red)
+            case .error where ToolResultWords.errorLabel(r.display) == "No folder open":
+                // A chat with no folder: the model reached for a file or shell tool it doesn't have.
+                Text("· no folder open").foregroundStyle(.orange)
+            case .error where ToolResultWords.errorLabel(r.display) == "Not available":
+                Text("· not available").foregroundStyle(.orange)
             case .error where groupSaysFailed:
                 EmptyView()
             case .error:

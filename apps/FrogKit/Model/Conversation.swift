@@ -1192,7 +1192,7 @@ final class Conversation {
         case .cancelled: return "Interrupted"
         case .suspended: return "Suspended for app update"
         case .error(let e): return e.description
-        case .looping: return "Stopped: the model kept repeating the same tool call"
+        case .looping: return "Stopped: the model kept making tool calls that couldn't help"
         case .stepLimit: return "Stopped at the step limit"
         case .blockedOnApproval(let denial): return "Stopped: retried a call that was already denied (\(denial))"
         case .billingLimit: return "Stopped: out of credit"

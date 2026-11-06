@@ -572,7 +572,7 @@ struct EndView: View {
                 color: .orange
             )
         case .looping:
-            banner("Stopped: the model kept repeating the same tool call", symbol: "arrow.trianglehead.2.clockwise", color: .orange)
+            banner("Stopped: the model kept making tool calls that couldn't help", symbol: "arrow.trianglehead.2.clockwise", color: .orange)
         case .stepLimit:
             banner("Stopped at the step limit. Say “continue” to keep going.", symbol: "flag.checkered", color: .orange)
         case .blockedOnApproval(let denial):

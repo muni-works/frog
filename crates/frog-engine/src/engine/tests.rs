@@ -2227,6 +2227,83 @@ async fn a_tool_that_was_not_offered_does_not_run() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// A coding model in a chat with no folder reaches for Write, then Bash, then Edit: each gets a
+/// way forward (answer in chat, or pick a folder) instead of a bare refusal, and the third such
+/// call stops the turn rather than letting it wander on. The model's later reply never runs.
+#[tokio::test]
+async fn a_chat_with_no_folder_steers_file_tools_to_the_chat_and_stops() {
+    let dir = std::env::temp_dir().join(format!("frog-no-folder-{}", new_id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let call = |id: &str, name: &str, input: Value| Block::ToolUse {
+        id: id.into(),
+        name: name.into(),
+        input,
+    };
+    let script = vec![
+        reply(
+            vec![call(
+                "w",
+                "Write",
+                json!({ "file_path": "fib.rs", "content": "fn fib() {}" }),
+            )],
+            Stop::ToolUse,
+        ),
+        reply(
+            vec![call("b", "Bash", json!({ "command": "cargo new fib" }))],
+            Stop::ToolUse,
+        ),
+        reply(
+            vec![call(
+                "e",
+                "Edit",
+                json!({ "file_path": "fib.rs", "old_string": "a", "new_string": "b" }),
+            )],
+            Stop::ToolUse,
+        ),
+        reply(vec![text("never reached")], Stop::End),
+    ];
+    let mut h = chat_engine(script, dir.clone());
+    let evs = run(&mut h, "write a rust fib function").await;
+    let calls: Vec<(String, String, Option<String>)> = evs
+        .iter()
+        .filter_map(|e| match &e.event {
+            Event::ItemCompleted {
+                item:
+                    Item::ToolCall {
+                        name,
+                        output,
+                        display,
+                        outcome: ToolOutcome::Error,
+                        ..
+                    },
+                ..
+            } => Some((name.clone(), output.clone(), display.clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(calls.len(), 3, "{calls:?}");
+    for (name, output, display) in &calls {
+        assert!(
+            output.contains("no folder") && output.contains("Answer in chat"),
+            "{name}: {output}"
+        );
+        assert!(output.contains(crate::folder::TOOL), "{output}");
+        assert_eq!(display.as_deref(), Some("no folder: answer in chat"));
+    }
+    assert!(
+        notices(&evs).iter().any(|n| n.contains("no folder")),
+        "the stop says why: {:?}",
+        notices(&evs)
+    );
+    assert!(
+        !evs.iter().any(|e| matches!(&e.event, Event::ItemCompleted { item: Item::Message { text }, .. } if text.contains("never reached"))),
+        "the turn stopped at the third unavailable call"
+    );
+    assert!(!dir.join("fib.rs").exists());
+    shutdown(h).await;
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 /// `/clear` starts a new conversation: `!cmd` output queued for the old one doesn't ride
 /// along on the new one's first message.
 #[tokio::test]

@@ -320,7 +320,7 @@ struct ToolCallView: View {
             switch r.outcome {
             case .denied: Text("Denied").font(.caption).foregroundStyle(.orange)
             case .skipped: Text("Skipped").font(.caption).foregroundStyle(.secondary)
-            case .error: Text(r.display?.hasPrefix("refused") == true ? "Repeated call refused" : "Failed").font(.caption).foregroundStyle(.red)
+            case .error: Text(ToolResultWords.errorLabel(r.display)).font(.caption).foregroundStyle(.red)
             case .ok:
                 if let d = r.diff {
                     HStack(spacing: TurnSpace.Inset.tight) {
@@ -619,5 +619,17 @@ struct TypingBubble: View {
                 .foregroundStyle(.tertiary)
                 .fixedSize()
         }
+    }
+}
+
+/// What a failed tool call's badge says. "refused: repeated identical call" is the loop guard;
+/// "no folder: …" a chat with no folder asked for a file or shell tool; anything else failed.
+enum ToolResultWords {
+    static func errorLabel(_ display: String?) -> String {
+        guard let display else { return "Failed" }
+        if display.hasPrefix("refused: repeated") { return "Repeated call refused" }
+        if display.hasPrefix("no folder") { return "No folder open" }
+        if display.hasPrefix("not an available tool") || display.hasPrefix("refused: not an available") { return "Not available" }
+        return "Failed"
     }
 }

@@ -102,8 +102,34 @@ const LOOP_REPLAN: u32 = 3;
 const LOOP_STOP: u32 = 6;
 /// Re-plans in a row, with no new distinct call in between, before the turn stops.
 const LOOP_STALE_REPLANS: u32 = 3;
+/// Calls to tools this conversation doesn't have, in one turn, before the turn stops (a
+/// coding model in a chat with no folder reaches for Write, then Bash, then …).
+const LOOP_UNAVAILABLE: u32 = 3;
 /// Distinct calls a re-plan message lists.
 const LOOP_RECENT: usize = 8;
+
+/// What a call to a tool that isn't offered gets back: in a chat (no folder), where the file and
+/// shell tools a coding model reaches for don't exist, a way forward rather than a refusal.
+fn unavailable_tool(name: &str, chat: bool) -> (String, &'static str) {
+    if chat {
+        (
+            format!(
+                "Not run: there's no `{name}` tool here. This conversation has no folder, so there are no files to \
+write and nowhere to run commands. Answer in chat instead (code goes in a fenced code block), or, if the user \
+needs it on disk, ask them to pick a folder (offer {}). Don't call file or shell tools again.",
+                crate::folder::TOOL
+            ),
+            "no folder: answer in chat",
+        )
+    } else {
+        (
+            format!(
+                "There's no `{name}` tool in this conversation. Use only the tools you were given."
+            ),
+            "not an available tool",
+        )
+    }
+}
 
 /// Tools whose result for the same arguments only changes when something else changes the
 /// world, so an earlier result can stand in for a repeat.
@@ -122,6 +148,8 @@ struct LoopGuard {
     recent: Vec<String>,
     /// Re-plans since the last call that was new to this turn.
     stale_replans: u32,
+    /// Calls this turn to tools that weren't offered.
+    unavailable: u32,
 }
 
 impl LoopGuard {
