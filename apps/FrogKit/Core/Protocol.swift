@@ -425,11 +425,21 @@ struct EngineError: Decodable, Equatable, Sendable, CustomStringConvertible {
     var description: String {
         switch type {
         case "provider": providerLine
-        case "billing": "Billing refused" + (Self.readable(reason).map { ": \($0)" } ?? ".")
+        case "billing": billingLine
         case "connection": "Couldn't reach the model. Check your connection and try again."
         case "incomplete_stream": "The response stream ended early."
         default: Self.readable(reason) ?? "The turn stopped on an error."
         }
+    }
+
+    /// Out of credit or quota reads as one plain line; any other refusal keeps its reason,
+    /// never a raw code like `insufficient_quota`.
+    private var billingLine: String {
+        let r = (reason ?? "").lowercased()
+        if r.contains("credit") || r.contains("quota") || status == 402 {
+            return "Out of credit. Add credit to keep going."
+        }
+        return "Billing refused" + (Self.readable(reason).map { ": \($0)" } ?? ".")
     }
 
     private var providerLine: String {

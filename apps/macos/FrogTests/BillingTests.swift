@@ -55,7 +55,7 @@ final class BillingTests: XCTestCase {
     /// wrong without the raw body's JSON.
     func testBillingEngineErrorRendersClean() {
         let e = EngineError(type: "billing", status: 402, message: "insufficient credits")
-        XCTAssertEqual(e.description, "Billing refused (402): insufficient credits")
+        XCTAssertEqual(e.description, "Out of credit. Add credit to keep going.")
     }
 
     /// A rendered view's height, the SnapshotTests way.

@@ -92,7 +92,7 @@ final class ProtocolTests: XCTestCase {
 
         // No billing body ever renders as a provider dump.
         let engine = EngineError(type: "billing", status: 402, message: "insufficient_quota")
-        XCTAssertEqual(engine.description, "Billing refused (402): insufficient_quota")
+        XCTAssertEqual(engine.description, "Out of credit. Add credit to keep going.")
     }
 
     func testTurnEnergy() throws {
