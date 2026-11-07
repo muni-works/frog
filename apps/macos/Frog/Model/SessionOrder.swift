@@ -1,5 +1,4 @@
 import Foundation
-import Observation
 
 /// The sidebar's top-level rows, in its chosen order, as the quick-switch shortcuts (⌘1…9,
 /// ⇧⌘]/⇧⌘[) step through them. Cached: it used to be derived in `WorkspaceView.body` — the
@@ -8,22 +7,20 @@ import Observation
 /// pins, archive, parents, grouping) change on listing and user action, not on a streamed
 /// delta, so the cache invalidates only then.
 @MainActor
-@Observable
 final class SessionOrder {
     static let shared = SessionOrder()
 
-    private(set) var order: [SessionInfo] = []
-
-    private var key: String = ""
-    private var group: SessionList.Grouping = .date
-    private var sort: SessionList.Sort = .activity
-    private var scope: AttentionTree.Scope = .live
-    private var current: String?
-    /// The listing, pins, archive or parents moved since the cache was built.
-    @ObservationIgnored private var dirty = true
+    /// One entry per set of inputs: each window asks with its own current session (and maybe
+    /// its own grouping), so a single slot would flip between them. Not observable on purpose:
+    /// it's read and written from `WorkspaceView.body`, and an observable cache written in one
+    /// window's body invalidated every other window's, which rewrote it — two windows (File >
+    /// Open Folder… beside a chat) re-rendered each other until AppKit gave up its layout pass
+    /// ("more Update Constraints in Window passes than there are views in the window") and
+    /// crashed. The body still tracks what `derive` reads off the `Library`.
+    private var cache: [String: [SessionInfo]] = [:]
 
     private init() {
-        Library.shared.onOrderInvalidated = { [weak self] in self?.dirty = true }
+        Library.shared.onOrderInvalidated = { [weak self] in self?.cache.removeAll() }
     }
 
     /// The order for a grouping: re-derived only when its inputs changed.
@@ -36,17 +33,11 @@ final class SessionOrder {
                      current: String?) -> [SessionInfo] {
         let library = Library.shared
         let key = "\(library.sessions.count)|\(library.pinned.count)|\(library.archived.count)|\(library.parents.count)|\(group.rawValue)|\(sort.rawValue)|\(scope.rawValue)|\(current ?? "-")"
-        if !dirty, key == self.key, group == self.group, sort == self.sort, scope == self.scope,
-           current == self.current, !order.isEmpty {
-            return order
-        }
-        order = derive(group: group, sort: sort, scope: scope, current: current)
-        self.key = key
-        self.group = group
-        self.sort = sort
-        self.scope = scope
-        self.current = current
-        dirty = false
+        if let hit = cache[key], !hit.isEmpty { return hit }
+        let order = derive(group: group, sort: sort, scope: scope, current: current)
+        // A few windows' worth; the listing moving clears it anyway.
+        if cache.count > 16 { cache.removeAll() }
+        cache[key] = order
         return order
     }
 

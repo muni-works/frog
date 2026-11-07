@@ -338,7 +338,11 @@ final class Workspace {
     var cloudTarget: String??
 
     func runInCloud(_ text: String, repo: String?? = nil) async {
-        let repo: String? = repo ?? CloudSessions.githubRepo(of: folder)
+        let folder = folder
+        // Off the main thread: it runs git and waits, which spins the main run loop.
+        let repo: String? = if let repo { repo } else {
+            await Task.detached(priority: .userInitiated) { CloudSessions.githubRepo(of: folder) }.value
+        }
         do {
             guard let s = try await CloudSessions.shared.create(repo: repo) else { return }
             cloudTarget = nil

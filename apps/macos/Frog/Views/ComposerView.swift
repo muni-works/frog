@@ -899,6 +899,10 @@ private struct LocationPicker: View {
     @Bindable var workspace: Workspace
     @State private var repos: CloudGateway.Repos?
     @State private var fetched = false
+    /// This folder's GitHub repo, read off the main thread. Never in `body`: `githubRepo(of:)`
+    /// runs git and waits, and `waitUntilExit` spins the run loop, so AppKit re-entered its
+    /// layout pass from inside SwiftUI's update and raised (the Open Folder crash).
+    @State private var here: String?
 
     private var label: String {
         switch workspace.cloudTarget {
@@ -912,10 +916,10 @@ private struct LocationPicker: View {
         Menu {
             Button("This Mac", systemImage: "laptopcomputer") { workspace.cloudTarget = nil }
             Section("Frog Cloud") {
-                if let here = CloudSessions.githubRepo(of: workspace.folder) {
+                if let here {
                     Button(here, systemImage: "cloud") { workspace.cloudTarget = .some(here) }
                 }
-                ForEach((repos?.repos ?? []).filter { $0.name != CloudSessions.githubRepo(of: workspace.folder) }, id: \.self) { r in
+                ForEach((repos?.repos ?? []).filter { $0.name != here }, id: \.self) { r in
                     Button(r.name, systemImage: r.private ? "lock" : "book.closed") { workspace.cloudTarget = .some(r.name) }
                 }
                 Button("No Repo", systemImage: "cloud") { workspace.cloudTarget = .some(nil) }
@@ -936,6 +940,10 @@ private struct LocationPicker: View {
         .fixedSize()
         .help("Where this conversation runs")
         .task { await load() }
+        .task(id: workspace.folder) {
+            let folder = workspace.folder
+            here = await Task.detached(priority: .utility) { CloudSessions.githubRepo(of: folder) }.value
+        }
     }
 
     private func load() async {
