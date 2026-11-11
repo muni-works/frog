@@ -258,6 +258,13 @@ struct ComposerView: View {
                     .frame(height: height)
                 }
                 .padding(.bottom, 2)
+                // As on the web: an open ask says so beside the stop button.
+                if conversation.busy, conversation.permission != nil || conversation.question != nil || conversation.elicitation != nil {
+                    Text("Waiting on you")
+                        .font(.frog(size: Tokens.Size.secondary))
+                        .foregroundStyle(Tokens.signal)
+                        .fixedSize()
+                }
                 if paneWidth > .narrow {
                     DictationButton(dictation: dictation, toggle: toggleDictation)
                 }
@@ -370,7 +377,7 @@ struct ComposerView: View {
         if let model = workspace.pendingDownloadModel {
             return "Downloading \(model.name)… messages send when it’s ready"
         }
-        if conversation.busy { return "Working… type a follow-up" }
+        if conversation.busy { return "Working… Esc interrupts · Return queues a follow-up" }
         // One vocabulary everywhere (Settings › Shortcuts): @ mentions a file, ! runs a command.
         if workspace.isChat { return "Reply to Frog" }
         return "Reply to Frog, @ a file, ! a command"

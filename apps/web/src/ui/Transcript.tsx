@@ -11,7 +11,7 @@ import { TurnFooter } from './TurnFooter'
 // Draws a folded Thread: the user's message, tool lines, "Decided" steps (reasoning items),
 // streamed replies, and a diff card per edit with Allow ⌘↩ / Deny ⌘. while it waits.
 
-export function DiffCard({ diff, ask, onDecide, note }: { diff: FileDiff; ask?: Ask | null; onDecide?: (allow: boolean) => void; note?: string }) {
+export function DiffCard({ diff, ask, onDecide, note }: { diff: FileDiff; ask?: Ask | null; onDecide?: Decide; note?: string }) {
   return (
     <div className="cardx">
       <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 14px 6px' }}>
@@ -64,8 +64,9 @@ function ToolLine({ e }: { e: Entry }) {
   const output = e.output.trim()
   const shown = open ?? (e.outcome === 'error' || (!e.done && !!output))
   const state = !e.done ? 'run' : e.outcome === 'error' ? 'err' : e.outcome === 'denied' ? 'denied' : 'ok'
-  // The engine's one-line gist (display) when it has one, else the argument.
-  const what = (e.done && e.display) || e.arg || (TOOL_LOOK[name] ? '' : e.name)
+  // What it touched ("Read src/retry.rs", as on the Mac); the engine's gist ("Read 54 lines")
+  // goes in the opened detail, so the verb isn't said twice.
+  const what = e.arg || (e.done && e.display) || (TOOL_LOOK[name] ? '' : e.name)
   return (
     <div className={`tool-row ${state}`}>
       <button type="button" className="tool" aria-expanded={shown} onClick={() => setOpen(!shown)}>
@@ -82,7 +83,7 @@ function ToolLine({ e }: { e: Entry }) {
       </button>
       {shown && (
         <div className="tool-body">
-          {e.arg && e.display && <div className="tool-arg">{e.arg}</div>}
+          {e.arg && e.display && <div className="tool-arg">{e.display}</div>}
           {output ? <pre className="tool-out">{clip(output)}</pre> : <div className="det">{e.done ? 'No output.' : 'Running…'}</div>}
         </div>
       )}
@@ -110,11 +111,56 @@ function EditLine({ diff }: { diff: FileDiff }) {
   )
 }
 
+/** A thought: one quiet line, collapsed with a ›, opening to what it thought (the Mac's too). */
+function ThoughtLine({ text }: { text: string }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="thought">
+      <button type="button" className="tool" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <span className="tool-verb">Thought</span>
+        <span className="tool-chev" aria-hidden="true">›</span>
+      </button>
+      {open && <div className="thought-body">{text}</div>}
+    </div>
+  )
+}
+
+export type DecideOpts = { always?: boolean; note?: string }
+type Decide = (allow: boolean, opts?: DecideOpts) => void
+
+/** The ask card, one design with the Mac's: the title, the command in a well, where it runs,
+ * then the answers. Allow is the green primary (⌘↩), Deny keeps ⌘., the rest are secondary. */
+function AskCard({ ask, onDecide }: { ask: Ask; onDecide: Decide }) {
+  const [noting, setNoting] = useState(false)
+  const [note, setNote] = useState('')
+  const always = ask.always ? ask.always[0].toUpperCase() + ask.always.slice(1) : ''
+  return (
+    <div className="cardx ask">
+      <div className="ask-h"><b>{ask.name === 'Bash' || ask.name === '!' ? 'Allow this command?' : `Allow ${ask.name}?`}</b>{ask.reason && <div className="det wrap">{ask.reason}</div>}</div>
+      <div className="diff">{ask.arg}</div>
+      {noting && (
+        <form className="ask-note" onSubmit={(ev) => { ev.preventDefault(); if (note.trim()) onDecide(false, { note }) }}>
+          <input className="f-input" autoFocus value={note} onChange={(ev) => setNote(ev.target.value)} placeholder="Tell the agent why, or what to do instead" />
+          <button type="submit" className="f-btn f-btn--bordered" disabled={!note.trim()}>Deny</button>
+        </form>
+      )}
+      <div className="det ask-where">Runs in your cloud sandbox</div>
+      <div className="diff-acts">
+        {always && <button type="button" className="f-btn f-btn--bordered" onClick={() => onDecide(true, { always: true })}>{always}</button>}
+        <button type="button" className="f-btn f-btn--bordered" onClick={() => setNoting(true)}>Deny with note…</button>
+        <span style={{ flex: 1 }} />
+        <button type="button" className="f-btn f-btn--bordered" onClick={() => onDecide(false)}>Deny ⌘.</button>
+        <button type="button" className="f-btn f-btn--prominent" onClick={() => onDecide(true)}>Allow ⌘↩</button>
+      </div>
+    </div>
+  )
+}
+
 const NO_MODELS: Model[] = []
 
 export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, models = NO_MODELS, outbox = [], onResend, onEdit, waiting, onContinue }: {
   thread: Thread
-  onDecide: (allow: boolean) => void
+  onDecide: Decide
   onAnswer: (choices: string[], other?: string) => void
   onElicit: (action: 'accept' | 'decline' | 'cancel', content?: Record<string, string | number | boolean>) => void
   /** Try again, offered on the last turn when it ended on an error. */
@@ -137,7 +183,7 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
   const latest = useRef({ onDecide, onAnswer, onRetry, onEdit, onContinue })
   latest.current = { onDecide, onAnswer, onRetry, onEdit, onContinue }
   const cb = useMemo<TurnCallbacks>(() => ({
-    onDecide: (a) => latest.current.onDecide(a),
+    onDecide: (a, o) => latest.current.onDecide(a, o),
     onAnswer: (c, o) => latest.current.onAnswer(c, o),
     onRetry: () => latest.current.onRetry?.(),
     onEdit: (t) => latest.current.onEdit?.(t),
@@ -180,7 +226,7 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
 
 type Turn = Thread['turns'][number]
 interface TurnCallbacks {
-  onDecide: (allow: boolean) => void
+  onDecide: Decide
   onAnswer: (choices: string[], other?: string) => void
   onRetry: () => void
   onEdit: (text: string) => void
@@ -214,7 +260,7 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
       <div className="reply-block">
       {turn.entries.map((e) => {
         if (e.kind === 'reasoning') return (
-          <div key={e.id} className="decided" title={e.text}>Decided · {e.text}</div>
+          <ThoughtLine key={e.id} text={e.text} />
         )
         if (e.kind === 'message') return <div key={e.id} className={`say ${servedClass(turn.usage?.served_by)}`} title={turn.usage?.served_by ? `Served by ${turn.usage.served_by.name}` : undefined}><Markdown text={e.text} />{!e.done && <span className="caret" />}</div>
         if (question?.item === e.id) return <QuestionCard key={e.id} q={question} onAnswer={cb.onAnswer} />
@@ -227,17 +273,7 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
           <DiffCard key={e.id} diff={diff} ask={asking} onDecide={cb.onDecide}
             note="Runs in your cloud sandbox. Nothing is pushed until you say so." />
         )
-        if (asking) return (
-          <div key={e.id} className="cardx">
-            <div style={{ padding: '10px 14px 6px' }}><b>Can I {asking.name.toLowerCase()} this?</b>{asking.reason && <div className="det wrap">{asking.reason}</div>}</div>
-            <div className="diff">{asking.arg}</div>
-            <div className="diff-acts">
-              <span style={{ flex: 1 }} className="det">Runs in your cloud sandbox.</span>
-              <button type="button" className="f-btn f-btn--bordered" onClick={() => cb.onDecide(false)}>Deny ⌘.</button>
-              <button type="button" className="f-btn f-btn--prominent" onClick={() => cb.onDecide(true)}>Allow ⌘↩</button>
-            </div>
-          </div>
-        )
+        if (asking) return <AskCard key={e.id} ask={asking} onDecide={cb.onDecide} />
         return <ToolLine key={e.id} e={e} />
       })}
       {turn.usage && (turn.reason?.type === 'complete' || turn.reason?.type === 'denied') && (

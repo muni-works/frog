@@ -105,7 +105,8 @@ final class TurnFlowTests: XCTestCase {
         ])
     }
 
-    func testShortThoughtFoldsIntoTheNextLine() {
+    /// One look: any thought before acting is its own quiet line, collapsed with a ›, as on the web.
+    func testShortThoughtIsItsOwnLine() {
         let flow = TurnFlow([
             thought("r", "Check the sidebar first.", secs: 1),
             tool("a", "Read", "a.swift"),
@@ -113,7 +114,7 @@ final class TurnFlowTests: XCTestCase {
             tool("c", "Read", "c.swift"),
             message("m", "Done."),
         ])
-        XCTAssertEqual(outline(flow), ["Thought, then read 3 files", "text: Done."])
+        XCTAssertEqual(outline(flow), ["Thought for 1s", "Read 3 files", "text: Done."])
     }
 
     /// A model's scratch line before answering (Apple Intelligence writes one every turn)

@@ -6,6 +6,7 @@ import type { SessionSummary } from './cloud/protocol'
 import type { Image, Mode } from './cloud/protocol'
 import { defaultModel, idOf, spec, useModels } from './models'
 import { plainError } from './errors'
+import type { DecideOpts } from './ui/Transcript'
 import { clearThreads, outOfCredits, pickStarters, useCloud, useRepos, useSessions, useThreads } from './store'
 import { once } from './live'
 import { useLayer, useMenu } from './ui/layers'
@@ -267,9 +268,11 @@ export default function App() {
   }, [cloud, send, setSessions, chosenModel, newMode])
   useEffect(() => { if (pending && cloud) { setPending(null); start(pending) } }, [pending, cloud, start])
 
-  const decide = useCallback((id: string, allow: boolean) => {
+  const decide = useCallback((id: string, allow: boolean, opts?: DecideOpts) => {
     const ask = thread(id).ask
-    if (ask) cloud?.send(id, { op: 'permission', id: ask.id, decision: allow ? 'allow' : 'deny' })
+    if (!ask) return
+    const note = opts?.note?.trim()
+    cloud?.send(id, { op: 'permission', id: ask.id, decision: allow ? (opts?.always ? 'allow_always' : 'allow') : 'deny', ...(note && !allow ? { note } : {}) })
   }, [thread, cloud])
 
   const rename = (s: SessionSummary, to: string) => {
@@ -493,7 +496,7 @@ export default function App() {
             {opening[current.id] && ct.turns.length === 0 && !outbox[current.id]?.length && current.state !== 'error' && (
               <div className="turn"><div className="me">{opening[current.id].text}</div></div>
             )}
-            <Transcript thread={ct} models={models} onDecide={(a) => decide(current.id, a)}
+            <Transcript thread={ct} models={models} onDecide={(a, o) => decide(current.id, a, o)}
               onAnswer={(choices, other) => ct.question && cloud?.send(current.id, { op: 'answer', id: ct.question.id, choices, ...(other ? { other } : {}) })}
               onElicit={(action, content) => ct.elicitation && cloud?.send(current.id, { op: 'elicit', id: ct.elicitation.id, action, ...(content ? { content } : {}) })}
               onRetry={() => send(current.id, 'Try that again.')}

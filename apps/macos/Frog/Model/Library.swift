@@ -366,10 +366,7 @@ final class Library {
         #endif
         guard let c = conversation(id) else { return nil }
         if let q = c.question { return q.question }
-        if let p = c.permission {
-            let arg = p.arg.split(separator: "\n").first.map(String.init) ?? ""
-            return arg.isEmpty ? p.name : "\(p.name) \(arg)"
-        }
+        if let p = c.permission { return Self.askLine(p) }
         if let e = c.elicitation { return e.message }
         return nil
     }

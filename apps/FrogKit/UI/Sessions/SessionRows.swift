@@ -109,7 +109,11 @@ struct RowStatusView: View {
             }
             .font(.frog(size: Tokens.Size.label))
         case .needsYou:
-            Text("Needs you").font(.frog(size: Tokens.Size.label, weight: .medium)).foregroundStyle(Tokens.signal)
+            // As on the web: an orange dot, then the words.
+            HStack(spacing: 5) {
+                Circle().fill(Tokens.signal).frame(width: 7, height: 7)
+                Text("Needs you").font(.frog(size: Tokens.Size.label, weight: .medium)).foregroundStyle(Tokens.signal)
+            }
         case .failed:
             Text("Failed").font(.frog(size: Tokens.Size.label, weight: .medium)).foregroundStyle(Tokens.fail)
         case .pr(let n):

@@ -50,8 +50,9 @@ struct TurnFlow {
             if run.allSatisfy({ $0.kind == .reasoning && $0.done && ActivityGroup.isShort($0) }) { return }
             // A long thought before acting is its own line ("Thought for 12s"); a short one
             // folds into the line that follows ("Thought, then read 3 files").
+            // Any thought before acting is its own quiet line ("Thought ›"), as on the web.
             if run.count > 1, let first = run.first, first.kind == .reasoning, first.done,
-               !ActivityGroup.isShort(first), run.dropFirst().contains(where: { $0.kind != .reasoning }) {
+               run.dropFirst().contains(where: { $0.kind != .reasoning }) {
                 segments.append(.activity(ActivityGroup(steps: [first])))
                 segments.append(.activity(ActivityGroup(steps: Array(run.dropFirst()))))
             } else {

@@ -7,7 +7,7 @@ export type Op =
   | { op: "submit"; text: string; images?: Image[]; more?: Part[] }
   | { op: "interrupt" }
   | { op: "compact"; focus?: string }
-  | { op: "permission"; id: string; decision: Decision }
+  | { op: "permission"; id: string; decision: Decision; note?: string }
   | { op: "answer"; id: string; choices?: string[]; other?: string }
   | { op: "elicit"; id: string; action: "accept" | "decline" | "cancel"; content?: unknown }
   | { op: "set_title"; title: string }

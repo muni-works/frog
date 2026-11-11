@@ -53,16 +53,8 @@ struct ActivityLine: View {
             if expanded {
                 ActivitySteps(steps: group.steps, conversation: conversation)
                     .transition(.opacity.combined(with: .move(edge: .top)))
-            } else {
-                // A failed command shows its output under the line, as on the web: what went
-                // wrong is the point of the row.
-                ForEach(failedCommands) { step in
-                    ToolDetail(name: Self.toolName(step), item: step, expanded: true, root: conversation.folder.path)
-                        .padding(.leading, 22)
-                }
-                if live, let now = group.current {
-                    liveStep(now)
-                }
+            } else if live, let now = group.current {
+                liveStep(now)
             }
             if !pinsQuestions, let p = conversation.permission, group.steps.contains(where: { $0.needsPermission && $0.id == p.item }) {
                 PermissionCard(request: p, conversation: conversation)
@@ -93,6 +85,12 @@ struct ActivityLine: View {
                             chevron
                             gistText.font(.callout).lineLimit(1)
                         }
+                    }
+                    // A failed command's output, under its own line, as on the web.
+                    if !expanded, let step = failedCommands.first(where: { $0.id == v.itemID }) {
+                        ToolDetail(name: Self.toolName(step), item: step, expanded: true, root: conversation.folder.path)
+                            .padding(.leading, 22)
+                            .padding(.vertical, 2)
                     }
                 }
             }
@@ -590,6 +588,8 @@ struct VerbLine: Equatable {
     var failed = false
     /// A thought: quieter, no icon.
     var quiet = false
+    /// The step it says, for putting a failed command's output under its own line.
+    var itemID: String?
 
     static func == (a: VerbLine, b: VerbLine) -> Bool {
         a.icon == b.icon && a.verb == b.verb && a.arg == b.arg && a.detail == b.detail
@@ -618,6 +618,7 @@ struct VerbLine: Equatable {
         case .tool(let name, let arg):
             let failed = item.result.map { $0.outcome == .error || $0.outcome == .denied } ?? false
             var v = VerbLine(icon: ToolLook.icon(name), verb: "Used \(ToolIcon.title(name))", arg: arg.isEmpty ? nil : short(arg), failed: failed)
+            v.itemID = item.id
             switch name {
             case "Read": v.verb = "Read"
             case "Grep", "Glob":

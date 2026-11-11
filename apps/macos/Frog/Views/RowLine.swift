@@ -22,7 +22,10 @@ extension Library {
         line.turns = c.turns.count
         if let q = c.question {
             line.text = q.question; line.tint = Tokens.signal
-        } else if c.permission != nil || c.elicitation != nil {
+        } else if let p = c.permission {
+            // The actual ask, as on the web: "Can I bash cargo test -q upload?".
+            line.text = Self.askLine(p); line.tint = Tokens.signal
+        } else if c.elicitation != nil {
             line.text = "Waiting on you"; line.tint = Tokens.signal
         } else if let now = c.liveActivity {
             line.text = now
@@ -30,6 +33,12 @@ extension Library {
             line.text = reply
         }
         return line
+    }
+
+    /// A permission request as a question: "Can I bash cargo test -q upload?".
+    static func askLine(_ p: PermissionRequest) -> String {
+        let arg = p.arg.split(separator: "\n").first.map(String.init) ?? ""
+        return "Can I \(p.name.lowercased())" + (arg.isEmpty ? "?" : " \(arg)?")
     }
 
     /// The first line of the last thing Frog said.
