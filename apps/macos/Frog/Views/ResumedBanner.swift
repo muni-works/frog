@@ -22,7 +22,7 @@ struct ResumedBanner: View {
                 Toggle(paneWidth == .wide ? "Resume automatically" : "Auto", isOn: $autoContinue)
                 .toggleStyle(.checkbox)
                 .fixedSize()
-                .help("Pick this conversation's running turn back up after frog restarts")
+                .help("Pick this conversation's running turn back up after Frog restarts")
                 .onChange(of: autoContinue) { _, on in SessionRegistry.shared.setAutoContinue(id, on) }
                 if conversation.busy {
                     Button("Stop") { conversation.interrupt() }

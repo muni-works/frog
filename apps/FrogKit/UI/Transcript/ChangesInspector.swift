@@ -44,7 +44,7 @@ struct ChangesInspector: View {
                     ContentUnavailableView(
                         "No Changes Yet",
                         systemImage: "doc.text.magnifyingglass",
-                        description: Text("Files frog edits in this session show up here.")
+                        description: Text("Files Frog edits in this session show up here.")
                     )
                     .padding(.vertical, 12)
                 } else {

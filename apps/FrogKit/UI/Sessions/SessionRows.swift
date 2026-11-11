@@ -67,18 +67,95 @@ enum FolderTint {
     }
 }
 
-/// A conversation's title and, below it, where it lives and when; or, while it's live, what
-/// it's doing or asking (`detail`).
+/// A row's status, on the right of its first line, as the web shows it: Running with a
+/// breathing dot, Needs you, Failed, a pull request, or a green dot for a turn that finished
+/// since you looked. Nothing when it's idle.
+enum RowStatus: Equatable {
+    case running, needsYou, failed, unread
+    case pr(Int)
+
+    static func derive(live: SessionLive?, end: SessionInfo.End?, pr: Int? = nil) -> RowStatus? {
+        switch SessionEndGlyph.derive(live: live, end: end) {
+        case .running: return .running
+        case .waiting: return .needsYou
+        case .failed: return .failed
+        case .unread: return .unread
+        case .idle: return pr.map(RowStatus.pr)
+        }
+    }
+}
+
+extension RowStatus {
+    static func of(_ state: SessionNesting.State, pr: Int?) -> RowStatus? {
+        switch state {
+        case .running: .running
+        case .waiting: .needsYou
+        case .failed: .failed
+        case .unread: .unread
+        case .done: pr.map(RowStatus.pr)
+        }
+    }
+}
+
+struct RowStatusView: View {
+    let status: RowStatus
+
+    var body: some View {
+        switch status {
+        case .running:
+            HStack(spacing: 5) {
+                BreathingDot(live: true)
+                Text("Running").foregroundStyle(Tokens.textSecondary)
+            }
+            .font(.frog(size: Tokens.Size.label))
+        case .needsYou:
+            Text("Needs you").font(.frog(size: Tokens.Size.label, weight: .medium)).foregroundStyle(Tokens.signal)
+        case .failed:
+            Text("Failed").font(.frog(size: Tokens.Size.label, weight: .medium)).foregroundStyle(Tokens.fail)
+        case .pr(let n):
+            Text("#\(n)").font(.frog(size: Tokens.Size.label, design: .monospaced)).foregroundStyle(Tokens.textTertiary)
+        case .unread:
+            Circle().fill(Tokens.accent).frame(width: 7, height: 7).help("Finished since you looked")
+        }
+    }
+}
+
+/// Frog green, breathing while something runs.
+struct BreathingDot: View {
+    let live: Bool
+    var size: CGFloat = 6
+
+    var body: some View {
+        TimelineView(.animation(paused: !live)) { tl in
+            let t = tl.date.timeIntervalSinceReferenceDate
+            let pulse = live ? 0.55 + 0.45 * (0.5 + 0.5 * sin(t * 2 * .pi / 1.4)) : 1
+            Circle()
+                .fill(Tokens.accent)
+                .frame(width: size, height: size)
+                .opacity(pulse)
+        }
+        .frame(width: size, height: size)
+    }
+}
+
+/// A conversation as the web lists it: the title with its status on the right, and below it
+/// what it's doing now or its last reply; idle with nothing to say, repo · turns · model. No
+/// timestamps.
 struct ConversationRowLabel: View {
     let session: SessionInfo
     let live: SessionLive?
     var end: SessionInfo.End? = nil
     /// The pane showing it, when the Mac's window is split.
     var pane: Int? = nil
+    /// One line only (inside a project group the place is the group).
     var showPlace = true
-    /// Said instead of the place, e.g. frog's question or the step in hand.
+    /// What it's doing now, its question, or its last reply.
     var detail: String? = nil
-    var detailTint: Color = .secondary
+    var detailTint: Color = Tokens.textSecondary
+    var pr: Int? = nil
+    var turns: Int? = nil
+    /// Hides the status (the Mac's hover menu takes its place).
+    var hideStatus = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -91,34 +168,38 @@ struct ConversationRowLabel: View {
                         .background(.tint, in: .rect(cornerRadius: 4))
                 }
                 if session.forkedFrom != nil {
-                    Image(systemName: "arrow.triangle.branch").font(.caption).foregroundStyle(.secondary)
+                    Image(systemName: "arrow.triangle.branch").font(.caption).foregroundStyle(Tokens.textSecondary)
                 }
                 Text(session.displayTitle)
                     .lineLimit(1)
                     .fontWeight(live == .unread ? .semibold : .regular)
+                Spacer(minLength: 4)
+                if let status = RowStatus.derive(live: live, end: end ?? session.end, pr: pr) {
+                    RowStatusView(status: status).opacity(hideStatus ? 0 : 1)
+                }
             }
-            if let detail {
+            if let detail, !detail.isEmpty {
                 Text(detail)
-                    .font(.caption.weight(live == .waiting ? .medium : .regular))
+                    .font(.frog(size: Tokens.Size.meta, weight: live == .waiting ? .medium : .regular))
                     .foregroundStyle(detailTint)
                     .lineLimit(1)
             } else if showPlace {
-                HStack(spacing: 4) {
-                    Image(systemName: session.isCloud ? "cloud" : session.isChat ? "bubble.left" : "folder")
-                    Text(session.isChat ? "Chat" : session.folder?.lastPathComponent ?? "")
-                        .lineLimit(1)
-                    Text("·")
-                    Text(SessionAge.short(session.modifiedDate))
-                    if end == .failed {
-                        Image(systemName: "exclamationmark.circle.fill")
-                            .font(.caption2)
-                            .foregroundStyle(.red)
-                    }
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                Text(idleLine)
+                    .font(.frog(size: Tokens.Size.meta))
+                    .foregroundStyle(Tokens.textTertiary)
+                    .lineLimit(1)
             }
         }
+    }
+
+    /// repo · turns · model
+    private var idleLine: String {
+        var parts: [String] = []
+        if session.isChat { parts.append("Chat") }
+        else if let f = session.folder?.lastPathComponent, !f.isEmpty { parts.append(f) }
+        if let turns, turns > 0 { parts.append("\(turns) turn\(turns == 1 ? "" : "s")") }
+        if !session.model.isEmpty { parts.append(ModelIdentity.cleanName(session.model).name) }
+        return parts.joined(separator: " · ")
     }
 }
 

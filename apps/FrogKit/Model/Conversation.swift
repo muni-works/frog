@@ -958,7 +958,12 @@ final class Conversation {
                 note(message, warning: level == "warn")
             } else if message.hasPrefix("frog api unavailable (") && message.contains(" — continuing on ") {
                 fallbackNotice = message
-            } else if level == "warn" { note(message, warning: true) } else { show(message) }
+            } else if level == "warn" { note(message, warning: true) } else if let plain = Self.plainNotice(message) {
+                show(plain)
+            } else {
+                // Diagnostics ("context window: … auto-compacting past …") are for the log.
+                NSLog("frog engine notice: %@", message)
+            }
         case .error(let e):
             // A plain line in the transcript; the raw provider body goes to the log.
             NSLog("frog engine error: %@", e.detail)
@@ -1272,6 +1277,15 @@ final class Conversation {
         update(&item)
         itemAt[id] = (turns.count - 1, turns[turns.count - 1].items.count)
         turns[turns.count - 1].items.append(item)
+    }
+
+    /// An info notice in plain words, if it's one a person should see or act on; nil for the
+    /// engine's diagnostics, which never reach the composer.
+    nonisolated static func plainNotice(_ message: String) -> String? {
+        let m = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        if m.hasPrefix("Network allow-list:") { return m }
+        if m == "started a new conversation" { return "Started a new conversation" }
+        return nil
     }
 
     private func show(_ text: String) {

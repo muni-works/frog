@@ -36,11 +36,12 @@ struct SendButton: View {
         } else {
             Button(action: send) {
                 #if os(macOS)
-                Image(systemName: "return")
-                    .font(.frog(size: 14, weight: .semibold))
-                    .foregroundStyle(canSend ? AnyShapeStyle(.tint) : AnyShapeStyle(.tertiary))
-                    .frame(width: 22, height: 22)
-                    .hoverPlate(h: 3, v: 3)
+                // A green circle with an up arrow, as on the web.
+                Image(systemName: "arrow.up")
+                    .font(.frog(size: 12, weight: .bold))
+                    .foregroundStyle(canSend ? AnyShapeStyle(.white) : AnyShapeStyle(Tokens.textTertiary))
+                    .frame(width: 26, height: 26)
+                    .background(canSend ? AnyShapeStyle(Tokens.accent) : AnyShapeStyle(Tokens.hover), in: .circle)
                 #else
                 Image(systemName: conversation.busy ? "text.append" : "arrow.up")
                     .font(.body.weight(.bold))

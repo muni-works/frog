@@ -350,7 +350,7 @@ struct ModelSettings: View {
     private var advanced: some View {
         Section {
             DisclosureGroup("Engine details") {
-                Text("Models on This Mac run on tang, frog's engine.") // advanced
+                Text("Models on This Mac run on tang, Frog's engine.") // advanced
                     .font(.frog(size: 10))
                     .foregroundStyle(.secondary)
                 ForEach(models) { m in
@@ -584,7 +584,7 @@ struct KeySheet: View {
             if let url = URL(string: provider.keyUrl), !provider.keyUrl.isEmpty {
                 Link("Get a key from \(provider.displayName)", destination: url).font(.frog(size: 12))
             }
-            Text("Stored in your Keychain. frog sends it only to \(provider.displayName).")
+            Text("Stored in your Keychain. Frog sends it only to \(provider.displayName).")
                 .font(.frog(size: 10))
                 .foregroundStyle(.secondary)
             if let e = store.error { Text(e).font(.frog(size: 10)).foregroundStyle(.red) }
@@ -716,11 +716,11 @@ private struct PermissionSettings: View {
             }
             Section("Computer use") {
                 Toggle("Let frog see and use other apps", isOn: $computerUse)
-                Text("frog reads windows through Accessibility and acts on their buttons and fields, usually without taking over your screen. Every action asks first unless you allow it, and it never types into password fields. New sessions pick this up.")
+                Text("Frog reads windows through Accessibility and acts on their buttons and fields, usually without taking over your screen. Every action asks first unless you allow it, and it never types into password fields. New sessions pick this up.")
                     .foregroundStyle(.secondary)
             }
             Section("Always-allowed commands") {
-                Text("Command prefixes that never ask (like `cargo check`) live in frog's config file, shared with the terminal app.")
+                Text("Command prefixes that never ask (like `cargo check`) live in Frog's config file, shared with the terminal app.")
                     .foregroundStyle(.secondary)
                 Button("Open config.toml…") {
                     if !FileManager.default.fileExists(atPath: configURL.path) {

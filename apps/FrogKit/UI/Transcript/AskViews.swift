@@ -50,7 +50,7 @@ struct QuestionCard: View {
                 Button("Skip") { conversation.answer(question: []) }
                     .buttonStyle(.glass)
                     .keyboardShortcut(.escape, modifiers: [])
-                    .help("Let frog decide (esc)")
+                    .help("Let Frog decide (esc)")
             }
         }
         .padding(TurnSpace.Card.padding)
