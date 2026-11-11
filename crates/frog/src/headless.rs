@@ -69,6 +69,10 @@ pub async fn print(mut h: Handle, prompt: String, json: bool) -> Result<bool> {
     // own and the engine exits when the handle drops (or on the Shutdown below).
     let mut ok = false;
     let status = (!json).then(Status::new);
+    // Child sessions the engine owns (StartSession headless): the run isn't over while one
+    // works, or while the note of one that finished is still to wake a turn.
+    let mut kids = Kids::default();
+    let mut turn_over = false;
     loop {
         let env = tokio::select! {
             env = h.events.recv() => env,
@@ -78,11 +82,16 @@ pub async fn print(mut h: Handle, prompt: String, json: bool) -> Result<bool> {
             }
         };
         let Some(env) = env else { break };
-        let mut done = false;
-        if let Event::TurnEnded { reason, .. } = &env.event {
-            ok = *reason == EndReason::Complete;
-            done = true;
+        kids.see(&env.event);
+        match &env.event {
+            Event::TurnEnded { reason, .. } => {
+                ok = *reason == EndReason::Complete;
+                turn_over = true;
+            }
+            Event::TurnStarted { .. } => turn_over = false,
+            _ => {}
         }
+        let mut done = turn_over && kids.settled();
         if matches!(env.event, Event::Error { .. }) {
             done = true;
         }
@@ -160,6 +169,7 @@ pub async fn print(mut h: Handle, prompt: String, json: bool) -> Result<bool> {
                 message,
             } => eprintln!("{message}"),
             Event::Error { error } => eprintln!("error: {error}"),
+            Event::ChildSession { name, state, .. } => eprintln!("[session {name}] {state}"),
             Event::TurnEnded { reason, .. } => match reason {
                 EndReason::Complete => {}
                 EndReason::Error { error } => eprintln!("error: {error}"),
@@ -183,6 +193,39 @@ pub async fn print(mut h: Handle, prompt: String, json: bool) -> Result<bool> {
         println!();
     }
     Ok(ok)
+}
+
+/// How the engine's own child sessions stand, from its `child_session` events.
+#[derive(Default)]
+struct Kids {
+    state: std::collections::HashMap<String, String>,
+    /// Children that finished a turn whose note hasn't started a parent turn yet.
+    wakes: usize,
+}
+
+impl Kids {
+    fn see(&mut self, event: &Event) {
+        match event {
+            Event::ChildSession { id, state, .. } => {
+                let was = self.state.insert(id.clone(), state.clone());
+                let was_busy = matches!(was.as_deref(), Some("running" | "waiting"));
+                if state == "idle" && was_busy {
+                    self.wakes += 1;
+                }
+            }
+            Event::TurnStarted { .. } => self.wakes = self.wakes.saturating_sub(1),
+            _ => {}
+        }
+    }
+
+    /// Nothing running, nothing waiting on the user, no note still to arrive.
+    fn settled(&self) -> bool {
+        self.wakes == 0
+            && !self
+                .state
+                .values()
+                .any(|s| s == "running" || s == "waiting")
+    }
 }
 
 /// Speak the engine protocol over stdio: `Op` JSON lines in, event envelopes out.
@@ -210,4 +253,31 @@ pub async fn serve(mut h: Handle) -> Result<()> {
         println!("{}", serde_json::to_string(&env)?);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod kids_tests {
+    use super::*;
+
+    fn child(state: &str) -> Event {
+        Event::ChildSession {
+            id: "c".into(),
+            name: "n".into(),
+            state: state.into(),
+            branch: None,
+            cwd: "/x".into(),
+        }
+    }
+
+    #[test]
+    fn a_run_waits_for_children_and_their_wake_turn() {
+        let mut k = Kids::default();
+        assert!(k.settled());
+        k.see(&child("running"));
+        assert!(!k.settled(), "a child works");
+        k.see(&child("idle"));
+        assert!(!k.settled(), "its note is still to wake the parent");
+        k.see(&Event::TurnStarted { turn: 2, input: String::new(), images: Vec::new(), more: Vec::new() });
+        assert!(k.settled());
+    }
 }
