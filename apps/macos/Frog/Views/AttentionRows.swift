@@ -118,7 +118,7 @@ struct TreeRow<Menu: View>: View {
         if session.isChat { parts.append("Chat") }
         else if let f = SessionList.worktreeName(session.folder) ?? session.folder?.lastPathComponent { parts.append(f) }
         if let n = line.turns, n > 0 { parts.append("\(n) turn\(n == 1 ? "" : "s")") }
-        if !session.model.isEmpty { parts.append(ModelIdentity.cleanName(session.model).name) }
+        if !session.model.isEmpty { parts.append(Workspace.modelName(session.model)) }
         return parts.joined(separator: " · ")
     }
 
@@ -183,7 +183,7 @@ struct TreeRow<Menu: View>: View {
         if let wt = SessionList.worktreeName(session.folder) { parts.append(wt) }
         else if let f = session.folder, !session.isChat { parts.append(f.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")) }
         if collapsed, let s = counts.summary { parts.append(s) }
-        parts.append(session.model)
+        if !session.model.isEmpty { parts.append(Workspace.modelName(session.model)) }
         return parts.joined(separator: "\n")
     }
 }

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { plainError } from './errors'
 import { friendly, Gateway } from './cloud/client'
 import type { EndReason, Envelope, RepoList, SessionSummary } from './cloud/protocol'
 import { CloudEngine } from './engine/cloud'
@@ -224,6 +225,7 @@ export function endError(reason: EndReason | null | undefined): string | null {
   const e = (reason as { error?: { type?: string; status?: number; message?: string } }).error ?? {}
   let detail = e.message ?? ''
   try { detail = JSON.parse(detail)?.error?.message ?? detail } catch { /* not JSON */ }
+  if (detail && plainError(detail) !== detail.trim()) return plainError(detail)
   if (e.status === 401) return `The model provider refused this session's key${detail ? ` (${detail})` : ''}.`
   if (e.status === 429) return 'Frog Cloud was too busy to answer, even after retrying. Try again in a moment.'
   if (e.status === 503) return 'No model was free on Frog Cloud, even after retrying. Try again in a moment.'

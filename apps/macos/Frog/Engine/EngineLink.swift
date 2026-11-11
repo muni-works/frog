@@ -17,7 +17,7 @@ extension EngineProcess: ConversationLink {
                 let t = line.trimmingCharacters(in: .whitespaces)
                 return !t.isEmpty && t.firstMatch(of: /^call \d+ (done|thinking|failed)\b/) == nil
             }
-            if let tail = lines.last { return tail }
+            if let tail = lines.last { return EngineError.plain(tail) }
         }
         if let signal {
             let name = [9: "SIGKILL", 15: "SIGTERM", 2: "SIGINT"][signal] ?? "signal \(signal)"

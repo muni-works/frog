@@ -482,9 +482,26 @@ struct EngineError: Decodable, Equatable, Sendable, CustomStringConvertible {
         return message
     }
 
+    /// An engine failure as a plain line: what happened, then what to do. Known failures get
+    /// their own words, and an OS error string ("No such file or directory (os error 2)") never
+    /// reaches the transcript. Anything else comes back as it was.
+    static func plain(_ raw: String) -> String {
+        let s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if s.firstMatch(of: /(?i)\bno session \S+/) != nil {
+            return "This session's history isn't on this Mac anymore, so it couldn't reopen. Start a new session."
+        }
+        guard let m = s.firstMatch(of: /(?i)\(os error (\d+)\)/) else { return s }
+        switch Int(m.1) ?? 0 {
+        case 2: return "A file Frog needed is missing, so it stopped. Try again, or start a new session."
+        case 1, 13: return "Frog wasn't allowed to open a file it needs. Check the folder's permissions and try again."
+        case 28: return "The disk is full. Free some space and try again."
+        default: return "Frog hit a system error and stopped. Try again."
+        }
+    }
+
     /// Short, and no markup or JSON: fit to show as is, sentence-cased with a full stop.
     static func readable(_ s: String?) -> String? {
-        guard let s = s?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty, s.count < 160,
+        guard let s = s.map(plain), !s.isEmpty, s.count < 160,
               !s.contains(where: { "{}<>".contains($0) }) else { return nil }
         let line = s.prefix(1).uppercased() + s.dropFirst()
         return line.hasSuffix(".") ? line : line + "."

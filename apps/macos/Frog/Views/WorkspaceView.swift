@@ -426,7 +426,9 @@ struct WorkspaceView: View {
         .navigationTitle(windowTitle)
         // The menu's content builds when it opens (a title menu is deferred by the system), but
         // the toolbar's item body runs per body pass: read the mirror, not the conversation.
-        .toolbarTitleMenu { if workspace.currentSession != nil { titleMenu(workspace.conversation!) } }
+        // The title bar is the title and a ⌄ menu (Rename, Archive, Delete), as on the web: the
+        // system's title menu shows no chevron, so the title is drawn here and the system's hidden.
+        .toolbar(removing: .title)
         // One backdrop for the whole canvas, so the conversation reads as a single surface.
         .background(FrogCanvas.color.ignoresSafeArea())
         .background(WindowReader {
@@ -521,6 +523,7 @@ struct WorkspaceView: View {
             Button("Cancel", role: .cancel) {}
         }
         .toolbar {
+            ToolbarItem(placement: .navigation) { titleBar }
             if compact && !sessionsVisible {
                 ToolbarItem(placement: .navigation) {
                     Button("Show Conversations", systemImage: "sidebar.left", action: toggleSessions)
@@ -594,6 +597,26 @@ extension WorkspaceView {
     private var place: String {
         guard !workspace.isChat else { return "" }
         return [workspace.name, workspace.git?.branch].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    /// The title and its ⌄ menu. The menu's content builds when it opens; the label reads the
+    /// mirror, not the streaming conversation.
+    private var titleBar: some View {
+        Menu {
+            if let c = workspace.conversation { titleMenu(c) }
+        } label: {
+            HStack(spacing: 5) {
+                Text(windowTitle).font(.frog(size: 13, weight: .semibold)).lineLimit(1)
+                Image(systemName: "chevron.down").font(.frog(size: 9, weight: .semibold))
+                    .foregroundStyle(Tokens.textSecondary)
+            }
+            .contentShape(.rect)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Rename, archive or delete this conversation")
     }
 
     @ViewBuilder

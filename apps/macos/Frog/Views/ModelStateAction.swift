@@ -48,6 +48,16 @@ struct ModelStateAction: View {
 extension Workspace {
     /// The identity of one of this folder's models, or of any spec.
     func identity(_ spec: String) -> ModelIdentity {
+        Self.identity(spec, in: models)
+    }
+
+    /// A model's name where no folder is at hand (a sidebar row): from the last model list any
+    /// folder loaded, named as the picker names it.
+    static func modelName(_ spec: String) -> String {
+        identity(spec, in: knownModelList).name
+    }
+
+    static func identity(_ spec: String, in models: [ModelEntry]) -> ModelIdentity {
         var m = ModelIdentity.of(spec, in: models)
         // A pooled model (`node/<hash>`) is named by the node that has it, never its hash.
         if spec.hasPrefix("node/") {

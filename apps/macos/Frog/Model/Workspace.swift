@@ -232,7 +232,13 @@ final class Workspace {
         let chat = Frog.isChat(folder)
         // Restoring what was open (see `SessionRegistry`) decides what this window shows.
         let restoring = SessionRegistry.shared.hasPending
-        let last = resume ?? (Self.restored || fresh || chat || restoring ? nil : UserDefaults.standard.string(forKey: Self.lastSessionKey(folder)))
+        // A replay shows its fixture, never the folder's last session.
+        let replaying = Replay.pending
+        let remembered = Self.restored || fresh || chat || restoring || replaying ? nil
+            : UserDefaults.standard.string(forKey: Self.lastSessionKey(folder))
+        // A remembered id whose log is gone (deleted, another home) would only fail to open.
+        let last = resume ?? remembered.flatMap { SessionRegistry.logExists($0) ? $0 : nil }
+        if let remembered, last == nil { UserDefaults.standard.removeObject(forKey: Self.lastSessionKey(folder)) }
         Self.restored = true
         resolveRepoRoot()
         let replay = Replay.arguments
@@ -264,6 +270,7 @@ final class Workspace {
 
     /// The model list as last loaded, by any folder.
     private static var knownModels: [ModelEntry] = []
+    static var knownModelList: [ModelEntry] { knownModels }
     @ObservationIgnored private var modelsLoaded = false
     @ObservationIgnored private var gitChecked = false
 
@@ -544,6 +551,9 @@ final class Workspace {
 @MainActor
 enum Replay {
     private static var used = false
+
+    /// A replay was asked for and no window has taken it yet.
+    static var pending: Bool { !used && UserDefaults.standard.string(forKey: "FrogReplay") != nil }
 
     static var arguments: [String]? {
         guard !used, let spec = UserDefaults.standard.string(forKey: "FrogReplay") else { return nil }

@@ -85,3 +85,30 @@ final class EngineEndTests: XCTestCase {
         XCTAssertEqual(process.outText.split(separator: "\n").last, "line 19")
     }
 }
+
+/// Engine failures read as plain lines; OS error strings never reach the transcript.
+final class PlainEngineErrorTests: XCTestCase {
+    func testAMissingSessionSaysWhatToDo() {
+        let line = EngineProcess.endDescription(
+            stderr: "no session 20261111-101400-834f: No such file or directory (os error 2)", out: "", signal: nil, exit: "status 1")
+        XCTAssertEqual(line, "This session's history isn't on this Mac anymore, so it couldn't reopen. Start a new session.")
+    }
+
+    func testNoOSErrorStringIsShown() {
+        for raw in ["reading config: Permission denied (os error 13)", "write: No space left on device (os error 28)",
+                    "open x: No such file or directory (os error 2)", "bind: Address in use (os error 48)"] {
+            let line = EngineError.plain(raw)
+            XCTAssertFalse(line.contains("os error"), line)
+            XCTAssertFalse(line.contains("No such file"), line)
+        }
+    }
+
+    func testAPlainLineIsKept() {
+        XCTAssertEqual(EngineError.plain("the model isn't on this gateway"), "the model isn't on this gateway")
+    }
+
+    func testAnErrorEventMapsToo() {
+        let e = EngineError(type: "engine", status: nil, message: "no session abc: No such file or directory (os error 2)")
+        XCTAssertFalse(e.description.contains("os error"))
+    }
+}

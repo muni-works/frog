@@ -5,8 +5,8 @@
 #   docs/design/parity/capture.sh            # both looks
 #   LOOKS=dark docs/design/parity/capture.sh # just one
 #
-# Needs: Xcode + xcodegen, npm deps in apps/web, Google Chrome, and Screen Recording permission for
-# the terminal running it. It builds its own copy of the app (toys.frog.parity) with a throwaway
+# Needs: Xcode + xcodegen, npm deps in apps/web and Google Chrome. The Mac app renders its own
+# window (-FrogSnapshot), so no Screen Recording permission. It builds its own copy of the app (toys.frog.parity) with a throwaway
 # HOME, and the engine binaries from a scratch copy of /Applications/Frog.app's (FROG_PREBUILT_DIR,
 # or set it yourself), never the bundle it builds.
 set -euo pipefail
@@ -37,11 +37,6 @@ xcodebuild build -quiet -jobs 4 -project Frog.xcodeproj -scheme Frog -configurat
     -derivedDataPath build/parity -destination 'generic/platform=macOS' PRODUCT_BUNDLE_IDENTIFIER=$ID
 APP="$MAC/build/parity/Build/Products/Debug/Frog.app"
 
-# hero-shot.sh's window finder: `winid park` moves the pointer away, `winid <pid>` prints the
-# main window's id.
-sed -n "/^cat > \"\$WORK\/winid.swift\" <<'EOF'$/,/^EOF$/p" "$MAC/scripts/hero-shot.sh" | sed '1d;$d' > "$WORK/winid.swift"
-swiftc -O -o "$WORK/winid" "$WORK/winid.swift"
-
 mac_shot() {
     local look=$1 home="$WORK/home-$1"
     mkdir -p "$home/code/lilypad/src"
@@ -50,18 +45,12 @@ mac_shot() {
     defaults delete $ID >/dev/null 2>&1 || true
     rm -rf ~/Library/Saved\ Application\ State/$ID.savedState
     local style=(-NSRequiresAquaSystemAppearance YES); [[ $look == dark ]] && style=(-AppleInterfaceStyle Dark)
-    "$WORK/winid" park
+    rm -f "$HERE/mac-$look.png"
+    # The app draws its own window to the PNG and quits (-FrogSnapshot): no Screen Recording.
     HOME="$home" "$APP/Contents/MacOS/Frog" -FrogFolder "$home/code/lilypad" -FrogReplay "$home/parity.jsonl" \
-        -FrogReplaySpeed 2 -ApplePersistenceIgnoreState YES -importedLegacyDefaults YES $style >/dev/null 2>&1 &
-    local pid=$!
-    sleep ${PARITY_MAC_WAIT:-12}
-    "$WORK/winid" park
-    screencapture -o -l$("$WORK/winid" $pid) -x "$HERE/mac-$look.png" || {
-        print -u2 "capture.sh: screencapture failed; give this terminal Screen Recording permission"
-        print -u2 "(System Settings → Privacy & Security), or run with PARITY_SKIP_MAC=1 for the web half."
-        kill $pid; exit 1
-    }
-    kill $pid; wait $pid 2>/dev/null || true
+        -FrogReplaySpeed 2 -FrogSnapshot "$HERE/mac-$look.png" -FrogSnapshotDelay ${PARITY_MAC_WAIT:-12} \
+        -ApplePersistenceIgnoreState YES -importedLegacyDefaults YES $style >/dev/null 2>&1 || true
+    [[ -s $HERE/mac-$look.png ]] || { print -u2 "capture.sh: the Mac app didn't write mac-$look.png"; exit 1; }
 }
 for look in $LOOKS; do mac_shot $look; done
 fi
@@ -95,7 +84,7 @@ done
     for look in $LOOKS; do
         print "<h2>${(C)look}</h2><div class=row>"
         if [[ -f $HERE/mac-$look.png ]]; then print "<figure><figcaption>Mac</figcaption><img src=mac-$look.png></figure>"
-        else print "<figure><figcaption>Mac: not captured yet (run capture.sh with Screen Recording permission)</figcaption></figure>"; fi
+        else print "<figure><figcaption>Mac: not captured yet (run capture.sh)</figcaption></figure>"; fi
         print "<figure><figcaption>Web</figcaption><img src=web-$look.png></figure></div>"
     done
 } > "$HERE/index.html"

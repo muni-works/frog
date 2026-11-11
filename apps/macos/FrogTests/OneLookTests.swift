@@ -39,6 +39,14 @@ final class OneLookTests: XCTestCase {
         XCTAssertEqual(Workspace.pooledName(spec: "node/80742a5cd76a", named: "80742a5cd76a"), "Shared model")
     }
 
+    /// The sidebar row's second line ("scratchpad · 80742a5cd76a") named the model by its hash.
+    @MainActor
+    func testSessionRowNamesAPooledModelAsThePickerDoes() {
+        ModelIdentity.rowName = { Workspace.modelName($0) }
+        XCTAssertFalse(ModelIdentity.rowName("node/80742a5cd76a").contains("80742a5cd76a"))
+        XCTAssertEqual(ModelIdentity.rowName("node/80742a5cd76a"), Workspace.modelName("node/80742a5cd76a"))
+    }
+
     func testRowStatus() {
         XCTAssertEqual(RowStatus.derive(live: .running, end: .complete), .running)
         XCTAssertEqual(RowStatus.derive(live: .waiting, end: nil), .needsYou)

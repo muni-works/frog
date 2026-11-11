@@ -1191,7 +1191,7 @@ private struct ChiefTile: View {
     private var helpText: String {
         var parts = [session.displayTitle, "Chief of staff"]
         if let f = session.folder, !session.isChat { parts.append(f.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")) }
-        parts.append(session.model)
+        if !session.model.isEmpty { parts.append(Workspace.modelName(session.model)) }
         return parts.joined(separator: "\n")
     }
 }
@@ -1564,7 +1564,7 @@ struct ConversationRow<Menu: View>: View {
     private var helpText: String {
         var parts = [session.displayTitle]
         if let f = session.folder, !session.isChat { parts.append(f.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")) }
-        parts.append(session.model)
+        if !session.model.isEmpty { parts.append(Workspace.modelName(session.model)) }
         return parts.joined(separator: "\n")
     }
 }
