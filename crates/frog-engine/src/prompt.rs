@@ -72,27 +72,46 @@ fn client_instructions(s: &mut String) {
     }
 }
 
+/// Where the per-session part of the system prompt starts. Everything before it is the same for
+/// every session on a repo (whatever its worktree), so a node's KV serves it to all of them.
+pub const ENV_HEADER: &str = "\n# Environment\n";
+
 pub fn system_prompt(cwd: &Path, cfg: &Config, model: &str) -> String {
-    let git = cwd.ancestors().any(|d| d.join(".git").exists());
-    let mut s = format!(
-        "{BASE}\n\n# Environment\n- Working directory: {}\n- Git repository: {}\n- Platform: {} ({})\n- Date: {}\n- Model: {model}\n",
-        cwd.display(),
-        if git { "yes" } else { "no" },
-        std::env::consts::OS,
-        std::env::consts::ARCH,
-        chrono::Local::now().format("%Y-%m-%d"),
-    );
+    format!("{}{}", system_head(cwd, cfg), environment(cwd, model))
+}
+
+/// The instructions, without the environment: stable across a repo's sessions and worktrees.
+pub fn system_head(cwd: &Path, cfg: &Config) -> String {
+    let mut s = BASE.to_string();
+    s.push('\n');
     for f in memory_files(cwd, cfg) {
         if let Ok(text) = std::fs::read_to_string(&f) {
             s.push_str(&format!(
                 "\n# Instructions from {}\n{}\n",
-                f.display(),
+                // Relative to the repo, so every worktree's head reads the same.
+                f.strip_prefix(cwd)
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|_| f.display().to_string()),
                 text.trim()
             ));
         }
     }
     client_instructions(&mut s);
     s
+}
+
+/// This session's own facts: its working directory, the date, the model. Kept late in the
+/// prompt so it doesn't split the shared head from what follows.
+pub fn environment(cwd: &Path, model: &str) -> String {
+    let git = cwd.ancestors().any(|d| d.join(".git").exists());
+    format!(
+        "{ENV_HEADER}- Working directory: {}\n- Git repository: {}\n- Platform: {} ({})\n- Date: {}\n- Model: {model}\n",
+        cwd.display(),
+        if git { "yes" } else { "no" },
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        chrono::Local::now().format("%Y-%m-%d"),
+    )
 }
 
 /// How Terminal (and, with the app, which hosts them in a card beside the conversation, Preview)

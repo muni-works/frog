@@ -1596,10 +1596,12 @@ impl Agent {
     fn new(mut o: Options, provider: Provider, shared: Arc<Shared>) -> Result<Self> {
         // Cached or shipped capability profiles are useful in both persisted and in-memory engines.
         let harness = harness::Harness::for_profile(&o.profile);
+        // The session's own facts last, so the shared head stays one prefix across sessions.
         let system = format!(
-            "{}{}",
-            prompt::system_prompt(&o.cwd, &o.cfg, &o.profile.model),
-            harness::guidance(harness.tier)
+            "{}{}{}",
+            prompt::system_head(&o.cwd, &o.cfg),
+            harness::guidance(harness.tier),
+            prompt::environment(&o.cwd, &o.profile.model)
         );
         // Panes open when the session was last saved, to close in the log (their shells died
         // with that process) so a resumed client doesn't expect them.
@@ -2177,6 +2179,7 @@ impl Agent {
             no_think: streamed.no_think,
             think_budget: streamed.think_budget,
             compact,
+            ran_on: u.ran_on.as_ref().map(|r| r.name.clone()),
         });
     }
 

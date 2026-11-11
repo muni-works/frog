@@ -360,6 +360,13 @@
           "minimum": 0,
           "type": "integer"
         },
+        "ran_on": {
+          "description": "The node it ran on, for a pooled model (`node/…`): its name, or \"this Mac\".",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "reusable": {
           "description": "How much of this request (0–1, by its text) repeats the start of the one before: about\nthe share of `prompt_tokens` a server's cache could cover.",
           "format": "double",

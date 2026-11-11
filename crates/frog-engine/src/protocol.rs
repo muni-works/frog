@@ -1486,6 +1486,9 @@ pub struct CallTiming {
     /// A compaction summary rather than a step of the turn.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub compact: bool,
+    /// The node it ran on, for a pooled model (`node/…`): its name, or "this Mac".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ran_on: Option<String>,
 }
 
 /// One tool call that got as far as the permission check.

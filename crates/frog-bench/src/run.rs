@@ -66,6 +66,9 @@ pub struct RunResult {
     pub presented: Vec<String>,
     pub workspace: PathBuf,
     pub check_output: String,
+    /// Retry storms the engine announced (a 429, a 5xx, a dropped stream): one per storm.
+    #[serde(default)]
+    pub retries: u32,
 }
 
 /// Energy for one run, in watt-hours. `local` is measured on this Mac (the engine, a local model
@@ -168,6 +171,7 @@ pub async fn run(r: Run<'_>) -> Result<RunResult> {
         presented: Vec::new(),
         workspace: r.workspace.clone(),
         check_output: String::new(),
+        retries: 0,
     };
 
     let started = Instant::now();
@@ -351,6 +355,7 @@ fn record(env: Envelope, out: &mut RunResult, at: &mut Place) {
                 }
             }
         }
+        Event::Notice { message, .. } if message.contains("retrying") => out.retries += 1,
         Event::Error { error } => out.error = Some(error.to_string()),
         _ => {}
     }
