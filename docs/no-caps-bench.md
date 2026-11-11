@@ -33,3 +33,12 @@ target/release/frog-bench swarm \
 ```
 
 That's 12 hours on one node, then 12 on the pool. Set `-n` to about 2–4 agents per node; above that, the queue on each node grows and tasks get slower without finishing more. Keep the Mac awake (`caffeinate -i`) for the whole run.
+
+## Results
+
+| run | model | mew only: passed / runs | Mac + mew: passed / runs | tok/s | stalls | additivity |
+|---|---|---|---|---|---|---|
+| `swarm-2026-11-11-mac-mew` | Qwen3-0.6B-4bit | 0 / 68 | 1 / 86 | 321 → 504 | 44 → 28 | broken on 3 short tasks |
+| `swarm-2026-11-11-mac-mew-8b` | Qwen3-8B-4bit | 21 / 42 | 41 / 64 | 86 → 128 | 72 → 31 | broken on edit-json-config (101 → 120 s) |
+
+Both runs: this Mac (M4 Max) + mew (RTX 3090), 6 agents, 15 minutes per phase, all 9 tasks, no 429s or 5xx. The "mew only" baseline pins to mew, but a pinned node that drops out briefly falls back, so a few percent of baseline calls ran on the Mac; that flatters the baseline. Stalls are queueing, with 6 agents on two nodes that each run one request at a time.
