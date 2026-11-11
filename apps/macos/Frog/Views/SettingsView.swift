@@ -1,7 +1,7 @@
 import CoreImage
 import SwiftUI
 
-/// ⌘, : General, Models, Energy, Permissions, MCP, Appearance, Shortcuts.
+/// ⌘, : General, Models, Energy, Lend, Permissions, MCP, Appearance, Shortcuts.
 struct SettingsView: View {
     /// The open tab; "Manage models…" in the model picker sets it to "models".
     @AppStorage("settingsTab") private var tab = "general"
@@ -14,6 +14,7 @@ struct SettingsView: View {
             }
             Tab("Billing", systemImage: "creditcard", value: "billing") { BillingSettings() }
             Tab("Energy", systemImage: "leaf", value: "energy") { EnergySettings() }
+            Tab("Lend", systemImage: "dot.radiowaves.left.and.right", value: "lend") { LendSettings() }
             Tab("Permissions", systemImage: "hand.raised", value: "permissions") { PermissionSettings() }
             Tab("MCP", systemImage: "puzzlepiece.extension", value: "mcp") { MCPSettings() }
             Tab("Appearance", systemImage: "paintbrush", value: "appearance") { AppearanceSettings() }

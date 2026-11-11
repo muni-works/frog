@@ -36,6 +36,11 @@ export default {
       return fetch(toGateway(request, env.GATEWAY_ORIGIN));
     }
     if (pathname === "/api/push") return push({ request, env });
+    // curl -fsSL https://frog.toys/node | sh: the node installer, as a script.
+    if (pathname === "/node" && env.ASSETS) {
+      const r = await env.ASSETS.fetch(new URL("/node.sh", request.url));
+      return new Response(r.body, { status: r.status, headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "max-age=300" } });
+    }
     if (REDIRECTS[pathname]) return Response.redirect(REDIRECTS[pathname], 302);
     // A conversation's own URL (/s/<id>) is the app: serve its page and let it route.
     if (/^\/s\/[\w-]+\/?$/.test(pathname) && env.ASSETS) return env.ASSETS.fetch(new URL("/", request.url));
