@@ -433,6 +433,8 @@ struct RemoteSession: Identifiable, Hashable {
     let pinned: Bool
     /// In the Mac's archive.
     let archived: Bool
+    /// The session that started it (the Mac's started-by tree).
+    let parent: String?
     let live: Live?
     /// The session as the Mac's sidebar knows it.
     let info: SessionInfo
@@ -475,6 +477,7 @@ struct RemoteSession: Identifiable, Hashable {
         open = row["open"] as? Bool ?? false
         pinned = row["pinned"] as? Bool ?? false
         archived = row["archived"] as? Bool ?? false
+        parent = row["parent"] as? String
         live = (row["live"] as? String).flatMap(Live.init)
         activity = row["activity"] as? String
         since = (row["since"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue / 1000) }

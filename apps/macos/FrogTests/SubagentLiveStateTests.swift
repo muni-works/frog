@@ -42,24 +42,19 @@ final class SubagentLiveStateTests: XCTestCase {
         XCTAssertEqual(c.agentRuns["task-1"]?.steps, 1)
         XCTAssertEqual(c.agentRuns["task-1"]?.items.count, 1, "deltas don't fold into a background run")
         XCTAssertNotEqual(ActivityLabel.live(turn, in: c), "Writing the answer")
-        let agent = try XCTUnwrap(c.agents.first)
-        XCTAssertEqual(agent.id, "task-1")
-        XCTAssertEqual(agent.title, "bg research")
-        XCTAssertEqual(agent.state, .running)
-        XCTAssertTrue(agent.background)
-        XCTAssertEqual(agent.activity, "Searching pattern")
-        XCTAssertEqual(c.agents.count, 1, "the Task call that started it isn't an agent of its own")
+        // Background Tasks are retired: an old log's unfinished one has no live row, and the
+        // Task call that started it isn't an agent of its own.
+        XCTAssertTrue(c.agents.isEmpty)
     }
 
-    /// A background agent asking permission: the request names its job, so no item appears;
-    /// its row says it waits on you.
+    /// A permission request naming a job (an old background agent, or a child the engine
+    /// owns) makes no item in the parent's turn.
     func testBackgroundAgentPermissionMakesNoItem() throws {
         let (c, link) = try backgroundAgent()
         link.onEvent(try envelope(6, #""event":"permission_request","id":"p1","item":"task-1","name":"Bash","arg":"cargo bench","always":"cargo bench""#))
         XCTAssertEqual(c.turns.last?.items.map(\.id), ["t1"])
-        XCTAssertEqual(c.agents.first?.state, .waiting)
         link.onEvent(try envelope(7, #""event":"permission_resolved","id":"p1","decision":"allow""#))
-        XCTAssertEqual(c.agents.first?.state, .running)
+        XCTAssertEqual(c.turns.last?.items.map(\.id), ["t1"])
     }
 
     /// A background agent the log left "running" died with its engine: no row for it.

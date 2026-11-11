@@ -135,4 +135,13 @@ final class SessionNestingTests: XCTestCase {
         XCTAssertTrue(State(.failed).settled)
         XCTAssertFalse(State(.unread).settled)
     }
+
+    /// The phone's flat lists: a child follows its parent, one deeper; one whose parent
+    /// isn't listed stays a root; a cycle loses nothing.
+    func testIndentedKeepsOrderAndNestsChildren() {
+        let parents = ["b": "a", "c": "b", "d": "gone", "e": "a", "x": "y", "y": "x"]
+        let out = SessionNesting.indented(["a", "d", "b", "c", "e", "x", "y"]) { parents[$0] }
+        XCTAssertEqual(out.map(\.id), ["a", "b", "c", "e", "d", "x", "y"])
+        XCTAssertEqual(out.map(\.depth), [0, 1, 2, 1, 0, 0, 1])
+    }
 }

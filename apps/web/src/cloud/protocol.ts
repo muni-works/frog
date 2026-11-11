@@ -171,6 +171,9 @@ export interface SessionSummary {
   archived?: boolean;
   /** With state "error": why the sandbox couldn't start, in words a person can act on. */
   error?: string;
+  /** The session that started this one (StartSession in a cloud sandbox): the list nests it
+   *  under its parent. Older gateways leave it out, and the list stays flat. */
+  parent?: string;
 }
 export interface NewSession {
   /** Omit for a session without a repo (an empty git repo in the sandbox). */

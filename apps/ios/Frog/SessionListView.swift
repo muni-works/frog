@@ -96,7 +96,11 @@ struct SessionListView: View {
     private func section(_ name: String, _ rows: [RemoteSession]) -> some View {
         if !rows.isEmpty {
             Section(name) {
-                ForEach(rows) { s in
+                // The Mac's started-by tree: a child under its parent when both are here.
+                let byId = Dictionary(rows.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+                let tree = SessionNesting.indented(rows.map(\.id)) { byId[$0]?.parent }
+                ForEach(tree, id: \.id) { node in
+                    let s = byId[node.id]!
                     Group {
                         if selection != nil {
                             SessionRow(session: s).tag(s.id)
@@ -106,6 +110,7 @@ struct SessionListView: View {
                             }
                         }
                     }
+                    .padding(.leading, CGFloat(node.depth) * 18)
                     .swipeActions(edge: .trailing) {
                         if let q = s.question {
                             Button("Allow", systemImage: "checkmark") { remote.answer(q, in: s.id, allow: true) }

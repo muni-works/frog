@@ -86,6 +86,27 @@ enum SessionNesting {
     /// Deepest indent; deeper descendants line up with it.
     static let maxDepth = 4
 
+    /// A flat list in tree order, for lists that keep their own sections (the phone's):
+    /// each id followed by the ones it started that are in the same list, indented one
+    /// deeper (up to `maxDepth`). Order otherwise kept; a child whose parent isn't in the
+    /// list stays where it was, as a root; a cycle can't lose a row.
+    static func indented(_ ids: [String], parent: (String) -> String?) -> [(id: String, depth: Int)] {
+        let present = Set(ids)
+        let parentIn = { (id: String) -> String? in
+            parent(id).flatMap { $0 != id && present.contains($0) ? $0 : nil }
+        }
+        var out: [(id: String, depth: Int)] = []
+        var placed: Set<String> = []
+        func walk(_ id: String, _ depth: Int) {
+            guard placed.insert(id).inserted else { return }
+            out.append((id, depth))
+            for c in ids where parentIn(c) == id { walk(c, min(depth + 1, maxDepth)) }
+        }
+        for id in ids where parentIn(id) == nil { walk(id, 0) }
+        for id in ids where !placed.contains(id) { walk(id, 0) }
+        return out
+    }
+
     /// Rows in tree order: each session followed by the ones it started. A child counts as
     /// settled only when it and everything under it is (a quiet manager whose workers run
     /// stays up). Settled children collapse under a `.done` row unless their parent is in
