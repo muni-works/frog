@@ -493,6 +493,7 @@ mod tests {
             think: Some(false),
             think_budget: None,
             cache_key: None,
+            background: false,
         })
     }
 

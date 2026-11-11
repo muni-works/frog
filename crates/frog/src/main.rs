@@ -277,6 +277,73 @@ fn parse_span(s: &str) -> Option<u64> {
     Some(n * mult)
 }
 
+/// `frog login [--google]`: sign in to Frog Cloud in the browser and save this machine's key.
+async fn login(args: &[String]) -> Result<bool> {
+    use frog_engine::{cloud_login, providers};
+    let provider = if args.iter().any(|a| a == "--google") {
+        "google"
+    } else {
+        "github"
+    };
+    let origin = providers::CLOUD_ORIGIN;
+    let browser: frog_engine::mcp_oauth::Browser = std::sync::Arc::new(|url: String| {
+        let opener = if cfg!(target_os = "macos") {
+            "open"
+        } else {
+            "xdg-open"
+        };
+        let opened = std::process::Command::new(opener)
+            .arg(&url)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success());
+        if !opened {
+            eprintln!("open this to sign in:\n  {url}");
+        }
+    });
+    eprintln!("signing in to Frog Cloud with {provider} in your browser…");
+    let http = reqwest::Client::new();
+    let device = cloud_login::device_name();
+    let key = cloud_login::sign_in(
+        &http,
+        origin,
+        provider,
+        &device,
+        browser,
+        cloud_login::TIMEOUT,
+    )
+    .await?;
+    if let Err(e) = providers::set_key(providers::CLOUD, &key) {
+        // No Keychain here (Linux): the key is still yours, it just lives in the environment.
+        eprintln!("{e:#}\nsigned in; set this in your shell instead:\n  export FROG_API_KEY={key}");
+        return Ok(true);
+    }
+    println!("signed in to Frog Cloud as \"{device}\"; the key is in the Keychain");
+    if std::env::var("FROG_API_KEY").is_ok() {
+        println!("  FROG_API_KEY is set in this shell and wins over the saved key");
+    }
+    println!("  use it: frog -m cloud/qwen3-coder-next (billed per token; local models stay free)");
+    Ok(true)
+}
+
+/// `frog logout`: remove the saved Frog Cloud key.
+fn logout() -> Result<bool> {
+    use frog_engine::cloud_login::{self, Logout};
+    use frog_engine::providers;
+    let done = cloud_login::logout(&providers::cloud_key_saved, &|| {
+        providers::set_key(providers::CLOUD, "")
+    })?;
+    match done {
+        Logout::Removed => println!("signed out: the Frog Cloud key is gone from the Keychain"),
+        Logout::NothingSaved => println!("no Frog Cloud key saved here"),
+    }
+    if std::env::var("FROG_API_KEY").is_ok() {
+        println!("  FROG_API_KEY is still set in this shell; unset it to stop using Frog Cloud");
+    }
+    Ok(true)
+}
+
 #[tokio::main]
 async fn main() {
     match run().await {
@@ -303,12 +370,32 @@ async fn run() -> Result<bool> {
     // `frog account [--json]`: frog cloud's key and where it goes. Local only, no network.
     if args.get(1).map(String::as_str) == Some("account") {
         let a = frog_engine::providers::Account::read();
+        // The model a new session starts on, and whether it's free or billed.
+        let cfg = Config::load()?;
+        let (model, runs) = match cfg.resolve(None) {
+            Ok((spec, p)) => {
+                let runs = frog_engine::model_policy::where_it_runs(&spec, &p);
+                (spec, runs)
+            }
+            Err(e) => (format!("{e:#}"), "unknown"),
+        };
         if args.iter().skip(2).any(|x| x == "--json") {
-            println!("{}", serde_json::to_string(&a)?);
+            let mut v = serde_json::to_value(&a)?;
+            v["model"] = model.into();
+            v["model_runs"] = runs.into();
+            println!("{v}");
         } else {
+            println!("model: {model} ({runs})");
             print!("{}", a.render());
         }
         return Ok(true);
+    }
+    // `frog login [--google]` / `frog logout`: Frog Cloud's key in the Keychain, as the app saves it.
+    if args.get(1).map(String::as_str) == Some("login") {
+        return login(&args[2..]).await;
+    }
+    if args.get(1).map(String::as_str) == Some("logout") {
+        return logout();
     }
     // `frog memory dump|forget <name>|clear [--model M]`: this project's compiled memory.
     if args.get(1).map(String::as_str) == Some("memory") {

@@ -1,7 +1,8 @@
 //! The two-tier model policy (docs/design/model-policy.md).
 //!
-//! **Tier 1** is frog cloud (`cloud/*`): the platform's own models, for workers, classifiers and
-//! the Mac. **Tier 2** is BYOK: the user's own provider account or machine, for the interactive
+//! **Tier 1** is frog cloud (`cloud/*`): the platform's own models, for workers and classifiers.
+//! A fresh install starts on this machine (`local/qwen3-4b`, or Apple Intelligence in the Mac
+//! app), never on a billed model. **Tier 2** is BYOK: the user's own provider account or machine, for the interactive
 //! session its owner sits in. Nothing hops between them, every retried call uses the same
 //! numbers, and a session only starts on a model its gateway currently lists.
 
@@ -46,6 +47,18 @@ pub fn tier(spec: &str, profile: &Profile) -> Tier {
         Tier::Byok
     } else {
         Tier::OnDevice
+    }
+}
+
+/// Where `spec` runs and who pays, in words: the first-run banner and `frog account` say it.
+pub fn where_it_runs(spec: &str, profile: &Profile) -> &'static str {
+    if spec.starts_with("node/") {
+        return "on your own machines, free";
+    }
+    match tier(spec, profile) {
+        Tier::Platform => "Frog Cloud, billed per token",
+        Tier::Byok => "your own provider account, billed by them",
+        Tier::OnDevice => "on this machine, free",
     }
 }
 
@@ -256,6 +269,22 @@ pub async fn check_spawn_spec(cfg: &crate::config::Config, spec: &str) -> Result
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn first_run_says_where_the_model_runs() {
+        let cfg = crate::config::Config::default();
+        let say = |spec: &str| where_it_runs(spec, &cfg.resolve(Some(spec)).unwrap().1);
+        assert_eq!(say("local/qwen3-4b"), "on this machine, free");
+        assert_eq!(
+            say("cloud/qwen3-coder-next"),
+            "Frog Cloud, billed per token"
+        );
+        assert_eq!(
+            say("anthropic/claude-sonnet-5"),
+            "your own provider account, billed by them"
+        );
+        assert_eq!(say("node/qwen3-8b"), "on your own machines, free");
+    }
 
     fn profile(kind: ProviderKind, base: Option<&str>) -> Profile {
         let mut p = Profile::new(kind, "m");

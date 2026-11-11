@@ -288,14 +288,14 @@ pub fn bearer(server: &str) -> Option<String> {
 
 // ---- PKCE --------------------------------------------------------------
 
-struct Pkce {
-    verifier: String,
-    challenge: String,
+pub(crate) struct Pkce {
+    pub(crate) verifier: String,
+    pub(crate) challenge: String,
 }
 
 impl Pkce {
     /// RFC 7636 §4.1: 32 random bytes, base64url; the challenge is their SHA-256.
-    fn new() -> Result<Self> {
+    pub(crate) fn new() -> Result<Self> {
         let mut bytes = [0u8; 32];
         fill_random(&mut bytes)?;
         Self::from_verifier_ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes))
@@ -311,7 +311,7 @@ impl Pkce {
 }
 
 /// Fill `buf` from the OS entropy pool (`/dev/urandom` on macOS and Linux).
-fn fill_random(buf: &mut [u8]) -> Result<()> {
+pub(crate) fn fill_random(buf: &mut [u8]) -> Result<()> {
     use std::io::Read;
     std::fs::File::open("/dev/urandom")
         .and_then(|mut f| f.read_exact(buf))
@@ -430,7 +430,7 @@ fn body<'a>(form: &[(&'a str, &'a str)]) -> String {
 }
 
 /// Attach query pairs to a URL that may already carry a `?`.
-fn join_query(url: &str, pairs: &[(&str, String)]) -> String {
+pub(crate) fn join_query(url: &str, pairs: &[(&str, String)]) -> String {
     let query = pairs
         .iter()
         .map(|(k, v)| format!("{}={}", encoded(k), encoded(v)))
@@ -444,7 +444,7 @@ fn join_query(url: &str, pairs: &[(&str, String)]) -> String {
 }
 
 /// Parse a query string into (`key`, `value`) pairs, percent-decoded (`+` is a space).
-fn parse_query(query: &str) -> Vec<(String, String)> {
+pub(crate) fn parse_query(query: &str) -> Vec<(String, String)> {
     query
         .split('&')
         .filter(|p| !p.is_empty())
@@ -616,7 +616,7 @@ pub async fn authorize(
 }
 
 /// Read the browser's redirect request off the loopback connection, as its raw target.
-async fn read_callback(stream: &mut tokio::net::TcpStream) -> Option<String> {
+pub(crate) async fn read_callback(stream: &mut tokio::net::TcpStream) -> Option<String> {
     use tokio::io::AsyncReadExt;
     let mut buf = [0u8; 4096];
     let n = stream.read(&mut buf).await.ok()?;
@@ -625,7 +625,7 @@ async fn read_callback(stream: &mut tokio::net::TcpStream) -> Option<String> {
 }
 
 /// Answer the redirect with a small HTML page the user sees.
-async fn write_page(stream: &mut tokio::net::TcpStream, text: &str) {
+pub(crate) async fn write_page(stream: &mut tokio::net::TcpStream, text: &str) {
     use tokio::io::AsyncWriteExt;
     let body = format!("<!doctype html><title>{text}</title><p>{text}</p>");
     let response = format!(

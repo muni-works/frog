@@ -349,7 +349,7 @@ final class Workspace {
             openCloud(s.id)
             if !text.isEmpty { conversation?.submit(text) }
         } catch {
-            raceError = error.localizedDescription
+            raceError = CloudFailure.text(error, doing: "start a Frog Cloud session")
         }
     }
 

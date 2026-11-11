@@ -11,6 +11,12 @@ import Network
 enum CloudSignIn {
     struct Exchange: Decodable { let key: String }
 
+    /// How long the browser has to come back before sign-in gives up.
+    static var timeout: TimeInterval = 60
+
+    /// Opens the browser at the sign-in page; tests swap it so nothing opens.
+    static var openBrowser: (URL) -> Void = { NSWorkspace.shared.open($0) }
+
     /// `provider` is "github" or "google". `link` (from `/v1/auth/link`) signs the browser in as
     /// this Mac's account first, so "github" then connects GitHub to it rather than to whoever
     /// the browser's cookie is.
@@ -58,15 +64,16 @@ enum CloudSignIn {
                             .init(name: "return", value: "http://127.0.0.1:\(port)/frog-signin"),
                             .init(name: "provider", value: provider),
                         ] + (link.map { [.init(name: "link", value: $0)] } ?? [])
-                        NSWorkspace.shared.open(u.url!)
+                        openBrowser(u.url!)
                     case .failed(let e): finish(.failure(e))
                     default: break
                     }
                 }
             }
             listener.start(queue: .main)
-            // Three minutes is plenty for GitHub or Google; past it, stop listening.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 180) {
+            // A minute is plenty for GitHub or Google; past it, stop listening and offer Try
+            // Again (a closed tab used to leave it spinning).
+            DispatchQueue.main.asyncAfter(deadline: .now() + timeout) {
                 MainActor.assumeIsolated { finish(.failure(URLError(.timedOut))) }
             }
           }

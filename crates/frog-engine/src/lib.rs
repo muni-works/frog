@@ -7,6 +7,7 @@ pub mod background;
 pub mod catalog;
 pub mod chapter;
 pub mod checkpoint;
+pub mod cloud_login;
 pub mod codemap;
 pub mod compiled_memory;
 pub mod config;

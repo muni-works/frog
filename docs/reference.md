@@ -36,13 +36,49 @@ The engine crate has no terminal dependencies, so the compiler enforces this bou
 | `anthropic/<model>` | Messages API with prompt caching |
 | `cloud/<model>` | Frog Cloud, hosted (`FROG_API_KEY` or a saved key; `FROG_BASE_URL` overrides `https://api.frog.toys/v1`, and then only `FROG_API_KEY` is sent) |
 
-Old provider ids still work as input: `tang/` means `local/`; `frog-api/`, `frog/`, `tang-cloud/` and `zest/` mean `cloud/`. A bare model id resolves when only one provider has it (`frog -m qwen3-coder-next`). Providers are listed This Mac first, then your servers, then Frog Cloud, then other clouds (`--providers --json` carries `rank` and `pinned`). `frog account [--json]` shows Frog Cloud's key source and base URL without touching the network.
+Old provider ids still work as input: `tang/` means `local/`; `frog-api/`, `frog/`, `tang-cloud/` and `zest/` mean `cloud/`. A bare model id resolves when only one provider has it (`frog -m qwen3-coder-next`). Providers are listed This Mac first, then your servers, then Frog Cloud, then other clouds (`--providers --json` carries `rank` and `pinned`). `frog account [--json]` shows the model a new session starts on (and whether it runs locally for free or on Frog Cloud, billed per token), plus Frog Cloud's key source and base URL, without touching the network.
 
 `local/` runs safetensors checkpoints (Qwen3 family today) from the Hugging Face cache or a directory, on [tang](https://github.com/muni-works/tang)'s Metal backend. It uses the checkpoint's own chat template, reuses the KV cache for the prefix a turn shares with the previous one, and logs to `~/.local/share/frog/tang-llm.log`. `local/` accepts bf16 checkpoints and `mlx-community` 4-bit ones. The binary is found through `FROG_TANG_BIN`, then next to `frog`, then on `PATH`.
 
 `apple/` needs Apple Intelligence enabled. Build the sidecar with `swift build -c release --package-path sidecars/frog-apple`; it's found through `FROG_APPLE_BIN`, next to `frog`, or on `PATH`. The model has an 8k context and no native tool calling, so frog sends tool calls as a JSON schema that runs as guided generation.
 
 Named profiles live in `~/.config/frog/config.toml`. See [config.example.toml](../config.example.toml).
+
+## Frog Cloud
+
+**Signing in.** `frog login` opens the browser to sign in with GitHub (`--google` for Google), then saves this machine's own `frog_…` key in the Keychain (service `frog`, account `cloud`) — the same place and the same flow as the Mac app's sign-in (PKCE at `https://api.frog.toys/auth/web`, back to a one-shot listener on `127.0.0.1`, then `POST /v1/auth/exchange`). On Linux, with no Keychain, it prints an `export FROG_API_KEY=…` line instead. `frog logout` deletes the saved key; an environment key is left alone and keeps winning. There's no device-code flow yet, so signing in needs a browser on the same machine.
+
+**Falling back.** If Frog Cloud is offline or out of capacity, frog says so and carries on with a local model: `FROG_FALLBACK_MODEL` if set, otherwise the default `local/qwen3-4b`. A credit error (402) doesn't fall back — the fix is money, not another model, so the turn stops with the one line saying where to add credits. `FROG_BASE_URL` points it at a different endpoint (a saved key only goes to `https://api.frog.toys`; elsewhere, only `FROG_API_KEY` is sent).
+
+**Two kinds of model** ([design/model-policy.md](design/model-policy.md)). **Frog Cloud** (`cloud/*`) is the platform's: the default for worker sessions, subagents and the auto-mode classifier. **BYOK** is your own account or machine — `vercel/`, `anthropic/`, `openai/`, `openrouter/`, `cloudflare/`, `ollama/`, `lmstudio/` and servers you add — for the interactive session you're sitting in. A fresh install starts on neither: it's on this machine (`local/qwen3-4b`, or Apple Intelligence in the Mac app). Nothing hops between the tiers: a worker on your own provider fails fast with one line naming it and the fix, an interactive session may carry on without it because you're there to see the notice, and auto mode's classifier is always `apple/on-device` then `cloud/bull`, never the model the session runs on.
+
+**Errors and retries.** A busy provider (429 or a 5xx) is retried three times at 1 s, 2 s and 4 s with a single notice; a wrong key, an empty wallet or a model your gateway doesn't list (401/402/404) fails at once with the provider's fix in the transcript. A session only starts on a model its gateway's `/v1/models` lists right now (checked once at spawn, from a list cached for a minute); `cloud/*` always starts.
+
+### Other agents on Frog Cloud
+
+Frog Cloud's endpoint is OpenAI-compatible, so other agents can use it too. Base URL `https://api.frog.toys/v1`, model `qwen3-coder-next`, key `FROG_API_KEY` (sign in at [api.frog.toys](https://api.frog.toys)). At capacity it answers 503.
+
+**opencode** (`opencode.json`)
+```json
+{"provider":{"frog":{"npm":"@ai-sdk/openai-compatible","name":"Frog Cloud","options":{"baseURL":"https://api.frog.toys/v1","apiKey":"{env:FROG_API_KEY}"},"models":{"qwen3-coder-next":{"name":"Qwen3-Coder-Next (Frog Cloud)","limit":{"context":131072,"output":16384}}}}},"model":"frog/qwen3-coder-next"}
+```
+
+**Cline, Roo Code, Kilo Code**: Settings → API Provider: **OpenAI Compatible** → Base URL `https://api.frog.toys/v1` → API Key: your `frog_` key → Model ID `qwen3-coder-next`. Turn on native tool calling. Context window 131072.
+
+**Continue** (`config.yaml`)
+```yaml
+models:
+  - name: Qwen3-Coder-Next (Frog Cloud)
+    provider: openai
+    model: qwen3-coder-next
+    apiBase: https://api.frog.toys/v1
+    apiKey: ${{ secrets.FROG_API_KEY }}
+    roles: [chat, edit, apply]
+```
+
+## The chief pattern
+
+For running an org of sessions in the Mac app, the pattern is the nesting and the pins — no feature, no special tile. Run a long-lived session in a workspace (`~/Developer/chief`, say), keep it **pinned** in the sidebar, and have it start the others (`StartSession`): a session's row nests the sessions it started under it, so the whole org reads as one tree with the long-lived session at the top. Pins float above the list, and a pinned row shows what it's doing and what it's waiting on like any other. Open two windows on the same session when you want to watch it work.
 
 ## Tools
 

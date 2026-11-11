@@ -1,10 +1,10 @@
 import XCTest
 @testable import Frog
 
-/// One frog per Mac, however it was built: the machine-wide lock and the decision that reads
-/// it. The old check was bundle-id-scoped, so a debug build (toys.frog.dev) never saw the
-/// installed app (toys.frog) and opened on top of it. Every real-file test locks a scratch
-/// file of its own — the app's own lock is never touched.
+/// One frog per build: a lock per bundle id and the decision that reads it. A Debug build
+/// (toys.frog.dev) and the installed app (toys.frog) never block each other; a second copy of
+/// the same build hands over. Every real-file test locks a scratch file of its own — the app's
+/// own lock is never touched.
 @MainActor
 final class InstanceLockTests: XCTestCase {
     private var lock: URL!
@@ -35,14 +35,54 @@ final class InstanceLockTests: XCTestCase {
                        .handOff)
     }
 
-    func testADifferentBundleIdLeavesQuietly() {
-        // The bug this fixes: a debug build vs the installed app.
+    func testADifferentBundleIdRunsAlongside() {
+        // The bug this fixes: a Debug build holding the shared lock made the installed app
+        // exit silently. A different build is never a reason to leave.
         XCTAssertEqual(InstanceDecision.decide(holderPid: livePid, myBundleId: "toys.frog.dev",
                                                holderBundleId: "toys.frog", isTesting: false),
-                       .exitQuietly)
+                       .runAlongside)
         XCTAssertEqual(InstanceDecision.decide(holderPid: livePid, myBundleId: "toys.frog",
                                                holderBundleId: "toys.frog.dev", isTesting: false),
-                       .exitQuietly)
+                       .runAlongside)
+    }
+
+    func testEachBuildLocksItsOwnFile() throws {
+        LockHolder.pathForTesting = nil
+        let installed = try XCTUnwrap(LockHolder.path(bundleIdentifier: "toys.frog"))
+        let debug = try XCTUnwrap(LockHolder.path(bundleIdentifier: "toys.frog.dev"))
+        XCTAssertTrue(installed.path.hasSuffix("Application Support/Frog/instance.lock"), installed.path)
+        XCTAssertTrue(debug.path.hasSuffix("Application Support/Frog/instance.toys.frog.dev.lock"), debug.path)
+        XCTAssertEqual(LockHolder.path(bundleIdentifier: nil), installed)
+        // Nothing in a bundle id can climb out of the folder.
+        let odd = try XCTUnwrap(LockHolder.path(bundleIdentifier: "../../x/y"))
+        XCTAssertEqual(odd.deletingLastPathComponent(), installed.deletingLastPathComponent())
+    }
+
+    /// Two builds hold their own locks at once (scratch files standing in for the two paths).
+    func testTwoBuildsHoldLocksAtOnce() {
+        let dir = lock.deletingLastPathComponent()
+        LockHolder.pathForTesting = dir.appending(path: "instance.lock")
+        let installed = LockHolder()
+        XCTAssertEqual(installed.acquire(bundleIdentifier: "toys.frog"), .took)
+        LockHolder.pathForTesting = dir.appending(path: "instance.toys.frog.dev.lock")
+        let debug = LockHolder()
+        XCTAssertEqual(debug.acquire(bundleIdentifier: "toys.frog.dev"), .took)
+    }
+
+    func testLaunchURLsKeepsURLsAndPathsAndSkipsDefaults() {
+        let urls = SingleInstance.launchURLs([
+            "/Applications/Frog.app/Contents/MacOS/Frog", "-psn_0_1234",
+            "-FrogFolder", "/tmp/proj", "frog://session/abc", "/Users/me/code",
+            "-NSDocumentRevisionsDebugMode", "YES",
+        ])
+        XCTAssertEqual(urls, [URL(string: "frog://session/abc")!, URL(fileURLWithPath: "/Users/me/code")])
+    }
+
+    func testTheConflictAlertNamesTheHolder() {
+        let text = SingleInstance.conflictText(pid: 4242)
+        XCTAssertEqual(text.title, "Frog is already running")
+        XCTAssertTrue(text.body.contains("4242"))
+        XCTAssertTrue(text.body.contains("Activity Monitor"))
     }
 
     func testAMissingBundleIdHandsOffNotQuiet() {
@@ -138,23 +178,5 @@ final class InstanceLockTests: XCTestCase {
         // And no lock file was created by that path.
         XCTAssertFalse(FileManager.default.fileExists(atPath: lock.path),
                        "a test host takes no lock")
-    }
-
-    /// The real launch path uses the user's Application Support, not the test override.
-    func testTheLockLivesInApplicationSupport() throws {
-        LockHolder.pathForTesting = nil
-        let lock = try XCTUnwrap(LockHolderTestingBridge.path())
-        XCTAssertTrue(lock.path.hasSuffix("Application Support/Frog/instance.lock"), lock.path)
-    }
-}
-
-/// The app's own lock path, for the test that pins where it lives.
-enum LockHolderTestingBridge {
-    static func path() -> URL? {
-        let fm = FileManager.default
-        guard let base = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-            return nil
-        }
-        return base.appending(path: "Frog/instance.lock")
     }
 }

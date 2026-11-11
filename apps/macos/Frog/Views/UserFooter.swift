@@ -7,6 +7,8 @@ struct UserFooter: View {
     @State private var account = CloudAccount.shared
     @State private var signingIn: Task<Void, Never>?
     @State private var failure: String?
+    /// The provider of the sign-in that failed, for Try Again.
+    @State private var lastProvider: String?
     @AppStorage("settingsTab") private var settingsTab = "general"
     @Environment(\.openSettings) private var openSettings
 
@@ -30,6 +32,10 @@ struct UserFooter: View {
                 .help("Cancel signing in")
             } else {
                 Menu {
+                    if failure != nil, let lastProvider {
+                        Button("Try Again") { signIn(lastProvider) }
+                        Divider()
+                    }
                     Button("Continue with GitHub") { signIn("github") }
                     Button("Continue with Google") { signIn("google") }
                 } label: {
@@ -75,6 +81,7 @@ struct UserFooter: View {
 
     private func signIn(_ provider: String) {
         failure = nil
+        lastProvider = provider
         signingIn = Task {
             defer { signingIn = nil }
             do {
@@ -98,26 +105,11 @@ struct UserFooter: View {
 }
 
 extension CloudAccount {
-    /// What a failed sign-in says, the same everywhere; nil when you cancelled it yourself.
-    static func signInFailure(_ error: Error) -> String? {
-        if error is CancellationError { return nil }
-        if let e = error as? URLError {
-            switch e.code {
-            case .cancelled: return nil
-            case .timedOut: return "Sign-in timed out. Try again."
-            case .notConnectedToInternet, .networkConnectionLost, .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed:
-                return "Can't reach Frog Cloud. Check your connection and try again."
-            default: break
-            }
-        }
-        return "Sign-in didn't finish. Try again."
-    }
-
     /// GitHub or Google in the browser, back with this Mac's own key, saved where frog reads it;
     /// then everything that shows the account catches up.
     static func signInAndSave(provider: String = "github") async throws {
         let key = try await CloudSignIn.run(provider: provider)
-        await ProviderStore.shared.setKey(key, for: "cloud")
+        guard await ProviderStore.shared.setKey(key, for: "cloud") else { throw SignInError.notSaved }
         await shared.reloadKey()
         await shared.refresh()
         await CloudSessions.shared.refresh()
@@ -131,7 +123,7 @@ extension CloudAccount {
     static func connect(_ provider: String) async throws {
         let link = try await shared.linkToken()
         let key = try await CloudSignIn.run(provider: provider, link: link)
-        await ProviderStore.shared.setKey(key, for: "cloud")
+        guard await ProviderStore.shared.setKey(key, for: "cloud") else { throw SignInError.notSaved }
         await shared.reloadKey()
         await shared.refresh()
         await CloudSessions.shared.refresh()

@@ -475,7 +475,7 @@ impl Account {
     pub fn render(&self) -> String {
         if !self.connected {
             let mut s = format!(
-                "frog cloud: not connected: set FROG_API_KEY or add a key in the app; get one at {}\n",
+                "frog cloud: not connected: run `frog login` (or set FROG_API_KEY; keys at {})\n",
                 self.key_url
             );
             if self.keychain_withheld {
@@ -506,6 +506,11 @@ impl Account {
         s.push_str(&format!("  pinned    {pin}\n"));
         s
     }
+}
+
+/// Whether frog cloud's key is saved in the Keychain (`frog logout` removes it).
+pub fn cloud_key_saved() -> bool {
+    keychain_get(CLOUD).is_some()
 }
 
 /// Store a key (empty removes it).
@@ -872,7 +877,7 @@ mod tests {
         assert!(!a.connected);
         assert_eq!(
             a.render(),
-            "frog cloud: not connected: set FROG_API_KEY or add a key in the app; get one at https://api.frog.toys/beta\n"
+            "frog cloud: not connected: run `frog login` (or set FROG_API_KEY; keys at https://api.frog.toys/beta)\n"
         );
         let kc = |id: &str| (id == CLOUD).then(|| "k".to_string());
         let env = env_of(&[("FROG_API_KEY", "e")]);

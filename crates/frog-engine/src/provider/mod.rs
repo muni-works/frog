@@ -41,6 +41,10 @@ pub struct Request<'a> {
     /// The conversation this call continues, so the server keeps its prompt cached (sent as
     /// `prompt_cache_key`); only set for servers that take it.
     pub cache_key: Option<&'a str>,
+    /// Work beside the conversation (subagents, the auto-mode classifier, compaction,
+    /// warming, titles): a node runs it only when no interactive call waits, and it goes out
+    /// as `x-frog-priority: background`.
+    pub background: bool,
 }
 
 /// Request fields a server takes beyond the standard API (see [`Provider::extensions`]).
@@ -307,6 +311,7 @@ impl Provider {
                 key,
                 extra,
                 anthropic: anthropic::Settings::from_profile(p, true),
+                priority: None,
             }),
             ProviderKind::Anthropic => Self::Anthropic(anthropic::Client {
                 http,
@@ -435,6 +440,12 @@ impl Provider {
                     prefill: has("prefill"),
                 }
             }
+            // Every node is a tang: the key keeps the conversation's KV, and its
+            // `prompt_cache_keys` tell placement which node holds it.
+            Self::Node(_) => Extensions {
+                cache_key: true,
+                ..Extensions::default()
+            },
             _ => Extensions::default(),
         }
     }

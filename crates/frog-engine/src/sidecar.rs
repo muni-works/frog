@@ -51,6 +51,43 @@ pub fn desktop() -> Option<PathBuf> {
     })
 }
 
+/// Started for the Mac app (`FROG_APP_PID` set), a sidecar goes when the app does — even on a
+/// crash or SIGKILL. `tang-llm` can't watch the pid itself, so a detached `/bin/sh` loop does:
+/// it terminates the sidecar once the app's pid is gone, and ends when the sidecar does.
+/// (`frog-apple` watches `FROG_APP_PID` on its own.) From the CLI, nothing changes: the
+/// sidecar outlives the engine so later sessions reuse it.
+fn watch_app(child: u32) {
+    let Some(app) = std::env::var("FROG_APP_PID")
+        .ok()
+        .and_then(|p| p.parse::<u32>().ok())
+    else {
+        return;
+    };
+    let mut cmd = Command::new("/bin/sh");
+    cmd.args(["-c", WATCH, "frog-parent-watch", &app.to_string(), &child.to_string()])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    // Its own session, like the sidecar, so it survives this engine.
+    unsafe {
+        use std::os::unix::process::CommandExt;
+        cmd.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
+    let _ = cmd.spawn();
+}
+
+/// The watch loop: `$1` the app, `$2` the sidecar (same as the Mac app's `ParentWatch`).
+const WATCH: &str = r#"p=$1 c=$2
+while kill -0 "$c" 2>/dev/null; do
+  if ! kill -0 "$p" 2>/dev/null; then
+    kill -TERM "$c" 2>/dev/null; sleep 3; kill -KILL "$c" 2>/dev/null; exit 0
+  fi
+  sleep 1
+done"#;
+
 fn kind(model: &str) -> &'static Kind {
     if model == APPLE { &APPLE_KIND } else { &TANG }
 }
@@ -193,6 +230,9 @@ pub async fn ensure(p: &Profile) -> Result<()> {
         }
     })?;
     std::fs::write(pid_file(k), child.id().to_string())?;
+    if model != APPLE {
+        watch_app(child.id());
+    }
 
     let start = Instant::now();
     while start.elapsed() < Duration::from_secs(300) {
@@ -216,4 +256,47 @@ pub async fn ensure(p: &Profile) -> Result<()> {
         k.bin,
         log_file(model).display()
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The watch loop ends the sidecar once the app's pid is gone (a stand-in `sleep` for each).
+    #[test]
+    fn watch_ends_the_sidecar_when_the_app_dies() {
+        let mut app = Command::new("sleep").arg("60").spawn().unwrap();
+        let mut sidecar = Command::new("sleep").arg("60").spawn().unwrap();
+        let mut watch = Command::new("/bin/sh")
+            .args(["-c", WATCH, "w", &app.id().to_string(), &sidecar.id().to_string()])
+            .spawn()
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(sidecar.try_wait().unwrap().is_none(), "alive while the app is");
+        app.kill().unwrap();
+        app.wait().unwrap();
+        let start = Instant::now();
+        while sidecar.try_wait().unwrap().is_none() {
+            assert!(start.elapsed() < Duration::from_secs(5), "the sidecar outlived the app");
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        watch.wait().unwrap();
+    }
+
+    /// And it ends on its own when the sidecar exits first.
+    #[test]
+    fn watch_ends_when_the_sidecar_does() {
+        let mut sidecar = Command::new("sleep").arg("60").spawn().unwrap();
+        let mut watch = Command::new("/bin/sh")
+            .args(["-c", WATCH, "w", &std::process::id().to_string(), &sidecar.id().to_string()])
+            .spawn()
+            .unwrap();
+        sidecar.kill().unwrap();
+        sidecar.wait().unwrap();
+        let start = Instant::now();
+        while watch.try_wait().unwrap().is_none() {
+            assert!(start.elapsed() < Duration::from_secs(5), "the watch outlived the sidecar");
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
 }

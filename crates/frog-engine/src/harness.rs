@@ -354,6 +354,7 @@ async fn ask(
         think: None,
         think_budget: None,
         cache_key: None,
+        background: false,
     };
     let mut ignore = |_| {};
     let call = provider.complete(&req, &mut ignore);
@@ -444,6 +445,7 @@ pub async fn probe_think_off(provider: &Provider) -> bool {
         think: Some(false),
         think_budget: None,
         cache_key: None,
+        background: false,
     };
     let mut ignore = |_| {};
     let call = provider.complete(&req, &mut ignore);

@@ -206,6 +206,7 @@ pub async fn write_with(
         think: Some(false),
         think_budget: None,
         cache_key: None,
+        background: true,
     };
     let provider = provider(&profile).await.ok()?;
     let mut ignore = |_: crate::provider::StreamEvent| {};
