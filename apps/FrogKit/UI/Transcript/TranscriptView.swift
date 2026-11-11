@@ -42,7 +42,53 @@ struct TranscriptView: View {
     /// How near the top of what's built (in points) builds more above it.
     static let nearTop: CGFloat = 60
 
+    #if os(macOS)
+    @State private var tableHandle = TableTranscriptHandle()
+    @State private var safeInsets = EdgeInsets()
+    #endif
+
     var body: some View {
+        #if os(macOS)
+        if TranscriptContainer.table {
+            table
+        } else {
+            stack
+        }
+        #else
+        stack
+        #endif
+    }
+
+    #if os(macOS)
+    /// The `NSTableView` transcript (see `TableTranscript`), behind `TranscriptContainer.table`.
+    private var table: some View {
+        TableTranscript(conversation: conversation, actions: actions, jump: jump, onVisibleTurns: onVisibleTurns,
+                        track: track, space: space, showThinking: verbosity.showsThinking, handle: tableHandle,
+                        insets: safeInsets)
+            .ignoresSafeArea(.container, edges: .vertical)
+            .background {
+                // The toolbar and the composer, which the rows scroll under.
+                Color.clear.onGeometryChange(for: EdgeInsets.self, of: { $0.safeAreaInsets }) {
+                    safeInsets = $0
+                    topInset = $0.top
+                }
+            }
+            .environment(\.transcriptTrack, track)
+            .mask { TranscriptMask(topInset: topInset, track: track).ignoresSafeArea(.container, edges: .vertical) }
+            .overlay(alignment: .bottom) {
+                NewBelowPill(track: track, writing: conversation.busy) {
+                    tableHandle.toEnd()
+                }
+            }
+            .overlay {
+                if conversation.turns.isEmpty, !conversation.busy, !conversation.replaying, conversation.failure == nil {
+                    EmptyTranscript(conversation: conversation)
+                }
+            }
+    }
+    #endif
+
+    private var stack: some View {
         ScrollViewReader { proxy in
             transcript
                 // Open at the end, whole: straight to the last row, laid out for real, rather
@@ -51,9 +97,14 @@ struct TranscriptView: View {
                 // Until it's set, the window is the last rows; once a turn is added it's pinned
                 // where it was, so the new turn doesn't push the top one out from above you.
                 // (Set on appear, it left the stack over rows it hadn't laid out.)
-                .onChange(of: conversation.turns.count) { old, new in
-                    guard shownFrom == nil, new > old, old > 0 else { return }
-                    shownFrom = Self.start(of: Array(conversation.turns.prefix(old)), rows: Self.windowRows)
+                // Only for turns added at the end: older history folding in above
+                // (`Conversation.olderPending`) leaves the last rows where they are, and pinning
+                // to "the first `old` turns" then pointed at a turn far up in that history: the
+                // stack rebuilt hundreds of rows and settled again (the switch benchmark's
+                // intermittent "ready over budget", whenever the fold beat the first settle).
+                .onChange(of: TurnEnds(conversation.turns)) { old, new in
+                    guard shownFrom == nil, new.count > old.count, old.count > 0, new.first == old.first else { return }
+                    shownFrom = Self.start(of: Array(conversation.turns.prefix(old.count)), rows: Self.windowRows)
                 }
                 .onChange(of: jump.wrappedValue) { _, id in
                     guard let id else { return }
@@ -176,9 +227,13 @@ struct TranscriptView: View {
 
     /// The rows of the turns built, in order (see `TranscriptRow`).
     private var rows: [TranscriptRow] {
-        let turns = conversation.turns
-        let first = firstShown
-        let showThinking = verbosity.showsThinking
+        Self.rows(of: conversation.turns, from: firstShown, flows: flows, showThinking: verbosity.showsThinking, space: space)
+    }
+
+    /// The rows of `turns` from index `first`: per turn its head (if any), its flow's segments,
+    /// and its tail. Shared by the lazy stack and the table transcript.
+    static func rows(of turns: [TurnState], from first: Int, flows: FlowCache, showThinking: Bool,
+                     space: TurnSpace.Scale) -> [TranscriptRow] {
         var out: [TranscriptRow] = []
         for t in turns.indices where t >= first {
             let turn = turns[t]
@@ -341,59 +396,8 @@ struct TranscriptView: View {
                             }
                         }
                 }
-                if let q = conversation.question {
-                    QuestionCard(question: q, conversation: conversation)
-                        .padding(.top, space.turn)
-                        .id(q.id)
-                        .transition(.opacity.combined(with: .move(edge: .bottom)))
-                }
-                if let e = conversation.elicitation {
-                    ElicitationCard(request: e, conversation: conversation)
-                        .padding(.top, space.turn)
-                        .id(e.id)
-                        .transition(.opacity.combined(with: .move(edge: .bottom)))
-                }
-                // The running turn's live line shows progress once there's something to show.
-                // A busy state with no live engine behind it (the stream died mid-turn) doesn't:
-                // it's a stale window until the watchdog reconciles from the log.
-                // (Not over the newest rows read from the log: they're the transcript already.)
-                if conversation.replaying, conversation.turns.isEmpty {
-                    LoadingIndicator(since: conversation.opened)
-                        .padding(.top, space.turn)
-                } else if conversation.busy, conversation.engineAlive, conversation.permission == nil,
-                   conversation.elicitation == nil, conversation.question == nil,
-                   conversation.turns.last?.items.isEmpty ?? true {
-                    WorkingIndicator(progress: conversation.progress, since: conversation.progressSince)
-                        .padding(.top, space.turn)
-                }
-                if let preview = conversation.presentPreview {
-                    PresentCard(present: preview)
-                        .opacity(0.85)
-                        .padding(.top, space.turn)
-                        .transition(.opacity)
-                }
-                if let failure = conversation.failure {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label(failure, systemImage: "exclamationmark.octagon")
-                            .foregroundStyle(.red)
-                            .textSelection(.enabled)
-                        // A worktree another engine holds: one press goes to the session that
-                        // owns it (its window, or its transcript here) instead of leaving the
-                        // user to hunt for the id in the line above.
-                        if let owner = conversation.heldBy, openSessionID != nil {
-                            Button { openSessionID?(owner) } label: {
-                                Label("Open \(owner)", systemImage: "arrow.up.forward.square")
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                        }
-                    }
-                    .padding(.top, space.turn)
-                }
-                if conversation.overflowRescue {
-                    OverflowRescueView(conversation: conversation)
-                        .transition(.opacity.combined(with: .move(edge: .bottom)))
-                }
+                // What follows the turns: cards that need you, the live line, a failure.
+                TranscriptTrailer(conversation: conversation)
                 Color.clear.frame(height: space.turn).id(Self.end)
             }
             .scrollTargetLayout()
@@ -428,6 +432,71 @@ struct TranscriptView: View {
             if conversation.turns.isEmpty, !conversation.busy, !conversation.replaying, conversation.failure == nil {
                 EmptyTranscript(conversation: conversation)
             }
+        }
+    }
+}
+
+/// What comes after the last turn: a question or elicitation that needs you, the running
+/// turn's live line, a presentation preview, a failure, the overflow rescue. Several views, so a
+/// lazy stack places each on its own; the table transcript wraps it in one row.
+struct TranscriptTrailer: View {
+    let conversation: Conversation
+    @Environment(\.turnSpace) private var space
+    @Environment(\.openSessionID) private var openSessionID
+
+    var body: some View {
+        if let q = conversation.question {
+            QuestionCard(question: q, conversation: conversation)
+                .padding(.top, space.turn)
+                .id(q.id)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+        }
+        if let e = conversation.elicitation {
+            ElicitationCard(request: e, conversation: conversation)
+                .padding(.top, space.turn)
+                .id(e.id)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+        }
+        // The running turn's live line shows progress once there's something to show.
+        // A busy state with no live engine behind it (the stream died mid-turn) doesn't:
+        // it's a stale window until the watchdog reconciles from the log.
+        // (Not over the newest rows read from the log: they're the transcript already.)
+        if conversation.replaying, conversation.turns.isEmpty {
+            LoadingIndicator(since: conversation.opened)
+                .padding(.top, space.turn)
+        } else if conversation.busy, conversation.engineAlive, conversation.permission == nil,
+           conversation.elicitation == nil, conversation.question == nil,
+           conversation.turns.last?.items.isEmpty ?? true {
+            WorkingIndicator(progress: conversation.progress, since: conversation.progressSince)
+                .padding(.top, space.turn)
+        }
+        if let preview = conversation.presentPreview {
+            PresentCard(present: preview)
+                .opacity(0.85)
+                .padding(.top, space.turn)
+                .transition(.opacity)
+        }
+        if let failure = conversation.failure {
+            VStack(alignment: .leading, spacing: 8) {
+                Label(failure, systemImage: "exclamationmark.octagon")
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+                // A worktree another engine holds: one press goes to the session that
+                // owns it (its window, or its transcript here) instead of leaving the
+                // user to hunt for the id in the line above.
+                if let owner = conversation.heldBy, openSessionID != nil {
+                    Button { openSessionID?(owner) } label: {
+                        Label("Open \(owner)", systemImage: "arrow.up.forward.square")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+            .padding(.top, space.turn)
+        }
+        if conversation.overflowRescue {
+            OverflowRescueView(conversation: conversation)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
         }
     }
 }
@@ -971,7 +1040,7 @@ extension EnvironmentValues {
 }
 
 /// The toolbar fade at the top and, where the text carries on below the view, a soft edge.
-private struct TranscriptMask: View {
+struct TranscriptMask: View {
     let topInset: CGFloat
     let track: ScrollTrack
 
@@ -989,7 +1058,7 @@ private struct TranscriptMask: View {
 }
 
 /// The pill, when something new came in below where you're reading.
-private struct NewBelowPill: View {
+struct NewBelowPill: View {
     let track: ScrollTrack
     let writing: Bool
     let action: () -> Void
@@ -1028,6 +1097,14 @@ private struct NewBelow: View {
         .glassEffect(.regular.interactive(), in: .capsule)
         .help("Go to the end and follow the answer")
     }
+}
+
+/// How many turns there are and which comes first: whether turns were added at the end or
+/// folded in above.
+struct TurnEnds: Equatable {
+    let count: Int
+    let first: TurnState.ID?
+    init(_ turns: [TurnState]) { count = turns.count; first = turns.first?.id }
 }
 
 /// One row of the transcript's lazy stack: a piece of a turn (see `TurnPart`).

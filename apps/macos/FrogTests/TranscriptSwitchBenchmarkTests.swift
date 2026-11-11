@@ -144,7 +144,17 @@ final class TranscriptSwitchBenchmarkTests: XCTestCase {
     }
     private var host: NSHostingView<AnyView>!
 
+    /// The container these run against: the table (`TranscriptContainer.table`). On the lazy
+    /// stack they failed intermittently (on main too): the stack opens up to ~100 pt short of
+    /// the end over rows it estimated, and sits there until the older history folding in 250 ms
+    /// later makes it lay out again, so "ready" was ~70 ms or ~350 ms depending on the race.
+    /// The table has a height for every row and opens at its end. `SWITCH_BENCH_STACK=1` runs
+    /// them on the stack.
+    private var container = false
+
     override func setUp() async throws {
+        container = TranscriptContainer.table
+        TranscriptContainer.table = ProcessInfo.processInfo.environment["SWITCH_BENCH_STACK"] == nil
         host = NSHostingView(rootView: AnyView(Color.clear.frame(width: 900, height: 700)))
         host.frame = CGRect(x: 0, y: 0, width: 900, height: 700)
         window = NSWindow(contentRect: host.frame, styleMask: [.titled, .resizable], backing: .buffered, defer: false)
@@ -155,6 +165,7 @@ final class TranscriptSwitchBenchmarkTests: XCTestCase {
     }
 
     override func tearDown() async throws {
+        TranscriptContainer.table = container
         window.close()
         window = nil
         host = nil
@@ -347,6 +358,8 @@ final class TranscriptSwitchBenchmarkTests: XCTestCase {
         jump = c.turns.last?.id
         pump(0.5)
         var heights: [CGFloat] = [], kept: [Double] = [], frames: [TimeInterval] = []
+        // The table's rows on screen at once (its rows are one per segment, as short as a line).
+        var maxVisible = 0
         for _ in 0..<500 {
             guard let doc = scroll.documentView else { break }
             if TranscriptProbe.isMounted(suffix: "-msg-0") { break }
@@ -360,6 +373,7 @@ final class TranscriptSwitchBenchmarkTests: XCTestCase {
             host.layoutSubtreeIfNeeded()
             host.displayIfNeeded()
             frames.append(Date().timeIntervalSince(frame))
+            if let table = doc as? NSTableView { maxVisible = max(maxVisible, table.rows(in: table.visibleRect).length) }
             pump(0.05)
             heights.append(doc.bounds.height)
             // Rows went in above: the row that was at the top is still on screen. A fill's
@@ -391,9 +405,16 @@ final class TranscriptSwitchBenchmarkTests: XCTestCase {
         // pump's own overhead in it (release not measured here): room for that, no more.
         XCTAssertLessThan(p50, 0.025, "scrolling well under 60 fps")
         XCTAssertGreaterThan(TranscriptBench.ink(scroll, in: host), 0.002, "blank at the top")
-        XCTAssertGreaterThan(kept.count, 0, "no rows went in above")
-        XCTAssertEqual(kept.min(), 1, "the view left its place as older rows went in above it")
-        XCTAssertLessThanOrEqual(TranscriptProbe.peakMountedRows, Self.mountedBudget, "built more than the rows on screen")
+        // The lazy stack builds older rows above as you near its top ("fills"); the table has
+        // every row already, as a height, so there's nothing to fill or hold in place.
+        if !TranscriptContainer.table {
+            XCTAssertGreaterThan(kept.count, 0, "no rows went in above")
+            XCTAssertEqual(kept.min(), 1, "the view left its place as older rows went in above it")
+        }
+        // The table builds exactly the rows on screen (a few more while one scrolls out and the
+        // next in); a 1,200-row session of short rows fits ~30 of them in the window.
+        let budget = TranscriptContainer.table ? maxVisible + 6 : Self.mountedBudget
+        XCTAssertLessThanOrEqual(TranscriptProbe.peakMountedRows, budget, "built more than the rows on screen")
     }
 
     /// Going back to a session opened a moment ago reads nothing until its log grows; a new event

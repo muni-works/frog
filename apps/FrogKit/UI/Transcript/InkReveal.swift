@@ -57,7 +57,9 @@ final class InkReveal: NSObject {
 
     private var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
     /// Text appears as it arrives: Reduce Motion, or a stream too fast to ink.
-    private var plain: Bool { reduceMotion || instant }
+    private var plain: Bool { reduceMotion || instant || Self.off }
+    /// For the perf probe: what streaming costs without the ink (as under Reduce Motion).
+    nonisolated(unsafe) static var off = false
     private var length: Int { view.textStorage?.length ?? 0 }
 
     init(view: MessageTextView) {
@@ -272,6 +274,9 @@ final class InkReveal: NSObject {
         return done
     }
 
+    /// Looked up once: `NSColor(named:)` on every painted run was a visible slice of streaming.
+    private static let accent = NSColor(named: "AccentColor") ?? .controlAccentColor
+
     private static func step(_ age: Double) -> Int {
         min(fadeSteps, Int((age / inkTime) * Double(fadeSteps)))
     }
@@ -283,7 +288,7 @@ final class InkReveal: NSObject {
         let step = Self.step(now - inked[i].at)
         inked[i].step = step
         guard range.length > 0 else { return }
-        let accent = NSColor(named: "AccentColor") ?? .controlAccentColor
+        let accent = Self.accent
         let t = Self.ease(Double(step) / Double(Self.fadeSteps))
         storage.enumerateAttribute(.foregroundColor, in: range) { value, sub, _ in
             let own = (value as? NSColor) ?? .labelColor
