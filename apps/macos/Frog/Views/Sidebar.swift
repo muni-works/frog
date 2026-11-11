@@ -910,7 +910,7 @@ struct SessionList: View {
                                         .frame(width: 16, height: 16).contentShape(.rect)
                                 }
                                 .buttonStyle(.plain).foregroundStyle(.tertiary)
-                                .padding(.top, 2).padding(.trailing, 2)
+                                .padding(.top, 9).padding(.trailing, 6)
                                 .help(collapsed ? "Show the sessions it started" : "Fold the sessions it started")
                             }
                         }

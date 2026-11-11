@@ -512,28 +512,32 @@ struct PermissionCard: View {
     /// One look with the web: the title, the command in a well, where it runs, then the answers.
     /// Allow is the green primary (⌘↩), Deny keeps ⌘., the rest are secondary.
     private var macCard: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text(request.question)
-                .font(.frog(size: Tokens.Size.body, weight: .semibold))
-                .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 8)
-            if let reason = request.reason {
-                Text(reason).font(.callout).foregroundStyle(Tokens.textSecondary)
-                    .padding(.horizontal, 14).padding(.bottom, 8)
+        // One inset (16) all round, one rhythm (12) between parts, the command in a rounded
+        // well inside the margins, the answers on the last line.
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(request.question)
+                    .font(.frog(size: Tokens.Size.body, weight: .semibold))
+                if let reason = request.reason {
+                    Text(reason).font(.frog(size: Tokens.Size.secondary)).foregroundStyle(Tokens.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             if let diff = request.preview {
-                DiffView(diff: diff, maxLines: 40).padding(.horizontal, 14).padding(.bottom, 8)
+                DiffView(diff: diff, maxLines: 40)
+                    .clipShape(.rect(cornerRadius: 8))
             } else if !request.arg.isEmpty {
                 Text(request.arg)
                     .font(.frog(size: Tokens.Size.secondary, design: .monospaced))
                     .textSelection(.enabled)
                     .lineLimit(8)
-                    .padding(.horizontal, 14).padding(.vertical, 10)
+                    .padding(.horizontal, 12).padding(.vertical, 9)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Tokens.well)
+                    .background(Tokens.well, in: .rect(cornerRadius: 8))
             }
-            if let card = request.card { ApprovalDetails(card: card).padding(.horizontal, 14).padding(.top, 8) }
+            if let card = request.card { ApprovalDetails(card: card) }
             if noting {
-                HStack(spacing: TurnSpace.Inset.row) {
+                HStack(spacing: 8) {
                     TextField("Tell the agent why, or what to do instead", text: $note)
                         .textFieldStyle(.roundedBorder)
                         .onSubmit { conversation.answer(.deny, note: note) }
@@ -541,7 +545,6 @@ struct PermissionCard: View {
                         .buttonStyle(CardButtonStyle())
                         .disabled(note.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
-                .padding(.horizontal, 14).padding(.top, 10)
             }
             // Two answers, as a Mac alert has: Deny and the default, Allow. The rest of the
             // choices wait behind ⋯; the shortcuts work without being printed on the buttons.
@@ -553,7 +556,11 @@ struct PermissionCard: View {
                     }
                     Button("Deny with a Note…") { noting = true }
                 } label: {
-                    Image(systemName: "ellipsis").frame(width: 30, height: 30).contentShape(.circle)
+                    Image(systemName: "ellipsis")
+                        .font(.frog(size: Tokens.Size.secondary, weight: .semibold))
+                        .frame(width: 28, height: 28)
+                        .background(Tokens.hover, in: .circle)
+                        .contentShape(.circle)
                 }
                 .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
                 .foregroundStyle(Tokens.textSecondary)
@@ -562,7 +569,7 @@ struct PermissionCard: View {
                     .font(.frog(size: Tokens.Size.meta))
                     .foregroundStyle(Tokens.textTertiary)
                     .lineLimit(1)
-                Spacer(minLength: 8)
+                Spacer(minLength: 12)
                 Button("Deny") { conversation.answer(.deny) }
                     .buttonStyle(CardButtonStyle())
                     .keyboardShortcut(".", modifiers: .command)
@@ -572,8 +579,8 @@ struct PermissionCard: View {
                     .keyboardShortcut(.return, modifiers: .command)
                     .help("Allow (⌘↩)")
             }
-            .padding(.horizontal, 14).padding(.top, 8).padding(.bottom, 12)
         }
+        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Tokens.raised, in: .rect(cornerRadius: Tokens.Radius.card))
         .clipShape(.rect(cornerRadius: Tokens.Radius.card))
@@ -594,8 +601,9 @@ struct CardButtonStyle: ButtonStyle {
         configuration.label
             .font(.frog(size: Tokens.Size.secondary, weight: primary ? .semibold : .medium))
             .foregroundStyle(primary ? Color.black : Tokens.text)
-            .padding(.horizontal, 12)
-            .frame(height: 30)
+            .padding(.horizontal, 14)
+            .frame(minWidth: 72)
+            .frame(height: 28)
             .background(primary ? Tokens.accent : Tokens.hover, in: .capsule)
             .opacity(enabled ? (configuration.isPressed ? 0.8 : 1) : 0.45)
             .contentShape(.capsule)
