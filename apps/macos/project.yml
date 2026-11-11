@@ -47,8 +47,8 @@ targets:
         SUPublicEDKey: $(SPARKLE_PUBLIC_KEY)
         LSApplicationCategoryType: public.app-category.developer-tools
         NSUserActivityTypes: [toys.frog.conversation]
-        NSLocalNetworkUsageDescription: "frog on your iPhone connects to this Mac over your network."
-        NSBonjourServices: [_frog._tcp]
+        NSLocalNetworkUsageDescription: "frog on your iPhone connects to this Mac over your network, and frog finds machines that can run models for you on it."
+        NSBonjourServices: [_frog._tcp, _frog-node._tcp]
         NSHumanReadableCopyright: "© 2026 Municipal Robotics"
         NSMicrophoneUsageDescription: "Frog listens only while you dictate into the composer. Speech is transcribed on this Mac; audio never leaves it."
         NSCalendarsFullAccessUsageDescription: "Frog reads your calendar on this Mac to shape your brief around your day. It never leaves this Mac."

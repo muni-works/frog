@@ -140,7 +140,7 @@ mod tests {
 
     fn profile(provider: ProviderKind, base_url: Option<&str>) -> Profile {
         let mut p: Profile = serde_json::from_value(serde_json::json!({
-            "provider": match provider { ProviderKind::Openai => "openai", ProviderKind::Anthropic => "anthropic", ProviderKind::Ollama => "ollama", ProviderKind::Codex => "codex" },
+            "provider": match provider { ProviderKind::Openai => "openai", ProviderKind::Anthropic => "anthropic", ProviderKind::Ollama => "ollama", ProviderKind::Codex => "codex", ProviderKind::Node => "node" },
             "model": "m",
         }))
         .unwrap();

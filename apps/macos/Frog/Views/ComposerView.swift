@@ -61,6 +61,7 @@ struct ComposerView: View {
     var body: some View {
         draftHooks(
             VStack(alignment: .leading, spacing: 8) {
+                if conversation.cloudSession == nil { NodeOffer() }
                 topRow
                     .opacity(suggestions.isEmpty && skillSuggestions.isEmpty ? 1 : 0)
                 field
@@ -412,6 +413,9 @@ struct ComposerView: View {
             Spacer()
             if let e = workspace.raceError {
                 Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange).help(e)
+            }
+            if paneWidth > .narrow, conversation.cloudSession == nil {
+                DeviceChip(conversation: conversation)
             }
             ModelPicker(workspace: workspace, conversation: conversation)
             if let status = conversation.status, paneWidth > .narrow {

@@ -224,6 +224,10 @@ struct ModelMenu: View {
                 if m.spec == "codex/default" {
                     Text("uses your ChatGPT plan").font(.frog(size: 10)).foregroundStyle(.secondary).padding(.leading, 36).offset(y: 14)
                 }
+                // A pooled model (`node/<hash>`): which of your machines it would run on.
+                if let place = Devices.shared.whereRuns(model: m.spec) {
+                    Text(place).font(.frog(size: 10)).foregroundStyle(.secondary).padding(.leading, 36).offset(y: 14)
+                }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)

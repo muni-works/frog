@@ -91,6 +91,8 @@ pub struct Usage {
     pub model: Option<String>,
     /// The response's `x-frog-upstream` header (frog cloud says who served the call).
     pub upstream: Option<String>,
+    /// Where a pooled model's call ran (docs/node-protocol.md §7).
+    pub ran_on: Option<crate::protocol::RanOn>,
 }
 
 impl Usage {

@@ -50,6 +50,10 @@ fn billing(e: &anyhow::Error) -> Option<BillingRefusal> {
     })
 }
 
+/// Most node failovers in one call: each takes a node out, so this only bounds a pool that
+/// keeps coming back between attempts.
+const MAX_FAILOVERS: u32 = 4;
+
 impl Agent {
     /// One model request. Streams item events (unless `quiet`) and retries transient errors
     /// that happen before anything streamed. Without `offer_tools` the model can only answer:
@@ -194,6 +198,7 @@ impl Agent {
         // One billing line per turn, however many calls: the transition to credit is one
         // fact, not one per step.
         let mut billing_line = false;
+        let mut failovers = 0;
         loop {
             self.emit(Event::Progress {
                 label: label.into(),
@@ -430,6 +435,33 @@ impl Agent {
                     }
                     attempt += 1;
                     tokio::time::sleep(Duration::from_millis(250)).await;
+                }
+                // A paired node stopped answering (docs/node-protocol.md §7): its partial goes,
+                // it's out of placement for 30 s, and the same call runs again at once on the
+                // next placement with one notice. Each failure takes a node out, so with every
+                // node down the call ends with one line (`next` is None), never a loop.
+                Err(e)
+                    if e
+                        .downcast_ref::<crate::provider::node::NodeFailed>()
+                        .and_then(|f| f.notice())
+                        .is_some()
+                        && failovers < MAX_FAILOVERS =>
+                {
+                    failovers += 1;
+                    let ids: Vec<String> = streamed
+                        .message
+                        .iter()
+                        .chain(streamed.reasoning.iter())
+                        .cloned()
+                        .collect();
+                    if !ids.is_empty() {
+                        self.emit(Event::ItemsDiscarded { ids });
+                    }
+                    let line = e
+                        .downcast_ref::<crate::provider::node::NodeFailed>()
+                        .and_then(|f| f.notice())
+                        .unwrap_or_default();
+                    self.notice(Level::Warn, line);
                 }
                 // A wrong key, an empty wallet or a model the gateway doesn't serve is the
                 // first answer, not a hiccup: no retry spends the rest of the budget on it. The

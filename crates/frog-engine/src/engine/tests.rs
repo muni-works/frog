@@ -37,6 +37,7 @@ fn reply(content: Vec<Block>, stop: Stop) -> Response {
             cache_write: 0,
             model: None,
             upstream: None,
+            ran_on: None,
         },
         stop,
     }
@@ -11863,5 +11864,125 @@ async fn a_steady_waiting_count_is_announced_once_not_every_step() {
         fresh.len() < steps,
         "not every step: fresh {fresh:?} of {steps} steps"
     );
+    shutdown(h).await;
+}
+
+/// An engine on a pooled model (`node/<hash>`) over `pool`.
+fn engine_pool(pool: Arc<crate::nodes::Pool>, hash: &str) -> Handle {
+    let mut profile = Profile::new(ProviderKind::Node, hash);
+    profile.tool_mode = ToolMode::Native;
+    let opts = Options {
+        cfg: Config {
+            hermetic: true,
+            ..Config::default()
+        },
+        profile_name: format!("node/{hash}"),
+        profile,
+        cwd: std::env::temp_dir(),
+        mode: Mode::Default,
+        can_ask: true,
+        resume: None,
+        store: None,
+        sandbox: false,
+        rich: false,
+        subagent: false,
+        chat: false,
+    };
+    start(
+        opts,
+        Provider::Node(crate::provider::node::Client::new(pool, hash, None)),
+    )
+    .unwrap()
+}
+
+/// D4: the node goes quiet mid-reply; its partial is discarded, one notice says where the turn
+/// finishes, and the reply that completes the turn is the second node's whole one — no text
+/// from the dead node survives, and the chip/receipt fields name where it ran.
+#[tokio::test]
+async fn a_node_that_dies_mid_stream_fails_over_and_the_turn_finishes_on_this_mac() {
+    use crate::nodes::fake::{Chat, paired, quick, spawn};
+    const Q4: &str = "aa11bb22cc33dd44";
+    let mew = spawn("fa", 900, vec![("org/Qwen3-4B", Q4, true)], Chat::Stall("half a rep")).await;
+    let mac = spawn("fb", 1, vec![("org/Qwen3-4B", Q4, true)], Chat::Reply("whole reply")).await;
+    let pool = crate::nodes::Pool::fixed(vec![paired("mew", "fa", &mew)], Some(mac.base.clone()), quick());
+    let mut h = engine_pool(pool, "aa11bb22cc33");
+    let evs = run(&mut h, "hi").await;
+    let notices: Vec<&str> = evs
+        .iter()
+        .filter_map(|e| match &e.event {
+            Event::Notice { message, .. } => Some(message.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        notices.iter().filter(|m| m.contains("stopped answering")).count(),
+        1,
+        "{notices:?}"
+    );
+    assert!(notices.contains(&"mew stopped answering; finishing on this Mac"));
+    assert!(evs.iter().any(|e| matches!(e.event, Event::ItemsDiscarded { .. })));
+    let answers: Vec<String> = evs
+        .iter()
+        .filter_map(|e| match &e.event {
+            Event::ItemCompleted {
+                item: Item::Message { text },
+                ..
+            } => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(answers, vec!["whole reply".to_string()]);
+    let usage = evs
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::TurnEnded {
+                reason: EndReason::Complete,
+                usage,
+                ..
+            } => Some(usage.clone()),
+            _ => None,
+        })
+        .expect("the turn completed");
+    let ran = usage.ran_on.expect("usage says where it ran");
+    assert!(ran.local && ran.name == "this Mac");
+    assert!(evs.iter().any(|e| matches!(
+        &e.event,
+        Event::Status(s) if s.ran_on.as_ref().is_some_and(|r| r.local)
+    )));
+    assert_eq!(mew.chats(), 1, "the dead node isn't tried again");
+    shutdown(h).await;
+}
+
+/// Every node down: the turn ends with one line, no failover loop.
+#[tokio::test]
+async fn with_every_node_down_the_turn_ends_with_one_line() {
+    use crate::nodes::fake::{Chat, paired, quick, spawn};
+    const Q4: &str = "aa11bb22cc33dd44";
+    let a = spawn("fa", 900, vec![("org/Qwen3-4B", Q4, true)], Chat::Fail).await;
+    let b = spawn("fb", 100, vec![("org/Qwen3-4B", Q4, true)], Chat::Fail).await;
+    let pool = crate::nodes::Pool::fixed(
+        vec![paired("mew", "fa", &a), paired("bull", "fb", &b)],
+        None,
+        quick(),
+    );
+    let mut h = engine_pool(pool, "aa11bb22cc33");
+    let evs = run(&mut h, "hi").await;
+    let notices: Vec<&str> = evs
+        .iter()
+        .filter_map(|e| match &e.event {
+            Event::Notice { message, .. } => Some(message.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(notices.iter().filter(|m| m.contains("finishing on")).count(), 1, "{notices:?}");
+    assert!(notices.contains(&"mew stopped answering; finishing on bull"));
+    assert!(evs.iter().any(|e| matches!(
+        e.event,
+        Event::TurnEnded {
+            reason: EndReason::Error { .. },
+            ..
+        }
+    )));
+    assert_eq!((a.chats(), b.chats()), (1, 1), "each node tried once");
     shutdown(h).await;
 }

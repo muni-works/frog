@@ -21,3 +21,11 @@ test("/v1 with no gateway is a 503 that points at the status page", async () => 
   assert.equal(h.status, 503);
   assert.match(await h.text(), /api\.frog\.toys\/status/);
 });
+
+test("/node serves the node installer as plain text", async () => {
+  const ASSETS = { fetch: async (u) => (new URL(u).pathname === "/node.sh" ? new Response("#!/bin/sh\n") : new Response("", { status: 404 })) };
+  const r = await worker.fetch(new Request("https://frog.toys/node"), { ASSETS });
+  assert.equal(r.status, 200);
+  assert.match(r.headers.get("content-type"), /text\/plain/);
+  assert.equal(await r.text(), "#!/bin/sh\n");
+});

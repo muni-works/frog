@@ -67,6 +67,7 @@ impl Running {
             todos: Vec::new(),
             vision: false,
             degraded: Vec::new(),
+            ran_on: None,
         }
     }
 }

@@ -25,6 +25,10 @@ struct FrogApp: App {
         // cards and materials (the per-app form of System Settings' "Allow wallpaper tinting").
         UserDefaults.standard.set(true, forKey: "AppleReduceDesktopTinting")
         Notifier.shared.setup()
+        // Settings › Lend left on: start lending again (it pauses itself on battery or heat).
+        if !MorningNotice.headless && !SingleInstance.isTesting {
+            Task { @MainActor in MacLender.shared.start() }
+        }
         Conversation.effects = MacEffects.shared
         Conversation.logReader = { id, after in
             // The durable half of the session log (what a dead engine left behind), read the
@@ -94,6 +98,12 @@ struct FrogApp: App {
         // Only ever opened from a preview card, never at launch or by restoration.
         .defaultLaunchBehavior(.suppressed)
         .restorationBehavior(.disabled)
+
+        Window("Devices", id: DevicesWindow.id) {
+            DevicesWindow()
+        }
+        .defaultSize(width: 900, height: 600)
+        .defaultLaunchBehavior(.suppressed)
 
         Settings {
             SettingsView()

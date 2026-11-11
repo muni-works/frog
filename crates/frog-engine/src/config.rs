@@ -12,6 +12,8 @@ pub enum ProviderKind {
     Anthropic,
     Ollama,
     Codex,
+    /// A pooled model on your paired nodes (`node/<weights_hash first 12>`).
+    Node,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Default, JsonSchema)]
@@ -583,6 +585,8 @@ impl Config {
             "openrouter" | "vercel" | "cloud" | "cloudflare" => {
                 Profile::new(ProviderKind::Openai, model)
             }
+            // Your paired nodes (docs/node-protocol.md §7): placed per call, keys from the Keychain.
+            "node" => Profile::new(ProviderKind::Node, model),
             "codex" => {
                 let mut p = Profile::new(ProviderKind::Codex, model);
                 if let Some((_, context)) = crate::provider::codex::models()
