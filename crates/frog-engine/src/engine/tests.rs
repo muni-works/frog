@@ -212,6 +212,7 @@ fn engine_real_profile(profile: Profile) -> Handle {
         key: None,
         extra: None,
         anthropic: Default::default(),
+        priority: None,
     }))
     .unwrap()
 }

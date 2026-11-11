@@ -240,6 +240,7 @@ mod tests {
             think: None,
             think_budget: None,
             cache_key: None,
+            background: false,
         };
         let body = c.body(&req);
         let m = &body["messages"][1];
@@ -266,6 +267,7 @@ mod tests {
             think,
             think_budget: None,
             cache_key: None,
+            background: false,
         };
         assert_eq!(c.body(&req(Some(false)))["think"], false);
         assert!(c.body(&req(None)).get("think").is_none());

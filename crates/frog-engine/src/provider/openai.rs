@@ -13,6 +13,8 @@ pub struct Client {
     pub extra: Option<Value>,
     /// Used when the request is sent as an Anthropic Messages call (see [`Self::gateway_claude`]).
     pub anthropic: super::anthropic::Settings,
+    /// `x-frog-priority` for a tang node (`interactive` or `background`); None sends none.
+    pub priority: Option<&'static str>,
 }
 
 impl Client {
@@ -211,6 +213,9 @@ impl Client {
             o.remove("stream_options");
         }
         let mut rb = self.http.post(url).json(&body);
+        if let Some(p) = self.priority {
+            rb = rb.header("x-frog-priority", p);
+        }
         if let Some(k) = &self.key {
             rb = rb.bearer_auth(k);
         }
@@ -230,6 +235,9 @@ impl Client {
         }
         let url = format!("{}/chat/completions", self.base.trim_end_matches('/'));
         let mut rb = self.http.post(url).json(&self.body(req));
+        if let Some(p) = self.priority {
+            rb = rb.header("x-frog-priority", p);
+        }
         if let Some(k) = &self.key {
             rb = rb.bearer_auth(k);
         }
@@ -398,6 +406,7 @@ mod tests {
             key: None,
             extra: None,
             anthropic: Default::default(),
+            priority: None,
         };
         let msgs = vec![Message {
             role: Role::User,
@@ -423,6 +432,7 @@ mod tests {
             think: None,
             think_budget: None,
             cache_key: None,
+            background: false,
         };
         let body = c.body(&req);
         let m = body["messages"].as_array().unwrap();
@@ -443,6 +453,7 @@ mod tests {
             key: None,
             extra: None,
             anthropic: Default::default(),
+            priority: None,
         };
         let msgs = vec![Message::user("hi")];
         let req = |think_budget| Request {
@@ -454,6 +465,7 @@ mod tests {
             think: None,
             think_budget,
             cache_key: None,
+            background: false,
         };
         let tang = client("http://192.168.2.12:8420/v1");
         assert_eq!(tang.body(&req(Some(1024)))["thinking_budget"], 1024);
@@ -476,6 +488,7 @@ mod tests {
             key: None,
             extra: None,
             anthropic: Default::default(),
+            priority: None,
         };
         let msgs = vec![Message::user("hi")];
         let req = |cache_key| Request {
@@ -487,6 +500,7 @@ mod tests {
             think: None,
             think_budget: None,
             cache_key,
+            background: false,
         };
         assert_eq!(c.body(&req(Some("abc")))["prompt_cache_key"], "abc");
         assert!(c.body(&req(None)).get("prompt_cache_key").is_none());
@@ -501,6 +515,7 @@ mod tests {
             key: None,
             extra,
             anthropic: Default::default(),
+            priority: None,
         };
         let msgs = vec![Message::user("hi")];
         let req = |think| Request {
@@ -512,6 +527,7 @@ mod tests {
             think,
             think_budget: None,
             cache_key: None,
+            background: false,
         };
         let local = client("http://localhost:8911/v1", None);
         assert_eq!(
@@ -550,6 +566,7 @@ mod gateway_tests {
             key: key.map(Into::into),
             extra: None,
             anthropic: Default::default(),
+            priority: None,
         }
     }
 
@@ -585,6 +602,7 @@ mod gateway_tests {
             think: None,
             think_budget: None,
             cache_key: None,
+            background: false,
         };
         let resp = c.complete(&req, &mut |_| {}).await.unwrap();
         assert_eq!(resp.usage.upstream.as_deref(), Some("workers-ai"));

@@ -270,6 +270,7 @@ async fn words(profile: &Profile, prompt: &str) -> anyhow::Result<(Words, crate:
         think: Some(false),
         think_budget: None,
         cache_key: None,
+        background: true,
     };
     let mut ignore = |_| {};
     let r = tokio::time::timeout(

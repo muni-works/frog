@@ -99,9 +99,10 @@ pooled model is `node/<weights_hash first 12>` with the display name from the no
 
 ## 7. What the engine does with it (for track B)
 
-- **Placement (D3.5):** for a call on a pooled model: the session's pinned node if it has the
-  model and answers; else any paired node with the same `weights_hash`, loaded first, then the
-  one with most free memory; else this Mac's tang if it has it; else fail with one line.
+- **Placement (D7, the scheduler):** for a call on a pooled model: the session's pinned node if
+  it has the model and answers (a pinned node whose fingerprint doesn't match stops with its one
+  line); else the earliest estimated finish among every paired node with the same
+  `weights_hash` and this Mac's tang; else fail with one line.
 - **Failover (D4):** a transport error, `5xx`, or no bytes for 20 s mid-stream: drop the
   partial assistant message (never shown as final), mark the node down for 30 s, and rerun the
   model call from the transcript on the next placement. Tool calls that completed before the
@@ -135,9 +136,30 @@ pooled model is `node/<weights_hash first 12>` with the display name from the no
 - **Model ids.** `node/<weights_hash first 12>` (an optional `@<node_id or name>` suffix pins
   the session to that node). `frog --list-models` / the picker list each pooled model once,
   `source: "node"`, with the display name from the node (the checkpoint's last path segment).
-- **Placement order:** pinned node → the node the session last ran on → other paired nodes
-  with the hash (loaded before on disk, then most `hardware.free_bytes`) → this Mac's tang →
-  fail with one line ("no paired node has <model> right now").
+- **Estimated finish:** queue wait + uncached prompt ÷ prefill rate + expected output ÷ decode
+  rate + round trip (+ load time when the model isn't loaded, + start-up when this Mac's tang
+  isn't running).
+  - Rates are the model's `rates.prefill_tok_s` / `decode_tok_s`; where a node hasn't measured
+    them, what the engine measured on its own calls there; else defaults. The round trip is
+    the `/node` poll's.
+  - The uncached prompt is the estimated prompt less the node's `kv.prompt_cache_keys` entry
+    for the session's `prompt_cache_key` (the engine sends it to every node).
+  - Expected output is a moving average per step kind: after the user's words (answers), after
+    tool results (usually a tool call), and background.
+  - Queue wait counts `queue.running` and `queue.waiting` (an interactive call skips background
+    entries: the node runs them after it), less the time since the poll, plus the calls this
+    engine has placed there and not finished.
+- **Ties:** finishes within 10% of the best are a tie, won by the node holding the session's KV,
+  then the node it last ran on, then loaded, most `hardware.free_bytes`, a paired node before
+  this Mac. A conversation doesn't move between machines on noise.
+- **Priority:** every call sends `x-frog-priority`. Background work (subagents, the auto-mode
+  classifier, compaction, warming, titles) sends `background` and goes only to nodes with no
+  interactive call running or waiting, when there is one; everything else sends `interactive`.
+- **This Mac on demand:** when the best or only placement is this Mac's tang and it isn't
+  running, the engine starts it (`tang-llm serve <model>`, the same sidecar `local/` models
+  use) with the model in the Hugging Face cache whose `weights_hash` matches, then places the
+  call there. This includes failover.
+- Nowhere: fail with one line ("no paired node has <model> right now").
 - **Failover:** transport error, `5xx`, a stream that ends without finishing, or no bytes for
   20 s once bytes have started (120 s before the first): the partial is discarded
   (`items_discarded`), the node is down for 30 s, and the call reruns at once on the next
