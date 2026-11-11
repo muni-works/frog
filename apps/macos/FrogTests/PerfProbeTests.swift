@@ -54,6 +54,16 @@ final class PerfProbeTests: XCTestCase {
     }
 
     func testLongTranscript() throws {
+        for table in [false, true] {
+            TranscriptContainer.table = table
+            let was = TranscriptContainer.table
+            defer { TranscriptContainer.table = was }
+            print("PROBE container: \(table ? "table" : "lazy stack")")
+            try longTranscript()
+        }
+    }
+
+    private func longTranscript() throws {
         let m0 = mem()
         let c = Conversation(folder: URL(fileURLWithPath: "/tmp/demo"), link: nil, replay: false, session: "p")
         let view = TranscriptView(conversation: c, actions: TurnActions(fork: { _ in }, rewind: { _ in }), jump: .constant(nil), onVisibleTurns: { _ in })
@@ -96,6 +106,16 @@ final class PerfProbeTests: XCTestCase {
     }
 
     func testStreamCost() throws {
+        for table in [false, true] {
+            TranscriptContainer.table = table
+            let was = TranscriptContainer.table
+            defer { TranscriptContainer.table = was }
+            print("PROBE container: \(table ? "table" : "lazy stack")")
+            try streamCost()
+        }
+    }
+
+    private func streamCost() throws {
         for prior in [0, 300] {
             let c = Conversation(folder: URL(fileURLWithPath: "/tmp/demo"), link: nil, replay: false, session: "p")
             let host = NSHostingView(rootView: TranscriptView(conversation: c, actions: TurnActions(fork: { _ in }, rewind: { _ in }), jump: .constant(nil), onVisibleTurns: { _ in }))
@@ -112,6 +132,101 @@ final class PerfProbeTests: XCTestCase {
             print(String(format: "PROBE prior %d turns: idle cpu %.0f%%, streaming cpu %.0f%%", prior, idle*100, st*100))
             w.close(); pump(0.2)
         }
+    }
+
+    /// For a profiler: 300 turns, then a long stream at the tail, bracketed by `PROBE stream-begin`
+    /// / `PROBE stream-end` so `sample <pid>` can be pointed at just the streaming.
+    func testStreamProfile() throws {
+        // Each mode in the same run, alternating, so machine load hits both alike.
+        var results: [String: [(cpu: Double, work: Double, turns: Int, rows: Int)]] = [:]
+        for round in 0..<2 {
+            for mode in ["before", "after", "no-ink"] {
+                let live = mode != "before"
+                Conversation.streamsLive = live
+                InkReveal.off = mode == "no-ink"
+                defer { Conversation.streamsLive = true; InkReveal.off = false }
+                let c = Conversation(folder: URL(fileURLWithPath: "/tmp/demo"), link: nil, replay: false, session: "p")
+                let host = NSHostingView(rootView: TranscriptView(conversation: c, actions: TurnActions(fork: { _ in }, rewind: { _ in }), jump: .constant(nil), onVisibleTurns: { _ in }))
+                host.frame = CGRect(x: 0, y: 0, width: 900, height: 760)
+                let w = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
+                w.isReleasedWhenClosed = false; w.contentView = host; w.orderFront(nil)
+                for t in 1...300 { turn(c, t) }
+                pump(1.0)
+                if round == 0, live { print("PROBE stream-begin"); fflush(stdout) }
+                TranscriptProbe.reset()
+                let c0 = cpu()
+                var work = 0.0
+                for t in (301 + round * 10)...(305 + round * 10) {
+                    work += ms { turn(c, t, pumpEvery: 0); host.layoutSubtreeIfNeeded(); w.displayIfNeeded() }
+                    _ = t
+                }
+                // Streamed delta by delta with a frame between each, as the app does at 30 Hz.
+                let id = "live-\(round)"
+                send(c, #""turn_started","turn":\#(900 + round),"input":"go""#)
+                send(c, #""item_started","id":"\#(id)","kind":{"type":"message"}"#)
+                let text = String(repeating: Self.answer(1) + "\n\n", count: 6)
+                var at = text.startIndex
+                while at < text.endIndex {
+                    let nx = text.index(at, offsetBy: 12, limitedBy: text.endIndex) ?? text.endIndex
+                    work += ms {
+                        send(c, #""item_delta","id":"\#(id)","delta":{"type":"text","text":\#(Self.json(String(text[at..<nx])))}"#)
+                        host.layoutSubtreeIfNeeded(); w.displayIfNeeded()
+                    }
+                    at = nx; pump(0.016)
+                }
+                results[mode, default: []].append((cpu() - c0, work, TranscriptProbe.turnBodies, TranscriptProbe.rowBodies))
+                w.close(); pump(0.2)
+            }
+        }
+        print("PROBE stream-end")
+        for (k, v) in results.sorted(by: { $0.key > $1.key }) {
+            for r in v {
+                print(String(format: "PROBE stream %@: cpu %.2fs, main-thread work %.0f ms, turn bodies %d, row bodies %d", k, r.cpu, r.work, r.turns, r.rows))
+            }
+        }
+    }
+
+    /// One long answer streamed at the tail of 300 turns, delta by delta with a frame between:
+    /// CPU over wall time for the stream alone, bracketed by `PROBE live-begin` for `sample`.
+    /// Once into each container.
+    func testStreamLive() throws {
+        for table in [false, true] {
+            TranscriptContainer.table = table
+            let was = TranscriptContainer.table
+            defer { TranscriptContainer.table = was }
+            try streamLive()
+        }
+        // What the ink costs, in the table (as under Reduce Motion: words just appear).
+        let was = TranscriptContainer.table
+        TranscriptContainer.table = true
+        InkReveal.off = true
+        defer { TranscriptContainer.table = was; InkReveal.off = false }
+        try streamLive()
+    }
+
+    private func streamLive() throws {
+        let c = Conversation(folder: URL(fileURLWithPath: "/tmp/demo"), link: nil, replay: false, session: "p")
+        let host = NSHostingView(rootView: TranscriptView(conversation: c, actions: TurnActions(fork: { _ in }, rewind: { _ in }), jump: .constant(nil), onVisibleTurns: { _ in }))
+        host.frame = CGRect(x: 0, y: 0, width: 900, height: 760)
+        let w = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        w.isReleasedWhenClosed = false; w.contentView = host; w.orderFront(nil); defer { w.close() }
+        for t in 1...300 { turn(c, t) }
+        pump(1.0)
+        send(c, #""turn_started","turn":900,"input":"go""#)
+        send(c, #""item_started","id":"live","kind":{"type":"message"}"#)
+        let text = String(repeating: Self.answer(1) + "\n\n", count: 12)
+        print("PROBE live-begin"); fflush(stdout)
+        let c0 = cpu(), t0 = Date()
+        var at = text.startIndex
+        while at < text.endIndex {
+            // About what the engine's 30 Hz batches carry at 40 tokens a second.
+            let nx = text.index(at, offsetBy: 6, limitedBy: text.endIndex) ?? text.endIndex
+            send(c, #""item_delta","id":"live","delta":{"type":"text","text":\#(Self.json(String(text[at..<nx])))}"#)
+            at = nx; pump(1.0 / 30)
+        }
+        let used = cpu() - c0, wall = Date().timeIntervalSince(t0)
+        print(String(format: "PROBE live stream (%@): %d chars, wall %.1fs cpu %.2fs (%.0f%% of a core)",
+                     (TranscriptContainer.table ? "table" : "lazy stack") + (InkReveal.off ? ", no ink" : ""), text.count, wall, used, used / wall * 100))
     }
 
     private struct Box: View {

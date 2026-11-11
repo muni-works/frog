@@ -33,6 +33,8 @@ struct TreeRow<Menu: View>: View {
     var onToggle: (() -> Void)? = nil
     /// Its git badge (its own tree, or its subtree's sum), when there's one to show.
     var git: GitRowBadge? = nil
+    /// The second line and status, as the web shows them.
+    var line = RowLine()
     let open: () -> Void
     @ViewBuilder let menu: () -> Menu
     @State private var hovering = false
@@ -46,10 +48,6 @@ struct TreeRow<Menu: View>: View {
         HStack(spacing: 0) {
             Color.clear.frame(width: AttentionMetrics.leading(depth))
             disclosure
-            if depth == 0 && monogram {
-                Monogram(session: session, size: AttentionMetrics.monogram, selected: false, live: nil)
-                    .padding(.trailing, 7)
-            }
             title
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(.rect)
@@ -59,7 +57,8 @@ struct TreeRow<Menu: View>: View {
         }
         .padding(.leading, 4)
         .padding(.trailing, 6)
-        .frame(height: AttentionMetrics.rowHeight)
+        .padding(.vertical, 5)
+        .frame(minHeight: AttentionMetrics.rowHeight)
         .background(background, in: .rect(cornerRadius: 6))
         .contentShape(.rect)
         .onHover { hovering = $0 }
@@ -89,20 +88,38 @@ struct TreeRow<Menu: View>: View {
     }
 
     private var title: some View {
-        HStack(spacing: 6) {
-            Text(highlighted)
-                .font(.frog(size: settledWeight ? 12 : 13, weight: manager && liveUnder ? .semibold : .regular))
-                .foregroundStyle(Color.primary.opacity(titleOpacity))
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                Text(highlighted)
+                    .font(.frog(size: Tokens.Size.secondary, weight: manager && liveUnder ? .semibold : .regular))
+                    .foregroundStyle(Tokens.text.opacity(titleOpacity))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                if collapsed, let summary = counts.summary {
+                    Text(summary)
+                        .font(.frog(size: Tokens.Size.meta))
+                        .foregroundStyle(Tokens.textTertiary)
+                        .lineLimit(1)
+                        .fixedSize()
+                }
+            }
+            Text(second)
+                .font(.frog(size: Tokens.Size.meta))
+                .foregroundStyle(line.text == nil ? Tokens.textTertiary : line.tint)
                 .lineLimit(1)
                 .truncationMode(.tail)
-            if collapsed, let summary = counts.summary {
-                Text(summary)
-                    .font(.frog(size: 11))
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
-                    .fixedSize()
-            }
         }
+    }
+
+    /// What it's doing now or its last reply; idle, repo · turns · model. No timestamps.
+    private var second: String {
+        if let t = line.text, !t.isEmpty { return t }
+        var parts: [String] = []
+        if session.isChat { parts.append("Chat") }
+        else if let f = SessionList.worktreeName(session.folder) ?? session.folder?.lastPathComponent { parts.append(f) }
+        if let n = line.turns, n > 0 { parts.append("\(n) turn\(n == 1 ? "" : "s")") }
+        if !session.model.isEmpty { parts.append(ModelIdentity.cleanName(session.model).name) }
+        return parts.joined(separator: " · ")
     }
 
     /// Settled work reads quieter; a top-level row keeps its size so the monograms line up.
@@ -132,11 +149,6 @@ struct TreeRow<Menu: View>: View {
                 Text("\(pane)").font(.system(size: 10, weight: .semibold, design: .rounded))
                     .foregroundStyle(.secondary).help("In pane \(pane)")
             }
-            if state.settled {
-                Text(SessionAgeShort.age(session.modifiedDate, now: .now))
-                    .font(.system(size: 11, design: .rounded).monospacedDigit())
-                    .foregroundStyle(.tertiary)
-            }
             ZStack {
                 glyph.opacity(hovering ? 0 : 1)
                 SwiftUI.Menu { menu() } label: {
@@ -147,13 +159,18 @@ struct TreeRow<Menu: View>: View {
                 .opacity(hovering ? 1 : 0)
                 .allowsHitTesting(hovering)
             }
-            .frame(width: 14)
+            .frame(minWidth: 14, alignment: .trailing)
         }
+        .frame(maxHeight: .infinity, alignment: .top)
     }
 
     @ViewBuilder
     private var glyph: some View {
-        AttentionGlyph(state: state, end: session.end, nested: depth > 0, pinned: pinned)
+        if let status = RowStatus.of(state, pr: line.pr) {
+            RowStatusView(status: status).fixedSize()
+        } else if pinned {
+            Image(systemName: "pin.fill").font(.frog(size: 9)).foregroundStyle(Tokens.textTertiary).help("pinned")
+        }
     }
 
     /// As on the web: the row you're on and the row under the pointer share one quiet fill.

@@ -30,7 +30,8 @@ final class Pane: Identifiable {
     /// Terminals and previews open beside the conversation (see `PaneHub`).
     var toolCount: Int { conversation?.panes.panes.count ?? 0 }
     /// Something for the card at this pane's edge: changed files, or a terminal or preview.
-    var hasTabs: Bool { changeCount > 0 || toolCount > 0 }
+    /// The inspector, opened by its toolbar toggle, shows even before there's anything in it.
+    var hasTabs: Bool { changeCount > 0 || toolCount > 0 || (showChanges && conversation != nil) }
     /// A preview needs room to be useful; changes alone read fine narrower.
     var cardWidth: CGFloat { toolCount > 0 ? PaneArea.minWidth + 60 : WorkspaceView.changesWidth }
     var hasRail: Bool { conversation?.started ?? false }

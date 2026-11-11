@@ -84,9 +84,9 @@ struct ModelIdentity: Hashable, Sendable {
         }
     }
     /// "Qwen3 8B", "Claude Sonnet 5", "Apple Intelligence".
-    let name: String
+    var name: String
     /// "4-bit", when the model id says so. Shown only in details.
-    let variant: String?
+    var variant: String?
     let place: Place
     let abilities: Abilities
     /// Billions of parameters, when known.

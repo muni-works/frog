@@ -127,7 +127,7 @@ struct PaneView: View {
                 if let n = undoTurn?.number { Task { await workspace.rewind(toBefore: n) } }
             }
         } message: {
-            Text("Files frog edited in that turn go back to how they were, and the conversation continues from just before it. The current session is kept, so you can go back to it.")
+            Text("Files Frog edited in that turn go back to how they were, and the conversation continues from just before it. The current session is kept, so you can go back to it.")
         }
         // A new workspace in this pane starts its views fresh.
         .id(ObjectIdentifier(workspace))
@@ -223,7 +223,8 @@ struct PaneView: View {
                         PaneArea(conversation: conversation,
                                  height: max(160, room - top - (pane.hasRail ? 160 : 0)),
                                  width: .constant(pane.cardWidth),
-                                 collapse: { toggleChanges() })
+                                 collapse: { toggleChanges() },
+                                 folder: pane.workspace.isChat ? nil : pane.workspace.folder)
                             .glassEffect(.regular, in: .rect(cornerRadius: 18))
                             .glassEffectID("changes", in: glass)
                             .shadow(color: .black.opacity(pane.peekChanges && !changesDocked ? 0.35 : 0), radius: 24, y: 10)

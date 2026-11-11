@@ -203,6 +203,17 @@ final class Library {
         onOrderInvalidated?()
     }
 
+    /// Delete a session: its log goes to the Trash (recoverable from there) and its row leaves
+    /// the list. Archiving first stops anything queued for it.
+    func delete(_ id: String) {
+        setArchived(id, true)
+        let log = FrogPaths.sessions.appending(path: "\(id).jsonl")
+        try? FileManager.default.trashItem(at: log, resultingItemURL: nil)
+        archived.remove(id)
+        UserDefaults.standard.set(Array(archived), forKey: "archivedSessions")
+        onOrderInvalidated?()
+    }
+
     /// Plain chats archive themselves after this long without activity, unless pinned, live or
     /// open in a window (the sidebar's "Chats" works like a browser's today tabs).
     static let chatLifetime: TimeInterval = 12 * 3600

@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import type { SessionSummary } from '../cloud/protocol'
 import type { Thread } from '../engine/thread'
 import { outOfCredits, peek } from '../store'
+import { useLayer, useMenu } from './layers'
 
 // The sidebar's sessions, after the Mac's: quiet one-line rows filed under days, a glyph only
 // when the state means something, a second line only while a session is live or wants you,
@@ -90,10 +91,16 @@ export function SessionList(p: {
   useEffect(() => {
     if (!ctx) return
     const close = () => setCtx(null)
-    addEventListener('mousedown', close); addEventListener('keydown', close); addEventListener('blur', close)
-    return () => { removeEventListener('mousedown', close); removeEventListener('keydown', close); removeEventListener('blur', close) }
+    // Keys that move around or pick inside the menu leave it open; anything else closes it.
+    const key = (e: KeyboardEvent) => { if (!/^(Arrow|Home|End|Enter| |Tab|Shift)/.test(e.key)) close() }
+    addEventListener('mousedown', close); addEventListener('keydown', key); addEventListener('blur', close)
+    return () => { removeEventListener('mousedown', close); removeEventListener('keydown', key); removeEventListener('blur', close) }
   }, [ctx])
+  useLayer(!!ctx, () => setCtx(null))
+  const ctxNav = useMenu(ctx)
   const setView = (v: Partial<View>) => { const next = { ...view, ...v }; setViewOpts(next); try { localStorage.setItem(VIEW, JSON.stringify(next)) } catch { /* private mode */ } }
+  useLayer(menu, () => setMenu(false))
+  const viewNav = useMenu(menu)
   const [failedOpen, setFailedOpen] = useState(false)
   const [seen, setSeen] = useState(loadSeen)
   const now = Date.now()
@@ -207,7 +214,7 @@ export function SessionList(p: {
           <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8" /><circle cx="16" cy="7" r="2" /><circle cx="10" cy="17" r="2" /></svg>
         </button>
         {menu && (
-          <div className="f-card sview" role="menu" aria-label="View options">
+          <div className="f-card sview" role="menu" aria-label="View options" {...viewNav}>
             <div className="cz-menu-h">Show</div>
             {([false, true] as const).map((a) => (
               <button key={String(a)} type="button" role="menuitemradio" aria-checked={view.archived === a} onClick={() => setView({ archived: a })}>
@@ -256,7 +263,7 @@ export function SessionList(p: {
       })}
       {total > shown && <div ref={more} className="slist-more" aria-hidden="true" />}
       {ctx && (
-        <div className="f-card sctx" role="menu" style={{ left: ctx.x, top: ctx.y }} onMouseDown={(e) => e.stopPropagation()}>
+        <div className="f-card sctx" role="menu" aria-label="Session" style={{ left: ctx.x, top: ctx.y }} onMouseDown={(e) => e.stopPropagation()} {...ctxNav}>
           <button type="button" role="menuitem" onClick={() => { setCtx(null); p.onOpen(ctx.s.id); p.onRename(ctx.s) }}>Rename…</button>
           <button type="button" role="menuitem" onClick={() => { setCtx(null); p.onArchive(ctx.s, !ctx.s.archived) }}>{ctx.s.archived ? 'Unarchive' : 'Archive'}</button>
           <div className="sview-sep" />

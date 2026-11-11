@@ -6,6 +6,8 @@ import type { SessionSummary } from './cloud/protocol'
 import type { Image, Mode } from './cloud/protocol'
 import { defaultModel, idOf, spec, useModels } from './models'
 import { clearThreads, outOfCredits, pickStarters, useCloud, useRepos, useSessions, useThreads } from './store'
+import { once } from './live'
+import { useLayer, useMenu } from './ui/layers'
 import { Composer } from './ui/Composer'
 import { Pond, HowItWorks, Trust, Muni } from './ui/Pond'
 import { Inspector } from './ui/Inspector'
@@ -93,10 +95,11 @@ export default function App() {
   useEffect(() => {
     if (!menuOpen) return
     const down = (e: MouseEvent) => { if (!(e.target as Element).closest('.title-menu')) setMenuOpen(false) }
-    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenuOpen(false) }
-    addEventListener('mousedown', down); addEventListener('keydown', key)
-    return () => { removeEventListener('mousedown', down); removeEventListener('keydown', key) }
+    addEventListener('mousedown', down)
+    return () => removeEventListener('mousedown', down)
   }, [menuOpen])
+  useLayer(menuOpen, () => setMenuOpen(false))
+  const titleNav = useMenu(menuOpen)
   // Phone layout: the sidebar is a drawer, closed whenever you go somewhere.
   const [drawer, setDrawer] = useState(false)
   const [renaming, setRenaming] = useState<string | null>(null)
@@ -108,7 +111,11 @@ export default function App() {
   const setNewMode = (m: Mode) => { setNewModeState(m); try { localStorage.setItem('frog.newMode', m) } catch { /* private mode */ } }
   const toastTimer = useRef(0)
 
-  const cloud = useCloud(key)
+  // Signed out, on purpose or because the key stopped working: nothing of the account stays.
+  const signedOut = useCallback(() => {
+    signOut(); clearThreads(); setKey(null); setAccount(null); setSettings(false); setView({ kind: 'new' })
+  }, [])
+  const cloud = useCloud(key, DEV_KEY ? undefined : signedOut)
   const models = useModels(DEV_KEY ? null : key)
   // The remembered pick only while Frog Cloud still lists it (dart drops out when no GPU node
   // runs): otherwise the default, never a model nothing would answer.
@@ -121,11 +128,13 @@ export default function App() {
   // reconnect after a sandbox sleeps, so streaming every running session kept them all awake
   // (and the account at its running-sandbox limit). Other sessions show the listed state.
   const live = useMemo(() => (current && !current.id.startsWith(PENDING) ? [current.id] : []), [current])
-  const thread = useThreads(cloud, live)
+  const { thread, threads } = useThreads(cloud, live)
   const ct = current ? thread(current.id) : null
   // Plan usage and credit, near-live: after each turn (billing lands a moment later, through
   // the usage queue), every 20s while the tab is visible, and when the ring is opened.
-  const refreshAccount = useCallback(() => { if (key && !DEV_KEY) me(key).then(setAccount).catch(() => undefined) }, [key])
+  const refreshAccount = useCallback(() => {
+    if (key && !DEV_KEY) me(key).then(setAccount).catch((e) => { if (e instanceof AuthError && e.status === 401) signedOut() })
+  }, [key, signedOut])
   useEffect(() => {
     if (!ct || ct.running) return
     const t = [2000, 8000].map((ms) => setTimeout(refreshAccount, ms))
@@ -140,10 +149,11 @@ export default function App() {
   useEffect(() => { if (current && compacting[current.id] && (ct?.marks ?? []).length >= compacting[current.id]) setCompacting(({ [current.id]: _, ...rest }) => rest) }, [current, ct?.marks, compacting]) // eslint-disable-line react-hooks/exhaustive-deps
   const title = (s: SessionSummary) => thread(s.id).title ?? s.title
   // The turn ended: what was queued goes as the next turn, one Submit with the rest as `more`.
+  const fresh = useRef(once<object>()).current
   useEffect(() => {
     if (!current || !ct || ct.running || opening[current.id]) return
     const q = queue[current.id]
-    if (!q?.length) return
+    if (!q?.length || !fresh(q)) return
     const [head, ...rest] = q
     cloud?.send(current.id, { op: 'submit', text: head.text, ...(head.images.length ? { images: head.images } : {}), ...(rest.length ? { more: rest.map((m) => ({ text: m.text, ...(m.images.length ? { images: m.images } : {}) })) } : {}) })
     setQueue((all) => ({ ...all, [current.id]: [] }))
@@ -153,11 +163,14 @@ export default function App() {
     if (current && ct && ct.turns.length > 0 && opening[current.id]) setOpening(({ [current.id]: _, ...rest }) => rest)
   }, [current, ct, opening])
   // Alerts: the tab title's badge and background notifications, from every streamed session.
-  useAlerts(useMemo(() => sessions.map((s) => {
+  // Recomputed per frame (cheap), but handed on only when a signal actually changed.
+  const signals = useMemo(() => sessions.map((s) => {
     const t = thread(s.id)
     const waiting = t.ask ? `Can I ${t.ask.name.toLowerCase()} ${t.ask.arg}?` : t.question ? t.question.question : t.elicitation ? `${t.elicitation.server} needs your input` : null
     return { id: s.id, title: t.title ?? s.title, waiting, finished: !t.running && t.ended?.type === 'complete' }
-  }), [sessions, thread]), useCallback((id: string) => setView({ kind: 'session', id }), []))
+  }), [sessions, thread, threads])
+  const signalKey = JSON.stringify(signals)
+  useAlerts(useMemo(() => signals, [signalKey]), useCallback((id: string) => setView({ kind: 'session', id }), [])) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => setDrawer(false), [view])
   // The sidebar folds away on wide screens (⌘\\), as on the Mac; remembered per browser.
@@ -203,12 +216,15 @@ export default function App() {
       if (!k || DEV_KEY) return
       setAccount(await me(k))
     }).catch((e) => {
-      if (e instanceof AuthError && e.status === 401) { signOut(); clearThreads(); setKey(null); return }
+      if (e instanceof AuthError && e.status === 401) { signedOut(); return }
       setAuthError(e instanceof AuthError ? e.code : friendly(e))
     })
   }, [])
 
-  useEffect(() => cloud?.watch((id, s) => setConn((all) => ({ ...all, [id]: s }))), [cloud])
+  useEffect(() => cloud?.watch((id, s) => {
+    setConn((all) => ({ ...all, [id]: s }))
+    if (s.state === 'unauthorized' && !DEV_KEY) signedOut()
+  }), [cloud, signedOut])
 
   // What you sent, shown at once: until the engine starts it as a turn it waits here, with a
   // clock (queued until the socket is up), one tick (on the wire), or Not sent.
@@ -434,7 +450,7 @@ export default function App() {
                   <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6" /></svg>
                 </button>
                 {menuOpen && (
-                  <div className="f-card cz-menu" role="menu" style={{ top: 30, bottom: 'auto', left: 0, right: 'auto', width: 200 }} onMouseLeave={() => setMenuOpen(false)}>
+                  <div className="f-card cz-menu" role="menu" aria-label="Session" style={{ top: 30, bottom: 'auto', left: 0, right: 'auto', width: 200 }} onMouseLeave={() => setMenuOpen(false)} {...titleNav}>
                     <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); setRenaming(current.id) }}>Rename</button>
                     <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); archive(current, !current.archived) }}>{current.archived ? 'Unarchive' : 'Archive'}</button>
                     <button type="button" role="menuitem" style={{ color: 'var(--warn)' }} onClick={() => { setMenuOpen(false); remove(current) }}>Delete session</button>
@@ -557,7 +573,7 @@ export default function App() {
 
       {palette && <Palette commands={commands} sessions={sessions} onOpen={(id) => setView({ kind: 'session', id })} onClose={() => setPalette(false)}
         text={(id) => thread(id).turns.flatMap((u) => [u.input, ...u.entries.filter((e) => e.kind === 'message').map((e) => e.text)]).join('\n')} />}
-      {settings && <Settings account={account} apiKey={key && !DEV_KEY ? key : undefined} tab={settingsTab} models={models} onTopUp={key && !DEV_KEY ? (d) => topUp(key, d) : undefined} onSubscribe={key && !DEV_KEY ? (p) => subscribe(key, p) : undefined} onConnect={key && !DEV_KEY ? (p) => leave(null, p, key, false) : undefined} onSignOut={() => { setSettings(false); signOut(); clearThreads(); setKey(null); setAccount(null); setView({ kind: 'new' }) }} onClose={() => setSettings(false)} />}
+      {settings && <Settings account={account} apiKey={key && !DEV_KEY ? key : undefined} tab={settingsTab} models={models} onTopUp={key && !DEV_KEY ? (d) => topUp(key, d) : undefined} onSubscribe={key && !DEV_KEY ? (p) => subscribe(key, p) : undefined} onConnect={key && !DEV_KEY ? (p) => leave(null, p, key, false) : undefined} onSignOut={signedOut} onClose={() => setSettings(false)} />}
       {toast && <div className="toast" role="status">{toast}</div>}
     </div>
   )

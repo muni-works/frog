@@ -1,10 +1,10 @@
-import { Fragment, memo, useMemo, useState, type ReactNode } from 'react'
+import { Fragment, memo, useMemo, useRef, useState, type ReactNode } from 'react'
 
 // Replies as Markdown: fenced code (with Copy), headings, lists, quotes, rules, tables and
 // inline code, bold, italics and links. Built as React elements, never HTML strings, so model
 // output can't inject markup. Links are http(s) and mailto only.
 
-type Block =
+export type Block =
   | { k: 'code'; lang: string; text: string; open: boolean }
   | { k: 'h'; level: number; text: string }
   | { k: 'list'; ordered: boolean; start: number; items: string[] }
@@ -75,6 +75,37 @@ export function parse(src: string): Block[] {
   return out
 }
 
+/** Where `src` can be cut so that parse(head) ++ parse(tail) == parse(src): the end of the last
+ * blank line outside a code fence (every block ends at a blank line in this grammar), or 0. */
+export function stableCut(src: string): number {
+  const text = src.replace(/\r\n?/g, '\n')
+  let cut = 0, fence: string | null = null, pos = 0, prevBlank = false
+  for (const line of text.split('\n')) {
+    const f = line.match(/^\s*(`{3,}|~{3,})/)
+    if (fence) { if (f && line.trimStart().startsWith(fence)) fence = null }
+    else if (f) fence = f[1]
+    else if (line.trim() === '' && !prevBlank) cut = pos
+    prevBlank = !fence && line.trim() === ''
+    pos += line.length + 1
+  }
+  return text === src ? cut : 0
+}
+
+/** A streaming reply's blocks: the part before the last safe cut is parsed once and reused while
+ * only the tail grows. `cache` holds the last head and its blocks. */
+export function parseStreaming(src: string, cache: { head: string; blocks: Block[] }): Block[] {
+  const cut = stableCut(src)
+  const head = src.slice(0, cut)
+  if (head !== cache.head) {
+    // Usually the old head plus a few new blocks: parse just what was added to it.
+    cache.blocks = head.startsWith(cache.head) && stableCut(cache.head) === cache.head.length
+      ? [...cache.blocks, ...parse(head.slice(cache.head.length))]
+      : parse(head)
+    cache.head = head
+  }
+  return [...cache.blocks, ...parse(src.slice(cut))]
+}
+
 const SAFE = /^(https?:|mailto:)/i
 
 /** Inline Markdown into React nodes: `code`, **bold**, *em*, [links](url), bare URLs. */
@@ -119,7 +150,9 @@ function Code({ lang, text }: { lang: string; text: string }) {
 
 /** Memoized on the text: a finished message isn't parsed again while another one streams. */
 export const Markdown = memo(function Markdown({ text }: { text: string }) {
-  const blocks = useMemo(() => parse(text), [text])
+  // While it streams, only the last block is parsed again on each new token.
+  const cache = useRef<{ head: string; blocks: Block[] }>({ head: '', blocks: [] })
+  const blocks = useMemo(() => parseStreaming(text, cache.current), [text])
   return (
     <div className="md">
       {blocks.map((b, i) => {

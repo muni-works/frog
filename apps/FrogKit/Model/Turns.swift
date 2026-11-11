@@ -11,7 +11,43 @@ struct ItemState: Identifiable {
 
     let id: String
     var kind: Kind
-    var text = ""
+    /// The item's text. For an answer that's streaming, the newest text lives in `live` and this
+    /// reads it without registering an observation: the transcript's structure (rows, flows,
+    /// equality) reads `text`, and a streamed delta must not re-run all of that (see `LiveText`).
+    /// A view that shows the words as they arrive reads `streamedText` instead.
+    var text: String {
+        get { live?.raw ?? stored }
+        set { live = nil; stored = newValue }
+    }
+    private var stored = ""
+    /// The streaming answer's text, while it streams (see `LiveText`). Shared by every copy of
+    /// this item, so a row holding an older copy still shows the newest words.
+    private(set) var live: LiveText?
+    /// The text, observed: for the one view that draws the answer as it streams.
+    var streamedText: String { live?.text ?? stored }
+
+    /// Append streamed text. Returns true when that's a change the transcript's structure can
+    /// see (the first words, or the first time the item streams), which the caller writes
+    /// through the conversation's `turns` as before; otherwise only `live` changed, and only
+    /// views reading `streamedText` update.
+    mutating func appendStreamed(_ t: String) -> Bool {
+        if let live {
+            let wasBlank = live.blank
+            live.append(t)
+            return wasBlank != live.blank
+        }
+        let box = LiveText(stored)
+        box.append(t)
+        live = box
+        return true
+    }
+
+    /// Done streaming: the text goes back to plain storage.
+    mutating func settleStreamed() {
+        guard let live else { return }
+        stored = live.raw
+        self.live = nil
+    }
     /// Live output from a running tool.
     var output = ""
     var result: Item.ToolResult?
@@ -28,6 +64,43 @@ struct ItemState: Identifiable {
     /// When the engine started and finished it, for "Thought for 2s" and the live line.
     var startedAt: Date?
     var endedAt: Date?
+
+    init(id: String, kind: Kind, text: String = "", output: String = "", result: Item.ToolResult? = nil,
+         imagePreview: ToolImage? = nil, done: Bool = false, needsPermission: Bool = false,
+         progress: ToolProgress? = nil, subagent: SubagentRun? = nil, autoReason: String? = nil,
+         startedAt: Date? = nil, endedAt: Date? = nil) {
+        self.id = id; self.kind = kind; stored = text; self.output = output; self.result = result
+        self.imagePreview = imagePreview; self.done = done; self.needsPermission = needsPermission
+        self.progress = progress; self.subagent = subagent; self.autoReason = autoReason
+        self.startedAt = startedAt; self.endedAt = endedAt
+    }
+}
+
+/// An answer's text while it streams, outside `Conversation.turns`: appending to it doesn't
+/// mutate the turns array, so only the answer's own row (which reads `text`, observed) updates
+/// on a delta, rather than the transcript's body and every row's equality check (measured: most
+/// of streaming's CPU on a 300-turn session).
+@Observable
+final class LiveText {
+    /// Observed: the answer's view reads this.
+    private(set) var text: String
+    /// The same text, unobserved: what the rest of the app reads.
+    @ObservationIgnored private(set) var raw: String
+    /// No visible characters yet (a message that hasn't said anything doesn't break its group).
+    @ObservationIgnored private(set) var blank: Bool
+
+    init(_ text: String) {
+        self.text = text
+        raw = text
+        blank = text.allSatisfy(\.isWhitespace)
+    }
+
+    func append(_ t: String) {
+        guard !t.isEmpty else { return }
+        raw += t
+        if blank, !t.allSatisfy(\.isWhitespace) { blank = false }
+        text = raw
+    }
 }
 
 /// A subagent's run as it streams in: its items (thinking, tool calls, the report being

@@ -48,7 +48,24 @@ struct ModelStateAction: View {
 extension Workspace {
     /// The identity of one of this folder's models, or of any spec.
     func identity(_ spec: String) -> ModelIdentity {
-        ModelIdentity.of(spec, in: models)
+        var m = ModelIdentity.of(spec, in: models)
+        // A pooled model (`node/<hash>`) is named by the node that has it, never its hash.
+        if spec.hasPrefix("node/") {
+            let named = Devices.shared.serving(model: spec).model
+            if let pooled = Self.pooledName(spec: spec, named: named) { m.name = pooled; m.variant = nil }
+        }
+        return m
+    }
+
+    /// The display name for a pooled model, when a node reports one; nil leaves the identity's
+    /// own name (which, for a bare hash, is what the bug showed).
+    nonisolated static func pooledName(spec: String, named: String) -> String? {
+        let short = String(spec.split(separator: "/", maxSplits: 1).last ?? "")
+        if !named.isEmpty, named != short { return ModelIdentity.cleanName(named).name }
+        // No node has said what it is yet: a hash means nothing to a person.
+        let hash = short.split(separator: "@").first ?? ""
+        let hex = hash.count >= 8 && hash.allSatisfy(\.isHexDigit)
+        return hex ? "Shared model" : nil
     }
 }
 
