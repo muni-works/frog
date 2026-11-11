@@ -5,6 +5,7 @@ import type { Thread } from '../engine/thread'
 import { outOfCredits, peek } from '../store'
 import { plainError } from '../errors'
 import { useLayer, useMenu } from './layers'
+import { askLine } from './ask'
 import { indented } from './nest'
 
 // The sidebar's sessions, after the Mac's: quiet one-line rows filed under days, a glyph only
@@ -14,7 +15,7 @@ import { indented } from './nest'
 type Glyph = 'run' | 'ask' | 'unread' | 'fail' | 'paused' | null
 
 function look(s: SessionSummary, t: Thread, unread: boolean): { glyph: Glyph; detail: string | null } {
-  if (t.ask) return { glyph: 'ask', detail: `Can I ${t.ask.name.toLowerCase()} ${t.ask.arg}?` }
+  if (t.ask) return { glyph: 'ask', detail: askLine(t.ask.name, t.ask.arg) }
   if (t.question) return { glyph: 'ask', detail: t.question.question }
   if (t.elicitation) return { glyph: 'ask', detail: `${t.elicitation.server} needs your input` }
   if (outOfCredits(t)) return { glyph: 'paused', detail: 'Paused · out of credits' }
@@ -199,7 +200,7 @@ export function SessionList(p: {
                 {s.pr.replace(/^#/, '')}
               </span>
             )}
-            {status ? <span className={`sstate sstate-${glyph}`}><span className={`sg sg-${glyph}`} />{status}</span>
+            {status ? <span className={`sstate sstate-${glyph}`} title={status} aria-label={status}><span className={`sg sg-${glyph}`} />{glyph === 'run' || glyph === 'ask' ? null : status}</span>
               : glyph === 'unread' ? <span className="sg sg-unread" aria-label="New" />
               : null}
           </span>

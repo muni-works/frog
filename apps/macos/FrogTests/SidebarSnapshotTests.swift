@@ -216,7 +216,7 @@ final class SidebarSnapshotTests: XCTestCase {
                 sessions: sessions,
                 live: ["lead": .running, "engine": .running, "tree": .waiting],
                 parents: ["engine": "lead", "tree": "lead", "webnest": "lead"],
-                asks: ["tree": "Bash cargo test -p frog-engine kids"])
+                asks: ["tree": AskPhrase.line(name: "Bash", arg: "cargo test -p frog-engine kids")])
         }
         restage()
         GitIndex.shared.stage([

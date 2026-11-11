@@ -102,18 +102,14 @@ struct RowStatusView: View {
 
     var body: some View {
         switch status {
+        // One signal per state: the dot says that, the row's second line says what (the
+        // step in hand, the ask). The words live in the tooltip and for VoiceOver.
         case .running:
-            HStack(spacing: 5) {
-                BreathingDot(live: true)
-                Text("Running").foregroundStyle(Tokens.textSecondary)
-            }
-            .font(.frog(size: Tokens.Size.label))
+            BreathingDot(live: true)
+                .help("Running").accessibilityLabel("Running")
         case .needsYou:
-            // As on the web: an orange dot, then the words.
-            HStack(spacing: 5) {
-                Circle().fill(Tokens.signal).frame(width: 7, height: 7)
-                Text("Needs you").font(.frog(size: Tokens.Size.label, weight: .medium)).foregroundStyle(Tokens.signal)
-            }
+            Circle().fill(Tokens.signal).frame(width: 7, height: 7)
+                .help("Needs you").accessibilityLabel("Needs you")
         case .failed:
             Text("Failed").font(.frog(size: Tokens.Size.label, weight: .medium)).foregroundStyle(Tokens.fail)
         case .pr(let n):
