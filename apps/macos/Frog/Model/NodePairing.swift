@@ -219,33 +219,71 @@ struct PairedStore {
 
     // MARK: Keychain
 
-    private func query(_ nodeID: String) -> [String: Any] {
-        [kSecClass as String: kSecClassGenericPassword,
-         kSecAttrService as String: service,
-         kSecAttrAccount as String: "node:\(nodeID)"]
-    }
-
-    func key(for nodeID: String) -> String? {
-        var q = query(nodeID)
-        q[kSecReturnData as String] = true
-        var out: AnyObject?
-        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let d = out as? Data else { return nil }
-        return String(data: d, encoding: .utf8)
-    }
-
-    private func setKey(_ key: String, for nodeID: String) throws {
-        deleteKey(nodeID)
-        var q = query(nodeID)
-        q[kSecValueData as String] = Data(key.utf8)
-        q[kSecAttrLabel as String] = "frog node \(nodeID)"
-        let status = SecItemAdd(q as CFDictionary, nil)
-        guard status == errSecSuccess else {
-            throw NSError(domain: NSOSStatusErrorDomain, code: Int(status),
-                          userInfo: [NSLocalizedDescriptionKey: "Keychain refused the node's key (\(status))."])
+    // Through `/usr/bin/security`, the way the engine reads and writes provider keys: an item
+    // the app made with SecItemAdd is the app's, so the engine's `security` read of it asked for
+    // the login password on every poll. Made by `security`, both sides read it without asking.
+    // Keys are cached here once read; they only change when pairing or un-pairing.
+    private static let cache = KeyCache()
+    private final class KeyCache: @unchecked Sendable {
+        private let lock = NSLock()
+        private var keys: [String: String] = [:]
+        subscript(_ id: String) -> String? {
+            get { lock.withLock { keys[id] } }
+            set { lock.withLock { keys[id] = newValue } }
         }
     }
 
-    private func deleteKey(_ nodeID: String) { SecItemDelete(query(nodeID) as CFDictionary) }
+    func key(for nodeID: String) -> String? {
+        if let k = Self.cache[nodeID] { return k }
+        let out = Self.security(["find-generic-password", "-s", service, "-a", "node:\(nodeID)", "-w"])
+        guard out.ok else { return nil }
+        let k = out.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !k.isEmpty else { return nil }
+        Self.cache[nodeID] = k
+        return k
+    }
+
+    private func setKey(_ key: String, for nodeID: String) throws {
+        // The key is base64url with a prefix; it never needs quoting beyond this. It goes over
+        // stdin to `security -i`, never on a command line where `ps` would show it.
+        guard key.allSatisfy({ $0.isLetter || $0.isNumber || "_-".contains($0) }) else {
+            throw NSError(domain: "frog.node", code: 1, userInfo: [NSLocalizedDescriptionKey: "The node sent a malformed key."])
+        }
+        // `security` run by the app is credited to the app, so name both explicitly: the app,
+        // and `security` itself (which the engine reads keys with).
+        let line = "add-generic-password -U -s \(service) -a \"node:\(nodeID)\" -l \"frog node \(nodeID)\""
+            + " -T /usr/bin/security -T \"\(Bundle.main.bundlePath)\" -w \"\(key)\"\n"
+        let out = Self.security(["-i"], stdin: line)
+        guard out.ok, !out.err.contains("error") else {
+            throw NSError(domain: "frog.node", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: "Keychain refused the node's key: \(out.err.trimmingCharacters(in: .whitespacesAndNewlines))"])
+        }
+        Self.cache[nodeID] = key
+    }
+
+    private func deleteKey(_ nodeID: String) {
+        Self.cache[nodeID] = nil
+        _ = Self.security(["delete-generic-password", "-s", service, "-a", "node:\(nodeID)"])
+    }
+
+    private static func security(_ args: [String], stdin: String? = nil) -> (ok: Bool, text: String, err: String) {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+        p.arguments = args
+        let out = Pipe(), err = Pipe(), inp = Pipe()
+        p.standardOutput = out
+        p.standardError = err
+        if stdin != nil { p.standardInput = inp }
+        do { try p.run() } catch { return (false, "", error.localizedDescription) }
+        if let stdin {
+            inp.fileHandleForWriting.write(Data(stdin.utf8))
+            try? inp.fileHandleForWriting.close()
+        }
+        let o = out.fileHandleForReading.readDataToEndOfFile()
+        let e = err.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        return (p.terminationStatus == 0, String(decoding: o, as: UTF8.self), String(decoding: e, as: UTF8.self))
+    }
 }
 
 /// This Mac's stable pairing identity.
