@@ -19,6 +19,22 @@ Each `*.dc.html` file is one board. `canvas.json` holds the layout. `ds/frog/` h
 - **Dark is the default.** Every board renders dark, and each has a theme switch to view it in light.
 - **Open:** onboarding without sign-up, i.e. a guest allowance on web and iPhone. This is under discussion and not designed yet.
 
+## One look (Mac and web), decided 2026-11-11
+
+The Mac app and the web app are one design. Where this section and "as built" below differ, this wins.
+
+- **One token source.** Colours (dark and light), radii, type sizes, spacing and fonts live in [`design/tokens.json`](../../../design/tokens.json). `node design/generate.mjs` writes `apps/web/src/tokens.css` and `apps/FrogKit/UI/Basics/Tokens.swift`; tests on both sides (`apps/web/test/tokens.test.ts`, `FrogTests/TokensTests.swift`) fail if either drifts. Nothing else sets a palette value.
+- **Surfaces:** dark page `#000`, sidebar and inspector `#0a0a0a`, cards, bubbles and composer `#121212`, wells `#1a1a1a`, hover 7% white. Light: `#fff`, `#fafafa`, `#f4f4f4`, `#ececec`, hover 5% black.
+- **Frame:** the Mac's inset rounded sidebar panel (`#0a0a0a`, 12 px radius, 8 px margin) on a true-black page.
+- **Session rows:** status on the right (Running with a breathing dot, Needs you, Failed, PR); the second line is what it's doing or its last reply; no timestamps; a green dot for a finished turn you haven't seen.
+- **Title bar:** the title and a ⌄ menu (Rename, Archive, Delete); no folder line; the inspector toggle on the right.
+- **Transcript:** your message in a right-aligned bubble. Activity lines are icon + verb + mono argument ("Read `x`", "Ran `cmd`", "Edited `f` +6 −3") with a › disclosure. Thinking is one quiet line with a breathing dot. Ask cards put the command in a well, with Deny and Allow ⌘↩.
+- **Composer:** + and send (a green circle) inside the box; the Mac adds the mic inside too. Placeholder "Reply to Frog, @ a file, ! a command". Below it: mode, then where it runs (Mac: a device chip, "on mew · 58 tok/s"; web: "Frog Cloud" and a repo pill), then the model and the ring on the right.
+- **Inspector:** one panel with Changes, Terminal and Preview tabs.
+- **Copy:** "Frog", capitalised.
+- **Still to converge:** text and state colours. The Mac uses translucent text (`text`, `textSecondary`…) and `signal`/`fail`; the web uses solid `fg`/`muted`/`faint` and `notice`/`warn`. Both sets are in the JSON so each app keeps rendering as today; pick one set and delete the other.
+- **Proof:** [`docs/design/parity`](../parity/README.md) renders one fixture session in both apps at the same size, side by side.
+
 ## The web app as built (supersedes the boards where they differ)
 
 The boards are the starting point. The shipped web app (`apps/web`, live at frog.toys) has moved on. This section is the source of truth.
