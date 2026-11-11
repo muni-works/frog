@@ -506,15 +506,20 @@ struct FrogCloudCard: View {
 
     static let getKeyURL = URL(string: "https://api.frog.toys/beta")!
     @State private var signingIn: Task<Void, Never>?
+    /// Why the last sign-in didn't finish (nil once you cancel or retry), and with what.
+    @State private var failure: String?
+    @State private var lastProvider = "github"
 
     /// GitHub or Google in the browser, back to this Mac with its own key, saved where frog reads it.
     private func signIn(_ provider: String = "github") {
+        failure = nil
+        lastProvider = provider
         signingIn = Task {
             defer { signingIn = nil }
             do {
                 try await CloudAccount.signInAndSave(provider: provider)
             } catch {
-                if let failure = CloudAccount.signInFailure(error) { store.error = failure }
+                failure = CloudAccount.signInFailure(error)
             }
         }
     }
@@ -548,6 +553,14 @@ struct FrogCloudCard: View {
                     .font(.frog(size: 10))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                if let failure, signingIn == nil {
+                    HStack(spacing: 6) {
+                        Text(failure).font(.frog(size: 10)).foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button("Try Again") { signIn(lastProvider) }
+                            .controlSize(.mini)
+                    }
+                }
             }
             Spacer()
             if provider?.key == nil {

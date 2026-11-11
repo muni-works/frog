@@ -88,6 +88,8 @@ final class MacLender: ObservableObject {
         }
         do {
             try p.run()
+            // Ends with the app, even on a crash: it was left serving, ppid 1, before.
+            ParentWatch.watch(child: p.processIdentifier)
             process = p
             state = .starting
             Task { await waitHealthy(p) }

@@ -43,7 +43,7 @@ final class CloudSessions {
             error = nil
             Library.shared.cloudChanged(sessions)
         } catch {
-            self.error = error.localizedDescription
+            self.error = CloudFailure.text(error, doing: "load your Frog Cloud sessions")
         }
     }
 
