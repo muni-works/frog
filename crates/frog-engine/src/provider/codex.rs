@@ -293,6 +293,7 @@ mod tests {
             think: None,
             think_budget: None,
             cache_key: None,
+            background: false,
         };
         let mut streamed = String::new();
         let resp = c

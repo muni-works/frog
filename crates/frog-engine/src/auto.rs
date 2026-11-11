@@ -528,6 +528,7 @@ impl Classifier {
             think: self.think,
             think_budget: None,
             cache_key: None,
+            background: true,
         };
         // A fast small model with a grammar: seconds, not minutes. Slower than
         // this and asking the user is the better use of everyone's time. 3s for
@@ -646,6 +647,7 @@ impl Classifier {
             think: self.think,
             think_budget: None,
             cache_key: None,
+            background: true,
         };
         let mut ignore = |_: crate::provider::StreamEvent| {};
         // The second pass fires on maybe one flagged call in dozens; a little

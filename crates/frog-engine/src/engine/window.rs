@@ -525,6 +525,7 @@ Not saved: the next session starts on {from} again"
             think: None,
             think_budget: None,
             cache_key: Some(&self.conv.session_id),
+            background: true,
         };
         let Some(prefill) = self.provider.prefill(&req) else {
             return;

@@ -151,6 +151,7 @@ pub async fn write_with(
         think: Some(false),
         think_budget: None,
         cache_key: None,
+        background: true,
     };
     let provider = match provider(&profile).await {
         Ok(p) => p,

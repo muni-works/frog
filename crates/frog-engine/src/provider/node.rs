@@ -5,7 +5,7 @@
 
 use super::{HttpError, Request, Response, Stop, StreamEvent, openai};
 use crate::config::Profile;
-use crate::nodes::{Placed, Pool};
+use crate::nodes::{Call, Placed, Pool, Sample, Step};
 use crate::protocol::RanOn;
 use anyhow::{Result, anyhow};
 use std::sync::{Arc, Mutex};
@@ -104,27 +104,26 @@ impl Client {
         self.last.lock().unwrap().as_ref().map(Placed::ran_on)
     }
 
-    fn pins(&self) -> Vec<String> {
-        self.pin
-            .iter()
-            .cloned()
-            .chain(
-                self.last
-                    .lock()
-                    .unwrap()
-                    .as_ref()
-                    .map(|p| p.node_id.clone()),
-            )
-            .collect()
+    /// Place a call (`req` None: just somewhere that has the model).
+    fn place(&self, req: Option<&Request<'_>>) -> Result<Placed, String> {
+        let last = self
+            .last
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|p| p.node_id.clone());
+        let call = Call {
+            pin: self.pin.as_deref(),
+            last: last.as_deref(),
+            cache_key: req.and_then(|r| r.cache_key),
+            prompt_tokens: req.map_or(0, prompt_tokens),
+            step: req.map_or(Step::Answer, step),
+            background: req.is_some_and(|r| r.background),
+        };
+        self.pool.schedule(&self.hash, &call)
     }
 
-    fn place(&self) -> Result<Placed, String> {
-        let pins = self.pins();
-        let pins: Vec<&str> = pins.iter().map(String::as_str).collect();
-        self.pool.place(&self.hash, &pins)
-    }
-
-    fn openai(&self, at: &Placed) -> openai::Client {
+    fn openai(&self, at: &Placed, background: bool) -> openai::Client {
         openai::Client {
             http: self.pool.http.clone(),
             base: format!("{}/v1", at.base.trim_end_matches('/')),
@@ -132,6 +131,11 @@ impl Client {
             key: at.key.clone(),
             extra: self.extra.clone(),
             anthropic: self.anthropic.clone(),
+            priority: Some(if background {
+                "background"
+            } else {
+                "interactive"
+            }),
         }
     }
 
@@ -143,8 +147,8 @@ impl Client {
 
     pub async fn capabilities(&self) -> Option<Vec<String>> {
         self.pool.ensure_fresh().await;
-        let at = self.place().ok()?;
-        self.openai(&at).capabilities().await
+        let at = self.place(None).ok()?;
+        self.openai(&at, false).capabilities().await
     }
 
     pub async fn complete(
@@ -159,16 +163,36 @@ impl Client {
             }
         }
         self.pool.ensure_fresh().await;
-        let at = self.place().map_err(NoPlacement)?;
-        let client = self.openai(&at);
+        let mut at = self.place(Some(req)).map_err(NoPlacement)?;
+        if let Some(model) = at.start.take() {
+            // The best (or only) place is this Mac's tang, which isn't running: start it.
+            if let Err(e) = self.pool.start_local(&model).await {
+                self.pool.mark_down(crate::nodes::LOCAL_ID);
+                return Err(NoPlacement(format!("couldn't start this Mac's tang: {e:#}")).into());
+            }
+            at = self.place(Some(req)).map_err(NoPlacement)?;
+            if at.start.is_some() {
+                self.pool.mark_down(crate::nodes::LOCAL_ID);
+                return Err(NoPlacement(
+                    "this Mac's tang started but doesn't serve this model".into(),
+                )
+                .into());
+            }
+        }
+        let _flight = self.pool.begin(&at, req.background);
+        let client = self.openai(&at, req.background);
         let timing = self.pool.timing.clone();
         // The last byte's time (None before the first), read by the stall watch.
         let last = Arc::new(Mutex::new(None::<Instant>));
         let heard = last.clone();
+        let first = Arc::new(Mutex::new(None::<Instant>));
+        let first_heard = first.clone();
         let started = Instant::now();
         let r = {
             let mut forward = |e: StreamEvent| {
-                *heard.lock().unwrap() = Some(Instant::now());
+                let now = Instant::now();
+                *heard.lock().unwrap() = Some(now);
+                first_heard.lock().unwrap().get_or_insert(now);
                 on(e)
             };
             let call = client.complete(req, &mut forward);
@@ -199,7 +223,7 @@ impl Client {
                 *last = None;
             }
             drop(last);
-            let next = self.place().ok().map(|p| p.label().to_string());
+            let next = self.place(Some(req)).ok().map(|p| p.label().to_string());
             anyhow!(NodeFailed {
                 from: at.label().to_string(),
                 next,
@@ -211,6 +235,21 @@ impl Client {
                 Err(failed("the reply ended before it finished".into()))
             }
             Ok(mut resp) => {
+                let first = *first.lock().unwrap();
+                self.pool.observe(
+                    &at,
+                    if req.background {
+                        Step::Background
+                    } else {
+                        step(req)
+                    },
+                    Sample {
+                        prefilled: resp.usage.input,
+                        output: resp.usage.output,
+                        first_byte: first.map(|t| t - started),
+                        total: started.elapsed(),
+                    },
+                );
                 resp.usage.ran_on = Some(at.ran_on());
                 *self.last.lock().unwrap() = Some(at);
                 Ok(resp)
@@ -218,6 +257,31 @@ impl Client {
             Err(e) if node_gone(&e) => Err(failed(format!("{e:#}"))),
             Err(e) => Err(e),
         }
+    }
+}
+
+/// The prompt's size in tokens, roughly (four characters each), for the finish estimate.
+fn prompt_tokens(req: &Request<'_>) -> u64 {
+    let msgs = serde_json::to_string(req.messages).map_or(0, |s| s.len());
+    let tools: usize = req
+        .tools
+        .iter()
+        .map(|t| t.name.len() + t.description.len() + t.schema.to_string().len())
+        .sum();
+    ((req.system.len() + msgs + tools) / 4) as u64
+}
+
+/// What a call is likely to write: after tool results, usually the next tool call.
+fn step(req: &Request<'_>) -> Step {
+    let after_tools = req.messages.last().is_some_and(|m| {
+        m.content
+            .iter()
+            .any(|b| matches!(b, crate::message::Block::ToolResult { .. }))
+    });
+    if after_tools {
+        Step::Tool
+    } else {
+        Step::Answer
     }
 }
 
@@ -241,6 +305,10 @@ mod tests {
     const Q4: &str = "aa11bb22cc33dd44";
 
     async fn call(c: &Client) -> (Result<Response>, String) {
+        call_as(c, false).await
+    }
+
+    async fn call_as(c: &Client, background: bool) -> (Result<Response>, String) {
         let messages = vec![Message {
             role: Role::User,
             content: vec![Block::Text { text: "hi".into() }],
@@ -254,6 +322,7 @@ mod tests {
             think: None,
             think_budget: None,
             cache_key: None,
+            background,
         };
         let mut seen = String::new();
         let r = c
@@ -321,5 +390,93 @@ mod tests {
         let (r, _) = call(&c).await;
         assert!(r.err().unwrap().downcast_ref::<NoPlacement>().is_some());
         assert_eq!(quiet.chats(), 1);
+    }
+
+    #[tokio::test]
+    async fn calls_say_their_priority() {
+        let node = spawn(
+            "fa",
+            900,
+            vec![("org/Qwen3-4B", Q4, true)],
+            Chat::Reply("hi"),
+        )
+        .await;
+        let pool = crate::nodes::Pool::fixed(vec![paired("mew", "fa", &node)], None, quick());
+        let c = Client::new(pool, "aa11bb22cc33", None);
+        assert!(call_as(&c, false).await.0.is_ok());
+        assert!(call_as(&c, true).await.0.is_ok());
+        assert_eq!(
+            *node.priorities.lock().unwrap(),
+            vec!["interactive".to_string(), "background".to_string()]
+        );
+    }
+
+    /// A pool whose local tang isn't running yet, and starts (as a fake) on demand.
+    fn startable(
+        paired: Vec<crate::nodes::Paired>,
+    ) -> (
+        Arc<crate::nodes::Pool>,
+        Arc<std::sync::atomic::AtomicUsize>,
+        Arc<Mutex<Option<crate::nodes::fake::Fake>>>,
+    ) {
+        let addr = crate::nodes::fake::reserve();
+        let starts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let up = Arc::new(Mutex::new(None));
+        let (count, keep) = (starts.clone(), up.clone());
+        let start = crate::nodes::LocalStart {
+            catalog: Box::new(|| vec![(Q4.to_string(), "org/Qwen3-4B".to_string())]),
+            start: Box::new(move |model| {
+                let (count, keep) = (count.clone(), keep.clone());
+                Box::pin(async move {
+                    assert_eq!(model, "org/Qwen3-4B");
+                    count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    let f = crate::nodes::fake::spawn_at(
+                        addr,
+                        "fc",
+                        vec![("org/Qwen3-4B", Q4, true)],
+                        Chat::Reply("from the mac"),
+                    )
+                    .await;
+                    *keep.lock().unwrap() = Some(f);
+                    Ok(())
+                })
+            }),
+        };
+        let pool =
+            crate::nodes::Pool::fixed_with_start(paired, format!("http://{addr}"), quick(), start);
+        (pool, starts, up)
+    }
+
+    #[tokio::test]
+    async fn an_unstarted_local_tang_is_started_when_it_is_the_only_place() {
+        let (pool, starts, _up) = startable(vec![]);
+        let c = Client::new(pool, "aa11bb22cc33", None);
+        let (r, text) = call(&c).await;
+        let resp = r.unwrap();
+        assert_eq!(text, "from the mac");
+        assert!(resp.usage.ran_on.unwrap().local);
+        // Running now: the next call doesn't start it again.
+        assert!(call(&c).await.0.is_ok());
+        assert_eq!(starts.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn failover_starts_this_macs_tang() {
+        let dead = spawn("fa", 900, vec![("org/Qwen3-4B", Q4, true)], Chat::Fail).await;
+        let (pool, starts, _up) = startable(vec![paired("mew", "fa", &dead)]);
+        let c = Client::new(pool, "aa11bb22cc33", None);
+        let (r, _) = call(&c).await;
+        let e = r.err().unwrap();
+        let f = e.downcast_ref::<NodeFailed>().expect("a node failure");
+        assert_eq!(
+            f.notice().unwrap(),
+            "mew stopped answering; finishing on this Mac"
+        );
+        // Not started for a node that answered: only when this Mac is where the call goes.
+        assert_eq!(starts.load(std::sync::atomic::Ordering::SeqCst), 0);
+        let (r, text) = call(&c).await;
+        assert_eq!(text, "from the mac");
+        assert!(r.unwrap().usage.ran_on.unwrap().local);
+        assert_eq!(starts.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 }

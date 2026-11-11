@@ -434,6 +434,7 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         think: Some(false),
         think_budget: None,
         cache_key: None,
+        background: false,
     };
     if let Some(tx) = &ctx.progress {
         let _ = tx.send("Judging full images and worst-region crops…".into());

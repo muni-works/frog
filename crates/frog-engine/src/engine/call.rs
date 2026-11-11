@@ -179,6 +179,8 @@ impl Agent {
             think,
             think_budget,
             cache_key: self.cache_key_ok.then_some(self.conv.session_id.as_str()),
+            // Subagents and compaction run beside the conversation: background on a node.
+            background: self.subagent || label == "compacting",
         };
         let (extends, reusable) = {
             let flat = flatten(&system, tools, messages);
