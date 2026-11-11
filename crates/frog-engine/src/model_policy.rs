@@ -295,8 +295,8 @@ mod tests {
     #[test]
     fn the_tiers_are_frog_cloud_this_machine_and_your_own_accounts() {
         let cloud = profile(ProviderKind::Openai, Some("https://api.frog.toys/v1"));
-        assert_eq!(tier("cloud/bull", &cloud), Tier::Platform);
-        assert_eq!(tier("frog/bull", &cloud), Tier::Platform);
+        assert_eq!(tier("cloud/deepseek-v4.1-flash", &cloud), Tier::Platform);
+        assert_eq!(tier("frog/deepseek-v4.1-flash", &cloud), Tier::Platform);
         let vercel = profile(ProviderKind::Openai, Some("https://ai-gateway.vercel.sh/v1"));
         assert_eq!(tier("vercel/openai/gpt-5", &vercel), Tier::Byok);
         let anthropic = profile(ProviderKind::Anthropic, None);
@@ -339,7 +339,7 @@ mod tests {
         // A busy provider has no fix to give: the retry says it.
         assert!(fix_line("vercel/x", Failure::Transient).is_none());
         // frog cloud's own key page.
-        let cloud = fix_line("cloud/bull", Failure::Credits).unwrap();
+        let cloud = fix_line("cloud/deepseek-v4.1-flash", Failure::Credits).unwrap();
         assert!(cloud.starts_with("frog cloud credits are out"), "{cloud}");
     }
 
@@ -378,7 +378,7 @@ mod tests {
         assert!(format!("{refused}").contains("model not listed"), "{refused}");
         // cloud/* is the platform's to serve: always valid, no list needed.
         let cloud = profile(ProviderKind::Openai, Some("https://api.frog.toys/v1"));
-        assert!(check_spawn("cloud/bull", &cloud).await.is_ok());
+        assert!(check_spawn("cloud/deepseek-v4.1-flash", &cloud).await.is_ok());
         // This machine's models have no gateway list.
         let ollama = profile(ProviderKind::Ollama, Some("http://localhost:11434"));
         assert!(check_spawn("ollama/qwen3", &ollama).await.is_ok());

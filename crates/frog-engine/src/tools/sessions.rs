@@ -114,7 +114,7 @@ an existing worktree path is reused as-is, and one another engine runs in is ref
                     "title": { "type": "string" },
                     "prompt": { "type": "string" },
                     "cwd": { "type": "string" },
-                    "model": { "type": "string", "description": "the model the new session runs on (e.g. local/qwen3-4b, cloud/tree); default: this session's model" },
+                    "model": { "type": "string", "description": "the model the new session runs on (e.g. local/qwen3-4b, cloud/glm-5.3-flash); default: this session's model" },
                     "mode": { "type": "string", "enum": ["default", "accept-edits", "auto", "yolo"], "description": "permission mode for the new session (default: yours, capped so it can never exceed yours)" },
                     "worktree": { "type": "boolean", "description": "its own git worktree on a new branch, based on the remote default branch (default false)" },
                     "allow_main_checkout": { "type": "boolean", "description": "run in the user's main repo checkout anyway; only when the user asked for it (default false)" },

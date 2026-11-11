@@ -764,7 +764,7 @@ mod tests {
         };
 
         // Frog Cloud auth: signed out, with the way back in.
-        for spec in ["cloud/tree", "frog/tree"] {
+        for spec in ["cloud/glm-5.3-flash", "frog/glm-5.3-flash"] {
             let s = describe_error(&provider(401, "invalid api key"), Some(spec));
             assert!(s.starts_with("signed out of Frog Cloud"), "{s}");
             assert!(
@@ -778,7 +778,7 @@ mod tests {
         assert!(s.contains("frog --set-key anthropic"), "{s}");
 
         // Network down.
-        let s = describe_error(&conn(), Some("cloud/tree"));
+        let s = describe_error(&conn(), Some("cloud/glm-5.3-flash"));
         assert!(
             s.starts_with("can't reach Frog Cloud: check your network"),
             "{s}"
@@ -808,7 +808,7 @@ mod tests {
 
         // Everything else keeps the engine's wording.
         let e = provider(500, "boom");
-        assert_eq!(describe_error(&e, Some("cloud/tree")), e.to_string());
+        assert_eq!(describe_error(&e, Some("cloud/glm-5.3-flash")), e.to_string());
         assert_eq!(
             describe_error(&provider(404, "no route"), None),
             "provider error (404): no route"

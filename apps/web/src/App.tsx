@@ -119,9 +119,9 @@ export default function App() {
   }, [])
   const cloud = useCloud(key, DEV_KEY ? undefined : signedOut)
   const models = useModels(DEV_KEY ? null : key)
-  // The remembered pick only while Frog Cloud still lists it (dart drops out when no GPU node
+  // The remembered pick only while Frog Cloud still lists it (Qwen3 Coder Next drops out when no GPU node
   // runs): otherwise the default, never a model nothing would answer.
-  const chosenModel = newModel && models.some((m) => m.id === idOf(newModel)) ? newModel : defaultModel(models)
+  const chosenModel = newModel && models.some((m) => m.id === idOf(newModel)) ? idOf(newModel) : defaultModel(models)
   const repoList = useRepos(cloud)
   const { sessions, loaded: sessionsLoaded, error: listError, setSessions, refresh: refreshSessions } = useSessions(cloud)
   const current = view.kind === 'session' ? sessions.find((s) => s.id === view.id) : undefined

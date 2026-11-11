@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { servedClass, type TurnUsage } from '../cloud/protocol'
-import { idOf, type Model } from '../models'
+import { currentId, idOf, modelName, type Model } from '../models'
 import { money, seconds, tokens, turnCost } from '../usage'
 import { CopyButton, IconButton } from './Transcript'
 
@@ -20,7 +20,7 @@ export function TurnFooter({ usage, models, answer, pinned, onRetry }: { usage: 
   if (usage.model_calls <= 0) return null
 
   const id = idOf(usage.model ?? null)
-  const model = models.find((m) => m.id === id)
+  const model = models.find((m) => currentId(m.id) === id)
   const cost = turnCost(usage, model)
   const tps = usage.tokens_per_sec ?? 0
   const speed = tps > 0 ? Math.round(tps) : null
@@ -32,7 +32,7 @@ export function TurnFooter({ usage, models, answer, pinned, onRetry }: { usage: 
         {answer && <CopyButton text={answer} label="Copy answer" />}
         {onRetry && <IconButton label="Try again" icon="retry" onClick={onRetry} />}
       </span>
-      {id && <span>{id}</span>}
+      {id && <span>{modelName(id)}</span>}
       {usage.served_by && <span className={servedClass(usage.served_by)}>{usage.served_by.name}</span>}
       {cost && (
         <button type="button" className="turn-plate" aria-expanded={open} title="Cost of this turn" onClick={() => setOpen(!open)}>{money(cost.total)}</button>

@@ -366,9 +366,9 @@ mod pick_tests {
     #[test]
     fn default_prefers_cloud_over_enabled_anthropic() {
         let enabled = Some("anthropic/claude-sonnet-5".to_string());
-        let tree = Some("cloud/tree".to_string());
-        let (spec, _) = pick_remote(tree, enabled.clone(), true).unwrap();
-        assert_eq!(spec, "cloud/tree");
+        let glm = Some("cloud/glm-5.3-flash".to_string());
+        let (spec, _) = pick_remote(glm, enabled.clone(), true).unwrap();
+        assert_eq!(spec, "cloud/glm-5.3-flash");
         let (spec, _) = pick_remote(None, enabled, true).unwrap();
         assert_eq!(spec, "anthropic/claude-sonnet-5");
         assert_eq!(pick_remote(None, None, false), None);

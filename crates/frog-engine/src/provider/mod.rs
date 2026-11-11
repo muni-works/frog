@@ -565,10 +565,10 @@ mod http_error_tests {
     fn summary_is_the_providers_own_message() {
         let e = HttpError {
             status: 429,
-            body: r#"{"error":{"message":"bull is busy right now","type":"rate_limit_error"}}"#.into(),
+            body: r#"{"error":{"message":"deepseek-v4.1-flash is busy right now","type":"rate_limit_error"}}"#.into(),
             billing: None,
         };
-        assert_eq!(e.summary(), "bull is busy right now");
+        assert_eq!(e.summary(), "deepseek-v4.1-flash is busy right now");
         let plain = HttpError { status: 502, body: "<html>bad gateway</html>".into(), billing: None };
         assert_eq!(plain.summary(), "HTTP 502");
     }
@@ -615,7 +615,7 @@ mod http_error_tests {
         // A busy provider isn't billing, even with the same shape on another status.
         let busy = HttpError {
             status: 429,
-            body: r#"{"error":{"message":"bull is busy"}}"#.into(),
+            body: r#"{"error":{"message":"deepseek-v4.1-flash is busy"}}"#.into(),
             billing: None,
         };
         assert!(!busy.is_billing());

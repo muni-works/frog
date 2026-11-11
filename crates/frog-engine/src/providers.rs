@@ -59,13 +59,34 @@ pub fn local_repo(model: &str) -> &str {
         .map_or(model, |(_, repo)| repo)
 }
 
-/// A spec as frog writes it today: new provider ids, short names for bundled local models.
+/// frog cloud's old model ids and their explicit names today. The gateway still answers
+/// the old ids as hidden aliases; frog maps them at read time so old configs, saved picks
+/// and session logs keep working.
+pub const CLOUD_ALIASES: &[(&str, &str)] = &[
+    ("bull", "deepseek-v4.1-flash"),
+    ("tree", "glm-5.3-flash"),
+    ("dart", "qwen3-coder-next"),
+];
+
+/// A frog cloud model id as the gateway names it today.
+pub fn cloud_model(id: &str) -> &str {
+    CLOUD_ALIASES
+        .iter()
+        .find(|(old, _)| *old == id)
+        .map_or(id, |(_, new)| new)
+}
+
+/// A spec as frog writes it today: new provider ids, short names for bundled local models,
+/// explicit names for frog cloud's old model ids.
 /// Inputs in old forms keep working; this is what gets stored.
 pub fn normalize(spec: &str) -> String {
     let Some((prov, model)) = spec.split_once('/') else {
         return spec.to_string();
     };
     let prov = canonical(prov);
+    if prov == CLOUD {
+        return format!("{CLOUD}/{}", cloud_model(model));
+    }
     if prov == LOCAL
         && let Some((short, _)) = LOCAL_MODELS.iter().find(|(_, repo)| *repo == model)
     {
@@ -719,6 +740,12 @@ mod tests {
                 "cloud/qwen3-coder-next"
             );
         }
+        // frog cloud's old model ids read as their explicit names.
+        assert_eq!(normalize("cloud/bull"), "cloud/deepseek-v4.1-flash");
+        assert_eq!(normalize("frog/tree"), "cloud/glm-5.3-flash");
+        assert_eq!(normalize("cloud/dart"), "cloud/qwen3-coder-next");
+        assert_eq!(normalize("cloud/glm-5.3-flash"), "cloud/glm-5.3-flash");
+        assert_eq!(normalize("ollama/tree"), "ollama/tree");
         assert_eq!(
             normalize("anthropic/claude-sonnet-5"),
             "anthropic/claude-sonnet-5"

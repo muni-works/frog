@@ -125,13 +125,13 @@ pub fn cloud_models() -> Vec<Model> {
         .unwrap_or_default()
 }
 
-/// The frog cloud model to start on when nothing names one: `cloud/tree` while frog cloud
-/// lists it (it always serves it), else the first model it lists.
+/// The frog cloud model to start on when nothing names one: `cloud/glm-5.3-flash` while
+/// frog cloud lists it (it always serves it), else the first model it lists. A gateway
+/// that still lists the old id (`tree`) counts.
 pub fn cloud_default(models: &[Model]) -> Option<String> {
-    let tree = format!("{}/tree", providers::CLOUD);
     models
         .iter()
-        .find(|m| m.spec == tree)
+        .find(|m| providers::cloud_model(&m.id) == "glm-5.3-flash")
         .or_else(|| models.first())
         .map(|m| m.spec.clone())
 }
@@ -338,10 +338,25 @@ fn per_million(v: &Value) -> Option<f64> {
 fn frog_cloud(m: &Value) -> Option<Model> {
     let mut model = openrouter(providers::CLOUD, m)?;
     if let Some(name) = m["display_name"].as_str() {
-        model.name = name.into();
+        model.name = plain_name(name).into();
     }
     model.served_by = ServedBy::parse(&m["served_by"]);
     Some(model)
+}
+
+/// A display name without the old animal moniker: "Tree (GLM-5.3 Flash)" is "GLM-5.3 Flash".
+fn plain_name(name: &str) -> &str {
+    providers::CLOUD_ALIASES
+        .iter()
+        .find_map(|(old, _)| {
+            let rest = name.get(old.len()..)?;
+            name[..old.len()]
+                .eq_ignore_ascii_case(old)
+                .then_some(rest)?
+                .strip_prefix(" (")?
+                .strip_suffix(')')
+        })
+        .unwrap_or(name)
 }
 
 fn openrouter(provider: &str, m: &Value) -> Option<Model> {
@@ -537,7 +552,7 @@ mod tests {
     #[test]
     fn frog_cloud_entries_describe_themselves() {
         let entry = json!({
-            "id": "tree", "object": "model", "display_name": "Tree (GLM-5.3 Flash)",
+            "id": "glm-5.3-flash", "object": "model", "display_name": "GLM-5.3 Flash",
             "context_length": 1048576,
             "architecture": {"input_modalities": ["text", "image"]},
             "supported_parameters": ["tools", "reasoning"],
@@ -546,8 +561,8 @@ mod tests {
                         "input_cache_read": "0.000000036", "request": "0", "image": "0"}
         });
         let m = frog_cloud(&entry).unwrap();
-        assert_eq!(m.spec, format!("{}/tree", providers::CLOUD));
-        assert_eq!(m.name, "Tree (GLM-5.3 Flash)");
+        assert_eq!(m.spec, format!("{}/glm-5.3-flash", providers::CLOUD));
+        assert_eq!(m.name, "GLM-5.3 Flash");
         assert_eq!(m.context, Some(1_048_576));
         assert!(m.vision() && m.reasoning && m.tools);
         assert!((m.cost_in.unwrap() - 0.18).abs() < 1e-9);
@@ -555,15 +570,20 @@ mod tests {
         assert!((m.cost_cache_read.unwrap() - 0.036).abs() < 1e-9);
         assert_eq!(m.served_by.unwrap().id, "workers-ai");
 
+        // An older gateway's moniker never reaches a name.
+        let m = frog_cloud(&json!({"id": "tree", "display_name": "Tree (GLM-5.3 Flash)"})).unwrap();
+        assert_eq!(m.name, "GLM-5.3 Flash");
+        assert_eq!(plain_name("Treehouse (x)"), "Treehouse (x)");
+
         // A bare entry: text only, no reasoning or tools claimed, named by its id.
-        let m = frog_cloud(&json!({"id": "dart"})).unwrap();
-        assert_eq!(m.name, "dart");
+        let m = frog_cloud(&json!({"id": "qwen3-coder-next"})).unwrap();
+        assert_eq!(m.name, "qwen3-coder-next");
         assert_eq!(m.inputs, ["text"]);
         assert!(!m.reasoning && !m.tools && m.served_by.is_none());
     }
 
     #[test]
-    fn the_default_frog_cloud_model_is_tree_else_the_first_listed() {
+    fn the_default_frog_cloud_model_is_glm_flash_else_the_first_listed() {
         let m = |id: &str| Model {
             spec: format!("{}/{id}", providers::CLOUD),
             id: id.into(),
@@ -571,12 +591,17 @@ mod tests {
         };
         let cloud = providers::CLOUD;
         assert_eq!(
-            cloud_default(&[m("bull"), m("dart"), m("tree")]),
+            cloud_default(&[m("deepseek-v4.1-flash"), m("qwen3-coder-next"), m("glm-5.3-flash")]),
+            Some(format!("{cloud}/glm-5.3-flash"))
+        );
+        // An older gateway still listing the old id.
+        assert_eq!(
+            cloud_default(&[m("bull"), m("tree")]),
             Some(format!("{cloud}/tree"))
         );
         assert_eq!(
-            cloud_default(&[m("bull"), m("dart")]),
-            Some(format!("{cloud}/bull"))
+            cloud_default(&[m("deepseek-v4.1-flash"), m("qwen3-coder-next")]),
+            Some(format!("{cloud}/deepseek-v4.1-flash"))
         );
         assert_eq!(cloud_default(&[]), None);
     }
@@ -603,7 +628,7 @@ mod tests {
     #[test]
     fn frog_cloud_entries_say_who_serves_them() {
         let entry = json!({
-            "id": "tree", "context_length": 1048576,
+            "id": "glm-5.3-flash", "context_length": 1048576,
             "served_by": {"id": "workers-ai", "name": "Cloudflare Workers AI", "third_party": true}
         });
         let s = ServedBy::parse(&entry["served_by"]).unwrap();

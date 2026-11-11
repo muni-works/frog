@@ -8,7 +8,23 @@ import type { Mode } from './cloud/protocol'
 export interface Model { id: string; context: number | null; input: number | null; output: number | null; cached: number | null }
 
 export const spec = (id: string) => `cloud/${id}`
-export const idOf = (spec: string | null) => (spec?.startsWith('cloud/') ? spec.slice(6) : spec)
+
+/** Frog Cloud's old model ids and their explicit names today. The gateway still answers the
+ *  old ones; a remembered pick or an old session's spec reads as today's id. */
+const OLD_IDS: Record<string, string> = { bull: 'deepseek-v4.1-flash', tree: 'glm-5.3-flash', dart: 'qwen3-coder-next' }
+export const currentId = (id: string) => OLD_IDS[id] ?? id
+export const idOf = (spec: string | null) => {
+  const id = spec?.startsWith('cloud/') ? spec.slice(6) : spec
+  return id == null ? id : currentId(id)
+}
+
+/** The plain model name people see. */
+const NAMES: Record<string, string> = {
+  'deepseek-v4.1-flash': 'DeepSeek V4.1 Flash',
+  'glm-5.3-flash': 'GLM-5.3 Flash',
+  'qwen3-coder-next': 'Qwen3 Coder Next',
+}
+export const modelName = (id: string) => NAMES[currentId(id)] ?? id
 
 /** USD per million tokens, e.g. "$0.20 / $0.80 per M". */
 export function price(m: Model) {
@@ -17,9 +33,9 @@ export function price(m: Model) {
   return `${f(m.input)} in · ${f(m.output)} out per M tokens`
 }
 
-/** The model a new session starts on: tree while Frog Cloud lists it (it always serves it),
- *  else the first it lists. Nothing is built in: no list, no default. */
-export const defaultModel = (models: Model[]) => (models.find((m) => m.id === 'tree') ?? models[0])?.id
+/** The model a new session starts on: GLM-5.3 Flash while Frog Cloud lists it (it always
+ *  serves it), else the first it lists. Nothing is built in: no list, no default. */
+export const defaultModel = (models: Model[]) => (models.find((m) => currentId(m.id) === 'glm-5.3-flash') ?? models[0])?.id
 
 /** The smallest context window worth offering for agent sessions. */
 const MIN_AGENT_CONTEXT = 64_000
