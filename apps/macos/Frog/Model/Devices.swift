@@ -366,6 +366,89 @@ final class Devices {
         return placement(hash: hash).map { "on \($0.name)" }
     }
 
+    // MARK: putting models onto nodes (D6)
+
+    /// Loads this Mac asked for and the node hasn't reported yet, by spec → node name.
+    private(set) var asked: [String: String] = [:]
+    /// Why the last load of a spec failed, in one line.
+    private(set) var loadProblem: [String: String] = [:]
+
+    /// Where a pooled model (`node/<hash>`) stands on your nodes: loaded somewhere, loading,
+    /// on a disk where it fits (and what it would replace), or on a disk where it won't.
+    func fit(model spec: String) -> NodeFit? {
+        guard spec.hasPrefix("node/") else { return nil }
+        let hash = String(spec.dropFirst(5).split(separator: "@").first ?? "")
+        let holders = found.values.map(\.device).filter { $0.paired && $0.online }
+            .compactMap { d in d.models.first { $0.weightsHash.hasPrefix(hash) }.map { (d, $0) } }
+        guard !holders.isEmpty else { return nil }
+        if let (d, _) = holders.first(where: { $0.1.loaded }) { return .loaded(node: d.name) }
+        if let d = holders.first(where: { $0.0.loadingID != nil && $0.0.loadingID == $0.1.id })?.0 {
+            return .loading(node: d.name, seconds: Int(d.loadingSecs ?? 0))
+        }
+        if let name = asked[spec] { return .loading(node: name, seconds: 0) }
+        let fits = holders.filter { ($0.1.loadBytes ?? 0) <= $0.0.room }
+        // Prefer a node with nothing to replace, then the one with the most room.
+        if let (d, _) = fits.max(by: { a, b in
+            if (a.0.model == nil) != (b.0.model == nil) { return a.0.model != nil }
+            return a.0.room < b.0.room
+        }) {
+            return .fits(node: d.name, replaces: d.model)
+        }
+        let (d, m) = holders.max { $0.0.room < $1.0.room }!
+        return .wontFit(node: d.name, need: m.loadBytes ?? 0, room: d.room)
+    }
+
+    /// The picker's second line for a pooled model.
+    func placeLine(model spec: String) -> String? {
+        if let why = loadProblem[spec], asked[spec] == nil { return why }
+        return fit(model: spec)?.line
+    }
+
+    /// Load a pooled model onto the node `fit` chose (`POST /models/load` with the paired
+    /// key). Returns when it's loaded; throws a one-line `NodeLoadError` otherwise. Replacing a
+    /// loaded model is the caller's question to ask first.
+    func load(model spec: String) async throws {
+        guard case .fits(let name, _) = fit(model: spec) else { throw NodeLoadError("It doesn't fit on any of your machines.") }
+        let hash = String(spec.dropFirst(5).split(separator: "@").first ?? "")
+        guard let (id, f) = found.first(where: { $0.value.device.name == name && $0.value.device.paired }),
+              let m = f.device.models.first(where: { $0.weightsHash.hasPrefix(hash) }),
+              let base = f.url ?? paired.first(where: { $0.node_id == id }).flatMap({ URL(string: $0.base_url) }),
+              let key = store.key(for: id)
+        else { throw NodeLoadError("Can't reach \(name).") }
+        asked[spec] = name
+        loadProblem[spec] = nil
+        defer { asked[spec] = nil }
+        do {
+            try await Self.requestLoad(base, key: key, model: m.id)
+        } catch {
+            let line = (error as? NodeLoadError)?.message ?? error.localizedDescription
+            loadProblem[spec] = line
+            await poll()
+            throw NodeLoadError(line)
+        }
+        await poll()
+    }
+
+    /// `POST /models/load {"model": id}`; tang answers when the load is done (or refused).
+    nonisolated static func requestLoad(_ base: URL, key: String, model: String) async throws {
+        var req = URLRequest(url: base.appending(path: "models/load"))
+        req.httpMethod = "POST"
+        req.timeoutInterval = 900
+        req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["model": model])
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        guard status != 200 else { return }
+        let why = (try? JSONDecoder().decode([String: String].self, from: data))?["error"]
+        let line = switch status {
+        case 409: "It's busy with a turn. Try again when it's idle."
+        case 507: "It doesn't fit anymore: " + (why ?? "not enough free memory.")
+        default: why ?? "The load failed (\(status))."
+        }
+        throw NodeLoadError(line)
+    }
+
     private func publish() {
         for id in found.keys {
             found[id]?.device.paired = isPaired(id)
@@ -446,6 +529,11 @@ struct Device: Identifiable, Equatable {
     var host: String?
     var model: String?
     var loading: String?
+    /// The repo id being loaded, and for how long so far.
+    var loadingID: String?
+    var loadingSecs: Double?
+    /// Device memory the loaded model holds (weights and KV pool).
+    var footprint: UInt64 = 0
     var decode: Double?
     var prefill: Double?
     var running = 0
@@ -462,7 +550,15 @@ struct Device: Identifiable, Equatable {
         var weightsHash: String
         var quant: String?
         var loaded: Bool
+        /// What `/models/load` takes (the repo id or directory the node listed).
+        var id: String = ""
+        /// Device memory loading it takes, by the node's own estimate (`load_bytes`).
+        var loadBytes: UInt64?
     }
+
+    /// Memory a load could use: what's free plus what the loaded model gives back (tang
+    /// swaps one model per process and never takes memory other processes hold).
+    var room: UInt64 { (freeBytes ?? 0) + footprint }
 
     /// The same machine under another id (a node whose Bonjour id isn't its node_id).
     func renamed(_ id: String) -> Device {
@@ -476,7 +572,7 @@ struct Device: Identifiable, Equatable {
         guard let r else {
             online = false
             models = []
-            model = nil; loading = nil; decode = nil; prefill = nil; running = 0; waiting = 0
+            model = nil; loading = nil; loadingID = nil; loadingSecs = nil; footprint = 0; decode = nil; prefill = nil; running = 0; waiting = 0
             if role != .thisMac { freeBytes = nil }
             return
         }
@@ -492,15 +588,18 @@ struct Device: Identifiable, Equatable {
         let m = r.models.loaded.first
         model = m.map { Self.shortModel($0.id) }
         loading = r.models.loading.map { Self.shortModel($0.id) }
+        loadingID = r.models.loading?.id
+        loadingSecs = r.models.loading.map { Double($0.elapsed_ms ?? 0) / 1000 }
+        footprint = r.models.loaded.reduce(0) { $0 + ($1.memory?.weights_bytes ?? 0) + ($1.memory?.kv_bytes ?? 0) }
         decode = m?.rates.decode_tok_s.flatMap { $0 > 0 ? $0 : nil }
         prefill = m?.rates.prefill_tok_s.flatMap { $0 > 0 ? $0 : nil }
         running = r.queue.running.count
         waiting = r.queue.waiting.count
         if let n = r.name, !n.isEmpty, role == .node { name = n }
         var pooled: [PooledModel] = []
-        for l in r.models.loaded { if let h = l.weights_hash { pooled.append(.init(name: Self.shortModel(l.id), weightsHash: h, quant: l.quant, loaded: true)) } }
+        for l in r.models.loaded { if let h = l.weights_hash { pooled.append(.init(name: Self.shortModel(l.id), weightsHash: h, quant: l.quant, loaded: true, id: l.id)) } }
         for l in r.models.on_disk ?? [] where !pooled.contains(where: { $0.weightsHash == l.weights_hash }) {
-            if let h = l.weights_hash { pooled.append(.init(name: Self.shortModel(l.id), weightsHash: h, quant: l.quant, loaded: false)) }
+            if let h = l.weights_hash { pooled.append(.init(name: Self.shortModel(l.id), weightsHash: h, quant: l.quant, loaded: false, id: l.id, loadBytes: l.load_bytes)) }
         }
         models = pooled
     }
@@ -557,9 +656,14 @@ struct NodeReport: Decodable {
         var prefill_tok_s: Double?
         var decode_tok_s: Double?
     }
+    struct Memory: Decodable {
+        var weights_bytes: UInt64?
+        var kv_bytes: UInt64?
+    }
     struct Loaded: Decodable {
         var id: String
         var rates: Rates
+        var memory: Memory?
         var weights_hash: String?
         var quant: String?
     }
@@ -567,12 +671,16 @@ struct NodeReport: Decodable {
         var id: String
         var weights_hash: String?
         var quant: String?
+        var load_bytes: UInt64?
     }
     struct Identity: Decodable {
         var fingerprint: String
         var public_key: String?
     }
-    struct Loading: Decodable { var id: String }
+    struct Loading: Decodable {
+        var id: String
+        var elapsed_ms: UInt64?
+    }
     struct Models: Decodable {
         var loaded: [Loaded]
         var loading: Loading?
@@ -590,4 +698,30 @@ struct NodeReport: Decodable {
     var hardware: Hardware
     var models: Models
     var queue: Queue
+}
+
+/// Where a pooled model stands on your nodes, for the picker.
+enum NodeFit: Equatable {
+    case loaded(node: String)
+    case loading(node: String, seconds: Int)
+    case fits(node: String, replaces: String?)
+    case wontFit(node: String, need: UInt64, room: UInt64)
+
+    var line: String {
+        switch self {
+        case .loaded(let n): "on \(n)"
+        case .loading(let n, let s): s > 0 ? "loading on \(n) · \(s) s" : "loading on \(n)"
+        case .fits(let n, let r): "on \(n)'s disk · fits" + (r.map { " · replaces \($0)" } ?? "")
+        case .wontFit(let n, let need, let room):
+            "on \(n)'s disk · won't fit (needs \(Self.gb(need)), \(Self.gb(room)) free)"
+        }
+    }
+
+    static func gb(_ b: UInt64) -> String { String(format: "%.1f GB", Double(b) / 1e9) }
+}
+
+struct NodeLoadError: LocalizedError {
+    let message: String
+    init(_ m: String) { message = m }
+    var errorDescription: String? { message }
 }

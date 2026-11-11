@@ -49,6 +49,9 @@ struct ModelMenu: View {
     @State private var selected = 0
     @State private var store = ProviderStore.shared
     @State private var downloads = ModelDownloads.shared
+    @State private var devices = Devices.shared
+    /// A pooled model whose load would replace the one its node has loaded: asked once.
+    @State private var replacing: Replacing?
     /// A provider whose key is being added, in a sheet over the list.
     @State private var keyFor: ProviderInfo?
     /// A cloud model waiting on the project's permission.
@@ -91,6 +94,15 @@ struct ModelMenu: View {
     /// Any model can be picked: the list does whatever it needs first. Only a spending cap
     /// stops it, since picking would override the cap.
     private func choose(_ m: ModelIdentity) {
+        // A pooled model on a node's disk: load it there first (asking before it replaces one).
+        switch devices.fit(model: m.spec) {
+        case .fits(let node, let replaces?):
+            replacing = Replacing(spec: m.spec, name: m.name, node: node, replaces: replaces)
+            return
+        case .fits: loadOnNode(m.spec); return
+        case .loading, .wontFit: return
+        case .loaded, nil: break
+        }
         switch m.state {
         case .ready where m.place.isCloud && workspace.mustAskForCloud: asking = m
         case .ready, .wontFit, .unreachable: pick(m.spec)
@@ -105,6 +117,16 @@ struct ModelMenu: View {
             settingsTab = "models"
             close()
             openSettings()
+        }
+    }
+
+    private func loadOnNode(_ spec: String) {
+        let pick = pick
+        Task {
+            do {
+                try await Devices.shared.load(model: spec)
+                pick(spec)
+            } catch {}
         }
     }
 
@@ -163,6 +185,14 @@ struct ModelMenu: View {
         .environment(\.addProviderKey) { addKey($0) }
         .environment(\.askCloudPermission) { asking = $0 }
         .sheet(item: $keyFor) { p in KeySheet(provider: p) }
+        .alert(replacing.map { "Load \($0.name) on \($0.node)?" } ?? "",
+               isPresented: Binding(get: { replacing != nil }, set: { if !$0 { replacing = nil } }),
+               presenting: replacing) { r in
+            Button("Replace \(r.replaces)") { loadOnNode(r.id) }
+            Button("Cancel", role: .cancel) {}
+        } message: { r in
+            Text("This replaces \(r.replaces) on \(r.node). Anything using it there stops.")
+        }
         .sheet(item: Binding(get: { asking.map(AskingCloud.init) }, set: { if $0 == nil { asking = nil } })) { a in
             CloudPermissionSheet(workspace: workspace, model: a.model) { allowed in
                 asking = nil
@@ -182,6 +212,7 @@ struct ModelMenu: View {
         .onKeyPress(.downArrow) { selected = min(selected + 1, max(flat.count - 1, 0)); hovered = nil; return .handled }
         .onKeyPress(.upArrow) { selected = max(selected - 1, 0); hovered = nil; return .handled }
         .onAppear {
+            devices.start()
             listFocused = true
             selected = flat.firstIndex { $0.spec == current } ?? 0
         }
@@ -203,6 +234,7 @@ struct ModelMenu: View {
             }
         }
         .onChange(of: query) { selected = 0 }
+        .onDisappear { devices.stop() }
     }
 
     private func header(_ title: String) -> some View {
@@ -225,8 +257,9 @@ struct ModelMenu: View {
                     Text("uses your ChatGPT plan").font(.frog(size: 10)).foregroundStyle(.secondary).padding(.leading, 36).offset(y: 14)
                 }
                 // A pooled model (`node/<hash>`): which of your machines it would run on.
-                if let place = Devices.shared.whereRuns(model: m.spec) {
-                    Text(place).font(.frog(size: 10)).foregroundStyle(.secondary).padding(.leading, 36).offset(y: 14)
+                if let place = devices.placeLine(model: m.spec) {
+                    NodePlaceLine(text: place, fit: devices.fit(model: m.spec))
+                        .padding(.leading, 36).offset(y: 14)
                 }
             }
             .padding(.horizontal, 8)
@@ -260,6 +293,32 @@ struct ModelMenu: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
     }
+}
+
+/// A pooled model's second line: where it would run and its state there.
+struct NodePlaceLine: View {
+    let text: String
+    let fit: NodeFit?
+
+    var body: some View {
+        HStack(spacing: 4) {
+            if case .loading = fit { ProgressView().controlSize(.mini) }
+            Text(text).lineLimit(1).truncationMode(.middle)
+        }
+        .font(.frog(size: 10))
+        .foregroundStyle(isWontFit ? .tertiary : .secondary)
+    }
+
+    private var isWontFit: Bool { if case .wontFit = fit { true } else { false } }
+}
+
+/// A load that would replace the model a node has loaded.
+struct Replacing: Identifiable {
+    let spec: String
+    let name: String
+    let node: String
+    let replaces: String
+    var id: String { spec }
 }
 
 /// A cloud model waiting on permission, as a sheet item.

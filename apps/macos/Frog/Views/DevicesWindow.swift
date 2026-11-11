@@ -372,6 +372,15 @@ struct DeviceCard: View {
                         .font(.frog(size: compact ? 11 : 12, weight: .medium))
                         .lineLimit(1)
                         .truncationMode(.middle)
+                    // A load in progress: how long so far (tang reports elapsed, not a fraction).
+                    if device.loading != nil {
+                        HStack(spacing: 4) {
+                            ProgressView().controlSize(.mini)
+                            if let s = device.loadingSecs, s >= 1 {
+                                Text("\(Int(s)) s").font(.frog(size: 10)).foregroundStyle(Tokens.textTertiary)
+                            }
+                        }
+                    }
                 }
                 Spacer(minLength: 4)
                 if !compact, let tps = device.decode {

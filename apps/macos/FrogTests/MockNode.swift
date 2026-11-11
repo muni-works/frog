@@ -21,6 +21,32 @@ final class MockNode: @unchecked Sendable {
     var advertise = false
     var gpu = "NVIDIA GeForce RTX 3090"
     var mem: UInt64 = 24 * 1_073_741_824
+    /// Memory other processes hold (never counted as room for a load).
+    var othersBytes: UInt64 = 3 * 1_073_741_824
+
+    /// A checkpoint on the mock's disk. `/models/load` takes `id`.
+    struct Model {
+        var id: String
+        var hash: String
+        var quant: String
+        var loadBytes: UInt64
+    }
+    /// What's on disk (D6): Qwen3-4B loaded, a small one that fits, one that never will.
+    var disk: [Model] = [
+        Model(id: "Qwen/Qwen3-4B", hash: "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90", quant: "bf16", loadBytes: 9_000_000_000),
+        Model(id: "mlx-community/Qwen3-1.7B-4bit", hash: "b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90a1", quant: "mlx-4bit", loadBytes: 2_200_000_000),
+        Model(id: "Qwen/Qwen3-32B", hash: "c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2", quant: "bf16", loadBytes: 70_000_000_000),
+    ]
+    /// The loaded model's id (nil = nothing loaded).
+    var loaded: String? = "Qwen/Qwen3-4B"
+    /// A load in progress, and when it started.
+    private(set) var loading: (id: String, since: Date)?
+    /// How long a load takes.
+    var loadSeconds: TimeInterval = 0.6
+    /// Loads asked for, in order.
+    private(set) var loadRequests: [String] = []
+    /// Answer `/models/load` with 409, as tang does mid-turn.
+    var busy = false
 
     struct Window {
         var code: String
@@ -102,6 +128,15 @@ final class MockNode: @unchecked Sendable {
             if let data { buf.append(data) }
             if let req = Request(buf) {
                 let (status, body) = self.handle(req, remote: c.endpoint)
+                // A load answers when it's done, like tang's.
+                if req.path == "/models/load", status == 200, let (id, _) = self.loading {
+                    self.queue.asyncAfter(deadline: .now() + self.loadSeconds) {
+                        self.loading = nil
+                        self.loaded = id
+                        self.respond(c, 200, ["loaded": id, "replaced": body ?? NSNull()])
+                    }
+                    return
+                }
                 self.respond(c, status, body)
             } else if done || err != nil {
                 c.cancel()
@@ -158,6 +193,9 @@ final class MockNode: @unchecked Sendable {
         case ("GET", "/node"):
             if let denied = gate(r) { return denied }
             return (200, report())
+        case ("POST", "/models/load"):
+            if let denied = gate(r) { return denied }
+            return load(r.json["model"] as? String)
         case ("DELETE", let p) where p.hasPrefix("/pair/"):
             let client = String(p.dropFirst("/pair/".count))
             guard let key = bearer(r), keys[client] == hash(key) else { return err(401, "bad key") }
@@ -166,6 +204,22 @@ final class MockNode: @unchecked Sendable {
         default: return err(404, "not found")
         }
     }
+
+    /// Starts a load (finished by `read` after `loadSeconds`); the 200 body is what it replaces.
+    private func load(_ id: String?) -> (Int, Any?) {
+        guard let id, let m = disk.first(where: { $0.id == id }) else { return err(404, "not on disk") }
+        loadRequests.append(id)
+        if loaded == id { return (200, ["loaded": id, "already": true]) }
+        if busy || loading != nil { return err(409, "1 requests running or waiting; retry when the node is idle") }
+        guard m.loadBytes <= free + footprint else { return err(507, "\(id) needs more than is free") }
+        let previous = loaded
+        loaded = nil
+        loading = (id, Date())
+        return (200, previous ?? NSNull())
+    }
+
+    private var footprint: UInt64 { loaded.flatMap { l in disk.first { $0.id == l } }?.loadBytes ?? 0 }
+    private var free: UInt64 { mem - othersBytes - footprint }
 
     private func openWindowLocked() -> String {
         let c = String(format: "%06d", Int.random(in: 0...999_999))
@@ -232,16 +286,21 @@ final class MockNode: @unchecked Sendable {
     }
 
     private func report() -> [String: Any] {
-        let model: [String: Any] = [
-            "id": "Qwen/Qwen3-4B", "weights_hash": "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90",
-            "quant": "bf16", "rates": ["prefill_tok_s": 2100.0, "decode_tok_s": 41.0],
-        ]
+        let loadedModels: [[String: Any]] = disk.filter { $0.id == loaded }.map { m in
+            ["id": m.id, "weights_hash": m.hash, "quant": m.quant,
+             "memory": ["weights_bytes": m.loadBytes - 1_000_000_000, "kv_bytes": 1_000_000_000],
+             "rates": ["prefill_tok_s": 2100.0, "decode_tok_s": 41.0]]
+        }
+        let onDisk: [[String: Any]] = disk.map { m in
+            ["id": m.id, "weights_hash": m.hash, "quant": m.quant, "load_bytes": m.loadBytes, "loaded": m.id == loaded]
+        }
+        let loadingJSON: Any = loading.map { ["id": $0.id, "elapsed_ms": Int(Date().timeIntervalSince($0.since) * 1000)] } ?? NSNull()
         return [
             "schema": 2, "node_id": nodeID, "name": name,
             "identity": ["fingerprint": fingerprint, "public_key": publicKey.base64EncodedString()],
             "hardware": ["kind": "cuda", "name": gpu, "unified_memory": false,
-                         "total_bytes": mem, "free_bytes": mem - 9 * 1_073_741_824],
-            "models": ["loaded": [model], "on_disk": [model]],
+                         "total_bytes": mem, "free_bytes": free],
+            "models": ["loaded": loadedModels, "loading": loadingJSON, "on_disk": onDisk],
             "queue": ["running": [], "waiting": []],
         ]
     }
