@@ -134,6 +134,7 @@ final class Devices {
                 c.cancel()
                 Task { @MainActor in
                     self?.found[id]?.url = url
+                    self?.found[id]?.device.host = url?.host()
                     self?.found[id]?.resolving = false
                 }
             case .failed, .cancelled:
@@ -168,6 +169,36 @@ final class Devices {
         return try? JSONDecoder().decode(NodeReport.self, from: data)
     }
 
+    /// Where a session's model runs, from its `provider/model` id: this Mac for on-device
+    /// providers, Frog Cloud for `cloud/`, a found node when a custom provider's host is one,
+    /// otherwise the provider by name.
+    func serving(model: String) -> Serving {
+        let provider = String(model.split(separator: "/").first ?? "")
+        let short = String(model.split(separator: "/", maxSplits: 1).last ?? Substring(model))
+        // `frog-api/` and `tang/` are Frog Cloud's old names.
+        if ["cloud", "frog-api", "tang"].contains(provider) {
+            return Serving(deviceID: "frog-cloud", name: "Frog Cloud", symbol: "cloud", model: short)
+        }
+        if ["local", "apple"].contains(provider) {
+            return Serving(deviceID: "this-mac", name: "this Mac", symbol: local.symbol, model: short)
+        }
+        guard let info = ProviderStore.shared.providers.first(where: { $0.id == provider }) else {
+            return Serving(deviceID: nil, name: provider, symbol: "cloud", model: short)
+        }
+        let host = URL(string: info.baseUrl)?.host()?.lowercased() ?? ""
+        if info.local || host == "127.0.0.1" || host == "localhost" {
+            return Serving(deviceID: "this-mac", name: "this Mac", symbol: local.symbol, model: short)
+        }
+        let first = host.split(separator: ".").first.map(String.init) ?? host
+        if let d = found.values.map(\.device).first(where: {
+            $0.host?.lowercased() == host || $0.name.lowercased() == first
+        }) {
+            return Serving(deviceID: d.id, name: d.name, symbol: "server.rack", model: short)
+        }
+        return Serving(deviceID: nil, name: info.custom ? first : info.name,
+                       symbol: info.custom ? "server.rack" : "cloud", model: short)
+    }
+
     private func publish() {
         // This Mac serving beyond loopback finds itself on Bonjour: one card, not two.
         let others = found.values.map(\.device)
@@ -180,6 +211,15 @@ final class Devices {
         let next = [local] + others + [cloud]
         if next != list { list = next }
     }
+}
+
+/// Where a session's model is running, for the composer's chip.
+struct Serving: Equatable {
+    /// The device on the map, when it's one of them.
+    var deviceID: String?
+    var name: String
+    var symbol: String
+    var model: String
 }
 
 /// One machine on the canvas.
@@ -222,6 +262,8 @@ struct Device: Identifiable, Equatable {
     var online = false
     var link: Link = .network
     var nodeID: String?
+    /// The address it was reached at, for matching a provider's base URL to it.
+    var host: String?
     var model: String?
     var loading: String?
     var decode: Double?
