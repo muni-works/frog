@@ -88,6 +88,12 @@ pub async fn print(mut h: Handle, prompt: String, json: bool) -> Result<bool> {
         }
         if json {
             println!("{}", serde_json::to_string(&env)?);
+            // Same ending as text mode: without this, `-p --json` printed turn_ended and then
+            // waited forever for the engine to go away.
+            if done {
+                let _ = h.ops.send(Op::Shutdown);
+                break;
+            }
             continue;
         }
         // Everything that prints below clears the status line first; reasoning doesn't print,
