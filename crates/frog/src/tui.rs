@@ -484,6 +484,11 @@ impl Tui {
             s.model.clone().cyan(),
             cwd.dark_grey()
         );
+        // Which model, and whether it's free or billed, before the first prompt.
+        if let Ok((spec, p)) = self.cfg.resolve(Some(&s.model)) {
+            let runs = frog_engine::model_policy::where_it_runs(&spec, &p);
+            render::info(&format!("   {spec} · {runs} · /model to switch"));
+        }
         render::info(
             "   /help for commands · shift+tab cycles permission mode · alt+enter for newline",
         );

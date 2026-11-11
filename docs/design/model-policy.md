@@ -18,8 +18,14 @@ On-device models (`apple/on-device`, `local/…`) sit outside both tiers: no key
 machine. They are the classifier's first judge and the Mac's offline path, and never a worker's
 model (a worker that needs a model gets tier 1).
 
-**Tier 1 is the default.** A worker session, a subagent, a classifier, and a fresh Mac install all
-start on frog cloud. Tier 2 is a choice a person makes in a session they are sitting in front of.
+**Tier 1 is the default for work nobody is watching.** A worker session, a subagent and a
+classifier start on frog cloud. Tier 2 is a choice a person makes in a session they are sitting in
+front of.
+
+**A fresh install starts on this machine, never on a billed model.** The CLI's default is
+`local/qwen3-4b` on frog's own engine (`LOCAL_DEFAULT` in `config.rs`); the Mac app starts on Apple
+Intelligence where the Mac has it, else the same. The first-run banner and `frog account` say which
+model is in use and whether it's free or billed. Frog Cloud is one `frog login` away.
 
 ## No cross-tier fallback chains
 
