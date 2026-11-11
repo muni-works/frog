@@ -113,7 +113,9 @@ final class MessageTextView: NSTextView, @MainActor NSLayoutManagerDelegate {
         }
         // Code blocks are measured before they go in, so their lines are the right height from
         // the first layout.
-        let before = codeAttachments(in: NSRange(location: 0, length: from)).count
+        // One attachment per code block (`MessageStyle.codeBlock`): counted from the blocks
+        // kept, not by walking the storage before them on every streamed delta.
+        let before = shown.prefix(keep).reduce(0) { n, b in if case .code = b { n + 1 } else { n } }
         let incoming = Self.attachments(in: tail, range: NSRange(location: 0, length: tail.length))
         while codeViews.count > before + incoming.count {
             // Not torn down mid-update: hidden now, gone once SwiftUI's update is over.
@@ -311,8 +313,16 @@ final class MessageTextView: NSTextView, @MainActor NSLayoutManagerDelegate {
     }
 
     /// A selection that covers a code block shows it selected, too.
+    /// Some code block may be drawn selected.
+    private var codeTinted = false
+
     override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
         super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
+        // TextKit sets an empty selection on every storage edit (each streamed delta): with
+        // nothing selected now or before, no code block's tint changes.
+        let selecting = ranges.contains { $0.rangeValue.length > 0 }
+        guard selecting || codeTinted else { return }
+        codeTinted = selecting
         for (i, item) in codeAttachments().enumerated() where i < codeViews.count {
             guard let host = codeViews[i] else { continue }
             let selected = isSelected(item.range)

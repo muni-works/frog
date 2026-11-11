@@ -57,7 +57,9 @@ final class InkReveal: NSObject {
 
     private var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
     /// Text appears as it arrives: Reduce Motion, or a stream too fast to ink.
-    private var plain: Bool { reduceMotion || instant }
+    private var plain: Bool { reduceMotion || instant || Self.off }
+    /// For the perf probe: what streaming costs without the ink (as under Reduce Motion).
+    nonisolated(unsafe) static var off = false
     private var length: Int { view.textStorage?.length ?? 0 }
 
     init(view: MessageTextView) {
