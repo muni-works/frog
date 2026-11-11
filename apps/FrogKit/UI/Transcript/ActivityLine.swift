@@ -21,6 +21,15 @@ struct ActivityLine: View {
         _expanded = State(initialValue: expanded ?? (verbosity == .verbose))
     }
 
+    private var failedCommands: [ItemState] {
+        group.done.filter { ["Bash", "!"].contains(Self.toolName($0)) && $0.result?.outcome == .error
+            && !($0.result.map { $0.display ?? $0.output } ?? "").isEmpty }
+    }
+
+    private static func toolName(_ item: ItemState) -> String {
+        if case .tool(let name, _) = item.kind { name } else { "" }
+    }
+
     /// A long thought on a line of its own ("Thought for 12s"): it gets a gist.
     private var thought: ItemState? {
         guard group.steps.count == 1, let t = group.steps.first, t.kind == .reasoning, t.done,
@@ -44,8 +53,16 @@ struct ActivityLine: View {
             if expanded {
                 ActivitySteps(steps: group.steps, conversation: conversation)
                     .transition(.opacity.combined(with: .move(edge: .top)))
-            } else if live, let now = group.current {
-                liveStep(now)
+            } else {
+                // A failed command shows its output under the line, as on the web: what went
+                // wrong is the point of the row.
+                ForEach(failedCommands) { step in
+                    ToolDetail(name: Self.toolName(step), item: step, expanded: true, root: conversation.folder.path)
+                        .padding(.leading, 22)
+                }
+                if live, let now = group.current {
+                    liveStep(now)
+                }
             }
             if !pinsQuestions, let p = conversation.permission, group.steps.contains(where: { $0.needsPermission && $0.id == p.item }) {
                 PermissionCard(request: p, conversation: conversation)
@@ -324,6 +341,8 @@ struct ActivityStepRow: View {
         }
         .padding(.horizontal, TurnSpace.Inset.card)
         .padding(.vertical, TurnSpace.Inset.snug)
+        // A failure opens by itself, as on the web: what went wrong is the point of the row.
+        .onAppear { if item.result?.outcome == .error, !groupSaysFailed { expanded = true } }
     }
 
     /// The row's words. A shell row running now says the intent ("Running git log…" from the
@@ -406,7 +425,8 @@ struct ActivityStepRow: View {
             case .error where groupSaysFailed:
                 EmptyView()
             case .error:
-                Text("· failed").foregroundStyle(.red)
+                // As on the web: a red tag, and the output opens by itself (see `body`).
+                FailedTag()
             case .ok:
                 if let d = r.diff {
                     ActivityText(pieces: [.diff(added: d.added, removed: d.removed)]).text
@@ -647,10 +667,13 @@ struct VerbLineView: View {
                 .font(.callout)
                 .foregroundStyle(Tokens.textTertiary)
         } else {
-            text
-                .font(.callout)
-                .lineLimit(1)
-                .truncationMode(.middle)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                text
+                    .font(.callout)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if line.failed { FailedTag() }
+            }
         }
     }
 
@@ -670,9 +693,18 @@ struct VerbLineView: View {
             t = t + Text(verbatim: " +\(diff.added)").foregroundStyle(.green).monospacedDigit()
                 + Text(verbatim: " −\(diff.removed)").foregroundStyle(.red).monospacedDigit()
         }
-        if line.failed {
-            t = t + Text(verbatim: " · failed").foregroundStyle(Tokens.fail)
-        }
         return t
+    }
+}
+
+/// A failed step's tag, as on the web: "failed" in red on a faint red plate.
+struct FailedTag: View {
+    var body: some View {
+        Text("failed")
+            .font(.frog(size: 11, weight: .medium))
+            .foregroundStyle(Tokens.fail)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 1)
+            .background(Tokens.fail.opacity(0.14), in: .rect(cornerRadius: 5))
     }
 }

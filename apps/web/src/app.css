@@ -533,6 +533,9 @@ button.tool:hover .tool-ic { color: var(--muted); }
 button.tool:hover .tool-what { color: var(--muted); }
 .tool-tag { flex: none; font-size: 11px; color: var(--muted); background: var(--hover); border-radius: 5px; padding: 0 6px; line-height: 17px; }
 .tool-tag.err { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
+.tool-n { flex: none; font: 12px/20px var(--font-mono); font-variant-numeric: tabular-nums; }
+.tool-n.add { color: var(--frog); } .tool-n.del { color: var(--warn); }
+.tool-row > .cardx { margin-top: 6px; }
 .tool-row.err .tool-ic { color: var(--warn); }
 .tool-row.run .tool-verb { color: var(--fg); }
 .tool-chev { margin-left: auto; flex: none; color: var(--faint); opacity: 0; transition: opacity .12s, transform .15s; font-size: 14px; }

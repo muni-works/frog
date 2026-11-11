@@ -245,6 +245,8 @@ async fn play(p: &mut Player, events: &[Envelope], ask: bool) -> Result<(), Inte
     let mut prev = events.first().map(|e| e.created).unwrap_or(0);
     let mut turn = 0;
     let mut open = false;
+    // A recorded permission request with no answer yet in the log.
+    let mut pending = false;
     for env in events {
         let gap = ((env.created - prev) as f64).clamp(0.0, 1500.0);
         prev = env.created;
@@ -369,10 +371,23 @@ async fn play(p: &mut Player, events: &[Envelope], ask: bool) -> Result<(), Inte
             }
             // Ask mode synthesizes its own permission flow.
             Event::PermissionResolved { .. } if ask => {}
+            Event::PermissionRequest { .. } if !ask => {
+                pending = true;
+                p.emit(env.event.clone());
+            }
+            Event::PermissionResolved { .. } => {
+                pending = false;
+                p.emit(env.event.clone());
+            }
             // Questions are put again above, under their own ids.
             Event::QuestionResolved { .. } => {}
             _ => p.emit(env.event.clone()),
         }
+    }
+    // A log that ends on an unanswered permission request (the parity fixture) holds there,
+    // card open and turn running, like an engine waiting on you.
+    if open && pending {
+        return Ok(());
     }
     // A log that ends mid-turn (crash or timeout) still ends cleanly for the client.
     if open {

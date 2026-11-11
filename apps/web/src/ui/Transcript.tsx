@@ -90,6 +90,26 @@ function ToolLine({ e }: { e: Entry }) {
   )
 }
 
+/** A finished edit: its line, opening to the diff card. */
+function EditLine({ diff }: { diff: FileDiff }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="tool-row ok">
+      <button type="button" className="tool" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <span className="tool-ic" aria-hidden="true">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={TOOL_LOOK.edit.icon} /></svg>
+        </span>
+        <span className="tool-verb">{diff.created ? 'Created' : 'Edited'}</span>
+        <span className="tool-what">{diff.path}</span>
+        <span className="tool-n add">+{diff.added}</span>
+        <span className="tool-n del">−{diff.removed}</span>
+        <span className="tool-chev" aria-hidden="true">›</span>
+      </button>
+      {open && <DiffCard diff={diff} />}
+    </div>
+  )
+}
+
 const NO_MODELS: Model[] = []
 
 export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, models = NO_MODELS, outbox = [], onResend, onEdit, waiting, onContinue }: {
@@ -200,6 +220,9 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
         if (question?.item === e.id) return <QuestionCard key={e.id} q={question} onAnswer={cb.onAnswer} />
         const asking = ask?.item === e.id ? ask : null
         const diff = e.diff ?? asking?.preview
+        // A finished edit is one activity line ("Edited src/a.ts +3 −2 ›", the One look), the
+        // Mac's too; it opens to the diff card. Asking first, the card shows whole.
+        if (diff && e.outcome !== 'denied' && !asking) return <EditLine key={e.id} diff={diff} />
         if (diff && e.outcome !== 'denied') return (
           <DiffCard key={e.id} diff={diff} ask={asking} onDecide={cb.onDecide}
             note="Runs in your cloud sandbox. Nothing is pushed until you say so." />

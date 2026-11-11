@@ -523,7 +523,10 @@ struct WorkspaceView: View {
             Button("Cancel", role: .cancel) {}
         }
         .toolbar {
+            // As on the web: a plain title (no glass pill) at the left, the controls at the right.
             ToolbarItem(placement: .navigation) { titleBar }
+                .sharedBackgroundVisibility(.hidden)
+            ToolbarSpacer(.flexible)
             if compact && !sessionsVisible {
                 ToolbarItem(placement: .navigation) {
                     Button("Show Conversations", systemImage: "sidebar.left", action: toggleSessions)
@@ -560,13 +563,15 @@ struct WorkspaceView: View {
         if sessionsVisible {
             SessionList(workspace: workspace, maxHeight: room) { toggleSessions() }
                 .frame(width: Self.sessionsWidth)
-                .glassEffect(.regular, in: .rect(cornerRadius: 18))
+                // One look: an opaque panel one step off the canvas (#0a0a0a, 12 pt radius), not
+                // glass. It also draws in -FrogSnapshot, which glass doesn't.
+                .background(Tokens.sidebar, in: .rect(cornerRadius: 12))
                 .glassEffectID("sessions", in: glass)
                 .shadow(color: .black.opacity(peekSessions ? 0.35 : 0), radius: 24, y: 10)
         } else if !compact {
             // Folded, it's a rail of status tiles that morphs back out.
             SessionRail(workspace: workspace, maxHeight: room, expand: toggleSessions)
-                .glassEffect(.regular, in: .rect(cornerRadius: 18))
+                .background(Tokens.sidebar, in: .rect(cornerRadius: 12))
                 .glassEffectID("sessions", in: glass)
         }
     }
