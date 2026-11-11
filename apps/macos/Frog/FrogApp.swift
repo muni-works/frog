@@ -12,8 +12,8 @@ struct FrogApp: App {
             if SingleInstance.otherIsRunning { exit(0) }
             NSApplication.shared.setActivationPolicy(.accessory)
         } else {
-            // One frog: a second copy hands its folder to the running one and quits; a different
-            // build (debug vs the installed app) leaves quietly instead of opening on top.
+            // One frog per build: a second copy hands its folder or URL to the running one and
+            // quits; a different build (debug vs the installed app) runs alongside.
             SingleInstance.handOff()
         }
         if SingleInstance.isTesting {
@@ -161,13 +161,13 @@ struct RootView: View {
     }
 }
 
-/// There's one frog on a Mac, however many copies of it are built. A machine-wide lock (a file
-/// plus `flock`, not a bundle id, so a debug build sees the installed one) decides at launch:
-/// a second copy of the same build hands its `-FrogFolder` to the one that's running, brings
-/// that forward, and quits; a copy with a different bundle id (the installed app vs a debug
-/// build) just leaves, quietly — it mustn't open a window on top or steal focus. The lock also
-/// stops `open -n` from stacking. Test hosts (XCTest launches the app to run its tests) are
-/// left alone and kept out of sight.
+/// One frog per build. A lock per bundle id (a file plus `flock`) decides at launch: a second
+/// copy of the same build hands its `-FrogFolder` or URL to the one that's running, brings
+/// that forward, and quits. A different build (a Debug build vs the installed app) locks a
+/// different file and runs alongside: it used to leave silently, so the installed Frog
+/// wouldn't open while any Debug build ran. A holder that can't be reached gets an alert,
+/// never a silent exit. Test hosts (XCTest launches the app to run its tests) are left alone
+/// and kept out of sight.
 enum SingleInstance {
     static var isTesting: Bool {
         ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
@@ -176,11 +176,11 @@ enum SingleInstance {
     /// Per bundle id, so a debug frog and the installed one don't open each other's folders.
     static let openFolder = Notification.Name("\(Bundle.main.bundleIdentifier ?? "toys.frog").openFolder")
 
-    /// The machine-wide lock. Held for the process's lifetime (the kernel drops `flock` when
+    /// This build's lock. Held for the process's lifetime (the kernel drops `flock` when
     /// the holder exits, so the fd has to stay open past every initializer).
     private static let held = LockHolder()
 
-    /// Another copy of frog is running — any build, checked by the machine-wide lock. Takes
+    /// Another copy of this build is running. Takes
     /// the lock when none is held, so the headless launch that asked is now the one frog.
     static var otherIsRunning: Bool {
         if isTesting { return false }
@@ -201,11 +201,8 @@ enum SingleInstance {
                 holderBundleId: holder.bundleIdentifier, isTesting: isTesting)
             {
             case .handOff: handOff(to: holder)
-            case .exitQuietly:
-                FileHandle.standardError.write(Data(
-                    "another Frog is running (pid \(holder.pid)); not starting a second instance\n".utf8))
-                exit(0)
-            case .takeLock: return
+            // A legacy lock file (an older build locking the shared one): not ours to wait on.
+            case .runAlongside, .takeLock: return
             }
         }
     }
@@ -216,12 +213,68 @@ enum SingleInstance {
     /// The running copy has the lock (same bundle id): pass the folder over, bring it
     /// forward, and leave.
     private static func handOff(to holder: LockHolder.Held) {
+        // The holder's app object: activating by pid works when the running copy has no
+        // NSRunningApplication of its own visible to us by bundle id yet.
+        guard let running = NSRunningApplication(processIdentifier: holder.pid),
+              !running.isTerminated else {
+            return conflict(holder: holder)
+        }
         passFolder()
-        // The holder's app object: activating by pid works across bundle ids and when the
-        // running copy has no NSRunningApplication of its own visible to us yet.
-        let running = NSRunningApplication(processIdentifier: holder.pid)
-        running?.activate()
+        passURLs(to: running)
+        running.activate()
         exit(0)
+    }
+
+    /// URLs and paths this launch was given on the command line (`open -n Frog.app frog://…`,
+    /// or the binary run by hand), opened in the running copy instead of lost.
+    static func launchURLs(_ arguments: [String]) -> [URL] {
+        var urls: [URL] = []
+        var skipNext = false
+        for arg in arguments.dropFirst() {
+            if skipNext { skipNext = false; continue }
+            // `-Key value` pairs are UserDefaults (`-FrogFolder` goes through passFolder).
+            if arg.hasPrefix("-") { skipNext = !arg.hasPrefix("-psn"); continue }
+            if let url = URL(string: arg), let scheme = url.scheme, scheme.count > 1, scheme != "file" {
+                urls.append(url)
+            } else if arg.hasPrefix("/") || arg.hasPrefix("file:") {
+                urls.append(arg.hasPrefix("file:") ? URL(string: arg)! : URL(fileURLWithPath: arg))
+            }
+        }
+        return urls
+    }
+
+    private static func passURLs(to running: NSRunningApplication) {
+        let urls = launchURLs(CommandLine.arguments)
+        guard !urls.isEmpty, let app = running.bundleURL else { return }
+        let done = DispatchSemaphore(value: 0)
+        NSWorkspace.shared.open(urls, withApplicationAt: app, configuration: .init()) { _, _ in done.signal() }
+        _ = done.wait(timeout: .now() + 2)
+    }
+
+    /// What the alert says when this build's lock is held by a frog we can't reach.
+    static func conflictText(pid: pid_t) -> (title: String, body: String) {
+        ("Frog is already running",
+         "Another copy of Frog (process \(pid)) holds this build's lock but isn't responding. "
+         + "Quit it in Activity Monitor, then open Frog again.")
+    }
+
+    /// The lock is held by a live process that isn't an app we can activate (hung, or not a
+    /// GUI process at all): say so, then leave. Never a silent exit.
+    private static func conflict(holder: LockHolder.Held) {
+        let text = conflictText(pid: holder.pid)
+        FileHandle.standardError.write(Data("\(text.title): \(text.body)\n".utf8))
+        NSApplication.shared.setActivationPolicy(.regular)
+        NSApp.activate()
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = text.title
+        alert.informativeText = text.body
+        alert.addButton(withTitle: "Quit")
+        alert.addButton(withTitle: "Open Activity Monitor")
+        if alert.runModal() == .alertSecondButtonReturn {
+            NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Utilities/Activity Monitor.app"))
+        }
+        exit(1)
     }
 
     /// Posts this launch's `-FrogFolder` to the running copy and waits (briefly) for it to say
@@ -283,7 +336,7 @@ enum FolderOpener {
 /// Whether this launch should take the lock, hand the folder over, or leave — everything
 /// except the locking itself, so the rules can be tested without processes.
 enum InstanceDecision {
-    case takeLock, handOff, exitQuietly
+    case takeLock, handOff, runAlongside
 
     static func decide(holderPid: pid_t, myBundleId: String?, holderBundleId: String?,
                        isTesting: Bool) -> InstanceDecision {
@@ -298,14 +351,14 @@ enum InstanceDecision {
             // as one frog with many windows.
             return .handOff
         }
-        // A different build is running: don't open a second frog on top of it.
-        return .exitQuietly
+        // A different build holds it (only a legacy shared lock file can say so): run
+        // alongside rather than vanish.
+        return .runAlongside
     }
 }
 
-/// The lock itself: `flock` on one file in Application Support, with the holder's pid and
-/// bundle id written in for the next launcher to read. `flock` is machine-wide, ignores bundle
-/// ids, and is dropped by the kernel when the holder exits — so a dead holder never keeps a
+/// The lock itself: `flock` on one file per bundle id in Application Support, with the
+/// holder's pid and bundle id written in for the next launcher to read. `flock` is dropped by the kernel when the holder exits — so a dead holder never keeps a
 /// live frog out. (Touched only at launch and in tests; `@unchecked` for the static let.)
 final class LockHolder: @unchecked Sendable {
     struct Held: Equatable {
@@ -330,7 +383,7 @@ final class LockHolder: @unchecked Sendable {
     /// reports what the first did), so the headless path and `handOff` can both ask.
     func acquire(bundleIdentifier: String?) -> Outcome {
         if !isFree { return state }
-        guard let lock = Self.path() else { return state }
+        guard let lock = Self.path(bundleIdentifier: bundleIdentifier) else { return state }
         Self.ensureDirectory(of: lock)
         // The holder writes its pid right after it takes the lock, so a failed acquire can
         // briefly read a stale (dead) pid — retry while the file still names a dead one.
@@ -374,18 +427,23 @@ final class LockHolder: @unchecked Sendable {
         return Held(pid: pid, bundleIdentifier: bundle)
     }
 
-    /// One lock per user, machine-wide — outside the bundle id's own container, so every
-    /// build of frog (release, debug, a backup) locks the same file. Tests point this at a
-    /// scratch file of their own.
+    /// Tests point this at a scratch file of their own.
     nonisolated(unsafe) static var pathForTesting: URL?
 
-    private static func path() -> URL? {
+    /// One lock per bundle id: the installed app keeps `instance.lock` (what older builds
+    /// read), every other build gets `instance.<bundle id>.lock`, so builds never block each
+    /// other.
+    static func path(bundleIdentifier: String?) -> URL? {
         if let forced = pathForTesting { return forced }
         let fm = FileManager.default
         guard let base = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
             return nil
         }
-        return base.appending(path: "Frog/instance.lock")
+        let name = switch bundleIdentifier {
+        case nil, "toys.frog": "instance.lock"
+        case let id?: "instance.\(id.filter { $0.isLetter || $0.isNumber || $0 == "." || $0 == "-" }).lock"
+        }
+        return base.appending(path: "Frog/\(name)")
     }
 
     private static func ensureDirectory(of lock: URL) {

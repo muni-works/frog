@@ -966,7 +966,7 @@ private struct LocationPicker: View {
                 try await CloudAccount.connectGitHub()
                 await load()
             } catch {
-                workspace.raceError = error.localizedDescription
+                if let failure = CloudAccount.signInFailure(error) { workspace.raceError = failure }
             }
         }
     }

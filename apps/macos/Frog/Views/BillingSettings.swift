@@ -8,6 +8,8 @@ struct BillingSettings: View {
     @State private var amount = 10
     @State private var signingIn: Task<Void, Never>?
     @State private var failure: String?
+    /// The sign-in that failed, for Try Again.
+    @State private var retry: (@MainActor () async throws -> Void)?
 
     var body: some View {
         Form {
@@ -52,7 +54,13 @@ struct BillingSettings: View {
             } else if account.error == nil {
                 Section { ProgressView().frame(maxWidth: .infinity) }
             }
-            if let error = failure ?? account.error {
+            if let failure {
+                Section {
+                    LabeledContent {
+                        if let retry, signingIn == nil { Button("Try Again") { start(retry) } }
+                    } label: { Text(failure).foregroundStyle(.red) }
+                }
+            } else if let error = account.error {
                 Section { Text(error).foregroundStyle(.red) }
             }
         }
@@ -63,6 +71,7 @@ struct BillingSettings: View {
     /// Runs a sign-in in the browser, cancellable, saying why if it doesn't finish.
     private func start(_ run: @escaping @MainActor () async throws -> Void) {
         failure = nil
+        retry = run
         signingIn = Task {
             defer { signingIn = nil }
             do { try await run() } catch { failure = CloudAccount.signInFailure(error) }
