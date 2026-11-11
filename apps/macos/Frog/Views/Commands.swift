@@ -124,6 +124,11 @@ struct FrogCommands: Commands {
                 .disabled(!(window?.state.findShown ?? false))
         }
 
+        CommandGroup(after: .windowArrangement) {
+            Divider()
+            Button("Devices") { openWindow(id: DevicesWindow.id) }
+        }
+
         CommandGroup(before: .toolbar) {
             // Quick switch, in the sidebar's order (its top-level rows): ⌘1…8 jump to the Nth
             // conversation, ⌘9 the last one (Safari-style), ⇧⌘] / ⇧⌘[ step through them with

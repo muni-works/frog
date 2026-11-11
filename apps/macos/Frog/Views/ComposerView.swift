@@ -413,6 +413,9 @@ struct ComposerView: View {
             if let e = workspace.raceError {
                 Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange).help(e)
             }
+            if paneWidth > .narrow, conversation.cloudSession == nil {
+                DeviceChip(conversation: conversation)
+            }
             ModelPicker(workspace: workspace, conversation: conversation)
             if let status = conversation.status, paneWidth > .narrow {
                 ContextButton(conversation: conversation, status: status)
