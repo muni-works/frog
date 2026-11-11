@@ -578,3 +578,11 @@ button.tool:hover .tool-chev { opacity: 1; }
 .cz-device-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--place-cloud); }
 .cz-device svg { color: var(--place-cloud); }
 .cz-under > .cz-model { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
+/* The ask card (one design with the Mac's): title, the command in a well, where it runs, answers. */
+.ask-h { padding: 12px 14px 8px; }
+.ask-where { padding: 10px 14px 0; font-size: 12px; }
+.ask .diff-acts { justify-content: flex-start; padding-top: 8px; flex-wrap: wrap; }
+.ask-note { display: flex; gap: 8px; padding: 10px 14px 0; }
+.ask-note .f-input { flex: 1; min-width: 0; }
+.thought .tool-verb { color: var(--faint); }
+.thought-body { font-size: 13px; line-height: 1.5; color: var(--muted); padding: 2px 0 6px 0; white-space: pre-wrap; }

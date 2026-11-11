@@ -16,7 +16,7 @@ export interface Entry {
   done: boolean
 }
 
-export interface Ask { id: string; item: string; name: string; arg: string; preview?: FileDiff; reason?: string }
+export interface Ask { id: string; item: string; name: string; arg: string; always?: string; preview?: FileDiff; reason?: string }
 
 /** The Ask tool waiting on a choice (`question`), answered with Op::Answer. */
 export interface Question { id: string; item: string; question: string; options: { label: string; detail?: string }[]; multi: boolean; allowOther: boolean }
@@ -138,7 +138,7 @@ function apply(t: Thread, ev: Event, created: number): Thread {
       return next
     }
     case 'permission_request':
-      return { ...t, ask: { id: ev.id, item: ev.item, name: ev.name, arg: ev.arg, preview: ev.preview, reason: ev.reason } }
+      return { ...t, ask: { id: ev.id, item: ev.item, name: ev.name, arg: ev.arg, always: ev.always, preview: ev.preview, reason: ev.reason } }
     case 'status':
       return { ...t, model: ev.model, mode: ev.mode, context: { used: ev.context_tokens, window: ev.context_window }, todos: ev.todos ?? t.todos, vision: ev.vision ?? t.vision }
     case 'pane_opened':

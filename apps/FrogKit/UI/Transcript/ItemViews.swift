@@ -470,6 +470,14 @@ struct PermissionCard: View {
     @State private var note = ""
 
     var body: some View {
+        #if os(macOS)
+        macCard
+        #else
+        iosCard
+        #endif
+    }
+
+    private var iosCard: some View {
         VStack(alignment: .leading, spacing: TurnSpace.Inset.card) {
             QuestionBody(request: request)
             if let card = request.card { ApprovalDetails(card: card) }
@@ -491,47 +499,97 @@ struct PermissionCard: View {
                     .frame(maxWidth: .infinity)
             }
             #else
+            EmptyView()
+            #endif
+        }
+        #if os(iOS)
+        .padding(TurnSpace.Card.padding)
+        .glassEffect(.regular.tint(.orange.opacity(0.10)), in: .rect(cornerRadius: TurnSpace.Card.radius))
+        #endif
+    }
+
+    #if os(macOS)
+    /// One look with the web: the title, the command in a well, where it runs, then the answers.
+    /// Allow is the green primary (⌘↩), Deny keeps ⌘., the rest are secondary.
+    private var macCard: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(request.question)
+                .font(.frog(size: Tokens.Size.body, weight: .semibold))
+                .padding(.horizontal, 14).padding(.top, 12).padding(.bottom, 8)
+            if let reason = request.reason {
+                Text(reason).font(.callout).foregroundStyle(Tokens.textSecondary)
+                    .padding(.horizontal, 14).padding(.bottom, 8)
+            }
+            if let diff = request.preview {
+                DiffView(diff: diff, maxLines: 40).padding(.horizontal, 14).padding(.bottom, 8)
+            } else if !request.arg.isEmpty {
+                Text(request.arg)
+                    .font(.frog(size: Tokens.Size.secondary, design: .monospaced))
+                    .textSelection(.enabled)
+                    .lineLimit(8)
+                    .padding(.horizontal, 14).padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Tokens.well)
+            }
+            if let card = request.card { ApprovalDetails(card: card).padding(.horizontal, 14).padding(.top, 8) }
             if noting {
                 HStack(spacing: TurnSpace.Inset.row) {
                     TextField("Tell the agent why, or what to do instead", text: $note)
                         .textFieldStyle(.roundedBorder)
                         .onSubmit { conversation.answer(.deny, note: note) }
                     Button("Deny") { conversation.answer(.deny, note: note) }
-                        .buttonStyle(.glass)
+                        .buttonStyle(CardButtonStyle())
                         .disabled(note.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
+                .padding(.horizontal, 14).padding(.top, 10)
             }
-            HStack(spacing: TurnSpace.Inset.row) {
-                Button {
-                    conversation.answer(.allow)
-                } label: {
-                    Text(request.card == nil ? "Allow" : "Allow once").frame(minWidth: 56)
-                }
-                .buttonStyle(.glassProminent)
-                .keyboardShortcut(.return, modifiers: .command)
-                .help("Allow (⌘↩)")
+            Text("Runs on this Mac · sandboxed")
+                .font(.frog(size: Tokens.Size.meta))
+                .foregroundStyle(Tokens.textSecondary)
+                .padding(.horizontal, 14).padding(.top, 10)
+            HStack(spacing: 8) {
                 // Some requests (moving to a folder) are decided every time.
                 if !request.always.isEmpty {
                     Button(alwaysLabel) { conversation.answer(request.card == nil ? .allowAlways : .allowPrefix) }
-                        .buttonStyle(.glass)
+                        .buttonStyle(CardButtonStyle())
                 }
-                Spacer()
                 Button("Deny with note…") { noting = true }
-                    .buttonStyle(.borderless)
-                Button("Deny") { conversation.answer(.deny) }
-                    .buttonStyle(.glass)
+                    .buttonStyle(CardButtonStyle())
+                Spacer(minLength: 8)
+                Button("Deny ⌘.") { conversation.answer(.deny) }
+                    .buttonStyle(CardButtonStyle())
                     .keyboardShortcut(".", modifiers: .command)
-                    .help("Deny (⌘.)")
+                Button(request.card == nil ? "Allow ⌘↩" : "Allow once ⌘↩") { conversation.answer(.allow) }
+                    .buttonStyle(CardButtonStyle(primary: true))
+                    .keyboardShortcut(.return, modifiers: .command)
             }
-            #endif
+            .padding(.horizontal, 14).padding(.top, 8).padding(.bottom, 12)
         }
-        .padding(TurnSpace.Card.padding)
-        .glassEffect(.regular.tint(.orange.opacity(0.10)), in: .rect(cornerRadius: TurnSpace.Card.radius))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Tokens.raised, in: .rect(cornerRadius: Tokens.Radius.card))
+        .clipShape(.rect(cornerRadius: Tokens.Radius.card))
     }
-
+    #endif
 
     private var alwaysLabel: String {
         request.always.prefix(1).uppercased() + request.always.dropFirst()
+    }
+}
+
+/// The ask card's buttons, as on the web: secondary on the hover fill, the primary green.
+struct CardButtonStyle: ButtonStyle {
+    var primary = false
+    @Environment(\.isEnabled) private var enabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.frog(size: Tokens.Size.secondary, weight: primary ? .semibold : .medium))
+            .foregroundStyle(primary ? Color.black : Tokens.text)
+            .padding(.horizontal, 12)
+            .frame(height: 30)
+            .background(primary ? Tokens.accent : Tokens.hover, in: .capsule)
+            .opacity(enabled ? (configuration.isPressed ? 0.8 : 1) : 0.45)
+            .contentShape(.capsule)
     }
 }
 
