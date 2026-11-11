@@ -258,13 +258,7 @@ struct ComposerView: View {
                     .frame(height: height)
                 }
                 .padding(.bottom, 2)
-                // As on the web: an open ask says so beside the stop button.
-                if conversation.busy, conversation.permission != nil || conversation.question != nil || conversation.elicitation != nil {
-                    Text("Waiting on you")
-                        .font(.frog(size: Tokens.Size.secondary))
-                        .foregroundStyle(Tokens.signal)
-                        .fixedSize()
-                }
+                // An open ask is its own card right above: the composer doesn't repeat it.
                 if paneWidth > .narrow {
                     DictationButton(dictation: dictation, toggle: toggleDictation)
                 }

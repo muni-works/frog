@@ -241,4 +241,16 @@ final class SidebarSnapshotTests: XCTestCase {
             }
         }
     }
+
+    /// The ask card: two answers and a ⋯, into ask-card-{light,dark}.png.
+    func testRenderAskCard() throws {
+        let c = Conversation(folder: URL(fileURLWithPath: "/tmp/demo"), link: nil, replay: false, session: "s")
+        let line = #"{"seq":1,"session":"s","created":1790113417019,"event":"permission_request","id":"p1","item":"t5","name":"Bash","arg":"cargo test -p frog-engine kids","always":"always allow `cargo test`"}"#
+        c.ingest(try JSONDecoder.frog.decode(Envelope.self, from: Data(line.utf8)))
+        let request = try XCTUnwrap(c.permission)
+        for (look, name) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
+            try render(PermissionCard(request: request, conversation: c).padding(16).background(.background),
+                       size: CGSize(width: 560, height: 200), to: "ask-card-\(name)", appearance: look)
+        }
+    }
 }

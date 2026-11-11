@@ -543,25 +543,34 @@ struct PermissionCard: View {
                 }
                 .padding(.horizontal, 14).padding(.top, 10)
             }
-            Text("Runs on this Mac · sandboxed")
-                .font(.frog(size: Tokens.Size.meta))
-                .foregroundStyle(Tokens.textSecondary)
-                .padding(.horizontal, 14).padding(.top, 10)
+            // Two answers, as a Mac alert has: Deny and the default, Allow. The rest of the
+            // choices wait behind ⋯; the shortcuts work without being printed on the buttons.
             HStack(spacing: 8) {
-                // Some requests (moving to a folder) are decided every time.
-                if !request.always.isEmpty {
-                    Button(alwaysLabel) { conversation.answer(request.card == nil ? .allowAlways : .allowPrefix) }
-                        .buttonStyle(CardButtonStyle())
+                Menu {
+                    // Some requests (moving to a folder) are decided every time.
+                    if !request.always.isEmpty {
+                        Button(alwaysLabel) { conversation.answer(request.card == nil ? .allowAlways : .allowPrefix) }
+                    }
+                    Button("Deny with a Note…") { noting = true }
+                } label: {
+                    Image(systemName: "ellipsis").frame(width: 30, height: 30).contentShape(.circle)
                 }
-                Button("Deny with note…") { noting = true }
-                    .buttonStyle(CardButtonStyle())
+                .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+                .foregroundStyle(Tokens.textSecondary)
+                .help("More choices")
+                Text("Runs on this Mac · sandboxed")
+                    .font(.frog(size: Tokens.Size.meta))
+                    .foregroundStyle(Tokens.textTertiary)
+                    .lineLimit(1)
                 Spacer(minLength: 8)
-                Button("Deny ⌘.") { conversation.answer(.deny) }
+                Button("Deny") { conversation.answer(.deny) }
                     .buttonStyle(CardButtonStyle())
                     .keyboardShortcut(".", modifiers: .command)
-                Button(request.card == nil ? "Allow ⌘↩" : "Allow once ⌘↩") { conversation.answer(.allow) }
+                    .help("Deny (⌘.)")
+                Button(request.card == nil ? "Allow" : "Allow Once") { conversation.answer(.allow) }
                     .buttonStyle(CardButtonStyle(primary: true))
                     .keyboardShortcut(.return, modifiers: .command)
+                    .help("Allow (⌘↩)")
             }
             .padding(.horizontal, 14).padding(.top, 8).padding(.bottom, 12)
         }
