@@ -95,6 +95,12 @@ struct FrogApp: App {
         .defaultLaunchBehavior(.suppressed)
         .restorationBehavior(.disabled)
 
+        Window("Devices", id: DevicesWindow.id) {
+            DevicesWindow()
+        }
+        .defaultSize(width: 900, height: 600)
+        .defaultLaunchBehavior(.suppressed)
+
         Settings {
             SettingsView()
                 .containerBackground(FrogCanvas.color, for: .window)

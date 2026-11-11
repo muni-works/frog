@@ -25,13 +25,14 @@
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_frog._tcp</string>
+		<string>_frog-node._tcp</string>
 	</array>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>Frog reads your calendar on this Mac to shape your brief around your day. It never leaves this Mac.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>© 2026 Municipal Robotics</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>frog on your iPhone connects to this Mac over your network.</string>
+	<string>frog on your iPhone connects to this Mac over your network, and frog finds machines that can run models for you on it.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Frog listens only while you dictate into the composer. Speech is transcribed on this Mac; audio never leaves it.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
