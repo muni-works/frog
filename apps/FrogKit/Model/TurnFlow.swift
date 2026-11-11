@@ -123,6 +123,12 @@ extension ItemState {
 
 extension TurnFlow.Segment {
     /// Nil while any of its items is running.
+    /// A step in it is waiting on a permission answer (its card shows).
+    var waiting: Bool {
+        if case .activity(let g) = self { return g.steps.contains(where: \.needsPermission) }
+        return false
+    }
+
     var stamp: [ItemStamp]? {
         switch self {
         case .text(let i), .visual(let i), .notice(let i): i.stamp.map { [$0] }

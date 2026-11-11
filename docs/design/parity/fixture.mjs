@@ -7,10 +7,31 @@
 //
 // The Mac replays it with -FrogReplay; the web gets it from gateway.mjs. It ends on the ask,
 // then holds (a long gap before the last event) so both captures catch the card open.
-const cwd = process.argv[2] ?? "/tmp/lilypad";
+//   node docs/design/parity/fixture.mjs --file old|new   # src/retry.rs before or after the edit
+const fileArg = process.argv[2] === "--file" ? process.argv[3] : null;
+const cwd = (fileArg ? null : process.argv[2]) ?? "/tmp/lilypad";
 const session = "20261111-120000-parity";
 const model = "ollama/qwen3-coder:30b";
 const t0 = Date.UTC(2026, 10, 11, 12, 0, 0);
+
+// The one edit: lines 18 to 23 of src/retry.rs, before (" " and "-") and after (" " and "+").
+const EDIT = [
+  [" ", "impl Backoff {"],
+  ["-", "    pub fn delay(&self, attempt: u32) -> Duration {"],
+  ["+", "    pub fn delay(&self, attempt: u32, rng: &mut impl Rng) -> Duration {"],
+  [" ", "        let base = self.base * 2u32.pow(attempt);"],
+  ["-", "        let jitter = thread_rng().gen_range(0..=base.as_millis() as u64);"],
+  ["+", "        let jitter = rng.gen_range(0..=base.as_millis() as u64 / 2);"],
+  ["+", "        // Half the base at most, so the third retry stays under 500ms."],
+  [" ", "        base + Duration::from_millis(jitter)"],
+];
+if (fileArg) {
+  const keep = fileArg === "old" ? "-" : "+";
+  const head = ["// Exponential backoff with jitter.", ...Array.from({ length: 16 }, () => "")];
+  const body = EDIT.filter(([m]) => m === " " || m === keep).map(([, t]) => t);
+  console.log([...head, ...body, "    }", "}"].join("\n"));
+  process.exit(0);
+}
 
 const diff = (path, start, lines) => {
   let old = start, nu = start, added = 0, removed = 0;
@@ -37,16 +58,7 @@ const events = [
   ...tool("t2", "Grep", "thread_rng", { display: "3 matches in 2 files" }),
   ...tool("t3", "Bash", "cargo test upload_retries_on_503", { outcome: "error", output: "test upload_retries_on_503 ... FAILED\nmock store: no request within 500ms" }),
   ...tool("t4", "Edit", "src/retry.rs", {
-    diff: diff("src/retry.rs", 18, [
-      [" ", "impl Backoff {"],
-      ["-", "    pub fn delay(&self, attempt: u32) -> Duration {"],
-      ["+", "    pub fn delay(&self, attempt: u32, rng: &mut impl Rng) -> Duration {"],
-      [" ", "        let base = self.base * 2u32.pow(attempt);"],
-      ["-", "        let jitter = thread_rng().gen_range(0..=base.as_millis() as u64);"],
-      ["+", "        let jitter = rng.gen_range(0..=base.as_millis() as u64 / 2);"],
-      ["+", "        // Half the base at most, so the third retry stays under 500ms."],
-      [" ", "        base + Duration::from_millis(jitter)"],
-    ]),
+    diff: diff("src/retry.rs", 18, EDIT),
   }),
   ...said("m1", "message", "The jitter came from `thread_rng()`, so the third retry could wait 800ms and the mock store gave up at 500ms. `Backoff::delay` now takes the `Rng`; the test passes a seeded one.", 900),
   [250, { event: "item_started", id: "t5", kind: { type: "tool_call", name: "Bash", arg: "cargo test -q upload" } }],

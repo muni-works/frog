@@ -1,8 +1,8 @@
 import AppKit
 
 /// `-FrogSnapshot <path.png>` (with optional `-FrogSnapshotDelay <seconds>`, default 10) renders
-/// the main window, title bar included, to a PNG and quits. The app draws itself, so the parity
-/// harness needs no Screen Recording permission (`docs/design/parity/capture.sh`).
+/// the main window, title bar included, to a PNG and quits. A process may capture its own
+/// windows, so the parity harness needs no Screen Recording permission (`docs/design/parity/capture.sh`).
 @MainActor
 enum Snapshot {
     static func scheduleIfAsked() {
@@ -23,9 +23,25 @@ enum Snapshot {
               let view = window.contentView?.superview ?? window.contentView else { return false }
         view.layoutSubtreeIfNeeded()
         view.displayIfNeeded()
-        guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return false }
-        view.cacheDisplay(in: view.bounds, to: rep)
-        guard let png = rep.representation(using: .png, properties: [:]) else { return false }
+        // The window server's picture of our own window first: it has everything (glass, the
+        // table-backed transcript, which `cacheDisplay` drew blank once a card was up), and a
+        // process may always capture its own windows, so no Screen Recording.
+        let rep = windowServerImage(window).map(NSBitmapImageRep.init(cgImage:)) ?? {
+            guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
+            view.cacheDisplay(in: view.bounds, to: rep)
+            return rep
+        }()
+        guard let rep, let png = rep.representation(using: .png, properties: [:]) else { return false }
         return (try? png.write(to: url)) != nil
+    }
+
+    /// `CGWindowListCreateImage` for one window, looked up at runtime: the SDK marks it
+    /// unavailable, but it still captures the caller's own windows without a permission prompt.
+    private static func windowServerImage(_ window: NSWindow) -> CGImage? {
+        typealias Fn = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
+        guard let sym = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGWindowListCreateImage") else { return nil }
+        let create = unsafeBitCast(sym, to: Fn.self)
+        // .optionIncludingWindow, .boundsIgnoreFraming | .bestResolution
+        return create(.null, 1 << 3, UInt32(window.windowNumber), (1 << 0) | (1 << 3))?.takeRetainedValue()
     }
 }

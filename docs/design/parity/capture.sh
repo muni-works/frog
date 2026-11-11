@@ -40,8 +40,19 @@ APP="$MAC/build/parity/Build/Products/Debug/Frog.app"
 mac_shot() {
     local look=$1 home="$WORK/home-$1"
     mkdir -p "$home/code/lilypad/src"
-    print '// Exponential backoff with jitter.' > "$home/code/lilypad/src/retry.rs"
     node "$HERE/fixture.mjs" "$home/code/lilypad" > "$home/parity.jsonl"
+    # A repo on the web's branch, with the fixture's edit uncommitted: the context bar over the
+    # composer shows lilypad · frog/lilypad-parity · +3 −2 · Commit changes, as the web does.
+    local repo="$home/code/lilypad"
+    node "$HERE/fixture.mjs" --file old > "$repo/src/retry.rs"
+    git -C "$repo" init -q -b frog/lilypad-parity
+    git -C "$repo" -c user.name=Frog -c user.email=frog@example.invalid commit -qm init --allow-empty
+    git -C "$repo" add -A
+    git -C "$repo" -c user.name=Frog -c user.email=frog@example.invalid commit -qm "retry: backoff"
+    node "$HERE/fixture.mjs" --file new > "$repo/src/retry.rs"
+    # The session's log where the sidebar reads it, so its row shows, as on the web.
+    mkdir -p "$home/.local/share/frog/sessions"
+    cp "$home/parity.jsonl" "$home/.local/share/frog/sessions/20261111-120000-parity.jsonl"
     defaults delete $ID >/dev/null 2>&1 || true
     rm -rf ~/Library/Saved\ Application\ State/$ID.savedState
     local style=(-NSRequiresAquaSystemAppearance YES); [[ $look == dark ]] && style=(-AppleInterfaceStyle Dark)
@@ -49,7 +60,7 @@ mac_shot() {
     # The app draws its own window to the PNG and quits (-FrogSnapshot): no Screen Recording.
     HOME="$home" "$APP/Contents/MacOS/Frog" -FrogFolder "$home/code/lilypad" -FrogReplay "$home/parity.jsonl" \
         -FrogReplaySpeed 2 -FrogSnapshot "$HERE/mac-$look.png" -FrogSnapshotDelay ${PARITY_MAC_WAIT:-12} \
-        -ApplePersistenceIgnoreState YES -importedLegacyDefaults YES $style >/dev/null 2>&1 || true
+        -ApplePersistenceIgnoreState YES -importedLegacyDefaults YES -autoArchiveChats NO -archivedSessions "()" $style >/dev/null 2>&1 || true
     [[ -s $HERE/mac-$look.png ]] || { print -u2 "capture.sh: the Mac app didn't write mac-$look.png"; exit 1; }
 }
 for look in $LOOKS; do mac_shot $look; done

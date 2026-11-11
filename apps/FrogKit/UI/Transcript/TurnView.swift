@@ -49,7 +49,9 @@ struct TurnView: View, Equatable {
             return a.turn.input == b.turn.input && a.turn.more == b.turn.more
                 && a.turn.images == b.turn.images && a.turn.wakes == b.turn.wakes
         case (.segment(let x), .segment(let y)):
-            return x.id == y.id && x.stamp == y.stamp
+            // A running segment has no stamp, so nil == nil reads as unchanged: a step that
+            // starts waiting on you must still redraw, to show its permission card.
+            return x.id == y.id && x.stamp == y.stamp && x.waiting == y.waiting
         case (.tail, .tail):
             return a.turn.items.map(\.itemKey) == b.turn.items.map(\.itemKey)
                 && a.turn.end == b.turn.end && a.turn.finished == b.turn.finished
@@ -236,10 +238,14 @@ struct TurnView: View, Equatable {
                     LiveStatus(text: status.text, since: status.since, preview: thinking)
                         .transition(.opacity)
                 }
+                #if !os(macOS)
+                // The Mac, like the web, says each edit as its line ("Edited f +3 −2 ›", opening
+                // to the diff) and the session's changes in the context bar over the composer.
                 if !parts.changes.isEmpty {
                     ChangesStrip(changes: parts.changes)
                         .equatable()
                 }
+                #endif
                 if FeatureFlags.outcomeCard, let claims = turn.claims {
                     // The outcome card (review-ux step 2): the worker's claims, read-only, in
                     // place of the changes strip for delegated work. Diffs stay one click away
