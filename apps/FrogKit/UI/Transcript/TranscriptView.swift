@@ -1168,6 +1168,9 @@ final class FlowCache {
             }
             out += "\(item.id)|\(kind)|\(item.done ? "d" : "u")|"
             if item.imagePreview != nil { out += "v" }
+            // The segments hold copies of the items: a step that starts waiting on a permission
+            // must rebuild its group, or the card (keyed on `needsPermission`) never shows.
+            if item.needsPermission { out += "w" }
             if let r = item.result {
                 out += "\(r.present != nil ? "p" : "-")\(r.app != nil ? "a" : "-")\((r.images ?? []).isEmpty ? "-" : "i")\(r.diagram != nil ? "d" : "-")\(r.diff != nil ? "f" : "-")"
             }

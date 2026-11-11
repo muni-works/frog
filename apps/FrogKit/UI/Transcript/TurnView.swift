@@ -49,7 +49,9 @@ struct TurnView: View, Equatable {
             return a.turn.input == b.turn.input && a.turn.more == b.turn.more
                 && a.turn.images == b.turn.images && a.turn.wakes == b.turn.wakes
         case (.segment(let x), .segment(let y)):
-            return x.id == y.id && x.stamp == y.stamp
+            // A running segment has no stamp, so nil == nil reads as unchanged: a step that
+            // starts waiting on you must still redraw, to show its permission card.
+            return x.id == y.id && x.stamp == y.stamp && x.waiting == y.waiting
         case (.tail, .tail):
             return a.turn.items.map(\.itemKey) == b.turn.items.map(\.itemKey)
                 && a.turn.end == b.turn.end && a.turn.finished == b.turn.finished
