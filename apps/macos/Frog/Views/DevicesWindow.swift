@@ -45,7 +45,7 @@ struct DeviceChip: View {
                     Text("on \(serving.name)")
                         .lineLimit(1)
                     if let tps = status.tokensPerSec, tps > 0 {
-                        Text("· \(Int(tps.rounded())) tok/s")
+                        Text("· " + ModelStats.speedText(tps))
                             .foregroundStyle(Tokens.textTertiary)
                             .monospacedDigit()
                     }
@@ -143,7 +143,7 @@ private struct DeviceMap: View {
                         .transition(.opacity.combined(with: .scale(scale: 0.96)))
                 }
                 if !compact, !devices.contains(where: { $0.role == .node }) {
-                    Text("Run `tang-llm serve --host 0.0.0.0` on any Mac or GPU box on your network to add it.")
+                    Text("Run `curl -fsSL https://frog.toys/node | sh` on any Linux GPU box on your network, or turn on Settings › Lend on another Mac, to add it.")
                         .font(.frog(size: 12))
                         .foregroundStyle(Tokens.textTertiary)
                         .multilineTextAlignment(.center)
@@ -375,11 +375,8 @@ struct DeviceCard: View {
                 }
                 Spacer(minLength: 4)
                 if !compact, let tps = device.decode {
-                    VStack(alignment: .trailing, spacing: 0) {
-                        Text(tps < 10 ? String(format: "%.1f", tps) : "\(Int(tps.rounded()))")
-                            .font(.frog(size: 20, weight: .semibold))
-                        Text("tok/s").font(.frog(size: 10)).foregroundStyle(Tokens.textTertiary)
-                    }
+                    Text(ModelStats.speedText(tps))
+                        .font(.frog(size: 15, weight: .semibold))
                 }
             }
         } else {

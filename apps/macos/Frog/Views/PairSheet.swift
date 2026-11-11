@@ -90,7 +90,7 @@ struct PairSheet: View {
                 if live.pairOpen {
                     Text("\(device.name) is showing a code. Type it here.")
                 } else {
-                    Text("On \(device.name), run ") + Text("tang-llm pair").font(.system(size: 13, design: .monospaced))
+                    Text("On \(device.name), run ") + Text("tang-llm pair").font(.system(size: 13, design: .monospaced)) // advanced: the command to type
                         + Text(" and type the code it shows.")
                 }
             }
