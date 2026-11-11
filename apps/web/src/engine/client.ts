@@ -6,6 +6,7 @@ import type { Envelope, Op } from '../cloud/protocol'
  */
 export interface EngineClient {
   /** Deliver every envelope for `session` with `seq > after`, then live ones. Returns unsubscribe. */
-  subscribe(session: string, after: number, onEnvelope: (e: Envelope) => void): () => void
+  /** `onReset`: the stream restarted from the beginning, so drop what was folded from it. */
+  subscribe(session: string, after: number, onEnvelope: (e: Envelope) => void, onReset?: () => void): () => void
   send(session: string, op: Op): void
 }

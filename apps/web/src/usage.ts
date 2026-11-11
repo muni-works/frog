@@ -34,3 +34,15 @@ export function seconds(ms: number) {
   const s = ms / 1000
   return s < 10 ? `${s.toFixed(1)}s` : s < 60 ? `${Math.round(s)}s` : `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`
 }
+
+/** A usage bar's colour: green, the notice colour past 80%, red once it's full. */
+export function barTone(x: number) {
+  return x >= 1 ? 'var(--warn)' : x > 0.8 ? 'var(--notice)' : 'var(--frog)'
+}
+
+/** The composer ring's colour, matching the bars: red only past the plan (or a full context),
+ * the notice colour past 80% of either, quiet otherwise. */
+export function ringTone(plan: number, ctx: number, over: boolean) {
+  const f = Math.max(plan, ctx)
+  return over || f >= 1 ? 'var(--warn)' : f > 0.8 ? 'var(--notice)' : 'var(--muted)'
+}

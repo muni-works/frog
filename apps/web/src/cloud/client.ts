@@ -20,6 +20,9 @@ export interface GatewayOptions {
   WebSocket?: WebSocketCtor;
   /** Protocol to offer in hello; only tests change it. */
   protocol?: number;
+  /** The token stopped working (a 401 from a route, or a socket that keeps failing while the
+   * account check answers 401): the app signs out. */
+  onUnauthorized?: () => void;
 }
 
 export class GatewayError extends Error {
@@ -72,6 +75,7 @@ export class Gateway {
     if (!res.ok) {
       let json: { error?: string } | undefined;
       try { json = text ? JSON.parse(text) : undefined; } catch { /* an HTML error page from a proxy */ }
+      if (res.status === 401) this.opts.onUnauthorized?.();
       throw new GatewayError(res.status, json?.error ?? res.statusText);
     }
     const json = text ? JSON.parse(text) : undefined;
@@ -117,12 +121,22 @@ export type ConnectionState =
   | { state: "connecting"; attempt: number }
   | { state: "live"; welcome: Welcome }
   | { state: "refused"; refused: Refused }
+  /** The token was refused: no more reconnects; the app signs out. */
+  | { state: "unauthorized" }
   | { state: "closed"; code: number; reason: string };
 
 export interface ConnectionHandlers {
   onEnvelope(env: Envelope): void;
   onState?(s: ConnectionState): void;
+  /** The gateway's log restarted below what we'd seen (a new sandbox, a reset store): drop what
+   * was folded so far, since it replays from the start. */
+  onReset?(): void;
 }
+
+/** Reconnects that fail before a welcome, in a row, before we ask whether the token still works.
+ * A refused upgrade (401) reaches the browser as a bare 1006 close, indistinguishable from a
+ * network drop, so the account route answers instead. */
+export const AUTH_PROBE_AFTER = 3;
 
 export class Connection {
   /** Highest seq seen; sent as `resume_after` on reconnect. */
@@ -132,8 +146,24 @@ export class Connection {
   private live = false;
   private stopped = false;
   private attempt = 0;
+  /** Closes in a row that never reached a welcome. */
+  private failures = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
+  /** Ops waiting for a live socket. */
   private queue: Op[] = [];
+  /** Submits put on the wire but not yet started as a turn. A socket that dies mid-send loses
+   * them silently, so they go again after the next welcome unless its replay shows them started. */
+  private unacked: Extract<Op, { op: "submit" }>[] = [];
+  /** After a welcome with submits to resend: the seq its replay runs to. Until then (or a short
+   * wait, since replay skips what wasn't kept) everything waits, so a resend can't duplicate a
+   * turn the replay is about to show started, and ops keep their order. */
+  private replayTo = 0;
+  private holdTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Resuming after N, the first envelope tells us whether the log restarted: replay only ever
+   * sends seqs above N, so one at or below it is a new log. (`welcome.last_seq` can't say: it
+   * may count only the kept envelopes, and frog serve already moves a restored engine's seqs
+   * above what a resuming peer has.) */
+  private checkFirst = false;
 
   constructor(
     private readonly gw: Gateway,
@@ -145,21 +175,28 @@ export class Connection {
     this.open();
   }
 
-  /** Sends an op, or queues it until the handshake completes. */
+  /** Sends an op, or queues it until the handshake completes. Submits are kept until their turn
+   * starts and resent after a reconnect, never twice. */
   send(op: Op): void {
-    if (this.live && this.ws) this.ws.send(JSON.stringify(op));
+    if (this.live && this.ws && !this.replayTo) this.wire(op);
     else this.queue.push(op);
   }
 
   close(): void {
     this.stopped = true;
     if (this.timer) clearTimeout(this.timer);
+    if (this.holdTimer) clearTimeout(this.holdTimer);
     this.ws?.close(1000);
   }
 
   /** Drops the socket as a network failure would; the connection reconnects. Tests use it. */
   drop(): void {
     this.ws?.close(4000, "dropped");
+  }
+
+  private wire(op: Op) {
+    if (op.op === "submit" && !this.unacked.includes(op)) this.unacked.push(op);
+    this.ws!.send(JSON.stringify(op));
   }
 
   private set(s: ConnectionState) {
@@ -179,6 +216,26 @@ export class Connection {
     };
     ws.onmessage = (m: MessageEvent) => this.message(String(m.data));
     ws.onclose = (e: CloseEvent) => this.closed(ws, e.code, e.reason);
+    // A refused upgrade errors, then closes; the close is what we act on.
+    ws.onerror = () => {};
+  }
+
+  /** The log restarted: forget it and ask for it all again on a fresh socket. */
+  private restart() {
+    this.lastSeq = 0;
+    this.handlers.onReset?.();
+    this.ws?.close(4000, "resync");
+  }
+
+  /** Replay has caught up: what was waiting (and what the socket may have eaten) goes now. */
+  private flush() {
+    this.replayTo = 0;
+    if (this.holdTimer) clearTimeout(this.holdTimer);
+    this.holdTimer = null;
+    if (!this.live || !this.ws) return;
+    const resend = this.unacked.splice(0);
+    const queued = this.queue.splice(0).filter((op) => !resend.includes(op as never));
+    for (const op of [...resend, ...queued]) this.wire(op);
   }
 
   private message(text: string) {
@@ -195,31 +252,69 @@ export class Connection {
         return;
       }
       if (!v?.welcome) return;
+      const w = v.welcome as Partial<Welcome>;
+      this.checkFirst = this.lastSeq > 0;
       this.live = true;
       this.attempt = 0;
+      this.failures = 0;
       this.set({ state: "live", welcome: v.welcome });
-      for (const op of this.queue.splice(0)) this.ws!.send(JSON.stringify(op));
+      const to = typeof w.last_seq === "number" ? w.last_seq : 0;
+      if (!this.unacked.length || to <= this.lastSeq) return this.flush();
+      this.replayTo = to;
+      this.holdTimer = setTimeout(() => this.flush(), 1000);
       return;
     }
     if (typeof v?.seq !== "number" || typeof v.event !== "string") return;
+    if (this.checkFirst) {
+      this.checkFirst = false;
+      if (v.seq <= this.lastSeq) return this.restart();
+    }
     // Replay after a reconnect can overlap what we already have.
     if (v.seq <= this.lastSeq) return;
     this.lastSeq = v.seq;
+    if (v.event === "turn_started") {
+      // A turn started: the submit with its text is delivered, or else the oldest one (turns
+      // start in the order they were sent; the engine may reword the input). Erring this way
+      // can only miss a resend, never send twice.
+      const i = this.unacked.findIndex((op) => op.text === v.input);
+      if (this.unacked.length) this.unacked.splice(i >= 0 ? i : 0, 1);
+    }
     this.handlers.onEnvelope(v as Envelope);
+    if (this.replayTo && this.lastSeq >= this.replayTo) this.flush();
   }
 
   private closed(ws: WebSocket, code: number, reason: string) {
     if (ws !== this.ws) return;
+    const wasLive = this.live;
     this.ws = null;
     this.live = false;
-    if (this.state.state === "refused") return;
+    this.replayTo = 0;
+    if (this.holdTimer) clearTimeout(this.holdTimer);
+    if (this.state.state === "refused" || this.state.state === "unauthorized") return;
     if (this.stopped || code === CLOSE_REFUSED || code === CLOSE_DELETED) {
       this.set({ state: "closed", code, reason });
       return;
     }
+    if (reason === "resync") {
+      this.timer = setTimeout(() => this.open(), 0);
+      return;
+    }
+    this.failures = wasLive ? 0 : this.failures + 1;
     this.attempt += 1;
     const delay = Math.min(250 * 2 ** (this.attempt - 1), 10_000);
     this.set({ state: "connecting", attempt: this.attempt });
     this.timer = setTimeout(() => this.open(), delay);
+    if (this.failures >= AUTH_PROBE_AFTER && this.failures % AUTH_PROBE_AFTER === 0) this.probe();
+  }
+
+  /** Is it the token? The session list answers 401 if so (and the gateway signs us out). */
+  private probe() {
+    this.gw.list().catch((e) => {
+      if ((e as { status?: number }).status !== 401 || this.stopped) return;
+      this.stopped = true;
+      if (this.timer) clearTimeout(this.timer);
+      this.ws?.close(1000);
+      this.set({ state: "unauthorized" });
+    });
   }
 }

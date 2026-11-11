@@ -11,5 +11,5 @@
     "skipLibCheck": true,
     "jsx": "react-jsx"
   },
-  "include": [".", "../src/cloud", "../src/engine", "../src/ui/Markdown.tsx", "../src/ui/TerminalPane.tsx", "../src/usage.ts"]
+  "include": [".", "../src/cloud", "../src/engine", "../src/ui/Markdown.tsx", "../src/ui/TerminalPane.tsx", "../src/usage.ts", "../src/live.ts", "../src/ui/layers.ts"]
 }
