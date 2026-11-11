@@ -5,6 +5,7 @@ import { billingHistory, billingPortal, createKey, firstName, listKeys, portalEr
 import { friendly } from '../cloud/client'
 import type { Model } from '../models'
 import type { SessionSummary } from '../cloud/protocol'
+import { useLayer } from './layers'
 
 export interface Command { id: string; label: string; hint?: string; run: () => void }
 
@@ -26,6 +27,7 @@ export function Palette({ commands, sessions, onOpen, onClose, text }: { command
     })
     return [...named, ...said]
   }, [q, commands, sessions, onOpen, text])
+  useLayer(true, onClose)
   const run = (c?: Command) => { if (!c) return; onClose(); c.run() }
   return (
     <div className="scrim" onMouseDown={onClose}>
@@ -33,7 +35,6 @@ export function Palette({ commands, sessions, onOpen, onClose, text }: { command
         <input className="pal-in" autoFocus value={q} placeholder="Search sessions and commands" aria-label="Search"
           onChange={(e) => { setQ(e.target.value); setHi(0) }}
           onKeyDown={(e) => {
-            if (e.key === 'Escape') onClose()
             if (e.key === 'ArrowDown') { e.preventDefault(); setHi(Math.min(hi + 1, items.length - 1)) }
             if (e.key === 'ArrowUp') { e.preventDefault(); setHi(Math.max(hi - 1, 0)) }
             if (e.key === 'Enter') run(items[hi])
@@ -192,11 +193,7 @@ function History({ apiKey }: { apiKey: string }) {
 
 export function Settings({ account, apiKey, tab: initial = 'Account', models = [], onConnect, onSignOut, onClose, onTopUp, onSubscribe }: { account: Account | null; apiKey?: string; tab?: SettingsTab; models?: Model[]; onConnect?: (provider: Provider) => void; onSignOut: () => void; onClose: () => void; onTopUp?: (dollars: number) => Promise<void>; onSubscribe?: (plan: string) => Promise<void> }) {
   const [tab, setTab] = useState<SettingsTab>(initial)
-  useEffect(() => {
-    const k = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-    window.addEventListener('keydown', k)
-    return () => window.removeEventListener('keydown', k)
-  }, [onClose])
+  useLayer(true, onClose)
   return (
     <div className="scrim" onMouseDown={onClose}>
       <div className="cardx settings" role="dialog" aria-label="Settings" onMouseDown={(e) => e.stopPropagation()}>

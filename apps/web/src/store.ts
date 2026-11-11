@@ -3,6 +3,7 @@ import { friendly, Gateway } from './cloud/client'
 import type { EndReason, Envelope, RepoList, SessionSummary } from './cloud/protocol'
 import { CloudEngine } from './engine/cloud'
 import { emptyThread, reduce, type Thread } from './engine/thread'
+import { diffIds } from './live'
 
 // Sessions belong to the account and come from the gateway (GET /v1/sessions); what
 // happens inside one comes only from its event stream. Nothing here is made up.
@@ -51,11 +52,18 @@ export function pickStarters(n = 3, cold = false): string[] {
   return a.slice(0, n)
 }
 
-export function useCloud(key: string | null) {
-  return useMemo(() => (key ? new CloudEngine(new Gateway({ origin: GATEWAY, token: key })) : null), [key])
+export const SESSIONS_VISIBLE_MS = 10_000
+export const SESSIONS_HIDDEN_MS = 60_000
+
+/** `onUnauthorized`: the gateway refused the key (a 401, or a socket that can't get in). */
+export function useCloud(key: string | null, onUnauthorized?: () => void) {
+  const latest = useRef(onUnauthorized)
+  latest.current = onUnauthorized
+  return useMemo(() => (key ? new CloudEngine(new Gateway({ origin: GATEWAY, token: key, onUnauthorized: () => latest.current?.() })) : null), [key])
 }
 
-/** The account's sessions, refreshed every 15 s (the gateway has no push for the list). */
+/** The account's sessions, polled (the gateway has no push for the list): every 10 s while the
+ * tab is visible, every minute while hidden, and at once on coming back. */
 export function useSessions(cloud: CloudEngine | null) {
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -73,11 +81,11 @@ export function useSessions(cloud: CloudEngine | null) {
   }, [cloud])
   useEffect(() => {
     if (!cloud) { setLoaded(false); return setSessions([]) }
-    // Near-live while you're looking (every 3s), slow when the tab is hidden, and at once on
-    // coming back. One cheap read of the account's session index each time.
+    // The open session's own changes refresh it at once (App), so the poll only catches what
+    // happened elsewhere: other tabs, the Mac. One cheap read of the session index each time.
     refresh()
     let t = 0
-    const arm = () => { clearInterval(t); t = window.setInterval(refresh, document.hidden ? 30_000 : 3_000) }
+    const arm = () => { clearInterval(t); t = window.setInterval(refresh, document.hidden ? SESSIONS_HIDDEN_MS : SESSIONS_VISIBLE_MS) }
     const back = () => { if (!document.hidden) refresh(); arm() }
     arm()
     document.addEventListener('visibilitychange', back)
@@ -123,21 +131,27 @@ export function peek(id: string, updated: number): Peek {
   return v
 }
 
-/** Sign-out forgets every thread this browser kept. */
+/** Sign-out forgets every thread this browser kept, and what was read from them. */
 export function clearThreads() {
+  peeks.clear()
   try { Object.keys(localStorage).filter((k) => k.startsWith(THREADS)).forEach((k) => localStorage.removeItem(k)) } catch { /* nothing kept */ }
 }
+
+type Pump = { cloud: CloudEngine; push: (id: string, env: Envelope | null, known: Thread | null) => void }
 
 export function useThreads(cloud: CloudEngine | null, ids: string[]) {
   const [threads, setThreads] = useState<Record<string, Thread>>({})
   const cache = useRef(threads)
   cache.current = threads
+  const subs = useRef(new Map<string, () => void>())
+  const pump = useRef<Pump | null>(null)
   const key = ids.join(',')
   useEffect(() => {
     if (!cloud) return
     // Envelopes are folded once per animation frame, not one render per streamed token. A
-    // hidden tab gets no frames, so a timer backs the frame up.
-    const queued: { id: string; env: Envelope; known: Thread | null }[] = []
+    // hidden tab gets no frames, so a timer backs the frame up. A null envelope is a reset: the
+    // stream restarted, so what was folded goes.
+    const queued: { id: string; env: Envelope | null; known: Thread | null }[] = []
     let frame = 0
     let timer: ReturnType<typeof setTimeout> | undefined
     const flush = () => {
@@ -147,19 +161,31 @@ export function useThreads(cloud: CloudEngine | null, ids: string[]) {
       const batch = queued.splice(0)
       if (batch.length) setThreads((all) => {
         const next = { ...all }
-        for (const q of batch) next[q.id] = reduce(next[q.id] ?? q.known ?? emptyThread, q.env)
+        for (const q of batch) next[q.id] = q.env ? reduce(next[q.id] ?? q.known ?? emptyThread, q.env) : emptyThread
         return next
       })
     }
-    const offs = ids.map((id) => {
-      const known = cache.current[id] ?? loadThread(id)
-      if (known && !cache.current[id]) setThreads((all) => ({ ...all, [id]: known }))
-      return cloud.subscribe(id, known?.lastSeq ?? 0, (env) => {
+    const all = subs.current
+    pump.current = {
+      cloud,
+      push: (id, env, known) => {
         queued.push({ id, env, known })
         if (!frame) { frame = requestAnimationFrame(flush); timer = setTimeout(flush, 200) }
-      })
-    })
-    return () => { flush(); offs.forEach((off) => off()) }
+      },
+    }
+    return () => { flush(); all.forEach((off) => off()); all.clear(); pump.current = null }
+  }, [cloud])
+  // Only what changed opens or closes: the sessions still streamed keep their sockets.
+  useEffect(() => {
+    const p = pump.current
+    if (!p || p.cloud !== cloud) return
+    const { add, drop } = diffIds(subs.current.keys(), ids)
+    for (const id of drop) { subs.current.get(id)?.(); subs.current.delete(id) }
+    for (const id of add) {
+      const known = cache.current[id] ?? loadThread(id)
+      if (known && !cache.current[id]) setThreads((all) => ({ ...all, [id]: known }))
+      subs.current.set(id, cloud!.subscribe(id, known?.lastSeq ?? 0, (env) => p.push(id, env, known), () => p.push(id, null, null)))
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cloud, key])
   // Saved a moment after it settles, not on every streamed token.
@@ -168,8 +194,11 @@ export function useThreads(cloud: CloudEngine | null, ids: string[]) {
     return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [threads, key])
-  // A session not streaming yet still shows what this browser kept of it.
-  return useCallback((id: string) => threads[id] ?? (ids.includes(id) ? loadThread(id) : null) ?? emptyThread, [threads, key]) // eslint-disable-line react-hooks/exhaustive-deps
+  // A stable getter, so callbacks built on it don't change with every streamed frame; `threads`
+  // changes when anything does, for what must re-render. A session not streaming yet still
+  // shows what this browser kept of it.
+  const thread = useCallback((id: string) => cache.current[id] ?? (subs.current.has(id) ? loadThread(id) : null) ?? emptyThread, [])
+  return { thread, threads }
 }
 
 /** The edge answers 402 `insufficient_credit` on inference; the engine ends the turn with that error. */

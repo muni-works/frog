@@ -2,9 +2,11 @@ import { useEffect, useRef, useState } from 'react'
 import { composing } from './guards'
 import type { Image, Mode } from '../cloud/protocol'
 import { modes, price, type Model } from '../models'
+import { barTone, ringTone } from '../usage'
 import { parseRepo } from '../store'
 import type { Provider } from '../auth'
 import { safeHref } from './href'
+import { useFocusTrap, useLayer, useMenu } from './layers'
 
 const gh = (n: number) => (
   <svg aria-hidden="true" width={n} height={n} viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.42-2.7 5.39-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5z" /></svg>
@@ -115,11 +117,11 @@ export function Composer(p: ComposerProps) {
       if (root.current?.contains(t) && t.closest('.cz-menu, [aria-expanded]')) return
       setMenu(null)
     }
-    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenu(null) }
     document.addEventListener('mousedown', down)
-    document.addEventListener('keydown', key)
-    return () => { document.removeEventListener('mousedown', down); document.removeEventListener('keydown', key) }
+    return () => document.removeEventListener('mousedown', down)
   }, [menu])
+  useLayer(!!menu, () => setMenu(null))
+  const nav = useMenu(menu)
 
   const [images, setImages] = useState<Image[]>([])
   const file = useRef<HTMLInputElement>(null)
@@ -162,20 +164,20 @@ export function Composer(p: ComposerProps) {
           {p.chips.map((c) => (
             <button key={c.text} type="button" className={`cz-sug${c.act ? ' act' : ''}`}
               onClick={() => { if (c.send && p.onSignIn) { setText(c.text); setMenu('signin') } else if (c.send) p.onSend(c.text, []); else { setText(c.text); ref.current?.focus() } }}>
-              {c.act ? '↗ ' : ''}{c.text}
+              {c.act ? <span aria-hidden="true">↗ </span> : null}{c.text}
             </button>
           ))}
         </div>
       )}
       {menu === 'plus' && (
-        <div className="f-card cz-menu" role="menu" style={{ left: 8 }}>
+        <div className="f-card cz-menu" role="menu" aria-label="Attach" style={{ left: 8 }} {...nav}>
           <button type="button" role="menuitem" onClick={() => { setMenu(null); file.current?.click() }}><span>▣</span>Attach images…</button>
           <button type="button" role="menuitem" onClick={() => { setText(text + '@'); setMenu(null); ref.current?.focus() }}><span>@</span>Mention a file</button>
         </div>
       )}
 
       {menu === 'model' && (
-        <div className="f-card cz-menu" role="menu" aria-label="Model" style={{ left: at, width: 300 }}>
+        <div className="f-card cz-menu" role="menu" aria-label="Model" style={{ left: at, width: 300 }} {...nav}>
           <div className="cz-menu-h">Model on Frog Cloud</div>
           {p.models?.map((m) => (
             <button key={m.id} type="button" role="menuitemradio" aria-checked={m.id === p.model} onClick={() => { p.onModel?.(m.id); setMenu(null) }}>
@@ -193,11 +195,10 @@ export function Composer(p: ComposerProps) {
         const list = [...recent, ...yours]
         const pick = (r: string | undefined) => { p.onRepo!(r); setMenu(null); setQ(''); ref.current?.focus() }
         return (
-          <div className="f-card cz-menu cz-repos" role="menu" aria-label="Repo" style={{ left: 150, width: 320 }}>
+          <div className="f-card cz-menu cz-repos" role="menu" aria-label="Repo" style={{ left: 150, width: 320 }} {...nav}>
             <input className="cz-search" autoFocus value={q} placeholder="Search repos, or paste a GitHub URL" aria-label="Repo"
               onChange={(e) => setQ(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Escape') setMenu(null)
                 if (e.key === 'Enter') { e.preventDefault(); const r = typed ?? list[0]; if (r) pick(r) }
               }} />
             {typed && !list.includes(typed) && <button type="button" role="menuitem" onClick={() => pick(typed)}><span style={{ flex: 1 }}>{typed}</span><span className="det">from GitHub</span></button>}
@@ -225,13 +226,13 @@ export function Composer(p: ComposerProps) {
         )
       })()}
       {menu === 'signin' && p.onSignIn && (
-        <div className="f-card cz-menu" role="menu" aria-label="Sign in" style={{ right: 8, left: 'auto', width: 230 }}>
+        <div className="f-card cz-menu" role="menu" aria-label="Sign in" style={{ right: 8, left: 'auto', width: 230 }} {...nav}>
           <button type="button" role="menuitem" onClick={() => p.onSignIn!('github', text.trim())}>{gh(14)}Continue with GitHub</button>
           <button type="button" role="menuitem" onClick={() => p.onSignIn!('google', text.trim())}>{google(14)}Continue with Google</button>
         </div>
       )}
       {menu === 'mode' && (
-        <div className="f-card cz-menu" role="menu" aria-label="When Frog asks" style={{ left: at, width: 300 }}>
+        <div className="f-card cz-menu" role="menu" aria-label="When Frog asks" style={{ left: at, width: 300 }} {...nav}>
           <div className="cz-menu-h">When Frog asks</div>
           {modes.map((m) => (
             <button key={m.id} type="button" role="menuitemradio" aria-checked={m.id === p.mode} onClick={() => { p.onMode?.(m.id); setMenu(null) }}>
@@ -296,7 +297,7 @@ export function Composer(p: ComposerProps) {
           </button>
           <label htmlFor="cz" className="sr">Message Frog</label>
           <textarea
-            id="cz" ref={ref} rows={1} placeholder={placeholder} value={text}
+            id="cz" ref={ref} rows={1} placeholder={placeholder} value={text} aria-label="Message Frog"
             onChange={(e) => { setText(e.target.value); grow(e.target) }}
             onPaste={(e) => { const fs = [...e.clipboardData.files].filter((f) => f.type.startsWith('image/')); if (fs.length) { e.preventDefault(); attach(fs) } }}
             onKeyDown={(e) => {
@@ -355,25 +356,25 @@ export function Composer(p: ComposerProps) {
 function ContextRing({ used, window, usage, onCompact, compacting }: { used: number | null; window: number; usage?: ComposerProps['usage']; onCompact?: () => void; compacting?: boolean }) {
   const [open, setOpen] = useState(false)
   const root = useRef<HTMLSpanElement>(null)
+  const button = useRef<HTMLButtonElement>(null)
   useEffect(() => {
     if (!open) return
     const down = (e: MouseEvent) => { if (!root.current?.contains(e.target as Node)) setOpen(false) }
-    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
-    addEventListener('mousedown', down); addEventListener('keydown', key)
-    return () => { removeEventListener('mousedown', down); removeEventListener('keydown', key) }
+    addEventListener('mousedown', down)
+    return () => removeEventListener('mousedown', down)
   }, [open])
+  useLayer(open, () => setOpen(false))
+  const trap = useFocusTrap(open, () => button.current)
   const sub = usage?.sub
   const plan = sub ? Math.max(0, ...sub.windows.filter((w) => w.limit > 0).map((w) => Math.min(1, w.used / w.limit))) : 0
   const ctx = used && window ? Math.min(1, used / window) : 0
   // The ring shows whichever is fuller, the plan or the context; red once the plan is used up.
   const f = Math.max(plan, ctx)
-  const tone = (x: number) => (x >= 1 ? 'var(--warn)' : x > 0.8 ? 'var(--warn)' : x > 0.6 ? 'var(--notice)' : 'var(--muted)')
-  const color = sub?.over ? 'var(--warn)' : tone(f)
-  const bar = (x: number) => (x >= 1 ? 'var(--warn)' : x > 0.8 ? 'var(--notice)' : 'var(--frog)')
+  const color = ringTone(plan, ctx, !!sub?.over)
   const r = 6.5, c = 2 * Math.PI * r
   return (
     <span className="ctx" ref={root}>
-      <button type="button" className="ctx-ring" aria-expanded={open} onClick={() => { if (!open) usage?.onOpen?.(); setOpen(!open) }} aria-label={`Usage and context, ${Math.round(f * 100)}%`}>
+      <button type="button" ref={button} className="ctx-ring" aria-haspopup="dialog" aria-expanded={open} onClick={() => { if (!open) usage?.onOpen?.(); setOpen(!open) }} aria-label={`Usage and context, ${Math.round(f * 100)}%`}>
         <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
           <circle cx="9" cy="9" r={r} fill="none" stroke="var(--line-strong)" strokeWidth="2.5" />
           <circle cx="9" cy="9" r={r} fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round"
@@ -381,7 +382,7 @@ function ContextRing({ used, window, usage, onCompact, compacting }: { used: num
         </svg>
       </button>
       {open && (
-        <div className="f-card ctx-card" role="dialog" aria-label="Usage and context">
+        <div className="f-card ctx-card" role="dialog" aria-label="Usage and context" {...trap}>
           {sub && (<>
             <div className="ctx-h"><span className="det">Plan usage · {sub.name}</span>{usage && <button type="button" className="ctx-link" onClick={() => { setOpen(false); usage.onBilling() }}>See all →</button>}</div>
             {sub.windows.filter((w) => w.limit > 0).map((w) => {
@@ -389,8 +390,8 @@ function ContextRing({ used, window, usage, onCompact, compacting }: { used: num
               const when = new Date(w.resets_at).toLocaleString(undefined, w.kind === '5h' ? { hour: 'numeric', minute: '2-digit' } : { weekday: 'short', hour: 'numeric', minute: '2-digit' })
               return (
                 <div key={w.kind} className="ctx-row">
-                  <div className="ctx-h"><span>{w.kind === '5h' ? 'Session limit' : 'Weekly'}</span><span className="det">{w.used ? `Resets ${when}` : 'Starts when a message is sent'} · {Math.round(x * 100)}%</span></div>
-                  <div className="ctx-bar"><span style={{ width: `${x * 100}%`, background: bar(x) }} /></div>
+                  <div className="ctx-h"><span>{w.kind === '5h' ? 'Session limit' : 'Weekly'}</span><span className="det">{w.resets_at ? `Resets ${when}` : 'Starts when a message is sent'} · {Math.round(x * 100)}%</span></div>
+                  <div className="ctx-bar"><span style={{ width: `${x * 100}%`, background: barTone(x) }} /></div>
                 </div>
               )
             })}
@@ -401,7 +402,7 @@ function ContextRing({ used, window, usage, onCompact, compacting }: { used: num
           {window > 0 && (<>
             {usage && <div className="ctx-sep" />}
             <div className="ctx-h"><span>Context</span><span className="det">{(used ?? 0).toLocaleString()} of {window.toLocaleString()} tokens · {Math.round(ctx * 100)}%</span></div>
-            <div className="ctx-bar"><span style={{ width: `${ctx * 100}%`, background: bar(ctx) }} /></div>
+            <div className="ctx-bar"><span style={{ width: `${ctx * 100}%`, background: barTone(ctx) }} /></div>
             {(onCompact || compacting) && (
               <button type="button" className="f-btn f-btn--bordered ctx-compact" disabled={compacting || !onCompact} onClick={() => { onCompact?.(); setOpen(false) }}>
                 {compacting ? 'Compacting…' : 'Compact now'}

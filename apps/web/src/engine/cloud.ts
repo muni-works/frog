@@ -13,8 +13,8 @@ export class CloudEngine implements EngineClient {
 
   constructor(readonly gateway: Gateway) {}
 
-  subscribe(session: string, after: number, onEnvelope: Parameters<EngineClient['subscribe']>[2]) {
-    const conn = this.gateway.connect(session, { onEnvelope, onState: (s) => this.watchers.forEach((w) => w(session, s)) }, after)
+  subscribe(session: string, after: number, onEnvelope: Parameters<EngineClient['subscribe']>[2], onReset?: () => void) {
+    const conn = this.gateway.connect(session, { onEnvelope, onReset, onState: (s) => this.watchers.forEach((w) => w(session, s)) }, after)
     this.conns.set(session, conn)
     // What this client can do, so the engine offers the model the right tools: questions get a
     // card here (Ask), but preview panes need a webview the web app can't host yet. A terminal

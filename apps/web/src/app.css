@@ -580,3 +580,13 @@ button.tool[aria-expanded="true"] .tool-chev { transform: rotate(90deg); }
 }
 .insp-top { gap: 6px; }
 .insp-x { flex: none; }
+
+/* Reduced motion: every looping animation stops (spinners keep their frog-coloured arc, still). */
+@media (prefers-reduced-motion: reduce) {
+  .sym.ring, .sg-run, .starting li.now .starting-g, .tool-spin, .caret, .term .cursor, .thinking, .thinking-dot, .beta-pill i { animation: none !important; }
+  .thinking { background: none; color: var(--muted); }
+}
+
+/* Keyboard focus in menus and on the usage ring (arrow keys move it; see ui/layers.ts). */
+[role="menu"] [role^="menuitem"]:focus-visible { outline: 2px solid var(--frog-pad); outline-offset: -2px; }
+.ctx-ring:focus-visible { outline: 2px solid var(--frog); outline-offset: 2px; border-radius: 50%; }
