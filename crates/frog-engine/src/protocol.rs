@@ -1276,6 +1276,20 @@ pub struct TurnUsage {
     /// third party. Absent when unknown (other providers, older logs).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub served_by: Option<ServedBy>,
+    /// Where the turn's last model call ran, for a pooled model (`node/…`). Absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ran_on: Option<RanOn>,
+}
+
+/// The node a pooled model's call ran on (docs/node-protocol.md §7).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+pub struct RanOn {
+    pub node_id: String,
+    /// The node's name ("mew"), or "this Mac".
+    pub name: String,
+    /// This Mac's own tang.
+    #[serde(default)]
+    pub local: bool,
 }
 
 /// Who runs a frog cloud model: `frog` (its own GPUs) or a third party (`workers-ai`).
@@ -1503,6 +1517,9 @@ pub struct Status {
     /// the session header shows them, and SessionStatus reports them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub degraded: Vec<Degraded>,
+    /// Where the last model call ran, for a pooled model (`node/…`): the composer chip.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ran_on: Option<RanOn>,
 }
 
 /// One way a session runs degraded, for the header badge and SessionStatus.

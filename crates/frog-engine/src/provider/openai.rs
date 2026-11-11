@@ -368,6 +368,7 @@ fn read_usage(u: &Value) -> Usage {
         output: u["completion_tokens"].as_u64().unwrap_or(0),
         model: None,
         upstream: None,
+        ran_on: None,
     }
 }
 

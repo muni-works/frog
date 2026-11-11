@@ -32,6 +32,7 @@ pub mod message;
 pub mod model_policy;
 pub mod models;
 pub mod named_files;
+pub mod nodes;
 pub mod panes;
 pub mod policy;
 pub mod pond;

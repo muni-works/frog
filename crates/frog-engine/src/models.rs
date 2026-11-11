@@ -12,7 +12,7 @@ pub struct ModelEntry {
     pub spec: String,
     pub provider: ProviderKind,
     pub model: String,
-    /// "config", "ollama", "tang", "apple", "server" (yours) or "remote" (turned on from a
+    /// "config", "ollama", "tang", "apple", "server" (yours), "node" (your paired nodes) or "remote" (turned on from a
     /// provider's catalog).
     pub source: &'static str,
     pub caps: Option<Caps>,
@@ -146,6 +146,25 @@ pub async fn list(cfg: &Config) -> Vec<ModelEntry> {
     {
         if let Ok((_, p)) = cfg.resolve(Some(&spec)) {
             out.push(entry(spec, "server", &p));
+        }
+    }
+    // Your paired nodes (docs/node-protocol.md §7): each model once, by its weights.
+    let pool = crate::nodes::Pool::global();
+    pool.ensure_fresh().await;
+    for m in pool.pooled() {
+        let spec = format!("node/{}", m.short());
+        if let Ok((_, p)) = cfg.resolve(Some(&spec)) {
+            let mut e = entry(spec.clone(), "node", &p);
+            e.info = Some(crate::catalog::Model {
+                spec,
+                provider: "node".into(),
+                id: m.id.clone(),
+                name: m.display().into(),
+                context: m.context_window,
+                tools: true,
+                ..Default::default()
+            });
+            out.push(e);
         }
     }
     // frog cloud: every model it lists now, the same list the web app shows, so a model frog

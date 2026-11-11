@@ -518,6 +518,12 @@ pub fn set_key(id: &str, key: &str) -> Result<()> {
     keychain::set(id, key)
 }
 
+/// A paired node's key (docs/node-protocol.md §7): Keychain account `node:<node_id>`, which
+/// the Mac app writes when pairing finishes.
+pub fn node_key(node_id: &str) -> Option<String> {
+    keychain::get(&format!("node:{node_id}"))
+}
+
 /// MCP OAuth's Keychain accounts (`mcp-oauth:<server>`), through the same module so
 /// `FROG_KEYCHAIN=off` and the cache behave the same.
 pub(crate) fn keychain_mcp_get(id: &str) -> Option<String> {

@@ -1,5 +1,6 @@
 pub mod anthropic;
 pub mod codex;
+pub mod node;
 pub mod ollama;
 pub mod openai;
 #[cfg(test)]
@@ -274,6 +275,7 @@ pub enum Provider {
     Anthropic(anthropic::Client),
     Ollama(ollama::Client),
     Codex(codex::Client),
+    Node(node::Client),
     #[cfg(test)]
     Scripted(scripted::Client),
 }
@@ -286,6 +288,11 @@ impl Provider {
         let key = p.api_key();
         let extra = p.extra.clone();
         Ok(match p.provider {
+            ProviderKind::Node => Self::Node(node::Client::new(
+                crate::nodes::Pool::global(),
+                &p.model,
+                Some(p),
+            )),
             ProviderKind::Codex => Self::Codex(codex::Client::new(
                 std::env::current_dir()?,
                 p.model.clone(),
@@ -352,6 +359,14 @@ impl Provider {
         }
     }
 
+    /// Where a pooled model's last call ran.
+    pub fn ran_on(&self) -> Option<crate::protocol::RanOn> {
+        match self {
+            Self::Node(c) => c.ran_on(),
+            _ => None,
+        }
+    }
+
     pub fn take_codex_items(&self) -> Vec<(String, String, serde_json::Value)> {
         match self {
             Self::Codex(c) => c.take_items(),
@@ -370,6 +385,11 @@ impl Provider {
             Self::Anthropic(_) => Some(true),
             Self::OpenAi(c) if c.is_openai() => Some(true),
             Self::Codex(_) => Some(false),
+            Self::Node(c) => tokio::time::timeout(Duration::from_secs(3), c.capabilities())
+                .await
+                .ok()
+                .flatten()
+                .map(|caps| caps.iter().any(|c| c == "vision")),
             Self::OpenAi(c) => tokio::time::timeout(Duration::from_secs(3), c.capabilities())
                 .await
                 .ok()
@@ -430,6 +450,7 @@ impl Provider {
             match self {
                 Self::Ollama(c) => c.probe_context().await,
                 Self::OpenAi(c) => c.probe_context().await,
+                Self::Node(c) => c.probe_context().await,
                 _ => None,
             }
         };
@@ -464,6 +485,7 @@ impl Provider {
             Self::Anthropic(c) => c.complete(req, on).await,
             Self::Ollama(c) => c.complete(req, on).await,
             Self::Codex(c) => c.complete(req, on).await,
+            Self::Node(c) => c.complete(req, on).await,
             #[cfg(test)]
             Self::Scripted(c) => c.complete(req, on).await,
         }

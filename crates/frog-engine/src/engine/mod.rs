@@ -1269,6 +1269,13 @@ fn classify(e: &anyhow::Error) -> EngineError {
             message: s.message.clone(),
         };
     }
+    // The node pool's one line: nowhere to place the call, or the last node with the model
+    // stopped answering (docs/node-protocol.md §7).
+    if e.is::<crate::provider::node::NodeFailed>() || e.is::<crate::provider::node::NoPlacement>() {
+        return EngineError::Connection {
+            message: e.to_string(),
+        };
+    }
     if let Some(c) = e.downcast_ref::<ConfigError>() {
         return EngineError::Config {
             message: c.0.clone(),
@@ -2068,6 +2075,7 @@ impl Agent {
             todos: self.ctx.todos.clone(),
             vision: self.vision,
             degraded: self.degraded(),
+            ran_on: self.provider.ran_on(),
         }));
     }
 
@@ -2132,6 +2140,11 @@ impl Agent {
             let served =
                 crate::protocol::ServedBy::resolve(&self.profile_name, u.upstream.as_deref());
             self.turn_usage.served_by = served.or(self.turn_usage.served_by.take());
+        }
+        // A pooled model's call says where it ran: the chip moves when the node does.
+        if u.ran_on.is_some() && u.ran_on != self.turn_usage.ran_on {
+            self.turn_usage.ran_on = u.ran_on.clone();
+            self.emit_status();
         }
         let (ttft, decode, think) = (ms(streamed.ttft), ms(streamed.decode), ms(streamed.think));
         let t = &mut self.timing;
