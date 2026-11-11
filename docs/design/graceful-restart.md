@@ -78,11 +78,12 @@ safe point, the engine fsyncs (`Journal::sync`) and additionally:
 - **Pending tool state:** nothing extra needed — at a safe point every in-flight tool has
   either a recorded result or an interrupted marker (above). Partial shell output is already
   streamed as `Event::Output`; the tail is captured by the kill marker.
-- **Background jobs** (`background.rs`: `Task{background}`, shell jobs, monitors, timers):
+- **Background jobs** (`background.rs`: shell jobs, monitors, timers; background `Task`s are
+  retired — parallel work is a child session, see `kids.rs`):
   start/finish are durable (`BackgroundStarted`/`BackgroundDone`). On drain, each still-running
   job is stopped and recorded `BackgroundDone` with outcome `interrupted_by_update`. On resume,
   the engine does **not** re-run them automatically; the "resumed after update" notice lists
-  them by id so the model can decide to re-attach (call `TaskOutput`/re-launch) or drop them.
+  them by id so the model can decide to re-attach (call `JobOutput`/re-launch) or drop them.
   Re-running blindly would duplicate side effects (a second `git push`, a double purchase).
   Subagents (Task children) are their own engines logging to the same store; a `Drain` to the
   parent cascades `Drain` to live children (the engine already tracks them for
