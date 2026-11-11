@@ -9,7 +9,8 @@ import Observation
 /// queue) about once a second while the Devices window is open.
 ///
 /// A node that wants an API key shows from its Bonjour record alone (name, GPU, memory) until
-/// pairing exists; one without a key is polled like this Mac.
+/// it's paired (docs/node-protocol.md §4); then it's polled with its key, and only while its
+/// identity matches the fingerprint pinned at pairing. Paired nodes live in `PairedStore`.
 @MainActor
 @Observable
 final class Devices {
@@ -19,6 +20,15 @@ final class Devices {
     private(set) var list: [Device] = []
     /// Why the network can't be searched, when it can't (usually Local Network is off for frog).
     private(set) var browseProblem: String?
+
+    /// Nodes this Mac has paired with (nodes.json; keys in the Keychain).
+    private(set) var paired: [PairedNode] = []
+    /// Fingerprints the user said "Not now" to, this launch.
+    private var dismissed: Set<String> = []
+    /// Why a paired node isn't being polled, by node id (its identity changed, it dropped us).
+    private var refused: [String: String] = [:]
+
+    @ObservationIgnored var store = PairedStore.shared
 
     private var local = Device.thisMac()
     private var found: [String: Found] = [:]
@@ -37,6 +47,7 @@ final class Devices {
     func start() {
         watchers += 1
         guard watchers == 1 else { return }
+        reloadPaired()
         browse()
         poller = Task { [weak self] in
             while !Task.isCancelled {
@@ -97,11 +108,14 @@ final class Devices {
             f.device.totalBytes = txt["mem"].flatMap(UInt64.init) ?? f.device.totalBytes
             f.device.unified = txt["unified"] == "1"
             f.device.keyed = txt["key"] == "1"
+            f.device.fingerprint = txt["fp"]
+            f.device.pairOpen = txt["pair"] == "1"
             // A keyed node can't be polled before pairing; being on Bonjour is all we know.
-            if f.device.keyed { f.device.online = true }
+            if f.device.keyed && !isPaired(id) { f.device.online = true }
             f.device.link = Device.Link(interface: r.interfaces.first ?? interface)
             found[id] = f
-            if f.url == nil, !f.resolving, !f.device.keyed { resolve(id, r.endpoint) }
+            // Keyed nodes resolve too: pairing needs the address.
+            if f.url == nil, !f.resolving { resolve(id, r.endpoint) }
         }
         for id in found.keys where !seen.contains(id) { found[id] = nil }
         publish()
@@ -136,6 +150,7 @@ final class Devices {
                     self?.found[id]?.url = url
                     self?.found[id]?.device.host = url?.host()
                     self?.found[id]?.resolving = false
+                    self?.follow(id, to: url)
                 }
             case .failed, .cancelled:
                 Task { @MainActor in self?.found[id]?.resolving = false }
@@ -145,36 +160,169 @@ final class Devices {
         c.start(queue: .main)
     }
 
-    // MARK: polling
+    /// A paired node found at a new address: point nodes.json there (the engine reads it).
+    private func follow(_ id: String, to url: URL?) {
+        guard let url, var p = paired.first(where: { $0.node_id == id }) else { return }
+        let base = url.absoluteString
+        guard p.base_url != base else { return }
+        p.base_url = base
+        try? store.update(p)
+        paired = store.load()
+    }
 
-    private func poll() async {
-        async let mine = Self.fetch(URL(string: "http://127.0.0.1:8911")!)
-        let targets = found.compactMap { id, f in f.url.map { (id, $0) } }
-        var theirs: [(String, NodeReport?)] = []
-        await withTaskGroup(of: (String, NodeReport?).self) { g in
-            for (id, url) in targets { g.addTask { (id, await Self.fetch(url)) } }
-            for await r in g { theirs.append(r) }
+    // MARK: pairing
+
+    func reloadPaired() { paired = store.load() }
+
+    func isPaired(_ id: String) -> Bool { paired.contains { $0.node_id == id } }
+
+    /// The first unpaired node on the network the user hasn't waved off: the notice's subject.
+    var offer: Device? {
+        list.first { d in
+            d.role == .node && d.keyed && !d.paired && d.fingerprint != nil && !dismissed.contains(d.fingerprint!)
         }
-        local.apply(await mine)
-        for (id, report) in theirs { found[id]?.device.apply(report) }
+    }
+
+    func dismiss(_ id: String) {
+        if let fp = found[id]?.device.fingerprint { dismissed.insert(fp) }
         publish()
     }
 
-    nonisolated private static func fetch(_ base: URL) async -> NodeReport? {
+    /// Pair with a found node using the code it shows. Throws `PairError`.
+    func pair(_ id: String, code: String) async throws {
+        guard let f = found[id], let url = f.url else { throw PairError.network("no address yet") }
+        let (node, key) = try await PairClient.pair(
+            base: url, code: code, clientID: PairIdentity.clientID, clientName: PairIdentity.clientName,
+            expectedFingerprint: f.device.fingerprint)
+        do { try store.save(node, key: key) } catch { throw PairError.network(error.localizedDescription) }
+        paired = store.load()
+        refused[node.node_id] = nil
+        if node.node_id != id, var moved = found.removeValue(forKey: id) {
+            moved.device = moved.device.renamed(node.node_id)
+            found[node.node_id] = moved
+        }
+        found[node.node_id]?.device.online = false
+        publish()
+        await poll()
+    }
+
+    /// Forget a node: tell it (best effort), drop the key and the nodes.json entry.
+    func unpair(_ id: String) async {
+        guard let p = paired.first(where: { $0.node_id == id }) else { return }
+        if let key = store.key(for: id), let url = found[id]?.url ?? URL(string: p.base_url) {
+            await PairClient.unpair(base: url, clientID: PairIdentity.clientID, key: key)
+        }
+        try? store.remove(nodeID: id)
+        paired = store.load()
+        refused[id] = nil
+        if let fp = found[id]?.device.fingerprint { dismissed.insert(fp) }
+        found[id]?.device.apply(nil)
+        if found[id]?.device.keyed == true { found[id]?.device.online = true }
+        publish()
+    }
+
+    // MARK: polling
+
+    func poll() async {
+        async let mine = Self.fetch(URL(string: "http://127.0.0.1:8911")!, key: nil)
+        // Unpaired keyed nodes can't be read; refused ones aren't, until re-paired.
+        var targets: [(String, URL, String?)] = []
+        for (id, f) in found where refused[id] == nil {
+            guard let url = f.url else { continue }
+            if isPaired(id) { targets.append((id, url, store.key(for: id))) }
+            else if !f.device.keyed { targets.append((id, url, nil)) }
+        }
+        // Paired nodes Bonjour hasn't shown (another subnet, Tailscale, mDNS off): their last address.
+        for p in paired where found[p.node_id] == nil && refused[p.node_id] == nil {
+            if let url = URL(string: p.base_url) { targets.append((p.node_id, url, store.key(for: p.node_id))) }
+        }
+        var theirs: [(String, Fetched)] = []
+        await withTaskGroup(of: (String, Fetched).self) { g in
+            for (id, url, key) in targets { g.addTask { (id, await Self.fetch(url, key: key)) } }
+            for await r in g { theirs.append(r) }
+        }
+        if case .report(let r) = await mine { local.apply(r) } else { local.apply(nil) }
+        for (id, fetched) in theirs { take(id, fetched) }
+        publish()
+    }
+
+    private func take(_ id: String, _ fetched: Fetched) {
+        if found[id] == nil, let p = paired.first(where: { $0.node_id == id }) {
+            var d = Device(id: id, role: .node, name: p.name)
+            d.keyed = true
+            found[id] = Found(device: d, url: URL(string: p.base_url))
+        }
+        let name = found[id]?.device.name ?? "it"
+        switch fetched {
+        case .report(let r):
+            if let p = paired.first(where: { $0.node_id == id }) {
+                // Pinning: a paired node must still be the machine we paired.
+                guard let fp = r.identity?.fingerprint, fp == p.fingerprint else {
+                    refused[id] = "This isn't the \(p.name) you paired."
+                    found[id]?.device.apply(nil)
+                    return
+                }
+            }
+            if let schema = r.schema, schema > 2 {
+                refused[id] = "\(name) runs a newer tang. Update frog to use it."
+                found[id]?.device.apply(nil)
+                return
+            }
+            found[id]?.device.apply(r)
+        case .unauthorized(let why):
+            found[id]?.device.apply(nil)
+            // The node dropped our key (`tang-llm unpair`): forget it, so it can be paired again.
+            if why == "bad key" || why == "not paired", isPaired(id) {
+                try? store.remove(nodeID: id)
+                paired = store.load()
+                refused[id] = "\(name) isn't paired anymore."
+                if found[id]?.device.keyed == true { found[id]?.device.online = true }
+            }
+        case .none:
+            found[id]?.device.apply(nil)
+        }
+    }
+
+    enum Fetched { case report(NodeReport), unauthorized(String), none }
+
+    nonisolated static func fetch(_ base: URL, key: String?) async -> Fetched {
         var req = URLRequest(url: base.appending(path: "node"))
         req.timeoutInterval = 0.8
+        if let key { req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
         guard let (data, resp) = try? await URLSession.shared.data(for: req),
-              (resp as? HTTPURLResponse)?.statusCode == 200
-        else { return nil }
-        return try? JSONDecoder().decode(NodeReport.self, from: data)
+              let status = (resp as? HTTPURLResponse)?.statusCode
+        else { return .none }
+        if status == 401 {
+            let why = (try? JSONDecoder().decode([String: String].self, from: data))?["error"] ?? "missing key"
+            return .unauthorized(why)
+        }
+        guard status == 200, let r = try? JSONDecoder().decode(NodeReport.self, from: data) else { return .none }
+        return .report(r)
     }
 
     /// Where a session's model runs, from its `provider/model` id: this Mac for on-device
     /// providers, Frog Cloud for `cloud/`, a found node when a custom provider's host is one,
     /// otherwise the provider by name.
-    func serving(model: String) -> Serving {
+    func serving(model: String, ranOn: RanOn? = nil) -> Serving {
         let provider = String(model.split(separator: "/").first ?? "")
         let short = String(model.split(separator: "/", maxSplits: 1).last ?? Substring(model))
+        // A pooled model: where the engine says the last call ran, else where it would run.
+        if provider == "node" {
+            let hash = String(short.split(separator: "@").first ?? "")
+            let nodes = found.values.map(\.device)
+            let display = nodes.lazy.compactMap { $0.models.first { $0.weightsHash.hasPrefix(hash) }?.name }.first ?? short
+            if let ranOn {
+                if ranOn.local == true {
+                    return Serving(deviceID: "this-mac", name: "this Mac", symbol: local.symbol, model: display)
+                }
+                let d = nodes.first { $0.id == ranOn.nodeId || $0.name == ranOn.name }
+                return Serving(deviceID: d?.id, name: ranOn.name, symbol: "server.rack", model: display)
+            }
+            if let d = placement(hash: hash) {
+                return Serving(deviceID: d.id, name: d.name, symbol: "server.rack", model: display)
+            }
+            return Serving(deviceID: "this-mac", name: "this Mac", symbol: local.symbol, model: display)
+        }
         // `frog-api/` and `tang/` are Frog Cloud's old names.
         if ["cloud", "frog-api", "tang"].contains(provider) {
             return Serving(deviceID: "frog-cloud", name: "Frog Cloud", symbol: "cloud", model: short)
@@ -199,7 +347,30 @@ final class Devices {
                        symbol: info.custom ? "server.rack" : "cloud", model: short)
     }
 
+    /// The paired node a pooled model would run on (loaded first, then most free memory).
+    func placement(hash: String) -> Device? {
+        found.values.map(\.device)
+            .filter { $0.paired && $0.online && $0.models.contains { $0.weightsHash.hasPrefix(hash) } }
+            .max { a, b in
+                let la = a.models.contains { $0.loaded && $0.weightsHash.hasPrefix(hash) }
+                let lb = b.models.contains { $0.loaded && $0.weightsHash.hasPrefix(hash) }
+                if la != lb { return !la }
+                return (a.freeBytes ?? 0) < (b.freeBytes ?? 0)
+            }
+    }
+
+    /// For the picker: "on mew" for a pooled model, nil when no paired node has it.
+    func whereRuns(model: String) -> String? {
+        guard model.hasPrefix("node/") else { return nil }
+        let hash = String(model.dropFirst(5).split(separator: "@").first ?? "")
+        return placement(hash: hash).map { "on \($0.name)" }
+    }
+
     private func publish() {
+        for id in found.keys {
+            found[id]?.device.paired = isPaired(id)
+            found[id]?.device.refused = refused[id]
+        }
         // This Mac serving beyond loopback finds itself on Bonjour: one card, not two.
         let others = found.values.map(\.device)
             .filter { $0.id != local.nodeID }
@@ -259,6 +430,15 @@ struct Device: Identifiable, Equatable {
     var totalBytes: UInt64 = 0
     var freeBytes: UInt64?
     var keyed = false
+    /// The identity fingerprint from Bonjour's `fp` (v2 nodes).
+    var fingerprint: String?
+    /// The node is showing a pairing code right now (`pair=1`).
+    var pairOpen = false
+    var paired = false
+    /// Why frog stopped talking to this paired node, in one line.
+    var refused: String?
+    /// What it holds, for pooling by `weights_hash`.
+    var models: [PooledModel] = []
     var online = false
     var link: Link = .network
     var nodeID: String?
@@ -277,9 +457,25 @@ struct Device: Identifiable, Equatable {
         return min(1, max(0, 1 - Double(free) / Double(totalBytes)))
     }
 
+    struct PooledModel: Equatable {
+        var name: String
+        var weightsHash: String
+        var quant: String?
+        var loaded: Bool
+    }
+
+    /// The same machine under another id (a node whose Bonjour id isn't its node_id).
+    func renamed(_ id: String) -> Device {
+        var d = Device(id: id, role: role, name: name)
+        d.symbol = symbol; d.chip = chip; d.kind = kind; d.unified = unified; d.totalBytes = totalBytes
+        d.keyed = keyed; d.fingerprint = fingerprint; d.link = link; d.host = host
+        return d
+    }
+
     mutating func apply(_ r: NodeReport?) {
         guard let r else {
             online = false
+            models = []
             model = nil; loading = nil; decode = nil; prefill = nil; running = 0; waiting = 0
             if role != .thisMac { freeBytes = nil }
             return
@@ -300,6 +496,13 @@ struct Device: Identifiable, Equatable {
         prefill = m?.rates.prefill_tok_s.flatMap { $0 > 0 ? $0 : nil }
         running = r.queue.running.count
         waiting = r.queue.waiting.count
+        if let n = r.name, !n.isEmpty, role == .node { name = n }
+        var pooled: [PooledModel] = []
+        for l in r.models.loaded { if let h = l.weights_hash { pooled.append(.init(name: Self.shortModel(l.id), weightsHash: h, quant: l.quant, loaded: true)) } }
+        for l in r.models.on_disk ?? [] where !pooled.contains(where: { $0.weightsHash == l.weights_hash }) {
+            if let h = l.weights_hash { pooled.append(.init(name: Self.shortModel(l.id), weightsHash: h, quant: l.quant, loaded: false)) }
+        }
+        models = pooled
     }
 
     static func thisMac() -> Device {
@@ -340,7 +543,8 @@ struct Device: Identifiable, Equatable {
     }
 }
 
-/// The part of tang's `GET /node` the canvas draws (schema 1).
+/// The part of tang's `GET /node` the canvas draws (schema 1, plus schema 2's identity, name
+/// and model identity when present).
 struct NodeReport: Decodable {
     struct Hardware: Decodable {
         var kind: String
@@ -356,18 +560,33 @@ struct NodeReport: Decodable {
     struct Loaded: Decodable {
         var id: String
         var rates: Rates
+        var weights_hash: String?
+        var quant: String?
+    }
+    struct OnDisk: Decodable {
+        var id: String
+        var weights_hash: String?
+        var quant: String?
+    }
+    struct Identity: Decodable {
+        var fingerprint: String
+        var public_key: String?
     }
     struct Loading: Decodable { var id: String }
     struct Models: Decodable {
         var loaded: [Loaded]
         var loading: Loading?
+        var on_disk: [OnDisk]?
     }
     struct Job: Decodable {}
     struct Queue: Decodable {
         var running: [Job]
         var waiting: [Job]
     }
+    var schema: Int?
     var node_id: String
+    var name: String?
+    var identity: Identity?
     var hardware: Hardware
     var models: Models
     var queue: Queue
