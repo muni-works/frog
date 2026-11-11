@@ -518,7 +518,7 @@ export default function App() {
                 ))}
               </div>
             )}
-            <Composer key={current.id} autoFocus usage={account ? { sub: account.subscription ?? null, credit: creditLine(account).replace(/ credit$/, ''), onBilling: () => openSettings('Billing'), onOpen: refreshAccount } : undefined} context={ct.context} compacting={!!compacting[current.id]}
+            <Composer key={current.id} session autoFocus usage={account ? { sub: account.subscription ?? null, credit: creditLine(account).replace(/ credit$/, ''), onBilling: () => openSettings('Billing'), onOpen: refreshAccount } : undefined} context={ct.context} compacting={!!compacting[current.id]}
               onCompact={(focus) => { setCompacting((c) => ({ ...c, [current.id]: (ct.marks ?? []).length + 1 })); cloud?.send(current.id, { op: 'compact', ...(focus ? { focus } : {}) }) }} chips={ct.next && !ct.running ? [{ text: ct.next.text, send: true, act: ct.next.act }] : undefined} state={ct.running || opening[current.id] ? 'working' : paused ? 'paused' : 'idle'} startedAt={ct.startedAt} waiting={!!(ct.ask || ct.question || ct.elicitation)}
               repo={current.repo} branch={current.branch} pr={current.pr} adds={adds} dels={dels}
               model={idOf(ct.model)} models={models} onModel={(id) => cloud?.send(current.id, { op: 'set_model', spec: spec(id) })}
