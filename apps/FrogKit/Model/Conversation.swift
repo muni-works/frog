@@ -819,6 +819,10 @@ final class Conversation {
                 if item.startedAt == nil { item.startedAt = at }
             }
         case .itemDelta(let id, let delta):
+            if case .text(let t) = delta, appendLive(id, t) {
+                if progress != nil { progress = nil }
+                return
+            }
             upsert(id) { item in
                 switch delta {
                 case .text(let t), .reasoning(let t): item.text += t
@@ -1089,6 +1093,7 @@ final class Conversation {
             }
         }
         for d in merged {
+            if case .text(let t) = d.delta, appendLive(d.id, t) { continue }
             upsert(d.id) { item in
                 switch d.delta {
                 case .text(let t), .reasoning(let t): item.text += t
@@ -1225,6 +1230,26 @@ final class Conversation {
     }
 
     /// Update the item with this id, creating it in the current turn if needed.
+    /// Off only for the perf probe's before/after (`PerfProbeTests.testStreamProfile`).
+    @ObservationIgnored nonisolated(unsafe) static var streamsLive = true
+
+    /// A streamed answer's text, appended without touching `turns` when nothing the
+    /// transcript's structure reads changes (see `LiveText`). False when the item isn't a
+    /// running message already in `turns`, or when the append is one the structure must see;
+    /// then the caller writes through `upsert`, which also starts the live buffer.
+    private func appendLive(_ id: String, _ t: String) -> Bool {
+        guard Self.streamsLive else { return false }
+        guard let (ti, ii) = itemAt[id], turns.indices.contains(ti), turns[ti].items.indices.contains(ii) else { return false }
+        let item = turns[ti].items[ii]
+        guard item.id == id, item.kind == .message, !item.done, let live = item.live, !live.blank else {
+            guard item.id == id, item.kind == .message, !item.done else { return false }
+            upsert(id) { _ = $0.appendStreamed(t) }
+            return true
+        }
+        live.append(t)
+        return true
+    }
+
     private func upsert(_ id: String, _ update: (inout ItemState) -> Void) {
         if let (t, i) = itemAt[id] {
             if turns.indices.contains(t), turns[t].items.indices.contains(i), turns[t].items[i].id == id {

@@ -272,6 +272,9 @@ final class InkReveal: NSObject {
         return done
     }
 
+    /// Looked up once: `NSColor(named:)` on every painted run was a visible slice of streaming.
+    private static let accent = NSColor(named: "AccentColor") ?? .controlAccentColor
+
     private static func step(_ age: Double) -> Int {
         min(fadeSteps, Int((age / inkTime) * Double(fadeSteps)))
     }
@@ -283,7 +286,7 @@ final class InkReveal: NSObject {
         let step = Self.step(now - inked[i].at)
         inked[i].step = step
         guard range.length > 0 else { return }
-        let accent = NSColor(named: "AccentColor") ?? .controlAccentColor
+        let accent = Self.accent
         let t = Self.ease(Double(step) / Double(Self.fadeSteps))
         storage.enumerateAttribute(.foregroundColor, in: range) { value, sub, _ in
             let own = (value as? NSColor) ?? .labelColor

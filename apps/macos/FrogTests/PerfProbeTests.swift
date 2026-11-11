@@ -114,6 +114,56 @@ final class PerfProbeTests: XCTestCase {
         }
     }
 
+    /// For a profiler: 300 turns, then a long stream at the tail, bracketed by `PROBE stream-begin`
+    /// / `PROBE stream-end` so `sample <pid>` can be pointed at just the streaming.
+    func testStreamProfile() throws {
+        // Each mode in the same run, alternating, so machine load hits both alike.
+        var results: [String: [(cpu: Double, work: Double, turns: Int, rows: Int)]] = [:]
+        for round in 0..<2 {
+            for live in [false, true] {
+                Conversation.streamsLive = live
+                defer { Conversation.streamsLive = true }
+                let c = Conversation(folder: URL(fileURLWithPath: "/tmp/demo"), link: nil, replay: false, session: "p")
+                let host = NSHostingView(rootView: TranscriptView(conversation: c, actions: TurnActions(fork: { _ in }, rewind: { _ in }), jump: .constant(nil), onVisibleTurns: { _ in }))
+                host.frame = CGRect(x: 0, y: 0, width: 900, height: 760)
+                let w = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
+                w.isReleasedWhenClosed = false; w.contentView = host; w.orderFront(nil)
+                for t in 1...300 { turn(c, t) }
+                pump(1.0)
+                if round == 0, live { print("PROBE stream-begin"); fflush(stdout) }
+                TranscriptProbe.reset()
+                let c0 = cpu()
+                var work = 0.0
+                for t in (301 + round * 10)...(305 + round * 10) {
+                    work += ms { turn(c, t, pumpEvery: 0); host.layoutSubtreeIfNeeded(); w.displayIfNeeded() }
+                    _ = t
+                }
+                // Streamed delta by delta with a frame between each, as the app does at 30 Hz.
+                let id = "live-\(round)"
+                send(c, #""turn_started","turn":\#(900 + round),"input":"go""#)
+                send(c, #""item_started","id":"\#(id)","kind":{"type":"message"}"#)
+                let text = String(repeating: Self.answer(1) + "\n\n", count: 6)
+                var at = text.startIndex
+                while at < text.endIndex {
+                    let nx = text.index(at, offsetBy: 12, limitedBy: text.endIndex) ?? text.endIndex
+                    work += ms {
+                        send(c, #""item_delta","id":"\#(id)","delta":{"type":"text","text":\#(Self.json(String(text[at..<nx])))}"#)
+                        host.layoutSubtreeIfNeeded(); w.displayIfNeeded()
+                    }
+                    at = nx; pump(0.016)
+                }
+                results[live ? "after" : "before", default: []].append((cpu() - c0, work, TranscriptProbe.turnBodies, TranscriptProbe.rowBodies))
+                w.close(); pump(0.2)
+            }
+        }
+        print("PROBE stream-end")
+        for (k, v) in results.sorted(by: { $0.key > $1.key }) {
+            for r in v {
+                print(String(format: "PROBE stream %@: cpu %.2fs, main-thread work %.0f ms, turn bodies %d, row bodies %d", k, r.cpu, r.work, r.turns, r.rows))
+            }
+        }
+    }
+
     private struct Box: View {
         @State var text: String
         @State var height: CGFloat = 22

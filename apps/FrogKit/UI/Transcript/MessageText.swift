@@ -68,8 +68,10 @@ final class MessageTextView: NSTextView, @MainActor NSLayoutManagerDelegate {
         c.sizingOptions = []
         return c
     }()
-    private struct CodeKey: Hashable { let language: String, code: String, width: CGFloat, line: CGFloat }
-    /// Code block heights by content and width, so a row that comes back doesn't measure again.
+    private struct CodeKey: Hashable { let lines: Int, titled: Bool, line: CGFloat }
+    /// Code block heights by line count. A block never wraps (it scrolls sideways), so its
+    /// height is its header plus its lines, whatever the code or the width: a block streaming
+    /// in is measured once per new line, not once per token (a SwiftUI sizing pass each).
     private static var codeHeights: [CodeKey: CGFloat] = [:]
     /// Inside `MessageText.updateNSView`, i.e. inside SwiftUI's update of the transcript.
     /// Invalidating this view's size from there changes an input of the graph mid-update (an
@@ -249,11 +251,12 @@ final class MessageTextView: NSTextView, @MainActor NSLayoutManagerDelegate {
             codeViews.append(nil)
         }
         cell.placeholder = codeViews[index] == nil
-        let container = textContainer?.containerSize.width ?? 0
-        let width = container > 0 && container < 10_000 ? container : 600
-        let key = CodeKey(language: cell.language, code: cell.code, width: width, line: MessageStyle.lineHeight)
+        let lines = max(1, cell.code.reduce(into: 1) { n, c in if c == "\n" { n += 1 } })
+        let key = CodeKey(lines: lines, titled: !cell.language.isEmpty, line: MessageStyle.lineHeight)
         if let height = Self.codeHeights[key] { return height }
-        Self.sizer.rootView = overlay
+        let width: CGFloat = 600
+        Self.sizer.rootView = CodeOverlay(language: cell.language.isEmpty ? "" : "x",
+                                          code: Array(repeating: "x", count: lines).joined(separator: "\n"))
         let height = ceil(Self.sizer.sizeThatFits(in: CGSize(width: width, height: .greatestFiniteMagnitude)).height)
         if Self.codeHeights.count > 4096 { Self.codeHeights.removeAll() }
         Self.codeHeights[key] = height

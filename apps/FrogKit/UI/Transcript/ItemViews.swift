@@ -17,7 +17,7 @@ struct ItemView: View {
             // One view for a message from first word to history, so the handoff from the
             // typing bubble to the plain row is a fade inside it, not a swap of two (a swap
             // would rebuild the text view and replay the ink).
-            TypingBubble(text: item.text, conversation: conversation, writing: typing && !item.done)
+            TypingBubble(text: item.streamedText, conversation: conversation, writing: typing && !item.done)
         case .reasoning:
             ReasoningView(text: item.text, done: item.done)
         case .tool("Diagram", _) where item.result?.diagram != nil:
