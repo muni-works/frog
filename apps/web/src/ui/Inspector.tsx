@@ -4,6 +4,8 @@ import type { Thread } from '../engine/thread'
 import { FileRow } from './Diff'
 import { TerminalPane } from './TerminalPane'
 
+type Tab = 'changes' | 'terminal' | 'preview'
+
 export function Inspector({ thread, onCommit, onPr, hasPr, send, onClose }: { onClose: () => void; thread: Thread; branch?: string; hasPr: boolean; onCommit: () => void; onPr: () => void; send: (op: Op) => void }) {
   // Width, dragged from the left edge and kept per browser.
   const [width, setWidth] = useState(() => { try { return Number(localStorage.getItem('frog.inspectorWidth')) || 330 } catch { return 330 } })
@@ -20,7 +22,7 @@ export function Inspector({ thread, onCommit, onPr, hasPr, send, onClose }: { on
     }
     addEventListener('pointermove', move); addEventListener('pointerup', up)
   }
-  const [pane, setPane] = useState<'changes' | 'terminal'>(() => { try { return localStorage.getItem('frog.inspectorTab') === 'terminal' ? 'terminal' : 'changes' } catch { return 'changes' } })
+  const [pane, setPane] = useState<Tab>(() => { try { const t = localStorage.getItem('frog.inspectorTab'); return t === 'terminal' || t === 'preview' ? t : 'changes' } catch { return 'changes' } })
   // Which changed files are open to their hunks; the only one opens by itself.
   const [open, setOpen] = useState<Set<string>>(new Set())
   useEffect(() => { if (thread.changes.length === 1) setOpen(new Set([thread.changes[0].path])) }, [thread.changes.length === 1 ? thread.changes[0].path : '']) // eslint-disable-line react-hooks/exhaustive-deps
@@ -34,9 +36,9 @@ export function Inspector({ thread, onCommit, onPr, hasPr, send, onClose }: { on
         onDoubleClick={() => { setWidth(330); try { localStorage.removeItem('frog.inspectorWidth') } catch { /* private mode */ } }} />
       <div className="insp-top">
         <div className="seg" role="tablist" style={{ flex: 1 }}>
-          {(['changes', 'terminal'] as const).map((p) => (
+          {(['changes', 'terminal', 'preview'] as const).map((p) => (
             <button key={p} type="button" role="tab" aria-selected={pane === p} onClick={() => { setPane(p); try { localStorage.setItem('frog.inspectorTab', p) } catch { /* private mode */ } }}>
-              {{ changes: 'Changes', terminal: 'Terminal' }[p]}
+              {{ changes: 'Changes', terminal: 'Terminal', preview: 'Preview' }[p]}
             </button>
           ))}
         </div>
@@ -93,8 +95,17 @@ export function Inspector({ thread, onCommit, onPr, hasPr, send, onClose }: { on
           )}
         </div>
       )}
-
-
+      {/* Sandbox ports aren't reachable from the browser yet, so Preview says so rather than
+       * pretending. The Mac app's Preview pane is the place for it today. */}
+      {pane === 'preview' && (
+        <div className="insp-body">
+          <div className="term-empty">
+            <svg aria-hidden="true" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M3 9h18M7 6.5h.01M10 6.5h.01" /></svg>
+            <b>Preview isn't on the web yet</b>
+            <span className="det wrap">Frog Cloud can't show a sandbox's dev server in the browser yet. Run it in Terminal for now, or open the session in the Mac app.</span>
+          </div>
+        </div>
+      )}
     </section>
   )
 }

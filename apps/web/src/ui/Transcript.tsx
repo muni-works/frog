@@ -194,7 +194,7 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
       <div className="reply-block">
       {turn.entries.map((e) => {
         if (e.kind === 'reasoning') return (
-          <div key={e.id} className="decided"><b>Decided</b> · {e.text}</div>
+          <div key={e.id} className="decided" title={e.text}>Decided · {e.text}</div>
         )
         if (e.kind === 'message') return <div key={e.id} className={`say ${servedClass(turn.usage?.served_by)}`} title={turn.usage?.served_by ? `Served by ${turn.usage.served_by.name}` : undefined}><Markdown text={e.text} />{!e.done && <span className="caret" />}</div>
         if (question?.item === e.id) return <QuestionCard key={e.id} q={question} onAnswer={cb.onAnswer} />

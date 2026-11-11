@@ -28,6 +28,8 @@ export interface ComposerProps {
   compacting?: boolean
   state?: 'idle' | 'working' | 'paused'
   repo?: string
+  /** In an open session (not the landing or new-session page): the reply placeholder. */
+  session?: boolean
   branch?: string
   pr?: string
   adds?: number
@@ -154,6 +156,7 @@ export function Composer(p: ComposerProps) {
   }
   const placeholder = working ? 'Working… Esc interrupts · Return queues a follow-up'
     : paused ? 'Paused · out of credits'
+    : p.session ? 'Reply to Frog, @ a file, ! a command'
     : 'Ask Frog to do something, or paste a GitHub repo'
   const hasGit = (p.adds ?? 0) + (p.dels ?? 0) > 0
 
@@ -332,17 +335,27 @@ export function Composer(p: ComposerProps) {
             {modes.find((m) => m.id === p.mode)?.label} <span className="chev">▾</span>
           </button>
         )}
+        <span className="cz-device" title="Runs in a Frog Cloud sandbox">
+          <span className="cz-device-dot" aria-hidden="true" />
+          <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M7 18a5 5 0 0 1-.6-9.96A6 6 0 0 1 18 9a4.5 4.5 0 0 1-.5 9z" /></svg>
+          Frog Cloud
+        </span>
         {!p.branch && (
           <button type="button" className="cz-chip" disabled={!p.onRepo && !p.onSignIn} aria-expanded={menu === 'repo'} onClick={() => (p.onSignIn ? setMenu('signin') : setMenu(menu === 'repo' ? null : 'repo'))}>
             <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 7h6l2 2h10v10H3z" /></svg>
             {p.repo || 'No repo'}
           </button>
         )}
+        {p.branch && (
+          <span className="cz-chip" title={`${p.repo || 'No repo'} · ${p.branch}`}>
+            <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 7h6l2 2h10v10H3z" /></svg>
+            {p.repo?.split('/')[1] || p.repo || 'No repo'}
+          </span>
+        )}
     <span style={{ flex: 1 }} />
         {(!!p.model || !!p.models?.length) && (
-          <button type="button" className="f-pill f-pill--cloud" aria-label={`Model: ${p.model ?? 'default'} on Frog Cloud`} aria-expanded={menu === 'model'}
+          <button type="button" className="f-pill cz-model" aria-label={`Model: ${p.model ?? 'default'}`} aria-expanded={menu === 'model'}
             disabled={!p.models?.length || !p.onModel} onClick={(e) => { anchor(e); setMenu(menu === 'model' ? null : 'model') }}>
-            <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7 18a5 5 0 0 1-.6-9.96A6 6 0 0 1 18 9a4.5 4.5 0 0 1-.5 9z" /></svg>
             {p.model ?? 'Default model'}{p.models?.length ? <span className="chev">▾</span> : null}
           </button>
         )}
