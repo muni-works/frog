@@ -12,7 +12,7 @@ final class SidebarSnapshotTests: XCTestCase {
         FileManager.default.temporaryDirectory.appending(path: "frog-snapshots")
     }
 
-    private let keys = ["sidebarGroup", "sidebarScope", "sidebarSort"]
+    private let keys = ["sidebarGroup", "sidebarScope", "sidebarSort", "calmSidebar"]
     private var saved: [String: Any] = [:]
 
     override func setUp() {
@@ -197,5 +197,39 @@ final class SidebarSnapshotTests: XCTestCase {
         let ws = Workspace(folder: URL(fileURLWithPath: "/Users/cam/Developer/frog/.frog/worktrees/grace"), resume: "grace")
         try render(SessionList(workspace: ws, maxHeight: 900, query: "okc").background(.background),
                    size: CGSize(width: 288, height: 600), to: "sidebar-search-light", appearance: .aqua)
+    }
+
+    /// The started-by tree with child sessions in every state (retired background agents'
+    /// replacement): sidebar-children-{light,dark}.png. A parent running, one child running,
+    /// one needing you (its ask as the second line), one done with its PR.
+    func testRenderChildSessionTree() throws {
+        let parent = Self.s("lead", "retire background agents", ago: 0.1)
+        let sessions: [SessionInfo] = [
+            parent,
+            Self.s("engine", "engine-owned child sessions", ago: 0.2),
+            Self.s("tree", "mac tree child states", ago: 0.3),
+            Self.s("webnest", "web session nesting", ago: 6),
+            Self.s("other", "transcript perf batch", ago: 40),
+        ]
+        Library.shared.stage(
+            sessions: sessions,
+            live: ["lead": .running, "engine": .running, "tree": .waiting],
+            parents: ["engine": "lead", "tree": "lead", "webnest": "lead"],
+            asks: ["tree": "Bash cargo test -p frog-engine kids"])
+        GitIndex.shared.stage([
+            "engine": GitBadge(tree: "/Users/cam/Developer/frog/.frog/worktrees/engine", branch: "frog/engine-owned-child-sessions",
+                               base: "origin/main", ahead: 3, behind: 0, dirty: 2, landed: .no, trouble: nil),
+            "webnest": GitBadge(tree: "/Users/cam/Developer/frog/.frog/worktrees/webnest", branch: "frog/web-session-nesting",
+                                base: "origin/main", ahead: 0, behind: 0, dirty: 0, landed: .pr(281), trouble: nil),
+        ], card: nil, stats: [:])
+        // The default view: by date (the calm list), where children now nest too.
+        UserDefaults.standard.set(true, forKey: "calmSidebar")
+        UserDefaults.standard.set("date", forKey: "sidebarGroup")
+        UserDefaults.standard.set("activity", forKey: "sidebarSort")
+        for (look, name) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
+            let ws = Workspace(folder: URL(fileURLWithPath: "/Users/cam/Developer/frog/.frog/worktrees/other"), resume: "other")
+            try render(SessionList(workspace: ws, maxHeight: 420).background(.background),
+                       size: CGSize(width: 300, height: 420), to: "sidebar-children-\(name)", appearance: look)
+        }
     }
 }

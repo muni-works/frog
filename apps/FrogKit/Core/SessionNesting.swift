@@ -92,17 +92,18 @@ enum SessionNesting {
     /// list stays where it was, as a root; a cycle can't lose a row.
     static func indented(_ ids: [String], parent: (String) -> String?) -> [(id: String, depth: Int)] {
         let present = Set(ids)
-        let parentIn = { (id: String) -> String? in
-            parent(id).flatMap { $0 != id && present.contains($0) ? $0 : nil }
+        var parentIn: [String: String] = [:]
+        for id in ids {
+            if let p = parent(id), p != id, present.contains(p) { parentIn[id] = p }
         }
         var out: [(id: String, depth: Int)] = []
         var placed: Set<String> = []
         func walk(_ id: String, _ depth: Int) {
             guard placed.insert(id).inserted else { return }
             out.append((id, depth))
-            for c in ids where parentIn(c) == id { walk(c, min(depth + 1, maxDepth)) }
+            for c in ids where parentIn[c] == id { walk(c, min(depth + 1, maxDepth)) }
         }
-        for id in ids where parentIn(id) == nil { walk(id, 0) }
+        for id in ids where parentIn[id] == nil { walk(id, 0) }
         for id in ids where !placed.contains(id) { walk(id, 0) }
         return out
     }

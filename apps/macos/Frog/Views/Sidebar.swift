@@ -848,14 +848,24 @@ struct SessionList: View {
                 .padding(.horizontal, 10)
                 .padding(.top, 12)
                 .padding(.bottom, 3)
-            ForEach(items) { listRow($0) }
+            // The started-by tree within the day: a child right under its parent, indented.
+            let byId = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+            let nested = SessionNesting.indented(items.map(\.id)) { library.parents[$0] }
+            ForEach(nested, id: \.id) { node in
+                if let s = byId[node.id] { listRow(s, depth: node.depth) }
+            }
         }
     }
 
-    /// A row of a flat list: one line when compact, two otherwise.
+    /// A row of a flat list: one line when compact, two otherwise; a child indented.
     @ViewBuilder
-    private func listRow(_ s: SessionInfo) -> some View {
-        if compactSidebar { compactRow(s, depth: 0) } else { row(s, showPlace: true) }
+    private func listRow(_ s: SessionInfo, depth: Int = 0) -> some View {
+        if compactSidebar {
+            compactRow(s, depth: depth)
+        } else {
+            row(s, showPlace: depth == 0, nested: depth > 0)
+                .padding(.leading, AttentionMetrics.leading(depth))
+        }
     }
 
     @ViewBuilder

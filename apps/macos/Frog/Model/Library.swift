@@ -129,6 +129,11 @@ final class Library {
     private func apply(_ listed: [SessionInfo]) {
         guard listed != local else { return }
         local = listed
+        // Children the engine owned itself name their parent in their log: file them in the
+        // tree too, unless the sidebar already has (a MoveSession wins).
+        for s in listed {
+            if let p = s.parent, parents[s.id] == nil, p != s.id { parents[s.id] = p }
+        }
         sessions = listed + cloud
         self.listed = Dictionary(listed.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         GitIndex.shared.listingChanged(listed)
