@@ -117,7 +117,7 @@ pub struct Report {
     pub additivity: Option<Additivity>,
 }
 
-pub async fn swarm(cfg: Config, a: Args) -> Result<Report> {
+pub async fn swarm(cfg: Config, mut a: Args) -> Result<Report> {
     if a.agents == 0 {
         bail!("--agents must be at least 1");
     }
@@ -125,6 +125,9 @@ pub async fn swarm(cfg: Config, a: Args) -> Result<Report> {
         bail!("no tasks");
     }
     std::fs::create_dir_all(&a.out)?;
+    // Absolute: git runs inside each seeded repo, and a relative worktree path would land
+    // there instead, leaving the run in a plain folder of whatever checkout holds it.
+    a.out = a.out.canonicalize()?;
     let cfg = Arc::new(cfg);
     let tasks = Arc::new(a.tasks.clone());
     let repos = seed_repos(&tasks, &a.out.join("repos"))?;
@@ -269,6 +272,8 @@ async fn phase(
                     Ok(r) => r,
                     Err(e) => {
                         eprintln!("  worker {worker}: {} errored: {e:#}", t.name);
+                        // Don't spin through the task list on a setup error.
+                        tokio::time::sleep(Duration::from_secs(5)).await;
                         continue;
                     }
                 };
