@@ -86,6 +86,30 @@ enum SessionNesting {
     /// Deepest indent; deeper descendants line up with it.
     static let maxDepth = 4
 
+    /// The ids of the entries (rows or "+N done") that are the last of their parent's children (nothing else at
+    /// their depth before the tree climbs back out), whose guide line ends in an elbow.
+    static func lastChildren(_ list: [Entry]) -> Set<String> {
+        func depth(_ e: Entry) -> Int {
+            switch e {
+            case .row(_, let d, _, _): d
+            case .done(_, let d, _, _, _): d
+            }
+        }
+        var out: Set<String> = []
+        for (i, e) in list.enumerated() {
+            let d = depth(e)
+            guard d > 0 else { continue }
+            var last = true
+            for next in list[(i + 1)...] {
+                let nd = depth(next)
+                if nd < d { break }
+                if nd == d { last = false; break }
+            }
+            if last { out.insert(e.id) }
+        }
+        return out
+    }
+
     /// A flat list in tree order, for lists that keep their own sections (the phone's):
     /// each id followed by the ones it started that are in the same list, indented one
     /// deeper (up to `maxDepth`). Order otherwise kept; a child whose parent isn't in the

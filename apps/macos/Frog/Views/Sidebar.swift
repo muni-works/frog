@@ -44,6 +44,8 @@ struct SessionList: View {
     @State private var openDone: Set<String> = []
     /// Parents showing only their children's counts ("4 running · 1 waiting"), not the rows.
     @State private var collapsedParents: Set<String> = []
+    /// Day headers ("Today") folded shut in the by-date list.
+    @State private var foldedDays: Set<String> = []
     /// Folded project groups, by folder path (newline-separated).
     @AppStorage("foldedGroups") private var foldedRaw = ""
     /// Org (the attention tree) by default; the older project and date views stay a choice.
@@ -220,7 +222,7 @@ struct SessionList: View {
                         } else {
                             switch grouping {
                             case .org, .project: tabs
-                            case .date: pinTiles; dated(unpinned)
+                            case .date: pinTiles; treeByDay(unpinned)
                             case .none:
                                 pinTiles
                                 ForEach(unpinned.sorted(by: before)) { listRow($0) }
@@ -602,14 +604,19 @@ struct SessionList: View {
     }
 
     private func compactEntries(_ list: [SessionNesting.Entry], byId: [String: SessionFolds.Fold]) -> some View {
-        ForEach(list) { entry in
+        let last = SessionNesting.lastChildren(list)
+        return ForEach(list) { entry in
             switch entry {
             case .row(let s, let depth, let counts, let collapsed):
-                compactBranchRow(s, depth: depth, counts: counts, collapsed: collapsed, fold: byId[s.id])
+                compactBranchRow(s, depth: depth, counts: counts, collapsed: collapsed, fold: byId[s.id],
+                                 lastChild: last.contains(entry.id))
             case .done(let parent, let depth, let count, let failed, let open):
-                // Lined up with its siblings' titles (rail, then the fold slot).
-                doneRow(parent: parent, count: count, failed: failed, open: open)
-                    .padding(.leading, CGFloat(max(depth - 1, 0)) * 8 + 12)
+                // On its siblings' guide line, lined up with their titles.
+                HStack(spacing: 0) {
+                    TreeGuide(last: last.contains(entry.id)).frame(width: 10).padding(.vertical, -1)
+                        .padding(.leading, CGFloat(max(depth - 1, 0)) * 8 + 4)
+                    doneRow(parent: parent, count: count, failed: failed, open: open).padding(.leading, 2)
+                }
             }
         }
     }
@@ -638,11 +645,11 @@ struct SessionList: View {
     /// One fold's row (its newest session) plus, when disclosed, the older ones indented.
     @ViewBuilder
     private func compactBranchRow(_ session: SessionInfo, depth: Int, counts: SessionNesting.Counts,
-                                  collapsed: Bool, fold: SessionFolds.Fold?) -> some View {
+                                  collapsed: Bool, fold: SessionFolds.Fold?, lastChild: Bool = false) -> some View {
         let fold = fold ?? SessionFolds.Fold(session: session, older: [])
         let isOpen = openFolds.contains(session.id)
         compactRow(session, depth: depth, folded: fold.older.count, foldOpen: isOpen, counts: counts,
-                   collapsed: collapsed, onFold: fold.folded ? { toggleFoldBranch(session.id) } : nil)
+                   collapsed: collapsed, lastChild: lastChild, onFold: fold.folded ? { toggleFoldBranch(session.id) } : nil)
         if fold.folded, isOpen {
             ForEach(fold.older) { older in
                 compactRow(older, depth: depth + 1)
@@ -658,10 +665,10 @@ struct SessionList: View {
 
     private func compactRow(_ session: SessionInfo, depth: Int, folded: Int = 0, foldOpen: Bool = false,
                             counts: SessionNesting.Counts = .init(), collapsed: Bool = false,
-                            onFold: (() -> Void)? = nil) -> some View {
+                            lastChild: Bool = false, onFold: (() -> Void)? = nil) -> some View {
         CompactSessionRow(
             session: session, selected: session.id == current,
-            live: library.live[session.id], depth: depth,
+            live: library.live[session.id], depth: depth, lastChild: lastChild,
             git: GitTreeBadges.leaf(session, members: [session], settled: GitTreeBadges.settled(rowState(session))) { open($0) },
             folded: folded, foldOpen: foldOpen, counts: counts, collapsed: collapsed, onFold: onFold,
             onCollapse: counts.total > 0 ? { toggleChildren(session.id) } : nil
@@ -836,6 +843,86 @@ struct SessionList: View {
 
     private func byDay(_ list: [SessionInfo]) -> [(String, [SessionInfo])] {
         SessionDays.group(list, day: day).map { ($0.0, $0.1.sorted(by: before)) }
+    }
+
+    /// The by-date list as a tree: each top-level session filed under the day of its newest
+    /// activity (its children's included), the sessions it started beneath it on a guide
+    /// line, a caret to fold them. One line per session when compact, two otherwise.
+    @ViewBuilder
+    private func treeByDay(_ items: [SessionInfo]) -> some View {
+        let folds = SessionFolds.group(items, parent: { library.parents[$0] })
+        let byId = Dictionary(uniqueKeysWithValues: folds.map { ($0.session.id, $0) })
+        let blocks = SessionNesting.blocks(tree(folds))
+        let newest = Dictionary(uniqueKeysWithValues: blocks.map { b in
+            (b.root.id, b.entries.compactMap { e -> Date? in
+                if case .row(let s, _, _, _) = e { return s.modifiedDate } else { return nil }
+            }.max() ?? b.root.modifiedDate)
+        })
+        let entries = Dictionary(uniqueKeysWithValues: blocks.map { ($0.root.id, $0.entries) })
+        ForEach(SessionDays.group(blocks.map(\.root), day: { sort == .created ? day($0) : newest[$0.id] ?? day($0) }), id: \.0) { title, roots in
+            let shut = foldedDays.contains(title)
+            Button {
+                withAnimation(.snappy(duration: 0.2)) {
+                    if foldedDays.remove(title) == nil { foldedDays.insert(title) }
+                }
+            } label: {
+                HStack(spacing: 5) {
+                    Text(title)
+                    Image(systemName: "chevron.down").font(.frog(size: 8, weight: .bold))
+                        .rotationEffect(.degrees(shut ? -90 : 0))
+                    Spacer(minLength: 0)
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 10).padding(.top, 12).padding(.bottom, 3)
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            if !shut {
+                let list = roots.flatMap { entries[$0.id] ?? [] }
+                if compactSidebar {
+                    compactEntries(list, byId: byId)
+                } else {
+                    twoLineEntries(list)
+                }
+            }
+        }
+    }
+
+    /// The tree's entries as two-line rows, children on the same guide line as compact.
+    private func twoLineEntries(_ list: [SessionNesting.Entry]) -> some View {
+        let last = SessionNesting.lastChildren(list)
+        return ForEach(list) { entry in
+            switch entry {
+            case .row(let s, let depth, let counts, let collapsed):
+                HStack(spacing: 0) {
+                    if depth > 0 {
+                        Color.clear.frame(width: CGFloat(min(depth, SessionNesting.maxDepth) - 1) * 14)
+                        TreeGuide(last: last.contains(entry.id)).frame(width: 14)
+                            .padding(.vertical, -5)
+                    }
+                    row(s, showPlace: depth == 0, nested: depth > 0, summary: collapsed ? counts.summary : nil)
+                        .overlay(alignment: .topTrailing) {
+                            if counts.total > 0 {
+                                Button { toggleChildren(s.id) } label: {
+                                    Image(systemName: "chevron.down").font(.frog(size: 8, weight: .bold))
+                                        .rotationEffect(.degrees(collapsed ? -90 : 0))
+                                        .frame(width: 16, height: 16).contentShape(.rect)
+                                }
+                                .buttonStyle(.plain).foregroundStyle(.tertiary)
+                                .padding(.top, 2).padding(.trailing, 2)
+                                .help(collapsed ? "Show the sessions it started" : "Fold the sessions it started")
+                            }
+                        }
+                }
+            case .done(let parent, let depth, let count, let failed, let open):
+                HStack(spacing: 0) {
+                    Color.clear.frame(width: CGFloat(min(depth, SessionNesting.maxDepth) - 1) * 14)
+                    TreeGuide(last: last.contains(entry.id)).frame(width: 14).padding(.vertical, -5)
+                    doneRow(parent: parent, count: count, failed: failed, open: open).padding(.leading, 4)
+                }
+            }
+        }
     }
 
     /// Rows under day headings.
@@ -1213,6 +1300,8 @@ private struct CompactSessionRow<Menu: View>: View {
     let selected: Bool
     let live: Library.Live?
     let depth: Int
+    /// The last of its parent's children: its guide line ends in an elbow.
+    var lastChild = false
     /// Its git badge (the attention tree's, from the same index).
     let git: GitRowBadge?
     /// How many older sessions of this branch are folded behind the row's disclosure.
@@ -1283,10 +1372,10 @@ private struct CompactSessionRow<Menu: View>: View {
         let running = working || live == .running
         return HStack(spacing: 0) {
             if nested {
-                // Nested rows keep their width for the title: 8 pt per level, one rail.
-                RoundedRectangle(cornerRadius: 1).fill(.quaternary)
-                    .frame(width: 1, height: 18)
-                    .padding(.leading, CGFloat(depth - 1) * Self.indent + 4).padding(.trailing, 5)
+                // Nested rows keep their width for the title: one guide line per parent,
+                // unbroken down its children, ending in an elbow at the last.
+                TreeGuide(last: lastChild).frame(width: 10).padding(.vertical, -1)
+                    .padding(.leading, CGFloat(depth - 1) * Self.indent + 4)
             } else {
                 Color.clear.frame(width: 6)
             }
@@ -1373,11 +1462,12 @@ private struct CompactSessionRow<Menu: View>: View {
     private var childBadge: some View {
         let n = counts.total
         return Button { onCollapse?() } label: {
-            Group {
+            HStack(spacing: 3) {
+                Image(systemName: "chevron.down").font(.frog(size: 8, weight: .bold))
+                    .rotationEffect(.degrees(collapsed ? -90 : 0))
+                    .foregroundStyle(.tertiary)
                 if collapsed, let summary = counts.summary {
-                    Text("· " + summary).foregroundStyle(.secondary)
-                } else {
-                    Text("\(n)").foregroundStyle(.tertiary)
+                    Text(summary).foregroundStyle(.secondary)
                 }
             }
             .font(.system(size: 10, design: .rounded).monospacedDigit())
@@ -1604,3 +1694,28 @@ final class SidebarClock {
     }
 }
 
+
+/// The started-by tree's guide: a quiet vertical line through a child's row, ending in a
+/// rounded elbow into the last child (like a file tree's └).
+struct TreeGuide: View {
+    let last: Bool
+
+    var body: some View {
+        Canvas { ctx, size in
+            let x: CGFloat = 4.5
+            var p = Path()
+            p.move(to: CGPoint(x: x, y: -1))
+            if last {
+                let mid = size.height / 2
+                p.addLine(to: CGPoint(x: x, y: mid - 4))
+                p.addQuadCurve(to: CGPoint(x: x + 4, y: mid), control: CGPoint(x: x, y: mid))
+                p.addLine(to: CGPoint(x: size.width - 1, y: mid))
+            } else {
+                p.addLine(to: CGPoint(x: x, y: size.height + 1))
+            }
+            ctx.stroke(p, with: .style(.quaternary), lineWidth: 1)
+        }
+        .frame(maxHeight: .infinity)
+        .accessibilityHidden(true)
+    }
+}

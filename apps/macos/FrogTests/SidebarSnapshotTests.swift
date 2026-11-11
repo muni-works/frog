@@ -211,11 +211,14 @@ final class SidebarSnapshotTests: XCTestCase {
             Self.s("webnest", "web session nesting", ago: 6),
             Self.s("other", "transcript perf batch", ago: 40),
         ]
-        Library.shared.stage(
-            sessions: sessions,
-            live: ["lead": .running, "engine": .running, "tree": .waiting],
-            parents: ["engine": "lead", "tree": "lead", "webnest": "lead"],
-            asks: ["tree": "Bash cargo test -p frog-engine kids"])
+        func restage() {
+            Library.shared.stage(
+                sessions: sessions,
+                live: ["lead": .running, "engine": .running, "tree": .waiting],
+                parents: ["engine": "lead", "tree": "lead", "webnest": "lead"],
+                asks: ["tree": "Bash cargo test -p frog-engine kids"])
+        }
+        restage()
         GitIndex.shared.stage([
             "engine": GitBadge(tree: "/Users/cam/Developer/frog/.frog/worktrees/engine", branch: "frog/engine-owned-child-sessions",
                                base: "origin/main", ahead: 3, behind: 0, dirty: 2, landed: .no, trouble: nil),
@@ -226,10 +229,16 @@ final class SidebarSnapshotTests: XCTestCase {
         UserDefaults.standard.set(true, forKey: "calmSidebar")
         UserDefaults.standard.set("date", forKey: "sidebarGroup")
         UserDefaults.standard.set("activity", forKey: "sidebarSort")
-        for (look, name) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
-            let ws = Workspace(folder: URL(fileURLWithPath: "/Users/cam/Developer/frog/.frog/worktrees/other"), resume: "other")
-            try render(SessionList(workspace: ws, maxHeight: 420).background(.background),
-                       size: CGSize(width: 300, height: 420), to: "sidebar-children-\(name)", appearance: look)
+        let compact = UserDefaults.standard.object(forKey: "compactSidebar")
+        defer { UserDefaults.standard.set(compact, forKey: "compactSidebar") }
+        for (dense, suffix) in [(false, ""), (true, "-compact")] {
+            UserDefaults.standard.set(dense, forKey: "compactSidebar")
+            for (look, name) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
+                restage()  // a sidebar's onAppear refresh can replace a staged listing
+                let ws = Workspace(folder: URL(fileURLWithPath: "/Users/cam/Developer/frog/.frog/worktrees/other"), resume: "other")
+                try render(SessionList(workspace: ws, maxHeight: 420).background(.background),
+                           size: CGSize(width: 300, height: 420), to: "sidebar-children\(suffix)-\(name)", appearance: look)
+            }
         }
     }
 }
