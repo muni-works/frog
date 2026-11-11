@@ -29,7 +29,7 @@ use std::time::Duration;
 /// gateway also lists Coder-Next (tang's own GPUs, the fastest tok/s frog serves), it
 /// judges first instead — the list is the availability signal, so nothing breaks when
 /// only some surfaces serve it.
-const DEFAULT_CLOUD: &str = "cloud/bull";
+const DEFAULT_CLOUD: &str = "cloud/deepseek-v4.1-flash";
 /// Coder-Next through frog cloud, preferred over [`DEFAULT_CLOUD`] when the gateway
 /// lists it (the catalog is what the last `/v1/models` returned — no network here).
 pub const CODER_NEXT: &str = "cloud/qwen3-coder-next";

@@ -1513,11 +1513,17 @@ enum ProviderID {
         }
     }
 
-    /// A spec with its provider part folded: "tang/x" → "local/x".
+    /// Frog Cloud's old model ids and their explicit names today (the engine's
+    /// `providers::CLOUD_ALIASES`). The gateway still answers the old ones.
+    static let cloudAliases = ["bull": "deepseek-v4.1-flash", "tree": "glm-5.3-flash", "dart": "qwen3-coder-next"]
+
+    /// A spec with its provider part folded: "tang/x" → "local/x", "cloud/tree" → "cloud/glm-5.3-flash".
     static func canonicalSpec(_ spec: String) -> String {
         let parts = spec.split(separator: "/", maxSplits: 1).map(String.init)
         guard parts.count == 2 else { return spec }
-        return canonical(parts[0]) + "/" + parts[1]
+        let provider = canonical(parts[0])
+        let model = provider == cloud ? cloudAliases[parts[1]] ?? parts[1] : parts[1]
+        return provider + "/" + model
     }
 
     /// The provider part of a spec, folded: "tang/x" → "local".

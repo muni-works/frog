@@ -29,10 +29,10 @@ fn logged_out_the_catalog_is_frog_clouds_public_list() {
                         .unwrap()
                         .push(String::from_utf8_lossy(&buf[..n]).into());
                     let body = r#"{"data":[
-                        {"id":"tree","display_name":"Tree (GLM-5.3 Flash)","context_length":1048576,
+                        {"id":"glm-5.3-flash","display_name":"GLM-5.3 Flash","context_length":1048576,
                          "architecture":{"input_modalities":["text","image"]},
                          "supported_parameters":["tools","reasoning"]},
-                        {"id":"bull","context_length":1048576}]}"#;
+                        {"id":"deepseek-v4.1-flash","context_length":1048576}]}"#;
                     let _ = write!(
                         sock,
                         "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
@@ -118,11 +118,11 @@ fn logged_out_the_catalog_is_frog_clouds_public_list() {
     // Only what frog cloud lists: nothing built in.
     let mut specs: Vec<&str> = cloud.iter().map(|m| m["spec"].as_str().unwrap()).collect();
     specs.sort();
-    assert_eq!(specs, ["cloud/bull", "cloud/tree"]);
-    let tree = cloud.iter().find(|m| m["spec"] == "cloud/tree").unwrap();
-    assert_eq!(tree["name"], "Tree (GLM-5.3 Flash)");
-    assert_eq!(tree["context"], 1_048_576);
-    assert_eq!(tree["reasoning"], true);
+    assert_eq!(specs, ["cloud/deepseek-v4.1-flash", "cloud/glm-5.3-flash"]);
+    let glm = cloud.iter().find(|m| m["spec"] == "cloud/glm-5.3-flash").unwrap();
+    assert_eq!(glm["name"], "GLM-5.3 Flash");
+    assert_eq!(glm["context"], 1_048_576);
+    assert_eq!(glm["reasoning"], true);
     run(&["--catalog", "--refresh"]);
     let account = run(&["account"]);
     assert!(account.contains("not connected"), "{account}");

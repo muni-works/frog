@@ -1115,7 +1115,7 @@ async fn an_admitted_billing_refusal_transitions_to_credit_and_continues() {
         Some("credit: 4200000"),
     );
     let (mut h, _, attempts) =
-        engine_profile_named(vec![refusal], vec![reply(vec![text("carried on")], Stop::End)], p, "cloud/bull");
+        engine_profile_named(vec![refusal], vec![reply(vec![text("carried on")], Stop::End)], p, "cloud/deepseek-v4.1-flash");
     let evs = run(&mut h, "hi").await;
     // Two attempts: the refusal, then the admitted retry.
     assert_eq!(attempts.lock().unwrap().len(), 2);
@@ -1162,7 +1162,7 @@ async fn a_second_billing_refusal_ends_the_turn_typed() {
         vec![refusal.clone(), refusal],
         vec![],
         p,
-        "cloud/bull",
+        "cloud/deepseek-v4.1-flash",
     );
     let evs = run(&mut h, "hi").await;
     assert_eq!(attempts.lock().unwrap().len(), 2);
@@ -1188,7 +1188,7 @@ async fn a_rate_limited_provider_backs_off_one_two_four_and_stops() {
     let mut p = Profile::new(ProviderKind::Ollama, "test");
     p.tool_mode = ToolMode::Native;
     let fails = (0..6)
-        .map(|_| scripted::Fail::http(429, "{\"error\":{\"message\":\"bull is busy\"}}"))
+        .map(|_| scripted::Fail::http(429, "{\"error\":{\"message\":\"deepseek-v4.1-flash is busy\"}}"))
         .collect();
     let (mut h, _, attempts) = engine_profile_timed(fails, vec![], p);
     let evs = run(&mut h, "hi").await;
@@ -11429,7 +11429,7 @@ async fn start_session_refuses_a_model_its_gateway_does_not_list() {
     assert_eq!(asked.len(), 1, "{asked:?}");
     // cloud/* is the platform's to serve: no gateway list is consulted, so it always starts.
     assert!(
-        crate::model_policy::check_spawn_spec(&Config::default(), "cloud/bull")
+        crate::model_policy::check_spawn_spec(&Config::default(), "cloud/deepseek-v4.1-flash")
             .await
             .is_ok()
     );
@@ -11962,7 +11962,7 @@ async fn with_every_node_down_the_turn_ends_with_one_line() {
     let a = spawn("fa", 900, vec![("org/Qwen3-4B", Q4, true)], Chat::Fail).await;
     let b = spawn("fb", 100, vec![("org/Qwen3-4B", Q4, true)], Chat::Fail).await;
     let pool = crate::nodes::Pool::fixed(
-        vec![paired("mew", "fa", &a), paired("bull", "fb", &b)],
+        vec![paired("mew", "fa", &a), paired("lend", "fb", &b)],
         None,
         quick(),
     );
@@ -11976,7 +11976,7 @@ async fn with_every_node_down_the_turn_ends_with_one_line() {
         })
         .collect();
     assert_eq!(notices.iter().filter(|m| m.contains("finishing on")).count(), 1, "{notices:?}");
-    assert!(notices.contains(&"mew stopped answering; finishing on bull"));
+    assert!(notices.contains(&"mew stopped answering; finishing on lend"));
     assert!(evs.iter().any(|e| matches!(
         e.event,
         Event::TurnEnded {

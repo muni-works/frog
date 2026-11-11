@@ -33,7 +33,7 @@ and say plainly where ours differs (engine vs API, our box vs their probes).
 - The 245 tok/s figure. It's in internal notes, and the writeup's maximum is 234.4 (engine).
   Reconcile it or drop it.
 - Cost-per-task claims (the plan's ~$0.06/task on an H200 at 30% busy is a model, not a measurement).
-- Anything about FP4, dart or B300 serving.
+- Anything about FP4, Qwen3 Coder Next or B300 serving.
 
 ## Page layout
 
@@ -102,7 +102,7 @@ client against our API. Different probes, so not a ranking.
 Same client, same prompts, same hour: frog api vs Novita, speed n=3 + 20-task pass@1. If it hasn't
 run by publish time, this section reads "not yet run" and nothing else.
 
-### 4. tang: GLM-5.3-Flash ("tree"), correctness first
+### 4. tang: GLM-5.3-Flash, correctness first
 
 | build | hardware | ids vs CPU oracle | prefill (20 tok) | decode tok/s | notes |
 |---|---|---|---|---|---|

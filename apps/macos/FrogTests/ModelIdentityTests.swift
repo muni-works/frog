@@ -31,6 +31,19 @@ final class ModelIdentityTests: XCTestCase {
         XCTAssertEqual(ModelIdentity.of("ollama/qwen3:4b", in: []).spoken, "Qwen3 4B, on this Mac")
     }
 
+    /// Frog Cloud's models go by their plain names, and old ids (an old log's `cloud/bull`)
+    /// read as today's.
+    @MainActor
+    func testFrogCloudModelsByPlainNames() {
+        XCTAssertEqual(ModelIdentity.of("cloud/deepseek-v4.1-flash", in: []).name, "DeepSeek V4.1 Flash")
+        XCTAssertEqual(ModelIdentity.of("cloud/bull", in: []).name, "DeepSeek V4.1 Flash")
+        XCTAssertEqual(ModelIdentity.of("cloud/bull", in: []).spec, "cloud/deepseek-v4.1-flash")
+        XCTAssertEqual(ModelIdentity.of("frog/tree", in: []).name, "GLM-5.3 Flash")
+        XCTAssertEqual(ModelIdentity.of("cloud/dart", in: []).name, "Qwen3 Coder Next")
+        XCTAssertEqual(ProviderID.canonicalSpec("cloud/tree"), "cloud/glm-5.3-flash")
+        XCTAssertEqual(ProviderID.canonicalSpec("ollama/tree"), "ollama/tree")
+    }
+
     func testFitAndStateLines() {
         // Weights, a fifth more, and 2 GB of context room.
         XCTAssertEqual(ModelIdentity.neededGB(weights: 4.6), 8)

@@ -82,7 +82,7 @@ test("retry notices read as what happened and when it tries again", async () => 
     "Frog Cloud is busy right now. Trying again in 4s (2 of 6).",
   );
   assert.equal(humanize("HTTP 503: no inference capacity right now — retrying in 8s (3/6)"), "No model is free on Frog Cloud right now. Trying again in 8s (3 of 6).");
-  assert.equal(humanize("bull is busy right now — still trying (3/6)"), "Frog Cloud is busy right now. Still trying (3 of 6).");
+  assert.equal(humanize("deepseek-v4.1-flash is busy right now — still trying (3/6)"), "Frog Cloud is busy right now. Still trying (3 of 6).");
   assert.equal(humanize("context window: 32768 tokens"), "context window: 32768 tokens");
 });
 

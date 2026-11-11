@@ -47,7 +47,7 @@ final class ModelSectionsTests: XCTestCase {
             entry("anthropic/claude-sonnet-5", source: "remote"),
             entry("local/mlx-community/Qwen3-4B-4bit", source: "local"),
         ]
-        if listCloud { entries.append(entry("cloud/tree", source: "remote")) }
+        if listCloud { entries.append(entry("cloud/glm-5.3-flash", source: "remote")) }
         if server { entries.append(entry("mew/qwen3:32b", source: "server")) }
         return ModelSections.make(usable: entries.map(ModelIdentity.init), suggested: [])
     }

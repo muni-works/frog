@@ -3,7 +3,7 @@
 Research note, 2026-10-26. It covers the two models frog serves through tang, as the code
 implements them:
 - **Qwen3-Coder-Next**: frog cloud's default and the model `cloud/qwen3-coder-next` points at.
-- **GLM-5.3-Flash**: the "tree" model.
+- **GLM-5.3-Flash** (`cloud/glm-5.3-flash`).
 
 For each one it lists the internal signals that exist and could be shown to a user, and where
 each one is computed. All paths are relative to `~/Developer/tang/crates/tang-llm/` unless they

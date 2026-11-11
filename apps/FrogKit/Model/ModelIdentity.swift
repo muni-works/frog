@@ -192,9 +192,19 @@ extension ModelIdentity {
 
     /// The identity for a spec, from the listed models if it's there, else from the spec alone
     /// (a session's model that's no longer listed).
+    /// Frog Cloud's models by their plain names, for when its list hasn't arrived.
+    static let frogCloudNames = [
+        "deepseek-v4.1-flash": "DeepSeek V4.1 Flash",
+        "glm-5.3-flash": "GLM-5.3 Flash",
+        "qwen3-coder-next": "Qwen3 Coder Next",
+    ]
+
     @MainActor
     static func of(_ spec: String, in models: [ModelEntry]) -> ModelIdentity {
         if let m = models.first(where: { $0.spec == spec }) { return ModelIdentity(m) }
+        // An old Frog Cloud id ("cloud/tree", from an old session log) reads as today's.
+        let spec = ProviderID.canonicalSpec(spec)
+        if let m = models.first(where: { ProviderID.canonicalSpec($0.spec) == spec }) { return ModelIdentity(m) }
         let parts = spec.split(separator: "/", maxSplits: 1).map(String.init)
         let provider = parts.count == 2 ? parts[0] : ""
         let model = parts.last ?? spec
@@ -207,9 +217,10 @@ extension ModelIdentity {
         } ?? .cloud(provider.isEmpty ? "unknown" : ModelContext.name(of: provider))
         }
         let cleaned = cleanName(model)
+        let cloudName = place == .frogCloud ? frogCloudNames[model] : nil
         var m = ModelIdentity(
             spec: spec,
-            name: provider == "apple" ? "Apple Intelligence" : cleaned.name,
+            name: provider == "apple" ? "Apple Intelligence" : cloudName ?? cleaned.name,
             variant: cleaned.variant,
             place: place,
             abilities: [],

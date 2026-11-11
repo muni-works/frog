@@ -268,7 +268,7 @@ pub struct Config {
     pub early_tools: bool,
     /// The model auto mode's classifier uses (a profile or provider/model). Default:
     /// Apple's on-device model where it exists, else frog cloud's small model
-    /// (`cloud/bull`, or `cloud/qwen3-coder-next` when the gateway lists it); the
+    /// (`cloud/deepseek-v4.1-flash`, or `cloud/qwen3-coder-next` when the gateway lists it); the
     /// session's model is the last classifier, then the built-in rules.
     #[serde(default)]
     pub auto_classifier: Option<String>,
@@ -283,7 +283,7 @@ pub struct Config {
     pub approval_timeout_secs: u64,
     /// The model that writes shell-command gists for tool rows (a profile or
     /// provider/model). Default: Apple's on-device model, else frog cloud's small
-    /// model (`cloud/bull`, or `cloud/qwen3-coder-next` when the gateway lists it).
+    /// model (`cloud/deepseek-v4.1-flash`, or `cloud/qwen3-coder-next` when the gateway lists it).
     /// With neither usable, rows show the elided command.
     #[serde(default)]
     pub gist_model: Option<String>,
@@ -640,7 +640,7 @@ impl Config {
     }
 }
 
-/// A bare model name (`tree`, `qwen3-4b`) as a full spec, when exactly one provider frog
+/// A bare model name (`glm-5.3-flash`, `qwen3-4b`) as a full spec, when exactly one provider frog
 /// knows offers it. No network: bundled local names and frog cloud's last-fetched list.
 fn bare(spec: &str) -> Option<String> {
     if spec.contains('/') {
@@ -746,6 +746,14 @@ mod tests {
             assert_eq!(spec, "cloud/qwen3-coder-next");
             assert!(p.base_url.is_some());
         }
+        // frog cloud's old ids (Cam's own config still says `cloud/bull`) read as today's.
+        for (old, new) in [("cloud/bull", "cloud/deepseek-v4.1-flash"), ("cloud/tree", "cloud/glm-5.3-flash")] {
+            let (spec, p) = cfg.resolve(Some(old)).unwrap();
+            assert_eq!(spec, new);
+            assert_eq!(p.model, &new[6..]);
+        }
+        let cfg2: Config = toml::from_str("default_model = \"cloud/tree\"").unwrap();
+        assert_eq!(cfg2.resolve(None).unwrap().0, "cloud/glm-5.3-flash");
         // A bare name frog cloud lists resolves to it.
         let tree = "cloud/tree-bare-test";
         crate::catalog::TEST_CACHE

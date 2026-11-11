@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { composing } from './guards'
 import type { Image, Mode } from '../cloud/protocol'
-import { modes, price, type Model } from '../models'
+import { modelName, modes, price, type Model } from '../models'
 import { barTone, ringTone } from '../usage'
 import { parseRepo } from '../store'
 import type { Provider } from '../auth'
@@ -189,7 +189,7 @@ export function Composer(p: ComposerProps) {
           <div className="cz-menu-h">Model on Frog Cloud</div>
           {p.models?.map((m) => (
             <button key={m.id} type="button" role="menuitemradio" aria-checked={m.id === p.model} onClick={() => { p.onModel?.(m.id); setMenu(null) }}>
-              <span style={{ flex: 1, minWidth: 0 }}><b style={{ fontWeight: 600 }}>{m.id}</b><br /><span className="det">{[price(m), m.context ? `${Math.round(m.context / 1000)}k context` : ''].filter(Boolean).join(' · ')}</span></span>
+              <span style={{ flex: 1, minWidth: 0 }}><b style={{ fontWeight: 600 }}>{modelName(m.id)}</b><br /><span className="det">{[price(m), m.context ? `${Math.round(m.context / 1000)}k context` : ''].filter(Boolean).join(' · ')}</span></span>
               <span style={{ color: 'var(--frog)', opacity: m.id === p.model ? 1 : 0 }}>✓</span>
             </button>
           ))}
@@ -359,9 +359,9 @@ export function Composer(p: ComposerProps) {
         )}
     <span style={{ flex: 1 }} />
         {(!!p.model || !!p.models?.length) && (
-          <button type="button" className="f-pill cz-model" aria-label={`Model: ${p.model ?? 'default'}`} aria-expanded={menu === 'model'}
+          <button type="button" className="f-pill cz-model" aria-label={`Model: ${p.model ? modelName(p.model) : 'default'}`} aria-expanded={menu === 'model'}
             disabled={!p.models?.length || !p.onModel} onClick={(e) => { anchor(e); setMenu(menu === 'model' ? null : 'model') }}>
-            {p.model ?? 'Default model'}{p.models?.length ? <span className="chev">▾</span> : null}
+            {p.model ? modelName(p.model) : 'Default model'}{p.models?.length ? <span className="chev">▾</span> : null}
           </button>
         )}
         {p.context?.window || p.usage?.sub ? <ContextRing used={p.context?.used ?? null} window={p.context?.window ?? 0} usage={p.usage} onCompact={p.onCompact && !working ? () => p.onCompact!() : undefined} compacting={p.compacting} /> : null}

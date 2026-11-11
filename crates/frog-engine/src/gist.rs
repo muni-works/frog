@@ -43,7 +43,7 @@ fn schema() -> Value {
 
 /// Which small model writes gists: `gist_model` from config when set, else Apple's
 /// on-device model when it's here (free, local, no key), else frog cloud's small
-/// model — `cloud/qwen3-coder-next` when the gateway lists it, else `cloud/bull`. A
+/// model — `cloud/qwen3-coder-next` when the gateway lists it, else `cloud/deepseek-v4.1-flash`. A
 /// candidate this project's policy rejects is skipped for the next; none usable means
 /// no gists (the caller falls back to the elided command).
 pub(crate) fn choose(cfg: &Config, dir: &std::path::Path) -> Option<(String, Profile)> {
@@ -52,7 +52,7 @@ pub(crate) fn choose(cfg: &Config, dir: &std::path::Path) -> Option<(String, Pro
         None => vec![
             "apple/on-device".into(),
             crate::catalog::cached(crate::auto::CODER_NEXT)
-                .map_or_else(|| "cloud/bull".to_string(), |_| crate::auto::CODER_NEXT.into()),
+                .map_or_else(|| "cloud/deepseek-v4.1-flash".to_string(), |_| crate::auto::CODER_NEXT.into()),
         ],
     };
     candidates.retain(|spec| spec != "apple/on-device" || crate::sidecar::available(crate::sidecar::APPLE));

@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { notifyOn, notifySupported, setNotify } from '../alerts'
 import { billingHistory, billingPortal, createKey, firstName, listKeys, portalErrorMessage, revokeKey, type Account, type KeyInfo, type Provider } from '../auth'
 import { friendly } from '../cloud/client'
-import type { Model } from '../models'
+import { modelName, type Model } from '../models'
 import type { SessionSummary } from '../cloud/protocol'
 import { useLayer } from './layers'
 
@@ -231,7 +231,7 @@ export function Settings({ account, apiKey, tab: initial = 'Account', models = [
                 <div className="set-price-h"><span>Model</span><span>Input</span><span>Cached</span><span>Output</span></div>
                 {models.map((m) => (
                   <div key={m.id} className="set-price">
-                    <span>{m.id}</span><span>{perM(m.input)}</span><span>{perM(m.cached)}</span><span>{perM(m.output)}</span>
+                    <span>{modelName(m.id)}</span><span>{perM(m.input)}</span><span>{perM(m.cached)}</span><span>{perM(m.output)}</span>
                   </div>
                 ))}
                 <div className="det">Per million tokens.</div>

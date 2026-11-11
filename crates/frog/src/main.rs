@@ -51,7 +51,7 @@ struct Cli {
     /// With --serve: the client can answer MCP elicitations and host MCP Apps.
     #[arg(long, requires = "serve", hide = true)]
     rich: bool,
-    /// Profile name from config.toml, or provider/model (e.g. local/qwen3-4b, cloud/tree, ollama/qwen3, anthropic/claude-sonnet-5)
+    /// Profile name from config.toml, or provider/model (e.g. local/qwen3-4b, cloud/glm-5.3-flash, ollama/qwen3, anthropic/claude-sonnet-5)
     #[arg(short, long)]
     model: Option<String>,
     /// Load an alternate config file (useful for isolated setups and testing).

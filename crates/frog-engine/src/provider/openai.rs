@@ -591,7 +591,7 @@ mod gateway_tests {
             s.write_all(head.as_bytes()).await.unwrap();
             s.write_all(body.as_bytes()).await.unwrap();
         });
-        let c = client(&format!("http://{addr}/v1"), "tree", None);
+        let c = client(&format!("http://{addr}/v1"), "glm-5.3-flash", None);
         let messages = vec![crate::message::Message::user("hello")];
         let req = Request {
             system: "",
