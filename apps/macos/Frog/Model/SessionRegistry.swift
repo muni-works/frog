@@ -84,7 +84,10 @@ final class SessionRegistry {
     private let enabled: Bool
     private var frozen = false
 
-    init(url: URL = SessionRegistry.defaultURL, enabled: Bool = !SingleInstance.isTesting) {
+    /// A replay (`-FrogReplay`, the parity harness and hero shots) shows its fixture and nothing
+    /// else: it neither restores the last run's sessions nor writes over the user's list.
+    init(url: URL = SessionRegistry.defaultURL,
+         enabled: Bool = !SingleInstance.isTesting && UserDefaults.standard.string(forKey: "FrogReplay") == nil) {
         self.url = url
         self.enabled = enabled
         let loaded = Self.load(url) ?? OpenSessions()
@@ -204,8 +207,12 @@ final class SessionRegistry {
     // MARK: Restoring
 
     /// Whether the engine has a log for this session (`-r` fails without one).
+    /// Looked up where the engine looks: under `$HOME`, which a launch can set (the parity
+    /// harness's throwaway home) apart from the account's home. Checking the account's home
+    /// resumed ids the engine couldn't find ("no session …: No such file or directory").
     static func logExists(_ id: String) -> Bool {
-        let home = FileManager.default.homeDirectoryForCurrentUser
+        let home = ProcessInfo.processInfo.environment["HOME"].map { URL(fileURLWithPath: $0) }
+            ?? FileManager.default.homeDirectoryForCurrentUser
         return FileManager.default.fileExists(atPath: home.appending(path: ".local/share/frog/sessions/\(id).jsonl").path)
     }
 
@@ -276,6 +283,8 @@ final class QuitGuard: NSObject, NSApplicationDelegate {
     /// its tests, and its runner exits "code 0 before establishing connection" if this quits
     /// while one is open.
     func applicationWillFinishLaunching(_ notification: Notification) {
+        // Session rows name models as the picker does (see `ModelIdentity.rowName`).
+        ModelIdentity.rowName = { Workspace.modelName($0) }
         guard !SingleInstance.isTesting, let id = Bundle.main.bundleIdentifier else { return }
         let me = ProcessInfo.processInfo.processIdentifier
         guard let other = NSRunningApplication.runningApplications(withBundleIdentifier: id)
@@ -290,6 +299,7 @@ final class QuitGuard: NSObject, NSApplicationDelegate {
     /// window closed.
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard !SingleInstance.isTesting else { return }
+        Snapshot.scheduleIfAsked()
         SingleInstance.listen()
     }
 

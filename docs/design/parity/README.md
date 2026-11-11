@@ -15,13 +15,14 @@ docs/design/parity/capture.sh
 ```
 
 It runs locally on a Mac (CI can't capture windows). Needs Xcode and xcodegen, `npm ci` in
-`apps/web`, Google Chrome, and Screen Recording permission for the terminal. `LOOKS=dark` shoots
+`apps/web` and Google Chrome. The Mac app draws its own window to a PNG (`-FrogSnapshot <path>`),
+so the terminal needs no Screen Recording permission. `LOOKS=dark` shoots
 one look; `FROG_PREBUILT_DIR` picks the engine binaries (default: a scratch copy of
 `/Applications/Frog.app`'s).
 
 - **Mac:** builds its own copy (`toys.frog.parity`) and replays the fixture with `-FrogReplay` in a
-  throwaway HOME, then captures the window without its shadow (`mac-*.png`), like
-  `apps/macos/scripts/hero-shot.sh`.
+  throwaway HOME; the app renders its window to `mac-*.png` and quits. A replay never restores the
+  last run's open sessions or the folder's last session, so the fixture is what shows.
 - **Web:** [`gateway.mjs`](gateway.mjs) serves the fixture as one session (reusing the vendored mock
   in `apps/web/test/mock`), vite dev proxies `/v1` to it with a dev key, and
   [`web-shot.mjs`](web-shot.mjs) captures `/s/s_parity` in headless Chrome at the Mac window's size

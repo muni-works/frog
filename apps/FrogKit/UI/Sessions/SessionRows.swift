@@ -198,7 +198,7 @@ struct ConversationRowLabel: View {
         if session.isChat { parts.append("Chat") }
         else if let f = session.folder?.lastPathComponent, !f.isEmpty { parts.append(f) }
         if let turns, turns > 0 { parts.append("\(turns) turn\(turns == 1 ? "" : "s")") }
-        if !session.model.isEmpty { parts.append(ModelIdentity.cleanName(session.model).name) }
+        if !session.model.isEmpty { parts.append(ModelIdentity.rowName(session.model)) }
         return parts.joined(separator: " · ")
     }
 }

@@ -223,6 +223,10 @@ extension ModelIdentity {
 
     // MARK: Names
 
+    /// A session's model as its row names it. The Mac points this at the picker's naming
+    /// (listed models, and a pooled `node/<hash>` by its node, never the hash).
+    @MainActor static var rowName: (String) -> String = { cleanName($0).name }
+
     /// A readable name from a model id: "mlx-community/Qwen3-8B-4bit" → "Qwen3 8B" (4-bit),
     /// "qwen3:4b" → "Qwen3 4B", "gemma-3-4b-it-4bit" → "Gemma 3 4B".
     static func cleanName(_ id: String) -> (name: String, variant: String?) {
