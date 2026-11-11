@@ -232,6 +232,8 @@ pub struct Placed {
     pub start: Option<String>,
     /// The estimated finish, in seconds.
     pub eta: f64,
+    /// The part of `eta` spent waiting behind other work.
+    pub wait: f64,
 }
 
 impl Placed {
@@ -333,6 +335,9 @@ pub struct Call<'a> {
     pub cache_key: Option<&'a str>,
     /// The whole prompt, estimated.
     pub prompt_tokens: u64,
+    /// The prompt's stable head, shared by every session on the repo (hash, estimated tokens):
+    /// a node that served it lately holds it in its KV whatever the conversation.
+    pub prefix: Option<(u64, u64)>,
     pub step: Step,
     pub background: bool,
 }
@@ -349,7 +354,8 @@ struct Measured {
 struct Flight {
     node: String,
     background: bool,
-    eta: f64,
+    /// Its own work, without the wait already counted for what was ahead of it.
+    work: f64,
     began: Instant,
 }
 
@@ -362,6 +368,8 @@ pub struct Sample {
     /// Until the first byte of the reply.
     pub first_byte: Option<Duration>,
     pub total: Duration,
+    /// The prompt head's hash ([`Call::prefix`]): the node now holds it.
+    pub prefix: Option<u64>,
 }
 
 /// Starting this Mac's tang for a model it has on disk but isn't serving.
@@ -466,6 +474,8 @@ const LOAD_SECS: f64 = 30.0;
 const LOAD_BYTES_PER_SEC: f64 = 2e9;
 /// Starting this Mac's tang before it loads.
 const START_SECS: f64 = 5.0;
+/// How long a node is taken to keep a prompt head it served (tang evicts cold blocks).
+const PREFIX_TTL: Duration = Duration::from_secs(15 * 60);
 /// Finishes within this fraction of the best are a tie.
 pub const TIE: f64 = 0.10;
 
@@ -507,6 +517,8 @@ pub struct Pool {
     outputs: Mutex<HashMap<Step, Ema>>,
     flights: Mutex<HashMap<u64, Flight>>,
     next_flight: std::sync::atomic::AtomicU64,
+    /// Prompt heads each `node_id/model` served, and when.
+    prefixes: Mutex<HashMap<String, HashMap<u64, Instant>>>,
 }
 
 /// A placed call in progress; dropping it ends it.
@@ -555,6 +567,7 @@ impl Pool {
             outputs: Mutex::new(HashMap::new()),
             flights: Mutex::new(HashMap::new()),
             next_flight: Default::default(),
+            prefixes: Mutex::new(HashMap::new()),
         }
     }
 
@@ -777,7 +790,7 @@ impl Pool {
             Flight {
                 node: at.node_id.clone(),
                 background,
-                eta: at.eta,
+                work: (at.eta - at.wait).max(0.0),
                 began: Instant::now(),
             },
         );
@@ -790,6 +803,15 @@ impl Pool {
     /// Learn from a finished call: the step's output length, and the node's rates where it
     /// doesn't report its own.
     pub fn observe(&self, at: &Placed, step: Step, s: Sample) {
+        if let Some(h) = s.prefix {
+            let now = Instant::now();
+            let mut prefixes = self.prefixes.lock().unwrap();
+            let held = prefixes
+                .entry(format!("{}/{}", at.node_id, at.model))
+                .or_default();
+            held.retain(|_, t| now - *t < PREFIX_TTL);
+            held.insert(h, now);
+        }
         if s.output > 0 {
             self.outputs
                 .lock()
@@ -853,6 +875,7 @@ impl Pool {
             local: false,
             start: None,
             eta: 0.0,
+            wait: 0.0,
         };
         if let Some(pin) = call.pin
             && let Some(p) = paired.iter().find(|p| p.node_id == pin || p.name == pin)
@@ -881,6 +904,7 @@ impl Pool {
                 local: true,
                 start,
                 eta: 0.0,
+                wait: 0.0,
             };
             if let Some((i, m)) = has(LOCAL_ID) {
                 cands.push((here(m.id.clone(), None), Some(i), m.clone()));
@@ -909,31 +933,56 @@ impl Pool {
         let measured = self.measured.lock().unwrap();
         let outputs = self.outputs.lock().unwrap();
         let flights = self.flights.lock().unwrap();
+        let prefixes = self.prefixes.lock().unwrap();
         let expect = |step: Step| {
             outputs
                 .get(&step)
                 .and_then(Ema::value)
                 .unwrap_or_else(|| step.default_output())
         };
+        let own = |at: &Placed, m: &NodeModel| {
+            let mine = measured.get(&format!("{}/{}", at.node_id, at.model));
+            (
+                m.prefill_tok_s
+                    .or_else(|| mine.and_then(|x| x.prefill.value())),
+                m.decode_tok_s
+                    .or_else(|| mine.and_then(|x| x.decode.value())),
+            )
+        };
+        // A node nothing's measured yet borrows the best rates its peers have for the same
+        // weights: guessing it slow would mean it's never tried, so never measured.
+        let peer = cands.iter().fold((None, None), |(p, d), (at, _, m)| {
+            let (op, od) = own(at, m);
+            let max = |a: Option<f64>, b: Option<f64>| match (a, b) {
+                (Some(a), Some(b)) => Some(a.max(b)),
+                (a, b) => a.or(b),
+            };
+            (max(p, op), max(d, od))
+        });
         // (placed, cached tokens, interactive work on it)
         let mut scored: Vec<(Placed, u64, bool, u64)> = cands
             .into_iter()
             .map(|(mut at, info, m)| {
-                let mine = measured.get(&format!("{}/{}", at.node_id, at.model));
-                let prefill = m
-                    .prefill_tok_s
-                    .or_else(|| mine.and_then(|x| x.prefill.value()))
-                    .unwrap_or(PREFILL_TOK_S);
-                let decode = m
-                    .decode_tok_s
-                    .or_else(|| mine.and_then(|x| x.decode.value()))
-                    .unwrap_or(DECODE_TOK_S);
+                let (op, od) = own(&at, &m);
+                let prefill = op.or(peer.0).unwrap_or(PREFILL_TOK_S);
+                let decode = od.or(peer.1).unwrap_or(DECODE_TOK_S);
                 let s = state.get(&at.node_id);
                 let rtt = s.and_then(|s| s.rtt.value()).unwrap_or(0.01);
                 let cached = call
                     .cache_key
                     .and_then(|k| m.cache_keys.iter().find(|(c, _)| c == k))
                     .map_or(0, |(_, n)| (*n).min(call.prompt_tokens));
+                // Another session's call left the repo's prompt head here.
+                let head = call
+                    .prefix
+                    .filter(|(h, _)| {
+                        prefixes
+                            .get(&format!("{}/{}", at.node_id, at.model))
+                            .and_then(|held| held.get(h))
+                            .is_some_and(|t| now - *t < PREFIX_TTL)
+                    })
+                    .map_or(0, |(_, n)| n.min(call.prompt_tokens));
+                let cached = cached.max(head);
                 let mut load = 0.0;
                 if !m.loaded {
                     load += m
@@ -970,7 +1019,7 @@ impl Pool {
                 let ours: f64 = flights
                     .values()
                     .filter(|f| f.node == at.node_id && counts(f.background))
-                    .map(|f| (f.eta - f.began.elapsed().as_secs_f64()).max(0.0))
+                    .map(|f| (f.work - f.began.elapsed().as_secs_f64()).max(0.0))
                     .sum();
                 let wait = (polled - since).max(0.0) + ours;
                 let step = if call.background {
@@ -978,6 +1027,7 @@ impl Pool {
                 } else {
                     call.step
                 };
+                at.wait = wait;
                 at.eta = wait
                     + (call.prompt_tokens - cached) as f64 / prefill
                     + expect(step) / decode
@@ -1533,6 +1583,7 @@ mod tests {
                 output: 500,
                 first_byte: Some(Duration::from_secs(1)),
                 total: Duration::from_secs(6),
+                prefix: None,
             },
         );
         assert_eq!(pool.schedule(Q4, &call(5000)).unwrap().name, "b");
@@ -1563,6 +1614,111 @@ mod tests {
         rates(&a, 1000.0, 80.0);
         pool.refresh().await;
         assert_eq!(pool.schedule(Q4, &call(1000)).unwrap().name, "a");
+    }
+
+    #[tokio::test]
+    async fn a_new_session_goes_where_the_repo_head_is_cached_unless_it_is_busy() {
+        let (a, b, pool) = two().await;
+        rates(&a, 500.0, 40.0);
+        rates(&b, 500.0, 40.0);
+        pool.refresh().await;
+        const HEAD: (u64, u64) = (0xfeed, 6000);
+        let session = |key: &'static str| Call {
+            cache_key: Some(key),
+            prefix: Some(HEAD),
+            ..call(8000)
+        };
+        // Another session ran on b: b holds the head, a would prefill it again.
+        let at_b = pool
+            .schedule(
+                Q4,
+                &Call {
+                    pin: Some("b"),
+                    ..session("s1")
+                },
+            )
+            .unwrap();
+        pool.observe(
+            &at_b,
+            Step::Answer,
+            Sample {
+                prefix: Some(HEAD.0),
+                ..Sample::default()
+            },
+        );
+        let at = pool.schedule(Q4, &session("s2")).unwrap();
+        assert_eq!(at.name, "b");
+        // A different repo's head isn't held anywhere.
+        let other = Call {
+            prefix: Some((0xbeef, 6000)),
+            ..session("s3")
+        };
+        let cold = pool.schedule(Q4, &other).unwrap();
+        assert!(cold.eta > at.eta + 10.0);
+        // Width over affinity: with b busy, the next session takes the idle node, paying for
+        // the head (19 s behind b's call + 19 s on b, against 31 s cold on a).
+        let _busy = pool.begin(&at, false);
+        assert_eq!(pool.schedule(Q4, &session("s4")).unwrap().name, "a");
+    }
+
+    #[tokio::test]
+    async fn an_unmeasured_node_is_tried_once_the_measured_one_is_busy() {
+        let (a, b, pool) = two().await;
+        a.model(|m| m["rates"] = json!({}));
+        b.model(|m| m["rates"] = json!({}));
+        pool.refresh().await;
+        // a ran a call and measured fast; b has never run one.
+        let at_a = pool
+            .schedule(Q4, &Call { pin: Some("a"), ..call(0) })
+            .unwrap();
+        pool.observe(
+            &at_a,
+            Step::Answer,
+            Sample {
+                prefilled: 4000,
+                output: 600,
+                first_byte: Some(Duration::from_secs(1)),
+                total: Duration::from_secs(4),
+                prefix: None,
+            },
+        );
+        let c = Call { cache_key: None, ..call(4000) };
+        let first = pool.schedule(Q4, &c).unwrap();
+        let _busy = pool.begin(&first, false);
+        // Guessed at the slow defaults, b would lose to waiting on a; at a's rates it wins.
+        assert_ne!(pool.schedule(Q4, &c).unwrap().node_id, first.node_id);
+    }
+
+    #[tokio::test]
+    async fn queued_flights_are_not_counted_twice() {
+        use fake::{Chat, paired, quick, spawn};
+        let a = spawn(
+            "fa",
+            100,
+            vec![("org/Qwen3-4B", Q4, true)],
+            Chat::Reply("x"),
+        )
+        .await;
+        rates(&a, 1000.0, 30.0);
+        let pool = Pool::fixed(vec![paired("a", "fa", &a)], None, quick());
+        pool.refresh().await;
+        let c = Call {
+            cache_key: None,
+            ..call(3000)
+        };
+        let one = pool.schedule(Q4, &c).unwrap();
+        let mut held = vec![pool.begin(&one, false)];
+        for n in 2..=4 {
+            let at = pool.schedule(Q4, &c).unwrap();
+            // Each call waits for the ones ahead, once each: n × one call, not 2^(n-1).
+            let want = n as f64 * one.eta;
+            assert!(
+                (at.eta - want).abs() < 0.05 * want,
+                "call {n}: eta {:.1}s, want {want:.1}s",
+                at.eta
+            );
+            held.push(pool.begin(&at, false));
+        }
     }
 
     #[tokio::test]

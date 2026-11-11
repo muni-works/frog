@@ -812,12 +812,28 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
                 native_tools: false,
                 format: Some(prompt::json_schema(specs)),
             },
-            ToolMode::Native | ToolMode::Auto => Wire {
-                system: self.system.clone(),
-                messages: with_images,
-                native_tools: true,
-                format: None,
-            },
+            ToolMode::Native | ToolMode::Auto => {
+                // A pooled model's chat template puts the tools after the system prompt. Keep
+                // the session's own facts (environment, repo map) out of it, at the head of the
+                // first user message instead, so system + tools is one prefix that every
+                // session on the repo shares in a node's KV.
+                if self.profile.provider == crate::config::ProviderKind::Node
+                    && let Some((system, own)) = split_own(&self.system)
+                {
+                    return Wire {
+                        system: system.to_string(),
+                        messages: Some(lead_with(prepared, own)),
+                        native_tools: true,
+                        format: None,
+                    };
+                }
+                Wire {
+                    system: self.system.clone(),
+                    messages: with_images,
+                    native_tools: true,
+                    format: None,
+                }
+            }
         }
     }
 
@@ -866,5 +882,47 @@ re-plans passed with no new call. Everything done so far is kept; give a differe
             })
             .collect();
         Some(out)
+    }
+}
+
+/// The system prompt's shared head and the session's own tail (from `prompt::ENV_HEADER`).
+fn split_own(system: &str) -> Option<(&str, &str)> {
+    let at = system.find(prompt::ENV_HEADER)?;
+    Some((&system[..at], system[at..].trim_start_matches('\n')))
+}
+
+/// `messages` with `text` as the first user message's first block.
+fn lead_with(messages: &[Message], text: &str) -> Vec<Message> {
+    let mut out = messages.to_vec();
+    if let Some(m) = out.iter_mut().find(|m| m.role == crate::message::Role::User) {
+        m.content.insert(
+            0,
+            Block::Text {
+                text: format!("<session>\n{}\n</session>", text.trim_end()),
+            },
+        );
+    }
+    out
+}
+
+#[cfg(test)]
+mod own_tests {
+    use super::*;
+    use crate::message::{Message, Role};
+
+    #[test]
+    fn the_session_tail_moves_to_the_first_user_message() {
+        let system = format!("head{}- Working directory: /wt/1\n\n# Repo map\nmain.rs\n", prompt::ENV_HEADER);
+        let (head, own) = split_own(&system).unwrap();
+        assert_eq!(head, "head");
+        assert!(own.starts_with("# Environment") && own.contains("Repo map"));
+        let msgs = vec![Message {
+            role: Role::User,
+            content: vec![Block::Text { text: "fix it".into() }],
+        }];
+        let out = lead_with(&msgs, own);
+        assert_eq!(out[0].content.len(), 2);
+        assert!(matches!(&out[0].content[0], Block::Text { text } if text.contains("/wt/1")));
+        assert!(split_own("no env here").is_none());
     }
 }

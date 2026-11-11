@@ -7,6 +7,7 @@ mod cache;
 mod export;
 mod report;
 mod run;
+mod swarm;
 mod task;
 
 use anyhow::{Context, Result, bail};
@@ -57,6 +58,37 @@ enum Cmd {
         #[arg(long)]
         thinking_budget: Option<u32>,
     },
+    /// The "no caps" bench: N agents in parallel for a fixed wall time, each run in its own
+    /// worktree, every call placed across the node pool. Writes JSON and an HTML report.
+    Swarm {
+        /// The model spec the agents use, usually a pooled one (`node/<hash>`).
+        #[arg(short, long)]
+        model: String,
+        /// Run the same swarm on this spec first and compare (e.g. `node/<hash>@mew`: one
+        /// node). No task's median may get worse.
+        #[arg(long)]
+        baseline: Option<String>,
+        /// Agents working at once.
+        #[arg(short = 'n', long, default_value_t = 4)]
+        agents: usize,
+        /// Wall time per phase, in minutes; runs in flight at the end finish.
+        #[arg(long, default_value_t = 30.0)]
+        minutes: f64,
+        #[arg(long, default_value = "bench/tasks")]
+        tasks: PathBuf,
+        /// Only tasks whose name contains this.
+        #[arg(short, long)]
+        filter: Option<String>,
+        /// A call waiting longer than this for its first token is a stall.
+        #[arg(long, default_value_t = 30.0)]
+        stall_secs: f64,
+        /// Electricity price, dollars per kWh, for local energy.
+        #[arg(long, default_value_t = 0.15)]
+        kwh_usd: f64,
+        /// Defaults to bench/results/swarm-<timestamp>.
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+    },
     /// Summarize a results file from an earlier run.
     Report { results: PathBuf },
     /// Write a results file as the public JSON frog.toys/energy reads (no paths or output).
@@ -92,6 +124,57 @@ async fn main() -> Result<()> {
                 thinking_budget,
             )
             .await
+        }
+        Cmd::Swarm {
+            model,
+            baseline,
+            agents,
+            minutes,
+            tasks,
+            filter,
+            stall_secs,
+            kwh_usd,
+            out,
+        } => {
+            let cfg = bench_config(None, None)?;
+            let mut specs = vec![model.clone()];
+            specs.extend(baseline.clone());
+            profile(&cfg, &specs).await?;
+            let out = out.unwrap_or_else(|| {
+                PathBuf::from("bench/results").join(format!(
+                    "swarm-{}",
+                    chrono::Local::now().format("%Y%m%d-%H%M%S")
+                ))
+            });
+            let report = swarm::swarm(
+                cfg,
+                swarm::Args {
+                    model,
+                    baseline,
+                    agents,
+                    minutes,
+                    tasks: task::load_all(&tasks, filter.as_deref())?,
+                    stall_secs,
+                    kwh_usd,
+                    out: out.clone(),
+                },
+            )
+            .await?;
+            if let Some(a) = &report.additivity {
+                println!(
+                    "\nadditivity {}: {}",
+                    if a.holds { "holds" } else { "BROKEN" },
+                    a.tasks
+                        .iter()
+                        .map(|(t, (b, p))| format!("{t} {b:.0}s→{p:.0}s"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+            }
+            std::fs::write(out.join("swarm.json"), serde_json::to_string_pretty(&report)?)?;
+            std::fs::write(out.join("report.html"), swarm::html(&report))?;
+            println!("report: {}", out.join("report.html").display());
+            Ok(())
         }
         Cmd::Report { results } => {
             report::print(&read_results(&results)?);
@@ -142,22 +225,7 @@ async fn run_suite(
     thinking: Option<String>,
     thinking_budget: Option<u32>,
 ) -> Result<()> {
-    let mut cfg = Config::load()?;
-    // A run measures the harness and the model: none of this machine's own instructions, skills,
-    // MCP servers or search backends.
-    cfg.hermetic = true;
-    cfg.web_search = None;
-    cfg.searxng_url = None;
-    if let Some(t) = &thinking {
-        cfg.thinking = serde_json::from_value(serde_json::json!(t))
-            .with_context(|| format!("unknown thinking setting `{t}`"))?;
-    }
-    if let Some(n) = thinking_budget {
-        cfg.thinking_budget = n;
-        for p in cfg.models.values_mut() {
-            p.thinking_budget = None;
-        }
-    }
+    let cfg = bench_config(thinking.as_deref(), thinking_budget)?;
     let tasks = task::load_all(&tasks_dir, filter.as_deref())?;
     let models = if models.is_empty() {
         vec![cfg.resolve(None)?.0]
@@ -187,29 +255,7 @@ async fn run_suite(
 
     // Profile models up front so `auto`'s one-time probe doesn't land inside a timed run.
     if modes.contains(&ToolMode::Auto) {
-        for m in &models {
-            let (_, profile) = cfg.resolve(Some(m))?;
-            if harness::is_hosted(&profile) {
-                continue;
-            }
-            if let Some(mut caps) = harness::cached(&profile) {
-                // Profiled before frog asked whether thinking can be switched off.
-                if caps.thinks && caps.think_off.is_none() {
-                    frog_engine::sidecar::ensure(&profile).await?;
-                    let provider = frog_engine::provider::Provider::new(&profile)?;
-                    caps.think_off = Some(harness::probe_think_off(&provider).await);
-                    harness::save(&profile, &caps);
-                }
-                continue;
-            }
-            eprintln!("profiling {m}…");
-            frog_engine::sidecar::ensure(&profile).await?;
-            let provider = frog_engine::provider::Provider::new(&profile)?;
-            match harness::probe(&provider, &frog_engine::tools::specs(), |_, _, _| {}).await {
-                Ok(caps) => harness::save(&profile, &caps),
-                Err(e) => eprintln!("  couldn't profile {m}: {e:#}"),
-            }
-        }
+        profile(&cfg, &models).await?;
     }
 
     let total = models.len() * modes.len() * tasks.len() * repeat as usize;
@@ -292,5 +338,53 @@ async fn run_suite(
     }
     report::print(&results);
     println!("\nresults: {}", results_path.display());
+    Ok(())
+}
+
+/// The config a bench runs with: none of this machine's own instructions, skills, MCP servers or
+/// search backends — a run measures the harness and the model.
+fn bench_config(thinking: Option<&str>, thinking_budget: Option<u32>) -> Result<Config> {
+    let mut cfg = Config::load()?;
+    cfg.hermetic = true;
+    cfg.web_search = None;
+    cfg.searxng_url = None;
+    if let Some(t) = thinking {
+        cfg.thinking = serde_json::from_value(serde_json::json!(t))
+            .with_context(|| format!("unknown thinking setting `{t}`"))?;
+    }
+    if let Some(n) = thinking_budget {
+        cfg.thinking_budget = n;
+        for p in cfg.models.values_mut() {
+            p.thinking_budget = None;
+        }
+    }
+    Ok(cfg)
+}
+
+/// Probe each local model's capabilities once, so `auto`'s probe doesn't land inside a timed run.
+async fn profile(cfg: &Config, models: &[String]) -> Result<()> {
+    for m in models {
+        let (_, profile) = cfg.resolve(Some(m))?;
+        if harness::is_hosted(&profile) {
+            continue;
+        }
+        if let Some(mut caps) = harness::cached(&profile) {
+            // Profiled before frog asked whether thinking can be switched off.
+            if caps.thinks && caps.think_off.is_none() {
+                frog_engine::sidecar::ensure(&profile).await?;
+                let provider = frog_engine::provider::Provider::new(&profile)?;
+                caps.think_off = Some(harness::probe_think_off(&provider).await);
+                harness::save(&profile, &caps);
+            }
+            continue;
+        }
+        eprintln!("profiling {m}…");
+        frog_engine::sidecar::ensure(&profile).await?;
+        let provider = frog_engine::provider::Provider::new(&profile)?;
+        match harness::probe(&provider, &frog_engine::tools::specs(), |_, _, _| {}).await {
+            Ok(caps) => harness::save(&profile, &caps),
+            Err(e) => eprintln!("  couldn't profile {m}: {e:#}"),
+        }
+    }
     Ok(())
 }

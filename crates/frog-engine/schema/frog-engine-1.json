@@ -360,6 +360,13 @@
           "minimum": 0,
           "type": "integer"
         },
+        "ran_on": {
+          "description": "The node it ran on, for a pooled model (`node/…`): its name, or \"this Mac\".",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "reusable": {
           "description": "How much of this request (0–1, by its text) repeats the start of the one before: about\nthe share of `prompt_tokens` a server's cache could cover.",
           "format": "double",
@@ -6315,6 +6322,28 @@
       ],
       "type": "object"
     },
+    "RanOn": {
+      "description": "The node a pooled model's call ran on (docs/node-protocol.md §7).",
+      "properties": {
+        "local": {
+          "default": false,
+          "description": "This Mac's own tang.",
+          "type": "boolean"
+        },
+        "name": {
+          "description": "The node's name (\"mew\"), or \"this Mac\".",
+          "type": "string"
+        },
+        "node_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "node_id",
+        "name"
+      ],
+      "type": "object"
+    },
     "ReportKind": {
       "enum": [
         "console",
@@ -6476,6 +6505,17 @@
         },
         "model": {
           "type": "string"
+        },
+        "ran_on": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RanOn"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where the last model call ran, for a pooled model (`node/…`): the composer chip."
         },
         "tier": {
           "$ref": "#/$defs/Tier"
@@ -6839,6 +6879,17 @@
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
+        },
+        "ran_on": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RanOn"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where the turn's last model call ran, for a pooled model (`node/…`). Absent otherwise."
         },
         "served_by": {
           "anyOf": [

@@ -9,7 +9,7 @@ impl Agent {
         let base = if self.chat {
             prompt::chat_prompt(&self.cfg, &self.profile.model)
         } else {
-            prompt::system_prompt(&self.root, &self.cfg, &self.profile.model)
+            prompt::system_head(&self.root, &self.cfg)
         };
         let rules = crate::rules::prompt_section(
             &self.rules,
@@ -51,6 +51,11 @@ impl Agent {
         // The store's contents never go in the prompt (that's the point): only how to reach it.
         if self.compiled.is_some() {
             self.system.push_str(crate::compiled_memory::PROMPT);
+        }
+        // The session's own facts after everything shared, so the shared part stays one prefix.
+        if !self.chat {
+            self.system
+                .push_str(&prompt::environment(&self.root, &self.profile.model));
         }
         // Last, since it's the one part that changes between turns.
         self.system.push_str(&self.repo_map.text);

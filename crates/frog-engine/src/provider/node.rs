@@ -117,6 +117,7 @@ impl Client {
             last: last.as_deref(),
             cache_key: req.and_then(|r| r.cache_key),
             prompt_tokens: req.map_or(0, prompt_tokens),
+            prefix: req.and_then(prefix),
             step: req.map_or(Step::Answer, step),
             background: req.is_some_and(|r| r.background),
         };
@@ -248,6 +249,7 @@ impl Client {
                         output: resp.usage.output,
                         first_byte: first.map(|t| t - started),
                         total: started.elapsed(),
+                        prefix: prefix(req).map(|(h, _)| h),
                     },
                 );
                 resp.usage.ran_on = Some(at.ran_on());
@@ -269,6 +271,29 @@ fn prompt_tokens(req: &Request<'_>) -> u64 {
         .map(|t| t.name.len() + t.description.len() + t.schema.to_string().len())
         .sum();
     ((req.system.len() + msgs + tools) / 4) as u64
+}
+
+/// The prompt's stable head: the system prompt up to the per-session environment
+/// (`prompt::ENV_HEADER`, which the engine moves out for pooled models) plus the tools, the same
+/// for every session on the repo whatever its worktree. Its hash and estimated tokens, for
+/// placing a new session where the head is already in KV.
+fn prefix(req: &Request<'_>) -> Option<(u64, u64)> {
+    use std::hash::{Hash, Hasher};
+    let end = req
+        .system
+        .find(crate::prompt::ENV_HEADER)
+        .unwrap_or(req.system.len());
+    let head = &req.system[..end];
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    head.hash(&mut h);
+    let mut chars = head.len();
+    for t in req.tools {
+        t.name.hash(&mut h);
+        t.description.hash(&mut h);
+        t.schema.to_string().hash(&mut h);
+        chars += t.name.len() + t.description.len() + t.schema.to_string().len();
+    }
+    (chars >= 1024).then(|| (h.finish(), (chars / 4) as u64))
 }
 
 /// What a call is likely to write: after tool results, usually the next tool call.

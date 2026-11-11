@@ -40,6 +40,14 @@ pub struct Call {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub compact: bool,
     pub cold: bool,
+    /// Output tokens and decode time, for throughput.
+    #[serde(default)]
+    pub output_tokens: u64,
+    #[serde(default)]
+    pub decode_ms: u64,
+    /// The node it ran on, for a pooled model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub node: Option<String>,
 }
 
 impl Call {
@@ -56,6 +64,9 @@ impl Call {
             reopened,
             compact: t.compact,
             cold: false,
+            output_tokens: t.output_tokens,
+            decode_ms: t.decode_ms,
+            node: t.ran_on.clone(),
         };
         c.cold = c.is_cold();
         c
