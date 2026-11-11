@@ -144,13 +144,19 @@ function AskCard({ ask, onDecide }: { ask: Ask; onDecide: Decide }) {
           <button type="submit" className="f-btn f-btn--bordered" disabled={!note.trim()}>Deny</button>
         </form>
       )}
-      <div className="det ask-where">Runs in your cloud sandbox</div>
+      {/* Two answers, as a Mac alert has; the rest behind ⋯, shortcuts in the tooltips. */}
       <div className="diff-acts">
-        {always && <button type="button" className="f-btn f-btn--bordered" onClick={() => onDecide(true, { always: true })}>{always}</button>}
-        <button type="button" className="f-btn f-btn--bordered" onClick={() => setNoting(true)}>Deny with note…</button>
+        <details className="ask-more">
+          <summary className="f-btn f-btn--bordered" aria-label="More choices" title="More choices">⋯</summary>
+          <div className="f-card ask-more-menu" role="menu">
+            {always && <button type="button" role="menuitem" onClick={() => onDecide(true, { always: true })}>{always}</button>}
+            <button type="button" role="menuitem" onClick={() => setNoting(true)}>Deny with a note…</button>
+          </div>
+        </details>
+        <span className="det ask-where">Runs in your cloud sandbox</span>
         <span style={{ flex: 1 }} />
-        <button type="button" className="f-btn f-btn--bordered" onClick={() => onDecide(false)}>Deny ⌘.</button>
-        <button type="button" className="f-btn f-btn--prominent" onClick={() => onDecide(true)}>Allow ⌘↩</button>
+        <button type="button" className="f-btn f-btn--bordered" title="Deny (⌘.)" onClick={() => onDecide(false)}>Deny</button>
+        <button type="button" className="f-btn f-btn--prominent" title="Allow (⌘↩)" onClick={() => onDecide(true)}>Allow</button>
       </div>
     </div>
   )

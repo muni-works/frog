@@ -315,7 +315,7 @@ export function Composer(p: ComposerProps) {
             }}
           />
           <span style={{ fontSize: 12, color: paused ? 'var(--warn)' : p.waiting ? 'var(--notice)' : 'var(--muted)', whiteSpace: 'nowrap' }}>
-            {working && p.waiting ? 'Waiting on you' : working ? `Working · ${timer}` : paused ? 'Out of credits' : ''}
+            {working && p.waiting ? '' : working ? `Working · ${timer}` : paused ? 'Out of credits' : ''}
           </span>
           {working ? (
             <button type="button" className="cz-send" aria-label="Stop (Esc)" onClick={p.onStop} style={{ background: 'var(--fg)', color: 'var(--bg)' }}>

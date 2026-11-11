@@ -899,7 +899,7 @@ struct SessionList: View {
                     if depth > 0 {
                         Color.clear.frame(width: CGFloat(min(depth, SessionNesting.maxDepth) - 1) * 14)
                         TreeGuide(last: last.contains(entry.id)).frame(width: 14)
-                            .padding(.vertical, -5)
+                            .padding(.vertical, -8)
                     }
                     row(s, showPlace: depth == 0, nested: depth > 0, summary: collapsed ? counts.summary : nil)
                         .overlay(alignment: .topTrailing) {
@@ -910,7 +910,7 @@ struct SessionList: View {
                                         .frame(width: 16, height: 16).contentShape(.rect)
                                 }
                                 .buttonStyle(.plain).foregroundStyle(.tertiary)
-                                .padding(.top, 2).padding(.trailing, 2)
+                                .padding(.top, 9).padding(.trailing, 6)
                                 .help(collapsed ? "Show the sessions it started" : "Fold the sessions it started")
                             }
                         }
