@@ -111,7 +111,7 @@ final class Library {
                 #endif
                 // Unchanged ids stay as the full listing read them: a partial refresh's rows
                 // replace only their own. Race attempts live in their own worktrees and are
-                // shown in the race, not here; worker worktrees are shown under their repo
+                // shown in the race card, not here; worker worktrees are shown under their repo
                 // (see `Sidebar.home`).
                 if known {
                     var merged = listed

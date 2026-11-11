@@ -40,8 +40,6 @@
 	<array>
 		<string>_frog._tcp</string>
 	</array>
-	<key>NSSupportsLiveActivities</key>
-	<true/>
 	<key>NSUserActivityTypes</key>
 	<array>
 		<string>toys.frog.conversation</string>

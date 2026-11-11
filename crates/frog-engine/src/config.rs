@@ -281,10 +281,6 @@ pub struct Config {
     /// (denies the call, tells the agent, and carries on). 0 waits forever.
     #[serde(default = "default_approval_timeout")]
     pub approval_timeout_secs: u64,
-    /// The model that writes the pond's brief (a profile or provider/model). Default: Apple's
-    /// on-device model when available, else the default model if it runs on your devices.
-    #[serde(default)]
-    pub brief_model: Option<String>,
     /// The model that writes shell-command gists for tool rows (a profile or
     /// provider/model). Default: Apple's on-device model, else frog cloud's small
     /// model (`cloud/bull`, or `cloud/qwen3-coder-next` when the gateway lists it).

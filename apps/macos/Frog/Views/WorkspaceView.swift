@@ -450,15 +450,6 @@ struct WorkspaceView: View {
                 panes.items.forEach { $0.peekChanges = false }
             }
         }
-        // The morning notice was clicked: the brief, in a new chat, unless one's already showing.
-        .onReceive(NotificationCenter.default.publisher(for: .showBrief)) { _ in
-            guard window?.isKeyWindow ?? true else { return }
-            showBrief()
-        }
-        // Clicking the notice launched frog: this is the first window, so it shows the brief.
-        .task {
-            if MorningNotice.pendingShow { showBrief() }
-        }
         .focusedSceneValue(\.frogWindow, FrogWindow(
             workspace: workspace, state: focused.ui,
             toggleSessions: toggleSessions, toggleChanges: { toggleChanges(focused) },
@@ -583,16 +574,7 @@ extension View {
 }
 
 extension WorkspaceView {
-    /// The brief, in a new chat, unless an empty chat (where it sits) is already showing.
-    private func showBrief() {
-        MorningNotice.pendingShow = false
-        let showing = Frog.isChat(workspace.folder) && (workspace.conversation?.turns.isEmpty ?? false)
-        if !showing { panes.switchFolder(nil, in: focused) }
-        Task { await Pond.shared.refresh() }
-    }
-
     private var windowTitle: String {
-        if workspace.race != nil { return workspace.name }
         // The mirror (see `Workspace.currentTitle`), not the conversation: the root body
         // reading the streaming conversation re-evaluated per delta to redraw a title that
         // only changes when the engine names the session.
@@ -602,7 +584,6 @@ extension WorkspaceView {
 
     /// Where the focused conversation lives: the project and its branch; nothing for a chat.
     private var place: String {
-        if workspace.race != nil { return "Racing" }
         guard !workspace.isChat else { return "" }
         return [workspace.name, workspace.git?.branch].compactMap { $0 }.joined(separator: " · ")
     }

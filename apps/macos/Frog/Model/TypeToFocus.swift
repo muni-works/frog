@@ -49,7 +49,7 @@ enum TypeToFocus {
     /// 4. Not one visible character — flags-changed events (`characters` nil), F-keys (in
     ///    the private-use range), control characters, Return, Tab, Esc, delete, space (scroll
     ///    views page on it): nothing to type. ⇧-shifted capitals stay; they're text.
-    /// 5. No composer to take it (a race view, or between conversations): the key is nobody's,
+    /// 5. No composer to take it (between conversations): the key is nobody's,
     ///    as before this existed.
     static func decide(
         _ event: Event, isKeyWindow: Bool, editing: Bool, canFocusComposer: Bool
@@ -128,7 +128,7 @@ enum TypeToFocus {
               let panes = registered.first(where: { $0.value.window === window })?.value.panes
         else { return }
         let ui = panes.focused.ui
-        // The ⌘K palette and find bar hold the window's keys; a race has no composer.
+        // The ⌘K palette and find bar hold the window's keys.
         guard !ui.paletteShown, !ui.findShown, let composer = ui.composer, composer.textView != nil
         else { return }
         guard case .compose = decide(

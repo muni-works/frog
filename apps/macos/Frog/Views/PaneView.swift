@@ -146,9 +146,7 @@ struct PaneView: View {
 
     @ViewBuilder
     private var detail: some View {
-        if let race = workspace.race {
-            RaceView(race: race) { workspace.endRace() }
-        } else if let id = workspace.opening, id != workspace.conversation?.sessionID, id != workspace.conversation?.cloudSession {
+        if let id = workspace.opening, id != workspace.conversation?.sessionID, id != workspace.conversation?.cloudSession {
             OpeningPane(title: Library.shared.sessions.first { $0.id == id }?.displayTitle)
         } else if let conversation = workspace.conversation {
             TranscriptView(
@@ -170,6 +168,10 @@ struct PaneView: View {
             .scrollEdgeEffectHidden(true, for: .bottom)
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 VStack(spacing: 0) {
+                    // A race's outcome: one card at the foot of the conversation.
+                    if let race = workspace.race {
+                        RaceCard(race: race) { workspace.endRace() }
+                    }
                     ResumedBanner(conversation: conversation)
                         .id(ObjectIdentifier(conversation))
                     BiggerModelLine(workspace: workspace, conversation: conversation)
@@ -195,16 +197,10 @@ struct PaneView: View {
     private func header(_ number: Int) -> some View {
         let badge = ActivityViewer.PaneBadge(number: number, focused: focused) { panes.close(pane) }
         Group {
-            if let c = workspace.conversation, workspace.race == nil {
+            if let c = workspace.conversation {
                 // The words give way in a narrow pane, so the capsule stays inside it.
                 ActivityViewer(workspace: workspace, conversation: c, jump: { ui.jumpTo = $0 }, pane: badge,
                                labelWidth: max(80, min(300, width - insets.leading - insets.trailing - 340)))
-            } else if workspace.race != nil {
-                Text("\(number)  \(workspace.name) · Racing")
-                    .font(.frog(size: 12))
-                    .padding(.horizontal, 12)
-                    .frame(height: 30)
-                    .glassEffect(.regular, in: .capsule)
             }
         }
         // The handle: drag it onto another pane's edge to move this pane there; double-click

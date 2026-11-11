@@ -51,7 +51,6 @@ targets:
         NSBonjourServices: [_frog._tcp, _frog-node._tcp]
         NSHumanReadableCopyright: "© 2026 Municipal Robotics"
         NSMicrophoneUsageDescription: "Frog listens only while you dictate into the composer. Speech is transcribed on this Mac; audio never leaves it."
-        NSCalendarsFullAccessUsageDescription: "Frog reads your calendar on this Mac to shape your brief around your day. It never leaves this Mac."
         NSSpeechRecognitionUsageDescription: "Frog turns your dictation into text on this Mac. Nothing is sent to Apple or anyone else."
     settings:
       base:

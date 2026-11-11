@@ -6,16 +6,9 @@ struct FrogApp: App {
     @NSApplicationDelegateAdaptor(QuitGuard.self) private var quitGuard
 
     init() {
-        if MorningNotice.headless {
-            // Woken by the brief's watcher to post the morning notice: no window, no Dock icon,
-            // and never in the way of a frog that's already open (any build — it asks on its own).
-            if SingleInstance.otherIsRunning { exit(0) }
-            NSApplication.shared.setActivationPolicy(.accessory)
-        } else {
-            // One frog: a second copy hands its folder to the running one and quits; a different
-            // build (debug vs the installed app) leaves quietly instead of opening on top.
-            SingleInstance.handOff()
-        }
+        // One frog: a second copy hands its folder to the running one and quits; a different
+        // build (debug vs the installed app) leaves quietly instead of opening on top.
+        SingleInstance.handOff()
         if SingleInstance.isTesting {
             // A test host: no Dock icon, no windows of its own (tests render offscreen).
             NSApplication.shared.setActivationPolicy(.accessory)
@@ -26,7 +19,7 @@ struct FrogApp: App {
         UserDefaults.standard.set(true, forKey: "AppleReduceDesktopTinting")
         Notifier.shared.setup()
         // Settings › Lend left on: start lending again (it pauses itself on battery or heat).
-        if !MorningNotice.headless && !SingleInstance.isTesting {
+        if !SingleInstance.isTesting {
             Task { @MainActor in MacLender.shared.start() }
         }
         Conversation.effects = MacEffects.shared
@@ -49,12 +42,11 @@ struct FrogApp: App {
         ModelContext.useMac()
         // Type-to-focus: printable keys reach the composer when no field holds them.
         TypeToFocus.begin()
-        // A test host and the morning notice mustn't read or write the user's drafts.
-        DraftStore.enabled = !SingleInstance.isTesting && !MorningNotice.headless
+        // A test host mustn't read or write the user's drafts.
+        DraftStore.enabled = !SingleInstance.isTesting
         DiagramLayout.mermaid = { source, cwd in
             await Diagram.fromMermaid(source, cwd: cwd ?? FileManager.default.homeDirectoryForCurrentUser)
         }
-        MorningNotice.start()
         _ = Updates.shared
         RemoteBridge.shared.startIfEnabled()
         // `open Frog.app --args --test-notification`: fire one notification of every category,
@@ -75,8 +67,8 @@ struct FrogApp: App {
         }
         .defaultSize(width: 1100, height: 760)
         .windowToolbarStyle(.unified)
-        .defaultLaunchBehavior(SingleInstance.isTesting || MorningNotice.headless ? .suppressed : .presented)
-        .restorationBehavior(SingleInstance.isTesting || MorningNotice.headless ? .disabled : .automatic)
+        .defaultLaunchBehavior(SingleInstance.isTesting ? .suppressed : .presented)
+        .restorationBehavior(SingleInstance.isTesting ? .disabled : .automatic)
         .commands { FrogCommands() }
 
         WindowGroup("Diagram", for: DiagramDocument.self) { $doc in

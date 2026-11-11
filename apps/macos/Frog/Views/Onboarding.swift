@@ -18,8 +18,6 @@ struct EmptyPageExtras: View {
         VStack(spacing: 10) {
             if isChat {
                 RecentProjectChips()
-                PondBrief()
-                    .padding(.top, 8)
             } else if let glance {
                 ProjectGreeting(conversation: conversation, glance: glance)
             }

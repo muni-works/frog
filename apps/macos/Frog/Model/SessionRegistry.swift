@@ -84,7 +84,7 @@ final class SessionRegistry {
     private let enabled: Bool
     private var frozen = false
 
-    init(url: URL = SessionRegistry.defaultURL, enabled: Bool = !SingleInstance.isTesting && !MorningNotice.headless) {
+    init(url: URL = SessionRegistry.defaultURL, enabled: Bool = !SingleInstance.isTesting) {
         self.url = url
         self.enabled = enabled
         let loaded = Self.load(url) ?? OpenSessions()
