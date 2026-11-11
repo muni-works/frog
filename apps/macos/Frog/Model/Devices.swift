@@ -110,7 +110,10 @@ final class Devices {
     /// The service's host and port, by connecting once (Bonjour gives a name, `/node` wants a URL).
     private func resolve(_ id: String, _ endpoint: NWEndpoint) {
         found[id]?.resolving = true
-        let c = NWConnection(to: endpoint, using: .tcp)
+        // IPv4: a link-local IPv6 answer ("fe80::…%en0") won't go through URLSession.
+        let params = NWParameters.tcp
+        (params.defaultProtocolStack.internetProtocol as? NWProtocolIP.Options)?.version = .v4
+        let c = NWConnection(to: endpoint, using: params)
         c.stateUpdateHandler = { [weak self] state in
             switch state {
             case .ready:
@@ -118,7 +121,8 @@ final class Devices {
                     guard case .hostPort(let host, let port) = c.currentPath?.remoteEndpoint else { return nil }
                     var h: String
                     switch host {
-                    case .ipv4(let a): h = "\(a)"
+                    // Network prints the interface scope ("192.168.2.12%en0"); a URL can't carry it.
+                    case .ipv4(let a): h = String("\(a)".split(separator: "%").first ?? "")
                     case .ipv6(let a): h = "[\(a)]"
                     case .name(let n, _): h = n
                     @unknown default: return nil
