@@ -2533,7 +2533,57 @@
           "type": "object"
         },
         {
-          "description": "Live output from background work (a subagent's step, a job's output, a monitor poll).",
+          "description": "A child session this engine owns changed state (see `kids`; only when no client hosts\nsessions — the Mac reports its own children). `state` is `running`, `waiting` (a\npermission prompt needs the user), `idle` (its turn ended) or `archived`.",
+          "properties": {
+            "branch": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "created": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "cwd": {
+              "type": "string"
+            },
+            "event": {
+              "const": "child_session",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "seq": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "id",
+            "name",
+            "state",
+            "cwd",
+            "seq",
+            "session",
+            "created"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Live output from background work (a job's output, a monitor poll).",
           "properties": {
             "created": {
               "format": "int64",
@@ -4344,7 +4394,42 @@
           "type": "object"
         },
         {
-          "description": "Live output from background work (a subagent's step, a job's output, a monitor poll).",
+          "description": "A child session this engine owns changed state (see `kids`; only when no client hosts\nsessions — the Mac reports its own children). `state` is `running`, `waiting` (a\npermission prompt needs the user), `idle` (its turn ended) or `archived`.",
+          "properties": {
+            "branch": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "cwd": {
+              "type": "string"
+            },
+            "event": {
+              "const": "child_session",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "id",
+            "name",
+            "state",
+            "cwd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Live output from background work (a job's output, a monitor poll).",
           "properties": {
             "event": {
               "const": "background_progress",
@@ -6315,6 +6400,28 @@
       ],
       "type": "object"
     },
+    "RanOn": {
+      "description": "The node a pooled model's call ran on (docs/node-protocol.md §7).",
+      "properties": {
+        "local": {
+          "default": false,
+          "description": "This Mac's own tang.",
+          "type": "boolean"
+        },
+        "name": {
+          "description": "The node's name (\"mew\"), or \"this Mac\".",
+          "type": "string"
+        },
+        "node_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "node_id",
+        "name"
+      ],
+      "type": "object"
+    },
     "ReportKind": {
       "enum": [
         "console",
@@ -6476,6 +6583,17 @@
         },
         "model": {
           "type": "string"
+        },
+        "ran_on": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RanOn"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where the last model call ran, for a pooled model (`node/…`): the composer chip."
         },
         "tier": {
           "$ref": "#/$defs/Tier"
@@ -6839,6 +6957,17 @@
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
+        },
+        "ran_on": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RanOn"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where the turn's last model call ran, for a pooled model (`node/…`). Absent otherwise."
         },
         "served_by": {
           "anyOf": [

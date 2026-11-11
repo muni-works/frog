@@ -16,14 +16,15 @@ extension Library {
         var line = RowLine()
         if case .pr(let n)? = GitIndex.shared.badge(s)?.landed { line.pr = n }
         guard let c = conversation(s.id) else {
-            if live[s.id] == .waiting { line.text = "Waiting on you"; line.tint = Tokens.signal }
+            // The dot says it needs you; the line says what (or, unknown, just that).
+            if live[s.id] == .waiting { line.text = asking(s.id) ?? "Waiting on you"; line.tint = Tokens.signal }
             return line
         }
         line.turns = c.turns.count
         if let q = c.question {
             line.text = q.question; line.tint = Tokens.signal
         } else if let p = c.permission {
-            // The actual ask, as on the web: "Can I bash cargo test -q upload?".
+            // The actual ask, as on the web: "Run cargo test -q?".
             line.text = Self.askLine(p); line.tint = Tokens.signal
         } else if c.elicitation != nil {
             line.text = "Waiting on you"; line.tint = Tokens.signal
@@ -35,10 +36,9 @@ extension Library {
         return line
     }
 
-    /// A permission request as a question: "Can I bash cargo test -q upload?".
+    /// A permission request as a question: "Run cargo test -q?" (see `AskPhrase`).
     static func askLine(_ p: PermissionRequest) -> String {
-        let arg = p.arg.split(separator: "\n").first.map(String.init) ?? ""
-        return "Can I \(p.name.lowercased())" + (arg.isEmpty ? "?" : " \(arg)?")
+        AskPhrase.line(name: p.name, arg: p.arg)
     }
 
     /// The first line of the last thing Frog said.

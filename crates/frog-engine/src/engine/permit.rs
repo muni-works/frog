@@ -851,12 +851,20 @@ impl Agent {
                 .await
                 .map_err(|e| anyhow::anyhow!("{e:#}"))?;
         }
+        if !self.shared.sessions.enabled() {
+            return self.local_session_tool(name, input).await;
+        }
+        // A write-capable child gets its own worktree unless the call says otherwise.
+        let mut input = input.clone();
+        if name == sessions::START && input.get("worktree").is_none() {
+            input["worktree"] = Value::Bool(crate::kids::wants_worktree(&input));
+        }
         let (id, rx) = self.shared.sessions.open();
         self.emit(Event::SessionRequest {
             id,
             item: item.into(),
             tool: name.into(),
-            input: input.clone(),
+            input,
         });
         let reply = rx
             .await
@@ -865,6 +873,106 @@ impl Agent {
             content: sessions::result(reply)?,
             ..Default::default()
         })
+    }
+
+    /// Session tools with no client hosting sessions (headless, the CLI): the engine starts
+    /// and owns the children itself (see `kids`).
+    async fn local_session_tool(&mut self, name: &str, input: &Value) -> Result<tools::Output> {
+        use crate::tools::sessions;
+        if !crate::kids::handles(name) {
+            anyhow::bail!("`{name}` needs the app (it manages sessions the engine doesn't own)");
+        }
+        let text = if name == sessions::START {
+            self.start_child(input).await?
+        } else {
+            self.shared.kids.answer(name, input)?
+        };
+        Ok(tools::Output {
+            content: text,
+            ..Default::default()
+        })
+    }
+
+    async fn start_child(&mut self, input: &Value) -> Result<String> {
+        let max = self.cfg.background_tasks.max(1);
+        if self.shared.kids.live() >= max {
+            anyhow::bail!(
+                "{max} sessions started from this one are open (the limit). Archive one with ArchiveSession first."
+            );
+        }
+        let title = input["title"].as_str().unwrap_or("task").trim().to_string();
+        let prompt = input["prompt"].as_str().unwrap_or("").trim().to_string();
+        let read_only = input["read_only"].as_bool() == Some(true);
+        let (cwd, branch) = match input["cwd"].as_str().filter(|c| !c.trim().is_empty()) {
+            Some(c) if !crate::kids::wants_worktree(input) => (self.root.join(c), None),
+            _ if crate::kids::wants_worktree(input) => {
+                match crate::kids::make_worktree(&self.root, &title)? {
+                    Some((dir, branch)) => (dir, Some(branch)),
+                    None => (self.root.clone(), None),
+                }
+            }
+            _ => (self.root.clone(), None),
+        };
+        let asked = input["mode"].as_str().and_then(|m| {
+            serde_json::from_value::<Mode>(Value::String(m.to_string())).ok()
+        });
+        // Never above the parent's own mode.
+        let mode = match asked {
+            Some(m) if (m as u8) <= (self.mode as u8) => m,
+            _ => self.mode,
+        };
+        let (profile_name, profile, fallback) = crate::subagent::profile(
+            &self.cfg,
+            &self.root,
+            input["model"].as_str(),
+            (&self.profile_name, &self.profile),
+        );
+        if let Some(why) = fallback {
+            self.notice(Level::Warn, why);
+        }
+        let parent = crate::engine::Options {
+            cfg: self.cfg.clone(),
+            profile_name,
+            profile,
+            cwd: self.root.clone(),
+            mode: self.mode,
+            can_ask: self.can_ask,
+            resume: None,
+            store: self.store.clone(),
+            sandbox: self.ctx.sandbox.is_some(),
+            rich: false,
+            subagent: false,
+            chat: false,
+        };
+        let opts = crate::kids::child_options(
+            &parent,
+            &self.conv.session_id,
+            cwd.clone(),
+            read_only,
+            mode,
+        );
+        let handle = crate::engine::spawn_child(opts)?;
+        let id = self
+            .shared
+            .kids
+            .adopt(
+                handle,
+                title.clone(),
+                cwd.clone(),
+                branch.clone(),
+                prompt,
+                self.shared.bg.clone(),
+            )
+            .await?;
+        let mut text = format!(
+            "Started session {title} ({id}) in {}",
+            cwd.display()
+        );
+        if let Some(b) = &branch {
+            text.push_str(&format!(" on branch {b}"));
+        }
+        text.push_str(". It runs on its own; when it finishes a turn you get a <session-message> from it with its report. SendMessage to steer it, SessionStatus to check it, ArchiveSession when done.");
+        Ok(text)
     }
 
     /// `Ask`: show the question and wait for the answer.

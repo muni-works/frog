@@ -1355,6 +1355,9 @@ struct SessionInfo: Codable, Sendable, Identifiable, Hashable {
     var forkedFrom: ForkPoint?
     /// The folder it works in (the chat folder for plain chats).
     var cwd: String?
+    /// The session that started it, from its log's header (a child the engine owned itself,
+    /// headless or in the cloud). The Mac's own children are filed in `Library.parents`.
+    var parent: String? = nil
 
     var displayTitle: String {
         let t = (title ?? firstInput ?? "Untitled").trimmingCharacters(in: .whitespacesAndNewlines)

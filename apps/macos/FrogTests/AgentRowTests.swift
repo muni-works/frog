@@ -125,17 +125,16 @@ final class AgentRowTests: XCTestCase {
         XCTAssertEqual(ActivityLabel.live(waitingTurn(), in: c), "Waiting on 1 agent")
     }
 
-    /// Background agents still at work are waited on too.
-    func testPillCountsBackgroundAgents() throws {
+    /// Background Tasks are retired: an old log's background agents never add to the count.
+    func testPillIgnoresOldBackgroundAgents() throws {
         let link = LiveLink()
         let c = Conversation(folder: URL(fileURLWithPath: "/tmp/demo"), link: link, replay: false, session: "s")
         link.onEvent(try envelope(1, #""event":"turn_started","turn":1,"input":"go""#))
         link.onEvent(try envelope(2, #""event":"background_started","id":"task-1","kind":"task","label":"a""#))
-        link.onEvent(try envelope(3, #""event":"background_started","id":"task-2","kind":"task","label":"b""#))
-        link.onEvent(try envelope(4, #""event":"background","running":2"#))
+        link.onEvent(try envelope(3, #""event":"background","running":1"#))
         link.onEvent(try envelope(5, #""event":"item_started","id":"t9","kind":{"type":"tool_call","name":"Task","arg":"c"}"#))
         let turn = try XCTUnwrap(c.turns.last)
-        XCTAssertEqual(ActivityLabel.live(turn, in: c), "Waiting on 3 agents")
+        XCTAssertEqual(ActivityLabel.live(turn, in: c), "Waiting on 1 agent")
     }
 
     /// Not waiting on an agent: the pill says the step, as before.

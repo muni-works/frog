@@ -86,6 +86,52 @@ enum SessionNesting {
     /// Deepest indent; deeper descendants line up with it.
     static let maxDepth = 4
 
+    /// The ids of the entries (rows or "+N done") that are the last of their parent's children (nothing else at
+    /// their depth before the tree climbs back out), whose guide line ends in an elbow.
+    static func lastChildren(_ list: [Entry]) -> Set<String> {
+        func depth(_ e: Entry) -> Int {
+            switch e {
+            case .row(_, let d, _, _): d
+            case .done(_, let d, _, _, _): d
+            }
+        }
+        var out: Set<String> = []
+        for (i, e) in list.enumerated() {
+            let d = depth(e)
+            guard d > 0 else { continue }
+            var last = true
+            for next in list[(i + 1)...] {
+                let nd = depth(next)
+                if nd < d { break }
+                if nd == d { last = false; break }
+            }
+            if last { out.insert(e.id) }
+        }
+        return out
+    }
+
+    /// A flat list in tree order, for lists that keep their own sections (the phone's):
+    /// each id followed by the ones it started that are in the same list, indented one
+    /// deeper (up to `maxDepth`). Order otherwise kept; a child whose parent isn't in the
+    /// list stays where it was, as a root; a cycle can't lose a row.
+    static func indented(_ ids: [String], parent: (String) -> String?) -> [(id: String, depth: Int)] {
+        let present = Set(ids)
+        var parentIn: [String: String] = [:]
+        for id in ids {
+            if let p = parent(id), p != id, present.contains(p) { parentIn[id] = p }
+        }
+        var out: [(id: String, depth: Int)] = []
+        var placed: Set<String> = []
+        func walk(_ id: String, _ depth: Int) {
+            guard placed.insert(id).inserted else { return }
+            out.append((id, depth))
+            for c in ids where parentIn[c] == id { walk(c, min(depth + 1, maxDepth)) }
+        }
+        for id in ids where parentIn[id] == nil { walk(id, 0) }
+        for id in ids where !placed.contains(id) { walk(id, 0) }
+        return out
+    }
+
     /// Rows in tree order: each session followed by the ones it started. A child counts as
     /// settled only when it and everything under it is (a quiet manager whose workers run
     /// stays up). Settled children collapse under a `.done` row unless their parent is in

@@ -2784,7 +2784,7 @@ async fn crashed_mid_turn_session_is_repaired_on_resume() {
             model: "m".into(),
             created: 0,
             forked_from: None,
-            worker: false,
+            worker: false, parent: None,
         },
     )
     .unwrap();
@@ -2843,7 +2843,7 @@ async fn continue_after_a_crash_runs_a_new_turn_with_the_note() {
             model: "m".into(),
             created: 0,
             forked_from: None,
-            worker: false,
+            worker: false, parent: None,
         },
     )
     .unwrap();
@@ -3529,16 +3529,21 @@ async fn stale_reads_are_pruned_when_the_turn_ends_and_logged() {
     ];
     // Size the window so the fixed prompt plus one read fits under PRUNE_AT, and two land
     // past it but short of COMPACT_AT.
+    // Headless, the engine offers the session tools it answers itself (see `kids`).
+    let local_sessions: Vec<_> = tools::sessions::specs()
+        .into_iter()
+        .filter(|s| crate::kids::handles(&s.name))
+        .collect();
     let fixed = fixed_chars(
-        &prompt::system_prompt(
+        &(prompt::system_prompt(
             &dir,
             &Config {
                 hermetic: true,
                 ..Config::default()
             },
             "test",
-        ),
-        &[tools::specs(), vec![crate::present::spec(false)]].concat(),
+        ) + tools::sessions::LOCAL_PROMPT),
+        &[tools::specs(), vec![crate::present::spec(false)], local_sessions].concat(),
     );
     let read_chars: usize = big.lines().map(|l| 6 + 1 + l.len() + 1).sum();
     let window = context::Estimator::default()
@@ -5744,12 +5749,13 @@ async fn session_tools_need_a_client_that_hosts_sessions() {
         .unwrap();
     loop {
         match h.events.recv().await.unwrap().event {
-            Event::SessionRequest { .. } => panic!("not offered without the capability"),
+            Event::SessionRequest { .. } => panic!("no client to ask without the capability"),
+            // The engine answers it itself: it owns the children (see `kids`).
             Event::ItemCompleted {
                 item: Item::ToolCall { name, output, .. },
                 ..
             } if name == "ListSessions" => {
-                assert!(output.starts_with("There's no `ListSessions` tool"));
+                assert_eq!(output, "No sessions started from this one.");
                 break;
             }
             _ => {}
@@ -8293,9 +8299,12 @@ fn woke_with(evs: &[Envelope]) -> Option<String> {
     })
 }
 
+/// No client hosts sessions (headless): StartSession has the engine spawn and own the child.
+/// Its log names the parent, and when it ends its turn the idle parent wakes with its report.
 #[tokio::test]
-async fn a_finished_background_task_wakes_an_idle_parent() {
+async fn a_headless_child_session_wakes_its_parent_with_its_report() {
     let dir = tmp_store();
+    let store = dir.join(".store");
     script_child(
         &dir,
         vec![reply(
@@ -8303,32 +8312,121 @@ async fn a_finished_background_task_wakes_an_idle_parent() {
             Stop::End,
         )],
     );
-    let task = call(
-        "t",
-        "Task",
-        json!({"description": "find parser", "prompt": "where is the parser?", "background": true}),
+    let start = call(
+        "s",
+        "StartSession",
+        json!({"title": "find parser", "prompt": "where is the parser?", "read_only": true}),
     );
     let script = vec![
-        reply(vec![task], Stop::ToolUse),
+        reply(vec![start], Stop::ToolUse),
         reply(vec![text("started it")], Stop::End),
         reply(vec![text("thanks, found it")], Stop::End),
     ];
-    let mut h = engine_with(script, true, None, None, None, dir.clone());
+    let mut h = engine_with(script, true, Some(store.clone()), None, None, dir.clone());
     drive(&mut h, |e| matches!(e, Event::Idle)).await;
-    submit(&h, "find the parser in the background");
-    // Everything through the report turn's end (the task's done event may arrive
-    // before, during or after the notice turn — ordering is the registry's, not ours).
+    submit(&h, "find the parser in parallel");
     let mut evs = drive(&mut h, |e| matches!(e, Event::TurnEnded { turn: 2, .. })).await;
     let mut more = drive(&mut h, |e| matches!(e, Event::Idle)).await;
     evs.append(&mut more);
-    let input = woke_with(&evs).expect("a turn started by the notice");
-    assert!(input.starts_with("<task-done id=task-1>"), "{input}");
-    assert!(input.contains("src/parse.rs:12"), "{input}");
+    let parent = evs[0].session.clone();
+    let woke = evs
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::TurnStarted { input, .. } if input.contains("<session-message") => {
+                Some(input.clone())
+            }
+            _ => None,
+        })
+        .expect("a turn started by the child's note");
+    assert!(woke.contains("name=\"find parser\""), "{woke}");
+    assert!(woke.contains("src/parse.rs:12"), "{woke}");
+    let child = evs
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::ChildSession { id, state, .. } if state == "idle" => Some(id.clone()),
+            _ => None,
+        })
+        .expect("the child's state reached the parent's clients");
     assert!(evs.iter().any(|e| matches!(
         &e.event,
-        Event::BackgroundDone { id, status, .. } if id == "task-1" && status == "done"
+        Event::ChildSession { id, state, .. } if *id == child && state == "running"
+    )));
+    let log = session::load(&store, &child).expect("the child has its own log");
+    assert_eq!(log.header.parent.as_deref(), Some(parent.as_str()));
+    shutdown(h).await;
+}
+
+/// A write-capable child's permission prompts surface on the parent, labelled with the
+/// child's session id, and the parent's answer goes back to the child. Then the parent
+/// archives it.
+#[tokio::test]
+async fn a_headless_childs_prompts_relay_through_the_parent_and_it_archives() {
+    let dir = tmp_store();
+    let write = call(
+        "w",
+        "Write",
+        json!({"file_path": "child.txt", "content": "hi\n"}),
+    );
+    script_child(
+        &dir,
+        vec![
+            reply(vec![write], Stop::ToolUse),
+            reply(vec![text("wrote child.txt")], Stop::End),
+        ],
+    );
+    // A `cwd` and no worktree: the child shares the folder.
+    let start = call(
+        "s",
+        "StartSession",
+        json!({"title": "writer", "prompt": "create child.txt", "cwd": ".", "worktree": false}),
+    );
+    let archive = call("a", "ArchiveSession", json!({"id": "writer"}));
+    let script = vec![
+        reply(vec![start], Stop::ToolUse),
+        reply(vec![text("started")], Stop::End),
+        reply(vec![archive], Stop::ToolUse),
+        reply(vec![text("archived it")], Stop::End),
+    ];
+    let mut h = engine_with(script, true, None, None, None, dir.clone());
+    drive(&mut h, |e| matches!(e, Event::Idle)).await;
+    submit(&h, "have a session write it");
+    let mut evs = drive(&mut h, |e| matches!(e, Event::TurnEnded { turn: 2, .. })).await;
+    let mut more = drive(&mut h, |e| matches!(e, Event::Idle)).await;
+    evs.append(&mut more);
+    let (child, asked) = evs
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::PermissionRequest { name, subagent, item, .. } => {
+                Some((item.clone(), (name.clone(), subagent.clone())))
+            }
+            _ => None,
+        })
+        .expect("the child's Write asked through the parent");
+    assert_eq!(asked, ("Write".into(), Some(child.clone())));
+    assert!(evs.iter().any(|e| matches!(
+        &e.event,
+        Event::ChildSession { id, state, .. } if *id == child && state == "waiting"
+    )), "the tree shows it needs you");
+    assert_eq!(std::fs::read_to_string(dir.join("child.txt")).unwrap(), "hi\n");
+    let archived = evs.iter().find_map(|e| match &e.event {
+        Event::ItemCompleted { item: Item::ToolCall { name, output, .. }, .. }
+            if name == "ArchiveSession" => Some(output.clone()),
+        _ => None,
+    });
+    assert!(archived.as_deref().is_some_and(|o| o.starts_with("Archived writer")), "{archived:?}");
+    assert!(evs.iter().any(|e| matches!(
+        &e.event,
+        Event::ChildSession { id, state, .. } if *id == child && state == "archived"
     )));
     shutdown(h).await;
+}
+
+/// Task has no `background` any more: parallel work is a child session.
+#[test]
+fn task_has_no_background_flag() {
+    let spec = crate::subagent::spec();
+    assert!(spec.schema["properties"].get("background").is_none());
+    assert!(spec.description.contains("StartSession"));
 }
 
 #[tokio::test]
@@ -8426,52 +8524,6 @@ async fn a_denied_subagent_call_does_not_run() {
     }
     drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
     assert!(!dir.join("nope.txt").exists());
-    shutdown(h).await;
-}
-
-/// A background task's steps reach the client wrapped under its job id (`task-N`, not an
-/// item of the parent's turn), so the client can show the agent's own progress; its
-/// progress events still carry the same steps for the background list.
-#[tokio::test]
-async fn a_background_tasks_steps_arrive_under_its_job_id() {
-    let dir = tmp_store();
-    script_child(
-        &dir,
-        vec![
-            reply(
-                vec![call("c1", "Grep", json!({"pattern": "x"}))],
-                Stop::ToolUse,
-            ),
-            reply(vec![text("found it in src/main.rs")], Stop::End),
-        ],
-    );
-    let task = call(
-        "t",
-        "Task",
-        json!({"description": "bg research", "prompt": "find it", "background": true}),
-    );
-    let script = vec![
-        reply(vec![task], Stop::ToolUse),
-        reply(vec![text("started in background")], Stop::End),
-        reply(vec![text("thanks")], Stop::End),
-    ];
-    let mut h = engine_with(script, true, None, None, None, dir.clone());
-    drive(&mut h, |e| matches!(e, Event::Idle)).await;
-    submit(&h, "research in the background");
-    let mut evs = drive(&mut h, |e| matches!(e, Event::BackgroundDone { .. })).await;
-    let mut more = drive(&mut h, |e| matches!(e, Event::Idle)).await;
-    evs.append(&mut more);
-    let step = evs.iter().find(|e| matches!(
-            &e.event,
-            Event::Subagent { item, inner } if item == "task-1"
-                && matches!(&**inner, Event::ItemCompleted { item: Item::ToolCall { name, .. }, .. } if name == "Grep")
-        ));
-    let step = step.expect("the background agent's Grep step, under task-1");
-    assert!(step.event.is_durable(), "its steps are kept for a reopen");
-    assert!(evs.iter().any(|e| matches!(
-        &e.event,
-        Event::BackgroundProgress { id, .. } if id == "task-1"
-    )));
     shutdown(h).await;
 }
 

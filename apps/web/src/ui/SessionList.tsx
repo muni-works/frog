@@ -5,6 +5,8 @@ import type { Thread } from '../engine/thread'
 import { outOfCredits, peek } from '../store'
 import { plainError } from '../errors'
 import { useLayer, useMenu } from './layers'
+import { askLine } from './ask'
+import { indented } from './nest'
 
 // The sidebar's sessions, after the Mac's: quiet one-line rows filed under days, a glyph only
 // when the state means something, a second line only while a session is live or wants you,
@@ -13,7 +15,7 @@ import { useLayer, useMenu } from './layers'
 type Glyph = 'run' | 'ask' | 'unread' | 'fail' | 'paused' | null
 
 function look(s: SessionSummary, t: Thread, unread: boolean): { glyph: Glyph; detail: string | null } {
-  if (t.ask) return { glyph: 'ask', detail: `Can I ${t.ask.name.toLowerCase()} ${t.ask.arg}?` }
+  if (t.ask) return { glyph: 'ask', detail: askLine(t.ask.name, t.ask.arg) }
   if (t.question) return { glyph: 'ask', detail: t.question.question }
   if (t.elicitation) return { glyph: 'ask', detail: `${t.elicitation.server} needs your input` }
   if (outOfCredits(t)) return { glyph: 'paused', detail: 'Paused · out of credits' }
@@ -176,7 +178,7 @@ export function SessionList(p: {
     rows[next].focus()
   }
 
-  const row = (s: SessionSummary) => {
+  const row = (s: SessionSummary, depth = 0) => {
     const t = p.thread(s.id)
     const unread = s.id !== p.current && !!seen[s.id] && !!s.last_turn && s.last_turn > seen[s.id]
     const { glyph, detail } = look(s, t, unread)
@@ -185,6 +187,7 @@ export function SessionList(p: {
     const status = glyph === 'run' ? (s.state === 'starting' ? 'Starting' : 'Running') : glyph === 'ask' ? 'Needs you' : glyph === 'fail' ? 'Failed' : glyph === 'paused' ? 'Paused' : null
     return (
       <button key={s.id} type="button" className={`srow${s.id === p.current ? ' on' : ''}${(detail && s.id === p.current) || !view.compact ? ' two' : ''}`} onClick={() => p.onOpen(s.id)}
+        style={depth ? { paddingLeft: 10 + depth * 16 } : undefined}
         onContextMenu={(e) => { e.preventDefault(); setCtx({ s, x: e.clientX, y: e.clientY }) }}
         title={s.state === 'error' ? (s.error ? plainError(s.error) : "The sandbox couldn't start") : undefined}>
         <span className="sbody">
@@ -197,7 +200,7 @@ export function SessionList(p: {
                 {s.pr.replace(/^#/, '')}
               </span>
             )}
-            {status ? <span className={`sstate sstate-${glyph}`}><span className={`sg sg-${glyph}`} />{status}</span>
+            {status ? <span className={`sstate sstate-${glyph}`} title={status} aria-label={status}><span className={`sg sg-${glyph}`} />{glyph === 'run' || glyph === 'ask' ? null : status}</span>
               : glyph === 'unread' ? <span className="sg sg-unread" aria-label="New" />
               : null}
           </span>
@@ -260,7 +263,7 @@ export function SessionList(p: {
                 <span className="sgroup-n">{folded ? g.rows.length : ''}<span className={`chev2${folded ? '' : ' open'}`}>›</span></span>
               </button>
             )}
-            {!folded && g.rows.map(row)}
+            {!folded && indented(g.rows).map((n) => row(n.row, n.depth))}
           </div>
         )
       })}
@@ -281,7 +284,7 @@ export function SessionList(p: {
               </button>
               <button type="button" className="sclear" onClick={() => p.onClear(failed.map((s) => s.id))}>Clear</button>
             </div>
-            {failedOpen && failed.map(row)}
+            {failedOpen && failed.map((s) => row(s))}
       </>}
     </div>
   )

@@ -140,8 +140,9 @@ extension TurnState {
 extension Conversation {
     /// Every agent the sidebar can speak of, in call order: the waited-on agents of the last
     /// turn (only it: older turns are settled, and this runs as the turn streams), then the
-    /// background agents. A background agent counts as working only while the engine says
-    /// background work runs (one the log left "running" died with its engine: not shown).
+    /// background agents of old logs. Background Tasks are retired (parallel work is a child
+    /// session in the started-by tree), so those only ever replay, as plain settled rows: one
+    /// the log left "running" died with its engine and isn't shown.
     var agents: [AgentRowInfo] {
         var out = turns.last?.agents ?? []
         if let p = permission, let i = out.firstIndex(where: { $0.id == p.item && !$0.finished }) {
@@ -154,16 +155,14 @@ extension Conversation {
             let run = agentRuns[job.id]
             let state: AgentRowInfo.State
             switch job.status {
-            case "running":
-                guard backgroundRunning > 0 else { continue }
-                state = permission?.item == job.id ? .waiting : .running
+            case "running": continue
             case "done", "stopped": state = .done
             default: state = .failed
             }
             let plan = run?.plan
             out.append(AgentRowInfo(
                 id: job.id, title: job.label.isEmpty ? "agent" : job.label, state: state,
-                activity: state == .failed ? job.head : state == .running ? run?.activity : nil,
+                activity: state == .failed ? job.head : nil,
                 steps: run?.steps ?? 0, planDone: plan?.done, planTotal: plan?.total,
                 startedAt: job.startedAt, endedAt: run?.endedAt, turn: job.turn, background: true))
         }
@@ -176,18 +175,13 @@ extension Conversation {
         return AgentList(agents, running: running, last: turns.last?.number)
     }
 
-    /// "Waiting on 2 agents", while `turn` waits on one of its own (a `Task` call in hand);
-    /// background agents still at work count too. Nil when it isn't waiting on one.
+    /// "Waiting on 1 agent", while `turn` waits on one of its own (a `Task` call in hand).
+    /// Nil when it isn't waiting on one. (Parallel work is child sessions, shown in the tree.)
     func waitingOnAgents(_ turn: TurnState) -> String? {
         guard !turn.finished,
               let current = turn.items.last(where: { !$0.done && $0.kind != .message }),
               case .tool("Task", _) = current.kind else { return nil }
-        // From the jobs alone (not the agents' runs): a background agent's steps don't
-        // rebuild the views that say this.
-        let background = backgroundRunning > 0
-            ? jobs.values.filter { $0.kind == "task" && $0.status == "running" }.count : 0
-        let n = 1 + background
-        return n == 1 ? "Waiting on 1 agent" : "Waiting on \(n) agents"
+        return "Waiting on 1 agent"
     }
 
     /// The transcript's live line while `turn` waits on an agent: "Waiting on 1 agent · 2 done…"

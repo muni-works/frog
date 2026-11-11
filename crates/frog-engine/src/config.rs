@@ -295,9 +295,14 @@ pub struct Config {
     /// Steps a subagent may take before it has to report.
     #[serde(default = "default_subagent_steps")]
     pub subagent_max_steps: u32,
-    /// Background subagents (`Task` with `background: true`) that may run at once.
+    /// Child sessions an engine may own at once when no client hosts sessions (see `kids`).
+    /// The key name predates child sessions (it capped background Tasks).
     #[serde(default = "default_background_tasks")]
     pub background_tasks: usize,
+    /// Set on a child session's own config by the engine that started it: its header names
+    /// this parent. Not a config.toml key.
+    #[serde(skip)]
+    pub parent_session: Option<String>,
     /// Set on a write-mode subagent's own config by its parent: it gets the edit and shell
     /// tools. Not a config.toml key.
     #[serde(skip)]

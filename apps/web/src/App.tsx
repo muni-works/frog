@@ -18,6 +18,7 @@ import { Starting } from './ui/Starting'
 import { creditLine, Palette, Settings, type Command, type SettingsTab } from './ui/Overlays'
 import { Transcript } from './ui/Transcript'
 import { safeHref } from './ui/href'
+import { askLine } from './ui/ask'
 import { sessionMissing } from './ui/guards'
 
 /** `pick`: open the composer's repo menu (back from sign-in, or ⌘K Connect a repo). */
@@ -168,7 +169,7 @@ export default function App() {
   // Recomputed per frame (cheap), but handed on only when a signal actually changed.
   const signals = useMemo(() => sessions.map((s) => {
     const t = thread(s.id)
-    const waiting = t.ask ? `Can I ${t.ask.name.toLowerCase()} ${t.ask.arg}?` : t.question ? t.question.question : t.elicitation ? `${t.elicitation.server} needs your input` : null
+    const waiting = t.ask ? askLine(t.ask.name, t.ask.arg) : t.question ? t.question.question : t.elicitation ? `${t.elicitation.server} needs your input` : null
     return { id: s.id, title: t.title ?? s.title, waiting, finished: !t.running && t.ended?.type === 'complete' }
   }), [sessions, thread, threads])
   const signalKey = JSON.stringify(signals)

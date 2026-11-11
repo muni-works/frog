@@ -1,9 +1,8 @@
-//! Background work: subagents started with `Task { background: true }`, shell jobs started
-//! with `Bash { run_in_background: true }`, and `Monitor`s (a command polled until its output
+//! Background work: shell jobs started with `Bash { run_in_background: true }`, and `Monitor`s (a command polled until its output
 //! matches or it exits a given way, or a plain timer).
 //!
 //! Each piece runs as its own tokio task and is tracked here by id. When one finishes it
-//! leaves a notice for the model (`<task-done id=…>`, `<job-done …>`, `<monitor-done …>`,
+//! leaves a notice for the model (`<job-done …>`, `<monitor-done …>`,
 //! `<wakeup …>`) and wakes the engine: an idle engine starts a turn with it, a busy one picks
 //! it up at the start of its next turn. Start and finish are durable events
 //! ([`Event::BackgroundStarted`], [`Event::BackgroundDone`]); live output goes out as
@@ -11,8 +10,12 @@
 //! or the user cancels.
 //!
 //! Nothing here asks for permission: the engine runs its normal permission check on the
-//! starting call (a job or a polled command is checked exactly like Bash), and a background
-//! subagent's own tool calls go through the parent's flow via [`Registry::relay`].
+//! starting call (a job or a polled command is checked exactly like Bash). A subagent's (or
+//! an engine-owned child session's) tool calls go through the parent's flow via
+//! [`Registry::relay_to`].
+//!
+//! Parallel agents are child sessions now (`StartSession`, see `kids`), not background
+//! `Task`s; old logs with `kind: "task"` events still replay as plain finished items.
 
 use crate::protocol::{Decision, Event, Op};
 use crate::provider::ToolSpec;
@@ -27,23 +30,17 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-pub const TASK_OUTPUT: &str = "TaskOutput";
-pub const TASK_STOP: &str = "TaskStop";
 pub const JOB_OUTPUT: &str = "JobOutput";
 pub const JOB_STOP: &str = "JobStop";
 pub const MONITOR: &str = "Monitor";
 
 /// Tools this module answers.
 pub fn handles(name: &str) -> bool {
-    matches!(
-        name,
-        TASK_OUTPUT | TASK_STOP | JOB_OUTPUT | JOB_STOP | MONITOR
-    )
+    matches!(name, JOB_OUTPUT | JOB_STOP | MONITOR)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Kind {
-    Task,
     Job,
     Monitor,
     Timer,
@@ -52,7 +49,6 @@ pub enum Kind {
 impl Kind {
     pub fn as_str(self) -> &'static str {
         match self {
-            Kind::Task => "task",
             Kind::Job => "job",
             Kind::Monitor => "monitor",
             Kind::Timer => "timer",
@@ -61,7 +57,6 @@ impl Kind {
 
     fn prefix(self) -> &'static str {
         match self {
-            Kind::Task => "task",
             Kind::Job => "job",
             Kind::Monitor | Kind::Timer => "mon",
         }
@@ -445,7 +440,16 @@ impl Registry {
         true
     }
 
-    /// Pending timers and monitors (not jobs or Tasks), oldest first.
+    /// Route permission answer `id` back to `ops` (a subagent's or child session's engine).
+    pub fn relay_to(&self, id: &str, ops: &mpsc::UnboundedSender<Op>) {
+        self.relay.lock().unwrap().insert(id.to_string(), ops.clone());
+    }
+
+    pub fn unrelay(&self, id: &str) {
+        self.relay.lock().unwrap().remove(id);
+    }
+
+    /// Pending timers and monitors (not jobs), oldest first.
     pub fn watches(&self) -> Vec<Watch> {
         let now = Instant::now();
         let entries = self.entries.lock().unwrap();
@@ -566,11 +570,10 @@ impl Registry {
 
 /// Passes a subagent's events on: its permission requests go to the user through the parent
 /// (labelled with `item`, answered via [`Registry::answer`]), everything else is wrapped in
-/// [`Event::Subagent`]. With `background`, its steps and messages are progress too.
+/// [`Event::Subagent`].
 pub fn forward(
     reg: Arc<Registry>,
     item: String,
-    background: bool,
 ) -> impl Fn(Event, &mpsc::UnboundedSender<Op>) + Send + Sync + 'static {
     move |event, ops| match event {
         Event::PermissionRequest {
@@ -584,7 +587,7 @@ pub fn forward(
             subagent: _,
             card,
         } => {
-            reg.relay.lock().unwrap().insert(id.clone(), ops.clone());
+            reg.relay_to(&id, ops);
             reg.emit(Event::PermissionRequest {
                 id,
                 item: item.clone(),
@@ -598,70 +601,14 @@ pub fn forward(
             });
         }
         Event::PermissionResolved { id, decision } => {
-            reg.relay.lock().unwrap().remove(&id);
+            reg.unrelay(&id);
             reg.emit(Event::PermissionResolved { id, decision });
         }
-        inner => {
-            if background {
-                match &inner {
-                    Event::ItemStarted {
-                        kind: crate::protocol::ItemKind::ToolCall { name, arg },
-                        ..
-                    } => reg.progress(&item, &format!("{name}({arg})"), false),
-                    Event::ItemCompleted {
-                        item: crate::protocol::Item::Message { text },
-                        ..
-                    } => reg.progress(&item, text, true),
-                    _ => {}
-                }
-            }
-            // A background task's `item` is its job id (`task-N`), not an item of the parent's
-            // turn: clients fold those into the agent's own run, not into the turn.
-            reg.emit(Event::Subagent {
-                item: item.clone(),
-                inner: Box::new(inner),
-            });
-        }
+        inner => reg.emit(Event::Subagent {
+            item: item.clone(),
+            inner: Box::new(inner),
+        }),
     }
-}
-
-/// `Task { background: true }`: run the subagent as its own task and return its id.
-pub fn start_task(
-    reg: &Arc<Registry>,
-    opts: crate::engine::Options,
-    input: &Value,
-    max: usize,
-) -> Result<Output> {
-    if input["prompt"].as_str().unwrap_or("").trim().is_empty() {
-        bail!("`prompt` is required: describe the task in full");
-    }
-    if reg.running(Kind::Task) >= max {
-        bail!(
-            "{max} background tasks are already running (the limit). Wait for one to finish, or stop one with TaskStop."
-        );
-    }
-    let id = reg.new_id(Kind::Task);
-    let label = input["description"].as_str().unwrap_or("task").to_string();
-    let stop = reg.begin(&id, Kind::Task, &label, None);
-    let (reg2, id2, input) = (reg.clone(), id.clone(), input.clone());
-    tokio::spawn(async move {
-        let fwd = forward(reg2.clone(), id2.clone(), true);
-        let r = crate::subagent::run(opts, &input, stop, fwd).await;
-        match r {
-            Ok(out) => {
-                let notice = format!("<task-done id={id2}>\n{}\n</task-done>", out.content.trim());
-                reg2.finish(&id2, "done", out.content, notice);
-            }
-            Err(e) => {
-                let msg = format!("{e:#}");
-                let notice = format!("<task-done id={id2} status=failed>\n{msg}\n</task-done>");
-                reg2.finish(&id2, "failed", msg, notice);
-            }
-        }
-    });
-    Ok(Output::text(format!(
-        "Started background task {id}. It runs on its own; you'll get a <task-done id={id}> message with its report when it finishes. TaskOutput {{\"id\": \"{id}\"}} shows its progress, TaskStop stops it."
-    )))
 }
 
 /// The bits of a context a background command needs: where it runs and its sandbox.
@@ -982,7 +929,7 @@ async fn poll_once(
     }
 }
 
-/// `TaskOutput`, `TaskStop`, `JobOutput`, `JobStop`, and `Monitor` (with `ctx` for its command).
+/// `JobOutput`, `JobStop`, and `Monitor` (with `ctx` for its command).
 pub fn run(reg: &Arc<Registry>, name: &str, input: &Value, ctx: &Ctx) -> Result<Output> {
     if name == MONITOR {
         return start_monitor(reg, input, ctx);
@@ -992,7 +939,7 @@ pub fn run(reg: &Arc<Registry>, name: &str, input: &Value, ctx: &Ctx) -> Result<
     let Some(e) = entries.get(id) else {
         let known: Vec<&str> = entries.keys().map(String::as_str).collect();
         bail!(
-            "no background task, job or monitor `{id}`. Known: {}",
+            "no background job or monitor `{id}`. Known: {}",
             if known.is_empty() {
                 "none".to_string()
             } else {
@@ -1000,18 +947,9 @@ pub fn run(reg: &Arc<Registry>, name: &str, input: &Value, ctx: &Ctx) -> Result<
             }
         );
     };
-    let want_task = matches!(name, TASK_OUTPUT | TASK_STOP);
-    if want_task != (e.kind == Kind::Task) {
-        let other = if e.kind == Kind::Task {
-            "TaskOutput/TaskStop"
-        } else {
-            "JobOutput/JobStop"
-        };
-        bail!("`{id}` is a {}: use {other}", e.kind.as_str());
-    }
     let secs = e.started.elapsed().as_secs();
     match name {
-        TASK_OUTPUT | JOB_OUTPUT => {
+        JOB_OUTPUT => {
             let body = match &e.file {
                 Some(f) => {
                     let lines = int_arg(input, "tail").unwrap_or(50).clamp(1, 2_000) as usize;
@@ -1051,16 +989,6 @@ pub fn run(reg: &Arc<Registry>, name: &str, input: &Value, ctx: &Ctx) -> Result<
 pub fn specs() -> Vec<ToolSpec> {
     let id = |what: &str| json!({"type": "string", "description": format!("The {what} id")});
     vec![
-        ToolSpec {
-            name: TASK_OUTPUT.into(),
-            description: "Check a background Task: its status and its report so far (or final report).".into(),
-            schema: json!({"type": "object", "properties": {"id": id("task")}, "required": ["id"]}),
-        },
-        ToolSpec {
-            name: TASK_STOP.into(),
-            description: "Stop a background Task. Returns what it had found so far.".into(),
-            schema: json!({"type": "object", "properties": {"id": id("task")}, "required": ["id"]}),
-        },
         ToolSpec {
             name: JOB_OUTPUT.into(),
             description: "Read the output of a background Bash job (or a Monitor's last poll).".into(),
