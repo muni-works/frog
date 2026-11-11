@@ -106,3 +106,47 @@ pooled model is `node/<weights_hash first 12>` with the display name from the no
   partial assistant message (never shown as final), mark the node down for 30 s, and rerun the
   model call from the transcript on the next placement. Tool calls that completed before the
   failed call stay done. One notice item: "mew stopped answering; finishing on this Mac".
+
+### The paired-node store (what the Mac app writes, what the engine reads)
+
+- **`~/.config/frog/nodes.json`**, written by the Mac app after a pairing finishes (atomic
+  rename, mode 0600), read by the engine on every poll (so a new pairing shows up without a
+  restart):
+  ```json
+  { "nodes": [ { "node_id": "7950c88d…", "fingerprint": "3f2a91c0…", "name": "mew",
+                 "base_url": "http://mew.local:8911" } ] }
+  ```
+  `base_url` is the server root (the engine calls `<base_url>/node` and `<base_url>/v1/…`).
+  Unknown fields are ignored; an entry missing any of the four is skipped.
+- **The key** never goes in the file: Keychain, service `frog`, account `node:<node_id>`,
+  the same item path frog uses for provider keys (`FROG_KEYCHAIN=off` skips it). Un-pairing
+  removes the entry and the item.
+- **This Mac's own tang** (`http://127.0.0.1:8911`, loopback, no key, no pin) is the last
+  placement and is never listed in the file.
+
+### Engine behaviour in detail
+
+- **Polling.** While a session runs on a pooled model the engine reads `GET /node` from every
+  paired node about every 2 s (2 s timeout), and before placing a call when what it has is
+  stale. Its view of a node is one of: usable, unreachable, or refused with one line:
+  - `identity.fingerprint` ≠ the stored one: "this isn't the mew you paired" (never placed);
+  - `schema` > 2: "mew runs a newer tang: update frog"; `schema` < 2: "mew needs a newer tang";
+  - `401`: "mew isn't paired anymore".
+- **Model ids.** `node/<weights_hash first 12>` (an optional `@<node_id or name>` suffix pins
+  the session to that node). `frog --list-models` / the picker list each pooled model once,
+  `source: "node"`, with the display name from the node (the checkpoint's last path segment).
+- **Placement order:** pinned node → the node the session last ran on → other paired nodes
+  with the hash (loaded before on disk, then most `hardware.free_bytes`) → this Mac's tang →
+  fail with one line ("no paired node has <model> right now").
+- **Failover:** transport error, `5xx`, a stream that ends without finishing, or no bytes for
+  20 s once bytes have started (120 s before the first): the partial is discarded
+  (`items_discarded`), the node is down for 30 s, and the call reruns at once on the next
+  placement with one `notice` ("mew stopped answering; finishing on this Mac"). Each failure
+  takes a node out, so with every node down the call ends with one line, not a loop.
+
+### Event fields (where a call ran)
+
+- `TurnEnded.usage.ran_on` and `Status.ran_on`: `{ "node_id", "name", "local" }` for the
+  last model call on a pooled model (`local: true` = this Mac's tang, `name` "this Mac").
+  Absent for every other provider. The chip reads `Status.ran_on.name`; receipts read
+  `usage.ran_on`.
