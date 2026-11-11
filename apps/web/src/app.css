@@ -1,7 +1,6 @@
 /* Layout for the web workspace. Colors come only from tokens.css. */
 html, body, #root { height: 100%; margin: 0; }
 body { background: var(--canvas); color: var(--fg); font: 13px/1.45 var(--font-sans); -webkit-font-smoothing: antialiased; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --canvas: #1c1c1c; --bg: #161616; --card: #232323; --well: #2a2a2a; --line: #2e2e2e; --line-strong: #3e3e3e; --hover: rgba(255,255,255,.08); --fg: #ececec; --muted: #9b9b9b; --faint: #646464; --frog: #58cc6f; --on-frog: #0d1a10; --frog-pad: rgba(88,204,111,.22); --place-local: #0a84ff; --place-cloud: #30d158; --badge-bg: rgba(48,209,88,.18); --warn: #e5775f; --notice: #ff9f0a; --notice-bg: rgba(255,159,10,.09); --glass-fill: rgba(44,44,46,.6); --glass-fallback: #2a2a2b; --glass-edge: rgba(255,255,255,.12); --shadow-glass: 0 1px 0 rgba(255,255,255,.12) inset, 0 8px 24px -14px rgba(0,0,0,.35); } }
 button { font: inherit; color: inherit; }
 a { color: var(--frog); }
 .sr { position: absolute; left: -9999px; }
@@ -523,13 +522,6 @@ body.resizing { cursor: col-resize; user-select: none; }
 .slist-more { height: 1px; }
 .hover-row.mine { align-self: flex-end; justify-content: flex-end; margin-left: auto; }
 
-/* Type: IBM Plex (Sans for the interface and replies, Mono for code and the terminal),
- * falling back to the system faces while it loads. */
-:root {
-  --font-sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
-  --font-display: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
-}
 body { font-family: var(--font-sans); }
 /* Tool calls: an icon, what it did in words, the argument quiet in mono; a chevron on hover. */
 .tool-row { gap: 2px; }
@@ -549,35 +541,6 @@ button.tool:hover .tool-chev, button.tool[aria-expanded="true"] .tool-chev { opa
 button.tool[aria-expanded="true"] .tool-chev { transform: rotate(90deg); }
 .tool-spin { width: 11px; height: 11px; border-radius: 50%; border: 1.5px solid var(--frog-pad); border-top-color: var(--frog); animation: spin 1s linear infinite; }
 .tool-body { margin: 2px 0 6px 7px; }
-
-/* Dark is true black, like the iPhone app: surfaces step up from black instead of from grey.
-   Contrast pass (2026-10-30), so it reads on LCDs as well as OLED: page #000 < sidebar #111 <
-   cards #1a1a1a < wells #242424, each a visible step; muted/faint text clear 4.5:1 on black. */
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
-  --canvas: #000; --bg: #000; --card: #1a1a1a; --well: #242424; --line: #2a2a2a; --line-strong: #383838;
-  --hover: rgba(255,255,255,.09); --glass-fill: rgba(17,17,17,.9); --glass-fallback: #111;
-  --muted: #a3a3a3; --faint: #808080;
-  --shadow-float: 0 16px 40px -12px rgba(0,0,0,.95);
-} }
-:root[data-theme="dark"] {
-  --canvas: #000; --bg: #000; --card: #1a1a1a; --well: #242424; --line: #2a2a2a; --line-strong: #383838;
-  --hover: rgba(255,255,255,.09); --glass-fill: rgba(17,17,17,.9); --glass-fallback: #111;
-  --muted: #a3a3a3; --faint: #808080;
-}
-
-/* Light is true white, the mirror of dark's true black: surfaces step down from white. The
-   page #fff > sidebar #f6f6f6 > cards #efefef > wells #e6e6e6; faint text is #767676, 4.5:1. */
-@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) {
-  --canvas: #fff; --bg: #fff; --card: #efefef; --well: #e6e6e6; --hover: rgba(0,0,0,.06);
-  --glass-fill: rgba(246,246,246,.9); --glass-fallback: #f6f6f6;
-  --muted: #5e5e5e; --faint: #767676;
-  --shadow-float: 0 16px 40px -14px rgba(0,0,0,.22);
-} }
-:root[data-theme="light"] {
-  --canvas: #fff; --bg: #fff; --card: #efefef; --well: #e6e6e6; --hover: rgba(0,0,0,.06);
-  --glass-fill: rgba(246,246,246,.9); --glass-fallback: #f6f6f6;
-  --muted: #5e5e5e; --faint: #767676;
-}
 .insp-top { gap: 6px; }
 .insp-x { flex: none; }
 
