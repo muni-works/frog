@@ -192,6 +192,12 @@ After phases 1–2, list every feature shipped in October, along with:
 
 Delete the bottom third.
 
+**Done 2026-11-11** (one PR, −5.8k lines net). Usage was read from `~/.local/share/frog` first:
+- **The pond and its brief** (calendar, GitHub "what frog noticed", morning notice): −2.2k engine lines (`pond/`, the CLI's `--brief`, `--watch`, `--background`, `--seen`, `--morning`, `--dismiss`, the `brief_model` config), −0.7k Mac lines (`PondBrief`, `Pond`, `CalendarSense`, `MorningNotice`, the calendar entitlement and usage string). The brief refreshed itself and sat on every empty chat, but the morning notice never fired on the main Mac.
+- **RaceView as a surface:** racing stays. Its outcome is now one card at the foot of the conversation (`RaceCard`): a line per attempt with View and Apply. About −140 lines. `attempts/` was empty.
+- **iOS extras:** the Watch app, its complication, widgets and Live Activity, the long-press notification preview and the share extension: −2.5k lines. The app and push approvals (`FrogPush`) stay.
+- **Kept: the legacy `tang/` and `frog-api/` model ids.** No code mints them now, but they're still being written back: 164 session logs and 37 rows of the session list index carry them, and the app rewrites the index from the logs. The normalizers stay.
+
 ## Order and parallelism
 
 ```

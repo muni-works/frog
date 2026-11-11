@@ -1,9 +1,9 @@
 import AppKit
 import UserNotifications
 
-/// frog's notifications on this Mac: what the model asked for with `Notify`, and the two
-/// things the app still raises on its own — a permission request you can answer right from the
-/// banner (a card waiting is genuinely urgent) and the morning brief.
+/// frog's notifications on this Mac: what the model asked for with `Notify`, and the one
+/// thing the app still raises on its own — a permission request you can answer right from the
+/// banner (a card waiting is genuinely urgent).
 ///
 /// A finished turn is not one of them. It's already on screen; the model calls `Notify` when
 /// the person needs to know and isn't watching (see the engine's prompt and `tools/notify.rs`).
@@ -80,15 +80,6 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
 
     /// Whether a notification would be shown (you've said yes).
     func canPost() async -> Bool { await allowed() }
-
-    /// The brief's morning notice. Clicking it opens the brief.
-    func morning(title: String, body: String) {
-        let c = UNMutableNotificationContent()
-        c.title = title
-        c.body = body
-        c.userInfo = ["brief": true]
-        post(c, id: "morning-brief")
-    }
 
     /// Whether notifications haven't been asked about yet.
     func notAskedYet() async -> Bool {
@@ -278,13 +269,9 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         didReceive response: UNNotificationResponse
     ) async {
         let id = response.notification.request.content.userInfo["permission"] as? String
-        let brief = response.notification.request.content.userInfo["brief"] as? Bool == true
         let action = response.actionIdentifier
         await MainActor.run {
-            if brief {
-                NSApp.activate()
-                MorningNotice.show()
-            } else if let id, let answer = answers[id] {
+            if let id, let answer = answers[id] {
                 switch action {
                 case Action.allow: answer(.allow)
                 case Action.deny: answer(.deny)

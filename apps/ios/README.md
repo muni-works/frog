@@ -1,4 +1,4 @@
-# frog for iPhone, iPad and Apple Watch
+# frog for iPhone and iPad
 
 A remote for frog on your Mac. The work runs on the Mac; the phone watches it, answers frog's
 questions and sends it the next thing.
@@ -33,20 +33,17 @@ is the sidebar's row menu (archive, pin, rename).
 | target | what |
 |---|---|
 | `Frog` | the app: list, threads, glass composer, questions, Siri/Shortcuts intents |
-| `FrogNotify` | long-press a question: the command or diff |
 | `FrogPush` | opens a sealed push (the relay and Apple see "frog needs you"; the phone has the key) |
-| `FrogWidgets` | Live Activity + Dynamic Island, home/lock widgets, Control Center control |
-| `FrogShare` | "Send to frog" in the share sheet |
-| `FrogWatch` | what needs you (the command, why, Allow / Deny / Always), what's running (Stop), what frog said (Reply) |
-| `FrogWatchWidgets` | the complication: the iPhone's status widget, built for watchOS |
+
+The Watch app, widgets and Live Activity, the long-press notification preview and the share
+extension were cut in Phase 5 (docs/plans/2026-10-27-elegant-and-legendary.md).
 
 Shared with the Mac app: `Protocol.swift`, `Diagram.swift`, `FrogFace.swift`.
 
 ## Working on it without a Mac
 
 Recorded sessions (the Mac's `Fixtures/`) play back as if live: answers stream, tools take their
-time, and the first command or edit stops to ask. They drive the Live Activity, widgets and watch
-too.
+time, and the first command or edit stops to ask.
 
 ```
 xcrun simctl launch booted toys.frog.remote -fixtures YES          # the list of recordings
@@ -69,10 +66,9 @@ a paid team's APNs key and isn't deployed yet.
 
 - TestFlight. (A real device and APNs work: the relay runs at frog.toys/api/push, with a caller
   secret and rate limits; the Mac's Settings › General holds the secret.)
-- The complication is built and fed, but hasn't been placed on a watch face in the Simulator.
-- Still Mac-only: races, the morning brief, the terminal and preview panes, the timeline rail,
+- Still Mac-only: races, the terminal and preview panes, the timeline rail,
   moving a conversation to another folder, `@file` and `/skill` in the composer, and Settings
   beyond spending and energy (models, keys, permissions, MCP).
 
 Everything a phone shows of a conversation is FrogKit's (see ../FrogKit/README.md): change a
-component there and the Mac, iPhone, iPad and extensions all change with it.
+component there and the Mac, iPhone and iPad all change with it.

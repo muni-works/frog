@@ -123,7 +123,6 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
             ModelContext.providers = { Remote.shared.providers }
             DiagramLayout.mermaid = { code, _ in await Remote.shared.layoutMermaid(code) }
             Notifications.shared.setup()
-            WatchLink.shared.start()
         }
         return true
     }

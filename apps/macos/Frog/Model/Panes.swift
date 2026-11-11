@@ -21,8 +21,8 @@ final class Pane: Identifiable {
         self.workspace = workspace
     }
 
-    /// The conversation on the canvas (a race has its own view).
-    var conversation: Conversation? { workspace.race == nil ? workspace.conversation : nil }
+    /// The conversation on the canvas.
+    var conversation: Conversation? { workspace.conversation }
     /// Files changed in this session, as the pill and the card's presence read it. The count
     /// itself only matters as ">0"; reading `sessionChanges.count` walked every turn's diffs
     /// per body pass. The version bumps exactly when the walk's result can.

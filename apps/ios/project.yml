@@ -16,11 +16,7 @@ targets:
     type: application
     platform: iOS
     dependencies:
-      - target: FrogNotify
       - target: FrogPush
-      - target: FrogWidgets
-      - target: FrogWatch
-      - target: FrogShare
     sources:
       - path: Frog
         excludes: ["*.entitlements"]
@@ -57,40 +53,10 @@ targets:
           NSAllowsLocalNetworking: true
         NSUserActivityTypes: [toys.frog.conversation]
         FrogKeychainGroup: $(AppIdentifierPrefix)toys.frog.remote
-        NSSupportsLiveActivities: true
         NSBonjourServices: [_frog._tcp]
         CFBundleURLTypes:
           - CFBundleURLName: toys.frog.remote
             CFBundleURLSchemes: [frog]
-  # Long-press a question from frog: the command or the diff, before you allow it.
-  FrogNotify:
-    type: app-extension
-    platform: iOS
-    dependencies:
-      - sdk: UserNotifications.framework
-      - sdk: UserNotificationsUI.framework
-    sources:
-      - path: NotificationContent
-      - path: Shared
-      - path: ../FrogKit/Core
-      - path: ../FrogKit/UI/Basics
-      - path: ../FrogKit/UI/Cards
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: toys.frog.remote.notify
-        GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: Frog
-    info:
-      path: NotificationContent/Info.plist
-      properties:
-        CFBundleDisplayName: Frog
-        NSExtension:
-          NSExtensionPointIdentifier: com.apple.usernotifications.content-extension
-          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationViewController
-          NSExtensionAttributes:
-            UNNotificationExtensionCategory: PERMISSION
-            UNNotificationExtensionDefaultContentHidden: true
-            UNNotificationExtensionInitialContentSizeRatio: 0.5
   # Opens a sealed push from the Mac before iOS shows it (PushCrypto): the relay and Apple
   # carry a placeholder; the phone has the pairing code.
   FrogPush:
@@ -119,129 +85,3 @@ targets:
         NSExtension:
           NSExtensionPointIdentifier: com.apple.usernotifications.service
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
-  # The lock screen and Dynamic Island while a turn runs; later, widgets and controls.
-  FrogWidgets:
-    type: app-extension
-    platform: iOS
-    dependencies:
-      - sdk: WidgetKit.framework
-      - sdk: SwiftUI.framework
-      - sdk: ActivityKit.framework
-    sources:
-      - path: Widgets
-        excludes: ["*.entitlements"]
-      - path: Shared
-      - path: ../FrogKit/Core
-      - path: ../FrogKit/UI/Basics
-      - path: ../FrogKit/UI/Cards
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: toys.frog.remote.widgets
-        CODE_SIGN_ENTITLEMENTS: Widgets/Widgets.entitlements
-        GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: Frog
-    info:
-      path: Widgets/Info.plist
-      properties:
-        CFBundleDisplayName: Frog
-        NSExtension:
-          NSExtensionPointIdentifier: com.apple.widgetkit-extension
-  # frog on your wrist: what needs you, answered with a tap.
-  FrogWatch:
-    type: application
-    platform: watchOS
-    deploymentTarget: "26.0"
-    dependencies:
-      - target: FrogWatchWidgets
-    sources:
-      - path: Watch
-        excludes: ["*.entitlements"]
-      - path: Shared/Snapshot.swift
-        group: Shared
-      - path: Shared/PairingCode.swift
-        group: Shared
-      - path: ../FrogKit/Core
-      - path: ../FrogKit/UI/Basics
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: toys.frog.remote.watchkitapp
-        CODE_SIGN_ENTITLEMENTS: Watch/Watch.entitlements
-        PRODUCT_NAME: Frog
-        GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: Frog
-        INFOPLIST_KEY_WKCompanionAppBundleIdentifier: toys.frog.remote
-        INFOPLIST_KEY_WKRunsIndependentlyOfCompanionApp: YES
-        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-    info:
-      path: Watch/Info.plist
-      properties:
-        CFBundleDisplayName: Frog
-        WKCompanionAppBundleIdentifier: toys.frog.remote
-        WKRunsIndependentlyOfCompanionApp: true
-  # "Send to frog" in the share sheet: a screenshot, a log or a link, into an open conversation.
-  FrogShare:
-    type: app-extension
-    platform: iOS
-    sources:
-      - path: ShareExtension
-        excludes: ["*.entitlements"]
-      - path: Shared
-      - path: ../FrogKit/Core
-      - path: ../FrogKit/UI/Basics
-      - path: ../FrogKit/UI/Cards
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: toys.frog.remote.share
-        GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: Send to frog
-        CODE_SIGN_ENTITLEMENTS: ShareExtension/ShareExtension.entitlements
-    info:
-      path: ShareExtension/Info.plist
-      properties:
-        CFBundleDisplayName: Send to frog
-        FrogKeychainGroup: $(AppIdentifierPrefix)toys.frog.remote
-        NSBonjourServices: [_frog._tcp]
-        NSLocalNetworkUsageDescription: "frog sends what you share to frog on your Mac."
-        NSAppTransportSecurity:
-          NSAllowsLocalNetworking: true
-        NSExtension:
-          NSExtensionPointIdentifier: com.apple.share-services
-          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController
-          NSExtensionAttributes:
-            NSExtensionActivationRule:
-              NSExtensionActivationSupportsText: true
-              NSExtensionActivationSupportsWebURLWithMaxCount: 1
-              NSExtensionActivationSupportsImageWithMaxCount: 1
-  # frog on the watch face: the iPhone's status widget, built for watchOS.
-  FrogWatchWidgets:
-    type: app-extension
-    platform: watchOS
-    deploymentTarget: "26.0"
-    dependencies:
-      - sdk: WidgetKit.framework
-      - sdk: SwiftUI.framework
-    sources:
-      - path: WatchWidgets
-        excludes: ["*.entitlements"]
-      - path: Widgets/StatusWidgets.swift
-        group: Widgets
-      - path: Widgets/FrogWidgets.swift
-        group: Widgets
-      - path: Shared/Snapshot.swift
-        group: Shared
-      - path: Shared/PairingCode.swift
-        group: Shared
-      - path: ../FrogKit/Core
-      - path: ../FrogKit/UI/Basics
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: toys.frog.remote.watchkitapp.widgets
-        GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: Frog
-        CODE_SIGN_ENTITLEMENTS: WatchWidgets/WatchWidgets.entitlements
-    info:
-      path: WatchWidgets/Info.plist
-      properties:
-        CFBundleDisplayName: Frog
-        NSExtension:
-          NSExtensionPointIdentifier: com.apple.widgetkit-extension

@@ -201,8 +201,6 @@ final class Remote {
             archived = rows.filter(\.archived)
             listWaiters.forEach { $0.resume(returning: sessions) }
             listWaiters = []
-            WatchLink.shared.share(sessions)
-            Glance.share(sessions, host: { if case .connected(let h) = state { h } else { nil } }())
             if let openLink { openLink.isOpenOnMac = sessions.first { $0.id == openLink.session }?.open ?? false }
         case "event":
             guard let env = msg["env"],
@@ -410,11 +408,6 @@ final class Remote {
                   "env": Notifications.apnsEnvironment])
         }
         #endif
-    }
-
-    /// Where a Live Activity for `session` takes its updates.
-    func registerActivity(session: String, token: String?) {
-        send(["type": "activity", "session": session, "token": token ?? NSNull()])
     }
 
     private func send(_ obj: [String: Any]) {

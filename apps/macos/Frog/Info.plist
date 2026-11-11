@@ -27,8 +27,6 @@
 		<string>_frog._tcp</string>
 		<string>_frog-node._tcp</string>
 	</array>
-	<key>NSCalendarsFullAccessUsageDescription</key>
-	<string>Frog reads your calendar on this Mac to shape your brief around your day. It never leaves this Mac.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>© 2026 Municipal Robotics</string>
 	<key>NSLocalNetworkUsageDescription</key>

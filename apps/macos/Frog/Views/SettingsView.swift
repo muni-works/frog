@@ -33,21 +33,8 @@ private struct GeneralSettings: View {
     @AppStorage("remoteEnabled") private var remote = false
     @AppStorage(RemotePush.secretKey) private var pushSecret = ""
     @State private var code = RemoteBridge.token
-    @State private var pond = Pond.shared
-    @AppStorage(CalendarSense.key) private var calendarSense = false
-    @AppStorage(MorningNotice.key) private var morningNotice = true
     @AppStorage(UpdateDrain.key) private var gracefulUpdates = false
     @AppStorage(UpdateDrain.budgetKey) private var drainBudget = 20.0
-
-    private func setCalendar(_ on: Bool) async {
-        guard on else {
-            calendarSense = false
-            CalendarSense.forget()
-            return
-        }
-        calendarSense = await CalendarSense.requestAccess()
-        if calendarSense { await pond.refresh() }
-    }
 
     var body: some View {
         Form {
@@ -75,27 +62,6 @@ private struct GeneralSettings: View {
                     .foregroundStyle(.secondary)
             }
             Section {
-                Toggle("Keep the brief fresh while Frog is closed", isOn: Binding(
-                    get: { pond.background ?? false },
-                    set: { on in Task { await pond.setBackground(on) } }
-                ))
-                .disabled(pond.background == nil)
-                Toggle("Tell me about the brief in the morning", isOn: Binding(
-                    get: { morningNotice },
-                    set: { on in
-                        morningNotice = on
-                        if on { Task { if await Notifier.shared.notAskedYet() { await Notifier.shared.ask() } } }
-                    }
-                ))
-                Toggle("Include my calendar", isOn: Binding(
-                    get: { calendarSense },
-                    set: { on in Task { await setCalendar(on) } }
-                ))
-            } footer: {
-                Text("Looks at GitHub every 15 minutes from login, so the brief is ready when you open Frog. In the morning, one notification when there's something new, never more than once a day. Your calendar is read on this Mac and never leaves it. The brief only reads; nothing is sent or changed for you.")
-                    .foregroundStyle(.secondary)
-            }
-            Section {
                 Toggle("Let frog on iPhone connect", isOn: $remote)
                     .onChange(of: remote) { _, on in
                         on ? RemoteBridge.shared.start() : RemoteBridge.shared.stop()
@@ -114,7 +80,6 @@ private struct GeneralSettings: View {
             }
         }
         .formStyle(.grouped)
-        .task { await pond.loadBackground() }
     }
 }
 
