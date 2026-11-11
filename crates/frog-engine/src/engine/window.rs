@@ -18,6 +18,8 @@ impl Agent {
         self.system = format!("{base}{rules}{}", harness::guidance(self.harness.tier));
         if !self.subagent && self.shared.sessions.enabled() {
             self.system.push_str(crate::tools::sessions::PROMPT);
+        } else if !self.subagent && !self.chat {
+            self.system.push_str(crate::tools::sessions::LOCAL_PROMPT);
         }
         if !self.subagent && self.irc().is_some() {
             self.system.push_str(crate::irc::PROMPT);

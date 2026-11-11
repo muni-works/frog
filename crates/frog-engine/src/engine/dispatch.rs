@@ -45,17 +45,13 @@ impl Agent {
             subagent: true,
             chat: false,
         };
-        if tools::bool_arg(input, "background") {
-            let max = self.cfg.background_tasks.max(1);
-            return crate::background::start_task(&self.shared.bg, opts, input, max);
-        }
         let stop = CancellationToken::new();
         self.shared
             .subagents
             .lock()
             .unwrap()
             .insert(id.to_string(), stop.clone());
-        let forward = crate::background::forward(self.shared.bg.clone(), id.to_string(), false);
+        let forward = crate::background::forward(self.shared.bg.clone(), id.to_string());
         // A drain cascades to a live subagent: it suspends its own turn (its engine ends it
         // `Suspended`), and the parent's drain deadline bounds its wait.
         let cascade = {

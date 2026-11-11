@@ -381,6 +381,8 @@ struct Shared {
     mcp: Mutex<Option<crate::mcp::Hub>>,
     /// Running subagents by `Task` tool call id, so a client can stop one.
     subagents: Mutex<HashMap<String, CancellationToken>>,
+    /// Child sessions this engine owns (when no client hosts sessions; see `kids`).
+    pub(crate) kids: Arc<crate::kids::Kids>,
     /// Set (under the lock) just before the first `Idle`; until then the router answers
     /// `Subscribe` itself.
     ready: Mutex<bool>,
@@ -451,6 +453,8 @@ struct Journal {
     header: Mutex<(PathBuf, String)>,
     /// For the header: an agent started this session.
     worker: std::sync::atomic::AtomicBool,
+    /// For the header: the session that started this one.
+    parent: Mutex<Option<String>>,
     /// The current turn's streaming events (text as it arrives, progress), beside the log as
     /// `<id>.live`, so another process following this session sees it live. Reset each turn.
     live: Mutex<Option<(String, std::fs::File)>>,
@@ -467,6 +471,7 @@ impl Journal {
             dead: AtomicBool::new(false),
             header: Mutex::new((PathBuf::new(), String::new())),
             worker: Default::default(),
+            parent: Mutex::new(None),
             live: Mutex::new(None),
         }
     }
@@ -509,6 +514,7 @@ impl Journal {
                 created: now_ms(),
                 forked_from: None,
                 worker: self.worker.load(Ordering::Relaxed),
+                parent: self.parent.lock().unwrap().clone(),
             };
             match Log::create(dir, header) {
                 Ok(l) => *log = Some(l),
@@ -639,6 +645,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         sessions: Default::default(),
         mcp: Default::default(),
         subagents: Default::default(),
+        kids: Default::default(),
         ready: Default::default(),
         working: Default::default(),
         bg: {
@@ -656,6 +663,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         irc: crate::irc::slot(),
     });
     shared.bg.set_wake(&work_tx);
+    shared.kids.set_inbox(&op_tx);
     // One engine per linked worktree (see `worktree`): taken before the session opens, so a
     // refused engine leaves nothing behind. Subagents share their parent's engine's tree.
     let worktree_lock = if opts.subagent || opts.store.is_none() {
@@ -1130,6 +1138,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             agent.meter_busy(false);
         }
         shared.bg.stop_all();
+        shared.kids.shutdown();
         agent.mcp.shutdown();
         shared.mcp.lock().unwrap().take();
         shared.panes.shutdown();
@@ -1689,6 +1698,7 @@ impl Agent {
         *shared.journal.header.lock().unwrap() = (o.cwd.clone(), o.profile_name.clone());
         o.cfg.worker |= resumed_worker;
         shared.journal.worker.store(o.cfg.worker, Ordering::Relaxed);
+        *shared.journal.parent.lock().unwrap() = o.cfg.parent_session.clone();
         shared.journal.start_session(session_id.clone(), seq, log);
         for id in stale_panes {
             shared.journal.emit(Event::PaneClosed { id, exit: None });

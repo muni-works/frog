@@ -1032,6 +1032,7 @@ fn list_sessions(
                         frog_engine::session::EndState::Failed => "failed",
                     })),
                     "forked_from": s.header.forked_from,
+                    "parent": s.header.parent,
                     "cwd": s.header.cwd,
                 })
             })
@@ -1042,22 +1043,90 @@ fn list_sessions(
     if sessions.is_empty() {
         println!("no sessions in {}", cwd.display());
     }
-    for s in sessions {
-        let when = chrono::DateTime::<chrono::Local>::from(s.modified).format("%b %d %H:%M");
-        let first = s
-            .title
-            .or(s.first_input)
-            .unwrap_or_default()
-            .replace('\n', " ");
-        let first: String = first.chars().take(60).collect();
-        let fork = s
-            .header
-            .forked_from
-            .map(|f| format!(" (fork of {}@{})", f.session, f.seq))
-            .unwrap_or_default();
-        println!("{}  {when}  {first}{fork}", s.id);
+    // The started-by tree: a child under its parent (when the parent is listed too).
+    let lines: Vec<(String, Option<String>, String)> = sessions
+        .into_iter()
+        .map(|s| {
+            let when = chrono::DateTime::<chrono::Local>::from(s.modified).format("%b %d %H:%M");
+            let first = s
+                .title
+                .or(s.first_input)
+                .unwrap_or_default()
+                .replace('\n', " ");
+            let first: String = first.chars().take(60).collect();
+            let fork = s
+                .header
+                .forked_from
+                .map(|f| format!(" (fork of {}@{})", f.session, f.seq))
+                .unwrap_or_default();
+            let line = format!("{}  {when}  {first}{fork}", s.id);
+            (s.id, s.header.parent, line)
+        })
+        .collect();
+    for line in started_by_tree(&lines) {
+        println!("{line}");
     }
     Ok(())
+}
+
+/// `(id, parent, line)` rows as a tree: roots in order, each child indented under its parent.
+/// A row whose parent isn't listed is a root.
+fn started_by_tree(rows: &[(String, Option<String>, String)]) -> Vec<String> {
+    let ids: std::collections::HashSet<&str> = rows.iter().map(|r| r.0.as_str()).collect();
+    let parent_of = |r: &(String, Option<String>, String)| {
+        r.1.as_deref()
+            .filter(|p| *p != r.0 && ids.contains(p))
+            .map(String::from)
+    };
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    fn walk<'a>(
+        rows: &'a [(String, Option<String>, String)],
+        id: &'a str,
+        depth: usize,
+        parent_of: &dyn Fn(&(String, Option<String>, String)) -> Option<String>,
+        seen: &mut std::collections::HashSet<&'a str>,
+        out: &mut Vec<String>,
+    ) {
+        if !seen.insert(id) {
+            return;
+        }
+        if let Some(r) = rows.iter().find(|r| r.0 == id) {
+            let pad = if depth == 0 { String::new() } else { format!("{}└ ", "  ".repeat(depth - 1)) };
+            out.push(format!("{pad}{}", r.2));
+        }
+        for c in rows.iter().filter(|c| parent_of(c).as_deref() == Some(id)) {
+            walk(rows, &c.0, depth + 1, parent_of, seen, out);
+        }
+    }
+    for r in rows.iter().filter(|r| parent_of(r).is_none()) {
+        walk(rows, &r.0, 0, &parent_of, &mut seen, &mut out);
+    }
+    // A parent cycle leaves rows no root reaches: list them flat rather than lose them.
+    for r in rows {
+        if !seen.contains(r.0.as_str()) {
+            out.push(r.2.clone());
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod started_by_tree_tests {
+    use super::started_by_tree;
+
+    #[test]
+    fn children_nest_under_their_parent() {
+        let row = |id: &str, p: Option<&str>| (id.to_string(), p.map(String::from), id.to_string());
+        let rows = vec![
+            row("a", None),
+            row("b", Some("a")),
+            row("c", Some("b")),
+            row("d", Some("gone")),
+            row("e", Some("a")),
+        ];
+        assert_eq!(started_by_tree(&rows), vec!["a", "└ b", "  └ c", "└ e", "d"]);
+    }
 }
 
 async fn probe(name: &str, profile: &frog_engine::config::Profile) -> Result<bool> {

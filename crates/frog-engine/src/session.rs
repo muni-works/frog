@@ -70,6 +70,9 @@ pub struct Header {
     /// An agent started it (`--worker`): a resume keeps its worker egress policy.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub worker: bool,
+    /// The session that started this one (`StartSession`): the sidebar's started-by tree.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -816,6 +819,7 @@ pub fn fork(dir: &Path, id: &str, upto: Option<u64>) -> Result<String> {
         }),
         // A fork of an agent's session is still an agent's.
         worker: src.worker,
+        parent: src.parent.clone(),
     };
     let mut log = Log::create(dir, header)?;
     for r in kept {
@@ -852,7 +856,7 @@ mod tests {
             model: "m".into(),
             created: 0,
             forked_from: None,
-            worker: false,
+            worker: false, parent: None,
         }
     }
 

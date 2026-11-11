@@ -744,7 +744,18 @@ pub enum Event {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         log: Option<String>,
     },
-    /// Live output from background work (a subagent's step, a job's output, a monitor poll).
+    /// A child session this engine owns changed state (see `kids`; only when no client hosts
+    /// sessions — the Mac reports its own children). `state` is `running`, `waiting` (a
+    /// permission prompt needs the user), `idle` (its turn ended) or `archived`.
+    ChildSession {
+        id: String,
+        name: String,
+        state: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        branch: Option<String>,
+        cwd: String,
+    },
+    /// Live output from background work (a job's output, a monitor poll).
     BackgroundProgress {
         id: String,
         text: String,
@@ -926,6 +937,7 @@ impl Event {
                 | Self::PaneCheckpoint { .. }
                 | Self::BackgroundStarted { .. }
                 | Self::BackgroundDone { .. }
+                | Self::ChildSession { .. }
                 | Self::WakesDelivered { .. }
                 | Self::MessageRead { .. }
         ) || matches!(

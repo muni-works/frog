@@ -140,6 +140,13 @@ impl Agent {
             }
             if self.shared.sessions.enabled() {
                 specs.extend(crate::tools::sessions::specs());
+            } else if !self.chat {
+                // No client hosts sessions: the engine owns the children (see `kids`).
+                specs.extend(
+                    crate::tools::sessions::specs()
+                        .into_iter()
+                        .filter(|s| crate::kids::handles(&s.name)),
+                );
             }
             // The bus tool, only when the client declared the bus (never to subagents: a
             // subagent's parent carries the channel).
@@ -233,6 +240,7 @@ impl Agent {
                 created: now_ms(),
                 forked_from: None,
                 worker: self.cfg.worker,
+                parent: self.cfg.parent_session.clone(),
             };
             self.shared.journal.header.lock().unwrap().0 = root.clone();
             let mut log = self.shared.journal.log.lock().unwrap();
@@ -242,6 +250,7 @@ impl Agent {
                     .ok();
                 let header = Header {
                     created: created.as_ref().map_or(header.created, |h| h.created),
+                    parent: created.as_ref().and_then(|h| h.parent.clone()).or(header.parent),
                     forked_from: created.and_then(|h| h.forked_from),
                     ..header
                 };

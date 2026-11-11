@@ -26,6 +26,7 @@ pub mod harness;
 pub mod image_paths;
 pub mod imports;
 pub mod irc;
+pub mod kids;
 pub mod mcp;
 pub mod mcp_oauth;
 pub mod memory;
