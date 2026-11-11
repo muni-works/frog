@@ -14,6 +14,7 @@ import { Starting } from './ui/Starting'
 import { creditLine, Palette, Settings, type Command, type SettingsTab } from './ui/Overlays'
 import { Transcript } from './ui/Transcript'
 import { safeHref } from './ui/href'
+import { sessionMissing } from './ui/guards'
 
 /** `pick`: open the composer's repo menu (back from sign-in, or ⌘K Connect a repo). */
 /** Placeholder session ids, shown while POST /v1/sessions is in flight. */
@@ -450,7 +451,7 @@ export default function App() {
         </div>) : <>{collapsed && <div className="side-float">{sideToggle(false)}</div>}<div className="phone-bar floating"><Burger /><b>Frog</b></div></>}
 
         {/* A link to a session this account doesn't have (deleted, or never was) says so. */}
-        {view.kind === 'session' && !current && sessionsLoaded && (
+        {sessionMissing(view, sessions, sessionsLoaded) && (
           <div className="main home">
             <div className="home-hero">
               <Mark size={56} />

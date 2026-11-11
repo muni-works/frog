@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { composing } from './guards'
 import type { Elicitation, Question } from '../engine/thread'
 import { safeHref } from './href'
 
@@ -25,7 +26,7 @@ export function QuestionCard({ q, onAnswer }: { q: Question; onAnswer: (choices:
       {q.allowOther && (
         <input className="f-field" value={other} placeholder="Or type your own answer" aria-label="Your own answer"
           onChange={(e) => setOther(e.target.value)}
-          onKeyDown={(e) => { if (e.nativeEvent.isComposing || e.keyCode === 229) return; if (e.key === 'Enter' && other.trim()) onAnswer(picked, other.trim()) }} />
+          onKeyDown={(e) => { if (composing(e)) return; if (e.key === 'Enter' && other.trim()) onAnswer(picked, other.trim()) }} />
       )}
       <div className="ask-acts">
         <button type="button" className="f-btn f-btn--plain" onClick={() => onAnswer([])}>Skip</button>
