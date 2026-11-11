@@ -468,7 +468,7 @@ struct SessionList: View {
                     state: rowState(s), selected: s.id == current,
                     pinned: library.pinned.contains(s.id), pane: paneNumbers[s.id], highlight: highlight,
                     onToggle: { toggleNode(s.id, collapsed: collapsed, counts: counts) },
-                    git: git.rows[s.id]
+                    git: git.rows[s.id], line: library.rowLine(s)
                 ) { open(s) } menu: { rowMenu(s, older: folds[s.id]?.older ?? [], git: git.rows[s.id]) }
                 if let c = library.conversation(s.id), !collapsed {
                     // Its own view: only it watches the conversation's turns as they stream.
@@ -904,7 +904,8 @@ struct SessionList: View {
             pane: paneNumbers[s.id],
             showPlace: showPlace,
             nested: nested,
-            summary: summary
+            summary: summary,
+            line: library.rowLine(s)
         ) {
             open(s)
         } menu: {
@@ -1493,6 +1494,7 @@ struct ConversationRow<Menu: View>: View {
     var nested = false
     /// Its collapsed children's counts ("4 running · 1 waiting"), shown after the title.
     var summary: String? = nil
+    var line = RowLine()
     let open: () -> Void
     @ViewBuilder let menu: () -> Menu
     @State private var hovering = false
@@ -1526,14 +1528,18 @@ struct ConversationRow<Menu: View>: View {
     }
 
     private var label: some View {
-        ConversationRowLabel(session: session, live: live, end: session.end, pane: pane, showPlace: showPlace)
+        ConversationRowLabel(session: session, live: live, end: session.end, pane: pane, showPlace: showPlace,
+                             detail: line.text, detailTint: line.tint, pr: line.pr, turns: line.turns,
+                             hideStatus: hovering)
     }
 
     /// Status and the hover menu share one slot sized to the larger of the two, so the row
     /// doesn't change size as the pointer passes over it.
     private var trailing: some View {
         ZStack(alignment: .trailing) {
-            status.opacity(hovering ? 0 : 1)
+            if pinned && !hovering {
+                Image(systemName: "pin.fill").font(.frog(size: 10)).foregroundStyle(Tokens.textTertiary)
+            }
             SwiftUI.Menu {
                 menu()
             } label: {
@@ -1548,32 +1554,6 @@ struct ConversationRow<Menu: View>: View {
             .allowsHitTesting(hovering)
         }
         .frame(height: 14)
-    }
-
-    @ViewBuilder
-    private var status: some View {
-        switch SessionEndGlyph.derive(live: live, end: session.end) {
-        case .running: LiveGlyph(live: .running)
-        case .waiting: LiveGlyph(live: .waiting)
-        case .unread: LiveGlyph(live: .unread)
-        case .failed:
-            Image(systemName: "exclamationmark.circle.fill")
-                .font(.frog(size: 10))
-                .foregroundStyle(.red)
-                .help("ended with an error")
-        case .idle:
-            if pinned {
-                Image(systemName: "pin.fill").font(.frog(size: 10)).foregroundStyle(.tertiary)
-            } else if nested && session.end == .complete {
-                Image(systemName: "checkmark.circle.fill").font(.frog(size: 10))
-                    .foregroundStyle(.green.opacity(0.6)).help("done")
-            } else if !showPlace {
-                Text(SessionAge.short(session.modifiedDate))
-                    .font(.frog(size: 10))
-                    .monospacedDigit()
-                    .foregroundStyle(.tertiary)
-            }
-        }
     }
 
     /// As on the web: the row you're on and the row under the pointer share one quiet fill.

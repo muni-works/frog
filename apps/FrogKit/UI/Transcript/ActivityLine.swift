@@ -60,17 +60,27 @@ struct ActivityLine: View {
         .onChange(of: verbosity) { _, v in expanded = v == .verbose }
     }
 
+    /// One line per step, as the web shows them: icon, verb, the argument in mono ("Read
+    /// `crates/x.rs`", "Ran `cargo test`", "Edited `f` +6 −3"). A thought is one quiet line.
+    /// The first line carries the › that opens the steps' output.
     private var line: some View {
         Button {
             withAnimation(.snappy(duration: 0.25)) { expanded.toggle() }
         } label: {
-            // A UI size under the 14pt answer, secondary: it reads as a margin note, not text.
-            Text("\(ActivityText(pieces: group.summary).text)\(gistText)  \(chevron)")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(.rect)
+            VStack(alignment: .leading, spacing: TurnSpace.Inset.tight) {
+                ForEach(Array(VerbLine.lines(group.done).enumerated()), id: \.offset) { i, v in
+                    HStack(alignment: .firstTextBaseline, spacing: 0) {
+                        VerbLineView(line: v)
+                        if i == 0 {
+                            Text(verbatim: "  ")
+                            chevron
+                            gistText.font(.callout).lineLimit(1)
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(.rect)
         }
         .buttonStyle(.plain)
         #if os(macOS)
@@ -435,7 +445,7 @@ struct LiveStatus: View {
 
     var body: some View {
         HStack(spacing: TurnSpace.Inset.row) {
-            ProgressView().controlSize(.mini)
+            BreathingDot(live: true)
             TimelineView(.periodic(from: .now, by: 1)) { ctx in
                 Text(text + elapsed(at: ctx.date))
                     .font(.callout)
@@ -546,5 +556,123 @@ enum ToolLook {
         let lead = text.hasPrefix("Searched the web for ") ? "Searched the web for" : String(text.prefix { $0 != " " })
         let rest = text.dropFirst(lead.count)
         return Text(lead).foregroundStyle(.primary) + Text(rest)
+    }
+}
+
+/// A finished step as the web says it: an icon, a past-tense verb, the argument in mono, and
+/// what came of it (matches, a diff, a failure).
+struct VerbLine: Equatable {
+    var icon: String
+    var verb: String
+    var arg: String?
+    var detail: String?
+    var diff: (added: UInt32, removed: UInt32)?
+    var failed = false
+    /// A thought: quieter, no icon.
+    var quiet = false
+
+    static func == (a: VerbLine, b: VerbLine) -> Bool {
+        a.icon == b.icon && a.verb == b.verb && a.arg == b.arg && a.detail == b.detail
+            && a.diff?.added == b.diff?.added && a.diff?.removed == b.diff?.removed && a.failed == b.failed
+    }
+
+    /// A group's lines: a thought only when nothing else happened, repeated plan updates once.
+    static func lines(_ steps: [ItemState]) -> [VerbLine] {
+        let hasTools = steps.contains { if case .tool = $0.kind { true } else { false } }
+        var out: [VerbLine] = []
+        for step in steps {
+            guard let v = of(step, alone: !hasTools) else { continue }
+            if v.verb == "Updated the plan", out.contains(where: { $0.verb == v.verb }) { continue }
+            out.append(v)
+        }
+        return out
+    }
+
+    static func of(_ item: ItemState, alone: Bool = true) -> VerbLine? {
+        switch item.kind {
+        case .reasoning:
+            guard alone else { return nil }
+            return VerbLine(icon: "", verb: item.duration.map { "Thought for \(ActivityWords.duration($0))" } ?? "Thought", quiet: true)
+        case .message, .notice:
+            return nil
+        case .tool(let name, let arg):
+            let failed = item.result.map { $0.outcome == .error || $0.outcome == .denied } ?? false
+            var v = VerbLine(icon: ToolLook.icon(name), verb: "Used \(ToolIcon.title(name))", arg: arg.isEmpty ? nil : short(arg), failed: failed)
+            switch name {
+            case "Read": v.verb = "Read"
+            case "Grep", "Glob":
+                v.verb = "Searched for"
+                let n = item.output.split(separator: "\n", omittingEmptySubsequences: true).count
+                if item.result?.outcome == .ok, !item.output.isEmpty { v.detail = "\(n) match\(n == 1 ? "" : "es")" }
+            case "Edit", "MultiEdit":
+                v.verb = "Edited"
+                v.diff = item.result?.diff.map { ($0.added, $0.removed) }
+            case "Write":
+                v.verb = item.result?.diff?.created == true ? "Created" : "Wrote"
+                v.diff = item.result?.diff.map { ($0.added, $0.removed) }
+            case "Bash", "!":
+                v.verb = "Ran"
+                v.arg = arg.split(separator: "\n").first.map { String($0.prefix(120)) }
+            case "WebFetch":
+                v.verb = "Fetched"
+                v.arg = URL(string: arg)?.host() ?? arg
+            case "WebSearch": v.verb = "Searched the web for"
+            case "Task": v.verb = "Ran an agent"; v.arg = arg.isEmpty ? nil : arg
+            case "TodoWrite": v.verb = "Updated the plan"; v.arg = nil
+            case "Diagram": v.verb = "Drew"; if arg.isEmpty { v.verb = "Drew a diagram" }
+            case "Present": v.verb = "Showed results"; v.arg = nil
+            case "Ask": v.verb = "Asked you"; v.arg = nil
+            case "Skill": v.verb = "Used the skill"
+            case "UseFolder": v.verb = "Moved to"
+            default: break
+            }
+            return v
+        }
+    }
+
+    /// A path from its repo down, not from /Users.
+    private static func short(_ arg: String) -> String {
+        guard arg.hasPrefix("/") else { return arg }
+        let parts = arg.split(separator: "/")
+        return parts.count > 3 ? parts.suffix(3).joined(separator: "/") : arg
+    }
+}
+
+struct VerbLineView: View {
+    let line: VerbLine
+
+    var body: some View {
+        if line.quiet {
+            Text(line.verb)
+                .font(.callout)
+                .foregroundStyle(Tokens.textTertiary)
+        } else {
+            text
+                .font(.callout)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+    }
+
+    private var text: Text {
+        var t = Text(Image(systemName: line.icon)).foregroundStyle(Tokens.textTertiary)
+            + Text(verbatim: "  ")
+            + Text(line.verb).foregroundStyle(Tokens.textSecondary)
+        if let arg = line.arg {
+            t = t + Text(verbatim: " ") + Text(verbatim: arg)
+                .font(.frog(size: Tokens.Size.status, design: .monospaced))
+                .foregroundStyle(Tokens.text)
+        }
+        if let d = line.detail {
+            t = t + Text(verbatim: " · \(d)").foregroundStyle(Tokens.textTertiary)
+        }
+        if let diff = line.diff {
+            t = t + Text(verbatim: " +\(diff.added)").foregroundStyle(.green).monospacedDigit()
+                + Text(verbatim: " −\(diff.removed)").foregroundStyle(.red).monospacedDigit()
+        }
+        if line.failed {
+            t = t + Text(verbatim: " · failed").foregroundStyle(Tokens.fail)
+        }
+        return t
     }
 }

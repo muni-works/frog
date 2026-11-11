@@ -75,7 +75,7 @@ private struct DeviceMapPopover: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
-                Text("Where frog runs")
+                Text("Where Frog runs")
                     .font(.frog(size: 13, weight: .semibold))
                 Spacer()
                 Text(PoolSummary.line(devices.list))
@@ -420,23 +420,6 @@ private struct MemoryBar: View {
             }
             .animation(.smooth(duration: 0.4), value: device.usedFraction)
         }
-    }
-}
-
-/// The chip's dot: frog green, breathing while a turn streams.
-private struct BreathingDot: View {
-    let live: Bool
-
-    var body: some View {
-        TimelineView(.animation(paused: !live)) { tl in
-            let t = tl.date.timeIntervalSinceReferenceDate
-            let pulse = live ? 0.55 + 0.45 * (0.5 + 0.5 * sin(t * 2 * .pi / 1.4)) : 1
-            Circle()
-                .fill(Tokens.accent)
-                .frame(width: 6, height: 6)
-                .opacity(pulse)
-        }
-        .frame(width: 6, height: 6)
     }
 }
 

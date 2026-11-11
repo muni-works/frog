@@ -117,7 +117,7 @@ struct TimelineRail: View {
                 if let n = confirmRewind { actions.rewind?(n) }
             }
         } message: {
-            Text("Files frog edited in this turn and later go back to how they were, and the conversation continues on a new branch from here. The current session is kept.")
+            Text("Files Frog edited in this turn and later go back to how they were, and the conversation continues on a new branch from here. The current session is kept.")
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibility)

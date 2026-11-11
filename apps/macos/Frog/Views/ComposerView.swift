@@ -66,7 +66,6 @@ struct ComposerView: View {
                     .opacity(suggestions.isEmpty && skillSuggestions.isEmpty ? 1 : 0)
                 field
                 controls
-                hint
             }
             .padding(.horizontal, TurnSpace.gutter)
             .padding(.top, TurnSpace.top)
@@ -209,7 +208,8 @@ struct ComposerView: View {
             if !attachments.isEmpty {
                 AttachmentStrip(images: $attachments, blind: conversation.status?.vision == false ? conversation.status?.model : nil)
             }
-            HStack(alignment: .bottom, spacing: 10) {
+            HStack(alignment: .bottom, spacing: 8) {
+                plusMenu
                 ZStack(alignment: .topLeading) {
                     if text.isEmpty, let ghost {
                         (Text(ghost) + Text("  ⇥").foregroundStyle(.quaternary))
@@ -256,6 +256,10 @@ struct ComposerView: View {
                         onPasteImages: { attachments += $0 }
                     )
                     .frame(height: height)
+                }
+                .padding(.bottom, 2)
+                if paneWidth > .narrow {
+                    DictationButton(dictation: dictation, toggle: toggleDictation)
                 }
                 sendButton
             }
@@ -366,59 +370,32 @@ struct ComposerView: View {
         if let model = workspace.pendingDownloadModel {
             return "Downloading \(model.name)… messages send when it’s ready"
         }
-        // The keys are under the field (`hint`), at rest too; the placeholder just says so.
         if conversation.busy { return "Working… type a follow-up" }
-        // A new conversation's placeholder is its only hint (the empty page is just a question).
         // One vocabulary everywhere (Settings › Shortcuts): @ mentions a file, ! runs a command.
-        let new = !conversation.started && !conversation.replaying
-        if workspace.isChat {
-            return new ? "Ask anything, or pick a folder to work on code" : "Ask anything"
-        }
-        return new ? "Ask about the code or describe a change · @ mentions a file · ! runs a command"
-                   : "Ask frog to do something · @ mentions a file · ! runs a command"
+        if workspace.isChat { return "Reply to Frog" }
+        return "Reply to Frog, @ a file, ! a command"
     }
 
     private var sendButton: some View {
         SendButton(conversation: conversation, canSend: canSend, send: send)
     }
 
-    /// The keys, always: queueing is stated before you need it, not only while frog works.
-    /// Return is the one key for both (it sends at rest, queues while a turn runs; there is no
-    /// separate ⌘Return), so the line says what each state does with it.
-    private var hint: some View {
-        Text(conversation.busy
-             ? "⏎ to queue for later · esc interrupts · ⇧⏎ new line"
-             : "⏎ to send · ⏎ while frog works queues for later · ⇧⏎ new line")
-            .font(.frog(size: Tokens.Size.meta))
-            .foregroundStyle(Tokens.textQuaternary)
-            .lineLimit(1)
-            .truncationMode(.tail)
-            .padding(.horizontal, 5)
-            .contentTransition(.opacity)
-            .animation(.easeOut(duration: 0.2), value: conversation.busy)
-            .accessibilityHidden(true)
-    }
-
-    /// Under the field, without chrome: add things on the left, how frog works on the right.
+    /// Under the box, without chrome: mode and where it runs on the left, model and context
+    /// ring on the right.
     private var controls: some View {
         HStack(spacing: 8) {
-            plusMenu
-            // A narrow pane keeps the controls you reach for: add, mode, model.
-            if paneWidth > .narrow {
-                DictationButton(dictation: dictation, toggle: toggleDictation)
-            }
             ModePicker(conversation: conversation)
             if !conversation.started, conversation.cloudSession == nil, CloudSessions.shared.available {
                 LocationPicker(workspace: workspace)
             } else if conversation.cloudSession != nil {
-                Label("Frog Cloud", systemImage: "cloud").foregroundStyle(.green.opacity(0.85))
-            }
-            Spacer()
-            if let e = workspace.raceError {
-                Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange).help(e)
+                Label("Frog Cloud", systemImage: "cloud").foregroundStyle(Tokens.accent)
             }
             if paneWidth > .narrow, conversation.cloudSession == nil {
                 DeviceChip(conversation: conversation)
+            }
+            Spacer()
+            if let e = workspace.raceError {
+                Image(systemName: "exclamationmark.triangle").foregroundStyle(Tokens.signal).help(e)
             }
             ModelPicker(workspace: workspace, conversation: conversation)
             if let status = conversation.status, paneWidth > .narrow {
@@ -744,7 +721,7 @@ struct GitBar: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(busy)
-                .help("Ask frog to commit the current changes")
+                .help("Ask Frog to commit the current changes")
             }
         }
         .contextMenu {

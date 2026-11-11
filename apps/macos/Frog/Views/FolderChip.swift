@@ -69,7 +69,7 @@ enum FolderPanel {
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.prompt = "Choose"
-        panel.message = "Choose the folder frog works in"
+        panel.message = "Choose the folder Frog works in"
         return panel.runModal() == .OK ? panel.url : nil
     }
 }

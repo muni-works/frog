@@ -27,6 +27,8 @@ struct WorkspaceView: View {
     /// This view's window, so the sidebar can bring an already-open conversation forward.
     @State private var window: NSWindow?
     @State private var renamingTitle = false
+    /// The session the title menu's Delete… is asking about.
+    @State private var deletingSession: String?
     @State private var newTitle = ""
     // The sidebar's view options, for the quick-switch shortcuts' reading of it.
     @AppStorage("sidebarGroup") private var sidebarGroup = SessionList.Grouping.date
@@ -422,7 +424,6 @@ struct WorkspaceView: View {
         // scratch space, not a document of yours.
         .modifier(FolderDocument(folder: workspace.isChat ? nil : workspace.folder))
         .navigationTitle(windowTitle)
-        .navigationSubtitle(place)
         // The menu's content builds when it opens (a title menu is deferred by the system), but
         // the toolbar's item body runs per body pass: read the mirror, not the conversation.
         .toolbarTitleMenu { if workspace.currentSession != nil { titleMenu(workspace.conversation!) } }
@@ -496,6 +497,20 @@ struct WorkspaceView: View {
         .onContinueUserActivity(Handoff.conversation) { a in
             continueHandoff(a)
         }
+        .confirmationDialog("Delete this conversation?", isPresented: Binding(
+            get: { deletingSession != nil }, set: { if !$0 { deletingSession = nil } }
+        )) {
+            Button("Move to Trash", role: .destructive) {
+                if let id = deletingSession {
+                    Library.shared.delete(id)
+                    workspace.newSession()
+                }
+                deletingSession = nil
+            }
+            Button("Cancel", role: .cancel) { deletingSession = nil }
+        } message: {
+            Text("Its log moves to the Trash.")
+        }
         .alert("Rename Conversation", isPresented: $renamingTitle) {
             TextField("Title", text: $newTitle)
             Button("Rename") {
@@ -513,19 +528,6 @@ struct WorkspaceView: View {
                 }
             }
             ToolbarItem(placement: .primaryAction) {
-                Menu {
-                    Button("Terminal", systemImage: "terminal", action: showTerminal)
-                    Button("Preview", systemImage: "globe", action: showPreview)
-                    if focused.changeCount > 0 {
-                        Button("Changes", systemImage: "plusminus") { revealPanes(focused) }
-                    }
-                } label: {
-                    Label("Panes", systemImage: "sidebar.right")
-                }
-                .help("Panes: terminal (⇧⌘T), preview (⇧⌘P), changes (⌥⌘0)")
-                .disabled(focused.conversation == nil)
-            }
-            ToolbarItem(placement: .primaryAction) {
                 Button("Split", systemImage: "rectangle.split.2x1") { split() }
                     .contextMenu {
                         Button("Split Right") { split(nil, .right) }
@@ -537,6 +539,12 @@ struct WorkspaceView: View {
             ToolbarItem(placement: .primaryAction) {
                 Button("Commands", systemImage: "command") { focused.ui.paletteShown.toggle() }
                     .help("Command Palette (⌘K)")
+            }
+            // The inspector toggle, rightmost: Changes, Terminal and Preview as tabs of one panel.
+            ToolbarItem(placement: .primaryAction) {
+                Button("Inspector", systemImage: "sidebar.right") { toggleChanges(focused) }
+                    .help("Inspector: changes, terminal, preview (⌥⌘0)")
+                    .disabled(focused.conversation == nil)
             }
         }
     }
@@ -595,23 +603,14 @@ extension WorkspaceView {
             renamingTitle = true
         }
         .disabled(conversation.sessionID == nil)
-        if !workspace.isChat {
-            Button("Show Folder in Finder") { NSWorkspace.shared.activateFileViewerSelecting([workspace.folder]) }
-        }
-        Picker("Cloud Models", selection: Binding(get: { workspace.cloud }, set: { c in Task { await workspace.setCloud(c) } })) {
-            Text("Ask First").tag(Workspace.CloudPolicy.ask)
-            Text("Allow").tag(Workspace.CloudPolicy.allow)
-            Text("Keep Code on Your Devices").tag(Workspace.CloudPolicy.deny)
-        }
         if let id = conversation.sessionID {
-            Button("Copy Session ID") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(id, forType: .string)
-            }
-            Divider()
             Button("Archive") {
                 Library.shared.setArchived(id, true)
                 workspace.newSession()
+            }
+            Divider()
+            Button("Delete…", role: .destructive) {
+                deletingSession = id
             }
         }
     }

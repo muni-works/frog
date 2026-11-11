@@ -143,7 +143,7 @@ struct PreviewPane: View {
     private var hint: some View {
         VStack(spacing: 8) {
             Image(systemName: "globe").font(.title).foregroundStyle(.tertiary)
-            Text("Run your dev server, then enter its URL, or ask frog to open it.")
+            Text("Run your dev server, then enter its URL, or ask Frog to open it.")
                 .font(.frog(size: 12))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

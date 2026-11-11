@@ -344,7 +344,7 @@ struct CloudPermissionSheet: View {
         VStack(alignment: .leading, spacing: 14) {
             Label("Use cloud models in \(workspace.policyName)?", systemImage: "cloud")
                 .font(.frog(size: 13, weight: .semibold))
-            Text("\(model.name) runs at \(provider). The files you mention, the commands frog runs and their output are sent there to answer you.")
+            Text("\(model.name) runs at \(provider). The files you mention, the commands Frog runs and their output are sent there to answer you.")
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Text("You can change this anytime from the conversation's title menu.")

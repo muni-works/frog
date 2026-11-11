@@ -58,11 +58,11 @@ struct ReasoningView: View {
                 withAnimation(.snappy(duration: 0.2)) { expanded.toggle() }
             } label: {
                 HStack(spacing: TurnSpace.Inset.row) {
-                    Image(systemName: "sparkles")
+                    // One quiet line: a breathing dot while it thinks.
+                    BreathingDot(live: !done)
+                        .opacity(done ? 0 : 1)
                         .frame(width: TurnSpace.Inset.icon)
-                        .symbolEffect(.pulse, isActive: !done)
                     Text(done ? "Thought" : "Thinking…")
-                        .fontWeight(.medium)
                     if !expanded {
                         Text(preview)
                             .lineLimit(1)
@@ -75,7 +75,7 @@ struct ReasoningView: View {
                         .rotationEffect(.degrees(expanded ? 90 : 0))
                 }
                 .font(.callout)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Tokens.textTertiary)
                 .contentShape(.rect)
             }
             .buttonStyle(.plain)
@@ -607,7 +607,7 @@ struct TypingBubble: View {
             if !w { settled = true }
         }
         .accessibilityHidden(!live)
-        .accessibilityLabel("frog is writing")
+        .accessibilityLabel("Frog is writing")
     }
 
     /// The model's speed, at the bubble's edge, from the engine's status.
