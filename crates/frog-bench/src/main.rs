@@ -171,7 +171,10 @@ async fn main() -> Result<()> {
                         .join(", ")
                 );
             }
-            std::fs::write(out.join("swarm.json"), serde_json::to_string_pretty(&report)?)?;
+            std::fs::write(
+                out.join("swarm.json"),
+                serde_json::to_string_pretty(&report)?,
+            )?;
             std::fs::write(out.join("report.html"), swarm::html(&report))?;
             println!("report: {}", out.join("report.html").display());
             Ok(())

@@ -390,7 +390,9 @@ pub fn summarize(
                 s.first_call_cached_tokens += c.cached_tokens;
             }
             let node = c.node.clone().unwrap_or_else(|| "unpooled".into());
-            *mostly.entry(c.node.as_deref().unwrap_or("unpooled")).or_default() += 1;
+            *mostly
+                .entry(c.node.as_deref().unwrap_or("unpooled"))
+                .or_default() += 1;
             let n = s.per_node.entry(node.clone()).or_default();
             n.calls += 1;
             n.prompt_tokens += c.prompt_tokens;
@@ -658,7 +660,13 @@ mod tests {
     use super::*;
     use crate::cache::Call;
 
-    fn run(task: &str, worker: usize, secs: (f64, f64), pass: bool, calls: &[(&str, u64, u64, u64)]) -> SwarmRun {
+    fn run(
+        task: &str,
+        worker: usize,
+        secs: (f64, f64),
+        pass: bool,
+        calls: &[(&str, u64, u64, u64)],
+    ) -> SwarmRun {
         let mut r: RunResult = serde_json::from_value(serde_json::json!({
             "task": task, "model": "node/x", "mode": "auto", "resolved_mode": null, "tier": null,
             "rep": 0, "pass": pass, "end": "complete", "error": null, "secs": secs.1 - secs.0,
@@ -692,13 +700,28 @@ mod tests {
     #[test]
     fn summary_counts_width_cache_and_stalls() {
         let runs = vec![
-            run("a", 0, (0.0, 10.0), true, &[("mew", 4000, 0, 500), ("mew", 4200, 4000, 200)]),
-            run("a", 1, (0.0, 20.0), false, &[("this Mac", 4000, 3000, 12_000)]),
+            run(
+                "a",
+                0,
+                (0.0, 10.0),
+                true,
+                &[("mew", 4000, 0, 500), ("mew", 4200, 4000, 200)],
+            ),
+            run(
+                "a",
+                1,
+                (0.0, 20.0),
+                false,
+                &[("this Mac", 4000, 3000, 12_000)],
+            ),
         ];
         let s = summarize(&runs, 20.0, Some(2.0), "node/x", 0.15);
         assert_eq!((s.runs, s.passed, s.stalls), (2, 1, 1));
         assert_eq!(s.prefill_saved_tokens, 7000);
-        assert_eq!((s.first_call_prompt_tokens, s.first_call_cached_tokens), (8000, 3000));
+        assert_eq!(
+            (s.first_call_prompt_tokens, s.first_call_cached_tokens),
+            (8000, 3000)
+        );
         assert_eq!(s.per_node["mew"].calls, 2);
         assert_eq!(s.per_node["this Mac"].runs_mostly_here, 1);
         assert!((s.agg_tok_s - 15.0).abs() < 1e-9);
@@ -717,11 +740,29 @@ mod tests {
             summary: summarize(&runs, 60.0, None, "node/x", 0.0),
             runs,
         };
-        let one = phase("one", vec![run("a", 0, (0.0, 30.0), true, &[]), run("b", 0, (0.0, 10.0), true, &[])]);
-        let two = phase("two", vec![run("a", 0, (0.0, 20.0), true, &[]), run("b", 0, (0.0, 10.4), true, &[])]);
+        let one = phase(
+            "one",
+            vec![
+                run("a", 0, (0.0, 30.0), true, &[]),
+                run("b", 0, (0.0, 10.0), true, &[]),
+            ],
+        );
+        let two = phase(
+            "two",
+            vec![
+                run("a", 0, (0.0, 20.0), true, &[]),
+                run("b", 0, (0.0, 10.4), true, &[]),
+            ],
+        );
         let add = additivity(&one, &two);
         assert!(add.holds, "{add:?}");
-        let worse = phase("two", vec![run("a", 0, (0.0, 20.0), true, &[]), run("b", 0, (0.0, 12.0), true, &[])]);
+        let worse = phase(
+            "two",
+            vec![
+                run("a", 0, (0.0, 20.0), true, &[]),
+                run("b", 0, (0.0, 12.0), true, &[]),
+            ],
+        );
         let add = additivity(&one, &worse);
         assert_eq!(add.worse, vec!["b".to_string()]);
         let page = html(&Report {
