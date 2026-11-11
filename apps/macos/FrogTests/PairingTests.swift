@@ -1,4 +1,5 @@
 import CryptoKit
+import SwiftUI
 import XCTest
 @testable import Frog
 
@@ -220,5 +221,78 @@ final class PairingTests: XCTestCase {
         let devices = Devices()
         XCTAssertEqual(devices.serving(model: "node/a1b2c3d4e5f6", ranOn: RanOn(nodeId: "x", name: "mew", local: false)).name, "mew")
         XCTAssertEqual(devices.serving(model: "node/a1b2c3d4e5f6", ranOn: RanOn(nodeId: nil, name: "this Mac", local: true)).deviceID, "this-mac")
+    }
+}
+
+/// Pictures of the notice, the code sheet and a paired card, from a real pairing with the mock
+/// (written to $TMPDIR/frog-snapshots).
+@MainActor
+final class PairingSnapshotTests: XCTestCase {
+    func testSnapshots() async throws {
+        let node = MockNode(name: "mew")
+        let port = try node.start()
+        defer { node.stop() }
+        let base = URL(string: "http://127.0.0.1:\(port)")!
+
+        var found = Device(id: node.nodeID, role: .node, name: "mew")
+        found.chip = "RTX 3090"; found.kind = "cuda"; found.totalBytes = node.mem; found.unified = false
+        found.keyed = true; found.online = true; found.fingerprint = node.fingerprint; found.link = .ethernet
+
+        try render("pair-notice.png", width: 620, height: 44) {
+            NodeOfferRow(device: found, use: {}, dismiss: {}).padding(6)
+        }
+        try render("pair-sheet.png", width: 400, height: 250) { PairSheet(device: found) }
+        try render("pair-sheet-typed.png", width: 400, height: 250) { PairSheet(device: found, code: "2718") }
+        try render("pair-sheet-wrong.png", width: 400, height: 250) {
+            PairSheet(device: found, problem: PairError.wrongCode.line("mew"))
+        }
+        try render("card-unpaired.png", width: 260, height: 190) {
+            DeviceCard(device: found, compact: false, serving: false).frame(width: 236, height: 168).padding(12)
+        }
+
+        // A real pairing, then the card as Devices draws it.
+        node.openWindow(code: "271828")
+        let (paired, key) = try await PairClient.pair(base: base, code: "271828", clientID: "snap", clientName: "t",
+                                                      expectedFingerprint: node.fingerprint)
+        let devices = Devices()
+        devices.store = PairedStore(file: FileManager.default.temporaryDirectory.appending(path: "snap-\(UUID()).json"),
+                                    service: "frog-tests-\(UUID().uuidString)")
+        try devices.store.save(paired, key: key)
+        defer { try? devices.store.remove(nodeID: paired.node_id) }
+        devices.reloadPaired()
+        await devices.poll()
+        var card = try XCTUnwrap(devices.list.first { $0.id == paired.node_id })
+        card.link = .ethernet
+        XCTAssertTrue(card.paired && card.online)
+        try render("card-paired.png", width: 260, height: 190) {
+            DeviceCard(device: card, compact: false, serving: true).frame(width: 236, height: 168).padding(12)
+        }
+        node.swapIdentity()
+        await devices.poll()
+        let refused = try XCTUnwrap(devices.list.first { $0.id == paired.node_id })
+        try render("card-refused.png", width: 260, height: 190) {
+            DeviceCard(device: refused, compact: false, serving: false).frame(width: 236, height: 168).padding(12)
+        }
+    }
+
+    private func render<V: View>(_ name: String, width: CGFloat, height: CGFloat, @ViewBuilder _ view: () -> V) throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "frog-snapshots")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        for (suffix, look) in [("", NSAppearance.Name.darkAqua), ("-light", .aqua)] {
+            let host = NSHostingView(rootView: view().frame(width: width, height: height).background(FrogCanvas.color))
+            host.frame = CGRect(x: 0, y: 0, width: width, height: height)
+            let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.appearance = NSAppearance(named: look)
+            window.contentView = host
+            window.orderFront(nil)
+            defer { window.close() }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+            host.layoutSubtreeIfNeeded()
+            guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return XCTFail("no bitmap") }
+            host.cacheDisplay(in: host.bounds, to: rep)
+            let file = name.replacingOccurrences(of: ".png", with: "\(suffix).png")
+            try XCTUnwrap(rep.representation(using: .png, properties: [:])).write(to: dir.appending(path: file))
+        }
     }
 }

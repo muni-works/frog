@@ -37,7 +37,7 @@ struct DeviceChip: View {
 
     var body: some View {
         if let status = conversation.status {
-            let serving = devices.serving(model: status.model)
+            let serving = devices.serving(model: status.model, ranOn: status.ranOn)
             Button { open.toggle() } label: {
                 HStack(spacing: 5) {
                     BreathingDot(live: conversation.busy)
@@ -225,10 +225,14 @@ private struct MapLink: View {
 }
 
 /// One machine: what it is, how much memory it has free, what it's running and how fast.
-private struct DeviceCard: View {
+struct DeviceCard: View {
     let device: Device
     let compact: Bool
     let serving: Bool
+    @State private var pairing = false
+    @State private var confirmUnpair = false
+
+    private var needsPairing: Bool { device.role == .node && device.keyed && !device.paired }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -249,6 +253,17 @@ private struct DeviceCard: View {
                         .font(.frog(size: compact ? 12 : 13, weight: .semibold))
                         .lineLimit(1)
                     Spacer(minLength: 4)
+                    if device.paired {
+                        Menu {
+                            Button("Un-pair \(device.name)…") { confirmUnpair = true }
+                        } label: {
+                            Image(systemName: "ellipsis").foregroundStyle(Tokens.textTertiary)
+                        }
+                        .menuStyle(.button)
+                        .buttonStyle(.plain)
+                        .menuIndicator(.hidden)
+                        .fixedSize()
+                    }
                     Circle().fill(dot).frame(width: 7, height: 7).help(status)
                 }
                 Text(spec)
@@ -271,6 +286,16 @@ private struct DeviceCard: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: compact ? 11 : 14, style: .continuous))
         .monospacedDigit()
+        .contextMenu {
+            if device.paired { Button("Un-pair \(device.name)…") { confirmUnpair = true } }
+            if needsPairing { Button("Use \(device.name)…") { pairing = true } }
+        }
+        .sheet(isPresented: $pairing) { PairSheet(device: device) }
+        .confirmationDialog("Un-pair \(device.name)?", isPresented: $confirmUnpair) {
+            Button("Un-pair", role: .destructive) { Task { await Devices.shared.unpair(device.id) } }
+        } message: {
+            Text("This Mac forgets its key and \(device.name) drops this Mac. Pair again any time with a new code.")
+        }
     }
 
     private var symbol: String {
@@ -297,13 +322,15 @@ private struct DeviceCard: View {
     }
 
     private var dot: Color {
-        guard device.online else { return Tokens.textQuaternary }
+        if device.refused != nil { return Tokens.fail }
+        guard device.online, !needsPairing else { return Tokens.textQuaternary }
         return device.running + device.waiting > 0 ? Tokens.signal : Tokens.accent
     }
 
     private var status: String {
         if device.role == .cloud { return device.online ? "Signed in" : "Not signed in" }
-        if device.keyed && device.model == nil { return "Found on the network; needs pairing" }
+        if let why = device.refused { return why }
+        if needsPairing { return "Found on the network; not paired" }
         if !device.online { return device.role == .thisMac ? "Engine not running" : "Not answering" }
         if device.running > 0 { return "Working" + (device.waiting > 0 ? ", \(device.waiting) waiting" : "") }
         return "Ready"
@@ -320,8 +347,19 @@ private struct DeviceCard: View {
                 }
             }
             .font(.frog(size: compact ? 11 : 12))
-        } else if device.keyed && device.model == nil {
-            Text("Needs pairing").font(.frog(size: compact ? 11 : 12)).foregroundStyle(Tokens.textTertiary)
+        } else if let why = device.refused {
+            Text(why).font(.frog(size: compact ? 11 : 12)).foregroundStyle(Tokens.textSecondary).lineLimit(2)
+        } else if needsPairing {
+            HStack(alignment: .firstTextBaseline) {
+                Text(device.pairOpen ? "Showing a code" : "Not paired")
+                    .foregroundStyle(Tokens.textTertiary)
+                Spacer()
+                Button("Use it") { pairing = true }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Tokens.text)
+                    .fontWeight(.medium)
+            }
+            .font(.frog(size: compact ? 11 : 12))
         } else if let model = device.loading ?? device.model {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 VStack(alignment: .leading, spacing: 1) {

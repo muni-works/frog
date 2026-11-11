@@ -334,6 +334,15 @@ struct Status: Decodable, Sendable, Equatable {
     /// What runs degraded right now (text tool calls, a model nobody picked, auto mode's
     /// classifier down), each with its why. Absent from older engines.
     var degraded: [Degraded]?
+    /// Where the last call on a pooled (`node/…`) model ran. Absent for other providers.
+    var ranOn: RanOn?
+}
+
+/// The engine's `ran_on`: the paired node (or this Mac's tang) a pooled call ran on.
+struct RanOn: Decodable, Sendable, Equatable {
+    var nodeId: String?
+    var name: String
+    var local: Bool?
 }
 
 /// One way a session runs degraded (the engine's `Status.degraded`).

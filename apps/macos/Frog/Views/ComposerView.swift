@@ -61,6 +61,7 @@ struct ComposerView: View {
     var body: some View {
         draftHooks(
             VStack(alignment: .leading, spacing: 8) {
+                if conversation.cloudSession == nil { NodeOffer() }
                 topRow
                     .opacity(suggestions.isEmpty && skillSuggestions.isEmpty ? 1 : 0)
                 field
