@@ -5,6 +5,7 @@ import { friendly, type ConnectionState } from './cloud/client'
 import type { SessionSummary } from './cloud/protocol'
 import type { Image, Mode } from './cloud/protocol'
 import { defaultModel, idOf, spec, useModels } from './models'
+import { plainError } from './errors'
 import { clearThreads, outOfCredits, pickStarters, useCloud, useRepos, useSessions, useThreads } from './store'
 import { once } from './live'
 import { useLayer, useMenu } from './ui/layers'
@@ -507,7 +508,7 @@ export default function App() {
                 step={current.id.startsWith(PENDING) ? 0 : cs?.state === 'live' ? 2 : 1} />
             )}
             {/* A sandbox that couldn't start says so here, by the composer, not above the conversation. */}
-            {current.state === 'error' && <div role="status" className="banner warn"><span style={{ flex: 1 }}>{current.error ?? "The sandbox couldn't start."}</span><button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => remove(current)}>Delete</button></div>}
+            {current.state === 'error' && <div role="status" className="banner warn"><span style={{ flex: 1 }}>{current.error ? plainError(current.error) : "The sandbox couldn't start."}</span><button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => remove(current)}>Delete</button></div>}
             {paused && (
               <section className="cardx outs" aria-label="Out of credits">
                 <b style={{ fontSize: 15 }}>You're out of cloud credits</b>

@@ -103,7 +103,12 @@ export function Composer(p: ComposerProps) {
   }
   const ref = useRef<HTMLTextAreaElement>(null)
   // One line until you write more, then it grows (to a cap, then scrolls), like Claude's.
-  const grow = (el: HTMLTextAreaElement) => { el.style.height = 'auto'; el.style.height = `${Math.min(el.scrollHeight, 220)}px` }
+  // Empty, it's the stylesheet's one line: Chrome counts the placeholder in scrollHeight, and
+  // measured before the column has its width (the landing's first paint) that wrapped to 220px.
+  const grow = (el: HTMLTextAreaElement) => {
+    el.style.height = 'auto'
+    el.style.height = el.value ? `${Math.min(el.scrollHeight, 220)}px` : ''
+  }
   const working = p.state === 'working', paused = p.state === 'paused'
   const timer = useTimer(working ? p.startedAt : undefined)
   useEffect(() => { if (p.draft !== undefined) setText(p.draft) }, [p.draft])

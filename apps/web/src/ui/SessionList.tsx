@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import type { SessionSummary } from '../cloud/protocol'
 import type { Thread } from '../engine/thread'
 import { outOfCredits, peek } from '../store'
+import { plainError } from '../errors'
 import { useLayer, useMenu } from './layers'
 
 // The sidebar's sessions, after the Mac's: quiet one-line rows filed under days, a glyph only
@@ -45,7 +46,7 @@ function loadView(): View {
 
 /** The second line, when rows aren't compact: what's true of the session right now. */
 function second(s: SessionSummary, t: Thread): string {
-  if (s.state === 'error') return s.error ?? "Couldn't start"
+  if (s.state === 'error') return s.error ? plainError(s.error) : "Couldn't start"
   if (s.state === 'starting') return 'Starting a sandbox'
   const kept = peek(s.id, s.updated)
   const live = [...t.turns].reverse().flatMap((u) => [...u.entries].reverse()).find((e) => e.kind === 'message')
@@ -54,7 +55,9 @@ function second(s: SessionSummary, t: Thread): string {
   if (snippet) return [s.repo ? s.repo.split('/')[1] ?? s.repo : null, snippet].filter(Boolean).join(' · ')
   // At rest with nothing kept: what it is, not that it's asleep.
   const turns = t.turns.length || kept.turns
-  const model = (t.model ?? kept.model)?.split('/').pop()
+  const last = (t.model ?? kept.model)?.split('/').pop()
+  // As the picker names it; a pooled model's bare hash means nothing to a person (the Mac's `pooledName`).
+  const model = last && /^[0-9a-f]{8,}(@.*)?$/i.test(last) ? 'Shared model' : last
   return [s.repo ? s.repo.split('/')[1] ?? s.repo : null, turns ? `${turns} turn${turns === 1 ? '' : 's'}` : null, model].filter(Boolean).join(' · ') || (s.repo || 'Scratch sandbox, no repo')
 }
 
@@ -183,7 +186,7 @@ export function SessionList(p: {
     return (
       <button key={s.id} type="button" className={`srow${s.id === p.current ? ' on' : ''}${(detail && s.id === p.current) || !view.compact ? ' two' : ''}`} onClick={() => p.onOpen(s.id)}
         onContextMenu={(e) => { e.preventDefault(); setCtx({ s, x: e.clientX, y: e.clientY }) }}
-        title={s.state === 'error' ? s.error ?? "The sandbox couldn't start" : undefined}>
+        title={s.state === 'error' ? (s.error ? plainError(s.error) : "The sandbox couldn't start") : undefined}>
         <span className="sbody">
           <span className="sline">
             <span className={`stitle${quiet ? ' quiet' : ''}`}>{p.title(s)}</span>
