@@ -125,7 +125,7 @@ final class PerfProbeTests: XCTestCase {
     }
 
     func testComposerHugePaste() throws {
-        for mb in [0.1, 1.0, 5.0] {
+        for mb in [0.0, 0.1, 1.0, 5.0] {
             let controller = ComposerController()
             let host = NSHostingView(rootView: Box(text: "", controller: controller)); host.frame = CGRect(x: 0, y: 0, width: 700, height: 200)
             let w = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)

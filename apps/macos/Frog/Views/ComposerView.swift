@@ -94,7 +94,9 @@ struct ComposerView: View {
     private func draftHooks(_ view: some View) -> some View {
         view
             .onAppear { restoreDraft() }
-            .onChange(of: text) { noteDraft(); saveDraftSoon() }
+            // Noted from the text view as it hands the draft over (`onPush`), not here: a rebuild
+            // right after a keystroke drops this view before its onChange would run.
+            .onChange(of: text) { saveDraftSoon() }
             .onChange(of: attachments) { saveDraftSoon() }
             // Out for good: saved (the willTerminate read comes before the write below it).
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
@@ -228,6 +230,7 @@ struct ComposerView: View {
                         text: $text,
                         height: $height,
                         controller: controller,
+                        onPush: noteDraft,
                         onSubmit: send,
                         onEscape: {
                             if dictation.isActive {
@@ -530,9 +533,10 @@ struct ComposerView: View {
         return min(tv.selectedRange().location, text.utf16.count)
     }
 
-    /// Every keystroke, in memory: a composer that replaces this one before its save on the way
-    /// out (SwiftUI can run the new one's onAppear first) still restores everything typed.
-    private func noteDraft() {
+    /// Every hand-over from the text view, in memory: a composer that replaces this one before its
+    /// save on the way out (SwiftUI can run the new one's onAppear first) still restores
+    /// everything typed.
+    private func noteDraft(_ text: String) {
         guard !text.isEmpty || !attachments.isEmpty else { return }
         drafts.note(
             ComposerDraft(text: text, images: attachments, cursor: Self.draftCursor(controller.textView, text: text), saved: .now),

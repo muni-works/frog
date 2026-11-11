@@ -140,7 +140,7 @@ final class ComposerCaretTests: XCTestCase {
     final class Current { var controller: ComposerController? }
 
     /// What `ComposerView` does with drafts, around the real text view: restore on appear, note
-    /// every keystroke. The old composer's save on the way out is left out — SwiftUI can run it
+    /// every hand-over from the text view. The old composer's save on the way out is left out — SwiftUI can run it
     /// after the new composer's onAppear, so the handover can't count on it.
     struct Handover: View {
         let store: DraftStore
@@ -150,7 +150,9 @@ final class ComposerCaretTests: XCTestCase {
         @State var controller = ComposerController()
         static let folder = URL(fileURLWithPath: "/tmp/frog-caret-tests")
         var body: some View {
-            ComposerTextView(text: $text, height: $height, controller: controller, onSubmit: {}, onEscape: { false })
+            ComposerTextView(text: $text, height: $height, controller: controller, onPush: { text in
+                store.note(ComposerDraft(text: text, images: [], cursor: ComposerView.draftCursor(controller.textView, text: text), saved: .now), id: "s1", folder: Self.folder)
+            }, onSubmit: {}, onEscape: { false })
                 .frame(width: 500, height: 120)
                 .onAppear {
                     current.controller = controller
@@ -158,9 +160,6 @@ final class ComposerCaretTests: XCTestCase {
                     text = d.text
                     controller.focus()
                     controller.select(NSRange(location: min(d.cursor, d.text.utf16.count), length: 0))
-                }
-                .onChange(of: text) {
-                    store.note(ComposerDraft(text: text, images: [], cursor: ComposerView.draftCursor(controller.textView, text: text), saved: .now), id: "s1", folder: Self.folder)
                 }
         }
     }

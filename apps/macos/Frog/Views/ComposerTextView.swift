@@ -168,6 +168,9 @@ struct ComposerTextView: NSViewRepresentable {
     @Binding var text: String
     @Binding var height: CGFloat
     var controller: ComposerController
+    /// The draft as it reaches the binding, said at once (the binding's onChange waits for the
+    /// next render, which a composer rebuilt right after a keystroke never gets).
+    var onPush: (String) -> Void = { _ in }
     var onSubmit: () -> Void
     var onEscape: () -> Bool
     /// Called with the `@query` at the cursor (without the `@`), or nil when there isn't one.
@@ -258,6 +261,13 @@ struct ComposerTextView: NSViewRepresentable {
         context.coordinator.fitHeightNow(tv)
     }
 
+    /// Going away (the conversation swapped, the pane rebuilt): a big draft's write still waiting
+    /// for a pause goes now, so the composer that takes over gets all of it.
+    static func dismantleNSView(_ scroll: NSScrollView, coordinator: Coordinator) {
+        guard let tv = scroll.documentView as? NSTextView else { return }
+        coordinator.flush(tv)
+    }
+
     @MainActor
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: ComposerTextView
@@ -293,6 +303,7 @@ struct ComposerTextView: NSViewRepresentable {
             let s = tv.string
             pushed = s
             parent.text = s
+            parent.onPush(s)
         }
 
         func textDidChange(_ notification: Notification) {
