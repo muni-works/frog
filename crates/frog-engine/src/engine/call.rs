@@ -97,35 +97,6 @@ impl Agent {
         Ok(())
     }
 
-    /// frog cloud is unreachable (offline) or out of capacity (503, 502): carry on with a local
-    /// model instead of failing the turn. `FROG_FALLBACK_MODEL` picks which. A credit error
-    /// (402) is not this: the fix is money, not another model (docs/design/model-policy.md).
-    pub(super) fn cloud_fallback(&self, e: &anyhow::Error) -> Option<String> {
-        let prov = self.profile_name.split_once('/')?.0;
-        if crate::providers::canonical(prov) != crate::providers::CLOUD {
-            return None;
-        }
-        let offline = e
-            .chain()
-            .filter_map(|c| c.downcast_ref::<reqwest::Error>())
-            .any(|r| r.is_connect());
-        let unavailable = e
-            .downcast_ref::<HttpError>()
-            .is_some_and(|h| matches!(h.status, 502 | 503));
-        if !offline && !unavailable {
-            return None;
-        }
-        Some(
-            std::env::var("FROG_FALLBACK_MODEL")
-                .ok()
-                .filter(|m| !m.is_empty())
-                .map(|m| crate::providers::normalize(&m))
-                .unwrap_or_else(|| crate::config::LOCAL_DEFAULT.into()),
-        )
-        // Only to a local model that's actually there: a fallback to nothing just fails later.
-        .filter(|m| !m.starts_with("local/") || local_server_up())
-    }
-
     pub(super) async fn call(
         &self,
         label: &str,
@@ -484,14 +455,17 @@ impl Agent {
                     }
                     return Err(e);
                 }
-                // A busy or briefly unreachable provider is retried before anything falls
-                // back: one 503, dropped connection or mid-stream gateway error shouldn't end
+                // A busy or briefly unreachable provider is retried before the turn
+                // stops: one 503, dropped connection or mid-stream gateway error shouldn't end
                 // a long task. When the broken attempt had already streamed a partial reply,
                 // its items are discarded and the step runs again from scratch. Three retries
                 // at 1 s, 2 s and 4 s, and ONE line for the whole storm.
                 Err(e)
                     if attempt < model_policy::MAX_RETRIES
-                        && (retryable(&e) || self.cloud_fallback(&e).is_some()) =>
+                        && (retryable(&e)
+                            || e.chain()
+                                .filter_map(|c| c.downcast_ref::<reqwest::Error>())
+                                .any(|r| r.is_connect())) =>
                 {
                     attempt += 1;
                     let ids: Vec<String> = streamed
