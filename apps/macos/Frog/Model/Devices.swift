@@ -331,6 +331,10 @@ final class Devices {
             return Serving(deviceID: "this-mac", name: "this Mac", symbol: local.symbol, model: short)
         }
         guard let info = ProviderStore.shared.providers.first(where: { $0.id == provider }) else {
+            // Before the provider list loads, Ollama and LM Studio are on this Mac, not a cloud.
+            if ["ollama", "lmstudio"].contains(provider) {
+                return Serving(deviceID: "this-mac", name: "this Mac", symbol: local.symbol, model: short)
+            }
             return Serving(deviceID: nil, name: provider, symbol: "cloud", model: short)
         }
         let host = URL(string: info.baseUrl)?.host()?.lowercased() ?? ""
@@ -474,11 +478,26 @@ struct Serving: Equatable {
     var name: String
     var symbol: String
     var model: String
+
+    /// Where it runs, for its color (`Color.place(_:)`): every cloud route names itself "cloud".
+    var place: ModelIdentity.Place {
+        if symbol == "cloud" { return .cloud(name) }
+        return deviceID == "this-mac" ? .mac : .server(name)
+    }
 }
 
 /// One machine on the canvas.
 struct Device: Identifiable, Equatable {
     enum Role: Equatable { case thisMac, node, cloud }
+
+    /// Where a model on it runs, for its color (`Color.place(_:)`).
+    var place: ModelIdentity.Place {
+        switch role {
+        case .thisMac: .mac
+        case .node: .server(name)
+        case .cloud: .frogCloud
+        }
+    }
     enum Link: Equatable {
         case thunderbolt, ethernet, wifi, tailscale, internet, network
         init(interface: NWInterface?) {

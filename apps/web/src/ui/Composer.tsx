@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { composing } from './guards'
 import type { Image, Mode } from '../cloud/protocol'
-import { modelName, modes, price, type Model } from '../models'
+import { modelName, modes, placeColor, placeOf, price, spec, type Model } from '../models'
 import { barTone, ringTone } from '../usage'
 import { parseRepo } from '../store'
 import type { Provider } from '../auth'
@@ -340,7 +340,7 @@ export function Composer(p: ComposerProps) {
             {modes.find((m) => m.id === p.mode)?.label} <span className="chev">▾</span>
           </button>
         )}
-        <span className="cz-device" title="Runs in a Frog Cloud sandbox">
+        <span className="cz-device" title="Runs in a Frog Cloud sandbox" style={{ color: placeColor('cloud') }}>
           <span className="cz-device-dot" aria-hidden="true" />
           <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M7 18a5 5 0 0 1-.6-9.96A6 6 0 0 1 18 9a4.5 4.5 0 0 1-.5 9z" /></svg>
           Frog Cloud
@@ -359,7 +359,7 @@ export function Composer(p: ComposerProps) {
         )}
     <span style={{ flex: 1 }} />
         {(!!p.model || !!p.models?.length) && (
-          <button type="button" className="f-pill cz-model" aria-label={`Model: ${p.model ? modelName(p.model) : 'default'}`} aria-expanded={menu === 'model'}
+          <button type="button" className="f-pill cz-model" style={{ color: placeColor(placeOf(p.model ? spec(p.model) : null)) }} aria-label={`Model: ${p.model ? modelName(p.model) : 'default'}`} aria-expanded={menu === 'model'}
             disabled={!p.models?.length || !p.onModel} onClick={(e) => { anchor(e); setMenu(menu === 'model' ? null : 'model') }}>
             {p.model ? modelName(p.model) : 'Default model'}{p.models?.length ? <span className="chev">▾</span> : null}
           </button>

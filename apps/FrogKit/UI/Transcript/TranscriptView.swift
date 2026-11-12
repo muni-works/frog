@@ -601,11 +601,12 @@ struct EndView: View {
                 HStack(spacing: TurnSpace.Inset.card) {
                     // Where it ran, then what it cost (cloud) or how fast it wrote.
                     if let spec = usage.model {
-                        // A Frog Cloud turn takes the color of who served it, not cloud green.
-                        ModelLabel(model: ModelIdentity.of(spec, in: models), size: .caption, tint: usage.servedBy.map(Color.served))
+                        ModelLabel(model: ModelIdentity.of(spec, in: models), size: .caption)
                     }
+                    // Who served it is a place tag too: a Frog Cloud turn is cloud green whoever's
+                    // GPUs answered (docs/models.md, "Place color").
                     if let s = usage.servedBy {
-                        Text(s.name).foregroundStyle(Color.served(s))
+                        Text(s.name).foregroundStyle(Color.place(.frogCloud))
                     }
                     // What it cost (cloud) or how fast it wrote; each opens its working.
                     if let c = ModelStats.shared.cost(of: usage) {

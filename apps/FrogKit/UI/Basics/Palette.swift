@@ -1,12 +1,10 @@
 import SwiftUI
 
 extension Color {
-    /// Where a model runs, as the Mac and phone color prompts and names: iMessage blue on your
-    /// own hardware (this Mac, your server), green in the cloud.
-    static func place(cloud: Bool) -> Color { cloud ? .green : .blue }
-
-    /// Who served a Frog Cloud answer: blue on Frog Cloud's own GPUs, green for a third party.
-    static func served(_ by: ServedBy) -> Color { by.isThirdParty ? .green : .blue }
+    /// Where a model runs, the one color rule (docs/models.md, "Place color"): cloud green for
+    /// any cloud (Frog Cloud, Anthropic, OpenAI), local blue for this Mac, Apple's model and your
+    /// paired nodes. Every model name, place tag and "where it runs" chip goes through here.
+    static func place(_ place: ModelIdentity.Place) -> Color { place.isCloud ? Tokens.placeCloud : Tokens.placeLocal }
 
     /// The app mark's green, a little brighter in the dark (the Mac's accent color).
     static let frog = Color(light: (0.180, 0.620, 0.310), dark: (0.345, 0.800, 0.435))

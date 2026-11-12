@@ -389,7 +389,7 @@ struct ComposerView: View {
             if !conversation.started, conversation.cloudSession == nil, CloudSessions.shared.available {
                 LocationPicker(workspace: workspace)
             } else if conversation.cloudSession != nil {
-                Label("Frog Cloud", systemImage: "cloud").foregroundStyle(Tokens.accent)
+                Label("Frog Cloud", systemImage: "cloud").foregroundStyle(Color.place(.frogCloud))
             }
             if paneWidth > .narrow, conversation.cloudSession == nil {
                 DeviceChip(conversation: conversation)
@@ -919,7 +919,7 @@ private struct LocationPicker: View {
             }
         } label: {
             Label(label, systemImage: workspace.cloudTarget == nil ? "laptopcomputer" : "cloud")
-                .foregroundStyle(workspace.cloudTarget == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.green.opacity(0.85)))
+                .foregroundStyle(workspace.cloudTarget == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.place(.frogCloud)))
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
