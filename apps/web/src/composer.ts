@@ -191,7 +191,7 @@ function send(s: State): Out {
   if (s.busy === 'sending') return [s, []]
   if (s.busy === 'loading_model') return [{ ...s, pending: 'draft' }, []]
   if (s.busy === 'working') {
-    return [{ ...s, draft: { text: '', attachments: [], caret: 0 }, lastSent: text, queued: s.queued + 1 }, [{ type: 'queue', text, attachments }]]
+    return [{ ...s, draft: { text: '', attachments: [], caret: 0 }, lastSent: text, queued: s.queued + 1 }, [{ type: 'queued', text, attachments }]]
   }
   const next: State = { ...s, busy: 'sending', pending: 'draft', error: null }
   if (s.where.kind === 'session') return [next, [{ type: 'submit', text, attachments }]]
@@ -200,7 +200,7 @@ function send(s: State): Out {
 
 /** A turn a git action asks for (Fix, Resolve conflicts): the draft stays put. */
 function sendAside(s: State, text: string): Out {
-  if (s.busy === 'working') return [{ ...s, queued: s.queued + 1 }, [{ type: 'queue', text, attachments: [] }]]
+  if (s.busy === 'working') return [{ ...s, queued: s.queued + 1 }, [{ type: 'queued', text, attachments: [] }]]
   return [{ ...s, busy: 'sending', pending: 'aside', error: null }, [{ type: 'submit', text, attachments: [] }]]
 }
 
