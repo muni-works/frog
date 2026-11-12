@@ -2,6 +2,7 @@
 # Build, sign and publish frog's CLI release without GitHub Actions (what release.yml did).
 #
 #   scripts/release-local.sh 0.2.0 build     # tarballs, checksums, minisig, frog.rb in dist/v0.2.0
+#   scripts/release-local.sh 0.2.0 sign      # minisign dist/v0.2.0 again (e.g. the key came later)
 #   scripts/release-local.sh 0.2.0 publish   # upload dist/v0.2.0 to the GitHub release
 #
 # build:
@@ -17,8 +18,8 @@
 #   assets to it and replaces its generated notes.
 set -euo pipefail
 
-VERSION=${1:?usage: release-local.sh <version> build|publish}
-CMD=${2:?usage: release-local.sh <version> build|publish}
+VERSION=${1:?usage: release-local.sh <version> build|sign|publish}
+CMD=${2:?usage: release-local.sh <version> build|sign|publish}
 TAG="v$VERSION"
 REPO=${FROG_RELEASE_REPO:-muni-works/frog}
 HOST=${FROG_LINUX_HOST:-mew}
@@ -109,16 +110,7 @@ build() {
     rm -rf "$DIST/bin"
     (cd "$DIST" && cat ./*.tar.gz.sha256 > SHA256SUMS)
 
-    if [[ -n ${FROG_MINISIGN_KEY:-} ]]; then
-        step "minisign"
-        [[ -r $FROG_MINISIGN_KEY ]] || fail "FROG_MINISIGN_KEY ($FROG_MINISIGN_KEY) isn't readable"
-        local f
-        for f in "$DIST"/*.tar.gz; do
-            minisign -S -s "$FROG_MINISIGN_KEY" -m "$f" -t "frog $TAG ${f:t}"
-        done
-    else
-        print "warning: FROG_MINISIGN_KEY not set; tarballs are unsigned"
-    fi
+    if [[ -n ${FROG_MINISIGN_KEY:-} ]]; then sign; else print "warning: FROG_MINISIGN_KEY not set; tarballs are unsigned (run: $0 $VERSION sign)"; fi
 
     if [[ $VERSION != *-* ]]; then
         step "Homebrew formula"
@@ -131,6 +123,15 @@ build() {
         ! grep -n '@[A-Z0-9_]*@' "$DIST/frog.rb" || fail "unfilled placeholder in frog.rb"
     fi
     step "Done: $DIST"; ls -1 "$DIST"
+}
+
+sign() { # minisign every tarball; minisign asks for the key's password itself
+    [[ -r ${FROG_MINISIGN_KEY:-} ]] || fail "set FROG_MINISIGN_KEY to a readable minisign secret key"
+    step "minisign"
+    local f
+    for f in "$DIST"/*.tar.gz; do
+        minisign -S -s "$FROG_MINISIGN_KEY" -m "$f" -t "frog $TAG ${f:t}"
+    done
 }
 
 publish() {
@@ -153,6 +154,7 @@ publish() {
 
 case $CMD in
     build) build ;;
+    sign) sign ;;
     publish) publish ;;
-    *) fail "unknown command: $CMD (build|publish)" ;;
+    *) fail "unknown command: $CMD (build|sign|publish)" ;;
 esac
