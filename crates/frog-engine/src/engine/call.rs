@@ -217,11 +217,15 @@ impl Agent {
                 ..Default::default()
             };
             let sent = Instant::now();
+            // A call in flight: `Status.waiting` reports it, so a session waiting on a slow
+            // or dead model says so instead of looking merely busy. Published, because the
+            // client learns state from events and this is the only moment the wait begins.
+            *self.call_started.lock().unwrap() = Some((sent, attempt + 1, None));
+            self.emit_status();
             // The engine log: what was sent, and a note while nothing has come back, so a
             // slow provider or a hang shows up while it's happening, not just after.
             let heard = Arc::new(std::sync::atomic::AtomicBool::new(false));
-            let watchdog = self.cfg.log_calls.then(|| {
-                eprintln!(
+            let watchdog = self.cfg.log_calls.then(|| {                eprintln!(
                     "call {call} {label} → {} · ~{prompt} tokens in · {} tools{}{}",
                     self.profile_name,
                     specs.len(),
@@ -388,7 +392,11 @@ impl Agent {
                         ),
                     });
                 }
-                Ok(resp) => return Ok((resp, streamed)),
+                Ok(resp) => {
+                    // The answer is in: this call is no longer waiting on the model.
+                    *self.call_started.lock().unwrap() = None;
+                    return Ok((resp, streamed));
+                }
                 // A billing refusal is a state transition, not an error: "transition to
                 // credits, but make it obvious". One typed, informational line names the
                 // window and the credit balance; the provider's raw JSON never goes up. When
@@ -518,7 +526,22 @@ impl Agent {
                             ),
                         );
                     }
-                    tokio::time::sleep(model_policy::retry_wait(attempt)).await;
+                    // A busy provider may say how long to wait; keep it for the status line
+                    // and wait that long instead of our own backoff when it's longer.
+                    let asked = e
+                        .downcast_ref::<HttpError>()
+                        .and_then(|h| h.retry_after)
+                        .map(|d| d.as_secs());
+                    let wait = model_policy::retry_wait(attempt).max(
+                        asked
+                            .map(Duration::from_secs)
+                            .unwrap_or(Duration::ZERO),
+                    );
+                    if asked.is_some() {
+                        *self.call_started.lock().unwrap() = Some((Instant::now(), attempt + 1, asked));
+                        self.emit_status();
+                    }
+                    tokio::time::sleep(wait).await;
                 }
                 Err(e) => {
                     // The last attempt (or one that isn't retryable) may leave a streamed
@@ -532,6 +555,7 @@ impl Agent {
                     if !ids.is_empty() {
                         self.emit(Event::ItemsDiscarded { ids });
                     }
+                    *self.call_started.lock().unwrap() = None;
                     return Err(e);
                 }
             }

@@ -477,6 +477,9 @@ async fn text_turn_lifecycle() {
         [
             "turn_started",
             "progress",
+            // The call is in flight: a status naming the wait, so a client can say
+            // "waiting on the model" instead of showing an unexplained gap.
+            "status",
             "item_started",
             "item_delta",
             "item_completed",
@@ -487,8 +490,12 @@ async fn text_turn_lifecycle() {
             "idle"
         ]
     );
+    // The one mid-turn status is the wait, and it carries the attempt.
+    assert!(matches!(&evs[2].event, Event::Status(s) if s.waiting.as_ref().is_some_and(|w| w.attempt == 1)));
+    // The end-of-turn status says nothing is waiting any more.
+    assert!(matches!(&evs[7].event, Event::Status(s) if s.waiting.is_none()));
     assert!(matches!(
-        &evs[5].event,
+        &evs[6].event,
         Event::Titled { title } if title == "hi"
     ));
     let seqs: Vec<u64> = evs.iter().map(|e| e.seq).collect();
@@ -2902,6 +2909,104 @@ async fn continue_after_a_crash_runs_a_new_turn_with_the_note() {
 /// turn 1, the log keeps its `TurnStarted` input and the user's message, so the prompt can be
 /// replayed — here proven by a fresh engine on the same store, whose next turn carries the
 /// prompt (a `Continue` on the repaired history runs it).
+/// A session waiting on the model says so: `Status.waiting` names the attempt and how long,
+/// so a slow or dead call reads as "waiting on the model", not as an unexplained stall.
+#[tokio::test]
+async fn a_call_in_flight_reports_as_waiting_on_the_model() {
+    use crate::protocol::Waiting;
+    let dir = tmp_store();
+    let mut profile = Profile::new(ProviderKind::Ollama, "test");
+    profile.tool_mode = ToolMode::Native;
+    let mut client = scripted::Client::new(vec![reply(vec![text("done")], Stop::End)]);
+    let hold = Arc::new((
+        std::sync::atomic::AtomicBool::new(true),
+        std::sync::atomic::AtomicBool::new(false),
+    ));
+    client.hold = Some(hold.clone());
+    let sent = client.sent.clone();
+    let opts = Options {
+        cfg: Config {
+            hermetic: true,
+            ..Config::default()
+        },
+        profile_name: "test".into(),
+        profile,
+        cwd: dir.clone(),
+        mode: Mode::AcceptEdits,
+        can_ask: true,
+        resume: None,
+        store: Some(dir.clone()),
+        sandbox: false,
+        rich: false,
+        subagent: false,
+        chat: false,
+    };
+    let mut h = start(opts, Provider::Scripted(client)).unwrap();
+    while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+    h.ops
+        .send(Op::Submit {
+            text: "hi".into(),
+            images: Vec::new(),
+            more: Vec::new(),
+        })
+        .unwrap();
+    // The request is in: the call is mid-flight, and the status the engine published says so.
+    while sent.lock().unwrap().is_empty() {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let mut mid = None;
+    while let Ok(env) = h.events.try_recv() {
+        if let Event::Status(s) = &env.event
+            && s.waiting.is_some()
+        {
+            mid = s.waiting.clone();
+        }
+    }
+    let w = mid.expect("a call in flight publishes a waiting status");
+    assert_eq!(w.attempt, 1, "the first try");
+    assert!(
+        w.retry_after_secs.is_none(),
+        "this provider gave no retry-after"
+    );
+    // Release the call; the turn runs to completion and the wait clears.
+    hold.1.store(true, std::sync::atomic::Ordering::SeqCst);
+    let mut after = None;
+    let mut ended = false;
+    while let Some(env) = h.events.recv().await {
+        if let Event::Status(s) = &env.event {
+            after = Some(s.waiting.clone());
+        }
+        if matches!(env.event, Event::TurnEnded { .. }) {
+            ended = true;
+        }
+        if ended && after.is_some() {
+            break;
+        }
+        if matches!(env.event, Event::Idle) {
+            break;
+        }
+    }
+    assert_eq!(
+        after,
+        Some(None),
+        "the turn's closing status must not still say waiting"
+    );
+    shutdown(h).await;
+
+    // The wire shape: absent retry-after is omitted, not sent as null.
+    let bare = Waiting {
+        seconds: 1,
+        attempt: 1,
+        retry_after_secs: None,
+    };
+    assert!(
+        serde_json::to_value(&bare)
+            .unwrap()
+            .get("retry_after_secs")
+            .is_none()
+    );
+}
+
 #[tokio::test]
 async fn a_birth_death_keeps_turn_ones_prompt_in_the_log_for_replay() {
     let dir = tmp_store();

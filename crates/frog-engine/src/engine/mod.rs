@@ -1473,6 +1473,11 @@ struct Agent {
     chat: bool,
     store: Option<PathBuf>,
     last_call: Duration,
+    /// The model call in flight, if any: when this attempt started, which attempt it is, and
+    /// the provider's `retry-after` when a busy answer gave one. `Status.waiting` reads it, so
+    /// a session waiting on a slow or dead model says so instead of looking merely busy. A
+    /// `Mutex` because the call path holds `&self`.
+    call_started: Mutex<Option<(Instant, u32, Option<u64>)>>,
     active_turn: Option<u64>,
     /// The context window actually in effect (config, bounded by what the server reports).
     window: u64,
@@ -1802,6 +1807,7 @@ impl Agent {
             chat: o.chat,
             store: o.store,
             last_call: Duration::ZERO,
+            call_started: Mutex::new(None),
             active_turn: None,
             window,
             est: Estimator::default(),
@@ -2093,7 +2099,20 @@ impl Agent {
             vision: self.vision,
             degraded: self.degraded(),
             ran_on: self.provider.ran_on(),
+            waiting: self.waiting(),
         }));
+    }
+
+    /// The model call in flight, if one is: how long this attempt has run, which attempt it
+    /// is, and any `retry-after` the provider gave. `None` between calls.
+    fn waiting(&self) -> Option<crate::protocol::Waiting> {
+        let held = self.call_started.lock().unwrap();
+        let (started, attempt, retry_after_secs) = (*held)?;
+        Some(crate::protocol::Waiting {
+            seconds: started.elapsed().as_secs(),
+            attempt,
+            retry_after_secs,
+        })
     }
 
     /// What this session runs degraded on now, each with why: text tool calls it didn't ask
