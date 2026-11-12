@@ -13,9 +13,9 @@
 #     certificate and the `frog` notary profile exist; otherwise unsigned (install.sh ad-hoc signs).
 #   - SHA256SUMS, a minisign signature per tarball ($FROG_MINISIGN_KEY = path to the secret key;
 #     minisign asks for its password itself), and the rendered Homebrew formula.
-# publish: creates the release (notes from docs/releases/v<version>.md), or, when
-#   apps/macos/scripts/release.sh already made it with Frog.dmg + appcast.xml, adds the CLI
-#   assets to it and replaces its generated notes.
+# publish: creates a draft release (notes from docs/releases/v<version>.md) or adds the CLI to
+#   the draft apps/macos/scripts/release.sh created, then publishes it via
+#   scripts/release-assets.sh — only once both the CLI and the app assets are attached.
 set -euo pipefail
 
 VERSION=${1:?usage: release-local.sh <version> build|sign|publish}
@@ -141,15 +141,21 @@ publish() {
     local files=("$DIST"/*.tar.gz "$DIST"/*.sha256 "$DIST/SHA256SUMS")
     files+=("$DIST"/*.minisig(N) "$DIST"/frog.rb(N))
     local pre=(); [[ $VERSION == *-* ]] && pre=(--prerelease)
+    # The tag's release is shared with the app (apps/macos/scripts/release.sh), so upload into a
+    # draft and let release-assets.sh publish it only once both halves are there. Drafts are
+    # invisible to releases/latest, which site/install.sh resolves, so a half-finished release
+    # can't 404 the installer.
     if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
         step "Adding the CLI to the existing $TAG"
         gh release upload "$TAG" "${files[@]}" --repo "$REPO" --clobber
         gh release edit "$TAG" --repo "$REPO" --notes-file "$NOTES" "${pre[@]}"
     else
-        step "Creating $TAG on $REPO"
+        step "Creating $TAG on $REPO (draft)"
         gh release create "$TAG" "${files[@]}" --repo "$REPO" --target "$(git rev-parse HEAD)" \
-            --title "frog $VERSION" --notes-file "$NOTES" "${pre[@]}"
+            --title "frog $VERSION" --notes-file "$NOTES" --draft "${pre[@]}"
     fi
+    step "Publishing $TAG once the app assets are there"
+    "$ROOT/scripts/release-assets.sh" publish "$TAG"
     step "Done: https://github.com/$REPO/releases/tag/$TAG"
 }
 
