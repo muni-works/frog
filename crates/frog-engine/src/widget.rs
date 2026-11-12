@@ -92,6 +92,18 @@ pub fn lint(code: &str) -> Vec<String> {
             blocked.join(", ")
         ));
     }
+    let painted = [
+        "background:#fff",
+        "background: #fff",
+        "background:white",
+        "background: white",
+        "background-color:#fff",
+        "background-color: #fff",
+        "background-color: white",
+    ];
+    if painted.iter().any(|p| lower.contains(p)) {
+        out.push("Don't paint a background: the card is transparent and follows dark mode. Use var(--surface) for panels, var(--fg) for text.".into());
+    }
     if lower.contains("localstorage")
         || lower.contains("sessionstorage")
         || lower.contains("document.cookie")

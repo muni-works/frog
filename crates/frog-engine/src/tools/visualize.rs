@@ -69,6 +69,13 @@ pub fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
             MAX_CODE / 1000
         );
     }
+    // Small models skip the read-me and paint white static boxes; the cost of one retry is
+    // worth the guide (and the retry carries the code they already wrote).
+    if !ctx.visual_guide {
+        bail!(
+            "call VisualGuide first (once per conversation), then call Visualize again with the widget rewritten to follow it."
+        );
+    }
     let title = input["title"].as_str().unwrap_or("").trim();
     let title = if title.is_empty() { "Visual" } else { title };
     let w = Widget::new(title, code);
@@ -78,12 +85,6 @@ pub fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         w.title,
         w.code.len().div_ceil(1000)
     );
-    if !ctx.visual_guide {
-        content.push_str(
-            "\nYou haven't read VisualGuide this conversation: call it before your next visual.",
-        );
-        ctx.visual_guide = true;
-    }
     if !notes.is_empty() {
         content.push_str("\nFix next time:\n- ");
         content.push_str(&notes.join("\n- "));
