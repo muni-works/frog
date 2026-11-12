@@ -64,19 +64,23 @@ struct WidgetCard: View {
             .frame(maxHeight: fill ? .infinity : 480)
         } else if fill {
             WidgetWebView(html: widget.html, height: .constant(0), onPrompt: ask, inline: false, onReady: { fullReady = true })
-                .opacity(fullReady ? 1 : 0)
-                .overlay { if !fullReady { drawing } }
+                .overlay { if !fullReady { cover } }
                 .onDisappear { fullReady = false }
         } else {
             WidgetWebView(html: widget.html, height: $height, onPrompt: ask, onReady: { ready = true })
                 .frame(height: height)
-                .opacity(ready ? 1 : 0)
-                .overlay { if !ready { drawing } }
+                .overlay { if !ready { cover } }
                 .animation(.easeOut(duration: 0.2), value: ready)
         }
     }
 
-    /// Until the widget's first layout: a quiet line, not a blank box.
+    /// Over the web view until the widget's first layout. A cover, not opacity: WebKit stops
+    /// painting a web view that starts transparent and doesn't resume when it's shown.
+    private var cover: some View {
+        Rectangle().fill(.background).overlay { drawing }
+    }
+
+    /// A quiet line, not a blank box.
     private var drawing: some View {
         HStack(spacing: 8) {
             ProgressView().controlSize(.small)
