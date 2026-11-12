@@ -52,3 +52,22 @@ test("a reply streaming inside an unclosed fence draws it as code, caret after",
   assert.match(html, /class="md-code"/);
   assert.match(html, /class="caret"/);
 });
+
+test("a connection drop says so, in the Mac's words, not 'system error'", () => {
+  const html = render("errors-notices");
+  assert.match(html, /Couldn(’|'|&#x27;)t reach the model/);
+  assert.doesNotMatch(html, /system error/);
+});
+
+test("child sessions read 'Ran an agent', as on Mac", () => {
+  assert.match(render("child-sessions"), /Ran an agent/);
+});
+
+test("Arabic and Hebrew lines pick their own direction", () => {
+  assert.match(render("scripts-and-emoji"), /<p dir="auto">/);
+});
+
+test("a short thought alone before the reply folds away, as on Mac", () => {
+  assert.equal((render("scripts-and-emoji").match(/class="thought"/g) ?? []).length, 0);
+  assert.equal((render("thoughts").match(/class="thought"/g) ?? []).length, 1);
+});

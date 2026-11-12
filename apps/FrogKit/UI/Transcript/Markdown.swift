@@ -23,8 +23,14 @@ enum Markdown {
         var paragraph: [String] = []
         var fence: (lang: String, lines: [String])?
         var table: (header: [String], align: [TableAlign], rows: [[String]])?
+        // Lines of the quote being read: consecutive `>` lines are one quote, as in CommonMark.
+        var quote: [String]?
 
         func flush() {
+            if let q = quote {
+                blocks.append(.quote(q.joined(separator: "\n").trimmingCharacters(in: .newlines)))
+                quote = nil
+            }
             if !paragraph.isEmpty {
                 blocks.append(.paragraph(paragraph.joined(separator: "\n")))
                 paragraph = []
@@ -84,11 +90,16 @@ enum Markdown {
                 blocks.append(.rule)
                 continue
             }
-            if trimmed.hasPrefix("> ") {
-                flush()
-                blocks.append(.quote(String(trimmed.dropFirst(2))))
+            // `> a`, a bare `>` (a break inside the quote) and nested `> > b`, flattened: a quote
+            // is drawn one level deep.
+            if trimmed.hasPrefix(">") {
+                var rest = Substring(trimmed)
+                while rest.hasPrefix(">") { rest = rest.dropFirst().drop(while: { $0 == " " }) }
+                if quote == nil { flush() }
+                quote = (quote ?? []) + [String(rest)]
                 continue
             }
+            if quote != nil { flush() }
             if let (marker, text) = listItem(trimmed) {
                 flush()
                 let indent = line.prefix(while: { $0 == " " }).count / 2

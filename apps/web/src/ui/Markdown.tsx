@@ -169,7 +169,7 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
           case 'h': {
             // Sized as on Mac (TurnType.heading): body + 4, body + 2, then body.
             const H = (['h2', 'h3', 'h4', 'h5', 'h6', 'h6'] as const)[b.level - 1]
-            return <H key={i}>{inline(b.text, i)}</H>
+            return <H key={i} dir="auto">{inline(b.text, i)}</H>
           }
           case 'list': {
             // A nested list (Mac's model): one flat list, each item stepped in by its depth,
@@ -180,7 +180,7 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
                 return <li key={j} style={{ ['--d' as string]: d }}><span className={mk === '•' ? 'md-dot' : 'md-num'}>{mk === '•' ? ['•', '◦', '▪'][d % 3] : mk}</span>{inline(it, j)}</li>
               })}</ul>
             )
-            const items = b.items.map((it, j) => <li key={j}>{inline(it, j)}</li>)
+            const items = b.items.map((it, j) => <li key={j} dir="auto">{inline(it, j)}</li>)
             return b.ordered ? <ol key={i} start={b.start}>{items}</ol> : <ul key={i}>{items}</ul>
           }
           case 'quote': return <blockquote key={i}><Markdown text={b.text} /></blockquote>
@@ -191,7 +191,7 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
               <tbody>{b.rows.map((r, j) => <tr key={j}>{r.map((c, n) => <td key={n} style={b.align?.[n] ? { textAlign: b.align[n] } : undefined}>{inline(c, n)}</td>)}</tr>)}</tbody>
             </table></div>
           )
-          default: return <p key={i}>{inline(b.text, i)}</p>
+          default: return <p key={i} dir="auto">{inline(b.text, i)}</p>
         }
       })}
     </div>

@@ -54,6 +54,8 @@ const TOOL_LOOK: Record<string, { verb: [string, string]; icon: string }> = {
   websearch: { verb: ['Searching the web for', 'Searched the web for'], icon: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18' },
   todowrite: { verb: ['Planning', 'Planned'], icon: 'M9 6h11M9 12h11M9 18h11M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2' },
   settitle: { verb: ['Naming', 'Named'], icon: 'M4 7V5h16v2M12 5v14M9 19h6' },
+  // A child session, as on Mac (ActivityLine): "Ran an agent <what it was asked>".
+  task: { verb: ['Running an agent', 'Ran an agent'], icon: 'M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM3 20c0-3 3-5 6-5s6 2 6 5M16 11a3 3 0 1 0 0-6M18 15c2 .6 3 2.4 3 5' },
 }
 const OTHER = { verb: ['Using', 'Used'] as [string, string], icon: 'M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z' }
 
@@ -112,6 +114,15 @@ function EditLine({ diff }: { diff: FileDiff }) {
 }
 
 /** A thought: one quiet line, collapsed with a ›, opening to what it thought (the Mac's too). */
+/** A short finished thought alone between replies (no tool beside it) folds away, as on Mac
+ * (TurnFlow: a model's scratch line before answering isn't worth a line of its own). */
+function foldedThought(entries: Entry[], n: number): boolean {
+  let a = n, b = n
+  while (a > 0 && entries[a - 1].kind !== 'message') a--
+  while (b < entries.length - 1 && entries[b + 1].kind !== 'message') b++
+  return entries.slice(a, b + 1).every((x) => x.kind === 'reasoning' && x.done && x.text.trim().length <= 200 && !x.text.trim().includes('\n\n'))
+}
+
 function ThoughtLine({ text }: { text: string }) {
   const [open, setOpen] = useState(false)
   return (
@@ -251,7 +262,7 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
       <div className="ask-block">
         {/* A blank message (whitespace, no images) draws no empty bubble. */}
         {[{ text: turn.input, images: turn.images }, ...(turn.more ?? [])].map((m, i) => !m.text.trim() && !m.images?.length ? null : (
-          <div key={i} className="me">
+          <div key={i} className="me" dir="auto">
             {m.images?.length ? <div className="me-imgs">{m.images.map((im, j) => <img key={j} src={`data:${im.mime};base64,${im.data}`} alt="" />)}</div> : null}
             {m.text}
           </div>
@@ -265,7 +276,8 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
         </div>
       </div>
       <div className="reply-block">
-      {turn.entries.map((e) => {
+      {turn.entries.map((e, n) => {
+        if (e.kind === 'reasoning' && foldedThought(turn.entries, n)) return null
         // An empty thought has nothing to open, and a blank reply nothing to read: neither draws.
         if (e.kind === 'reasoning') return e.text.trim() ? <ThoughtLine key={e.id} text={e.text} /> : null
         if (e.kind === 'message' && e.done && !e.text.trim()) return null

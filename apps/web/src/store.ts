@@ -224,6 +224,9 @@ export function turnError(t: Thread): string | null {
 export function endError(reason: EndReason | null | undefined): string | null {
   if (reason?.type !== 'error') return null
   const e = (reason as { error?: { type?: string; status?: number; message?: string } }).error ?? {}
+  // The Mac's words (EngineError.description) for the kinds that carry no useful detail.
+  if (e.type === 'connection') return "Couldn't reach the model. Check your connection and try again."
+  if (e.type === 'incomplete_stream') return 'The response stream ended early.'
   let detail = e.message ?? ''
   try { detail = JSON.parse(detail)?.error?.message ?? detail } catch { /* not JSON */ }
   if (detail && plainError(detail) !== detail.trim()) return plainError(detail)

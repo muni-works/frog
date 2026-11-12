@@ -20,7 +20,7 @@ VITE_PORT=${PARITY_VITE_PORT:-5199}
 CASES=(${=CASES:-$(node "$HERE/fuzz/cases.mjs" --list)})
 VARIANTS=(${=VARIANTS:-dark light narrow})
 OUT=${OUT:-$HERE/fuzz/shots}
-W=1100 H=760 NARROW=560
+W=1100 H=760 NARROW=680
 WORK=$(mktemp -d -t frog-fuzz)
 pids=()
 trap 'for p in $pids; do kill $p 2>/dev/null || true; done; rm -rf "$WORK"' EXIT
