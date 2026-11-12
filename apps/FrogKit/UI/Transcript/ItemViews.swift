@@ -255,12 +255,13 @@ struct ToolCallView: View {
 
     private var result: Item.ToolResult? { item.result }
     private var failed: Bool { result.map { $0.outcome != .ok } ?? false }
-    /// A shell row: its preview is the gist when one arrived (see `CommandGists`), else the
-    /// command elided against the session root so a worktree path can't eat the line.
+    /// The row's words: the gist when the engine's side-model sent one, else the argument
+    /// (a shell command elided against the session root, so a worktree path can't eat the
+    /// line). The argument stays the truth; the gist only reads better.
     private var isShell: Bool { name == "Bash" || name == "!" }
     private var root: String { conversation.folder.path }
     private var elided: String { CommandElision.elide(arg, from: root) }
-    private var gist: String? { isShell ? CommandGists.shared.gist(for: arg) : nil }
+    private var gist: String? { item.gist }
 
     var body: some View {
         VStack(alignment: .leading, spacing: TurnSpace.Inset.row) {

@@ -466,14 +466,12 @@ pub enum Event {
         id: String,
         item: Item,
     },
-    /// A one-line gist of a finished `Bash` tool call's command, written by a small
-    /// side-model in one batched call per turn flush (see `gist`). Live only: a
-    /// replaying client regenerates nothing, and shows the raw (elided) command.
-    CommandGisted {
-        /// The tool call's item id.
+    /// A one-line gist of a finished tool call, written by a small side-model in one batched
+    /// call per turn (see `gist`): "searched the engine for where gists flush". Durable, so a
+    /// replayed session shows the same lines; the row's own argument stays the fallback.
+    ItemGisted {
+        /// The tool call's item id, which the client already drew.
         item: String,
-        /// The command it ran, for hashing on the client (cache).
-        command: String,
         /// The gist, one line; empty never arrives (the event is only sent when there is one).
         gist: String,
     },
@@ -931,6 +929,7 @@ impl Event {
                 | Self::ShellCwd { .. }
                 | Self::ModeChanged { .. }
                 | Self::Titled { .. }
+                | Self::ItemGisted { .. }
                 | Self::ChapterTitled { .. }
                 | Self::PaneOpened { .. }
                 | Self::PaneClosed { .. }
@@ -1658,6 +1657,21 @@ mod tests {
             r#"{"event":"question","id":"q1","item":"t1","question":"Which?","options":[{"label":"A"}],"allow_other":true}"#
         );
         assert!(!asked.is_durable());
+    }
+
+    /// A gist is durable, so a replayed session shows the same lines as the live one did:
+    /// the log keeps it and the client re-reads it rather than asking a model again.
+    #[test]
+    fn item_gisted_is_durable_and_keyed_by_item() {
+        let gisted = Event::ItemGisted {
+            item: "t1".into(),
+            gist: "searched the engine for where gists flush".into(),
+        };
+        assert_eq!(
+            serde_json::to_string(&gisted).unwrap(),
+            r#"{"event":"item_gisted","item":"t1","gist":"searched the engine for where gists flush"}"#
+        );
+        assert!(gisted.is_durable());
     }
 
     /// A subagent's steps survive a reopen: started/completed items inside a `subagent`

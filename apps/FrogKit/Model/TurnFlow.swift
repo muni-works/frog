@@ -96,6 +96,8 @@ struct ItemStamp: Equatable {
     let ok: Bool
     let needsPermission: Bool
     let preview: Bool
+    /// The row's gist, which arrives after it finished: a change rebuilds the row.
+    let gist: String?
     let subagentItems: Int
     let subagentEnded: Date?
 }
@@ -106,6 +108,8 @@ extension ItemState {
         guard done else { return nil }
         return ItemStamp(id: id, text: text.utf8.count, output: output.utf8.count, result: result != nil,
                          ok: result?.outcome == .ok, needsPermission: needsPermission, preview: imagePreview != nil,
+                         // A gist lands after the row finished: it has to rebuild for it.
+                         gist: gist,
                          subagentItems: subagent?.items.count ?? 0, subagentEnded: subagent?.endedAt)
     }
 

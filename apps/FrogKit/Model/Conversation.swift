@@ -853,11 +853,10 @@ final class Conversation {
             }
             if case .toolCall = item, isNews(env) { stepsDone += 1 }
             changesVersion += 1
-        case .commandGisted(_, let command, let gist):
-            // A finished shell command's one-line summary, written in one batched side-model
-            // call per turn flush (live only). Cached by command hash so identical rows share
-            // it and later turns reuse it; rows read the cache (an @Observable) and rebuild.
-            CommandGists.shared.record(command: command, gist: gist)
+        case .itemGisted(let item, let gist):
+            // A finished call's one-line summary, from the engine's side-model. It lands on the
+            // row itself, so it survives a replay and a reload: nothing is cached here.
+            upsert(item) { $0.gist = gist.isEmpty ? nil : gist }
         case .nextSuggested(_, let text, let act):
             // Live only: a replay never brings back a suggestion for a turn long gone.
             if isNews(env), !text.isEmpty { next = Next(text: text, act: act) }

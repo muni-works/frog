@@ -10,6 +10,9 @@ export interface Entry {
   name?: string
   arg?: string
   display?: string | null
+  /** A one-line gist of what the call did, from the engine's side-model. The argument stays
+   * the fallback: a row without one reads as it always did. */
+  gist?: string | null
   outcome?: ToolOutcome
   diff?: FileDiff
   /** A Visualize result, drawn as a sandboxed card. */
@@ -125,6 +128,9 @@ function apply(t: Thread, ev: Event, created: number): Thread {
       const next = patch(t, ev.id, (e) => (d.type === 'output' ? { ...e, output: e.output + d.text } : { ...e, text: e.text + d.text }))
       return d.type === 'output' ? { ...next, terminal: next.terminal + d.text } : next
     }
+    case 'item_gisted':
+      // A finished call's one-line summary from the engine's side-model, landing on its row.
+      return patch(t, ev.item, (e) => ({ ...e, gist: ev.gist || null }))
     case 'item_completed': {
       const it = ev.item
       const next = patch(t, ev.id, (e) => it.type === 'tool_call'

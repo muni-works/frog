@@ -1,9 +1,8 @@
 import XCTest
 @testable import Frog
 
-/// The tool row's command UX: gist preview when cached, elided-command fallback, the
-/// hash-keyed gist cache (one gist per unique command), and path elision against the
-/// session root.
+/// The tool row's command UX: the gist preview when the engine's side-model sent one, the
+/// elided-command fallback, and path elision against the session root.
 @MainActor
 final class CommandRowTests: XCTestCase {
     private let root = "/Users/cam/Developer/frog/.frog/worktrees/tool-row-ux"
@@ -41,42 +40,24 @@ final class CommandRowTests: XCTestCase {
             "ls \"quoted\" 'single'")
     }
 
-    // MARK: The gist cache
+    // MARK: The row's words
 
-    func testIdenticalCommandsShareOneGist() {
-        let gists = CommandGists.shared
-        gists.reset()
-        let command = "git --no-optional-locks log --oneline -5"
-        gists.record(command: command, gist: "git log of the worktree")
-        // A second event for the same command is a no-op: the first line stays.
-        gists.record(command: command, gist: "a different line that must not win")
-        XCTAssertEqual(gists.gist(for: command), "git log of the worktree")
-        // Two rows with the same command read the same gist (hash-keyed).
-        XCTAssertEqual(gists.gist(for: command), gists.gist(for: command))
-        // An empty gist never lands (the engine never sends one, and the row falls back).
-        gists.record(command: "cargo test", gist: "")
-        XCTAssertNil(gists.gist(for: "cargo test"))
-        gists.reset()
-    }
-
-    // MARK: The preview line's fallback
-
-    func testPreviewFallsBackToTheElidedCommandWhilePendingOrUnavailable() {
-        // No gist recorded: the row shows the elided command, never a blank line.
-        let gists = CommandGists.shared
-        gists.reset()
+    /// The gist is per item, not per command: two rows running the same command each keep
+    /// their own line, and a row with none falls back to the elided command.
+    func testTheGistBelongsToTheRow() {
+        var gisted = ItemState(id: "t1", kind: .tool(name: "Bash", arg: "git log --oneline -5"))
+        gisted.gist = "git log of the sleep-events worktree"
+        XCTAssertEqual(gisted.gist, "git log of the sleep-events worktree")
+        let bare = ItemState(id: "t2", kind: .tool(name: "Bash", arg: "git log --oneline -5"))
+        XCTAssertNil(bare.gist)
+        // The fallback is the elided command, never a blank line.
         let command = "cd /Users/cam/Developer/frog/.frog/worktrees/sleep-events && git --no-optional-locks log --oneline -5"
-        XCTAssertNil(gists.gist(for: command))
         XCTAssertEqual(
             CommandElision.elide(command, from: root),
             "cd worktrees/sleep-events && git --no-optional-locks log --oneline -5")
-        // With a gist, the same lookup answers (dart available, cached).
-        gists.record(command: command, gist: "git log of the worktree")
-        XCTAssertEqual(gists.gist(for: command), "git log of the worktree")
-        gists.reset()
     }
 
-    // MARK: The event decodes and lands in the cache
+    // MARK: The event decodes and lands on its row
 
     private var seq: UInt64 = 0
 
@@ -89,16 +70,24 @@ final class CommandRowTests: XCTestCase {
         c.ingest(env)
     }
 
-    func testCommandGistedEventDecodesAndRecords() throws {
-        let gists = CommandGists.shared
-        gists.reset()
+    func testItemGistedEventDecodesAndLandsOnTheRow() throws {
         let c = Conversation(folder: URL(fileURLWithPath: root), link: nil, replay: false)
-        ingest(c, #""command_gisted","item":"t1","command":"git log --oneline -5","gist":"git log of the sleep-events worktree""#)
-        XCTAssertEqual(gists.gist(for: "git log --oneline -5"), "git log of the sleep-events worktree")
-        // A duplicate command in a later turn reuses the one gist (hash cache).
-        ingest(c, #""command_gisted","item":"t2","command":"git log --oneline -5","gist":"second""#)
-        XCTAssertEqual(gists.gist(for: "git log --oneline -5"), "git log of the sleep-events worktree")
-        gists.reset()
+        ingest(c, #""item_started","id":"t1","kind":{"type":"tool_call","name":"Bash","arg":"git log --oneline -5"}"#)
+        ingest(c, #""item_gisted","item":"t1","gist":"git log of the sleep-events worktree""#)
+        let row = c.turns.last?.items.first { $0.id == "t1" }
+        XCTAssertEqual(row?.gist, "git log of the sleep-events worktree")
+        // A different row keeps its own (absent) line: nothing is shared by command.
+        ingest(c, #""item_started","id":"t2","kind":{"type":"tool_call","name":"Bash","arg":"git log --oneline -5"}"#)
+        let bare = c.turns.last?.items.first { $0.id == "t2" }
+        XCTAssertNil(bare?.gist)
+    }
+
+    /// An empty gist never arrives, but if one did it clears rather than showing a blank.
+    func testAnEmptyGistLeavesTheRowOnItsArgument() throws {
+        let c = Conversation(folder: URL(fileURLWithPath: root), link: nil, replay: false)
+        ingest(c, #""item_started","id":"t1","kind":{"type":"tool_call","name":"Bash","arg":"cargo test"}"#)
+        ingest(c, #""item_gisted","item":"t1","gist":"""#)
+        let row = c.turns.last?.items.first { $0.id == "t1" }
+        XCTAssertNil(row?.gist)
     }
 }
-
