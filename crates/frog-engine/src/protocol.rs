@@ -197,6 +197,16 @@ pub enum Op {
     SetTitle {
         title: String,
     },
+    /// Bind a pull request to this session, or update what's known about one already bound
+    /// (title, state, checks as a client last saw them). Answered with [`Event::Prs`].
+    BindPr {
+        pr: crate::prs::PrBinding,
+    },
+    /// Unbind `repo#number`. Answered with [`Event::Prs`].
+    UnbindPr {
+        repo: String,
+        number: u64,
+    },
     /// Answer an [`Event::Elicitation`]. `action` is `accept`, `decline` or `cancel`;
     /// `content` holds the form's values when accepting.
     Elicit {
@@ -632,6 +642,11 @@ pub enum Event {
     Titled {
         title: String,
     },
+    /// The PRs bound to this session, the whole list after every change. Durable, so a
+    /// resumed engine, a replay and every client agree (the composer's git line).
+    Prs {
+        prs: Vec<crate::prs::PrBinding>,
+    },
     PaneOpened {
         id: String,
         kind: PaneKind,
@@ -929,6 +944,7 @@ impl Event {
                 | Self::ShellCwd { .. }
                 | Self::ModeChanged { .. }
                 | Self::Titled { .. }
+                | Self::Prs { .. }
                 | Self::ItemGisted { .. }
                 | Self::ChapterTitled { .. }
                 | Self::PaneOpened { .. }

@@ -1991,6 +1991,41 @@
           "type": "object"
         },
         {
+          "description": "The PRs bound to this session, the whole list after every change. Durable, so a\nresumed engine, a replay and every client agree (the composer's git line).",
+          "properties": {
+            "created": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "event": {
+              "const": "prs",
+              "type": "string"
+            },
+            "prs": {
+              "items": {
+                "$ref": "#/$defs/PrBinding"
+              },
+              "type": "array"
+            },
+            "seq": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "prs",
+            "seq",
+            "session",
+            "created"
+          ],
+          "type": "object"
+        },
+        {
           "properties": {
             "created": {
               "format": "int64",
@@ -4012,6 +4047,26 @@
           "type": "object"
         },
         {
+          "description": "The PRs bound to this session, the whole list after every change. Durable, so a\nresumed engine, a replay and every client agree (the composer's git line).",
+          "properties": {
+            "event": {
+              "const": "prs",
+              "type": "string"
+            },
+            "prs": {
+              "items": {
+                "$ref": "#/$defs/PrBinding"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "event",
+            "prs"
+          ],
+          "type": "object"
+        },
+        {
           "properties": {
             "cwd": {
               "type": [
@@ -5844,6 +5899,46 @@
           "type": "object"
         },
         {
+          "description": "Bind a pull request to this session, or update what's known about one already bound\n(title, state, checks as a client last saw them). Answered with [`Event::Prs`].",
+          "properties": {
+            "op": {
+              "const": "bind_pr",
+              "type": "string"
+            },
+            "pr": {
+              "$ref": "#/$defs/PrBinding"
+            }
+          },
+          "required": [
+            "op",
+            "pr"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Unbind `repo#number`. Answered with [`Event::Prs`].",
+          "properties": {
+            "number": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "op": {
+              "const": "unbind_pr",
+              "type": "string"
+            },
+            "repo": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "repo",
+            "number"
+          ],
+          "type": "object"
+        },
+        {
           "description": "Answer an [`Event::Elicitation`]. `action` is `accept`, `decline` or `cancel`;\n`content` holds the form's values when accepting.",
           "properties": {
             "action": {
@@ -6388,6 +6483,56 @@
       },
       "required": [
         "text"
+      ],
+      "type": "object"
+    },
+    "PrBinding": {
+      "description": "One bound PR. `repo` is `owner/name`; the pair (`repo`, `number`) is its identity.",
+      "properties": {
+        "auto": {
+          "description": "Bound by the engine because the session's branch opened it (vs. by hand).",
+          "type": "boolean"
+        },
+        "checks": {
+          "description": "Passing and total checks, as last seen.",
+          "maxItems": 2,
+          "minItems": 2,
+          "prefixItems": [
+            {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          ],
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "number": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "repo": {
+          "type": "string"
+        },
+        "state": {
+          "description": "`draft`, `checks`, `failing`, `approved`, `merged` or `closed`, as last seen; empty\nuntil a client has looked.",
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "repo",
+        "number"
       ],
       "type": "object"
     },

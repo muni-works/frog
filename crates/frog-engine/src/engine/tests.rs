@@ -12039,3 +12039,72 @@ async fn with_every_node_down_the_turn_ends_with_one_line() {
     assert_eq!((a.chats(), b.chats()), (1, 1), "each node tried once");
     shutdown(h).await;
 }
+
+/// A PR opened from the session's branch binds itself, a client binds and unbinds others, and
+/// every change is a durable `Prs` with the whole list (so a replay renders the git line).
+#[tokio::test]
+async fn prs_bind_from_gh_pr_create_and_by_hand() {
+    let base = std::env::temp_dir().join(format!("frog-prs-{}", new_id()));
+    let (root, store) = (base.join("repo"), base.join("store"));
+    for d in [&root, &store] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    let script = vec![
+        reply(
+            vec![Block::ToolUse {
+                id: "a".into(),
+                name: "Bash".into(),
+                input: json!({ "command": "echo https://github.com/o/r/pull/9 # gh pr create --fill" }),
+            }],
+            Stop::ToolUse,
+        ),
+        reply(vec![text("opened")], Stop::End),
+    ];
+    let (mut h, _) = engine_sent(script, Some(store.clone()), None, None, root.clone());
+    while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+    h.ops
+        .send(Op::Submit { text: "open a pr".into(), images: Vec::new(), more: Vec::new() })
+        .unwrap();
+    let mut sid = String::new();
+    loop {
+        let env = h.events.recv().await.unwrap();
+        sid = env.session.clone();
+        if let Event::PermissionRequest { id, .. } = &env.event {
+            h.ops
+                .send(Op::Permission { id: id.clone(), decision: Decision::Allow, note: None })
+                .unwrap();
+        }
+        if matches!(env.event, Event::Idle) {
+            break;
+        }
+    }
+    h.ops
+        .send(Op::BindPr { pr: crate::prs::PrBinding::new("o/other", 4) })
+        .unwrap();
+    h.ops.send(Op::UnbindPr { repo: "o/r".into(), number: 9 }).unwrap();
+    let mut seen = 0;
+    while seen < 2 {
+        if let Event::Prs { .. } = h.events.recv().await.unwrap().event {
+            seen += 1;
+        }
+    }
+    shutdown(h).await;
+    let logged: Vec<Vec<(String, u64, bool)>> = session::load(&store, &sid)
+        .unwrap()
+        .events
+        .into_iter()
+        .filter_map(|e| match e.event {
+            Event::Prs { prs } => Some(prs.into_iter().map(|p| (p.repo, p.number, p.auto)).collect()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        logged,
+        vec![
+            vec![("o/r".to_string(), 9, true)],
+            vec![("o/r".to_string(), 9, true), ("o/other".to_string(), 4, false)],
+            vec![("o/other".to_string(), 4, false)],
+        ]
+    );
+    let _ = std::fs::remove_dir_all(base);
+}

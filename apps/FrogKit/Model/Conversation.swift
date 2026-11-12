@@ -120,6 +120,8 @@ final class Conversation {
     /// Events that arrived while replaying, folded in together once the history is all here.
     @ObservationIgnored private var held: [Envelope] = []
     private(set) var title: String?
+    /// PRs bound to the session (the engine's `Prs`): the composer's git line.
+    private(set) var prs: [PrBinding] = []
     /// Where the agent moved this conversation (`UseFolder`), if not the folder it runs in.
     /// The pane reopens it there once the turn is over (see `Panes.move`).
     private(set) var movedTo: URL?
@@ -1054,6 +1056,8 @@ final class Conversation {
             title = t
             onSessionChange?()
             sessionChanged?()
+        case .prs(let list):
+            prs = list
         case .folderChanged(let cwd):
             let url = URL(fileURLWithPath: cwd)
             let here = folder.resolvingSymlinksInPath().standardizedFileURL.path

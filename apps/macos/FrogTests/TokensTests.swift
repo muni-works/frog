@@ -48,6 +48,8 @@ final class TokensTests: XCTestCase {
         "text": Tokens.text, "textSecondary": Tokens.textSecondary, "textTertiary": Tokens.textTertiary,
         "textQuaternary": Tokens.textQuaternary, "accent": Tokens.accent, "signal": Tokens.signal, "fail": Tokens.fail,
         "placeLocal": Tokens.placeLocal, "placeCloud": Tokens.placeCloud,
+        "prFailing": Tokens.prFailing, "prChecks": Tokens.prChecks, "prDraft": Tokens.prDraft,
+        "prApproved": Tokens.prApproved, "prClosed": Tokens.prClosed, "prMerged": Tokens.prMerged,
     ]
 
     func testColorsMatchTheJSON() throws {

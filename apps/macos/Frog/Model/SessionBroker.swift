@@ -1769,8 +1769,9 @@ extension SessionBroker {
         case .yolo: ["--yolo"]
         case .auto: ["--auto"]
         case .acceptEdits: ["--accept-edits"]
-        case .default: []
+        case .default: ["--mode", "default"]
         }
-        return flag + ["--worker"] + Workspace.engineFlags(chat: false).filter { $0 != "--yolo" && $0 != "--auto" && $0 != "--accept-edits" }
+        let modeFlags: Set<String> = ["--yolo", "--auto", "--accept-edits", "--mode", "default"]
+        return flag + ["--worker"] + Workspace.engineFlags(chat: false).filter { !modeFlags.contains($0) }
     }
 }
