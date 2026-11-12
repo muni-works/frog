@@ -1,7 +1,7 @@
 import { Fragment, memo, useEffect, useMemo, useRef, useState } from 'react'
-import { servedClass, type FileDiff, type Image } from '../cloud/protocol'
+import type { FileDiff, Image } from '../cloud/protocol'
 import type { Ask, Entry, Question, Thread } from '../engine/thread'
-import type { Model } from '../models'
+import { placeColor, type Model } from '../models'
 import { ElicitationCard, QuestionCard } from './AskCards'
 import { Markdown } from './Markdown'
 import { Hunks } from './Diff'
@@ -268,7 +268,7 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
         if (e.kind === 'reasoning') return (
           <ThoughtLine key={e.id} text={e.text} />
         )
-        if (e.kind === 'message') return <div key={e.id} className={`say ${servedClass(turn.usage?.served_by)}`} title={turn.usage?.served_by ? `Served by ${turn.usage.served_by.name}` : undefined}><Markdown text={e.text} />{!e.done && <span className="caret" />}</div>
+        if (e.kind === 'message') return <div key={e.id} className={`say ${turn.usage?.served_by ? 'served' : ''}`} style={turn.usage?.served_by ? { ['--served' as string]: placeColor('cloud') } : undefined} title={turn.usage?.served_by ? `Served by ${turn.usage.served_by.name}` : undefined}><Markdown text={e.text} />{!e.done && <span className="caret" />}</div>
         if (question?.item === e.id) return <QuestionCard key={e.id} q={question} onAnswer={cb.onAnswer} />
         const asking = ask?.item === e.id ? ask : null
         const diff = e.diff ?? asking?.preview

@@ -226,7 +226,7 @@ struct ChatView: View {
                         .disabled(!canSend)
                         .onSubmit(send)
                     SendButton(conversation: conversation, canSend: canSend && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty),
-                               send: send, tint: Color.place(cloud: identity?.place.isCloud ?? false))
+                               send: send, tint: Color.place(identity?.place ?? .mac))
                         .transition(.scale.combined(with: .opacity))
                 }
                 .animation(.spring(duration: 0.3, bounce: 0.3), value: conversation.busy)

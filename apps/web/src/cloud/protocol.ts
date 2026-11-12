@@ -101,11 +101,6 @@ export interface ServedBy {
   third_party?: boolean;
 }
 
-/** Blue on Frog Cloud's own GPUs, green for a third party (the `served-*` classes). */
-export function servedClass(s: ServedBy | null | undefined): string {
-  if (!s) return '';
-  return (s.third_party ?? s.id !== 'frog') ? 'served-third' : 'served-frog';
-}
 
 export type Event =
   | { event: "turn_started"; turn: number; input: string; images?: Image[]; more?: Part[] }

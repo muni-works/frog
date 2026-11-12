@@ -78,7 +78,22 @@ One view, `ModelLabel(identity, size:)`, in four sizes. Every surface picks a si
 | `.menu` | name, place as a subtitle, checkmark | Model menu, Settings default picker, Race sheet, command palette |
 | `.caption` | place icon and name in secondary text | empty conversation, turn footer, session hover |
 
-The place icon is `laptopcomputer` for On this Mac, `apple.intelligence` for Apple Intelligence, `server.rack` for your own servers, `cloud` for Cloud. Cloud names carry a faint tint of the cloud color, while On this Mac stays neutral. Like Safari's lock, the signal is small, always in the same spot, and never loud.
+The place icon is `laptopcomputer` for On this Mac, `apple.intelligence` for Apple Intelligence, `server.rack` for your own servers, `cloud` for Cloud. Like Safari's lock, the signal is small, always in the same spot, and never loud.
+
+### Place color
+
+A model's name, its place tag and the "where it runs" chip are colored by where the model runs, and by nothing else. **Cloud is green, local is blue, everywhere**: the Mac, the phone and the web.
+
+| Place | Color | Token |
+|---|---|---|
+| Any cloud: Frog Cloud, and Anthropic or OpenAI with your own key | cloud green: frog green, the accent (`#2e9e4f` light, `#58cc6f` dark) | `place-cloud` / `Tokens.placeCloud` |
+| Local: this Mac, Apple Intelligence, a paired node or your own server | local blue (`#3478e0` light, `#64a4ff` dark) | `place-local` / `Tokens.placeLocal` |
+
+- Third-party clouds are cloud green too. The color answers "does my code leave my machines?", and for Anthropic or OpenAI it does, the same as for Frog Cloud.
+- A Frog Cloud turn is green whoever's GPUs served it. The served-by name in the footer is a place tag, so it's green too; it no longer turns blue on Frog Cloud's own GPUs.
+- One function decides: `Color.place(_:)` in FrogKit (`ModelIdentity.Place.color` calls it) and `placeColor(placeOf(spec))` in `apps/web/src/models.ts`. No view picks its own green or blue for a place, and `ModelLabel` and `PlaceIcon` take no tint. `ModelIdentityTests` and `apps/web/test/place.test.ts` fail on any that does.
+- Status colors are not place colors: a device's online dot, a running spinner and the send button's ready state keep their own meaning.
+- Both colors come from `design/tokens.json`. The blue sits at the green's lightness so neither shouts: 4.3:1 on white and 8.3:1 on black, against the green's 3.4:1 and 10:1.
 
 VoiceOver reads every size as one element: "Qwen3 8B, on this Mac, free" or "Claude Sonnet 5, cloud, Anthropic, about 4 cents a turn".
 

@@ -9,6 +9,16 @@ export interface Model { id: string; context: number | null; input: number | nul
 
 export const spec = (id: string) => `cloud/${id}`
 
+/** Where a model runs: `local` for this Mac, Apple's model and paired nodes; every other
+ *  provider (Frog Cloud, Anthropic, OpenAI) is `cloud`. Mirrors FrogKit's `ModelIdentity.Place`. */
+export type Place = 'cloud' | 'local'
+export const placeOf = (spec: string | null | undefined): Place =>
+  /^(local|apple|node|ollama|lmstudio)\//.test(spec ?? '') ? 'local' : 'cloud'
+
+/** The one place color rule (docs/models.md, "Place color"): cloud green, local blue. Every
+ *  model name, place tag and "where it runs" chip takes its color from here, never its own. */
+export const placeColor = (p: Place): string => (p === 'cloud' ? 'var(--place-cloud)' : 'var(--place-local)')
+
 /** Frog Cloud's old model ids and their explicit names today. The gateway still answers the
  *  old ones; a remembered pick or an old session's spec reads as today's id. */
 const OLD_IDS: Record<string, string> = { bull: 'deepseek-v4.1-flash', tree: 'glm-5.3-flash', dart: 'qwen3-coder-next' }

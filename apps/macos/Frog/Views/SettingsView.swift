@@ -503,7 +503,7 @@ struct FrogCloudCard: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "cloud.fill").foregroundStyle(.green.opacity(0.85)).frame(width: 20)
+            Image(systemName: "cloud.fill").foregroundStyle(Color.place(.frogCloud)).frame(width: 20)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(ProviderID.cloudName)
@@ -511,8 +511,8 @@ struct FrogCloudCard: View {
                         .font(.caption2.weight(.semibold))
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
-                        .background(.green.opacity(0.18), in: .capsule)
-                        .foregroundStyle(.green)
+                        .background(Color.place(.frogCloud).opacity(0.18), in: .capsule)
+                        .foregroundStyle(Color.place(.frogCloud))
                 }
                 Text(Self.keyLine(provider?.key) ?? "Fast hosted models from frog. Sign in or add a key to use them.")
                     .font(.frog(size: 10))

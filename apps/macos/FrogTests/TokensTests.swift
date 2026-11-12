@@ -47,6 +47,7 @@ final class TokensTests: XCTestCase {
         "well": Tokens.well, "hover": Tokens.hover, "hairline": Tokens.hairline, "hairlineStrong": Tokens.hairlineStrong,
         "text": Tokens.text, "textSecondary": Tokens.textSecondary, "textTertiary": Tokens.textTertiary,
         "textQuaternary": Tokens.textQuaternary, "accent": Tokens.accent, "signal": Tokens.signal, "fail": Tokens.fail,
+        "placeLocal": Tokens.placeLocal, "placeCloud": Tokens.placeCloud,
     ]
 
     func testColorsMatchTheJSON() throws {

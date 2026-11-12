@@ -41,9 +41,12 @@ struct DeviceChip: View {
             Button { open.toggle() } label: {
                 HStack(spacing: 5) {
                     BreathingDot(live: conversation.busy)
-                    Image(systemName: serving.symbol)
-                    Text("on \(serving.name)")
-                        .lineLimit(1)
+                    Group {
+                        Image(systemName: serving.symbol)
+                        Text("on \(serving.name)")
+                            .lineLimit(1)
+                    }
+                    .foregroundStyle(Color.place(serving.place))
                     if let tps = status.tokensPerSec, tps > 0 {
                         Text("· " + ModelStats.speedText(tps))
                             .foregroundStyle(Tokens.textTertiary)
@@ -126,7 +129,7 @@ private struct DeviceMap: View {
             let placed = layout(in: size)
             ZStack {
                 ForEach(placed, id: \.0.id) { d, p in
-                    MapLink(from: center, to: p,
+                    MapLink(from: center, to: p, place: d.place,
                             lit: d.id == serving, live: live && d.id == serving,
                             online: d.online,
                             label: linkLabel(d))
@@ -193,6 +196,8 @@ private struct DeviceMap: View {
 private struct MapLink: View {
     let from: CGPoint
     let to: CGPoint
+    /// The far end's place: a lit link takes its color, blue to a node, green to the cloud.
+    let place: ModelIdentity.Place
     let lit: Bool
     let live: Bool
     let online: Bool
@@ -207,13 +212,13 @@ private struct MapLink: View {
                     p.move(to: from)
                     p.addLine(to: to)
                 }
-                .stroke(lit ? Tokens.accent : (online ? Tokens.textTertiary : Tokens.textQuaternary),
+                .stroke(lit ? Color.place(place) : (online ? Tokens.textTertiary : Tokens.textQuaternary),
                         style: StrokeStyle(lineWidth: lit ? 2 : 1.25, lineCap: .round,
                                            dash: live ? [6, 4] : (online ? [] : [3, 4]), dashPhase: phase))
             }
             Text(label)
                 .font(.frog(size: 10, weight: .medium))
-                .foregroundStyle(lit ? Tokens.accent : Tokens.textSecondary)
+                .foregroundStyle(lit ? Color.place(place) : Tokens.textSecondary)
                 .monospacedDigit()
                 .padding(.horizontal, 7)
                 .padding(.vertical, 3)
@@ -281,7 +286,7 @@ struct DeviceCard: View {
         .overlay {
             if serving {
                 RoundedRectangle(cornerRadius: compact ? 11 : 14, style: .continuous)
-                    .strokeBorder(Tokens.accent, lineWidth: 1.5)
+                    .strokeBorder(Color.place(device.place), lineWidth: 1.5)
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: compact ? 11 : 14, style: .continuous))
@@ -366,7 +371,7 @@ struct DeviceCard: View {
                     if !compact || serving {
                         Text(serving ? "this turn" : (device.loading != nil ? "Loading" : "Loaded"))
                             .font(.frog(size: 10))
-                            .foregroundStyle(serving ? Tokens.accent : Tokens.textTertiary)
+                            .foregroundStyle(serving ? Color.place(device.place) : Tokens.textTertiary)
                     }
                     Text(model)
                         .font(.frog(size: compact ? 11 : 12, weight: .medium))
