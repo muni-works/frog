@@ -1,4 +1,4 @@
-import type { ElicitSchema, EndReason, Envelope, Event, FileDiff, Image, Mode, Part, Todo, ToolOutcome, TurnUsage } from '../cloud/protocol'
+import type { ElicitSchema, EndReason, Envelope, Event, FileDiff, Image, Mode, Part, Todo, ToolOutcome, TurnUsage, Widget } from '../cloud/protocol'
 
 // Folds a session's envelopes into what the transcript draws. Pure, so replay and
 // live streaming share one path: `reduce(thread, envelope)` for every envelope in order.
@@ -12,6 +12,8 @@ export interface Entry {
   display?: string | null
   outcome?: ToolOutcome
   diff?: FileDiff
+  /** A Visualize result, drawn as a sandboxed card. */
+  widget?: Widget
   output: string
   done: boolean
 }
@@ -126,7 +128,7 @@ function apply(t: Thread, ev: Event, created: number): Thread {
     case 'item_completed': {
       const it = ev.item
       const next = patch(t, ev.id, (e) => it.type === 'tool_call'
-        ? { ...e, done: true, outcome: it.outcome, display: it.display, diff: it.diff, output: it.output }
+        ? { ...e, done: true, outcome: it.outcome, display: it.display, diff: it.diff, ...(it.widget ? { widget: it.widget } : {}), output: it.output }
         : { ...e, done: true, text: it.text })
       if (it.type === 'tool_call' && it.diff && it.outcome === 'ok') {
         // A file edited several times keeps every edit's hunks and the summed counts.

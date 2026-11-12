@@ -214,7 +214,7 @@ pub fn spec(weak: bool) -> ToolSpec {
     if kinds.contains(&"diagram") {
         variants.push(json!({"type": "object", "properties": {
             "type": {"const": "diagram"}
-        }, "required": ["type", "nodes"], "description": "the Diagram tool's arguments, plus type"}));
+        }, "required": ["type", "nodes"], "description": "a diagram: kind, title, nodes, edges (and groups), plus type"}));
     }
     ToolSpec {
         name: TOOL.into(),

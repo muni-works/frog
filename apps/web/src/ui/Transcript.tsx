@@ -7,6 +7,7 @@ import { Markdown } from './Markdown'
 import { Hunks } from './Diff'
 import { endError } from '../store'
 import { TurnFooter } from './TurnFooter'
+import { WidgetCard } from './Widget'
 
 // Draws a folded Thread: the user's message, tool lines, "Decided" steps (reasoning items),
 // streamed replies, and a diff card per edit with Allow ⌘↩ / Deny ⌘. while it waits.
@@ -53,6 +54,8 @@ const TOOL_LOOK: Record<string, { verb: [string, string]; icon: string }> = {
   webfetch: { verb: ['Fetching', 'Fetched'], icon: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18' },
   websearch: { verb: ['Searching the web for', 'Searched the web for'], icon: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18' },
   todowrite: { verb: ['Planning', 'Planned'], icon: 'M9 6h11M9 12h11M9 18h11M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2' },
+  visualize: { verb: ['Making a visual', 'Made a visual'], icon: 'M4 19V5M4 19h16M8 15l3-4 3 2 5-6' },
+  visualguide: { verb: ['Reading the visual guide', 'Read the visual guide'], icon: 'M6 3h8l4 4v14H6zM14 3v4h4' },
   settitle: { verb: ['Naming', 'Named'], icon: 'M4 7V5h16v2M12 5v14M9 19h6' },
   // A child session, as on Mac (ActivityLine): "Ran an agent <what it was asked>".
   task: { verb: ['Running an agent', 'Ran an agent'], icon: 'M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM3 20c0-3 3-5 6-5s6 2 6 5M16 11a3 3 0 1 0 0-6M18 15c2 .6 3 2.4 3 5' },
@@ -175,7 +178,7 @@ function AskCard({ ask, onDecide }: { ask: Ask; onDecide: Decide }) {
 
 const NO_MODELS: Model[] = []
 
-export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, models = NO_MODELS, outbox = [], onResend, onEdit, waiting, onContinue }: {
+export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, models = NO_MODELS, outbox = [], onResend, onEdit, waiting, onContinue, onPrompt }: {
   thread: Thread
   onDecide: Decide
   onAnswer: (choices: string[], other?: string) => void
@@ -192,19 +195,22 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
   onContinue?: () => void
   /** What a sent message is waiting on, in a few words ("waking the sandbox"). */
   waiting?: string
+  /** A visual's `sendPrompt`: send this as the user's next message. */
+  onPrompt?: (text: string) => void
 }) {
   // The live turn is the last one by position: turn numbers can repeat after a resume.
   const lastIdx = thread.turns.length - 1
   // Handlers change identity every render; turns read them through one stable ref so a
   // streamed delta redraws only the turn it touched.
-  const latest = useRef({ onDecide, onAnswer, onRetry, onEdit, onContinue })
-  latest.current = { onDecide, onAnswer, onRetry, onEdit, onContinue }
+  const latest = useRef({ onDecide, onAnswer, onRetry, onEdit, onContinue, onPrompt })
+  latest.current = { onDecide, onAnswer, onRetry, onEdit, onContinue, onPrompt }
   const cb = useMemo<TurnCallbacks>(() => ({
     onDecide: (a, o) => latest.current.onDecide(a, o),
     onAnswer: (c, o) => latest.current.onAnswer(c, o),
     onRetry: () => latest.current.onRetry?.(),
     onEdit: (t) => latest.current.onEdit?.(t),
     onContinue: () => latest.current.onContinue?.(),
+    onPrompt: (t) => latest.current.onPrompt?.(t),
   }), [])
   const has = { retry: !!onRetry, edit: !!onEdit, cont: !!onContinue }
   return (
@@ -248,6 +254,7 @@ interface TurnCallbacks {
   onRetry: () => void
   onEdit: (text: string) => void
   onContinue: () => void
+  onPrompt: (text: string) => void
 }
 
 /** One turn. Memoized: the reducer keeps untouched turns the same object, so while the last
@@ -293,6 +300,7 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
             note="Runs in your cloud sandbox. Nothing is pushed until you say so." />
         )
         if (asking) return <AskCard key={e.id} ask={asking} onDecide={cb.onDecide} />
+        if (e.widget && e.outcome === 'ok') return <WidgetCard key={e.id} widget={e.widget} onPrompt={cb.onPrompt} />
         return <ToolLine key={e.id} e={e} />
       })}
       {turn.usage && (turn.reason?.type === 'complete' || turn.reason?.type === 'denied') && (

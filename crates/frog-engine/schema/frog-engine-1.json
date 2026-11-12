@@ -5180,6 +5180,17 @@
             "type": {
               "const": "tool_call",
               "type": "string"
+            },
+            "widget": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Widget"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Set for Visualize: the widget and the sandboxed document that draws it."
             }
           },
           "required": [
@@ -7011,6 +7022,28 @@
         "input_tokens",
         "output_tokens",
         "model_calls"
+      ],
+      "type": "object"
+    },
+    "Widget": {
+      "description": "The widget as the model wrote it, plus the document clients load.",
+      "properties": {
+        "code": {
+          "description": "The model's HTML or SVG fragment (what \"Source\" shows).",
+          "type": "string"
+        },
+        "html": {
+          "description": "A complete HTML document wrapping `code`: load it into a sandboxed view as is.",
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "code",
+        "html"
       ],
       "type": "object"
     }

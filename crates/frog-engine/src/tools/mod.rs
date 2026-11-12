@@ -1,6 +1,7 @@
 pub mod bash;
 pub mod compare;
 pub mod diagram;
+pub mod visualize;
 pub mod docs;
 pub mod fs;
 pub mod image;
@@ -57,6 +58,8 @@ pub struct Ctx {
     pub cancel: Option<tokio_util::sync::CancellationToken>,
     /// Web settings, the page cache and the search backend.
     pub web: std::sync::Arc<web::Web>,
+    /// The model has read `VisualGuide` this session (or been told to).
+    pub visual_guide: bool,
 }
 
 impl Ctx {
@@ -78,6 +81,7 @@ impl Ctx {
             preview: None,
             cancel: None,
             web: Default::default(),
+            visual_guide: false,
         }
     }
 
@@ -239,6 +243,8 @@ pub struct Output {
     pub diagram: Option<Box<crate::diagram::Diagram>>,
     /// Validated blocks, for Present.
     pub present: Option<Box<crate::present::Present>>,
+    /// An interactive HTML/SVG widget, for Visualize.
+    pub widget: Option<Box<crate::widget::Widget>>,
     /// Images to show the user (MCP results).
     pub images: Vec<crate::protocol::Image>,
     /// An MCP App to host for this result.
@@ -256,6 +262,7 @@ impl Output {
             diff: None,
             diagram: None,
             present: None,
+            widget: None,
             images: Vec::new(),
             app: None,
             notify: None,
@@ -273,7 +280,8 @@ pub fn specs() -> Vec<ToolSpec> {
         search::grep_spec(),
         todo::spec(),
         notify::spec(),
-        diagram::spec(),
+        visualize::guide_spec(),
+        visualize::spec(),
         image::spec(),
         screenshot::spec(),
         compare::spec(),
@@ -321,7 +329,8 @@ pub async fn run(name: &str, input: &Value, ctx: &mut Ctx) -> Result<Output> {
         "Grep" => search::grep(input, ctx).await,
         "TodoWrite" => todo::run(input, ctx),
         notify::TOOL => notify::run(input, ctx),
-        "Diagram" => diagram::run(input, ctx),
+        visualize::TOOL => visualize::run(input, ctx),
+        visualize::GUIDE => visualize::guide(input, ctx),
         "Image" => image::run(input, ctx).await,
         "Screenshot" => screenshot::run(input, ctx).await,
         "Compare" => compare::run(input, ctx).await,
@@ -330,7 +339,7 @@ pub async fn run(name: &str, input: &Value, ctx: &mut Ctx) -> Result<Output> {
         "WebSearch" => websearch::run(input, ctx).await,
         "Docs" => docs::run(input, ctx).await,
         _ => bail!(
-            "unknown tool `{name}`. Available: Bash, Terminal, Read, Write, Edit, Glob, Grep, TodoWrite, Diagram, Image, Screenshot, Compare, CodeMap, WebFetch, Docs"
+            "unknown tool `{name}`. Available: Bash, Terminal, Read, Write, Edit, Glob, Grep, TodoWrite, Visualize, VisualGuide, Image, Screenshot, Compare, CodeMap, WebFetch, Docs"
         ),
     }
 }
@@ -342,7 +351,7 @@ pub fn label(name: &str, input: &Value, ctx: &Ctx) -> (String, String) {
         "Bash" => s("command").lines().next().unwrap_or("").to_string(),
         "Read" | "Write" | "Edit" => ctx.display(&ctx.resolve(&s("file_path"))),
         "Glob" | "Grep" => s("pattern"),
-        "Diagram" => s("title"),
+        "Diagram" | visualize::TOOL => s("title"),
         "Image" => s("prompt"),
         "Screenshot" => s("url"),
         "Compare" => format!("{} → {}", s("target"), s("actual")),

@@ -82,6 +82,7 @@ pub async fn read(input: &Value, ctx: &mut Ctx) -> Result<Output> {
             diff: None,
             diagram: None,
             present: None,
+            widget: None,
             ..Default::default()
         });
     }
@@ -117,6 +118,7 @@ pub async fn read(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         diff: None,
         diagram: None,
         present: None,
+        widget: None,
         ..Default::default()
     })
 }
@@ -158,6 +160,7 @@ fn list_dir(path: &Path, ctx: &Ctx) -> Result<Output> {
         diff: None,
         diagram: None,
         present: None,
+        widget: None,
         ..Default::default()
     })
 }
@@ -204,6 +207,7 @@ pub async fn write(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         diff: Some(structured),
         diagram: None,
         present: None,
+        widget: None,
         ..Default::default()
     })
 }
@@ -264,6 +268,7 @@ pub async fn edit(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         diff: Some(file_diff(&ctx.display(&path), Some(&text), &updated)),
         diagram: None,
         present: None,
+        widget: None,
         ..Default::default()
     })
 }

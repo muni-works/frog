@@ -989,6 +989,9 @@ pub enum Item {
         /// Set for Present: validated blocks, ready to draw.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         present: Option<Box<crate::present::Present>>,
+        /// Set for Visualize: the widget and the sandboxed document that draws it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        widget: Option<Box<crate::widget::Widget>>,
         /// Images the tool returned (MCP servers), shown to the user.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         images: Vec<Image>,

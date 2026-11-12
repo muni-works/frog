@@ -503,6 +503,7 @@ export default function App() {
               onAnswer={(choices, other) => ct.question && cloud?.send(current.id, { op: 'answer', id: ct.question.id, choices, ...(other ? { other } : {}) })}
               onElicit={(action, content) => ct.elicitation && cloud?.send(current.id, { op: 'elicit', id: ct.elicitation.id, action, ...(content ? { content } : {}) })}
               onRetry={() => send(current.id, 'Try that again.')}
+              onPrompt={(text) => send(current.id, text)}
               outbox={outbox[current.id]} onResend={(n) => resend(current.id, n)}
               waiting={cs?.state === 'connecting' ? (cs.attempt ? 'reconnecting to the sandbox' : 'connecting to the sandbox')
                 : current.state === 'sleeping' ? 'waking the sandbox' : current.state === 'starting' ? 'starting the sandbox'

@@ -354,6 +354,7 @@ root {}. Re-`cd` if you need the old location back.</system-note>",
             image: self.ctx.image.clone(),
             screenshot_endpoint: self.ctx.screenshot_endpoint.clone(),
             judge: self.ctx.judge.clone(),
+            visual_guide: self.ctx.visual_guide,
         })
     }
 
@@ -703,6 +704,7 @@ Don't repeat it. Change the arguments or try a different approach.",
                     diff: out.diff,
                     diagram: out.diagram,
                     present: out.present,
+                    widget: out.widget,
                     images: out.images,
                     app: out.app,
                 },

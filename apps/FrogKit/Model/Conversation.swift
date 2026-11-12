@@ -1136,7 +1136,7 @@ final class Conversation {
                 return "Subagent: \(current.subagent?.activity ?? "Starting")"
             }
             if current.needsPermission { return nil }
-            if case .tool(let name, _) = current.kind, name == "Diagram" { return nil }
+            if case .tool(let name, _) = current.kind, name == "Diagram" || name == "Visualize" { return nil }
             return ActivityWords.now(current)
         }
         if let m = last.items.last, m.kind == .message, !m.done, !m.text.isEmpty { return "Writing…" }

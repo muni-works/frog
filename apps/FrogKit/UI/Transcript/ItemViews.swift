@@ -27,6 +27,13 @@ struct ItemView: View {
                 ProgressView().controlSize(.small)
                 Text(arg.isEmpty ? "Drawing a diagram…" : "Drawing \(arg)…").font(.callout).foregroundStyle(.secondary)
             }
+        case .tool("Visualize", _) where item.result?.widget != nil && item.result?.outcome == .ok:
+            WidgetCard(widget: item.result!.widget!, conversation: conversation)
+        case .tool("Visualize", let arg) where !item.done:
+            HStack(spacing: TurnSpace.Inset.row) {
+                ProgressView().controlSize(.small)
+                Text(arg.isEmpty ? "Making a visual…" : "Making \(VisualWidget(title: arg, code: "", html: "").displayTitle)…").font(.callout).foregroundStyle(.secondary)
+            }
         case .tool("Present", _) where item.result?.present != nil:
             PresentCard(present: item.result!.present!, act: conversation.act)
         case .tool("Task", let arg):

@@ -35,6 +35,7 @@ struct TurnFlow {
             guard case .tool(let name, _) = item.kind else { return false }
             if !item.done && item.imagePreview != nil { return true }
             if name == "Diagram" { return item.result?.diagram != nil || !item.done }
+            if name == "Visualize" { return item.result?.widget != nil || !item.done }
             guard let r = item.result, r.outcome == .ok else { return false }
             if r.present != nil { return true }
             if let app = r.app { return latestApp[app.server + app.uri] == item.id }
@@ -274,6 +275,8 @@ enum ActivityWords {
         case "Screenshot": return [.text("captured the page")]
         case "Compare": return [.text("compared the images")]
         case "Diagram": return [.text("drew a diagram")]
+        case "Visualize": return [.text(calls.count == 1 ? "made a visual" : "made \(count(calls.count, "visual"))")]
+        case "VisualGuide": return [.text("read the visual guide")]
         case "Present": return [.text("showed results")]
         case "Ask": return [.text(calls.count == 1 ? "asked you" : "asked you \(count(calls.count, "question"))")]
         case "CodeMap": return [.text("mapped the code")]
@@ -313,6 +316,8 @@ enum ActivityWords {
             case "Task": return arg.isEmpty ? "Ran an agent" : "Agent: \(arg)"
             case "TodoWrite": return "Updated the plan"
             case "Diagram": return arg.isEmpty ? "Drew a diagram" : "Drew \(arg)"
+            case "Visualize": return "Made a visual"
+            case "VisualGuide": return "Read the visual guide"
             case "Present": return "Showed results"
             case "Ask": return "Asked you"
             case "CodeMap": return "Mapped the code"
