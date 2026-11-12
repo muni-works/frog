@@ -56,7 +56,9 @@ The card follows the app's light or dark theme, so never hard-code colours.
 - `sendPrompt(text)` asks Frog a follow-up as if the user typed it (only from a click). Use it sparingly for a "Go deeper on this" button, never automatically.
 
 ## Craft
-- Get the physics or maths right; compute values, don't fake them. Tiles must agree with the picture.
+- Get the physics or maths right; compute values, don't fake them. Tiles must agree with the picture and with each other (one number, one formula: if a label says |X(f)| show that quantity, not a rescaled one).
+- Defaults are round and telling (a 400 nm gap, not 999 nm), and every label sits clear of lines and other labels: place them deliberately, not at a curve's endpoint.
+- Tile values use the body font, not monospace.
 - Start from a state that already shows the idea (a non-trivial default), so it reads before anyone touches it.
 - Thin strokes (1–1.5 px), generous spacing, rounded ends; at most one bold element. Restraint looks better than decoration: no gradients, glows or drop shadows.
 - Arrows: define an SVG `<marker>` once and reuse it.

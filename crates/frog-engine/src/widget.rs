@@ -131,6 +131,7 @@ connect-src 'none'; frame-src 'none'; worker-src blob:; form-action 'none'; base
 <meta http-equiv="Content-Security-Policy" content="{csp}">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 <style>{SHELL_CSS}</style>
 <script>{SHELL_JS}</script>
 </head><body><div id="frog-widget">
@@ -146,7 +147,7 @@ connect-src 'none'; frame-src 'none'; worker-src blob:; form-action 'none'; base
 /// toggles, segmented buttons. Light by default, true black in dark.
 const SHELL_CSS: &str = r#"
 :root{color-scheme:light dark;
---bg:transparent;--surface:#f4f4f4;--well:#ececec;--line:#e3e3e3;--line-strong:#d2d2d2;
+--bg:transparent;--surface:#ffffff;--well:#e9e9e9;--line:#e3e3e3;--line-strong:#d2d2d2;
 --fg:#1b1d1a;--muted:#5e5e5e;--faint:#767676;--accent:#2e9e4f;--on-accent:#fff;
 --c1:#2e9e4f;--c2:#3478e0;--c3:#d9622b;--c4:#8a5cd6;--c5:#c99a06;--c6:#d6457a;--c7:#159aa3;--c8:#6b7280;
 --good:#2e9e4f;--bad:#c4513d;--warn:#c27c0e;
@@ -154,12 +155,12 @@ const SHELL_CSS: &str = r#"
 --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
 --radius:10px;--radius-sm:6px}
 @media (prefers-color-scheme:dark){:root:not([data-theme=light]){
---surface:#121212;--well:#1a1a1a;--line:#2a2a2a;--line-strong:#383838;
+--surface:#1c1c1c;--well:#242424;--line:#2a2a2a;--line-strong:#383838;
 --fg:#ececec;--muted:#a3a3a3;--faint:#808080;--accent:#58cc6f;--on-accent:#0d1a10;
 --c1:#58cc6f;--c2:#64a4ff;--c3:#f0834f;--c4:#a989f0;--c5:#e8bf3a;--c6:#f0709e;--c7:#3cc3cc;--c8:#9ca3af;
 --good:#58cc6f;--bad:#e5775f;--warn:#e8a33a}}
 :root[data-theme=dark]{
---surface:#121212;--well:#1a1a1a;--line:#2a2a2a;--line-strong:#383838;
+--surface:#1c1c1c;--well:#242424;--line:#2a2a2a;--line-strong:#383838;
 --fg:#ececec;--muted:#a3a3a3;--faint:#808080;--accent:#58cc6f;--on-accent:#0d1a10;
 --c1:#58cc6f;--c2:#64a4ff;--c3:#f0834f;--c4:#a989f0;--c5:#e8bf3a;--c6:#f0709e;--c7:#3cc3cc;--c8:#9ca3af;
 --good:#58cc6f;--bad:#e5775f;--warn:#e8a33a}

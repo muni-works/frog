@@ -2,7 +2,9 @@
 // A one-session gateway for the parity capture: the web app (vite dev, proxying /v1 here) lists
 // one session and, on attach, gets the fixture's events up to its ask card, which stays open.
 //
-//   node docs/design/parity/gateway.mjs [--port 8799] [--fixture fixture.jsonl]
+//   node docs/design/parity/gateway.mjs [--port 8799] [--fixture fixture.jsonl] [--title "…"]
+//
+// A fixture without an ask is shown whole (the visuals fixtures in docs/design/visuals).
 //
 // Reuses the vendored mock's websocket and fixture loader (apps/web/test/mock).
 import { createServer } from "node:http";
@@ -13,11 +15,12 @@ const arg = (n, d) => (process.argv.indexOf(`--${n}`) > 0 ? process.argv[process
 const port = Number(arg("port", 8799));
 const events = loadFixture(arg("fixture", new URL("./fixture.jsonl", import.meta.url).pathname));
 const id = "s_parity";
-const title = "Fix flaky upload retry";
+const title = arg("title", "Fix flaky upload retry");
 const now = Date.now();
 const info = { id, title, repo: "muni-works/lilypad", branch: "frog/lilypad-parity", state: "running", updated: now };
 // Up to and including the ask; the hold and what follows are the Mac replay's business.
-const shown = events.slice(0, events.findIndex((e) => e.event === "permission_request") + 1);
+const ask = events.findIndex((e) => e.event === "permission_request");
+const shown = ask < 0 ? events : events.slice(0, ask + 1);
 const json = (res, s, b) => res.writeHead(s, { "content-type": "application/json" }).end(JSON.stringify(b));
 
 const server = createServer((req, res) => {
