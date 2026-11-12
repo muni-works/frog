@@ -1,17 +1,17 @@
 name: release-assets
 
-# The alarm that would have caught v0.2.1.
+# The alarm that would have caught v0.2.1, and the one that stops it happening quietly again.
 #
 # A guard that only runs inside the two publishers can't catch the case that actually happened:
 # on v0.2.1 the macOS build job died on a retired runner label before the release job (and any
 # publish-time check in it) ever ran, and apps/macos/scripts/release.sh published the dmg-only
 # release on its own. Nothing was left to notice.
 #
-# This runs on `release: published`, so it fires however a release got published — the workflow,
-# release.sh, scripts/release-local.sh, or the GitHub web UI — and it re-checks the *published*
-# set, not a draft. It also runs on a schedule, because `release: published` doesn't fire for a
-# release that goes wrong later (an asset deleted by hand), and releases/latest is what
-# `curl -fsSL https://frog.toys/install.sh | sh` resolves.
+# Two checks, because there are two ways to end up with a release nobody can install:
+#   1. a *published* release is missing assets — install.sh 404s right now.
+#   2. a *draft* is complete (publishing was skipped) or has sat incomplete for hours (a
+#      publisher died). Drafts keep install.sh working, which also makes a dead run silent: every
+#      release since v0.1.1-rc2 had to be finished by hand because nothing said a run had died.
 on:
   release:
     types: [published, edited]
@@ -39,19 +39,33 @@ jobs:
           else
             scripts/release-assets.sh check latest
           fi
-      # A published release missing assets doesn't fix itself, and install.sh is broken until it
-      # does. Fail the job (above) and say what to do in the run summary.
+      # Only on the timer/dispatch: no draft exists mid-release, and this is the check that
+      # notices a publisher died instead of waiting for a human to compare asset counts.
+      - name: no release is stuck half-published
+        if: ${{ github.event_name != 'release' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/release-assets.sh drafts
+      # Neither failure fixes itself. Fail the job (above) and say what to do in the summary.
       - name: what to do about it
         if: failure()
         run: |
           {
-            echo "### A release is not installable"
+            echo "### A release is not installable, or is stuck"
             echo
             echo '`curl -fsSL https://frog.toys/install.sh | sh` resolves `releases/latest` and'
             echo 'downloads `frog-<tag>-<target>.tar.gz`. This release is missing some of those.'
             echo
-            echo "Fix: re-run the release workflow for the tag so it attaches the CLI assets"
-            echo "(Actions → release → Run workflow is a dry run; use *Re-run all jobs* on the"
-            echo "tag's run). Both publishers upload into a draft and"
-            echo "\`scripts/release-assets.sh publish <tag>\` publishes once the set is complete."
+            echo "Both publishers upload into a draft, and"
+            echo "\`scripts/release-assets.sh publish <tag>\` publishes once the set is complete,"
+            echo "so a *published* release missing assets means someone published by hand."
+            echo
+            echo "To attach the CLI to an existing tag (this builds it from the default branch's"
+            echo "workflow, so it works for tags cut before a workflow fix):"
+            echo
+            echo '```'
+            echo "gh workflow run release.yml --repo \$GITHUB_REPOSITORY -f tag=<tag>"
+            echo '```'
+            echo
+            echo "A re-run of the tag's own run is not enough: it uses the tag's workflow file."
           } >> "$GITHUB_STEP_SUMMARY"

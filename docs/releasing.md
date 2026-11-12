@@ -59,8 +59,31 @@ adds the missing assets rather than replacing the dmg/appcast, then
 
 Re-running uses the workflow file from the tag's commit, not from `main`, so a fix to
 `release.yml` on `main` doesn't apply to an old tag — the re-run needs the tag's own file to be
-sound. To publish without CI at all, `scripts/release-local.sh <version> build` then
-`publish` on a machine with the minisign key.
+sound. For a tag cut before such a fix, dispatch instead: it builds that tag using the default
+branch's workflow file and attaches the CLI to its release.
+
+```sh
+gh workflow run release.yml --repo muni-works/frog -f tag=v0.2.1
+```
+
+To publish without CI at all, `scripts/release-local.sh <version> build` then `publish` on a
+machine with the minisign key.
+
+## Nobody has to notice
+
+Drafts keep `install.sh` working, but on their own they'd make a dead publisher *quiet*: a
+release that never shipped looks exactly like one not yet cut. That is why every release from
+v0.1.1-rc3 through v0.2.1 was finished by hand — nothing said a run had died.
+
+So `scripts/release-assets.sh drafts` is an error when a draft is **complete** (publishing was
+skipped) or has been **incomplete for more than 6 hours** (a publisher died). The `release-assets`
+workflow runs it on the daily timer, so both cases turn into a red run instead of waiting for
+someone to notice.
+
+```sh
+scripts/release-assets.sh drafts          # default 6h limit
+scripts/release-assets.sh drafts 24       # for a slow release day
+```
 
 ## Runners
 
