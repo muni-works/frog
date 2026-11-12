@@ -97,6 +97,30 @@ final class NodeLoadTests: XCTestCase {
         XCTAssertEqual(devices.fit(model: qwen4), .loaded(node: "mew"))
     }
 
+    func testPickerRowsSayWhatPickingDoes() throws {
+        let rows = devices.machineModels().filter { [qwen4, qwen17, qwen32].contains($0.spec) }
+        let running = try XCTUnwrap(rows.first { $0.spec == qwen4 })
+        XCTAssertTrue(running.running)
+        XCTAssertNil(running.tag)
+        XCTAssertEqual(running.places, "mew")
+        XCTAssertEqual(rows.first { $0.spec == qwen17 }?.tag, "swaps")
+        // Running models first.
+        XCTAssertEqual(rows.first?.spec, qwen4)
+    }
+
+    func testBusyNodeSwapsAfterItsTurn() async throws {
+        node.busy = true
+        let swap = Task { try await devices.switchTo(qwen17, by: "s1") }
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(devices.waitingSwap[qwen17], "mew")
+        node.busy = false
+        try await swap.value
+        XCTAssertEqual(node.loadRequests.last.map { $0.hasSuffix("1.7B") || !$0.isEmpty }, true)
+        XCTAssertNil(devices.waitingSwap[qwen17])
+        XCTAssertEqual(devices.lastSwitch?.by, "s1")
+        XCTAssertEqual(devices.lastSwitch?.line.hasPrefix("mew switched to "), true)
+    }
+
     func testPickerLinesUseTheModelVocabulary() {
         for line in [NodeFit.loaded(node: "mew"), .loading(node: "mew", seconds: 4), .fits(node: "mew", replaces: "Qwen3-0.6B"),
                      .wontFit(node: "mew", need: 9_100_000_000, room: 4_200_000_000)].map(\.line) {

@@ -51,3 +51,11 @@ open permission request, which is where `frog --replay` holds.
 The same cases are web regression tests: `apps/web/test/parity-fuzz.test.ts` folds and renders
 each one and pins what the first run found (`npm test` in `apps/web`). Add a case there when a
 transcript bug turns up, and re-run `fuzz.sh` after a transcript change.
+
+## Model picker and Settings › Models
+
+[`models.html`](models.html) puts the picker, the Machines list and a machine's page side by side,
+Mac and web, from one fixture. Mac: `TEST_RUNNER_FROG_PARITY_OUT=$PWD/docs/design/parity xcodebuild
+… test -only-testing:FrogTests/ModelsParityTests`. Web: `npx vite` in `apps/web`, then
+`node docs/design/parity/web-shot.mjs "http://localhost:5173/parity/models.html?view=picker&theme=dark" …`
+(views: `picker`, `settings`, `machine`).
