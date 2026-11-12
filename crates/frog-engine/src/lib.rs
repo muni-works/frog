@@ -42,6 +42,7 @@ pub mod prompt;
 pub mod prs;
 pub mod protocol;
 pub mod provider;
+pub mod questions;
 pub mod providers;
 pub mod recall;
 pub mod repomap;
