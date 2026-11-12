@@ -100,7 +100,7 @@ impl Agent {
         }
         if self.chat {
             // No project to work in: only the tools that don't touch files or run commands.
-            specs.retain(|s| matches!(&*s.name, "Diagram" | "Visualize" | "VisualGuide" | "Image" | "WebFetch" | "WebSearch"));
+            specs.retain(|s| matches!(&*s.name, "Visualize" | "VisualGuide" | "Image" | "WebFetch" | "WebSearch"));
             specs.push(crate::folder::spec());
         }
         // Terminal panes are engine-owned, so every client gets them; previews need a client

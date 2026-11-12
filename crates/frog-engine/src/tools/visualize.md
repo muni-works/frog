@@ -8,7 +8,7 @@ A visual is a small, self-contained HTML (or SVG) widget that renders inline in 
 - Data with shape: a trend, a distribution, a comparison.
 - A mechanism with moving parts: fields, waves, orbits, gradients, queues, algorithms stepping.
 
-Not for: short factual answers, code changes, lists, or anything a sentence or a table says just as well. For architecture boxes-and-arrows, use Diagram instead. One visual per idea; a long explanation may have two or three, each introduced by a sentence.
+Not for: short factual answers, code changes, lists, or anything a sentence or a table says just as well. Boxes-and-arrows (architecture, a request's path, a sequence of calls) are visuals too: see "Diagrams" below. One visual per idea; a long explanation may have two or three, each introduced by a sentence.
 
 ## Shape of a great widget
 1. **Controls on top**: one to three. A labelled slider with its live value on the right, a checkbox toggle, or a segmented button pair ("Lab view | Ride with the electrons").
@@ -34,6 +34,9 @@ Make it interactive: something to drag, slide, toggle or step. Animate only when
 </div>
 ```
 Also: `.stack`, `.row`, `.muted`, `.mono`, `.legend` (`<span><i style="background:var(--c2)"></i>label</span>`), `.btn` / `.btn.on`, `select`.
+
+## Diagrams
+For architecture, flows and sequences, draw a static SVG: 4–12 boxes (`rect` with `rx="8"`, `fill="var(--surface)"`, `stroke="var(--line-strong)"`), labels centred in `var(--fg)`, edges as paths with one shared arrow `<marker>`, edge labels in `var(--muted)` on a small `var(--surface)` pill so lines never cross text. Lay out on a grid you compute (columns × rows), top-to-bottom or left-to-right; never let boxes overlap. Highlight the one box or path that matters in `var(--c2)`. A hover or click that reveals a node's one-line detail is a nice touch; keep it static otherwise.
 
 ## Colour and type: always CSS variables
 The card follows the app's light or dark theme, so never hard-code colours.

@@ -280,7 +280,6 @@ pub fn specs() -> Vec<ToolSpec> {
         search::grep_spec(),
         todo::spec(),
         notify::spec(),
-        diagram::spec(),
         visualize::guide_spec(),
         visualize::spec(),
         image::spec(),
@@ -330,7 +329,6 @@ pub async fn run(name: &str, input: &Value, ctx: &mut Ctx) -> Result<Output> {
         "Grep" => search::grep(input, ctx).await,
         "TodoWrite" => todo::run(input, ctx),
         notify::TOOL => notify::run(input, ctx),
-        "Diagram" => diagram::run(input, ctx),
         visualize::TOOL => visualize::run(input, ctx),
         visualize::GUIDE => visualize::guide(input, ctx),
         "Image" => image::run(input, ctx).await,
@@ -341,7 +339,7 @@ pub async fn run(name: &str, input: &Value, ctx: &mut Ctx) -> Result<Output> {
         "WebSearch" => websearch::run(input, ctx).await,
         "Docs" => docs::run(input, ctx).await,
         _ => bail!(
-            "unknown tool `{name}`. Available: Bash, Terminal, Read, Write, Edit, Glob, Grep, TodoWrite, Diagram, Visualize, VisualGuide, Image, Screenshot, Compare, CodeMap, WebFetch, Docs"
+            "unknown tool `{name}`. Available: Bash, Terminal, Read, Write, Edit, Glob, Grep, TodoWrite, Visualize, VisualGuide, Image, Screenshot, Compare, CodeMap, WebFetch, Docs"
         ),
     }
 }
