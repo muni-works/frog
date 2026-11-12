@@ -125,7 +125,7 @@ rm "$DIST/Frog.zip"
 step "Making the disk image"
 STAGE="$DIST/stage"; mkdir -p "$STAGE"; ditto "$APP" "$STAGE/Frog.app"
 DMG="$DIST/Frog.dmg"
-create-dmg --volname "Frog" --window-size 540 360 --icon-size 128 \
+create-dmg --volname "Frog" --background "$APP_DIR/dmg/background.tiff" --window-size 540 360 --icon-size 128 \
     --icon Frog.app 140 170 --hide-extension Frog.app --app-drop-link 400 170 \
     --no-internet-enable "$DMG" "$STAGE" >/dev/null
 rm -rf "$STAGE"
