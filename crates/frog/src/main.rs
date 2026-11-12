@@ -11,8 +11,8 @@ mod ws;
 use anyhow::{Context, Result};
 use clap::Parser;
 use frog_engine::config::{Config, ToolMode};
-use frog_engine::session;
 use frog_engine::protocol::Event;
+use frog_engine::session;
 use frog_engine::{Mode, Options};
 use std::io::Read;
 
@@ -212,7 +212,7 @@ struct Cli {
     /// Auto mode: a local classifier approves steps that plainly serve your request.
     #[arg(long, conflicts_with_all = ["yolo", "accept_edits"])]
     auto: bool,
-    /// Permission mode: default (ask), accept-edits, auto or yolo.
+    /// Permission mode: default (ask), accept-edits, auto (the default for new sessions) or yolo.
     #[arg(long, value_name = "MODE", value_parser = ["default", "accept-edits", "auto", "yolo"],
           conflicts_with_all = ["yolo", "accept_edits", "auto"])]
     mode: Option<String>,
@@ -241,8 +241,9 @@ fn approvals(args: &[String]) -> Result<bool> {
             other => anyhow::bail!("frog approvals [--since 24h] [--json]: unexpected `{other}`"),
         }
     }
-    let secs = parse_span(&since)
-        .ok_or_else(|| anyhow::anyhow!("--since takes a span like 24h, 90m, 7d or 3600s, not `{since}`"))?;
+    let secs = parse_span(&since).ok_or_else(|| {
+        anyhow::anyhow!("--since takes a span like 24h, 90m, 7d or 3600s, not `{since}`")
+    })?;
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
@@ -680,7 +681,12 @@ async fn run() -> Result<bool> {
         (Some("yolo"), _) | (None, (true, _, _)) => Mode::Yolo,
         (Some("accept-edits"), _) | (None, (_, true, _)) => Mode::AcceptEdits,
         (Some("auto"), _) | (None, (_, _, true)) => Mode::Auto,
-        _ => Mode::Default,
+        (Some("default"), _) => Mode::Default,
+        // A flagless resume: the engine keeps the mode the log has, and a log with none ran
+        // in Default, the default before Auto.
+        _ if resume.is_some() => Mode::Default,
+        // New sessions start in Auto (docs/plans/2026-11-12-composer-tray.md).
+        _ => Mode::Auto,
     };
     // A resume runs on the session's own model, unless -m says otherwise: `config.toml`'s
     // default (or the last model used anywhere) may name one this session never ran on, or
@@ -963,11 +969,7 @@ fn session_tree(
 /// `permission_decision` events by layer, across sessions. The engine's own
 /// `Op::Digest` counts in memory; this reads the record, so it covers every
 /// session that ran today, including closed ones.
-fn digest(
-    store: &std::path::Path,
-    cwd: &std::path::Path,
-    all: bool,
-) -> Result<()> {
+fn digest(store: &std::path::Path, cwd: &std::path::Path, all: bool) -> Result<()> {
     let sessions = session::list(store, (!all).then_some(cwd), None)?;
     let today = chrono::Utc::now().date_naive();
     let mut auto_allowed = 0u32;
@@ -994,7 +996,9 @@ fn digest(
                 ("second-pass", "allow") => second_pass += 1,
                 ("delegated", "allow") => delegated += 1,
                 ("delegated", "ask") => blocked += 1,
-                ("never-delegable", "ask") | ("breaker", "deny") | ("repeat", "deny") => blocked += 1,
+                ("never-delegable", "ask") | ("breaker", "deny") | ("repeat", "deny") => {
+                    blocked += 1
+                }
                 (_, "ask") | (_, "deny") => cards += 1,
                 _ => {}
             }
@@ -1092,7 +1096,11 @@ fn started_by_tree(rows: &[(String, Option<String>, String)]) -> Vec<String> {
             return;
         }
         if let Some(r) = rows.iter().find(|r| r.0 == id) {
-            let pad = if depth == 0 { String::new() } else { format!("{}└ ", "  ".repeat(depth - 1)) };
+            let pad = if depth == 0 {
+                String::new()
+            } else {
+                format!("{}└ ", "  ".repeat(depth - 1))
+            };
             out.push(format!("{pad}{}", r.2));
         }
         for c in rows.iter().filter(|c| parent_of(c).as_deref() == Some(id)) {
@@ -1125,7 +1133,10 @@ mod started_by_tree_tests {
             row("d", Some("gone")),
             row("e", Some("a")),
         ];
-        assert_eq!(started_by_tree(&rows), vec!["a", "└ b", "  └ c", "└ e", "d"]);
+        assert_eq!(
+            started_by_tree(&rows),
+            vec!["a", "└ b", "  └ c", "└ e", "d"]
+        );
     }
 }
 

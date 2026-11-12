@@ -401,7 +401,11 @@ impl Tui {
                 _ => (Decision::Deny, "denied · sending your message".red()),
             };
             render::say(&format!("  {said}"));
-            self.send(Op::Permission { id, decision, note: None });
+            self.send(Op::Permission {
+                id,
+                decision,
+                note: None,
+            });
             if matches!(
                 line.to_lowercase().as_str(),
                 "" | "y" | "yes" | "a" | "always" | "n" | "no"

@@ -384,9 +384,12 @@ async fn a_new_peer_replaces_the_old_and_can_resume() {
     // The old peer is closed.
     while recv(&mut a).await.is_some() {}
     // resume_after 0 replays the durable envelopes in order, plus the latest status at its
-    // own seq; the first durable one is the turn.
+    // own seq; the first durable one is the turn (after the new session's mode, Auto).
     let replay = until(&mut b, "turn_ended").await;
-    let first = replay.iter().find(|e| e["event"] != "status").unwrap();
+    let first = replay
+        .iter()
+        .find(|e| e["event"] != "status" && e["event"] != "mode_changed")
+        .unwrap();
     assert_eq!(first["event"], "turn_started");
     assert!(replay.iter().filter(|e| e["event"] == "status").count() <= 1);
     assert!(
@@ -614,7 +617,10 @@ async fn without_a_model_the_gateway_gets_frog_clouds() {
     until(&mut ws, "turn_ended").await;
     let models = f.models.lock().unwrap().clone();
     assert!(!models.is_empty());
-    assert!(models.iter().all(|(m, _)| m == "glm-5.3-flash"), "{models:?}");
+    assert!(
+        models.iter().all(|(m, _)| m == "glm-5.3-flash"),
+        "{models:?}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

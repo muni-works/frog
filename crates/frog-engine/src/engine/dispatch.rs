@@ -655,6 +655,13 @@ Don't repeat it. Change the arguments or try a different approach.",
                 out.content = format!("{}\n{n}", out.content);
             }
             let output = out.content;
+            // A PR the session's branch just opened binds itself (the composer's git line).
+            if is_bash
+                && outcome == ToolOutcome::Ok
+                && let Some(pr) = crate::prs::created(&command, &output)
+            {
+                self.bind_pr(pr);
+            }
             // Rules scoped to the file just read or edited go in front of its result, the
             // first time this session.
             let rules = match (&*name, outcome == ToolOutcome::Ok) {

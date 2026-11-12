@@ -1465,6 +1465,8 @@ struct Agent {
     /// Whenever the effective mode differs, the next chance to write logs it (see
     /// `log_mode`), so a restarted engine resumes in it and no change is ever silent.
     mode_logged: Option<Mode>,
+    /// PRs bound to the session (`Op::BindPr`, or opened from its branch), from its log.
+    prs: Vec<crate::prs::PrBinding>,
     can_ask: bool,
     rich: bool,
     subagent: bool,
@@ -1615,6 +1617,7 @@ impl Agent {
         // it, rather than silently reverting to whatever the flags say — the picker and the
         // engine must agree on the effective mode.
         let mut resumed_mode = None;
+        let mut resumed_prs = Vec::new();
         // MCP tools that were loaded via `McpTools` in a previous session, to be restored on resume.
         let mut loaded_tools: Vec<String> = Vec::new();
         let mut resumed_titled = false;
@@ -1659,6 +1662,7 @@ impl Agent {
                         }
                         Event::PaneClosed { id, .. } => stale_panes.retain(|p| p != id),
                         Event::ModeChanged { mode } => resumed_mode = Some(*mode),
+                        Event::Prs { prs } => resumed_prs = prs.clone(),
                         _ => {}
                     }
                 }
@@ -1791,6 +1795,7 @@ impl Agent {
             },
             mode: resumed_mode.unwrap_or(o.mode),
             mode_logged: resumed_mode,
+            prs: resumed_prs,
             can_ask: o.can_ask,
             rich: o.rich,
             subagent: o.subagent,
@@ -2337,6 +2342,13 @@ impl Agent {
         self.write_summary();
     }
 
+    /// Bind (or update) a PR and tell every client the new list. No change, no event.
+    fn bind_pr(&mut self, pr: crate::prs::PrBinding) {
+        if crate::prs::upsert(&mut self.prs, pr) {
+            self.emit(Event::Prs { prs: self.prs.clone() });
+        }
+    }
+
     /// Record the session's title and remember it's named. A client's `Op::SetTitle` and the
     /// model's `SetTitle` tool both land here.
     fn set_title(&mut self, title: String) {
@@ -2510,6 +2522,12 @@ impl Agent {
                 let title = crate::title::clean(&title);
                 if !title.is_empty() {
                     self.set_title(title);
+                }
+            }
+            Op::BindPr { pr } => self.bind_pr(pr),
+            Op::UnbindPr { repo, number } => {
+                if crate::prs::remove(&mut self.prs, &repo, number) {
+                    self.emit(Event::Prs { prs: self.prs.clone() });
                 }
             }
             Op::Deliver {

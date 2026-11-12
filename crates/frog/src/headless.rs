@@ -277,7 +277,12 @@ mod kids_tests {
         assert!(!k.settled(), "a child works");
         k.see(&child("idle"));
         assert!(!k.settled(), "its note is still to wake the parent");
-        k.see(&Event::TurnStarted { turn: 2, input: String::new(), images: Vec::new(), more: Vec::new() });
+        k.see(&Event::TurnStarted {
+            turn: 2,
+            input: String::new(),
+            images: Vec::new(),
+            more: Vec::new(),
+        });
         assert!(k.settled());
     }
 }

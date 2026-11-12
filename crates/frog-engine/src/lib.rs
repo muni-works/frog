@@ -39,6 +39,7 @@ pub mod panes;
 pub mod policy;
 pub mod present;
 pub mod prompt;
+pub mod prs;
 pub mod protocol;
 pub mod provider;
 pub mod providers;
