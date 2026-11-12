@@ -7,7 +7,7 @@ cd "$(dirname "$0")"
 npm --prefix ../apps/web ci --silent
 npm --prefix ../apps/web run build --silent
 rm -rf dist && mkdir -p dist/mac
-cp -R node.sh favicon.svg icon.png shot-dark.png shot-light.png data energy dist/
+cp -R install.sh node.sh favicon.svg icon.png shot-dark.png shot-light.png data energy dist/
 # the cram design page: served at /cram.html when it goes live (Beat 2)
 mkdir -p dist/design && cp -R design dist/design/
 cp index.html dist/mac/index.html
