@@ -9,9 +9,7 @@ struct SettingsView: View {
     var body: some View {
         TabView(selection: $tab) {
             Tab("General", systemImage: "gearshape", value: "general") { GeneralSettings() }
-            if !ModelSections.frogCloudOnly {
-                Tab("Models", systemImage: "cpu", value: "models") { ModelSettings() }
-            }
+            Tab("Models", systemImage: "cpu", value: "models") { MachinesSettings() }
             Tab("Billing", systemImage: "creditcard", value: "billing") { BillingSettings() }
             Tab("Energy", systemImage: "leaf", value: "energy") { EnergySettings() }
             Tab("Lend", systemImage: "dot.radiowaves.left.and.right", value: "lend") { LendSettings() }

@@ -16,6 +16,9 @@ import Observation
 final class Devices {
     static let shared = Devices()
 
+    /// "Download a model" and Delete, off until tang ships `/models/pull` and `/models/delete`.
+    static var canPull: Bool { UserDefaults.standard.bool(forKey: "frogModelPull") }
+
     /// This Mac first, then the network's nodes by name, then Frog Cloud.
     private(set) var list: [Device] = []
     /// Why the network can't be searched, when it can't (usually Local Network is off for frog).
@@ -45,6 +48,7 @@ final class Devices {
 
     /// Start browsing and polling (balanced by `stop`; the window calls both).
     func start() {
+        guard !seeded else { return }
         watchers += 1
         guard watchers == 1 else { return }
         reloadPaired()
@@ -434,11 +438,11 @@ final class Devices {
     }
 
     /// `POST /models/load {"model": id}`; tang answers when the load is done (or refused).
-    nonisolated static func requestLoad(_ base: URL, key: String, model: String) async throws {
+    nonisolated static func requestLoad(_ base: URL, key: String?, model: String) async throws {
         var req = URLRequest(url: base.appending(path: "models/load"))
         req.httpMethod = "POST"
         req.timeoutInterval = 900
-        req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        if let key { req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONSerialization.data(withJSONObject: ["model": model])
         let (data, resp) = try await URLSession.shared.data(for: req)
@@ -450,12 +454,160 @@ final class Devices {
         case 507: "It doesn't fit anymore: " + (why ?? "not enough free memory.")
         default: why ?? "The load failed (\(status))."
         }
-        throw NodeLoadError(line)
+        throw NodeLoadError(line, busy: status == 409)
+    }
+
+    // MARK: machines (the picker and Settings › Models)
+
+    /// Every machine that can run a model for you: This Mac, then your paired nodes. Frog Cloud
+    /// isn't one; it's its own group.
+    var machines: [Device] { list.filter { $0.role == .thisMac || ($0.role == .node && $0.paired) } }
+
+    /// Models on your machines, one row per model (`weights_hash`), each listing the machines
+    /// that hold it and what picking it there does.
+    func machineModels() -> [MachineModel] {
+        var rows: [String: MachineModel] = [:]
+        var order: [String] = []
+        for d in machines where d.online {
+            for m in d.models {
+                let key = String(m.weightsHash.prefix(12))
+                guard !key.isEmpty else { continue }
+                let action: MachineModel.Action = m.loaded ? .running : (d.model != nil ? .swaps : .loads)
+                let hold = MachineModel.Hold(deviceID: d.id, name: d.role == .thisMac ? "This Mac" : d.name, action: action,
+                                             decode: m.loaded ? d.decode : nil, busy: d.running + d.waiting)
+                if rows[key] == nil {
+                    rows[key] = MachineModel(spec: "node/\(key)", name: Self.displayName(m.name), holds: [])
+                    order.append(key)
+                }
+                rows[key]!.holds.append(hold)
+            }
+        }
+        return order.compactMap { rows[$0] }.sorted { a, b in
+            if a.running != b.running { return a.running }
+            return a.name.localizedStandardCompare(b.name) == .orderedAscending
+        }
+    }
+
+    /// "Qwen3-8B-MLX-4bit" → "Qwen3-8B": the quant lives on the machine page, not the pill.
+    nonisolated static func displayName(_ s: String) -> String {
+        var n = s
+        for tail in ["-MLX-4bit", "-MLX-8bit", "-4bit", "-8bit", "-bf16", "-MLX"] where n.hasSuffix(tail) {
+            n = String(n.dropLast(tail.count))
+        }
+        return n
+    }
+
+    /// Picks waiting for a busy node: spec → the machine that swaps after its turn.
+    private(set) var waitingSwap: [String: String] = [:]
+    /// The last switch frog made on a machine, for other sessions' one-line notice.
+    private(set) var lastSwitch: Switched?
+
+    struct Switched: Equatable {
+        var deviceID: String
+        var line: String
+        var by: String?
+        var at = Date()
+    }
+
+    func dismissSwitch() { lastSwitch = nil }
+
+    /// Fixture machines, for snapshots and parity shots: nothing is browsed or polled.
+    func seed(_ devices: [Device]) { seeded = true; list = devices }
+    @ObservationIgnored private var seeded = false
+
+    /// Put a model on one of your machines so the next turn runs there. Already running: done.
+    /// Otherwise it loads on the idle machine with the most room (or the one named), swapping
+    /// what that machine holds. A busy machine (409) swaps after its turn: frog waits for it to go
+    /// idle and asks again. `by` is the conversation asking, so it isn't told about its own swap.
+    func switchTo(_ spec: String, on deviceID: String? = nil, by: String? = nil) async throws {
+        guard let row = machineModels().first(where: { $0.spec == spec }) else {
+            throw NodeLoadError("It isn't on any of your machines.")
+        }
+        if deviceID == nil, row.running { return }
+        let candidates = row.holds.filter { deviceID == nil || $0.deviceID == deviceID }
+        guard let hold = candidates.first(where: { $0.action == .running })
+                ?? candidates.min(by: { ($0.action == .loads ? 0 : 1, $0.busy) < ($1.action == .loads ? 0 : 1, $1.busy) })
+        else { throw NodeLoadError("It isn't on that machine.") }
+        if hold.action == .running { return }
+        guard let d = list.first(where: { $0.id == hold.deviceID }),
+              let m = d.models.first(where: { $0.weightsHash.hasPrefix(String(spec.dropFirst(5))) }),
+              let base = baseURL(hold.deviceID)
+        else { throw NodeLoadError("Can't reach \(hold.name).") }
+        let swapped = d.model
+        asked[spec] = hold.name
+        loadProblem[spec] = nil
+        defer { asked[spec] = nil; waitingSwap[spec] = nil }
+        while true {
+            do {
+                try await Self.requestLoad(base, key: key(hold.deviceID), model: m.id)
+                break
+            } catch let e as NodeLoadError where e.busy {
+                // Swaps after this turn: wait for the machine to go idle, then ask again.
+                waitingSwap[spec] = hold.name
+                while !Task.isCancelled {
+                    try await Task.sleep(for: .seconds(1))
+                    await poll()
+                    if let now = list.first(where: { $0.id == hold.deviceID }), now.online, now.running + now.waiting == 0 { break }
+                }
+                try Task.checkCancellation()
+                waitingSwap[spec] = nil
+            } catch {
+                let line = (error as? NodeLoadError)?.message ?? error.localizedDescription
+                loadProblem[spec] = line
+                await poll()
+                throw NodeLoadError(line)
+            }
+        }
+        if swapped != nil {
+            lastSwitch = Switched(deviceID: hold.deviceID, line: "\(hold.name) switched to \(row.name)", by: by)
+        }
+        await poll()
+    }
+
+    /// Stop the model a machine is running (`POST /models/unload`).
+    func stopModel(on deviceID: String) async throws {
+        guard let base = baseURL(deviceID) else { throw NodeLoadError("Can't reach it.") }
+        var req = URLRequest(url: base.appending(path: "models/unload"))
+        req.httpMethod = "POST"
+        req.timeoutInterval = 120
+        if let k = key(deviceID) { req.setValue("Bearer \(k)", forHTTPHeaderField: "Authorization") }
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        await poll()
+        guard status == 200 else {
+            if status == 409 { throw NodeLoadError("It's busy with a turn. Stop it when it's idle.", busy: true) }
+            throw NodeLoadError((try? JSONDecoder().decode([String: String].self, from: data))?["error"] ?? "Stopping failed (\(status)).")
+        }
+    }
+
+    /// Call a machine something else, on this Mac only.
+    func rename(_ deviceID: String, to name: String) {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        if deviceID == local.id {
+            UserDefaults.standard.set(name, forKey: "thisMacName")
+            local.name = name
+        } else if var p = paired.first(where: { $0.node_id == deviceID }) {
+            p.name = name
+            try? store.update(p)
+            paired = store.load()
+        }
+        publish()
+    }
+
+    private func baseURL(_ deviceID: String) -> URL? {
+        if deviceID == local.id { return URL(string: "http://127.0.0.1:8911") }
+        return found[deviceID]?.url ?? paired.first(where: { $0.node_id == deviceID }).flatMap { URL(string: $0.base_url) }
+    }
+
+    private func key(_ deviceID: String) -> String? {
+        deviceID == local.id ? nil : store.key(for: deviceID)
     }
 
     private func publish() {
         for id in found.keys {
             found[id]?.device.paired = isPaired(id)
+            if let p = paired.first(where: { $0.node_id == id }), !p.name.isEmpty { found[id]?.device.name = p.name }
             found[id]?.device.refused = refused[id]
         }
         // This Mac serving beyond loopback finds itself on Bonjour: one card, not two.
@@ -468,6 +620,42 @@ final class Devices {
         cloud.link = .internet
         let next = [local] + others + [cloud]
         if next != list { list = next }
+    }
+}
+
+/// One model on your machines, for the picker: which machines hold it, and what picking it
+/// there does.
+struct MachineModel: Identifiable, Equatable {
+    enum Action: Equatable {
+        /// Running: picking it does nothing more.
+        case running
+        /// The machine runs another model: picking it swaps.
+        case swaps
+        /// The machine is idle: picking it loads.
+        case loads
+    }
+    struct Hold: Equatable {
+        var deviceID: String
+        var name: String
+        var action: Action
+        var decode: Double?
+        var busy: Int
+    }
+    var spec: String
+    var name: String
+    var holds: [Hold]
+    var id: String { spec }
+    var running: Bool { holds.contains { $0.action == .running } }
+
+    /// What picking it does, in one word, when nothing runs it yet: "loads" beats "swaps".
+    var tag: String? {
+        if running { return nil }
+        return holds.contains { $0.action == .loads } ? "loads" : "swaps"
+    }
+
+    /// "mew, This Mac": where it is, running ones first.
+    var places: String {
+        holds.sorted { ($0.action == .running ? 0 : 1) < ($1.action == .running ? 0 : 1) }.map(\.name).joined(separator: ", ")
     }
 }
 
@@ -614,7 +802,7 @@ struct Device: Identifiable, Equatable {
         prefill = m?.rates.prefill_tok_s.flatMap { $0 > 0 ? $0 : nil }
         running = r.queue.running.count
         waiting = r.queue.waiting.count
-        if let n = r.name, !n.isEmpty, role == .node { name = n }
+        if let n = r.name, !n.isEmpty, role == .node, !paired { name = n }
         var pooled: [PooledModel] = []
         for l in r.models.loaded { if let h = l.weights_hash { pooled.append(.init(name: Self.shortModel(l.id), weightsHash: h, quant: l.quant, loaded: true, id: l.id)) } }
         for l in r.models.on_disk ?? [] where !pooled.contains(where: { $0.weightsHash == l.weights_hash }) {
@@ -624,7 +812,8 @@ struct Device: Identifiable, Equatable {
     }
 
     static func thisMac() -> Device {
-        var d = Device(id: "this-mac", role: .thisMac, name: Host.current().localizedName ?? "This Mac")
+        var d = Device(id: "this-mac", role: .thisMac,
+                       name: UserDefaults.standard.string(forKey: "thisMacName") ?? Host.current().localizedName ?? "This Mac")
         d.symbol = hasBattery ? "laptopcomputer" : "desktopcomputer"
         d.chip = sysctl("machdep.cpu.brand_string").replacingOccurrences(of: "Apple ", with: "")
         d.kind = "metal"
@@ -741,6 +930,8 @@ enum NodeFit: Equatable {
 
 struct NodeLoadError: LocalizedError {
     let message: String
-    init(_ m: String) { message = m }
+    /// The node said 409: it's in a turn, and swaps once it's idle.
+    var busy = false
+    init(_ m: String, busy: Bool = false) { message = m; self.busy = busy }
     var errorDescription: String? { message }
 }

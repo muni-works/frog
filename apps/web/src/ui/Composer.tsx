@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { composing } from './guards'
 import type { Image, Mode } from '../cloud/protocol'
-import { modelName, modes, placeColor, placeOf, price, spec, type Model } from '../models'
+import { modelName, modes, outputPrice, placeColor, placeOf, spec, type Model } from '../models'
+import { machineModels, places, tag, useShowCloud, type Machine } from '../machines'
 import { barTone, ringTone } from '../usage'
 import { parseRepo } from '../store'
 import type { Provider } from '../auth'
@@ -47,6 +48,11 @@ export interface ComposerProps {
   /** Signed in without GitHub: the repo menu offers to connect it, with what's typed. */
   onConnectGithub?: (text: string) => void
   onModel?: (id: string) => void
+  /** Your machines (none on the web until the gateway reports them), and Settings › Models. */
+  machines?: Machine[]
+  /** Open with the model menu showing (parity shots). */
+  openModels?: boolean
+  onManage?: () => void
   /** When the engine asks before acting; the chip shows once the engine (or a new session) says. */
   mode?: Mode | null
   onMode?: (mode: Mode) => void
@@ -93,7 +99,9 @@ function useTimer(since?: number) {
 
 export function Composer(p: ComposerProps) {
   const [text, setText] = useState(p.draft ?? '')
-  const [menu, setMenu] = useState<'plus' | 'model' | 'mode' | 'repo' | 'signin' | null>(p.pickRepo ? 'repo' : null)
+  const [menu, setMenu] = useState<'plus' | 'model' | 'mode' | 'repo' | 'signin' | null>(p.pickRepo ? 'repo' : p.openModels ? 'model' : null)
+  const showCloudModels = useShowCloud()
+  const machineRows = machineModels(p.machines ?? [])
   const [q, setQ] = useState('')
   // Where the open menu's button sits, so the menu opens right above it.
   const [at, setAt] = useState(8)
@@ -185,14 +193,29 @@ export function Composer(p: ComposerProps) {
       )}
 
       {menu === 'model' && (
-        <div className="f-card cz-menu" role="menu" aria-label="Model" style={{ left: at, width: 300 }} {...nav}>
-          <div className="cz-menu-h">Model on Frog Cloud</div>
-          {p.models?.map((m) => (
-            <button key={m.id} type="button" role="menuitemradio" aria-checked={m.id === p.model} onClick={() => { p.onModel?.(m.id); setMenu(null) }}>
-              <span style={{ flex: 1, minWidth: 0 }}><b style={{ fontWeight: 600 }}>{modelName(m.id)}</b><br /><span className="det">{[price(m), m.context ? `${Math.round(m.context / 1000)}k context` : ''].filter(Boolean).join(' · ')}</span></span>
-              <span style={{ color: 'var(--frog)', opacity: m.id === p.model ? 1 : 0 }}>✓</span>
+        <div className="f-card cz-menu cz-models" role="menu" aria-label="Model" style={{ left: at, width: 320 }} {...nav}>
+          <div className="cz-menu-h">Your machines</div>
+          {machineRows.length === 0 && <div className="det cz-menu-note">No models on your machines yet.</div>}
+          {machineRows.map((m) => (
+            // The web runs sessions in Frog Cloud: a machine's model runs from the Mac app.
+            <button key={m.spec} type="button" role="menuitemradio" aria-checked={false} disabled title="Runs from the Mac app">
+              <span className="cz-dot" style={{ background: placeColor('local') }} aria-hidden="true" />
+              <span className="cz-mname">{m.name}</span><span className="det cz-mdetail">{places(m)}</span>
+              <span className="cz-mtag">{tag(m) ?? ''}</span>
             </button>
           ))}
+          {showCloudModels && !!p.models?.length && <div className="cz-menu-h">Frog Cloud</div>}
+          {showCloudModels && p.models?.map((m) => (
+            <button key={m.id} type="button" role="menuitemradio" aria-checked={m.id === p.model} onClick={() => { p.onModel?.(m.id); setMenu(null) }}>
+              <span className="cz-dot" style={{ background: placeColor('cloud') }} aria-hidden="true" />
+              <span className="cz-mname">{modelName(m.id)}</span><span className="det cz-mdetail">{outputPrice(m)}</span>
+              <span className="cz-mtag" style={{ opacity: m.id === p.model ? 1 : 0 }}>✓</span>
+            </button>
+          ))}
+          {p.onManage && (<>
+            <div className="cz-menu-sep" />
+            <button type="button" role="menuitem" onClick={() => { setMenu(null); p.onManage!() }}>Manage…</button>
+          </>)}
         </div>
       )}
       {menu === 'repo' && p.onRepo && (() => {
@@ -359,9 +382,12 @@ export function Composer(p: ComposerProps) {
         )}
     <span style={{ flex: 1 }} />
         {(!!p.model || !!p.models?.length) && (
-          <button type="button" className="f-pill cz-model" style={{ color: placeColor(placeOf(p.model ? spec(p.model) : null)) }} aria-label={`Model: ${p.model ? modelName(p.model) : 'default'}`} aria-expanded={menu === 'model'}
+          <button type="button" className="f-pill cz-model" aria-label={`Model: ${p.model ? modelName(p.model) : 'default'} on Frog Cloud`} aria-expanded={menu === 'model'}
             disabled={!p.models?.length || !p.onModel} onClick={(e) => { anchor(e); setMenu(menu === 'model' ? null : 'model') }}>
-            {p.model ? modelName(p.model) : 'Default model'}{p.models?.length ? <span className="chev">▾</span> : null}
+            <span className="cz-dot" style={{ background: placeColor(placeOf(p.model ? spec(p.model) : null)) }} aria-hidden="true" />
+            <span className="cz-pill-model">{p.model ? modelName(p.model) : 'Default model'}</span>
+            <span className="cz-pill-place">· Frog Cloud</span>
+            {p.models?.length ? <span className="chev">▾</span> : null}
           </button>
         )}
         {p.context?.window || p.usage?.sub ? <ContextRing used={p.context?.used ?? null} window={p.context?.window ?? 0} usage={p.usage} onCompact={p.onCompact && !working ? () => p.onCompact!() : undefined} compacting={p.compacting} /> : null}

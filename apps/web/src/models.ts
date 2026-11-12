@@ -43,6 +43,9 @@ export function price(m: Model) {
   return `${f(m.input)} in · ${f(m.output)} out per M tokens`
 }
 
+/** "$0.80/M out": a cloud model's price per million output tokens, as the picker shows it. */
+export const outputPrice = (m: Model) => (m.output == null ? '' : `$${(m.output * 1e6).toFixed(2)}/M out`)
+
 /** The model a new session starts on: GLM-5.3 Flash while Frog Cloud lists it (it always
  *  serves it), else the first it lists. Nothing is built in: no list, no default. */
 export const defaultModel = (models: Model[]) => (models.find((m) => currentId(m.id) === 'glm-5.3-flash') ?? models[0])?.id
