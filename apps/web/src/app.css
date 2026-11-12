@@ -452,7 +452,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .title-chev { width: 24px; height: 24px; }
 /* What Frog is doing: quiet sans, the words shimmering past, a breathing dot. */
 .thinking { display: inline-flex; align-items: center; gap: 9px; font-size: 13px; letter-spacing: .005em;
-  background: linear-gradient(90deg, var(--faint) 0%, var(--faint) 35%, var(--fg) 50%, var(--faint) 65%, var(--faint) 100%) 0 0 / 250% 100%;
+  background: linear-gradient(90deg, var(--muted) 0%, var(--muted) 35%, var(--fg) 50%, var(--muted) 65%, var(--muted) 100%) 0 0 / 250% 100%;
   -webkit-background-clip: text; background-clip: text; color: transparent; animation: shimmer-text 2.4s linear infinite; }
 .thinking.warn { background: none; color: var(--notice); animation: none; }
 .thinking-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--frog); flex: none; animation: breathe 1.6s ease-in-out infinite; }
@@ -540,7 +540,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 
 body { font-family: var(--font-sans); }
 /* Tool calls: an icon, what it did in words, the argument quiet in mono; a chevron on hover. */
-.tool-row { gap: 2px; }
+.tool-row { gap: 6px; }
 button.tool { display: flex; align-items: center; gap: 8px; width: fit-content; max-width: calc(100% + 8px); border: 0; background: transparent; padding: 1px 8px; margin-left: -8px; border-radius: 8px; font: 13px/20px var(--font-sans); color: var(--muted); cursor: pointer; text-align: left; min-width: 0; }
 button.tool:hover { background: var(--hover); color: var(--fg); }
 .tool-ic { width: 16px; height: 16px; flex: none; display: grid; place-items: center; color: var(--faint); }
@@ -561,10 +561,10 @@ button.tool:hover .tool-what { color: var(--muted); }
 button.tool:hover .tool-chev, button.tool[aria-expanded="true"] .tool-chev { opacity: 1; }
 button.tool[aria-expanded="true"] .tool-chev { transform: rotate(90deg); }
 .tool-spin { width: 11px; height: 11px; border-radius: 50%; border: 1.5px solid var(--frog-pad); border-top-color: var(--frog); animation: spin 1s linear infinite; }
-.tool-body { margin: 2px 0 6px 7px; }
-/* Activity lines run together, as on Mac (TurnSpace): a 22px row, 2px apart, with the reply's
+.tool-body { margin: 6px 0 6px 7px; }
+/* Activity lines run together, as on Mac (TurnSpace): a 22px row, 6px apart, with the reply's
    usual 12px only around the run. */
-.reply-block > :is(.tool-row, .thought) + :is(.tool-row, .thought) { margin-top: -10px; }
+.reply-block > :is(.tool-row, .thought) + :is(.tool-row, .thought) { margin-top: -6px; }
 .insp-top { gap: 6px; }
 .insp-x { flex: none; }
 
@@ -572,6 +572,8 @@ button.tool[aria-expanded="true"] .tool-chev { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) {
   .sym.ring, .sg-run, .starting li.now .starting-g, .tool-spin, .caret, .term .cursor, .thinking, .thinking-dot, .beta-pill i { animation: none !important; }
   .thinking { background: none; color: var(--muted); }
+  .tool-row { gap: 6px; }
+  .reply-block > :is(.tool-row, .thought) + :is(.tool-row, .thought) { margin-top: -6px; }
 }
 
 /* Keyboard focus in menus and on the usage ring (arrow keys move it; see ui/layers.ts). */
