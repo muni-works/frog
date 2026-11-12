@@ -347,9 +347,22 @@ impl Agent {
             );
             return Decision::Allow;
         }
+        // The one line the card says about why. Boilerplate first, then the honest one:
+        // a self-requested escape of a build/test on the session's own paths would have
+        // worked confined, and saying so beats "it can read your credentials" (measured:
+        // every carded build in the 20261112 logs had `unsandboxed: true` for no reason).
+        let needless = leaves_sandbox
+            && crate::approval::needless_escape(cmd, &self.ctx.cwd, &self.ctx.root, &self.created);
         let mut reason = leaves_sandbox.then(|| {
-            "Runs outside the sandbox: it can change files anywhere and read your credentials."
-                .to_string()
+            if needless {
+                "The agent asked to run this outside the sandbox, but it's a build or file step
+                in this session's own checkout or scratch — the sandbox allows those paths, so
+                it would run the same confined; nothing needed the escape."
+                    .replace('\n', " ")
+            } else {
+                "Runs outside the sandbox: it can change files anywhere and read your credentials."
+                    .to_string()
+            }
         });
         if terminal_run && self.ctx.shell_sandbox.is_some() {
             reason = Some(
@@ -365,10 +378,15 @@ impl Agent {
                 ))
             }
             Some(_) => {
-                reason = Some(
+                reason = Some(if needless {
+                    "The agent asked to leave the sandbox and past the network allow-list, but it's a
+                    build or file step in this session's own checkout or scratch — nothing here
+                    needs the network or the wider writes; it would run the same confined."
+                        .replace('\n', " ")
+                } else {
                     "Runs outside the sandbox and past this session's network allow-list: it can reach any host, change files anywhere and read your credentials."
-                        .to_string(),
-                )
+                        .to_string()
+                })
             }
             None => {}
         }
@@ -1058,7 +1076,13 @@ impl Agent {
             return Err(("never-delegable", format!("it {why} (never delegated)")));
         }
         let preview = tools::fs::preview(name, input, &self.ctx);
-        let action = crate::auto::describe(name, input, preview.as_ref(), sandbox);
+        let action = crate::auto::describe(
+            name,
+            input,
+            preview.as_ref(),
+            sandbox,
+            (&self.ctx.cwd, &self.ctx.root, &self.created),
+        );
         // A hard rule is a flag without asking the first pass: it goes straight to the
         // second, which can only clear it with context (rm and ssh are always
         // double-checked, never single-checked). With no classifier it cards.
