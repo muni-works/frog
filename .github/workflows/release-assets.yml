@@ -1,0 +1,57 @@
+name: release-assets
+
+# The alarm that would have caught v0.2.1.
+#
+# A guard that only runs inside the two publishers can't catch the case that actually happened:
+# on v0.2.1 the macOS build job died on a retired runner label before the release job (and any
+# publish-time check in it) ever ran, and apps/macos/scripts/release.sh published the dmg-only
+# release on its own. Nothing was left to notice.
+#
+# This runs on `release: published`, so it fires however a release got published — the workflow,
+# release.sh, scripts/release-local.sh, or the GitHub web UI — and it re-checks the *published*
+# set, not a draft. It also runs on a schedule, because `release: published` doesn't fire for a
+# release that goes wrong later (an asset deleted by hand), and releases/latest is what
+# `curl -fsSL https://frog.toys/install.sh | sh` resolves.
+on:
+  release:
+    types: [published, edited]
+  schedule:
+    # daily; the installer is the front door, so drift shouldn't wait for the next release
+    - cron: "17 14 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  installable:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # On a release event, check that release. Otherwise check whatever releases/latest is now.
+      - name: the release install.sh would resolve carries every asset it needs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          if [ -n "$TAG" ]; then
+            scripts/release-assets.sh check "$TAG"
+          else
+            scripts/release-assets.sh check latest
+          fi
+      # A published release missing assets doesn't fix itself, and install.sh is broken until it
+      # does. Fail the job (above) and say what to do in the run summary.
+      - name: what to do about it
+        if: failure()
+        run: |
+          {
+            echo "### A release is not installable"
+            echo
+            echo '`curl -fsSL https://frog.toys/install.sh | sh` resolves `releases/latest` and'
+            echo 'downloads `frog-<tag>-<target>.tar.gz`. This release is missing some of those.'
+            echo
+            echo "Fix: re-run the release workflow for the tag so it attaches the CLI assets"
+            echo "(Actions → release → Run workflow is a dry run; use *Re-run all jobs* on the"
+            echo "tag's run). Both publishers upload into a draft and"
+            echo "\`scripts/release-assets.sh publish <tag>\` publishes once the set is complete."
+          } >> "$GITHUB_STEP_SUMMARY"
