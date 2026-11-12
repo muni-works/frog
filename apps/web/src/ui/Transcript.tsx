@@ -1,7 +1,7 @@
 import { Fragment, memo, useEffect, useMemo, useRef, useState } from 'react'
 import type { FileDiff, Image } from '../cloud/protocol'
 import type { Ask, Entry, Question, Thread } from '../engine/thread'
-import { placeColor, type Model } from '../models'
+import { type Model } from '../models'
 import { ElicitationCard, QuestionCard } from './AskCards'
 import { Markdown } from './Markdown'
 import { Hunks } from './Diff'
@@ -57,6 +57,8 @@ const TOOL_LOOK: Record<string, { verb: [string, string]; icon: string }> = {
   visualize: { verb: ['Making a visual', 'Made a visual'], icon: 'M4 19V5M4 19h16M8 15l3-4 3 2 5-6' },
   visualguide: { verb: ['Reading the visual guide', 'Read the visual guide'], icon: 'M6 3h8l4 4v14H6zM14 3v4h4' },
   settitle: { verb: ['Naming', 'Named'], icon: 'M4 7V5h16v2M12 5v14M9 19h6' },
+  // A child session, as on Mac (ActivityLine): "Ran an agent <what it was asked>".
+  task: { verb: ['Running an agent', 'Ran an agent'], icon: 'M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM3 20c0-3 3-5 6-5s6 2 6 5M16 11a3 3 0 1 0 0-6M18 15c2 .6 3 2.4 3 5' },
 }
 const OTHER = { verb: ['Using', 'Used'] as [string, string], icon: 'M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z' }
 
@@ -115,6 +117,15 @@ function EditLine({ diff }: { diff: FileDiff }) {
 }
 
 /** A thought: one quiet line, collapsed with a ›, opening to what it thought (the Mac's too). */
+/** A short finished thought alone between replies (no tool beside it) folds away, as on Mac
+ * (TurnFlow: a model's scratch line before answering isn't worth a line of its own). */
+function foldedThought(entries: Entry[], n: number): boolean {
+  let a = n, b = n
+  while (a > 0 && entries[a - 1].kind !== 'message') a--
+  while (b < entries.length - 1 && entries[b + 1].kind !== 'message') b++
+  return entries.slice(a, b + 1).every((x) => x.kind === 'reasoning' && x.done && x.text.trim().length <= 200 && !x.text.trim().includes('\n\n'))
+}
+
 function ThoughtLine({ text }: { text: string }) {
   const [open, setOpen] = useState(false)
   return (
@@ -256,8 +267,9 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
   return (
     <div className="turn">
       <div className="ask-block">
-        {[{ text: turn.input, images: turn.images }, ...(turn.more ?? [])].map((m, i) => (
-          <div key={i} className="me">
+        {/* A blank message (whitespace, no images) draws no empty bubble. */}
+        {[{ text: turn.input, images: turn.images }, ...(turn.more ?? [])].map((m, i) => !m.text.trim() && !m.images?.length ? null : (
+          <div key={i} className="me" dir="auto">
             {m.images?.length ? <div className="me-imgs">{m.images.map((im, j) => <img key={j} src={`data:${im.mime};base64,${im.data}`} alt="" />)}</div> : null}
             {m.text}
           </div>
@@ -271,11 +283,12 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
         </div>
       </div>
       <div className="reply-block">
-      {turn.entries.map((e) => {
-        if (e.kind === 'reasoning') return (
-          <ThoughtLine key={e.id} text={e.text} />
-        )
-        if (e.kind === 'message') return <div key={e.id} className={`say ${turn.usage?.served_by ? 'served' : ''}`} style={turn.usage?.served_by ? { ['--served' as string]: placeColor('cloud') } : undefined} title={turn.usage?.served_by ? `Served by ${turn.usage.served_by.name}` : undefined}><Markdown text={e.text} />{!e.done && <span className="caret" />}</div>
+      {turn.entries.map((e, n) => {
+        if (e.kind === 'reasoning' && foldedThought(turn.entries, n)) return null
+        // An empty thought has nothing to open, and a blank reply nothing to read: neither draws.
+        if (e.kind === 'reasoning') return e.text.trim() ? <ThoughtLine key={e.id} text={e.text} /> : null
+        if (e.kind === 'message' && e.done && !e.text.trim()) return null
+        if (e.kind === 'message') return <div key={e.id} className="say"><Markdown text={e.text} />{!e.done && <span className="caret" />}</div>
         if (question?.item === e.id) return <QuestionCard key={e.id} q={question} onAnswer={cb.onAnswer} />
         const asking = ask?.item === e.id ? ask : null
         const diff = e.diff ?? asking?.preview

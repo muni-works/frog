@@ -2,9 +2,7 @@
 // A one-session gateway for the parity capture: the web app (vite dev, proxying /v1 here) lists
 // one session and, on attach, gets the fixture's events up to its ask card, which stays open.
 //
-//   node docs/design/parity/gateway.mjs [--port 8799] [--fixture fixture.jsonl] [--title "…"]
-//
-// A fixture without an ask is shown whole (the visuals fixtures in docs/design/visuals).
+//   node docs/design/parity/gateway.mjs [--port 8799] [--fixture fixture.jsonl]
 //
 // Reuses the vendored mock's websocket and fixture loader (apps/web/test/mock).
 import { createServer } from "node:http";
@@ -17,10 +15,12 @@ const events = loadFixture(arg("fixture", new URL("./fixture.jsonl", import.meta
 const id = "s_parity";
 const title = arg("title", "Fix flaky upload retry");
 const now = Date.now();
-const info = { id, title, repo: "muni-works/lilypad", branch: "frog/lilypad-parity", state: "running", updated: now };
-// Up to and including the ask; the hold and what follows are the Mac replay's business.
+// Up to and including the ask; the hold and what follows are the Mac replay's business. A fixture
+// with no ask (the fuzz cases, fuzz/cases.mjs) is shown whole.
 const ask = events.findIndex((e) => e.event === "permission_request");
 const shown = ask < 0 ? events : events.slice(0, ask + 1);
+const ended = shown.findLast((e) => e.event === "turn_started" || e.event === "turn_ended")?.event === "turn_ended";
+const info = { id, title, repo: "muni-works/lilypad", branch: "frog/lilypad-parity", state: ended ? "idle" : "running", updated: now };
 const json = (res, s, b) => res.writeHead(s, { "content-type": "application/json" }).end(JSON.stringify(b));
 
 const server = createServer((req, res) => {

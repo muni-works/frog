@@ -10,7 +10,8 @@ import { diffIds } from './live'
 // happens inside one comes only from its event stream. Nothing here is made up.
 
 /** The gateway's origin. In dev, Vite proxies /v1 to $GATEWAY (default the mock). */
-export const GATEWAY = (import.meta.env.VITE_GATEWAY as string | undefined) ?? location.origin
+// Optional chains so tests can import it under node (no vite env, no location).
+export const GATEWAY = (import.meta.env?.VITE_GATEWAY as string | undefined) ?? globalThis.location?.origin ?? ""
 
 // New-session suggestions: three drawn at random from this pool on each visit. Concrete,
 // worth a sandbox, and each one shows a different thing Frog is good at.
@@ -223,6 +224,9 @@ export function turnError(t: Thread): string | null {
 export function endError(reason: EndReason | null | undefined): string | null {
   if (reason?.type !== 'error') return null
   const e = (reason as { error?: { type?: string; status?: number; message?: string } }).error ?? {}
+  // The Mac's words (EngineError.description) for the kinds that carry no useful detail.
+  if (e.type === 'connection') return "Couldn't reach the model. Check your connection and try again."
+  if (e.type === 'incomplete_stream') return 'The response stream ended early.'
   let detail = e.message ?? ''
   try { detail = JSON.parse(detail)?.error?.message ?? detail } catch { /* not JSON */ }
   if (detail && plainError(detail) !== detail.trim()) return plainError(detail)

@@ -314,9 +314,10 @@ struct TurnView: View, Equatable {
         return (Self.modelName(raw), conversation.progressSince ?? turn.startedAt ?? .now)
     }
 
-    /// The prompt has a row: what you asked, or a message from another session.
+    /// The prompt has a row: what you asked, or a message from another session. A blank prompt
+    /// (whitespace, no images) has none, so it draws no empty bubble.
     static func hasHead(_ turn: TurnState) -> Bool {
-        !turn.input.isEmpty || !turn.more.isEmpty
+        !turn.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !turn.images.isEmpty || !turn.more.isEmpty
     }
 
     private static func modelName(_ raw: String) -> String {

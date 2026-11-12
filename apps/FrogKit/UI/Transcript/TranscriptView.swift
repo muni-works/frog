@@ -523,7 +523,7 @@ struct UserPrompt: View {
                     }
                 }
             }
-            if !message.isEmpty {
+            if !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 Text(message)
                     .font(.frog(size: TurnType.body))
                     .textSelection(.enabled)
