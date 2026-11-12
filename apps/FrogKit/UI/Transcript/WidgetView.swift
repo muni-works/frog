@@ -13,6 +13,8 @@ struct WidgetCard: View {
     @State private var expanded = false
     @State private var asked: String?
     @State private var gate = PromptGate()
+    @State private var ready = false
+    @State private var fullReady = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -61,10 +63,24 @@ struct WidgetCard: View {
             }
             .frame(maxHeight: fill ? .infinity : 480)
         } else if fill {
-            WidgetWebView(html: widget.html, height: .constant(0), onPrompt: ask)
+            WidgetWebView(html: widget.html, height: .constant(0), onPrompt: ask, inline: false, onReady: { fullReady = true })
+                .opacity(fullReady ? 1 : 0)
+                .overlay { if !fullReady { drawing } }
+                .onDisappear { fullReady = false }
         } else {
-            WidgetWebView(html: widget.html, height: $height, onPrompt: ask)
+            WidgetWebView(html: widget.html, height: $height, onPrompt: ask, onReady: { ready = true })
                 .frame(height: height)
+                .opacity(ready ? 1 : 0)
+                .overlay { if !ready { drawing } }
+                .animation(.easeOut(duration: 0.2), value: ready)
+        }
+    }
+
+    /// Until the widget's first layout: a quiet line, not a blank box.
+    private var drawing: some View {
+        HStack(spacing: 8) {
+            ProgressView().controlSize(.small)
+            Text("Drawing…").font(.callout).foregroundStyle(.secondary)
         }
     }
 
@@ -133,13 +149,17 @@ struct WidgetWebView: PlatformViewRepresentable {
     let html: String
     @Binding var height: CGFloat
     let onPrompt: (String) -> Void
+    /// Inline cards are sized to their content, so wheel scrolling belongs to the transcript.
+    var inline = true
+    /// The widget laid out (its first height report): time to show it.
+    var onReady: () -> Void = {}
 
     func makeCoordinator() -> Host { Host(self) }
 
-    func makeWeb(context: Context) -> WKWebView { Self.makeWebView(html: html, host: context.coordinator) }
+    func makeWeb(context: Context) -> WKWebView { Self.makeWebView(html: html, host: context.coordinator, inline: inline) }
 
     /// The locked-down web view, loaded with `html` and reporting to `host`.
-    static func makeWebView(html: String, host: Host) -> WKWebView {
+    static func makeWebView(html: String, host: Host, inline: Bool = true) -> WKWebView {
         let config = WKWebViewConfiguration()
         // Nothing persists and nothing is shared with the app's other web views.
         config.websiteDataStore = .nonPersistent()
@@ -150,7 +170,12 @@ struct WidgetWebView: PlatformViewRepresentable {
         config.allowsInlineMediaPlayback = true
         config.dataDetectorTypes = []
         #endif
+        #if os(macOS)
+        let web = WidgetWKWebView(frame: .zero, configuration: config)
+        web.passesScroll = inline
+        #else
         let web = WKWebView(frame: .zero, configuration: config)
+        #endif
         #if os(macOS)
         web.setValue(false, forKey: "drawsBackground")
         #else
@@ -205,7 +230,10 @@ struct WidgetWebView: PlatformViewRepresentable {
             let prompt = msg["text"] as? String
             Task { @MainActor in
                 switch type {
+                case "ready":
+                    self.view.onReady()
                 case "height":
+                    self.view.onReady()
                     if let height { self.view.height = min(max(CGFloat(height.rounded(.up)), 120), 1400) }
                 case "prompt":
                     if let prompt, !prompt.isEmpty { self.view.onPrompt(String(prompt.prefix(2000))) }
@@ -232,3 +260,14 @@ struct WidgetWebView: PlatformViewRepresentable {
         func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? { nil }
     }
 }
+
+#if os(macOS)
+/// A widget's web view. Inline it hands wheel events to the transcript, so scrolling past a
+/// visual never gets stuck on it; expanded it scrolls itself.
+final class WidgetWKWebView: WKWebView {
+    var passesScroll = true
+    override func scrollWheel(with event: NSEvent) {
+        if passesScroll { nextResponder?.scrollWheel(with: event) } else { super.scrollWheel(with: event) }
+    }
+}
+#endif
