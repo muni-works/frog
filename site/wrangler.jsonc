@@ -11,8 +11,13 @@
     // /energy -> /energy/, /index.html -> /, like vercel.json's cleanUrls.
     "html_handling": "auto-trailing-slash",
     // No SPA fallback: unmatched paths go to the worker, which 404s.
-    "not_found_handling": "none"
+    "not_found_handling": "none",
+    // The installer is a file, but the worker sees it first to count the hit (worker.js).
+    "run_worker_first": ["/install.sh"]
   },
+  // Launch analytics: one point per install hit and appcast fetch (docs/privacy.md). The
+  // dataset is created on first write.
+  "analytics_engine_datasets": [{ "binding": "ANALYTICS", "dataset": "frog_site" }],
   "workers_dev": true,
   "vars": {
     // The Frog Cloud gateway the app's /v1 requests (and session websockets) go to. Same
