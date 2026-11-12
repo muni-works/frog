@@ -492,8 +492,21 @@ async fn text_turn_lifecycle() {
     );
     // The one mid-turn status is the wait, and it carries the attempt.
     assert!(matches!(&evs[2].event, Event::Status(s) if s.waiting.as_ref().is_some_and(|w| w.attempt == 1)));
-    // The end-of-turn status says nothing is waiting any more.
-    assert!(matches!(&evs[7].event, Event::Status(s) if s.waiting.is_none()));
+    // The end-of-turn status says nothing is waiting any more. Found by position rather than
+    // by index: it's the status after `turn_ended`, and pinning an index here makes every
+    // added event a failure that says nothing about the wait.
+    let ended = evs
+        .iter()
+        .position(|e| matches!(e.event, Event::TurnEnded { .. }))
+        .expect("a turn ends");
+    let after = evs[ended..]
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::Status(s) => Some(s),
+            _ => None,
+        })
+        .expect("the turn's end is followed by a status");
+    assert!(after.waiting.is_none(), "still waiting after the turn: {after:?}");
     assert!(matches!(
         &evs[6].event,
         Event::Titled { title } if title == "hi"
@@ -503,20 +516,34 @@ async fn text_turn_lifecycle() {
         seqs.windows(2).all(|w| w[1] == w[0] + 1),
         "seq must be contiguous: {seqs:?}"
     );
+    // The reply's own item, wherever it sits: started, streamed, completed.
+    let reply_evs: Vec<&Event> = evs
+        .iter()
+        .map(|e| &e.event)
+        .filter(|e| {
+            matches!(
+                e,
+                Event::ItemStarted { .. } | Event::ItemDelta { .. } | Event::ItemCompleted { .. }
+            )
+        })
+        .collect();
+    assert_eq!(reply_evs.len(), 3, "{reply_evs:?}");
     assert!(
-        matches!(&evs[4].event, Event::ItemCompleted { item: Item::Message { text }, .. } if text == "hello")
+        matches!(reply_evs[2], Event::ItemCompleted { item: Item::Message { text }, .. } if text == "hello")
     );
     assert!(matches!(
-        &evs[6].event,
-        Event::TurnEnded {
+        evs.iter()
+            .find(|e| matches!(e.event, Event::TurnEnded { .. }))
+            .map(|e| &e.event),
+        Some(Event::TurnEnded {
             reason: EndReason::Complete,
             ..
-        }
+        })
     ));
     // The delta and the completion refer to the same item.
-    let ids: Vec<&str> = evs[2..5]
+    let ids: Vec<&str> = reply_evs
         .iter()
-        .map(|e| match &e.event {
+        .map(|e| match e {
             Event::ItemStarted { id, .. }
             | Event::ItemDelta { id, .. }
             | Event::ItemCompleted { id, .. } => id.as_str(),
@@ -4727,6 +4754,33 @@ async fn a_resume_drops_timers_the_dead_engine_had_with_one_line() {
     assert!(out.starts_with("Timer mon-2 set"), "ids continue: {out}");
     assert!(!out.contains("Also pending"), "nothing re-armed: {out}");
     shutdown(h).await;
+}
+
+#[tokio::test]
+async fn a_json_mode_call_stops_waiting_when_the_answer_lands() {
+    // The json-mode arm of the call returns early; if it doesn't clear the in-flight marker,
+    // the turn ends still claiming to wait on the model — a session that looks stuck forever.
+    let script = vec![reply(
+        vec![text(r#"{"thought":"","action":{"answer":"done"}}"#)],
+        Stop::End,
+    )];
+    let mut h = engine_mode(script, ToolMode::Json);
+    let evs = run(&mut h, "hi").await;
+    let ended = evs
+        .iter()
+        .position(|e| matches!(e.event, Event::TurnEnded { .. }))
+        .expect("a turn ends");
+    let after = evs[ended..]
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::Status(s) => Some(s),
+            _ => None,
+        })
+        .expect("the turn's end is followed by a status");
+    assert!(
+        after.waiting.is_none(),
+        "a json-mode call finished but the status still says it waits: {after:?}"
+    );
 }
 
 #[tokio::test]
@@ -12213,3 +12267,4 @@ async fn prs_bind_from_gh_pr_create_and_by_hand() {
     );
     let _ = std::fs::remove_dir_all(base);
 }
+

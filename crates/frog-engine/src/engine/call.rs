@@ -381,6 +381,9 @@ impl Agent {
             match r {
                 // Unparseable JSON-mode output is kept as a plain answer and counted as a failure.
                 Ok(resp) if json_mode => {
+                    // The answer is in, JSON-mode or not: this call isn't waiting any more.
+                    // Cleared here as well as below, because this arm returns early.
+                    *self.call_started.lock().unwrap() = None;
                     return Ok(match from_json_mode(resp.clone()) {
                         Some(resp) => (resp, streamed),
                         None => (
@@ -417,6 +420,7 @@ impl Agent {
                         self.emit(Event::ItemsDiscarded { ids });
                     }
                     if !billing.admitted {
+                        *self.call_started.lock().unwrap() = None;
                         return Err(BillingRefused {
                             window: billing.window.to_string(),
                             reason: billing.reason,
@@ -436,6 +440,7 @@ impl Agent {
                     // admit didn't hold (or the credit ran out), and the turn ends with the
                     // honest typed reason instead of spinning.
                     if attempt > 0 {
+                        *self.call_started.lock().unwrap() = None;
                         return Err(BillingRefused {
                             window: billing.window.to_string(),
                             reason: billing.reason,
