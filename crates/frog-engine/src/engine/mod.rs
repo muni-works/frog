@@ -1583,9 +1583,9 @@ struct Agent {
     /// Set by `permit` when it refused a repeat of a call denied this turn: the batch stops
     /// and the turn ends with this denial.
     blocked: Option<String>,
-    /// This turn's finished `Bash` calls (item id, command, output head) awaiting a gist,
-    /// flushed in one side-model call when the turn ends (see `gist`).
-    pending_gists: Vec<(String, String, String)>,
+    /// This turn's finished tool calls awaiting a gist, flushed in one side-model call when
+    /// the turn ends (see `gist`): item id, tool, argument, outcome, output head.
+    pending_gists: Vec<(String, String, String, ToolOutcome, String)>,
     /// Chapter titles written this session, by content hash: the same chapter never asks
     /// twice. Shared with the title task.
     chapter_titles: Arc<Mutex<HashMap<u64, String>>>,
@@ -2198,29 +2198,33 @@ impl Agent {
         }
     }
 
-    /// Write the turn's queued command gists in one batched side-model call, and emit one
-    /// [`Event::CommandGisted`] per item. The model call is bounded and best effort: any
+    /// Write the turn's queued tool-call gists in batched side-model calls, and emit one
+    /// durable [`Event::ItemGisted`] per item. The model call is bounded and best effort: any
     /// trouble (no usable model, a timeout, an unreadable answer) silently leaves those rows
-    /// on the raw command — a gist is a display flourish, never worth failing over.
-    /// Duplicated commands across items get the same line, so the call stays one per
-    /// unique command, not one per row.
+    /// on their own argument — a gist is a display flourish, never worth failing over.
+    /// Duplicated calls across items get the same line, so the work stays one per unique
+    /// call, not one per row.
     async fn flush_gists(&mut self) {
         let pending = std::mem::take(&mut self.pending_gists);
         if pending.is_empty() || self.subagent {
             return;
         }
-        let commands: Vec<crate::gist::Command> = pending
+        let calls: Vec<crate::gist::Call> = pending
             .iter()
-            .map(|(_, command, output)| crate::gist::Command { command, output })
+            .map(|(_, tool, arg, outcome, output)| crate::gist::Call {
+                tool,
+                arg,
+                outcome: *outcome,
+                output,
+            })
             .collect();
-        let gists = crate::gist::write(&self.cfg, &self.root, &commands).await;
-        for ((id, command, _), gist) in pending.iter().zip(gists) {
+        let gists = crate::gist::write(&self.cfg, &self.root, &calls, crate::harness::is_cloud(&self.profile)).await;
+        for ((id, ..), gist) in pending.iter().zip(gists) {
             if gist.is_empty() {
                 continue;
             }
-            self.emit(Event::CommandGisted {
+            self.emit(Event::ItemGisted {
                 item: id.clone(),
-                command: command.clone(),
                 gist,
             });
         }
@@ -2248,10 +2252,11 @@ impl Agent {
             return;
         }
         let (cfg, root) = (self.cfg.clone(), self.root.clone());
+        let cloud_ok = crate::harness::is_cloud(&self.profile);
         let (journal, cache) = (self.shared.journal.clone(), self.chapter_titles.clone());
         let session = journal.session();
         tokio::spawn(async move {
-            let Some(title) = crate::chapter::write(&cfg, &root, &closed).await else {
+            let Some(title) = crate::chapter::write(&cfg, &root, &closed, cloud_ok).await else {
                 return;
             };
             cache.lock().unwrap().insert(key, title.clone());

@@ -69,9 +69,11 @@ function ToolLine({ e }: { e: Entry }) {
   const output = e.output.trim()
   const shown = open ?? (e.outcome === 'error' || (!e.done && !!output))
   const state = !e.done ? 'run' : e.outcome === 'error' ? 'err' : e.outcome === 'denied' ? 'denied' : 'ok'
-  // What it touched ("Read src/retry.rs", as on the Mac); the engine's gist ("Read 54 lines")
-  // goes in the opened detail, so the verb isn't said twice.
-  const what = e.arg || (e.done && e.display) || (TOOL_LOOK[name] ? '' : e.name)
+  // What it touched ("Read src/retry.rs", as on the Mac), or the side-model's gist when one
+  // arrived: a raw shell command or MCP arguments read as nothing, and the gist says what the
+  // call did. The engine's own one-line display ("Read 54 lines") goes in the opened detail,
+  // so the verb isn't said twice.
+  const what = (e.done && e.gist) || e.arg || (e.done && e.display) || (TOOL_LOOK[name] ? '' : e.name)
   return (
     <div className={`tool-row ${state}`}>
       <button type="button" className="tool" aria-expanded={shown} onClick={() => setOpen(!shown)}>
@@ -81,14 +83,22 @@ function ToolLine({ e }: { e: Entry }) {
             : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={look.icon} /></svg>}
         </span>
         <span className="tool-verb">{look.verb[e.done ? 1 : 0]}</span>
-        {what && <span className="tool-what">{what}</span>}
+        {what && <span className={`tool-what${e.done && e.gist ? ' gist' : ''}`}>{what}</span>}
         {state === 'err' && <span className="tool-tag err">failed</span>}
         {state === 'denied' && <span className="tool-tag">denied</span>}
         <span className="tool-chev" aria-hidden="true">›</span>
       </button>
       {shown && (
         <div className="tool-body">
-          {e.arg && e.display && <div className="tool-arg">{e.display}</div>}
+          {/* The raw call stays readable when the row's line is something else: with a gist on
+              the row, this is the argument it summarized. The engine's own display leads, as
+              upstream had it ("Read 54 lines"), with the argument under it. */}
+          {e.arg && (e.gist || e.display) && (
+            <>
+              {e.display && <div className="tool-arg">{e.display}</div>}
+              <div className="tool-arg">{e.arg}</div>
+            </>
+          )}
           {output ? <pre className="tool-out">{clip(output)}</pre> : <div className="det">{e.done ? 'No output.' : 'Running…'}</div>}
         </div>
       )}

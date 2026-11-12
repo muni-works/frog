@@ -86,6 +86,25 @@ test("retry notices read as what happened and when it tries again", async () => 
   assert.equal(humanize("context window: 32768 tokens"), "context window: 32768 tokens");
 });
 
+test("a finished call's gist lands on its own row, not on its command", () => {
+  const t = [
+    { event: "turn_started", turn: 1, input: "check the branch" },
+    { event: "item_started", id: "t1", kind: { type: "tool_call", name: "Bash", arg: "git log --oneline -5" } },
+    { event: "item_completed", id: "t1", item: { type: "tool_call", name: "Bash", arg: "git log --oneline -5", input: {}, outcome: "ok", output: "abc fix", display: null } },
+    { event: "item_gisted", item: "t1", gist: "git log of the sleep-events worktree" },
+    // A second row, the same command, no gist of its own: it keeps its argument.
+    { event: "item_started", id: "t2", kind: { type: "tool_call", name: "Bash", arg: "git log --oneline -5" } },
+    { event: "item_completed", id: "t2", item: { type: "tool_call", name: "Bash", arg: "git log --oneline -5", input: {}, outcome: "ok", output: "abc fix", display: null } },
+    { event: "turn_ended", turn: 1, reason: { type: "complete" } },
+  ].reduce((t, e) => reduce(t, env(e as Event)), emptyThread);
+  const [a, b] = t.turns[0].entries;
+  assert.equal(a.gist, "git log of the sleep-events worktree");
+  assert.equal(b.gist, undefined);
+  // An empty gist is no gist: the row falls back to its argument.
+  const cleared = reduce(t, env({ event: "item_gisted", item: "t1", gist: "" }));
+  assert.equal(cleared.turns[0].entries[0].gist, null);
+});
+
 test("next_suggested holds the model's suggestion until the next turn starts", () => {
   let t = [
     { event: "turn_started", turn: 1, input: "fix it" },

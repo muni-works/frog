@@ -345,14 +345,17 @@ struct ActivityStepRow: View {
 
     /// The row's words. A shell row running now says the intent ("Running git log…" from the
     /// elided command) rather than the raw text; done, it reads as always ("Ran …"), with a
-    /// gist replacing the raw command when one arrived.
+    /// gist from the engine's side-model replacing the raw command when one arrived. Any
+    /// other row a gist came for (a web fetch, an MCP call) reads as the gist, which says
+    /// what it did where the row's own words only name the argument.
     private var rowTitle: String {
+        if let gist = item.gist, item.done, name != "Bash", name != "!" { return gist }
         guard name == "Bash" || name == "!" else { return ActivityWords.row(item) }
         if !item.done {
             let elided = CommandElision.elide(item.arg, from: conversation.folder.path)
             return ActivityWords.isTest(item.arg) ? "Running the tests…" : "Running \(elided)…"
         }
-        if let gist = CommandGists.shared.gist(for: item.arg) {
+        if let gist = item.gist {
             return gist
         }
         return "Ran \(CommandElision.elide(item.arg, from: conversation.folder.path))"
