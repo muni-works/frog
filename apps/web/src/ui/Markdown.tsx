@@ -7,10 +7,10 @@ import { Fragment, memo, useMemo, useRef, useState, type ReactNode } from 'react
 export type Block =
   | { k: 'code'; lang: string; text: string; open: boolean }
   | { k: 'h'; level: number; text: string }
-  | { k: 'list'; ordered: boolean; start: number; items: string[] }
+  | { k: 'list'; ordered: boolean; start: number; items: string[]; depth?: number[]; marks?: string[] }
   | { k: 'quote'; text: string }
   | { k: 'hr' }
-  | { k: 'table'; head: string[]; rows: string[][] }
+  | { k: 'table'; head: string[]; rows: string[][]; align?: ('left' | 'center' | 'right')[] }
   | { k: 'p'; text: string }
 
 export function parse(src: string): Block[] {
@@ -39,25 +39,31 @@ export function parse(src: string): Block[] {
       flush()
       const cells = (l: string) => l.trim().replace(/^\||\|$/g, '').split('|').map((c) => c.trim())
       const head = cells(line)
+      const align = cells(lines[i + 1]).map((c) => (c.startsWith(':') && c.endsWith(':') ? 'center' : c.endsWith(':') ? 'right' : 'left') as 'left' | 'center' | 'right')
       const rows: string[][] = []
       i += 2
       while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) rows.push(cells(lines[i++]))
-      out.push({ k: 'table', head, rows })
+      out.push({ k: 'table', head, rows, ...(align.some((a) => a !== 'left') ? { align } : {}) })
       continue
     }
     const li = line.match(/^\s*([-*+]|(\d+)[.)])\s+(.*)$/)
     if (li) {
       flush()
       const ordered = !!li[2]
-      const items: string[] = []
+      const indent = (l: string) => l.match(/^ */)![0].length
+      const base = indent(line)
+      const items: string[] = [], depth: number[] = [], marks: string[] = []
       while (i < lines.length) {
         const m = lines[i].match(/^\s*([-*+]|(\d+)[.)])\s+(.*)$/)
-        if (m && !!m[2] === ordered) { items.push(m[3]); i++; continue }
+        // A nested item (two more spaces a level, as on Mac) may be either kind; a top-level
+        // one must be the list's own kind.
+        const d = m ? Math.floor(Math.max(0, indent(lines[i]) - base) / 2) : 0
+        if (m && (d > 0 || !!m[2] === ordered)) { items.push(m[3]); depth.push(d); marks.push(m[2] ? `${m[2]}.` : '•'); i++; continue }
         // A wrapped or indented continuation line belongs to the item above.
         if (items.length && /^\s{2,}\S/.test(lines[i])) { items[items.length - 1] += '\n' + lines[i].trim(); i++; continue }
         break
       }
-      out.push({ k: 'list', ordered, start: ordered ? Number(li[2]) : 1, items })
+      out.push({ k: 'list', ordered, start: ordered ? Number(li[2]) : 1, items, ...(depth.some((d) => d > 0) ? { depth, marks } : {}) })
       continue
     }
     if (/^\s*>/.test(line)) {
@@ -108,20 +114,22 @@ export function parseStreaming(src: string, cache: { head: string; blocks: Block
 
 const SAFE = /^(https?:|mailto:)/i
 
-/** Inline Markdown into React nodes: `code`, **bold**, *em*, [links](url), bare URLs. */
+/** Inline Markdown into React nodes: `code`, ***both***, ~~struck~~, **bold**, *em*, [links](url), bare URLs. */
 export function inline(text: string, key = 0): ReactNode[] {
   const out: ReactNode[] = []
-  const re = /(`+)([\s\S]*?[^`])\1(?!`)|\*\*([\s\S]+?)\*\*|__([\s\S]+?)__|(?<![\w*])\*(?!\s)([\s\S]+?)(?<!\s)\*(?!\w)|(?<![\w_])_(?!\s)([\s\S]+?)(?<!\s)_(?!\w)|\[([^\]]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)|(https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"])/g
+  const re = /(`+)([\s\S]*?[^`])\1(?!`)|\*\*\*(?!\s)([\s\S]+?)\*\*\*|~~(?!\s)([\s\S]+?)~~|\*\*([\s\S]+?)\*\*|__([\s\S]+?)__|(?<![\w*])\*(?!\s)([\s\S]+?)(?<!\s)\*(?!\w)|(?<![\w_])_(?!\s)([\s\S]+?)(?<!\s)_(?!\w)|\[([^\]]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)|(https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"])/g
   let last = 0
   let m: RegExpExecArray | null
   while ((m = re.exec(text))) {
     if (m.index > last) out.push(...lines(text.slice(last, m.index), `${key}-${last}`))
     const k = `${key}-${m.index}`
     if (m[2] !== undefined) out.push(<code key={k}>{m[2]}</code>)
-    else if (m[3] !== undefined || m[4] !== undefined) out.push(<strong key={k}>{inline(m[3] ?? m[4], m.index)}</strong>)
-    else if (m[5] !== undefined || m[6] !== undefined) out.push(<em key={k}>{inline(m[5] ?? m[6], m.index)}</em>)
-    else if (m[7] !== undefined) out.push(SAFE.test(m[8]) ? <a key={k} href={m[8]} target="_blank" rel="noreferrer">{inline(m[7], m.index)}</a> : <Fragment key={k}>{m[7]}</Fragment>)
-    else if (m[9] !== undefined) out.push(<a key={k} href={m[9]} target="_blank" rel="noreferrer">{m[9]}</a>)
+    else if (m[3] !== undefined) out.push(<strong key={k}><em>{inline(m[3], m.index)}</em></strong>)
+    else if (m[4] !== undefined) out.push(<del key={k}>{inline(m[4], m.index)}</del>)
+    else if (m[5] !== undefined || m[6] !== undefined) out.push(<strong key={k}>{inline(m[5] ?? m[6], m.index)}</strong>)
+    else if (m[7] !== undefined || m[8] !== undefined) out.push(<em key={k}>{inline(m[7] ?? m[8], m.index)}</em>)
+    else if (m[9] !== undefined) out.push(SAFE.test(m[10]) ? <a key={k} href={m[10]} target="_blank" rel="noreferrer">{inline(m[9], m.index)}</a> : <Fragment key={k}>{m[9]}</Fragment>)
+    else if (m[11] !== undefined) out.push(<a key={k} href={m[11]} target="_blank" rel="noreferrer">{m[11]}</a>)
     last = m.index + m[0].length
   }
   if (last < text.length) out.push(...lines(text.slice(last), `${key}-${last}`))
@@ -159,10 +167,19 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
         switch (b.k) {
           case 'code': return <Code key={i} lang={b.lang} text={b.text} />
           case 'h': {
-            const H = (['h3', 'h3', 'h4', 'h5', 'h6', 'h6'] as const)[b.level - 1]
+            // Sized as on Mac (TurnType.heading): body + 4, body + 2, then body.
+            const H = (['h2', 'h3', 'h4', 'h5', 'h6', 'h6'] as const)[b.level - 1]
             return <H key={i}>{inline(b.text, i)}</H>
           }
           case 'list': {
+            // A nested list (Mac's model): one flat list, each item stepped in by its depth,
+            // with its own marker (• ◦ ▪ by depth, or its number).
+            if (b.depth) return (
+              <ul key={i} className="md-nest">{b.items.map((it, j) => {
+                const d = b.depth![j], mk = b.marks![j]
+                return <li key={j} style={{ ['--d' as string]: d }}><span className={mk === '•' ? 'md-dot' : 'md-num'}>{mk === '•' ? ['•', '◦', '▪'][d % 3] : mk}</span>{inline(it, j)}</li>
+              })}</ul>
+            )
             const items = b.items.map((it, j) => <li key={j}>{inline(it, j)}</li>)
             return b.ordered ? <ol key={i} start={b.start}>{items}</ol> : <ul key={i}>{items}</ul>
           }
@@ -170,8 +187,8 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
           case 'hr': return <hr key={i} />
           case 'table': return (
             <div key={i} className="md-table"><table>
-              <thead><tr>{b.head.map((c, j) => <th key={j}>{inline(c, j)}</th>)}</tr></thead>
-              <tbody>{b.rows.map((r, j) => <tr key={j}>{r.map((c, n) => <td key={n}>{inline(c, n)}</td>)}</tr>)}</tbody>
+              <thead><tr>{b.head.map((c, j) => <th key={j} style={b.align?.[j] ? { textAlign: b.align[j] } : undefined}>{inline(c, j)}</th>)}</tr></thead>
+              <tbody>{b.rows.map((r, j) => <tr key={j}>{r.map((c, n) => <td key={n} style={b.align?.[n] ? { textAlign: b.align[n] } : undefined}>{inline(c, n)}</td>)}</tr>)}</tbody>
             </table></div>
           )
           default: return <p key={i}>{inline(b.text, i)}</p>

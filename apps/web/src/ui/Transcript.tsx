@@ -1,7 +1,7 @@
 import { Fragment, memo, useEffect, useMemo, useRef, useState } from 'react'
 import type { FileDiff, Image } from '../cloud/protocol'
 import type { Ask, Entry, Question, Thread } from '../engine/thread'
-import { placeColor, type Model } from '../models'
+import { type Model } from '../models'
 import { ElicitationCard, QuestionCard } from './AskCards'
 import { Markdown } from './Markdown'
 import { Hunks } from './Diff'
@@ -249,7 +249,8 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
   return (
     <div className="turn">
       <div className="ask-block">
-        {[{ text: turn.input, images: turn.images }, ...(turn.more ?? [])].map((m, i) => (
+        {/* A blank message (whitespace, no images) draws no empty bubble. */}
+        {[{ text: turn.input, images: turn.images }, ...(turn.more ?? [])].map((m, i) => !m.text.trim() && !m.images?.length ? null : (
           <div key={i} className="me">
             {m.images?.length ? <div className="me-imgs">{m.images.map((im, j) => <img key={j} src={`data:${im.mime};base64,${im.data}`} alt="" />)}</div> : null}
             {m.text}
@@ -265,10 +266,10 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
       </div>
       <div className="reply-block">
       {turn.entries.map((e) => {
-        if (e.kind === 'reasoning') return (
-          <ThoughtLine key={e.id} text={e.text} />
-        )
-        if (e.kind === 'message') return <div key={e.id} className={`say ${turn.usage?.served_by ? 'served' : ''}`} style={turn.usage?.served_by ? { ['--served' as string]: placeColor('cloud') } : undefined} title={turn.usage?.served_by ? `Served by ${turn.usage.served_by.name}` : undefined}><Markdown text={e.text} />{!e.done && <span className="caret" />}</div>
+        // An empty thought has nothing to open, and a blank reply nothing to read: neither draws.
+        if (e.kind === 'reasoning') return e.text.trim() ? <ThoughtLine key={e.id} text={e.text} /> : null
+        if (e.kind === 'message' && e.done && !e.text.trim()) return null
+        if (e.kind === 'message') return <div key={e.id} className="say"><Markdown text={e.text} />{!e.done && <span className="caret" />}</div>
         if (question?.item === e.id) return <QuestionCard key={e.id} q={question} onAnswer={cb.onAnswer} />
         const asking = ask?.item === e.id ? ask : null
         const diff = e.diff ?? asking?.preview

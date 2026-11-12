@@ -10,7 +10,8 @@ import { diffIds } from './live'
 // happens inside one comes only from its event stream. Nothing here is made up.
 
 /** The gateway's origin. In dev, Vite proxies /v1 to $GATEWAY (default the mock). */
-export const GATEWAY = (import.meta.env.VITE_GATEWAY as string | undefined) ?? location.origin
+// Optional chains so tests can import it under node (no vite env, no location).
+export const GATEWAY = (import.meta.env?.VITE_GATEWAY as string | undefined) ?? globalThis.location?.origin ?? ""
 
 // New-session suggestions: three drawn at random from this pool on each visit. Concrete,
 // worth a sandbox, and each one shows a different thing Frog is good at.
