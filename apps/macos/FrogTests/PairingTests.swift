@@ -247,7 +247,7 @@ final class PairingSnapshotTests: XCTestCase {
             PairSheet(device: found, problem: PairError.wrongCode.line("mew"))
         }
         try render("card-unpaired.png", width: 260, height: 190) {
-            DeviceCard(device: found, compact: false, serving: false).frame(width: 236, height: 168).padding(12)
+            MachineRow(device: found).frame(width: 236).padding(12)
         }
 
         // A real pairing, then the card as Devices draws it.
@@ -265,13 +265,13 @@ final class PairingSnapshotTests: XCTestCase {
         card.link = .ethernet
         XCTAssertTrue(card.paired && card.online)
         try render("card-paired.png", width: 260, height: 190) {
-            DeviceCard(device: card, compact: false, serving: true).frame(width: 236, height: 168).padding(12)
+            MachineRow(device: card).frame(width: 236).padding(12)
         }
         node.swapIdentity()
         await devices.poll()
         let refused = try XCTUnwrap(devices.list.first { $0.id == paired.node_id })
         try render("card-refused.png", width: 260, height: 190) {
-            DeviceCard(device: refused, compact: false, serving: false).frame(width: 236, height: 168).padding(12)
+            MachineRow(device: refused).frame(width: 236).padding(12)
         }
     }
 

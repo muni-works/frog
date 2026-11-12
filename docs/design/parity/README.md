@@ -29,3 +29,11 @@ one look; `FROG_PREBUILT_DIR` picks the engine binaries (default: a scratch copy
   in points, 2× (`web-*.png`).
 
 Re-run it after a layout or token change and commit the PNGs and `index.html` with it.
+
+## Model picker and Settings › Models
+
+[`models.html`](models.html) puts the picker, the Machines list and a machine's page side by side,
+Mac and web, from one fixture. Mac: `TEST_RUNNER_FROG_PARITY_OUT=$PWD/docs/design/parity xcodebuild
+… test -only-testing:FrogTests/ModelsParityTests`. Web: `npx vite` in `apps/web`, then
+`node docs/design/parity/web-shot.mjs "http://localhost:5173/parity/models.html?view=picker&theme=dark" …`
+(views: `picker`, `settings`, `machine`).

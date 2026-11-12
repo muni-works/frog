@@ -391,8 +391,8 @@ struct ComposerView: View {
             } else if conversation.cloudSession != nil {
                 Label("Frog Cloud", systemImage: "cloud").foregroundStyle(Color.place(.frogCloud))
             }
-            if paneWidth > .narrow, conversation.cloudSession == nil {
-                DeviceChip(conversation: conversation)
+            if conversation.cloudSession == nil {
+                SwitchNotice(conversation: conversation)
             }
             Spacer()
             if let e = workspace.raceError {
@@ -947,5 +947,29 @@ private struct LocationPicker: View {
                 if let failure = CloudAccount.signInFailure(error) { workspace.raceError = failure }
             }
         }
+    }
+}
+
+/// One line when another session swapped the model on the machine this one runs on:
+/// "mew switched to Qwen3-8B". Click to dismiss.
+struct SwitchNotice: View {
+    let conversation: Conversation
+    @State private var devices = Devices.shared
+
+    var body: some View {
+        if let s = devices.lastSwitch, s.by != conversation.sessionID, ranHere(s.deviceID) {
+            Button { devices.dismissSwitch() } label: {
+                Label(s.line, systemImage: "arrow.triangle.2.circlepath")
+                    .lineLimit(1)
+                    .foregroundStyle(Tokens.textSecondary)
+            }
+            .buttonStyle(.plain)
+            .help("Another session swapped the model on this machine. Click to dismiss.")
+        }
+    }
+
+    private func ranHere(_ deviceID: String) -> Bool {
+        guard let status = conversation.status else { return false }
+        return devices.serving(model: status.model, ranOn: status.ranOn).deviceID == deviceID
     }
 }
