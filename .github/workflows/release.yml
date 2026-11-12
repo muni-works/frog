@@ -5,8 +5,16 @@ on:
     tags:
       - "v*"
       - "v*-rc*"
-  # Dry run: builds and smoke-tests, publishes nothing.
+  # Dry run: builds and smoke-tests, publishes nothing — unless `tag` names an existing tag, in
+  # which case this builds THAT tag from main's workflow file and attaches the CLI to its
+  # release. That's the repair path: re-running a tag's own run uses the tag's workflow file, so
+  # a tag cut before a workflow fix stays broken (v0.2.1 pinned the retired macos-14 runner).
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "existing tag to build and attach CLI assets to (empty: dry run)"
+        required: false
+        type: string
   pull_request:
     paths: [".github/workflows/release.yml"]
 
@@ -15,6 +23,10 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # The tag this run is about: the pushed tag, or the one asked for by a dispatch. Everything
+  # downstream uses $TAG rather than GITHUB_REF_NAME so a dispatch from main names the tag's
+  # assets correctly.
+  TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   build:
@@ -23,7 +35,11 @@ jobs:
       matrix:
         include:
           - target: aarch64-apple-darwin
-            os: macos-14
+            # macos-14 was retired on 2026-11-02: the job dies in 0s with "The configuration
+            # 'macos-14-arm64-us-default' is not supported", which is what sank v0.2.1.
+            # macos-26 is the arm64 image ci.yml uses. Rust's target sets its own minos (11.0),
+            # so a newer SDK doesn't raise the CLI's deployment floor.
+            os: macos-26
             zig: false
             # The app needs a private tang checkout (FROG_REQUIRE_TANG), which CI doesn't
             # have; signed app releases come from apps/macos/scripts/release.sh. CI ships the CLI.
@@ -41,7 +57,10 @@ jobs:
             bundle: false
     runs-on: ${{ matrix.os }}
     steps:
+      # A dispatch from main builds the tag it was asked for; a tag push builds that tag.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
       # Only the macOS bundle needs tang: build-engine.sh requires tang-llm when
       # FROG_REQUIRE_TANG=1, and the Linux CLI tarballs don't ship the app.
       - uses: actions/checkout@v4
@@ -87,7 +106,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
         run: |
-          name="frog-${GITHUB_REF_NAME//\//-}-${TARGET}"
+          name="frog-${TAG//\//-}-${TARGET}"
           mkdir -p "dist/$name"
           cp "target/${TARGET}/release/frog" "dist/$name/"
           # host strip can't read the aarch64 cross output
@@ -132,12 +151,12 @@ jobs:
               -project Frog.xcodeproj -scheme Frog -configuration Release \
               -derivedDataPath build/release -destination 'generic/platform=macOS' \
               ARCHS=arm64 ONLY_ACTIVE_ARCH=NO \
-              MARKETING_VERSION="${GITHUB_REF_NAME#v}" CURRENT_PROJECT_VERSION="1" \
+              MARKETING_VERSION="${TAG#v}" CURRENT_PROJECT_VERSION="1" \
               FROG_REQUIRE_TANG=1 \
               CODE_SIGN_IDENTITY="-" \
               DEVELOPMENT_TEAM="" \
               CODE_SIGN_STYLE="Manual"
-            APP="build/dist/${GITHUB_REF_NAME#v}/Frog.app"
+            APP="build/dist/${TAG#v}/Frog.app"
             ditto "build/release/Build/Products/Release/Frog.app" "$APP"
             # Zip lands at dist/ root, not inside dist/$name/.
             ditto -c -k --keepParent "$APP" "../../dist/Frog.zip"
@@ -196,11 +215,15 @@ jobs:
           '
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    # A tag push, or a dispatch that named a tag to repair. A plain dispatch is a dry run.
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.tag != '')
     needs: [build, smoke-cloud]
     runs-on: ubuntu-latest
     steps:
+      # main's workflow file when repairing an old tag, the tag's own when it was pushed.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -220,15 +243,15 @@ jobs:
           sudo apt-get install -y -qq minisign >/dev/null
           printf '%s\n' "$MINISIGN_SECRET_KEY" > "$RUNNER_TEMP/minisign.key"
           for f in dist/*.tar.gz; do
-            minisign -S -s "$RUNNER_TEMP/minisign.key" -m "$f" -t "frog ${GITHUB_REF_NAME} $(basename "$f")"
+            minisign -S -s "$RUNNER_TEMP/minisign.key" -m "$f" -t "frog ${TAG} $(basename "$f")"
           done
           rm -f "$RUNNER_TEMP/minisign.key"
       # Render packaging/homebrew/frog.rb for this release (stable tags only).
       - name: homebrew formula
-        if: ${{ !contains(github.ref_name, '-') }}
+        if: ${{ !contains(inputs.tag || github.ref_name, '-') }}
         run: |
-          v="${GITHUB_REF_NAME#v}"
-          sha() { cut -d' ' -f1 < "dist/frog-${GITHUB_REF_NAME}-$1.tar.gz.sha256"; }
+          v="${TAG#v}"
+          sha() { cut -d' ' -f1 < "dist/frog-${TAG}-$1.tar.gz.sha256"; }
           sed -e "s/@VERSION@/$v/" \
               -e "s/@SHA256_AARCH64_APPLE_DARWIN@/$(sha aarch64-apple-darwin)/" \
               -e "s/@SHA256_AARCH64_UNKNOWN_LINUX_GNU@/$(sha aarch64-unknown-linux-gnu)/" \
@@ -238,13 +261,19 @@ jobs:
       - name: check if prerelease
         id: prerelease
         run: |
-          if [[ "${{ github.ref_name }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rc[0-9]+$ ]]; then
+          if [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rc[0-9]+$ ]]; then
             echo "prerelease=true" >> $GITHUB_OUTPUT
           else
             echo "prerelease=false" >> $GITHUB_OUTPUT
           fi
+      # Two publishers share this tag and neither can do the other's half: this job has the CLI,
+      # apps/macos/scripts/release.sh has the app (it needs a private tang checkout). So the
+      # release stays a DRAFT here — drafts are invisible to releases/latest, which is what
+      # site/install.sh resolves — and scripts/release-assets.sh publishes it only once the
+      # asset set is complete. Whichever publisher runs second does the publishing.
       - uses: softprops/action-gh-release@v2
         with:
+          draft: true
           files: |
             dist/*.tar.gz
             dist/*.sha256
@@ -254,9 +283,14 @@ jobs:
             dist/Frog.zip
             dist/Frog.zip.sha256
           prerelease: ${{ steps.prerelease.outputs.prerelease == 'true' }}
+      # Fails loudly if the release is missing anything install.sh needs, and publishes it when
+      # it isn't. A CLI-only tag (no app published yet) stays a draft and keeps the last good
+      # release serving — that is a pass, not a failure: release.sh publishes it later.
+      - name: publish once the asset set is complete
+        run: scripts/release-assets.sh publish "$TAG"
       # Push the rendered formula to the tap when a token for it is configured.
       - name: update homebrew tap
-        if: ${{ !contains(github.ref_name, '-') }}
+        if: ${{ !contains(inputs.tag || github.ref_name, '-') }}
         env:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
@@ -271,4 +305,4 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Formula/frog.rb
-          git diff --cached --quiet || { git commit -m "frog ${GITHUB_REF_NAME}" && git push; }
+          git diff --cached --quiet || { git commit -m "frog ${TAG}" && git push; }
