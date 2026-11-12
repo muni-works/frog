@@ -15,6 +15,8 @@ enum ToolIcon {
         case "Screenshot": "camera.viewfinder"
         case "Compare": "square.split.2x1"
         case "Diagram": "point.3.connected.trianglepath.dotted"
+        case "Visualize": "chart.xyaxis.line"
+        case "VisualGuide": "book.pages"
         case "Present": "tablecells"
         case "Ask": "questionmark.bubble"
         case "CodeMap": "map"

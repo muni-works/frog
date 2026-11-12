@@ -293,6 +293,7 @@ struct TurnView: View, Equatable {
             }
             if current.needsPermission { return nil }
             if case .tool("Diagram", _) = current.kind { return nil }
+            if case .tool("Visualize", _) = current.kind { return nil }
             return (ActivityWords.now(current), current.startedAt)
         }
         // Between steps: the model is working out what to do next.
@@ -415,7 +416,7 @@ struct TurnParts {
         // Messages after the last tool call are the answer; everything else is work. Diagrams
         // (and MCP apps and images) are part of the answer wherever they come.
         func isDiagram(_ item: ItemState) -> Bool {
-            if case .tool(let name, _) = item.kind, name == "Diagram" { true } else { false }
+            if case .tool(let name, _) = item.kind, name == "Diagram" || name == "Visualize" { true } else { false }
         }
         // MCP results with their own UI (an app, or images) and Present's blocks are shown like
         // diagrams.
@@ -435,7 +436,7 @@ struct TurnParts {
         }
         for (i, item) in turn.items.enumerated() {
             let isAnswer: Bool = {
-                if isDiagram(item) { return item.result?.diagram != nil || !item.done }
+                if isDiagram(item) { return item.result?.diagram != nil || item.result?.widget != nil || !item.done }
                 if isVisual(item) { return true }
                 guard item.kind == .message else { return false }
                 guard let lastTool else { return true }

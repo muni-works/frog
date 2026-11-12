@@ -641,6 +641,8 @@ struct VerbLine: Equatable {
             case "Task": v.verb = "Ran an agent"; v.arg = arg.isEmpty ? nil : arg
             case "TodoWrite": v.verb = "Updated the plan"; v.arg = nil
             case "Diagram": v.verb = "Drew"; if arg.isEmpty { v.verb = "Drew a diagram" }
+            case "Visualize": v.verb = "Made a visual"; v.arg = nil
+            case "VisualGuide": v.verb = "Read the visual guide"; v.arg = nil
             case "Present": v.verb = "Showed results"; v.arg = nil
             case "Ask": v.verb = "Asked you"; v.arg = nil
             case "Skill": v.verb = "Used the skill"
