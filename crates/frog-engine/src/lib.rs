@@ -58,6 +58,7 @@ pub mod thinking;
 pub mod next;
 pub mod title;
 pub mod tools;
+pub mod widget;
 pub mod worktree;
 
 pub use engine::{Handle, Options, spawn, spawn_checked};
