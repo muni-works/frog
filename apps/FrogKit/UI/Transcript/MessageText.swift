@@ -540,7 +540,28 @@ enum MessageStyle {
         case .table(let header, let align, let rows):
             out.append(table(header: header, align: align, rows: rows, gap: gap))
         }
+        // A paragraph or heading that starts in Arabic or Hebrew reads right to left, right
+        // aligned, whatever the Mac's own language (`.natural` follows the locale, not the text).
+        switch block {
+        case .paragraph(let t), .heading(_, let t):
+            if startsRightToLeft(t) {
+                out.enumerateAttribute(.paragraphStyle, in: NSRange(location: 0, length: out.length)) { v, r, _ in
+                    guard let p = (v as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle else { return }
+                    p.baseWritingDirection = .rightToLeft
+                    out.addAttribute(.paragraphStyle, value: p, range: r)
+                }
+            }
+        default: break
+        }
         return out
+    }
+
+    /// The first strong letter is from a right-to-left script.
+    static func startsRightToLeft(_ s: String) -> Bool {
+        for u in s.unicodeScalars where u.properties.isAlphabetic {
+            return (0x0590...0x08FF).contains(u.value) || (0xFB1D...0xFDFF).contains(u.value) || (0xFE70...0xFEFF).contains(u.value)
+        }
+        return false
     }
 
     private static func codeBlock(language: String, code: String, gap: CGFloat) -> NSAttributedString {

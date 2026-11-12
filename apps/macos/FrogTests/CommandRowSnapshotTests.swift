@@ -59,7 +59,6 @@ final class CommandRowSnapshotTests: XCTestCase {
     private var c: Conversation?
 
     func testRenderRowStates() throws {
-        CommandGists.shared.reset()
         let root = "/Users/cam/Developer/frog/.frog/worktrees/sleep-events"
         let conv = conversation()
         c = conv
@@ -72,15 +71,14 @@ final class CommandRowSnapshotTests: XCTestCase {
 
         // 2. Done, gist arrived: the preview reads as intent.
         send(conv, #""item_completed","id":"b1","item":{"type":"tool_call","name":"Bash","arg":\#(Self.json(cmd)),"input":{"command":\#(Self.json(cmd))},"outcome":"ok","output":"7faaf84 Merge pull request #103\\n57ded26 engine: no side runs"}"#)
-        send(conv, #""command_gisted","item":"b1","command":\#(Self.json(cmd)),"gist":"git log and status of the sleep-events worktree""#)
+        send(conv, #""item_gisted","item":"b1","gist":"git log and status of the sleep-events worktree""#)
         pump(0.3)
         try render("row-gisted.png")
 
-        // 3. Done, no gist (dart unavailable): the elided command stays.
+        // 3. Done, no gist (no side-model resolved): the elided command stays.
         send(conv, #""item_started","id":"b2","kind":{"type":"tool_call","name":"Bash","arg":\#(Self.json(cmd))}"#)
         send(conv, #""item_completed","id":"b2","item":{"type":"tool_call","name":"Bash","arg":\#(Self.json(cmd)),"input":{"command":\#(Self.json(cmd))},"outcome":"ok","output":"7faaf84 Merge"}"#)
         pump(0.3)
         try render("row-fallback.png")
-        CommandGists.shared.reset()
     }
 }

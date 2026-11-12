@@ -1465,6 +1465,8 @@ struct Agent {
     /// Whenever the effective mode differs, the next chance to write logs it (see
     /// `log_mode`), so a restarted engine resumes in it and no change is ever silent.
     mode_logged: Option<Mode>,
+    /// PRs bound to the session (`Op::BindPr`, or opened from its branch), from its log.
+    prs: Vec<crate::prs::PrBinding>,
     can_ask: bool,
     rich: bool,
     subagent: bool,
@@ -1583,9 +1585,9 @@ struct Agent {
     /// Set by `permit` when it refused a repeat of a call denied this turn: the batch stops
     /// and the turn ends with this denial.
     blocked: Option<String>,
-    /// This turn's finished `Bash` calls (item id, command, output head) awaiting a gist,
-    /// flushed in one side-model call when the turn ends (see `gist`).
-    pending_gists: Vec<(String, String, String)>,
+    /// This turn's finished tool calls awaiting a gist, flushed in one side-model call when
+    /// the turn ends (see `gist`): item id, tool, argument, outcome, output head.
+    pending_gists: Vec<(String, String, String, ToolOutcome, String)>,
     /// Chapter titles written this session, by content hash: the same chapter never asks
     /// twice. Shared with the title task.
     chapter_titles: Arc<Mutex<HashMap<u64, String>>>,
@@ -1615,6 +1617,7 @@ impl Agent {
         // it, rather than silently reverting to whatever the flags say — the picker and the
         // engine must agree on the effective mode.
         let mut resumed_mode = None;
+        let mut resumed_prs = Vec::new();
         // MCP tools that were loaded via `McpTools` in a previous session, to be restored on resume.
         let mut loaded_tools: Vec<String> = Vec::new();
         let mut resumed_titled = false;
@@ -1659,6 +1662,7 @@ impl Agent {
                         }
                         Event::PaneClosed { id, .. } => stale_panes.retain(|p| p != id),
                         Event::ModeChanged { mode } => resumed_mode = Some(*mode),
+                        Event::Prs { prs } => resumed_prs = prs.clone(),
                         _ => {}
                     }
                 }
@@ -1791,6 +1795,7 @@ impl Agent {
             },
             mode: resumed_mode.unwrap_or(o.mode),
             mode_logged: resumed_mode,
+            prs: resumed_prs,
             can_ask: o.can_ask,
             rich: o.rich,
             subagent: o.subagent,
@@ -2198,29 +2203,33 @@ impl Agent {
         }
     }
 
-    /// Write the turn's queued command gists in one batched side-model call, and emit one
-    /// [`Event::CommandGisted`] per item. The model call is bounded and best effort: any
+    /// Write the turn's queued tool-call gists in batched side-model calls, and emit one
+    /// durable [`Event::ItemGisted`] per item. The model call is bounded and best effort: any
     /// trouble (no usable model, a timeout, an unreadable answer) silently leaves those rows
-    /// on the raw command — a gist is a display flourish, never worth failing over.
-    /// Duplicated commands across items get the same line, so the call stays one per
-    /// unique command, not one per row.
+    /// on their own argument — a gist is a display flourish, never worth failing over.
+    /// Duplicated calls across items get the same line, so the work stays one per unique
+    /// call, not one per row.
     async fn flush_gists(&mut self) {
         let pending = std::mem::take(&mut self.pending_gists);
         if pending.is_empty() || self.subagent {
             return;
         }
-        let commands: Vec<crate::gist::Command> = pending
+        let calls: Vec<crate::gist::Call> = pending
             .iter()
-            .map(|(_, command, output)| crate::gist::Command { command, output })
+            .map(|(_, tool, arg, outcome, output)| crate::gist::Call {
+                tool,
+                arg,
+                outcome: *outcome,
+                output,
+            })
             .collect();
-        let gists = crate::gist::write(&self.cfg, &self.root, &commands).await;
-        for ((id, command, _), gist) in pending.iter().zip(gists) {
+        let gists = crate::gist::write(&self.cfg, &self.root, &calls, crate::harness::is_cloud(&self.profile)).await;
+        for ((id, ..), gist) in pending.iter().zip(gists) {
             if gist.is_empty() {
                 continue;
             }
-            self.emit(Event::CommandGisted {
+            self.emit(Event::ItemGisted {
                 item: id.clone(),
-                command: command.clone(),
                 gist,
             });
         }
@@ -2248,10 +2257,11 @@ impl Agent {
             return;
         }
         let (cfg, root) = (self.cfg.clone(), self.root.clone());
+        let cloud_ok = crate::harness::is_cloud(&self.profile);
         let (journal, cache) = (self.shared.journal.clone(), self.chapter_titles.clone());
         let session = journal.session();
         tokio::spawn(async move {
-            let Some(title) = crate::chapter::write(&cfg, &root, &closed).await else {
+            let Some(title) = crate::chapter::write(&cfg, &root, &closed, cloud_ok).await else {
                 return;
             };
             cache.lock().unwrap().insert(key, title.clone());
@@ -2335,6 +2345,13 @@ impl Agent {
         }
         self.sync_log();
         self.write_summary();
+    }
+
+    /// Bind (or update) a PR and tell every client the new list. No change, no event.
+    fn bind_pr(&mut self, pr: crate::prs::PrBinding) {
+        if crate::prs::upsert(&mut self.prs, pr) {
+            self.emit(Event::Prs { prs: self.prs.clone() });
+        }
     }
 
     /// Record the session's title and remember it's named. A client's `Op::SetTitle` and the
@@ -2510,6 +2527,12 @@ impl Agent {
                 let title = crate::title::clean(&title);
                 if !title.is_empty() {
                     self.set_title(title);
+                }
+            }
+            Op::BindPr { pr } => self.bind_pr(pr),
+            Op::UnbindPr { repo, number } => {
+                if crate::prs::remove(&mut self.prs, &repo, number) {
+                    self.emit(Event::Prs { prs: self.prs.clone() });
                 }
             }
             Op::Deliver {

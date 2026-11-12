@@ -9,6 +9,12 @@ enum Snapshot {
         guard let path = UserDefaults.standard.string(forKey: "FrogSnapshot"), !path.isEmpty else { return }
         let delay = UserDefaults.standard.double(forKey: "FrogSnapshotDelay")
         Task { @MainActor in
+            // `-FrogSnapshotSize 520x760` (points): the window at that size, set early so the
+            // transcript lays out at it before the capture (the parity fuzz's narrow pass).
+            if let size = UserDefaults.standard.string(forKey: "FrogSnapshotSize") {
+                try? await Task.sleep(for: .seconds(1))
+                resize(to: size)
+            }
             try? await Task.sleep(for: .seconds(delay > 0 ? delay : 10))
             let ok = write(to: URL(fileURLWithPath: path))
             if !ok { FileHandle.standardError.write(Data("FrogSnapshot: no window to draw\n".utf8)) }
@@ -16,10 +22,20 @@ enum Snapshot {
         }
     }
 
+    private static func resize(to spec: String) {
+        let parts = spec.split(separator: "x").compactMap { Double($0) }
+        guard parts.count == 2, let window = mainWindow else { return }
+        window.minSize = NSSize(width: min(window.minSize.width, parts[0]), height: min(window.minSize.height, parts[1]))
+        window.setFrame(NSRect(origin: window.frame.origin, size: NSSize(width: parts[0], height: parts[1])), display: true)
+    }
+
+    private static var mainWindow: NSWindow? {
+        NSApp.orderedWindows.first { $0.isVisible && !($0 is NSPanel) && $0.frame.width > 200 } ?? NSApp.mainWindow
+    }
+
     /// The frontmost real window (not a panel or the status item), drawn by its frame view.
     static func write(to url: URL) -> Bool {
-        let windows = NSApp.orderedWindows.filter { $0.isVisible && !($0 is NSPanel) && $0.frame.width > 200 }
-        guard let window = windows.first ?? NSApp.mainWindow,
+        guard let window = mainWindow,
               let view = window.contentView?.superview ?? window.contentView else { return false }
         view.layoutSubtreeIfNeeded()
         view.displayIfNeeded()

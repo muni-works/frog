@@ -485,7 +485,11 @@ async fn pump(
                         },
                         _ => Decision::Deny,
                     };
-                    let _ = ops.send(frog_engine::protocol::Op::Permission { id, decision, note: None });
+                    let _ = ops.send(frog_engine::protocol::Op::Permission {
+                        id,
+                        decision,
+                        note: None,
+                    });
                 });
             }
             Event::TurnEnded { reason, .. } => finish(match reason {

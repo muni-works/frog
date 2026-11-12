@@ -12,6 +12,9 @@ import Observation
 final class GitIndex {
     static let shared = GitIndex()
 
+    /// `repo#number` → a bound PR's state as gh last reported it (GitIndex+PRs.swift).
+    var prSeen: [String: ComposerModel.Pr] = [:]
+
     /// Tree top → its badge. The only state rows observe.
     private(set) var badges: [String: GitBadge] = [:]
     /// The hover card's lazily read numbers, by key (`m:` a merge, `d:` a branch vs base).

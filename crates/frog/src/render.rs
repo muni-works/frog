@@ -808,7 +808,10 @@ mod tests {
 
         // Everything else keeps the engine's wording.
         let e = provider(500, "boom");
-        assert_eq!(describe_error(&e, Some("cloud/glm-5.3-flash")), e.to_string());
+        assert_eq!(
+            describe_error(&e, Some("cloud/glm-5.3-flash")),
+            e.to_string()
+        );
         assert_eq!(
             describe_error(&provider(404, "no route"), None),
             "provider error (404): no route"

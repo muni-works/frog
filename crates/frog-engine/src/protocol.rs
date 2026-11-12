@@ -197,6 +197,16 @@ pub enum Op {
     SetTitle {
         title: String,
     },
+    /// Bind a pull request to this session, or update what's known about one already bound
+    /// (title, state, checks as a client last saw them). Answered with [`Event::Prs`].
+    BindPr {
+        pr: crate::prs::PrBinding,
+    },
+    /// Unbind `repo#number`. Answered with [`Event::Prs`].
+    UnbindPr {
+        repo: String,
+        number: u64,
+    },
     /// Answer an [`Event::Elicitation`]. `action` is `accept`, `decline` or `cancel`;
     /// `content` holds the form's values when accepting.
     Elicit {
@@ -466,14 +476,12 @@ pub enum Event {
         id: String,
         item: Item,
     },
-    /// A one-line gist of a finished `Bash` tool call's command, written by a small
-    /// side-model in one batched call per turn flush (see `gist`). Live only: a
-    /// replaying client regenerates nothing, and shows the raw (elided) command.
-    CommandGisted {
-        /// The tool call's item id.
+    /// A one-line gist of a finished tool call, written by a small side-model in one batched
+    /// call per turn (see `gist`): "searched the engine for where gists flush". Durable, so a
+    /// replayed session shows the same lines; the row's own argument stays the fallback.
+    ItemGisted {
+        /// The tool call's item id, which the client already drew.
         item: String,
-        /// The command it ran, for hashing on the client (cache).
-        command: String,
         /// The gist, one line; empty never arrives (the event is only sent when there is one).
         gist: String,
     },
@@ -633,6 +641,11 @@ pub enum Event {
     },
     Titled {
         title: String,
+    },
+    /// The PRs bound to this session, the whole list after every change. Durable, so a
+    /// resumed engine, a replay and every client agree (the composer's git line).
+    Prs {
+        prs: Vec<crate::prs::PrBinding>,
     },
     PaneOpened {
         id: String,
@@ -931,6 +944,8 @@ impl Event {
                 | Self::ShellCwd { .. }
                 | Self::ModeChanged { .. }
                 | Self::Titled { .. }
+                | Self::Prs { .. }
+                | Self::ItemGisted { .. }
                 | Self::ChapterTitled { .. }
                 | Self::PaneOpened { .. }
                 | Self::PaneClosed { .. }
@@ -989,6 +1004,9 @@ pub enum Item {
         /// Set for Present: validated blocks, ready to draw.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         present: Option<Box<crate::present::Present>>,
+        /// Set for Visualize: the widget and the sandboxed document that draws it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        widget: Option<Box<crate::widget::Widget>>,
         /// Images the tool returned (MCP servers), shown to the user.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         images: Vec<Image>,
@@ -1655,6 +1673,21 @@ mod tests {
             r#"{"event":"question","id":"q1","item":"t1","question":"Which?","options":[{"label":"A"}],"allow_other":true}"#
         );
         assert!(!asked.is_durable());
+    }
+
+    /// A gist is durable, so a replayed session shows the same lines as the live one did:
+    /// the log keeps it and the client re-reads it rather than asking a model again.
+    #[test]
+    fn item_gisted_is_durable_and_keyed_by_item() {
+        let gisted = Event::ItemGisted {
+            item: "t1".into(),
+            gist: "searched the engine for where gists flush".into(),
+        };
+        assert_eq!(
+            serde_json::to_string(&gisted).unwrap(),
+            r#"{"event":"item_gisted","item":"t1","gist":"searched the engine for where gists flush"}"#
+        );
+        assert!(gisted.is_durable());
     }
 
     /// A subagent's steps survive a reopen: started/completed items inside a `subagent`

@@ -1,4 +1,4 @@
-import type { ElicitSchema, EndReason, Envelope, Event, FileDiff, Image, Mode, Part, Todo, ToolOutcome, TurnUsage } from '../cloud/protocol'
+import type { ElicitSchema, EndReason, Envelope, Event, FileDiff, Image, Mode, Part, Todo, ToolOutcome, TurnUsage, Widget } from '../cloud/protocol'
 
 // Folds a session's envelopes into what the transcript draws. Pure, so replay and
 // live streaming share one path: `reduce(thread, envelope)` for every envelope in order.
@@ -10,8 +10,13 @@ export interface Entry {
   name?: string
   arg?: string
   display?: string | null
+  /** A one-line gist of what the call did, from the engine's side-model. The argument stays
+   * the fallback: a row without one reads as it always did. */
+  gist?: string | null
   outcome?: ToolOutcome
   diff?: FileDiff
+  /** A Visualize result, drawn as a sandboxed card. */
+  widget?: Widget
   output: string
   done: boolean
 }
@@ -123,10 +128,13 @@ function apply(t: Thread, ev: Event, created: number): Thread {
       const next = patch(t, ev.id, (e) => (d.type === 'output' ? { ...e, output: e.output + d.text } : { ...e, text: e.text + d.text }))
       return d.type === 'output' ? { ...next, terminal: next.terminal + d.text } : next
     }
+    case 'item_gisted':
+      // A finished call's one-line summary from the engine's side-model, landing on its row.
+      return patch(t, ev.item, (e) => ({ ...e, gist: ev.gist || null }))
     case 'item_completed': {
       const it = ev.item
       const next = patch(t, ev.id, (e) => it.type === 'tool_call'
-        ? { ...e, done: true, outcome: it.outcome, display: it.display, diff: it.diff, output: it.output }
+        ? { ...e, done: true, outcome: it.outcome, display: it.display, diff: it.diff, ...(it.widget ? { widget: it.widget } : {}), output: it.output }
         : { ...e, done: true, text: it.text })
       if (it.type === 'tool_call' && it.diff && it.outcome === 'ok') {
         // A file edited several times keeps every edit's hunks and the summed counts.

@@ -205,6 +205,7 @@ impl Agent {
                 diff: None,
                 diagram: None,
                 present: None,
+                widget: None,
                 images: Vec::new(),
                 app: None,
             },

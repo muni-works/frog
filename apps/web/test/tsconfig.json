@@ -4,12 +4,12 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "types": ["node"],
+    "types": ["node", "vite/client"],
     "strict": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
     "skipLibCheck": true,
     "jsx": "react-jsx"
   },
-  "include": [".", "../src/cloud", "../src/engine", "../src/ui/Markdown.tsx", "../src/ui/TerminalPane.tsx", "../src/usage.ts", "../src/live.ts", "../src/ui/layers.ts"]
+  "include": [".", "../src/cloud", "../src/engine", "../src/ui/Markdown.tsx", "../src/ui/TerminalPane.tsx", "../src/usage.ts", "../src/composer.ts", "../src/live.ts", "../src/ui/layers.ts"]
 }

@@ -19,6 +19,12 @@
   --notice-bg: rgba(255, 149, 0, 0.09);
   --place-local: #3478e0;
   --place-cloud: #2e9e4f;
+  --pr-failing: #d9403b;
+  --pr-checks: #cc851f;
+  --pr-draft: #8a8a8a;
+  --pr-approved: #2e9e4f;
+  --pr-closed: #b04a3c;
+  --pr-merged: #8250df;
   --badge-bg: rgba(52, 199, 89, 0.18);
   --glass-fill: rgba(250, 250, 250, 0.9);
   --glass-fallback: #fafafa;
@@ -54,6 +60,12 @@
   --notice-bg: rgba(255, 159, 10, 0.09);
   --place-local: #64a4ff;
   --place-cloud: #58cc6f;
+  --pr-failing: #ff6961;
+  --pr-checks: #e5a54b;
+  --pr-draft: #8e8e8e;
+  --pr-approved: #58cc6f;
+  --pr-closed: #c9705f;
+  --pr-merged: #a887f0;
   --badge-bg: rgba(48, 209, 88, 0.18);
   --glass-fill: rgba(10, 10, 10, 0.9);
   --glass-fallback: #0a0a0a;
@@ -89,6 +101,12 @@
   --notice-bg: rgba(255, 159, 10, 0.09);
   --place-local: #64a4ff;
   --place-cloud: #58cc6f;
+  --pr-failing: #ff6961;
+  --pr-checks: #e5a54b;
+  --pr-draft: #8e8e8e;
+  --pr-approved: #58cc6f;
+  --pr-closed: #c9705f;
+  --pr-merged: #a887f0;
   --badge-bg: rgba(48, 209, 88, 0.18);
   --glass-fill: rgba(10, 10, 10, 0.9);
   --glass-fallback: #0a0a0a;

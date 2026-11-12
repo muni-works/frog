@@ -91,7 +91,7 @@ struct ActivityLabel: View {
         switch last.kind {
         case .tool(let name, let arg):
             let verb = ["Bash": "Running", "Read": "Reading", "Edit": "Editing", "Write": "Writing",
-                        "Grep": "Searching", "Glob": "Finding", "Diagram": "Drawing", "CodeMap": "Mapping",
+                        "Grep": "Searching", "Glob": "Finding", "Diagram": "Drawing", "Visualize": "Making a visual", "VisualGuide": "Reading the visual guide", "CodeMap": "Mapping",
                         "Present": "Laying out", "Ask": "Asking",
                         "Task": "Delegating", "McpTools": "Finding tools", "Skill": "Loading skill",
                         "WebFetch": "Fetching", "WebSearch": "Searching the web", "Docs": "Reading docs"][name]

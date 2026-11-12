@@ -345,14 +345,17 @@ struct ActivityStepRow: View {
 
     /// The row's words. A shell row running now says the intent ("Running git log…" from the
     /// elided command) rather than the raw text; done, it reads as always ("Ran …"), with a
-    /// gist replacing the raw command when one arrived.
+    /// gist from the engine's side-model replacing the raw command when one arrived. Any
+    /// other row a gist came for (a web fetch, an MCP call) reads as the gist, which says
+    /// what it did where the row's own words only name the argument.
     private var rowTitle: String {
+        if let gist = item.gist, item.done, name != "Bash", name != "!" { return gist }
         guard name == "Bash" || name == "!" else { return ActivityWords.row(item) }
         if !item.done {
             let elided = CommandElision.elide(item.arg, from: conversation.folder.path)
             return ActivityWords.isTest(item.arg) ? "Running the tests…" : "Running \(elided)…"
         }
-        if let gist = CommandGists.shared.gist(for: item.arg) {
+        if let gist = item.gist {
             return gist
         }
         return "Ran \(CommandElision.elide(item.arg, from: conversation.folder.path))"
@@ -586,6 +589,8 @@ struct VerbLine: Equatable {
     var detail: String?
     var diff: (added: UInt32, removed: UInt32)?
     var failed = false
+    /// You said no: a quiet "denied" tag, not a red failure (as on the web).
+    var denied = false
     /// A thought: quieter, no icon.
     var quiet = false
     /// The step it says, for putting a failed command's output under its own line.
@@ -593,7 +598,7 @@ struct VerbLine: Equatable {
 
     static func == (a: VerbLine, b: VerbLine) -> Bool {
         a.icon == b.icon && a.verb == b.verb && a.arg == b.arg && a.detail == b.detail
-            && a.diff?.added == b.diff?.added && a.diff?.removed == b.diff?.removed && a.failed == b.failed
+            && a.diff?.added == b.diff?.added && a.diff?.removed == b.diff?.removed && a.failed == b.failed && a.denied == b.denied
     }
 
     /// A group's lines: a thought only when nothing else happened, repeated plan updates once.
@@ -616,8 +621,9 @@ struct VerbLine: Equatable {
         case .message, .notice:
             return nil
         case .tool(let name, let arg):
-            let failed = item.result.map { $0.outcome == .error || $0.outcome == .denied } ?? false
+            let failed = item.result.map { $0.outcome == .error } ?? false
             var v = VerbLine(icon: ToolLook.icon(name), verb: "Used \(ToolIcon.title(name))", arg: arg.isEmpty ? nil : short(arg), failed: failed)
+            v.denied = item.result?.outcome == .denied
             v.itemID = item.id
             switch name {
             case "Read": v.verb = "Read"
@@ -641,6 +647,8 @@ struct VerbLine: Equatable {
             case "Task": v.verb = "Ran an agent"; v.arg = arg.isEmpty ? nil : arg
             case "TodoWrite": v.verb = "Updated the plan"; v.arg = nil
             case "Diagram": v.verb = "Drew"; if arg.isEmpty { v.verb = "Drew a diagram" }
+            case "Visualize": v.verb = "Made a visual"; v.arg = nil
+            case "VisualGuide": v.verb = "Read the visual guide"; v.arg = nil
             case "Present": v.verb = "Showed results"; v.arg = nil
             case "Ask": v.verb = "Asked you"; v.arg = nil
             case "Skill": v.verb = "Used the skill"
@@ -673,7 +681,7 @@ struct VerbLineView: View {
                     .font(.callout)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                if line.failed { FailedTag() }
+                if line.failed { FailedTag() } else if line.denied { DeniedTag() }
             }
         }
     }
@@ -695,6 +703,18 @@ struct VerbLineView: View {
                 + Text(verbatim: " −\(diff.removed)").foregroundStyle(.red).monospacedDigit()
         }
         return t
+    }
+}
+
+/// A denied step's tag, as on the web (`.tool-tag`): "denied", quiet, on the hover fill.
+struct DeniedTag: View {
+    var body: some View {
+        Text("denied")
+            .font(.frog(size: 11, weight: .medium))
+            .foregroundStyle(Tokens.textSecondary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 1)
+            .background(Tokens.hover, in: .rect(cornerRadius: 5))
     }
 }
 

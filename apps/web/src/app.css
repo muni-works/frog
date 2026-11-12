@@ -51,8 +51,7 @@ a { color: var(--frog); }
 .decided { font-size: 12px; color: var(--muted); border-left: 2px solid var(--line); padding-left: 10px; }
 .decided b { color: var(--fg); }
 .say { font-size: 14px; overflow-wrap: anywhere; }
-/* Who served a Frog Cloud answer: a rule in the margin, blue for Frog Cloud's GPUs, green for a third party. */
-.say.served { box-shadow: -8px 0 0 -6px var(--served); }
+/* Who served an answer is said once, in the turn footer (as on Mac): no margin rule on the text. */
 .caret { display: inline-block; width: 7px; height: 14px; margin-left: 2px; vertical-align: -2px; background: var(--frog); animation: blink 1s steps(2) infinite; }
 @keyframes blink { 50% { opacity: 0; } }
 .cardx { background: var(--card); border: 0; border-radius: 12px; overflow: hidden; }
@@ -169,17 +168,20 @@ button.tool:hover { color: var(--fg); }
 /* markdown */
 .md > :first-child { margin-top: 0; } .md > :last-child { margin-bottom: 0; }
 .md p { margin: 0 0 10px; }
-.md h3, .md h4, .md h5, .md h6 { margin: 14px 0 6px; font-size: 15px; } .md h4, .md h5, .md h6 { font-size: 14px; }
+.md h2, .md h3, .md h4, .md h5, .md h6 { margin: 14px 0 6px; font-size: 14px; font-weight: 600; } .md h2 { font-size: 18px; } .md h3 { font-size: 16px; }
 .md ul, .md ol { margin: 0 0 10px; padding-left: 22px; } .md li { margin: 2px 0; }
+.md .md-nest { list-style: none; padding-left: 0; } .md-nest li { position: relative; padding-left: calc(22px * (var(--d) + 1)); }
+.md-nest li > span { position: absolute; right: calc(100% - 22px * (var(--d) + 1) + 6px); font-variant-numeric: tabular-nums; } .md-nest .md-num { color: var(--muted); }
+.md del { color: var(--muted); }
 .md code { font: 12.5px var(--font-mono); background: rgba(127,127,127,.14); border-radius: 4px; padding: 1px 4px; }
 .md blockquote { margin: 0 0 10px; padding-left: 12px; border-left: 2px solid var(--line-strong); color: var(--muted); }
-.md hr { border: 0; border-top: 0; margin: 12px 0; }
+.md hr { border: 0; height: 1px; background: color-mix(in srgb, var(--fg) 10%, transparent); margin: 12px 0; }
 .md-code { margin: 0 0 10px; border: 0; border-radius: 10px; overflow: hidden; }
 .md-code-top { display: flex; justify-content: space-between; align-items: center; padding: 4px 6px 4px 12px; font-size: 11.5px; color: var(--faint); background: rgba(127,127,127,.08); }
 .md-code pre { margin: 0; padding: 10px 12px; overflow-x: auto; font: 12.5px/19px var(--font-mono); }
 .md-code pre code { background: none; padding: 0; font: inherit; }
 .md-table { overflow-x: auto; margin: 0 0 10px; }
-.md table { border-collapse: collapse; font-size: 13px; } .md th, .md td { border: 0; padding: 4px 8px; text-align: left; } .md th { background: rgba(127,127,127,.08); }
+.md table { border-collapse: collapse; font-size: 13px; } .md th, .md td { border: 0; padding: 4px 8px; text-align: left; overflow-wrap: normal; vertical-align: top; } .md th { white-space: nowrap; } .md td { min-width: 4ch; } .md th { background: rgba(127,127,127,.08); }
 
 /* questions and MCP prompts */
 .ask-card { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; box-shadow: var(--shadow-float); }
@@ -539,12 +541,14 @@ body.resizing { cursor: col-resize; user-select: none; }
 body { font-family: var(--font-sans); }
 /* Tool calls: an icon, what it did in words, the argument quiet in mono; a chevron on hover. */
 .tool-row { gap: 2px; }
-button.tool { display: flex; align-items: center; gap: 8px; width: 100%; max-width: 100%; border: 0; background: transparent; padding: 4px 8px; margin-left: -8px; border-radius: 8px; font: 13px/20px var(--font-sans); color: var(--muted); cursor: pointer; text-align: left; min-width: 0; }
+button.tool { display: flex; align-items: center; gap: 8px; width: fit-content; max-width: calc(100% + 8px); border: 0; background: transparent; padding: 1px 8px; margin-left: -8px; border-radius: 8px; font: 13px/20px var(--font-sans); color: var(--muted); cursor: pointer; text-align: left; min-width: 0; }
 button.tool:hover { background: var(--hover); color: var(--fg); }
 .tool-ic { width: 16px; height: 16px; flex: none; display: grid; place-items: center; color: var(--faint); }
 button.tool:hover .tool-ic { color: var(--muted); }
 .tool-verb { flex: none; }
 .tool-what { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 12px/20px var(--font-mono); color: var(--faint); }
+/* A gist reads as a sentence, not a command: prose, and a shade brighter than the raw argument. */
+.tool-what.gist { font: 13px/20px var(--font-sans); color: var(--muted); }
 button.tool:hover .tool-what { color: var(--muted); }
 .tool-tag { flex: none; font-size: 11px; color: var(--muted); background: var(--hover); border-radius: 5px; padding: 0 6px; line-height: 17px; }
 .tool-tag.err { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
@@ -553,11 +557,14 @@ button.tool:hover .tool-what { color: var(--muted); }
 .tool-row > .cardx { margin-top: 6px; }
 .tool-row.err .tool-ic { color: var(--warn); }
 .tool-row.run .tool-verb { color: var(--fg); }
-.tool-chev { margin-left: auto; flex: none; color: var(--faint); opacity: 0; transition: opacity .12s, transform .15s; font-size: 14px; }
+.tool-chev { margin-left: -2px; flex: none; color: var(--faint); opacity: 0; transition: opacity .12s, transform .15s; font-size: 14px; }
 button.tool:hover .tool-chev, button.tool[aria-expanded="true"] .tool-chev { opacity: 1; }
 button.tool[aria-expanded="true"] .tool-chev { transform: rotate(90deg); }
 .tool-spin { width: 11px; height: 11px; border-radius: 50%; border: 1.5px solid var(--frog-pad); border-top-color: var(--frog); animation: spin 1s linear infinite; }
 .tool-body { margin: 2px 0 6px 7px; }
+/* Activity lines run together, as on Mac (TurnSpace): a 22px row, 2px apart, with the reply's
+   usual 12px only around the run. */
+.reply-block > :is(.tool-row, .thought) + :is(.tool-row, .thought) { margin-top: -10px; }
 .insp-top { gap: 6px; }
 .insp-x { flex: none; }
 
@@ -617,3 +624,61 @@ button.tool:hover .tool-chev { opacity: 1; }
 .cardx.ask .diff-acts { padding: 0; margin: 0; gap: 8px; align-items: center; }
 .cardx.ask .diff-acts .f-btn { min-width: 72px; height: 28px; }
 .ask-more > summary { min-width: 0 !important; width: 28px; height: 28px; padding: 0; border-radius: 50%; display: grid; place-items: center; }
+
+/* Visuals (Visualize): a card with the widget's own sandboxed frame. */
+.widget { background: var(--card); border-radius: 12px; overflow: hidden; margin: 6px 0; }
+.widget-h { display: flex; align-items: center; gap: 8px; padding: 9px 10px 9px 14px; border-bottom: 1px solid var(--line); min-height: 40px; }
+.widget-ic { color: var(--faint); display: grid; place-items: center; }
+.widget-verb { color: var(--muted); white-space: nowrap; }
+.widget-title { font-weight: 500; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.widget-btn { border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 6px; cursor: pointer; }
+.widget-btn:hover { background: var(--hover); color: var(--fg); }
+.widget-btn.on { color: var(--fg); background: var(--hover); }
+.widget-btn.icon { display: grid; place-items: center; width: 28px; height: 28px; padding: 0; }
+.widget-frame { display: block; width: 100%; border: 0; background: transparent; color-scheme: normal; }
+.widget-src { margin: 0; padding: 12px 14px; max-height: 480px; overflow: auto; font: 12px/18px var(--font-mono); white-space: pre; color: var(--fg); }
+.widget-asked { padding: 8px 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+.widget-full { position: fixed; inset: 0; z-index: 60; background: rgba(0, 0, 0, .6); display: grid; place-items: center; padding: 24px; }
+.widget-full-card { background: var(--canvas); border: 1px solid var(--line); border-radius: 14px; width: min(1200px, 100%); height: min(900px, 100%); display: flex; flex-direction: column; overflow: hidden; }
+.widget-full-body { flex: 1; min-height: 0; overflow: auto; }
+.widget-full-body .widget-src { max-height: none; }
+@media (max-width: 600px) { .widget-full { padding: 0; } .widget-full-card { border-radius: 0; border: 0; } }
+
+/* The tray (docs/plans/2026-11-12-composer-tray.md): one surface, a top line, the field, a rail. */
+.cz-tray { gap: 6px; padding: 0 8px 8px; background: var(--card); border: 1px solid var(--line); box-shadow: none; }
+.cz-tray textarea { padding: 4px 6px; }
+.cz-top { display: flex; align-items: center; gap: 10px; height: 36px; margin: 0 -8px; padding: 0 12px 0 14px; border-bottom: 1px solid var(--line); font-size: 12.5px; color: var(--muted); white-space: nowrap; min-width: 0; }
+.cz-top > * { flex-shrink: 0; }
+.cz-repo { color: var(--muted); text-decoration: none; }
+.cz-repo:hover { color: var(--fg); }
+.cz-branch { color: var(--faint); overflow: hidden; text-overflow: ellipsis; flex-shrink: 1; min-width: 0; }
+.cz-diff, .cz-where { border: 0; background: transparent; font: inherit; color: inherit; cursor: pointer; padding: 2px 4px; border-radius: 6px; display: inline-flex; align-items: center; gap: 5px; }
+.cz-where { color: var(--fg); }
+.cz-diff:hover, .cz-where:hover { background: var(--hover); }
+.cz-pill, .cz-act { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px; border: 0; border-radius: 7px; background: var(--hover); color: var(--fg); font: 12.5px/1 var(--font-sans); cursor: pointer; }
+.cz-act { font-weight: 600; background: color-mix(in srgb, var(--fg) 10%, transparent); }
+.cz-act:disabled { opacity: .5; cursor: default; }
+.cz-pill:hover, .cz-act:hover { filter: brightness(1.08); }
+.cz-prdot { width: 7px; height: 7px; border-radius: 50%; flex: none; display: inline-block; }
+.cz-stackwrap { position: relative; }
+.cz-stack { position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 6; width: 380px; padding: 6px; box-shadow: var(--shadow-float); white-space: nowrap; }
+.cz-stack button { display: flex; gap: 8px; align-items: center; width: 100%; border: 0; background: transparent; padding: 6px 8px; border-radius: var(--radius-plate); font: 12.5px/18px var(--font-sans); color: var(--fg); cursor: pointer; text-align: left; }
+.cz-stack button:hover { background: var(--hover); }
+.cz-stack .cz-search { width: 100%; box-sizing: border-box; }
+.cz-bad { box-shadow: inset 0 0 0 1px var(--warn); }
+.cz-send.cz-bad { box-shadow: 0 0 0 1.5px var(--warn); }
+.cz-notice { padding: 0 6px; font-size: 12px; }
+.cz-err { display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 10px; border-radius: 10px; background: color-mix(in srgb, var(--warn) 9%, transparent); font-size: 12.5px; color: var(--fg); }
+.cz-erricon { width: 16px; height: 16px; border-radius: 50%; background: var(--warn); color: #fff; font: 700 11px/16px var(--font-sans); text-align: center; flex: none; }
+.cz-errbtn { height: 24px; padding: 0 9px; border: 0; border-radius: 7px; background: var(--hover); color: var(--fg); font: 600 12px/1 var(--font-sans); cursor: pointer; }
+.cz-errx { border: 0; background: transparent; color: var(--faint); cursor: pointer; padding: 2px 4px; }
+.cz-rail { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.cz-rail > * { flex-shrink: 0; }
+.cz-rail > .cz-ic { width: 30px; height: 30px; border-radius: 50%; }
+.cz-send { position: relative; }
+.cz-action-send { background: var(--frog); }
+.cz-action-send:disabled { background: var(--line-strong); cursor: default; }
+.cz-action-dictate { background: transparent; color: var(--muted); }
+.cz-action-dictate:hover { background: var(--hover); }
+.cz-action-stop, .cz-action-queue { background: var(--fg); color: var(--bg); }
+.cz-qcount { position: absolute; top: -4px; right: -4px; min-width: 14px; height: 14px; padding: 0 3px; box-sizing: border-box; border-radius: 7px; background: var(--muted); color: var(--bg); font: 700 9px/14px var(--font-sans); }

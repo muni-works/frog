@@ -169,11 +169,11 @@ struct Answer {
 /// A title for `chapter`, or `None` when no side-model resolved, the call failed or the
 /// answer was empty (the app keeps its heuristic title). One call. A hermetic config
 /// (benchmarks, engine tests) never asks.
-pub async fn write(cfg: &Config, dir: &std::path::Path, chapter: &Closed) -> Option<String> {
+pub async fn write(cfg: &Config, dir: &std::path::Path, chapter: &Closed, cloud_ok: bool) -> Option<String> {
     if cfg.hermetic {
         return None;
     }
-    write_with(cfg, dir, chapter, |profile| {
+    write_with(cfg, dir, chapter, cloud_ok, |profile| {
         Box::pin(async {
             crate::sidecar::ensure(profile).await?;
             Ok(Provider::new(profile)?)
@@ -188,12 +188,13 @@ pub async fn write_with(
     cfg: &Config,
     dir: &std::path::Path,
     chapter: &Closed,
+    cloud_ok: bool,
     mut provider: impl FnMut(&Profile) -> futures_util::future::BoxFuture<'_, anyhow::Result<Provider>>,
 ) -> Option<String> {
     if chapter.turns.is_empty() {
         return None;
     }
-    let (_name, profile) = crate::gist::choose(cfg, dir)?;
+    let (_name, profile) = crate::gist::choose(cfg, dir, cloud_ok)?;
     let prompt = prompt(chapter);
     let msgs = vec![Message::user(prompt)];
     let schema = schema();
@@ -390,6 +391,7 @@ mod tests {
             &hermetic(),
             std::path::Path::new("/t"),
             &chapter(),
+            true,
             side(r#"{"title":"Timeline Rail Fix"}"#, calls.clone()),
         )
         .await;
@@ -406,6 +408,7 @@ mod tests {
                 &hermetic(),
                 std::path::Path::new("/t"),
                 &chapter(),
+                true,
                 side(text, Arc::new(Mutex::new(0))),
             )
             .await;
@@ -419,7 +422,7 @@ mod tests {
         // built, nothing comes back — the app keeps its heuristic title.
         let cfg = Config { gist_model: Some("nope/nothing".into()), ..hermetic() };
         let calls = Arc::new(Mutex::new(0));
-        let title = write_with(&cfg, std::path::Path::new("/t"), &chapter(), side("{}", calls.clone())).await;
+        let title = write_with(&cfg, std::path::Path::new("/t"), &chapter(), true, side("{}", calls.clone())).await;
         assert!(title.is_none());
         assert_eq!(*calls.lock().unwrap(), 0);
     }
@@ -463,6 +466,6 @@ mod tests {
 
     #[tokio::test]
     async fn a_hermetic_config_never_asks() {
-        assert!(write(&hermetic(), std::path::Path::new("/t"), &chapter()).await.is_none());
+        assert!(write(&hermetic(), std::path::Path::new("/t"), &chapter(), true).await.is_none());
     }
 }

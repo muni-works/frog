@@ -422,7 +422,9 @@ final class Workspace {
         case .yolo: ["--yolo"]
         case .auto: ["--auto"]
         case .acceptEdits: ["--accept-edits"]
-        default: []
+        // Asked for on purpose: the engine's own default for a new session is Auto.
+        case .default: ["--mode", "default"]
+        case nil: []
         }
         let computerUse = UserDefaults.standard.bool(forKey: "computerUse") ? ["--computer-use"] : []
         let chat = isChat ? ["--chat"] : []

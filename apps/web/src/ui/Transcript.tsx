@@ -1,12 +1,13 @@
 import { Fragment, memo, useEffect, useMemo, useRef, useState } from 'react'
 import type { FileDiff, Image } from '../cloud/protocol'
 import type { Ask, Entry, Question, Thread } from '../engine/thread'
-import { placeColor, type Model } from '../models'
+import { type Model } from '../models'
 import { ElicitationCard, QuestionCard } from './AskCards'
 import { Markdown } from './Markdown'
 import { Hunks } from './Diff'
 import { endError } from '../store'
 import { TurnFooter } from './TurnFooter'
+import { WidgetCard } from './Widget'
 
 // Draws a folded Thread: the user's message, tool lines, "Decided" steps (reasoning items),
 // streamed replies, and a diff card per edit with Allow ⌘↩ / Deny ⌘. while it waits.
@@ -53,7 +54,11 @@ const TOOL_LOOK: Record<string, { verb: [string, string]; icon: string }> = {
   webfetch: { verb: ['Fetching', 'Fetched'], icon: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18' },
   websearch: { verb: ['Searching the web for', 'Searched the web for'], icon: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18' },
   todowrite: { verb: ['Planning', 'Planned'], icon: 'M9 6h11M9 12h11M9 18h11M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2' },
+  visualize: { verb: ['Making a visual', 'Made a visual'], icon: 'M4 19V5M4 19h16M8 15l3-4 3 2 5-6' },
+  visualguide: { verb: ['Reading the visual guide', 'Read the visual guide'], icon: 'M6 3h8l4 4v14H6zM14 3v4h4' },
   settitle: { verb: ['Naming', 'Named'], icon: 'M4 7V5h16v2M12 5v14M9 19h6' },
+  // A child session, as on Mac (ActivityLine): "Ran an agent <what it was asked>".
+  task: { verb: ['Running an agent', 'Ran an agent'], icon: 'M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM3 20c0-3 3-5 6-5s6 2 6 5M16 11a3 3 0 1 0 0-6M18 15c2 .6 3 2.4 3 5' },
 }
 const OTHER = { verb: ['Using', 'Used'] as [string, string], icon: 'M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z' }
 
@@ -64,9 +69,11 @@ function ToolLine({ e }: { e: Entry }) {
   const output = e.output.trim()
   const shown = open ?? (e.outcome === 'error' || (!e.done && !!output))
   const state = !e.done ? 'run' : e.outcome === 'error' ? 'err' : e.outcome === 'denied' ? 'denied' : 'ok'
-  // What it touched ("Read src/retry.rs", as on the Mac); the engine's gist ("Read 54 lines")
-  // goes in the opened detail, so the verb isn't said twice.
-  const what = e.arg || (e.done && e.display) || (TOOL_LOOK[name] ? '' : e.name)
+  // What it touched ("Read src/retry.rs", as on the Mac), or the side-model's gist when one
+  // arrived: a raw shell command or MCP arguments read as nothing, and the gist says what the
+  // call did. The engine's own one-line display ("Read 54 lines") goes in the opened detail,
+  // so the verb isn't said twice.
+  const what = (e.done && e.gist) || e.arg || (e.done && e.display) || (TOOL_LOOK[name] ? '' : e.name)
   return (
     <div className={`tool-row ${state}`}>
       <button type="button" className="tool" aria-expanded={shown} onClick={() => setOpen(!shown)}>
@@ -76,14 +83,22 @@ function ToolLine({ e }: { e: Entry }) {
             : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={look.icon} /></svg>}
         </span>
         <span className="tool-verb">{look.verb[e.done ? 1 : 0]}</span>
-        {what && <span className="tool-what">{what}</span>}
+        {what && <span className={`tool-what${e.done && e.gist ? ' gist' : ''}`}>{what}</span>}
         {state === 'err' && <span className="tool-tag err">failed</span>}
         {state === 'denied' && <span className="tool-tag">denied</span>}
         <span className="tool-chev" aria-hidden="true">›</span>
       </button>
       {shown && (
         <div className="tool-body">
-          {e.arg && e.display && <div className="tool-arg">{e.display}</div>}
+          {/* The raw call stays readable when the row's line is something else: with a gist on
+              the row, this is the argument it summarized. The engine's own display leads, as
+              upstream had it ("Read 54 lines"), with the argument under it. */}
+          {e.arg && (e.gist || e.display) && (
+            <>
+              {e.display && <div className="tool-arg">{e.display}</div>}
+              <div className="tool-arg">{e.arg}</div>
+            </>
+          )}
           {output ? <pre className="tool-out">{clip(output)}</pre> : <div className="det">{e.done ? 'No output.' : 'Running…'}</div>}
         </div>
       )}
@@ -112,6 +127,15 @@ function EditLine({ diff }: { diff: FileDiff }) {
 }
 
 /** A thought: one quiet line, collapsed with a ›, opening to what it thought (the Mac's too). */
+/** A short finished thought alone between replies (no tool beside it) folds away, as on Mac
+ * (TurnFlow: a model's scratch line before answering isn't worth a line of its own). */
+function foldedThought(entries: Entry[], n: number): boolean {
+  let a = n, b = n
+  while (a > 0 && entries[a - 1].kind !== 'message') a--
+  while (b < entries.length - 1 && entries[b + 1].kind !== 'message') b++
+  return entries.slice(a, b + 1).every((x) => x.kind === 'reasoning' && x.done && x.text.trim().length <= 200 && !x.text.trim().includes('\n\n'))
+}
+
 function ThoughtLine({ text }: { text: string }) {
   const [open, setOpen] = useState(false)
   return (
@@ -164,7 +188,7 @@ function AskCard({ ask, onDecide }: { ask: Ask; onDecide: Decide }) {
 
 const NO_MODELS: Model[] = []
 
-export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, models = NO_MODELS, outbox = [], onResend, onEdit, waiting, onContinue }: {
+export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, models = NO_MODELS, outbox = [], onResend, onEdit, waiting, onContinue, onPrompt }: {
   thread: Thread
   onDecide: Decide
   onAnswer: (choices: string[], other?: string) => void
@@ -181,19 +205,22 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
   onContinue?: () => void
   /** What a sent message is waiting on, in a few words ("waking the sandbox"). */
   waiting?: string
+  /** A visual's `sendPrompt`: send this as the user's next message. */
+  onPrompt?: (text: string) => void
 }) {
   // The live turn is the last one by position: turn numbers can repeat after a resume.
   const lastIdx = thread.turns.length - 1
   // Handlers change identity every render; turns read them through one stable ref so a
   // streamed delta redraws only the turn it touched.
-  const latest = useRef({ onDecide, onAnswer, onRetry, onEdit, onContinue })
-  latest.current = { onDecide, onAnswer, onRetry, onEdit, onContinue }
+  const latest = useRef({ onDecide, onAnswer, onRetry, onEdit, onContinue, onPrompt })
+  latest.current = { onDecide, onAnswer, onRetry, onEdit, onContinue, onPrompt }
   const cb = useMemo<TurnCallbacks>(() => ({
     onDecide: (a, o) => latest.current.onDecide(a, o),
     onAnswer: (c, o) => latest.current.onAnswer(c, o),
     onRetry: () => latest.current.onRetry?.(),
     onEdit: (t) => latest.current.onEdit?.(t),
     onContinue: () => latest.current.onContinue?.(),
+    onPrompt: (t) => latest.current.onPrompt?.(t),
   }), [])
   const has = { retry: !!onRetry, edit: !!onEdit, cont: !!onContinue }
   return (
@@ -237,6 +264,7 @@ interface TurnCallbacks {
   onRetry: () => void
   onEdit: (text: string) => void
   onContinue: () => void
+  onPrompt: (text: string) => void
 }
 
 /** One turn. Memoized: the reducer keeps untouched turns the same object, so while the last
@@ -249,8 +277,9 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
   return (
     <div className="turn">
       <div className="ask-block">
-        {[{ text: turn.input, images: turn.images }, ...(turn.more ?? [])].map((m, i) => (
-          <div key={i} className="me">
+        {/* A blank message (whitespace, no images) draws no empty bubble. */}
+        {[{ text: turn.input, images: turn.images }, ...(turn.more ?? [])].map((m, i) => !m.text.trim() && !m.images?.length ? null : (
+          <div key={i} className="me" dir="auto">
             {m.images?.length ? <div className="me-imgs">{m.images.map((im, j) => <img key={j} src={`data:${im.mime};base64,${im.data}`} alt="" />)}</div> : null}
             {m.text}
           </div>
@@ -264,11 +293,12 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
         </div>
       </div>
       <div className="reply-block">
-      {turn.entries.map((e) => {
-        if (e.kind === 'reasoning') return (
-          <ThoughtLine key={e.id} text={e.text} />
-        )
-        if (e.kind === 'message') return <div key={e.id} className={`say ${turn.usage?.served_by ? 'served' : ''}`} style={turn.usage?.served_by ? { ['--served' as string]: placeColor('cloud') } : undefined} title={turn.usage?.served_by ? `Served by ${turn.usage.served_by.name}` : undefined}><Markdown text={e.text} />{!e.done && <span className="caret" />}</div>
+      {turn.entries.map((e, n) => {
+        if (e.kind === 'reasoning' && foldedThought(turn.entries, n)) return null
+        // An empty thought has nothing to open, and a blank reply nothing to read: neither draws.
+        if (e.kind === 'reasoning') return e.text.trim() ? <ThoughtLine key={e.id} text={e.text} /> : null
+        if (e.kind === 'message' && e.done && !e.text.trim()) return null
+        if (e.kind === 'message') return <div key={e.id} className="say"><Markdown text={e.text} />{!e.done && <span className="caret" />}</div>
         if (question?.item === e.id) return <QuestionCard key={e.id} q={question} onAnswer={cb.onAnswer} />
         const asking = ask?.item === e.id ? ask : null
         const diff = e.diff ?? asking?.preview
@@ -280,6 +310,7 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
             note="Runs in your cloud sandbox. Nothing is pushed until you say so." />
         )
         if (asking) return <AskCard key={e.id} ask={asking} onDecide={cb.onDecide} />
+        if (e.widget && e.outcome === 'ok') return <WidgetCard key={e.id} widget={e.widget} onPrompt={cb.onPrompt} />
         return <ToolLine key={e.id} e={e} />
       })}
       {turn.usage && (turn.reason?.type === 'complete' || turn.reason?.type === 'denied') && (

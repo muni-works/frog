@@ -51,6 +51,9 @@ struct ItemState: Identifiable {
     /// Live output from a running tool.
     var output = ""
     var result: Item.ToolResult?
+    /// A one-line gist of what the call did, from the engine's side-model ("searched the
+    /// engine for where gists flush"). Arrives after the row; the argument stays the fallback.
+    var gist: String?
     var imagePreview: ToolImage?
     var displayImages: [ToolImage] { result?.images ?? (imagePreview.map { [$0] } ?? []) }
     var done = false

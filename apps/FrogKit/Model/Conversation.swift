@@ -120,6 +120,8 @@ final class Conversation {
     /// Events that arrived while replaying, folded in together once the history is all here.
     @ObservationIgnored private var held: [Envelope] = []
     private(set) var title: String?
+    /// PRs bound to the session (the engine's `Prs`): the composer's git line.
+    private(set) var prs: [PrBinding] = []
     /// Where the agent moved this conversation (`UseFolder`), if not the folder it runs in.
     /// The pane reopens it there once the turn is over (see `Panes.move`).
     private(set) var movedTo: URL?
@@ -853,11 +855,10 @@ final class Conversation {
             }
             if case .toolCall = item, isNews(env) { stepsDone += 1 }
             changesVersion += 1
-        case .commandGisted(_, let command, let gist):
-            // A finished shell command's one-line summary, written in one batched side-model
-            // call per turn flush (live only). Cached by command hash so identical rows share
-            // it and later turns reuse it; rows read the cache (an @Observable) and rebuild.
-            CommandGists.shared.record(command: command, gist: gist)
+        case .itemGisted(let item, let gist):
+            // A finished call's one-line summary, from the engine's side-model. It lands on the
+            // row itself, so it survives a replay and a reload: nothing is cached here.
+            upsert(item) { $0.gist = gist.isEmpty ? nil : gist }
         case .nextSuggested(_, let text, let act):
             // Live only: a replay never brings back a suggestion for a turn long gone.
             if isNews(env), !text.isEmpty { next = Next(text: text, act: act) }
@@ -1055,6 +1056,8 @@ final class Conversation {
             title = t
             onSessionChange?()
             sessionChanged?()
+        case .prs(let list):
+            prs = list
         case .folderChanged(let cwd):
             let url = URL(fileURLWithPath: cwd)
             let here = folder.resolvingSymlinksInPath().standardizedFileURL.path
@@ -1136,7 +1139,7 @@ final class Conversation {
                 return "Subagent: \(current.subagent?.activity ?? "Starting")"
             }
             if current.needsPermission { return nil }
-            if case .tool(let name, _) = current.kind, name == "Diagram" { return nil }
+            if case .tool(let name, _) = current.kind, name == "Diagram" || name == "Visualize" { return nil }
             return ActivityWords.now(current)
         }
         if let m = last.items.last, m.kind == .message, !m.done, !m.text.isEmpty { return "Writing…" }

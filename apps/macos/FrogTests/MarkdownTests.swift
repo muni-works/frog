@@ -19,6 +19,11 @@ final class MarkdownTests: XCTestCase {
         XCTAssertEqual(rows[1], ["Julian", "Solar"])
     }
 
+    func testQuoteLinesAreOneQuote() {
+        let blocks = Markdown.parse("> one\n> two\n>\n> > nested\n\nafter")
+        XCTAssertEqual(blocks, [.quote("one\ntwo\n\nnested"), .paragraph("after")])
+    }
+
     func testPipesInCodeStay() {
         XCTAssertEqual(Markdown.tableRow("| `a|b` | c |"), ["`a|b`", "c"])
         XCTAssertNil(Markdown.tableRow("not a row"))
