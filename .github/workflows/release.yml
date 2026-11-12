@@ -220,10 +220,16 @@ jobs:
     needs: [build, smoke-cloud]
     runs-on: ubuntu-latest
     steps:
-      # main's workflow file when repairing an old tag, the tag's own when it was pushed.
+      # The tag's own tree: the notes/README the tarballs carry are the tag's, not main's.
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.tag || github.ref }}
+      # The guard is taken from main, not the tag: repairing an old tag must use the current
+      # check, and scripts/release-assets.sh didn't exist at the tags that need repairing.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: .release-tools
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -273,6 +279,9 @@ jobs:
       # asset set is complete. Whichever publisher runs second does the publishing.
       - uses: softprops/action-gh-release@v2
         with:
+          # Explicit: on a workflow_dispatch GITHUB_REF is refs/heads/main, and the action would
+          # otherwise target a release for the branch instead of the tag being repaired.
+          tag_name: ${{ env.TAG }}
           draft: true
           files: |
             dist/*.tar.gz
@@ -287,7 +296,7 @@ jobs:
       # it isn't. A CLI-only tag (no app published yet) stays a draft and keeps the last good
       # release serving — that is a pass, not a failure: release.sh publishes it later.
       - name: publish once the asset set is complete
-        run: scripts/release-assets.sh publish "$TAG"
+        run: .release-tools/scripts/release-assets.sh publish "$TAG"
       # Push the rendered formula to the tap when a token for it is configured.
       - name: update homebrew tap
         if: ${{ !contains(inputs.tag || github.ref_name, '-') }}
