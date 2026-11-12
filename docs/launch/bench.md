@@ -34,6 +34,8 @@ and say plainly where ours differs (engine vs API, our box vs their probes).
   Reconcile it or drop it.
 - Cost-per-task claims (the plan's ~$0.06/task on an H200 at 30% busy is a model, not a measurement).
 - Anything about FP4, Qwen3 Coder Next or B300 serving.
+- "Adding a machine never slows you down." Both no-caps runs (below) had a task whose median got
+  slower with the second machine. The additivity bench is a target, not a result.
 
 ## Page layout
 
@@ -77,8 +79,8 @@ Footnote, engine-level (labeled): single-stream 4-bit 234 (2026-11-05; Oct 21: 2
 was 222.2 on Oct 21 (historical, not re-measured). Quant quality: Q4 vs Q8_0 KL median 0.0005, top-1 agreement
 96.8-97.0%.
 
-Hardware: N nodes (confirm from `/status` at publish) × 1 H200 141 GB each (expected Oct 28: 2 nodes, each carrying
-qwen3-coder-next 131072 ctx + qwen3-8b + qwen3-vl-8b, routed by prefix affinity). Weights:
+Hardware: these numbers were measured on 1 H200 141 GB node carrying
+qwen3-coder-next 131072 ctx + qwen3-8b + qwen3-vl-8b. Frog Cloud's serving hardware has changed since; confirm from `/status` and re-date before publishing. Weights:
 unsloth UD-Q4_K_XL GGUF. Method: 3 coding prompts (explain/refactor/write) from tang
 `docs/bench/qwen3next-aa/make_prompts.py`, 512 output tokens, greedy, drafts off, tok/s after the
 first token.
@@ -87,6 +89,37 @@ first token.
 API 224.7 (sampler fix) / ~215 via api.frog.toys; 10k 190; TTFT cold 1.8-2.2 s, cached 18-95 ms;
 8 streams 72.5/498 (no MTP). Prod Oct 25 metrics showed 86 tok/s per stream under real load:
 publish the load curve honestly, not just the single-stream peak. -->
+
+### 1b. No caps: your machines, one agent
+
+`frog-bench swarm`: N agents in parallel on hardware you own, fixed wall time, each run in its own
+worktree of one seeded repo, every model call placed by the node scheduler. Method and the full
+table: [docs/no-caps-bench.md](../no-caps-bench.md) (muni-works/frog#281, #285). Raw results:
+`bench/results/swarm-2026-11-11-mac-mew/` and `bench/results/swarm-2026-11-11-mac-mew-8b/`
+(`swarm.json`, `report.html`).
+
+Hardware: this Mac (M4 Max) + mew (RTX 3090). 6 agents, 15 minutes per phase, all 9 tasks.
+Baseline is mew only, then the pool.
+
+| model | mew only: passed / runs | Mac + mew: passed / runs | aggregate tok/s | stalls | 429 / 5xx |
+|---|---|---|---|---|---|
+| Qwen3-8B-4bit | 21 / 42 | 41 / 64 | 86 → 128 | 72 → 31 | 0 |
+| Qwen3-0.6B-4bit | 0 / 68 | 1 / 86 | 321 → 504 | 44 → 28 | 0 |
+
+The honest part, from `swarm.json` → `additivity` (median seconds per task, mew only → Mac + mew):
+
+- **Qwen3-8B:** one of 9 tasks got slower: edit-json-config 101 → 120 s.
+- **Qwen3-0.6B:** three of 9 tasks got slower, all short ones: add-function 11 → 20 s,
+  edit-json-config 34 → 37 s, present-next-steps 20 → 31 s. The 0.6B model passes almost nothing,
+  so read that run for throughput and placement, not for quality.
+- The additivity check (no task median more than 5% worse) **fails on both runs.**
+- The mew-only baseline isn't pure: a pinned node that drops out briefly falls back, so a few
+  percent of baseline calls ran on the Mac. That flatters the baseline.
+- Stalls are queueing: 6 agents on two nodes that each serve one request at a time.
+
+What it supports: with the 8B model, adding the Mac roughly doubled passed runs in the same 15
+minutes (21 → 41) with zero rate-limit errors. What it doesn't: that every task gets faster, or
+anything about a 24-hour run (not run yet; the procedure is in no-caps-bench.md).
 
 ### 2. Market context (quoted, not ours)
 
@@ -107,7 +140,6 @@ run by publish time, this section reads "not yet run" and nothing else.
 | build | hardware | ids vs CPU oracle | prefill (20 tok) | decode tok/s | notes |
 |---|---|---|---|---|---|
 | naive kernels (4 bugs fixed) | 1× B300, all-GPU | **8/8** `785 1196 6801 264 6386 38038 911 279` | 22.9 s | 0.52 | correctness build, naive by design |
-| + q8 gemv8 | {{HW}} | {{n/n}} | | {{}} | |
 | + grouped MoE | | | | | |
 | + CUDA graphs | | | | | |
 | + fused mHC | | | | | |
@@ -123,7 +155,6 @@ That line frames every point as a % of SOL, the honest way to show headroom. No 
 
 ### 5. Kernel verification
 - the planted-bug transcript (from docs/kernel-verify.md), with a link to the script
-- harness coverage: kernels with a `kernel_test!` / total GPU kernels in tang-llm ({{COVERAGE}})
 - for each step in §4, the verify summary line
 
 ### 6. Method, reproduction, raw logs
