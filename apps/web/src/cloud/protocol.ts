@@ -52,7 +52,11 @@ export type Item =
       output: string;
       display: string | null;
       diff?: FileDiff;
+      widget?: Widget;
     };
+
+/** widget.rs `Widget`: a Visualize result. `html` is the sandboxed document to load as is. */
+export interface Widget { title: string; code: string; html: string }
 
 export type Delta =
   | { type: "text"; text: string }
