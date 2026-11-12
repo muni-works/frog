@@ -84,6 +84,9 @@ enum Op: Encodable, Sendable {
     case subscribe(after: UInt64)
     case clear
     case setTitle(String)
+    /// Bind a PR to the session, or update what's known about a bound one.
+    case bindPr(PrBinding)
+    case unbindPr(repo: String, number: Int)
     /// Answer an MCP elicitation: `accept`, `decline` or `cancel`.
     case elicit(id: String, action: String, content: JSONValue?)
     /// Stop a running subagent (its `Task` tool call id); the parent keeps going.
@@ -127,7 +130,7 @@ enum Op: Encodable, Sendable {
         case action, content, server, tool, arguments, images, why
         case kind, cwd, url, cols, rows, data, level, message, status, call, result, error, mention, context, panes, draft
         case ask, choices, other, label, send, note, sessions, from, fromName = "from_name", more
-        case deadline
+        case deadline, pr, repo, number
     }
 
     func encode(to encoder: Encoder) throws {
@@ -180,6 +183,13 @@ enum Op: Encodable, Sendable {
         case .setTitle(let title):
             try c.encode("set_title", forKey: .op)
             try c.encode(title, forKey: .title)
+        case .bindPr(let pr):
+            try c.encode("bind_pr", forKey: .op)
+            try c.encode(pr, forKey: .pr)
+        case .unbindPr(let repo, let number):
+            try c.encode("unbind_pr", forKey: .op)
+            try c.encode(repo, forKey: .repo)
+            try c.encode(number, forKey: .number)
         case .elicit(let id, let action, let content):
             try c.encode("elicit", forKey: .op)
             try c.encode(id, forKey: .id)
@@ -922,6 +932,8 @@ enum Event: Decodable, Sendable {
     case folderChanged(String)
     case modeChanged(Mode)
     case titled(String)
+    /// The PRs bound to the session, the whole list after every change (durable).
+    case prs([PrBinding])
     case itemDelta(id: String, delta: Delta)
     case permissionRequest(PermissionRequest)
     case progress(EngineProgress)
@@ -1016,7 +1028,7 @@ extension Event {
         case host, port, enforced, hosts, sandboxLeft
         case running
         case status, text, log, items, wakes
-        case urgency, body
+        case urgency, body, prs
     }
 
     init(from decoder: Decoder) throws {
@@ -1082,6 +1094,8 @@ extension Event {
             self = .folderChanged(try c.decode(String.self, forKey: .cwd))
         case "titled":
             self = .titled(try c.decode(String.self, forKey: .title))
+        case "prs":
+            self = .prs(try c.decode([PrBinding].self, forKey: .prs))
         case "mode_changed":
             self = .modeChanged(try c.decode(Mode.self, forKey: .mode))
         case "permission_request":
@@ -1566,5 +1580,47 @@ extension CatalogModel {
 
     private static func dollars(_ v: Double) -> String {
         v < 1 ? String(format: "$%.2f", v) : String(format: "$%g", (v * 100).rounded() / 100)
+    }
+}
+
+/// A PR bound to a session (the engine's `prs::PrBinding`): its identity, and what a client last
+/// saw of it. `checks` is passing and total.
+struct PrBinding: Codable, Equatable, Hashable, Sendable {
+    var repo: String
+    var number: Int
+    var title: String = ""
+    var state: String = ""
+    var checks: [Int]?
+    var auto: Bool = false
+
+    init(repo: String, number: Int, title: String = "", state: String = "", checks: [Int]? = nil, auto: Bool = false) {
+        self.repo = repo
+        self.number = number
+        self.title = title
+        self.state = state
+        self.checks = checks
+        self.auto = auto
+    }
+
+    private enum K: String, CodingKey { case repo, number, title, state, checks, auto }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: K.self)
+        repo = try c.decode(String.self, forKey: .repo)
+        number = try c.decode(Int.self, forKey: .number)
+        title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
+        state = try c.decodeIfPresent(String.self, forKey: .state) ?? ""
+        checks = try c.decodeIfPresent([Int].self, forKey: .checks)
+        auto = try c.decodeIfPresent(Bool.self, forKey: .auto) ?? false
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: K.self)
+        try c.encode(repo, forKey: .repo)
+        try c.encode(number, forKey: .number)
+        if !title.isEmpty { try c.encode(title, forKey: .title) }
+        if !state.isEmpty { try c.encode(state, forKey: .state) }
+        try c.encodeIfPresent(checks, forKey: .checks)
+        if auto { try c.encode(auto, forKey: .auto) }
     }
 }

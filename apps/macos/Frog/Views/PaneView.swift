@@ -178,7 +178,7 @@ struct PaneView: View {
                         .id(ObjectIdentifier(conversation))
                     PingLine(conversation: conversation)
                         .id(ObjectIdentifier(conversation))
-                    ComposerView(workspace: workspace, conversation: conversation, window: ui)
+                    ComposerView(workspace: workspace, conversation: conversation, window: ui, openDiff: { pane.showChanges = true })
                         .id(ObjectIdentifier(conversation))
                         // The panes you're not typing into step back a little.
                         .opacity(focused ? 1 : 0.72)
