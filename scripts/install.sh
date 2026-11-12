@@ -7,9 +7,7 @@ set -eu
 FROG_REPO="${FROG_REPO:-muni-works/frog}"
 
 # minisign public key for release signatures (the second line of minisign.pub, "RW...").
-# PLACEHOLDER: empty until the release signing key exists; set it to the public half of the
-# MINISIGN_SECRET_KEY secret release.yml signs with. While empty, signatures aren't checked.
-FROG_MINISIGN_PUBKEY=""
+FROG_MINISIGN_PUBKEY="RWRxRLpWXDJlkcb7OZvuKFrMJn/XlofsgSMtRT9i8UUtQHmfT4xM+Dov"
 
 err() { printf 'frog-install: error: %s\n' "$*" >&2; exit 1; }
 info() { printf 'frog-install: %s\n' "$*"; }

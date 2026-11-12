@@ -3,7 +3,7 @@
 #
 #   apps/macos/scripts/release.sh 0.2.0            # build, notarize, publish to GitHub
 #   apps/macos/scripts/release.sh 0.2.0 --local    # stop before GitHub: dist/ only
-#   apps/macos/scripts/release.sh 0.2.0 --unsigned # unsigned build, no notarization
+#   apps/macos/scripts/release.sh 0.2.0 --unsigned # unsigned build, no notarization, dist/ only
 #
 # One-time setup on the release Mac:
 #   1. A "Developer ID Application" certificate in the login Keychain (developer.apple.com).
@@ -11,7 +11,8 @@
 #   3. The Sparkle private key ("Private key for signing Sparkle updates" in the login
 #      Keychain). Its public half is project.yml's SPARKLE_PUBLIC_KEY. To move it to another
 #      Mac: generate_keys -x key.txt here, generate_keys -f key.txt there (Sparkle's bin/).
-#   4. A tang checkout (TANG_DIR, else ../tang): a release always ships tang-llm.
+#   4. dmgbuild (pipx install dmgbuild).
+#   5. A tang checkout (TANG_DIR, else ../tang): a release always ships tang-llm.
 #
 # The release lands on $FROG_RELEASE_REPO (muni-works/frog) as Frog.dmg and appcast.xml. frog.toys
 # redirects /download and /appcast.xml to the latest release's copies (site/vercel.json).
@@ -38,12 +39,13 @@ fail() { print -P "%F{red}error:%f $*" >&2; exit 1 }
 # Preflight: everything that can fail late, checked before a 10 minute build.
 [[ $VERSION =~ '^[0-9]+\.[0-9]+\.[0-9]+$' ]] || fail "version must look like 1.2.3"
 [[ -z $(git status --porcelain) ]] || fail "working tree isn't clean"
+command -v dmgbuild >/dev/null || [[ $MODE == --unsigned ]] || fail "no dmgbuild; run: pipx install dmgbuild"
 if [[ $MODE != --unsigned ]]; then
     security find-identity -v -p codesigning | grep -q "$SIGN_ID" || fail "no \"$SIGN_ID\" certificate in the Keychain"
     xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1 \
         || fail "no notary credentials; run: xcrun notarytool store-credentials $NOTARY_PROFILE"
 fi
-if [[ $MODE != --local ]] && [[ $MODE != --unsigned ]]; then
+if [[ $MODE != --local ]] && [[ $MODE != --unsigned || -n ${FROG_PUBLISH_UNSIGNED:-} ]]; then
     gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1 && fail "$TAG already exists on $REPO"
 fi
 
@@ -84,8 +86,9 @@ if [[ $MODE == --unsigned ]]; then
   </channel>
 </rss>
 EOF
-    if [[ $MODE == --local ]]; then
-        step "Done: $DIST"
+    # An unsigned build stays local unless asked for: it would take the release's tag.
+    if [[ -z ${FROG_PUBLISH_UNSIGNED:-} ]]; then
+        step "Done: $DIST (set FROG_PUBLISH_UNSIGNED=1 to publish it as a prerelease)"
         exit 0
     fi
     step "Publishing $TAG to $REPO (unsigned prerelease)"
@@ -122,12 +125,9 @@ xcrun stapler staple "$APP"
 rm "$DIST/Frog.zip"
 
 step "Making the disk image"
-STAGE="$DIST/stage"; mkdir -p "$STAGE"; ditto "$APP" "$STAGE/Frog.app"
 DMG="$DIST/Frog.dmg"
-create-dmg --volname "Frog" --window-size 540 360 --icon-size 128 \
-    --icon Frog.app 140 170 --hide-extension Frog.app --app-drop-link 400 170 \
-    --no-internet-enable "$DMG" "$STAGE" >/dev/null
-rm -rf "$STAGE"
+rm -f "$DMG"
+dmgbuild -s "$APP_DIR/dmg/dmg_settings.py" -D app="$APP" -D background="$APP_DIR/dmg/background.tiff" Frog "$DMG" >/dev/null
 codesign --force --timestamp --sign "$SIGN_ID" "$DMG"
 notarize "$DMG"
 xcrun stapler staple "$DMG"
