@@ -1,0 +1,3535 @@
+{
+ "about": "Shared test vectors for the composer reducer (docs/plans/2026-11-12-composer-tray.md). Each case deep-merges `given` onto `base` (objects merge, arrays and scalars replace), applies `intent`, and checks `expect` against the new state plus `derived` (a partial match: objects match the keys listed, arrays match length and each element partially) and `effects` (same length, each partial). Run by apps/web/test/composer.test.ts and FrogTests/ComposerReducerTests.swift. A behaviour change is a new case here; both fail until they agree.",
+ "base": {
+  "draft": {
+   "text": "",
+   "attachments": [],
+   "caret": 0
+  },
+  "lastSent": "",
+  "mode": "auto",
+  "yoloConfirmed": false,
+  "model": {
+   "id": "local/qwen3-coder-next",
+   "name": "Qwen3 Coder Next",
+   "place": "local",
+   "node": "mew"
+  },
+  "defaults": {
+   "local": {
+    "id": "local/qwen3-coder-next",
+    "name": "Qwen3 Coder Next",
+    "place": "local",
+    "node": "mew"
+   },
+   "cloud": {
+    "id": "cloud/glm-5.3-flash",
+    "name": "GLM-5.3 Flash",
+    "place": "cloud",
+    "node": null
+   }
+  },
+  "signedIn": true,
+  "where": {
+   "kind": "folder",
+   "folder": "/Users/cam/frog",
+   "branch": "main",
+   "worktree": true,
+   "git": true,
+   "dirty": false
+  },
+  "busy": "idle",
+  "pending": null,
+  "queued": 0,
+  "error": null,
+  "notice": null,
+  "confirm": null,
+  "stackOpen": false,
+  "memory": {
+   "modelByPlace": {},
+   "worktreeByRepo": {},
+   "branchByRepo": {}
+  }
+ },
+ "cases": [
+  {
+   "name": "empty composer offers dictation",
+   "row": "Rail · Action, empty",
+   "given": {},
+   "intent": {
+    "type": "action"
+   },
+   "expect": {
+    "derived": {
+     "action": "dictate",
+     "sendDisabled": true
+    }
+   },
+   "effects": [
+    {
+     "type": "start_dictation"
+    }
+   ]
+  },
+  {
+   "name": "typing turns the action into send",
+   "row": "Rail · Action, text",
+   "given": {},
+   "intent": {
+    "type": "type",
+    "text": "add a test"
+   },
+   "expect": {
+    "draft": {
+     "text": "add a test",
+     "caret": 10
+    },
+    "derived": {
+     "action": "send",
+     "sendDisabled": false
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "whitespace alone sends nothing",
+   "row": "Send · 1",
+   "given": {
+    "draft": {
+     "text": "   \n"
+    }
+   },
+   "intent": {
+    "type": "send"
+   },
+   "expect": {
+    "busy": "idle",
+    "draft": {
+     "text": "   \n"
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "send in a session submits and keeps the draft until ack",
+   "row": "Send · 2",
+   "given": {
+    "draft": {
+     "text": "add a test",
+     "attachments": [],
+     "caret": 10
+    },
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": []
+    }
+   },
+   "intent": {
+    "type": "send"
+   },
+   "expect": {
+    "busy": "sending",
+    "pending": "draft",
+    "draft": {
+     "text": "add a test"
+    },
+    "derived": {
+     "sendDisabled": true
+    }
+   },
+   "effects": [
+    {
+     "type": "submit",
+     "text": "add a test",
+     "attachments": []
+    }
+   ]
+  },
+  {
+   "name": "send trims the text",
+   "row": "Send · 1",
+   "given": {
+    "draft": {
+     "text": "  fix it \n",
+     "attachments": [],
+     "caret": 3
+    },
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": []
+    }
+   },
+   "intent": {
+    "type": "send"
+   },
+   "expect": {
+    "busy": "sending"
+   },
+   "effects": [
+    {
+     "type": "submit",
+     "text": "fix it"
+    }
+   ]
+  },
+  {
+   "name": "acknowledgement clears the draft and attachments",
+   "row": "Send · 3",
+   "given": {
+    "draft": {
+     "text": "add a test",
+     "attachments": [
+      {
+       "name": "a.png",
+       "size": 10,
+       "type": "image/png"
+      }
+     ],
+     "caret": 10
+    },
+    "busy": "sending",
+    "pending": "draft",
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": []
+    }
+   },
+   "intent": {
+    "type": "ack"
+   },
+   "expect": {
+    "busy": "working",
+    "pending": null,
+    "draft": {
+     "text": "",
+     "attachments": []
+    },
+    "lastSent": "add a test",
+    "derived": {
+     "action": "stop"
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "a second send while sending is ignored",
+   "row": "Send · 2",
+   "given": {
+    "draft": {
+     "text": "add a test",
+     "attachments": [],
+     "caret": 10
+    },
+    "busy": "sending",
+    "pending": "draft",
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": []
+    }
+   },
+   "intent": {
+    "type": "send"
+   },
+   "expect": {
+    "busy": "sending"
+   },
+   "effects": []
+  },
+  {
+   "name": "attachments alone can be sent",
+   "row": "Send · 1",
+   "given": {
+    "draft": {
+     "text": "",
+     "attachments": [
+      {
+       "name": "shot.png",
+       "size": 2000,
+       "type": "image/png"
+      }
+     ],
+     "caret": 0
+    },
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": []
+    }
+   },
+   "intent": {
+    "type": "send"
+   },
+   "expect": {
+    "busy": "sending"
+   },
+   "effects": [
+    {
+     "type": "submit",
+     "text": "",
+     "attachments": [
+      {
+       "name": "shot.png"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "name": "working with an empty draft shows stop",
+   "row": "Rail · Action, working",
+   "given": {
+    "busy": "working",
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": []
+    }
+   },
+   "intent": {
+    "type": "action"
+   },
+   "expect": {
+    "derived": {
+     "action": "stop"
+    }
+   },
+   "effects": [
+    {
+     "type": "interrupt"
+    }
+   ]
+  },
+  {
+   "name": "text typed while working turns return into queue",
+   "row": "Rail · Action, working",
+   "given": {
+    "busy": "working",
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": []
+    }
+   },
+   "intent": {
+    "type": "type",
+    "text": "also lint"
+   },
+   "expect": {
+    "derived": {
+     "action": "queue"
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "queue sends a follow-up and counts it",
+   "row": "Rail · Action, working",
+   "given": {
+    "busy": "working",
+    "draft": {
+     "text": "also lint",
+     "attachments": [],
+     "caret": 9
+    },
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": []
+    }
+   },
+   "intent": {
+    "type": "send"
+   },
+   "expect": {
+    "busy": "working",
+    "queued": 1,
+    "draft": {
+     "text": ""
+    },
+    "lastSent": "also lint"
+   },
+   "effects": [
+    {
+     "type": "queue",
+     "text": "also lint",
+     "attachments": []
+    }
+   ]
+  },
+  {
+   "name": "turn done clears the queued count",
+   "row": "Rail · Action, working",
+   "given": {
+    "busy": "working",
+    "queued": 2,
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": []
+    }
+   },
+   "intent": {
+    "type": "turn_done"
+   },
+   "expect": {
+    "busy": "idle",
+    "queued": 0,
+    "derived": {
+     "action": "dictate"
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "esc stops a turn",
+   "row": "Keyboard · Esc",
+   "given": {
+    "busy": "working",
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": []
+    }
+   },
+   "intent": {
+    "type": "esc"
+   },
+   "expect": {
+    "busy": "working"
+   },
+   "effects": [
+    {
+     "type": "interrupt"
+    }
+   ]
+  },
+  {
+   "name": "esc clears an error when nothing runs",
+   "row": "Keyboard · Esc",
+   "given": {
+    "error": {
+     "code": "cloud_busy",
+     "message": "Frog Cloud is busy",
+     "actions": [
+      "retry"
+     ],
+     "control": null,
+     "detail": null,
+     "retryIn": 4
+    }
+   },
+   "intent": {
+    "type": "esc"
+   },
+   "expect": {
+    "error": null
+   },
+   "effects": []
+  },
+  {
+   "name": "up in an empty composer recalls the last message",
+   "row": "Keyboard · ↑",
+   "given": {
+    "lastSent": "run the tests"
+   },
+   "intent": {
+    "type": "recall"
+   },
+   "expect": {
+    "draft": {
+     "text": "run the tests",
+     "caret": 13
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "up with text typed does nothing",
+   "row": "Keyboard · ↑",
+   "given": {
+    "lastSent": "run the tests",
+    "draft": {
+     "text": "add a test",
+     "attachments": [],
+     "caret": 10
+    }
+   },
+   "intent": {
+    "type": "recall"
+   },
+   "expect": {
+    "draft": {
+     "text": "add a test"
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "model loading: send waits",
+   "row": "Send · Model loading",
+   "given": {
+    "draft": {
+     "text": "add a test",
+     "attachments": [],
+     "caret": 10
+    },
+    "busy": "loading_model",
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": []
+    }
+   },
+   "intent": {
+    "type": "send"
+   },
+   "expect": {
+    "busy": "loading_model",
+    "pending": "draft",
+    "derived": {
+     "action": "stop"
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "model ready sends what waited",
+   "row": "Send · Model loading",
+   "given": {
+    "draft": {
+     "text": "add a test",
+     "attachments": [],
+     "caret": 10
+    },
+    "busy": "loading_model",
+    "pending": "draft",
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": []
+    }
+   },
+   "intent": {
+    "type": "model_ready"
+   },
+   "expect": {
+    "busy": "sending",
+    "pending": "draft"
+   },
+   "effects": [
+    {
+     "type": "submit",
+     "text": "add a test"
+    }
+   ]
+  },
+  {
+   "name": "stop cancels a model load and keeps the draft",
+   "row": "Send · Model loading",
+   "given": {
+    "draft": {
+     "text": "add a test",
+     "attachments": [],
+     "caret": 10
+    },
+    "busy": "loading_model",
+    "pending": "draft",
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": []
+    }
+   },
+   "intent": {
+    "type": "stop"
+   },
+   "expect": {
+    "busy": "idle",
+    "pending": null,
+    "draft": {
+     "text": "add a test"
+    }
+   },
+   "effects": [
+    {
+     "type": "cancel_load"
+    }
+   ]
+  },
+  {
+   "name": "engine stopped keeps the draft",
+   "row": "Send · Engine not running",
+   "given": {
+    "draft": {
+     "text": "add a test",
+     "attachments": [],
+     "caret": 10
+    },
+    "busy": "sending",
+    "pending": "draft",
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": []
+    }
+   },
+   "intent": {
+    "type": "send_failed",
+    "code": "engine_stopped"
+   },
+   "expect": {
+    "busy": "idle",
+    "draft": {
+     "text": "add a test"
+    },
+    "error": {
+     "code": "engine_stopped",
+     "message": "Frog's engine stopped",
+     "actions": [
+      "restart_engine"
+     ],
+     "control": null
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "restart engine clears the error, draft kept",
+   "row": "Send · Engine not running",
+   "given": {
+    "draft": {
+     "text": "add a test",
+     "attachments": [],
+     "caret": 10
+    },
+    "error": {
+     "code": "engine_stopped",
+     "message": "Frog's engine stopped",
+     "actions": [
+      "restart_engine"
+     ],
+     "control": null,
+     "detail": null,
+     "retryIn": null
+    }
+   },
+   "intent": {
+    "type": "error_action",
+    "action": "restart_engine"
+   },
+   "expect": {
+    "error": null,
+    "draft": {
+     "text": "add a test"
+    }
+   },
+   "effects": [
+    {
+     "type": "restart_engine"
+    }
+   ]
+  },
+  {
+   "name": "signed out of Frog Cloud",
+   "row": "Send · Gateway 401",
+   "given": {
+    "draft": {
+     "text": "add a test",
+     "attachments": [],
+     "caret": 10
+    },
+    "busy": "sending",
+    "pending": "draft",
+    "model": {
+     "id": "cloud/glm-5.3-flash",
+     "name": "GLM-5.3 Flash",
+     "place": "cloud",
+     "node": null
+    }
+   },
+   "intent": {
+    "type": "send_failed",
+    "code": "signed_out"
+   },
+   "expect": {
+    "busy": "idle",
+    "draft": {
+     "text": "add a test"
+    },
+    "error": {
+     "code": "signed_out",
+     "message": "Signed out of Frog Cloud",
+     "actions": [
+      "sign_in"
+     ]
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "sign in from the error opens login",
+   "row": "Send · Gateway 401",
+   "given": {
+    "draft": {
+     "text": "add a test",
+     "attachments": [],
+     "caret": 10
+    },
+    "error": {
+     "code": "signed_out",
+     "message": "Signed out of Frog Cloud",
+     "actions": [
+      "sign_in"
+     ],
+     "control": null,
+     "detail": null,
+     "retryIn": null
+    }
+   },
+   "intent": {
+    "type": "error_action",
+    "action": "sign_in"
+   },
+   "expect": {
+    "error": null,
+    "draft": {
+     "text": "add a test"
+    }
+   },
+   "effects": [
+    {
+     "type": "open_login"
+    }
+   ]
+  },
+  {
+   "name": "out of credit offers the local model",
+   "row": "Send · 402",
+   "given": {
+    "draft": {
+     "text": "add a test",
+     "attachments": [],
+     "caret": 10
+    },
+    "busy": "sending",
+    "pending": "draft",
+    "model": {
+     "id": "cloud/glm-5.3-flash",
+     "name": "GLM-5.3 Flash",
+     "place": "cloud",
+     "node": null
+    }
+   },
+   "intent": {
+    "type": "send_failed",
+    "code": "no_credit"
+   },
+   "expect": {
+    "error": {
+     "code": "no_credit",
+     "message": "Out of credit",
+     "actions": [
+      "add_credit",
+      "use_local"
+     ]
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "out of credit with no local model offers only credit",
+   "row": "Send · 402",
+   "given": {
+    "draft": {
+     "text": "add a test",
+     "attachments": [],
+     "caret": 10
+    },
+    "busy": "sending",
+    "pending": "draft",
+    "model": {
+     "id": "cloud/glm-5.3-flash",
+     "name": "GLM-5.3 Flash",
+     "place": "cloud",
+     "node": null
+    },
+    "defaults": {
+     "local": null,
+     "cloud": {
+      "id": "cloud/glm-5.3-flash",
+      "name": "GLM-5.3 Flash",
+      "place": "cloud",
+      "node": null
+     }
+    }
+   },
+   "intent": {
+    "type": "send_failed",
+    "code": "no_credit"
+   },
+   "expect": {
+    "error": {
+     "code": "no_credit",
+     "actions": [
+      "add_credit"
+     ]
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "use local switches the model and clears the error",
+   "row": "Send · 402",
+   "given": {
+    "draft": {
+     "text": "add a test",
+     "attachments": [],
+     "caret": 10
+    },
+    "model": {
+     "id": "cloud/glm-5.3-flash",
+     "name": "GLM-5.3 Flash",
+     "place": "cloud",
+     "node": null
+    },
+    "error": {
+     "code": "no_credit",
+     "message": "Out of credit",
+     "actions": [
+      "add_credit",
+      "use_local"
+     ],
+     "control": null,
+     "detail": null,
+     "retryIn": null
+    }
+   },
+   "intent": {
+    "type": "error_action",
+    "action": "use_local"
+   },
+   "expect": {
+    "error": null,
+    "model": {
+     "id": "local/qwen3-coder-next",
+     "name": "Qwen3 Coder Next",
+     "place": "local",
+     "node": "mew"
+    }
+   },
+   "effects": [
+    {
+     "type": "set_model",
+     "model": {
+      "id": "local/qwen3-coder-next",
+      "name": "Qwen3 Coder Next",
+      "place": "local",
+      "node": "mew"
+     }
+    }
+   ]
+  },
+  {
+   "name": "add credit opens billing",
+   "row": "Send · 402",
+   "given": {
+    "error": {
+     "code": "no_credit",
+     "message": "Out of credit",
+     "actions": [
+      "add_credit"
+     ],
+     "control": null,
+     "detail": null,
+     "retryIn": null
+    }
+   },
+   "intent": {
+    "type": "error_action",
+    "action": "add_credit"
+   },
+   "expect": {
+    "error": null
+   },
+   "effects": [
+    {
+     "type": "open_billing"
+    }
+   ]
+  },
+  {
+   "name": "cloud busy shows the backoff",
+   "row": "Send · 429 / 5xx",
+   "given": {
+    "draft": {
+     "text": "add a test",
+     "attachments": [],
+     "caret": 10
+    },
+    "busy": "sending",
+    "pending": "draft",
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": []
+    }
+   },
+   "intent": {
+    "type": "send_failed",
+    "code": "cloud_busy",
+    "retryIn": 8
+   },
+   "expect": {
+    "error": {
+     "code": "cloud_busy",
+     "message": "Frog Cloud is busy",
+     "actions": [
+      "retry"
+     ],
+     "retryIn": 8
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "retry sends the kept draft again",
+   "row": "Send · 429 / 5xx",
+   "given": {
+    "draft": {
+     "text": "add a test",
+     "attachments": [],
+     "caret": 10
+    },
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": []
+    },
+    "error": {
+     "code": "cloud_busy",
+     "message": "Frog Cloud is busy",
+     "actions": [
+      "retry"
+     ],
+     "control": null,
+     "detail": null,
+     "retryIn": 8
+    }
+   },
+   "intent": {
+    "type": "error_action",
+    "action": "retry"
+   },
+   "expect": {
+    "error": null,
+    "busy": "sending"
+   },
+   "effects": [
+    {
+     "type": "submit",
+     "text": "add a test"
+    }
+   ]
+  },
+  {
+   "name": "dismiss clears the error slot",
+   "row": "Error display · ×",
+   "given": {
+    "error": {
+     "code": "pr_not_found",
+     "message": "Couldn't find that PR",
+     "actions": [],
+     "control": null,
+     "detail": null,
+     "retryIn": null
+    }
+   },
+   "intent": {
+    "type": "dismiss_error"
+   },
+   "expect": {
+    "error": null
+   },
+   "effects": []
+  },
+  {
+   "name": "attaching an image adds it",
+   "row": "Rail · ＋",
+   "given": {},
+   "intent": {
+    "type": "attach",
+    "files": [
+     {
+      "name": "a.png",
+      "size": 1200,
+      "type": "image/png"
+     }
+    ]
+   },
+   "expect": {
+    "draft": {
+     "attachments": [
+      {
+       "name": "a.png"
+      }
+     ]
+    },
+    "error": null
+   },
+   "effects": []
+  },
+  {
+   "name": "too-large and wrong-type files are refused, the rest attach",
+   "row": "Rail · ＋",
+   "given": {},
+   "intent": {
+    "type": "attach",
+    "files": [
+     {
+      "name": "ok.txt",
+      "size": 10,
+      "type": "text/plain"
+     },
+     {
+      "name": "huge.png",
+      "size": 30000000,
+      "type": "image/png"
+     },
+     {
+      "name": "app.zip",
+      "size": 100,
+      "type": "application/zip"
+     }
+    ]
+   },
+   "expect": {
+    "draft": {
+     "attachments": [
+      {
+       "name": "ok.txt"
+      }
+     ]
+    },
+    "error": {
+     "code": "attach_refused",
+     "message": "Couldn't attach huge.png (over 20 MB), app.zip (not a supported type)",
+     "actions": []
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "removing an attachment",
+   "row": "Rail · ＋",
+   "given": {
+    "draft": {
+     "text": "",
+     "attachments": [
+      {
+       "name": "a.png",
+       "size": 1,
+       "type": "image/png"
+      },
+      {
+       "name": "b.png",
+       "size": 1,
+       "type": "image/png"
+      }
+     ],
+     "caret": 0
+    }
+   },
+   "intent": {
+    "type": "remove_attachment",
+    "index": 0
+   },
+   "expect": {
+    "draft": {
+     "attachments": [
+      {
+       "name": "b.png"
+      }
+     ]
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "mic denied outlines the action button",
+   "row": "Rail · Action, empty",
+   "given": {},
+   "intent": {
+    "type": "mic_denied"
+   },
+   "expect": {
+    "error": {
+     "code": "mic_denied",
+     "message": "Allow microphone in System Settings",
+     "actions": [
+      "open_settings"
+     ],
+     "control": "action"
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "open settings from the mic error",
+   "row": "Rail · Action, empty",
+   "given": {
+    "error": {
+     "code": "mic_denied",
+     "message": "Allow microphone in System Settings",
+     "actions": [
+      "open_settings"
+     ],
+     "control": "action",
+     "detail": null,
+     "retryIn": null
+    }
+   },
+   "intent": {
+    "type": "error_action",
+    "action": "open_settings"
+   },
+   "expect": {
+    "error": null
+   },
+   "effects": [
+    {
+     "type": "open_mic_settings"
+    }
+   ]
+  },
+  {
+   "name": "mode defaults to auto",
+   "row": "Rail · Mode",
+   "given": {},
+   "intent": {
+    "type": "type",
+    "text": ""
+   },
+   "expect": {
+    "mode": "auto"
+   },
+   "effects": []
+  },
+  {
+   "name": "picking a mode applies it",
+   "row": "Rail · Mode",
+   "given": {},
+   "intent": {
+    "type": "set_mode",
+    "mode": "accept_edits"
+   },
+   "expect": {
+    "mode": "accept_edits"
+   },
+   "effects": [
+    {
+     "type": "set_mode",
+     "mode": "accept_edits"
+    }
+   ]
+  },
+  {
+   "name": "picking yolo asks once",
+   "row": "Rail · Mode",
+   "given": {},
+   "intent": {
+    "type": "set_mode",
+    "mode": "yolo"
+   },
+   "expect": {
+    "mode": "auto",
+    "confirm": "yolo"
+   },
+   "effects": []
+  },
+  {
+   "name": "confirming yolo applies it and remembers",
+   "row": "Rail · Mode",
+   "given": {
+    "confirm": "yolo"
+   },
+   "intent": {
+    "type": "confirm"
+   },
+   "expect": {
+    "mode": "yolo",
+    "yoloConfirmed": true,
+    "confirm": null
+   },
+   "effects": [
+    {
+     "type": "set_mode",
+     "mode": "yolo"
+    }
+   ]
+  },
+  {
+   "name": "yolo after confirming once doesn't ask again",
+   "row": "Rail · Mode",
+   "given": {
+    "yoloConfirmed": true,
+    "mode": "default"
+   },
+   "intent": {
+    "type": "set_mode",
+    "mode": "yolo"
+   },
+   "expect": {
+    "mode": "yolo",
+    "confirm": null
+   },
+   "effects": [
+    {
+     "type": "set_mode",
+     "mode": "yolo"
+    }
+   ]
+  },
+  {
+   "name": "cancelling the yolo confirmation keeps the mode",
+   "row": "Rail · Mode",
+   "given": {
+    "confirm": "yolo"
+   },
+   "intent": {
+    "type": "cancel_confirm"
+   },
+   "expect": {
+    "mode": "auto",
+    "confirm": null
+   },
+   "effects": []
+  },
+  {
+   "name": "cmd-period cycles auto to ask",
+   "row": "Keyboard · ⌘.",
+   "given": {},
+   "intent": {
+    "type": "cycle_mode"
+   },
+   "expect": {
+    "mode": "default"
+   },
+   "effects": [
+    {
+     "type": "set_mode",
+     "mode": "default"
+    }
+   ]
+  },
+  {
+   "name": "cmd-period from accept edits asks for yolo",
+   "row": "Keyboard · ⌘.",
+   "given": {
+    "mode": "accept_edits"
+   },
+   "intent": {
+    "type": "cycle_mode"
+   },
+   "expect": {
+    "mode": "accept_edits",
+    "confirm": "yolo"
+   },
+   "effects": []
+  },
+  {
+   "name": "changing mode mid-turn applies to the next permission",
+   "row": "Rail · Mode",
+   "given": {
+    "busy": "working",
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": []
+    }
+   },
+   "intent": {
+    "type": "set_mode",
+    "mode": "default"
+   },
+   "expect": {
+    "mode": "default",
+    "busy": "working"
+   },
+   "effects": [
+    {
+     "type": "set_mode",
+     "mode": "default"
+    }
+   ]
+  },
+  {
+   "name": "picking a model sets it and remembers it for the folder",
+   "row": "Rail · Model",
+   "given": {},
+   "intent": {
+    "type": "pick_model",
+    "model": {
+     "id": "local/qwen3-8b",
+     "name": "Qwen3 8B",
+     "place": "local",
+     "node": null
+    }
+   },
+   "expect": {
+    "model": {
+     "id": "local/qwen3-8b",
+     "name": "Qwen3 8B",
+     "place": "local",
+     "node": null
+    },
+    "memory": {
+     "modelByPlace": {
+      "/Users/cam/frog": {
+       "id": "local/qwen3-8b",
+       "name": "Qwen3 8B",
+       "place": "local",
+       "node": null
+      }
+     }
+    }
+   },
+   "effects": [
+    {
+     "type": "set_model",
+     "model": {
+      "id": "local/qwen3-8b",
+      "name": "Qwen3 8B",
+      "place": "local",
+      "node": null
+     }
+    }
+   ]
+  },
+  {
+   "name": "a cloud model while signed out opens login and keeps the draft",
+   "row": "Rail · Model",
+   "given": {
+    "draft": {
+     "text": "add a test",
+     "attachments": [],
+     "caret": 10
+    },
+    "signedIn": false
+   },
+   "intent": {
+    "type": "pick_model",
+    "model": {
+     "id": "cloud/glm-5.3-flash",
+     "name": "GLM-5.3 Flash",
+     "place": "cloud",
+     "node": null
+    }
+   },
+   "expect": {
+    "model": {
+     "id": "local/qwen3-coder-next",
+     "name": "Qwen3 Coder Next",
+     "place": "local",
+     "node": "mew"
+    },
+    "draft": {
+     "text": "add a test"
+    }
+   },
+   "effects": [
+    {
+     "type": "open_login"
+    }
+   ]
+  },
+  {
+   "name": "swapping a node's model mid-turn swaps after the turn",
+   "row": "Rail · Model",
+   "given": {
+    "busy": "working",
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": []
+    },
+    "model": {
+     "id": "local/qwen3-8b",
+     "name": "Qwen3 8B",
+     "place": "local",
+     "node": null
+    }
+   },
+   "intent": {
+    "type": "pick_model",
+    "model": {
+     "id": "local/qwen3-coder-next",
+     "name": "Qwen3 Coder Next",
+     "place": "local",
+     "node": "mew"
+    }
+   },
+   "expect": {
+    "model": {
+     "id": "local/qwen3-coder-next",
+     "name": "Qwen3 Coder Next",
+     "place": "local",
+     "node": "mew"
+    },
+    "notice": "Swaps after this turn"
+   },
+   "effects": [
+    {
+     "type": "set_model",
+     "model": {
+      "id": "local/qwen3-coder-next",
+      "name": "Qwen3 Coder Next",
+      "place": "local",
+      "node": "mew"
+     }
+    }
+   ]
+  },
+  {
+   "name": "changing the folder keeps draft, attachments and mode",
+   "row": "New · folder",
+   "given": {
+    "draft": {
+     "text": "add a test",
+     "attachments": [
+      {
+       "name": "a.png",
+       "size": 1,
+       "type": "image/png"
+      }
+     ],
+     "caret": 10
+    },
+    "mode": "accept_edits"
+   },
+   "intent": {
+    "type": "choose_folder",
+    "folder": "/Users/cam/zest",
+    "branch": "dev",
+    "git": true,
+    "dirty": false
+   },
+   "expect": {
+    "draft": {
+     "text": "add a test",
+     "attachments": [
+      {
+       "name": "a.png"
+      }
+     ]
+    },
+    "mode": "accept_edits",
+    "where": {
+     "kind": "folder",
+     "folder": "/Users/cam/zest",
+     "branch": "dev",
+     "worktree": true
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "changing the folder takes its remembered model",
+   "row": "New · folder",
+   "given": {
+    "memory": {
+     "modelByPlace": {
+      "/Users/cam/zest": {
+       "id": "local/qwen3-8b",
+       "name": "Qwen3 8B",
+       "place": "local",
+       "node": null
+      }
+     },
+     "worktreeByRepo": {},
+     "branchByRepo": {}
+    }
+   },
+   "intent": {
+    "type": "choose_folder",
+    "folder": "/Users/cam/zest",
+    "branch": "main",
+    "git": true,
+    "dirty": false
+   },
+   "expect": {
+    "model": {
+     "id": "local/qwen3-8b",
+     "name": "Qwen3 8B",
+     "place": "local",
+     "node": null
+    }
+   },
+   "effects": [
+    {
+     "type": "set_model",
+     "model": {
+      "id": "local/qwen3-8b",
+      "name": "Qwen3 8B",
+      "place": "local",
+      "node": null
+     }
+    }
+   ]
+  },
+  {
+   "name": "changing the folder takes its remembered worktree switch",
+   "row": "New · folder",
+   "given": {
+    "memory": {
+     "modelByPlace": {},
+     "worktreeByRepo": {
+      "/Users/cam/zest": false
+     },
+     "branchByRepo": {}
+    }
+   },
+   "intent": {
+    "type": "choose_folder",
+    "folder": "/Users/cam/zest",
+    "branch": "main",
+    "git": true,
+    "dirty": false
+   },
+   "expect": {
+    "where": {
+     "worktree": false
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "a folder outside git has no worktree",
+   "row": "New · New worktree",
+   "given": {},
+   "intent": {
+    "type": "choose_folder",
+    "folder": "/Users/cam/notes",
+    "branch": "",
+    "git": false,
+    "dirty": false
+   },
+   "expect": {
+    "where": {
+     "kind": "folder",
+     "git": false,
+     "worktree": false
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "switching to cloud keeps the draft and says the model changed",
+   "row": "New · cloud",
+   "given": {
+    "draft": {
+     "text": "add a test",
+     "attachments": [],
+     "caret": 10
+    }
+   },
+   "intent": {
+    "type": "choose_cloud",
+    "repo": "muni-works/frog",
+    "branch": "main"
+   },
+   "expect": {
+    "draft": {
+     "text": "add a test"
+    },
+    "where": {
+     "kind": "cloud",
+     "repo": "muni-works/frog",
+     "branch": "main"
+    },
+    "model": {
+     "id": "cloud/glm-5.3-flash",
+     "name": "GLM-5.3 Flash",
+     "place": "cloud",
+     "node": null
+    },
+    "notice": "Switched to GLM-5.3 Flash for Frog Cloud"
+   },
+   "effects": [
+    {
+     "type": "set_model",
+     "model": {
+      "id": "cloud/glm-5.3-flash",
+      "name": "GLM-5.3 Flash",
+      "place": "cloud",
+      "node": null
+     }
+    }
+   ]
+  },
+  {
+   "name": "switching from cloud back to a folder takes a local model",
+   "row": "New · folder",
+   "given": {
+    "draft": {
+     "text": "add a test",
+     "attachments": [],
+     "caret": 10
+    },
+    "model": {
+     "id": "cloud/glm-5.3-flash",
+     "name": "GLM-5.3 Flash",
+     "place": "cloud",
+     "node": null
+    },
+    "where": {
+     "kind": "cloud",
+     "repo": "muni-works/frog",
+     "branch": "main"
+    }
+   },
+   "intent": {
+    "type": "choose_folder",
+    "folder": "/Users/cam/frog",
+    "branch": "main",
+    "git": true,
+    "dirty": false
+   },
+   "expect": {
+    "draft": {
+     "text": "add a test"
+    },
+    "model": {
+     "id": "local/qwen3-coder-next",
+     "name": "Qwen3 Coder Next",
+     "place": "local",
+     "node": "mew"
+    },
+    "notice": "Switched to Qwen3 Coder Next on this Mac"
+   },
+   "effects": [
+    {
+     "type": "set_model",
+     "model": {
+      "id": "local/qwen3-coder-next",
+      "name": "Qwen3 Coder Next",
+      "place": "local",
+      "node": "mew"
+     }
+    }
+   ]
+  },
+  {
+   "name": "just chat keeps the draft and drops the top line's repo",
+   "row": "New · folder",
+   "given": {
+    "draft": {
+     "text": "add a test",
+     "attachments": [],
+     "caret": 10
+    }
+   },
+   "intent": {
+    "type": "just_chat"
+   },
+   "expect": {
+    "where": {
+     "kind": "chat"
+    },
+    "draft": {
+     "text": "add a test"
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "a branch choice is kept when you switch away and back",
+   "row": "New · branch",
+   "given": {
+    "memory": {
+     "modelByPlace": {},
+     "worktreeByRepo": {},
+     "branchByRepo": {
+      "/Users/cam/zest": "feature"
+     }
+    }
+   },
+   "intent": {
+    "type": "choose_folder",
+    "folder": "/Users/cam/zest",
+    "branch": "main",
+    "git": true,
+    "dirty": false
+   },
+   "expect": {
+    "where": {
+     "branch": "feature"
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "picking a branch remembers it for the repo",
+   "row": "New · branch",
+   "given": {},
+   "intent": {
+    "type": "pick_branch",
+    "branch": "dev"
+   },
+   "expect": {
+    "where": {
+     "branch": "dev"
+    },
+    "memory": {
+     "branchByRepo": {
+      "/Users/cam/frog": "dev"
+     }
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "worktree off on a dirty tree notes the checkout",
+   "row": "New · New worktree",
+   "given": {
+    "where": {
+     "dirty": true
+    }
+   },
+   "intent": {
+    "type": "toggle_worktree"
+   },
+   "expect": {
+    "where": {
+     "worktree": false
+    },
+    "notice": "Frog will work in your checkout",
+    "memory": {
+     "worktreeByRepo": {
+      "/Users/cam/frog": false
+     }
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "worktree on clears the note",
+   "row": "New · New worktree",
+   "given": {
+    "where": {
+     "dirty": true,
+     "worktree": false
+    },
+    "notice": "Frog will work in your checkout"
+   },
+   "intent": {
+    "type": "toggle_worktree"
+   },
+   "expect": {
+    "where": {
+     "worktree": true
+    },
+    "notice": null
+   },
+   "effects": []
+  },
+  {
+   "name": "send on a new session creates it with the where",
+   "row": "New · Send",
+   "given": {
+    "draft": {
+     "text": "add a test",
+     "attachments": [],
+     "caret": 10
+    }
+   },
+   "intent": {
+    "type": "send"
+   },
+   "expect": {
+    "busy": "sending",
+    "draft": {
+     "text": "add a test"
+    }
+   },
+   "effects": [
+    {
+     "type": "start_session",
+     "where": {
+      "kind": "folder",
+      "folder": "/Users/cam/frog",
+      "worktree": true
+     },
+     "text": "add a test",
+     "attachments": []
+    }
+   ]
+  },
+  {
+   "name": "worktree creation fails: draft kept, offer the checkout",
+   "row": "New · Send",
+   "given": {
+    "draft": {
+     "text": "add a test",
+     "attachments": [],
+     "caret": 10
+    },
+    "busy": "sending",
+    "pending": "draft"
+   },
+   "intent": {
+    "type": "failed",
+    "code": "worktree_failed",
+    "detail": "branch main is checked out elsewhere"
+   },
+   "expect": {
+    "busy": "idle",
+    "draft": {
+     "text": "add a test"
+    },
+    "error": {
+     "code": "worktree_failed",
+     "message": "Couldn't make a worktree",
+     "actions": [
+      "use_checkout"
+     ],
+     "control": "worktree",
+     "detail": "branch main is checked out elsewhere"
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "use checkout turns the worktree off and sends",
+   "row": "New · Send",
+   "given": {
+    "draft": {
+     "text": "add a test",
+     "attachments": [],
+     "caret": 10
+    },
+    "error": {
+     "code": "worktree_failed",
+     "message": "Couldn't make a worktree",
+     "actions": [
+      "use_checkout"
+     ],
+     "control": "worktree",
+     "detail": null,
+     "retryIn": null
+    }
+   },
+   "intent": {
+    "type": "error_action",
+    "action": "use_checkout"
+   },
+   "expect": {
+    "error": null,
+    "where": {
+     "worktree": false
+    },
+    "busy": "sending"
+   },
+   "effects": [
+    {
+     "type": "start_session",
+     "where": {
+      "worktree": false
+     },
+     "text": "add a test"
+    }
+   ]
+  },
+  {
+   "name": "clone fails: draft kept",
+   "row": "New · Send",
+   "given": {
+    "draft": {
+     "text": "add a test",
+     "attachments": [],
+     "caret": 10
+    },
+    "busy": "sending",
+    "pending": "draft",
+    "where": {
+     "kind": "cloud",
+     "repo": "o/r",
+     "branch": "main"
+    }
+   },
+   "intent": {
+    "type": "failed",
+    "code": "clone_failed"
+   },
+   "expect": {
+    "busy": "idle",
+    "draft": {
+     "text": "add a test"
+    },
+    "error": {
+     "code": "clone_failed",
+     "message": "Couldn't clone the repo",
+     "control": "where"
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "a suggestion fills the draft without sending",
+   "row": "New · suggestions",
+   "given": {},
+   "intent": {
+    "type": "suggestion",
+    "text": "Explain this repo"
+   },
+   "expect": {
+    "draft": {
+     "text": "Explain this repo"
+    },
+    "busy": "idle"
+   },
+   "effects": []
+  },
+  {
+   "name": "suggestions don't replace typed text",
+   "row": "New · suggestions",
+   "given": {
+    "draft": {
+     "text": "add a test",
+     "attachments": [],
+     "caret": 10
+    }
+   },
+   "intent": {
+    "type": "suggestion",
+    "text": "Explain this repo"
+   },
+   "expect": {
+    "draft": {
+     "text": "add a test"
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "no changes, nothing ahead: no action",
+   "row": "Top line · Action",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": []
+    }
+   },
+   "intent": {
+    "type": "type",
+    "text": ""
+   },
+   "expect": {
+    "derived": {
+     "gitAction": null,
+     "prSummary": null
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "dirty with no PR: commit",
+   "row": "Top line · Commit",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 12,
+      "del": 3,
+      "files": 2
+     },
+     "dirty": true,
+     "ahead": 0,
+     "prs": []
+    }
+   },
+   "intent": {
+    "type": "git_action"
+   },
+   "expect": {
+    "derived": {
+     "gitAction": "commit",
+     "canSwitchBranch": false
+    }
+   },
+   "effects": [
+    {
+     "type": "draft_commit"
+    }
+   ]
+  },
+  {
+   "name": "commit hook failure keeps the message and shows output",
+   "row": "Top line · Commit",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": true,
+     "ahead": 0,
+     "prs": []
+    }
+   },
+   "intent": {
+    "type": "failed",
+    "code": "hook_failed",
+    "detail": "lint: 2 errors"
+   },
+   "expect": {
+    "error": {
+     "code": "hook_failed",
+     "message": "A commit hook failed",
+     "actions": [
+      "show_output"
+     ],
+     "control": "git_action",
+     "detail": "lint: 2 errors"
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "show output from the hook error",
+   "row": "Top line · Commit",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": true,
+     "ahead": 0,
+     "prs": []
+    },
+    "error": {
+     "code": "hook_failed",
+     "message": "A commit hook failed",
+     "actions": [
+      "show_output"
+     ],
+     "control": "git_action",
+     "detail": "lint: 2 errors",
+     "retryIn": null
+    }
+   },
+   "intent": {
+    "type": "error_action",
+    "action": "show_output"
+   },
+   "expect": {
+    "error": {
+     "code": "hook_failed"
+    }
+   },
+   "effects": [
+    {
+     "type": "show_output",
+     "detail": "lint: 2 errors"
+    }
+   ]
+  },
+  {
+   "name": "committed with no PR: open PR",
+   "row": "Top line · Open PR",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 2,
+     "prs": []
+    }
+   },
+   "intent": {
+    "type": "git_action"
+   },
+   "expect": {
+    "derived": {
+     "gitAction": "open_pr"
+    }
+   },
+   "effects": [
+    {
+     "type": "open_pr"
+    }
+   ]
+  },
+  {
+   "name": "open PR without gh auth: connect GitHub",
+   "row": "Top line · Open PR",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 2,
+     "prs": []
+    }
+   },
+   "intent": {
+    "type": "failed",
+    "code": "gh_auth"
+   },
+   "expect": {
+    "error": {
+     "code": "gh_auth",
+     "message": "Connect GitHub to open a PR",
+     "actions": [
+      "connect_github"
+     ],
+     "control": "git_action"
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "connect GitHub runs gh auth login",
+   "row": "Top line · Open PR",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 2,
+     "prs": []
+    },
+    "error": {
+     "code": "gh_auth",
+     "message": "Connect GitHub to open a PR",
+     "actions": [
+      "connect_github"
+     ],
+     "control": "git_action",
+     "detail": null,
+     "retryIn": null
+    }
+   },
+   "intent": {
+    "type": "error_action",
+    "action": "connect_github"
+   },
+   "expect": {
+    "error": null
+   },
+   "effects": [
+    {
+     "type": "gh_auth_login"
+    }
+   ]
+  },
+  {
+   "name": "ahead of the PR: push",
+   "row": "Top line · Push",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 1,
+     "prs": [
+      {
+       "repo": "muni-works/frog",
+       "number": 297,
+       "title": "PR 297",
+       "state": "checks",
+       "checks": {
+        "ok": 1,
+        "total": 3
+       }
+      }
+     ]
+    }
+   },
+   "intent": {
+    "type": "git_action"
+   },
+   "expect": {
+    "derived": {
+     "gitAction": "push",
+     "prSummary": {
+      "count": 1,
+      "worst": "checks",
+      "label": "#297"
+     }
+    }
+   },
+   "effects": [
+    {
+     "type": "push"
+    }
+   ]
+  },
+  {
+   "name": "push rejected: branch moved on GitHub",
+   "row": "Top line · Push",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 1,
+     "prs": [
+      {
+       "repo": "muni-works/frog",
+       "number": 297,
+       "title": "PR 297",
+       "state": "checks",
+       "checks": {
+        "ok": 3,
+        "total": 3
+       }
+      }
+     ]
+    }
+   },
+   "intent": {
+    "type": "failed",
+    "code": "push_rejected"
+   },
+   "expect": {
+    "error": {
+     "code": "push_rejected",
+     "message": "Branch moved on GitHub",
+     "actions": [
+      "pull_retry"
+     ],
+     "control": "git_action"
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "pull and retry never force-pushes",
+   "row": "Top line · Push",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 1,
+     "prs": [
+      {
+       "repo": "muni-works/frog",
+       "number": 297,
+       "title": "PR 297",
+       "state": "checks",
+       "checks": {
+        "ok": 3,
+        "total": 3
+       }
+      }
+     ]
+    },
+    "error": {
+     "code": "push_rejected",
+     "message": "Branch moved on GitHub",
+     "actions": [
+      "pull_retry"
+     ],
+     "control": "git_action",
+     "detail": null,
+     "retryIn": null
+    }
+   },
+   "intent": {
+    "type": "error_action",
+    "action": "pull_retry"
+   },
+   "expect": {
+    "error": null
+   },
+   "effects": [
+    {
+     "type": "pull_push"
+    }
+   ]
+  },
+  {
+   "name": "checks failing: fix sends a turn and keeps the draft",
+   "row": "Top line · Fix",
+   "given": {
+    "draft": {
+     "text": "add a test",
+     "attachments": [],
+     "caret": 10
+    },
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": [
+      {
+       "repo": "muni-works/frog",
+       "number": 297,
+       "title": "PR 297",
+       "state": "failing",
+       "checks": {
+        "ok": 2,
+        "total": 3
+       }
+      }
+     ]
+    }
+   },
+   "intent": {
+    "type": "git_action"
+   },
+   "expect": {
+    "busy": "sending",
+    "pending": "aside",
+    "draft": {
+     "text": "add a test"
+    },
+    "derived": {
+     "gitAction": "fix"
+    }
+   },
+   "effects": [
+    {
+     "type": "submit",
+     "text": "Fix the failing checks on #297",
+     "attachments": []
+    }
+   ]
+  },
+  {
+   "name": "acknowledging a fix leaves the draft alone",
+   "row": "Top line · Fix",
+   "given": {
+    "draft": {
+     "text": "add a test",
+     "attachments": [],
+     "caret": 10
+    },
+    "busy": "sending",
+    "pending": "aside",
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": [
+      {
+       "repo": "muni-works/frog",
+       "number": 297,
+       "title": "PR 297",
+       "state": "failing",
+       "checks": {
+        "ok": 3,
+        "total": 3
+       }
+      }
+     ]
+    }
+   },
+   "intent": {
+    "type": "ack"
+   },
+   "expect": {
+    "busy": "working",
+    "draft": {
+     "text": "add a test"
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "approved: merge asks first",
+   "row": "Top line · Merge",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": [
+      {
+       "repo": "muni-works/frog",
+       "number": 297,
+       "title": "PR 297",
+       "state": "approved",
+       "checks": {
+        "ok": 3,
+        "total": 3
+       }
+      }
+     ]
+    }
+   },
+   "intent": {
+    "type": "git_action"
+   },
+   "expect": {
+    "confirm": "merge",
+    "derived": {
+     "gitAction": "merge"
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "confirming the merge merges that PR",
+   "row": "Top line · Merge",
+   "given": {
+    "confirm": "merge",
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": [
+      {
+       "repo": "muni-works/frog",
+       "number": 297,
+       "title": "PR 297",
+       "state": "approved",
+       "checks": {
+        "ok": 3,
+        "total": 3
+       }
+      }
+     ]
+    }
+   },
+   "intent": {
+    "type": "confirm"
+   },
+   "expect": {
+    "confirm": null
+   },
+   "effects": [
+    {
+     "type": "merge",
+     "repo": "muni-works/frog",
+     "number": 297
+    }
+   ]
+  },
+  {
+   "name": "merge conflicts: resolve is a turn",
+   "row": "Top line · Merge",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": [
+      {
+       "repo": "muni-works/frog",
+       "number": 297,
+       "title": "PR 297",
+       "state": "approved",
+       "checks": {
+        "ok": 3,
+        "total": 3
+       }
+      }
+     ]
+    },
+    "error": {
+     "code": "merge_conflict",
+     "message": "This PR has conflicts",
+     "actions": [
+      "resolve_conflicts"
+     ],
+     "control": "git_action",
+     "detail": null,
+     "retryIn": null
+    }
+   },
+   "intent": {
+    "type": "error_action",
+    "action": "resolve_conflicts"
+   },
+   "expect": {
+    "error": null,
+    "busy": "sending",
+    "pending": "aside"
+   },
+   "effects": [
+    {
+     "type": "submit",
+     "text": "Resolve the merge conflicts on #297"
+    }
+   ]
+  },
+  {
+   "name": "branch protection shows its reason",
+   "row": "Top line · Merge",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": [
+      {
+       "repo": "muni-works/frog",
+       "number": 297,
+       "title": "PR 297",
+       "state": "approved",
+       "checks": {
+        "ok": 3,
+        "total": 3
+       }
+      }
+     ]
+    }
+   },
+   "intent": {
+    "type": "failed",
+    "code": "branch_protected",
+    "detail": "2 approving reviews are required"
+   },
+   "expect": {
+    "error": {
+     "code": "branch_protected",
+     "message": "2 approving reviews are required",
+     "actions": []
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "merged: archive",
+   "row": "Top line · Archive",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": [
+      {
+       "repo": "muni-works/frog",
+       "number": 297,
+       "title": "PR 297",
+       "state": "merged",
+       "checks": {
+        "ok": 3,
+        "total": 3
+       }
+      }
+     ]
+    }
+   },
+   "intent": {
+    "type": "git_action"
+   },
+   "expect": {
+    "derived": {
+     "gitAction": "archive",
+     "prSummary": {
+      "label": "#297",
+      "worst": "merged"
+     }
+    }
+   },
+   "effects": [
+    {
+     "type": "archive",
+     "discard": false
+    }
+   ]
+  },
+  {
+   "name": "merged with a dirty worktree asks before deleting",
+   "row": "Top line · Archive",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": true,
+     "ahead": 0,
+     "prs": [
+      {
+       "repo": "muni-works/frog",
+       "number": 297,
+       "title": "PR 297",
+       "state": "merged",
+       "checks": {
+        "ok": 3,
+        "total": 3
+       }
+      }
+     ]
+    }
+   },
+   "intent": {
+    "type": "git_action"
+   },
+   "expect": {
+    "confirm": "archive",
+    "derived": {
+     "gitAction": "archive"
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "closed: reopen",
+   "row": "Top line · Reopen",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": [
+      {
+       "repo": "muni-works/frog",
+       "number": 297,
+       "title": "PR 297",
+       "state": "closed",
+       "checks": {
+        "ok": 3,
+        "total": 3
+       }
+      }
+     ]
+    }
+   },
+   "intent": {
+    "type": "git_action"
+   },
+   "expect": {
+    "derived": {
+     "gitAction": "reopen"
+    }
+   },
+   "effects": [
+    {
+     "type": "reopen",
+     "repo": "muni-works/frog",
+     "number": 297
+    }
+   ]
+  },
+  {
+   "name": "draft PR, up to date: no action",
+   "row": "Top line · Action",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": [
+      {
+       "repo": "muni-works/frog",
+       "number": 297,
+       "title": "PR 297",
+       "state": "draft",
+       "checks": {
+        "ok": 3,
+        "total": 3
+       }
+      }
+     ]
+    }
+   },
+   "intent": {
+    "type": "git_action"
+   },
+   "expect": {
+    "derived": {
+     "gitAction": null,
+     "prSummary": {
+      "worst": "draft"
+     }
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "PR pill opens the PR",
+   "row": "Top line · PR pill",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": [
+      {
+       "repo": "muni-works/frog",
+       "number": 297,
+       "title": "PR 297",
+       "state": "checks",
+       "checks": {
+        "ok": 3,
+        "total": 3
+       }
+      }
+     ]
+    }
+   },
+   "intent": {
+    "type": "pr_click",
+    "index": 0
+   },
+   "expect": {},
+   "effects": [
+    {
+     "type": "open_url",
+     "url": "https://github.com/muni-works/frog/pull/297"
+    }
+   ]
+  },
+  {
+   "name": "option-click copies the URL",
+   "row": "Top line · PR pill",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": [
+      {
+       "repo": "muni-works/frog",
+       "number": 297,
+       "title": "PR 297",
+       "state": "checks",
+       "checks": {
+        "ok": 3,
+        "total": 3
+       }
+      }
+     ]
+    }
+   },
+   "intent": {
+    "type": "pr_click",
+    "index": 0,
+    "alt": true
+   },
+   "expect": {},
+   "effects": [
+    {
+     "type": "copy",
+     "text": "https://github.com/muni-works/frog/pull/297"
+    }
+   ]
+  },
+  {
+   "name": "stack pill names the worst state",
+   "row": "Top line · Stack pill",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": [
+      {
+       "repo": "muni-works/frog",
+       "number": 297,
+       "title": "PR 297",
+       "state": "approved",
+       "checks": {
+        "ok": 3,
+        "total": 3
+       }
+      },
+      {
+       "repo": "muni-works/zest",
+       "number": 41,
+       "title": "PR 41",
+       "state": "failing",
+       "checks": {
+        "ok": 3,
+        "total": 3
+       }
+      },
+      {
+       "repo": "muni-works/frog",
+       "number": 298,
+       "title": "PR 298",
+       "state": "checks",
+       "checks": {
+        "ok": 3,
+        "total": 3
+       }
+      }
+     ]
+    }
+   },
+   "intent": {
+    "type": "open_stack"
+   },
+   "expect": {
+    "stackOpen": true,
+    "derived": {
+     "gitAction": "fix",
+     "prSummary": {
+      "count": 3,
+      "worst": "failing",
+      "label": "3 PRs, 1 failing"
+     }
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "all merged stack",
+   "row": "Top line · Stack pill",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": [
+      {
+       "repo": "muni-works/frog",
+       "number": 297,
+       "title": "PR 297",
+       "state": "merged",
+       "checks": {
+        "ok": 3,
+        "total": 3
+       }
+      },
+      {
+       "repo": "muni-works/frog",
+       "number": 298,
+       "title": "PR 298",
+       "state": "merged",
+       "checks": {
+        "ok": 3,
+        "total": 3
+       }
+      }
+     ]
+    }
+   },
+   "intent": {
+    "type": "type",
+    "text": ""
+   },
+   "expect": {
+    "derived": {
+     "gitAction": "archive",
+     "prSummary": {
+      "label": "2 PRs, all merged"
+     }
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "the stack opens only with two or more",
+   "row": "Top line · Stack pill",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": [
+      {
+       "repo": "muni-works/frog",
+       "number": 297,
+       "title": "PR 297",
+       "state": "checks",
+       "checks": {
+        "ok": 3,
+        "total": 3
+       }
+      }
+     ]
+    }
+   },
+   "intent": {
+    "type": "open_stack"
+   },
+   "expect": {
+    "stackOpen": false
+   },
+   "effects": []
+  },
+  {
+   "name": "esc closes the stack",
+   "row": "Top line · Stack pill",
+   "given": {
+    "stackOpen": true,
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": [
+      {
+       "repo": "muni-works/frog",
+       "number": 1,
+       "title": "PR 1",
+       "state": "checks",
+       "checks": {
+        "ok": 3,
+        "total": 3
+       }
+      },
+      {
+       "repo": "muni-works/frog",
+       "number": 2,
+       "title": "PR 2",
+       "state": "draft",
+       "checks": {
+        "ok": 3,
+        "total": 3
+       }
+      }
+     ]
+    }
+   },
+   "intent": {
+    "type": "esc"
+   },
+   "expect": {
+    "stackOpen": false
+   },
+   "effects": []
+  },
+  {
+   "name": "bind a PR by URL or number",
+   "row": "Top line · Bind a PR…",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": []
+    }
+   },
+   "intent": {
+    "type": "bind_pr",
+    "ref": " #41 "
+   },
+   "expect": {},
+   "effects": [
+    {
+     "type": "bind_pr",
+     "ref": "#41"
+    }
+   ]
+  },
+  {
+   "name": "a PR that can't be found is inline",
+   "row": "Top line · Bind a PR…",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": []
+    }
+   },
+   "intent": {
+    "type": "failed",
+    "code": "pr_not_found"
+   },
+   "expect": {
+    "error": {
+     "code": "pr_not_found",
+     "message": "Couldn't find that PR"
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "bound PR state arrives from the feed",
+   "row": "Top line · PR state source",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": []
+    }
+   },
+   "intent": {
+    "type": "prs",
+    "prs": [
+     {
+      "repo": "muni-works/frog",
+      "number": 297,
+      "title": "PR 297",
+      "state": "checks",
+      "checks": {
+       "ok": 1,
+       "total": 3
+      }
+     }
+    ]
+   },
+   "expect": {
+    "where": {
+     "prs": [
+      {
+       "number": 297,
+       "state": "checks"
+      }
+     ]
+    },
+    "derived": {
+     "prSummary": {
+      "label": "#297"
+     }
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "a PR you can't access stays bound",
+   "row": "Top line · Stack pill",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": []
+    }
+   },
+   "intent": {
+    "type": "prs",
+    "prs": [
+     {
+      "repo": "acme/secret",
+      "number": 9,
+      "title": "PR 9",
+      "state": "draft",
+      "checks": {
+       "ok": 3,
+       "total": 3
+      },
+      "access": false
+     },
+     {
+      "repo": "muni-works/frog",
+      "number": 297,
+      "title": "PR 297",
+      "state": "checks",
+      "checks": {
+       "ok": 3,
+       "total": 3
+      }
+     }
+    ]
+   },
+   "expect": {
+    "where": {
+     "prs": [
+      {
+       "repo": "acme/secret",
+       "access": false
+      },
+      {
+       "number": 297
+      }
+     ]
+    },
+    "derived": {
+     "prSummary": {
+      "count": 2
+     }
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "switching branch on a dirty tree does nothing",
+   "row": "Top line · branch",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": true,
+     "ahead": 0,
+     "prs": []
+    }
+   },
+   "intent": {
+    "type": "switch_branch",
+    "branch": "main"
+   },
+   "expect": {
+    "derived": {
+     "canSwitchBranch": false
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "switching branch on a clean tree",
+   "row": "Top line · branch",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": []
+    }
+   },
+   "intent": {
+    "type": "switch_branch",
+    "branch": "main"
+   },
+   "expect": {},
+   "effects": [
+    {
+     "type": "switch_branch",
+     "branch": "main"
+    }
+   ]
+  }
+ ]
+}
