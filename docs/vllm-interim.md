@@ -135,3 +135,18 @@ Caveat: prod runs tang at `--batch 48` with a 64k context, which we didn't measu
 2. vLLM: `uv pip install vllm hf_transfer`, then `hf download Qwen/Qwen3-Coder-Next-FP8`, then serve with the flags above plus `--enable-prompt-tokens-details`. Put the venv's bin on `PATH` (vLLM shells out to `ninja`).
 3. tang: build with `RUSTC_WRAPPER= cargo build --release -p tang-llm --features cuda`. The empty `RUSTC_WRAPPER` matters because sccache on the volume hung. Then `TANG_CODER_KV=int8 tang-llm serve <gguf> --ctx 32768 --batch 32`.
 4. Load: `CONC=<c> URL=<server> python3 docs/vllm-interim/agentload.py`, for c ∈ {1, 4, 16, 32, 64}.
+
+## Micro-bench (H200, for tang's board)
+
+[`vllm-interim/vbench.py`](vllm-interim/vbench.py) uses vLLM 0.33.0 offline on one H200 (secure cloud, $5.29/hr). Prompts are random token ids; prefix cache is off and output is greedy. Rows are in muni-works/tang#270.
+
+| ctx | B | prefill tok/s | decode tok/s (agg) | decode tok/s per stream |
+|---|---|---|---|---|
+| 4k | 1 | 43,220 | 219 | 219 |
+| 4k | 4 | 42,943 | 594 | 148 |
+| 4k | 16 | 52,344 | 1,687 | 105 |
+| 32k | 1 | 43,052 | 213 | 213 |
+| 32k | 4 | 43,341 | 609 | 152 |
+| 32k | 16 | 43,554 | 1,398 | 87 |
+
+Prefill is the gap: ~22× tang's derived prefill and ~8× llama.cpp's.
