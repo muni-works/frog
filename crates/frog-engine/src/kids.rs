@@ -199,29 +199,38 @@ impl Kids {
         kids.get(id).map(|k| k.state.lock().unwrap().clone())
     }
 
-    /// A child by id or name.
+    /// A child by id or name. `self`/`me`/`this` name the session asking, which here is the
+    /// parent engine — not a child, so there's nothing to look up; say that instead of
+    /// "no session `self`". An exact id or name match still wins, as on the Mac's broker.
     fn find(&self, who: &str) -> Result<String> {
         let kids = self.kids.lock().unwrap();
         if kids.contains_key(who) {
             return Ok(who.to_string());
         }
-        kids.iter()
+        if let Some(id) = kids
+            .iter()
             .find(|(_, k)| k.name.eq_ignore_ascii_case(who))
             .map(|(id, _)| id.clone())
-            .ok_or_else(|| {
-                let known: Vec<String> = kids
-                    .iter()
-                    .map(|(id, k)| format!("{} ({id})", k.name))
-                    .collect();
-                anyhow!(
-                    "no session `{who}` started from this one. Known: {}",
-                    if known.is_empty() {
-                        "none".into()
-                    } else {
-                        known.join(", ")
-                    }
-                )
-            })
+        {
+            return Ok(id);
+        }
+        if crate::tools::sessions::is_self(who) {
+            bail!(
+                "That's this session: the sessions here are the children it started, so there's no separate one to name. ListSessions shows them."
+            );
+        }
+        let known: Vec<String> = kids
+            .iter()
+            .map(|(id, k)| format!("{} ({id})", k.name))
+            .collect();
+        bail!(
+            "no session `{who}` started from this one. Known: {}",
+            if known.is_empty() {
+                "none".into()
+            } else {
+                known.join(", ")
+            }
+        )
     }
 
     /// Adopt a spawned child engine: watch its events, relay its permission prompts through
@@ -535,6 +544,44 @@ mod tests {
         assert!(!wants_worktree(&json!({"cwd": "/x"})));
         assert!(wants_worktree(&json!({"cwd": "/x", "worktree": true})));
         assert!(!wants_worktree(&json!({"worktree": false})));
+    }
+
+    #[test]
+    fn self_aliases_name_the_asking_session() {
+        // The alias set both resolvers share: `self`, `me`, `this`, in any case.
+        use crate::tools::sessions::is_self;
+        for alias in ["self", "me", "this", "Self", " ME ", "This"] {
+            assert!(is_self(alias), "{alias:?} is the caller");
+        }
+        for other in ["chief-0001", "sel", "", "myself"] {
+            assert!(!is_self(other), "{other:?} is not the caller");
+        }
+    }
+
+    #[test]
+    fn find_prefers_an_exact_id_or_name_over_the_self_alias() {
+        let kids = Kids::default();
+        let mut map = kids.kids.lock().unwrap();
+        map.insert(
+            "child-0001".into(),
+            Kid {
+                name: "self".into(),
+                cwd: PathBuf::from("/tmp/x"),
+                branch: None,
+                ops: mpsc::unbounded_channel().0,
+                state: Arc::new(Mutex::new(State::default())),
+                archived: false,
+            },
+        );
+        drop(map);
+        // A child actually named "self" wins, so nothing that resolved before changed.
+        assert_eq!(kids.find("self").unwrap(), "child-0001");
+        // The parent asking for itself gets an honest refusal, not "no session".
+        let err = kids.find("me").unwrap_err().to_string();
+        assert!(err.contains("That's this session"), "{err}");
+        // Anything else is still the old miss, listing what there is.
+        let err = kids.find("nobody").unwrap_err().to_string();
+        assert!(err.contains("Known: self (child-0001)"), "{err}");
     }
 
     #[test]

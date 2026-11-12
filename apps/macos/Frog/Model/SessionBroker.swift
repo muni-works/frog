@@ -389,7 +389,7 @@ final class SessionBroker {
             // name only sees unarchived sessions — resolve against everything to unarchive.
             let key = input["id"]?.string ?? ""
             let on = r.tool == "ArchiveSession"
-            switch on ? resolve(key) : resolve(key, includeArchived: true) {
+            switch on ? resolve(key, caller: sender) : resolve(key, caller: sender, includeArchived: true) {
             case .success(let e):
                 guard e.id != sender else { return c.replySession(r.id, error: "That's this session.") }
                 // An archived session's queued messages never run: one left behind restarted
@@ -410,8 +410,12 @@ final class SessionBroker {
                 c.replySession(r.id, result: selfStatus(of: c).map(\.json) ?? .null)
                 return
             }
-            target = resolve(key)
+            target = resolve(key, caller: sender)
             switch target {
+            case .success(let e) where e.id == sender:
+                // `self`, `me`, `this`: the same answer, from the same place.
+                c.replySession(r.id, result: selfStatus(of: c).map(\.json) ?? .null)
+                return
             case .success(let e):
                 Task { [weak c] in
                     guard var info = await Self.readStatus(e.id, broker: self) else {
@@ -425,7 +429,7 @@ final class SessionBroker {
                 c.replySession(r.id, error: e.message)
             }
         case "ReadSession":
-            switch resolve(input["id"]?.string ?? "") {
+            switch resolve(input["id"]?.string ?? "", caller: sender) {
             case .success(let e):
                 let n = input["last_n"]?.int ?? 20
                 let kinds = (input["kinds"]?.array ?? []).compactMap(\.string)
@@ -441,7 +445,7 @@ final class SessionBroker {
             // straight to the engine (Op.interrupt applies immediately, not at the boundary),
             // never starting one that's gone: a dead engine has nothing running.
             // `clear_queue` also cancels its inbox, so no queued message starts the next turn.
-            switch resolve(input["id"]?.string ?? "") {
+            switch resolve(input["id"]?.string ?? "", caller: sender) {
             case .success(let e):
                 guard e.id != sender else { return c.replySession(r.id, error: "That's this session: use your own stop.") }
                 let target = tracked(e.id)
@@ -465,7 +469,7 @@ final class SessionBroker {
             // Never above the caller's own mode (a child can't grant itself more than its
             // parent has), and yolo additionally needs an explicit flag. Applies at the
             // target's next permission decision, even mid-turn.
-            switch resolve(input["id"]?.string ?? "") {
+            switch resolve(input["id"]?.string ?? "", caller: sender) {
             case .success(let e):
                 guard let raw = input["mode"]?.string, let wanted = Mode(rawValue: raw) else {
                     return c.replySession(r.id, error: "`mode` must be default, accept-edits, auto or yolo.")
@@ -490,7 +494,7 @@ final class SessionBroker {
                 c.replySession(r.id, error: e.message)
             }
         case "SetSessionModel":
-            switch resolve(input["id"]?.string ?? "") {
+            switch resolve(input["id"]?.string ?? "", caller: sender) {
             case .success(let e):
                 guard let model = input["model"]?.string, !model.isEmpty else {
                     return c.replySession(r.id, error: "`model` is required (provider/model, e.g. local/qwen3-4b).")
@@ -525,7 +529,7 @@ final class SessionBroker {
                 : "\(rows.count) pending approval\(rows.count == 1 ? "" : "s"). The user answers them in their window; the chief of staff (or the session's parent) may decide one with ResolveDelegated, naming its approval_id. Anyone else can't."
             c.replySession(r.id, result: .object(["approvals": .array(rows), "note": .string(note)]))
         case "RenameSession":
-            switch resolve(input["id"]?.string ?? "", includeArchived: true) {
+            switch resolve(input["id"]?.string ?? "", caller: sender, includeArchived: true) {
             case .success(let e):
                 let title = input["title"]?.string ?? ""
                 let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -555,13 +559,13 @@ final class SessionBroker {
             // Re-file a session under a new parent — the nesting the sidebar derives from.
             // Sidebar organization only: the log, model, mode and history stay the session's
             // own (a mis-filed session stops being stuck). nil/absent parent unparents.
-            switch resolve(input["id"]?.string ?? "", includeArchived: true) {
+            switch resolve(input["id"]?.string ?? "", caller: sender, includeArchived: true) {
             case .success(let e):
                 let asked = (input["parent"]?.string ?? "")
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 var parent: Entry?
                 if !asked.isEmpty {
-                    switch resolve(asked, includeArchived: true) {
+                    switch resolve(asked, caller: sender, includeArchived: true) {
                     case .success(let p): parent = p
                     case .failure(let err): return c.replySession(r.id, error: err.message)
                     }
@@ -613,7 +617,7 @@ final class SessionBroker {
         var why = "no chief is configured"
         var found: Entry?
         for n in names {
-            switch resolve(n) {
+            switch resolve(n, caller: sender) {
             case .success(let e): found = e
             case .failure(let e): why = e.message
             }
@@ -957,9 +961,18 @@ final class SessionBroker {
         directory().filter { $0.id != id }.sorted { $0.modified > $1.modified }
     }
 
-    /// Find a session by id (or a unique id prefix), else by name (case-insensitive).
+    /// Whether `key` names the caller itself: `self`, `me` or `this`.
+    static func isSelf(_ key: String) -> Bool {
+        ["self", "me", "this"].contains(key.lowercased())
+    }
+
+    /// Find a session by id, else by name (case-insensitive), else — for `self`, `me` and
+    /// `this` — `caller`, the session asking, else by a unique 6+ char id prefix.
     /// `includeArchived` also looks among archived sessions (to unarchive one).
-    func resolve(_ to: String, includeArchived: Bool = false) -> Result<Entry, BrokerError> {
+    ///
+    /// Exact id and name win over the alias, so a session actually named "self" still
+    /// resolves to itself and nothing that worked before changes meaning.
+    func resolve(_ to: String, caller: String? = nil, includeArchived: Bool = false) -> Result<Entry, BrokerError> {
         let key = to.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else { return .failure(BrokerError("`to` is empty")) }
         let all = includeArchived ? directoryIncludingArchived() : directory()
@@ -969,16 +982,29 @@ final class SessionBroker {
         if named.count > 1 {
             return .failure(BrokerError("\(named.count) sessions are named \"\(key)\": use an id (\(named.map(\.id).joined(separator: ", ")))"))
         }
+        if let caller, !caller.isEmpty, Self.isSelf(key) {
+            // Listings leave the caller out; it's still a session that exists.
+            return .success(all.first { $0.id == caller } ?? Entry(id: caller, name: "", state: ""))
+        }
         let prefixed = key.count >= 6 ? all.filter { $0.id.hasPrefix(key) } : []
         if prefixed.count == 1 { return .success(prefixed[0]) }
-        return .failure(BrokerError("No session \"\(key)\". ListSessions shows what's there."))
+        return .failure(BrokerError(Self.noSuchSession(key, among: all)))
+    }
+
+    /// The resolution failure, saying what IS there: a handful of names and ids, so the
+    /// model can pick without spending a call on a listing first (never the whole dump).
+    static func noSuchSession(_ key: String, among all: [Entry]) -> String {
+        guard !all.isEmpty else { return "No session \"\(key)\", and no sessions exist yet." }
+        let shown = all.prefix(6).map { "\($0.name) (\($0.id))" }.joined(separator: ", ")
+        let more = all.count > 6 ? ", and \(all.count - 6) more" : ""
+        return "No session \"\(key)\". Available: \(shown)\(more). ListSessions shows them all."
     }
 
     func send(from sender: String, name: String, to: String, message: String, notifyWhenIdle: Bool, informational: Bool = false) -> Result<Entry, BrokerError> {
         let message = message.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !message.isEmpty else { return .failure(BrokerError("`message` is empty")) }
         let target: Entry
-        switch resolve(to) {
+        switch resolve(to, caller: sender) {
         case .success(let e): target = e
         case .failure(let e): return .failure(e)
         }
