@@ -1220,18 +1220,14 @@
           "type": "object"
         },
         {
-          "description": "A one-line gist of a finished `Bash` tool call's command, written by a small\nside-model in one batched call per turn flush (see `gist`). Live only: a\nreplaying client regenerates nothing, and shows the raw (elided) command.",
+          "description": "A one-line gist of a finished tool call, written by a small side-model in one batched\ncall per turn (see `gist`): \"searched the engine for where gists flush\". Durable, so a\nreplayed session shows the same lines; the row's own argument stays the fallback.",
           "properties": {
-            "command": {
-              "description": "The command it ran, for hashing on the client (cache).",
-              "type": "string"
-            },
             "created": {
               "format": "int64",
               "type": "integer"
             },
             "event": {
-              "const": "command_gisted",
+              "const": "item_gisted",
               "type": "string"
             },
             "gist": {
@@ -1239,7 +1235,7 @@
               "type": "string"
             },
             "item": {
-              "description": "The tool call's item id.",
+              "description": "The tool call's item id, which the client already drew.",
               "type": "string"
             },
             "seq": {
@@ -1254,7 +1250,6 @@
           "required": [
             "event",
             "item",
-            "command",
             "gist",
             "seq",
             "session",
@@ -3566,14 +3561,10 @@
           "type": "object"
         },
         {
-          "description": "A one-line gist of a finished `Bash` tool call's command, written by a small\nside-model in one batched call per turn flush (see `gist`). Live only: a\nreplaying client regenerates nothing, and shows the raw (elided) command.",
+          "description": "A one-line gist of a finished tool call, written by a small side-model in one batched\ncall per turn (see `gist`): \"searched the engine for where gists flush\". Durable, so a\nreplayed session shows the same lines; the row's own argument stays the fallback.",
           "properties": {
-            "command": {
-              "description": "The command it ran, for hashing on the client (cache).",
-              "type": "string"
-            },
             "event": {
-              "const": "command_gisted",
+              "const": "item_gisted",
               "type": "string"
             },
             "gist": {
@@ -3581,14 +3572,13 @@
               "type": "string"
             },
             "item": {
-              "description": "The tool call's item id.",
+              "description": "The tool call's item id, which the client already drew.",
               "type": "string"
             }
           },
           "required": [
             "event",
             "item",
-            "command",
             "gist"
           ],
           "type": "object"

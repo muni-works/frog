@@ -901,9 +901,10 @@ enum Event: Decodable, Sendable {
     case turnEnded(turn: UInt64, reason: EndReason, usage: TurnUsage)
     case itemStarted(id: String, kind: ItemKind)
     case itemCompleted(id: String, item: Item)
-    /// A one-line gist of a finished `Bash` call's command, written by a small side-model
-    /// in one batched call per turn flush. Live only; the raw command stays the truth.
-    case commandGisted(item: String, command: String, gist: String)
+    /// A one-line gist of a finished tool call, written by a small side-model in batched
+    /// calls per turn ("searched the engine for where gists flush"). Durable; the call's
+    /// own argument stays the fallback.
+    case itemGisted(item: String, gist: String)
     /// A chapter's title from a small side-model, sent when the next chapter opened; it
     /// replaces the rail's heuristic title for the chapter starting at `turn`. Durable.
     case chapterTitled(turn: UInt64, title: String)
@@ -1050,10 +1051,9 @@ extension Event {
             self = .itemStarted(id: try c.decode(String.self, forKey: .id), kind: try c.decode(ItemKind.self, forKey: .kind))
         case "item_completed":
             self = .itemCompleted(id: try c.decode(String.self, forKey: .id), item: try c.decode(Item.self, forKey: .item))
-        case "command_gisted":
-            self = .commandGisted(
+        case "item_gisted":
+            self = .itemGisted(
                 item: try c.decode(String.self, forKey: .item),
-                command: try c.decode(String.self, forKey: .command),
                 gist: try c.decode(String.self, forKey: .gist))
         case "next_suggested":
             self = .nextSuggested(

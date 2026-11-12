@@ -112,6 +112,8 @@ export type Event =
   | { event: "item_started"; id: string; kind: ItemKind }
   | { event: "item_completed"; id: string; item: Item }
   | { event: "item_delta"; id: string; delta: Delta }
+  /** A finished tool call's one-line gist, from the engine's side-model. Durable. */
+  | { event: "item_gisted"; item: string; gist: string }
   | { event: "permission_request"; id: string; item: string; name: string; arg: string; always: string; preview?: FileDiff; reason?: string }
   | { event: "permission_resolved"; id: string; decision: Decision }
   | { event: "titled"; title: string }

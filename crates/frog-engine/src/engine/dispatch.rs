@@ -614,18 +614,26 @@ Don't repeat it. Change the arguments or try a different approach.",
                 }
             };
             let mut out = out;
-            // Captured before the item's parts move into its event: a shell command queued
-            // for a gist when it finished (see the queue after `ItemCompleted`).
-            let (is_bash, item_id, command, out_head) = if name == "Bash" {
+            // Captured before the item's parts move into its event: the egress note's key and
+            // command, and a call worth a line, queued for a gist when it finished (see the
+            // queue after `ItemCompleted`). The tools whose own `display` already says what
+            // happened never queue (see `gist::worth`); nor does a call that didn't run.
+            let (item_id, command) = (
+                id.clone(),
+                input["command"].as_str().unwrap_or("").to_string(),
+            );
+            let gist_pending = (executed
+                && outcome != ToolOutcome::Denied
+                && crate::gist::worth(&name))
+            .then(|| {
                 (
-                    true,
                     id.clone(),
-                    input["command"].as_str().unwrap_or("").to_string(),
-                    out.content.chars().take(400).collect(),
+                    name.clone(),
+                    arg.clone(),
+                    outcome,
+                    out.content.chars().take(400).collect::<String>(),
                 )
-            } else {
-                (false, String::new(), String::new(), String::new())
-            };
+            });
             // One result can't blow the window (and being the most recent, it would never be
             // pruned): clip anything larger than MAX_RESULT_SHARE of the window.
             let result_cap = self.result_cap();
@@ -728,11 +736,10 @@ Don't repeat it. Change the arguments or try a different approach.",
             }
             // Connections it tried past the allow-list, right under its row.
             self.flush_egress(Some(&item_id), &command);
-            // Queue a gist for a finished shell command, written when the turn ends in one
-            // batched side-model call (see `flush_gists`). Skipped calls (not run) don't
-            // need one; the elided command tells that story.
-            if is_bash && outcome == ToolOutcome::Ok && executed {
-                self.pending_gists.push((item_id, command, out_head));
+            // Queue a gist for a finished call worth one, written when the turn ends in
+            // batched side-model calls (see `flush_gists`).
+            if let Some(pending) = gist_pending {
+                self.pending_gists.push(pending);
             }
         }
         // A model that keeps sleeping on a wait that already runs (refused twice) won't end its
