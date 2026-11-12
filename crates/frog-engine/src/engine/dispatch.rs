@@ -664,7 +664,7 @@ Don't repeat it. Change the arguments or try a different approach.",
             }
             let output = out.content;
             // A PR the session's branch just opened binds itself (the composer's git line).
-            if is_bash
+            if name == "Bash"
                 && outcome == ToolOutcome::Ok
                 && let Some(pr) = crate::prs::created(&command, &output)
             {
