@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Frog</title>
-<meta name="description" content="A coding agent for your Mac, built for local models.">
+<meta name="description" content="A coding agent that runs on the machines you own. No caps. Your machines. One agent.">
 <meta property="og:title" content="Frog">
-<meta property="og:description" content="A coding agent for your Mac, built for local models.">
+<meta property="og:description" content="A coding agent that runs on the machines you own. No caps. Your machines. One agent.">
 <meta property="og:image" content="https://frog.toys/icon.png">
 <meta name="theme-color" content="#f6f5f1" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#141513" media="(prefers-color-scheme: dark)">
@@ -450,7 +450,7 @@
     </div>
     <p class="says" aria-live="polite">what shall we fix?</p>
     <h1>Frog</h1>
-    <p class="lede">A coding agent for your Mac, built for local models.</p>
+    <p class="lede">No caps. Your machines. One agent.</p>
     <a class="download" href="/download">
       <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M10 2a1 1 0 0 1 1 1v8.59l2.3-2.3a1 1 0 1 1 1.4 1.42l-4 4a1 1 0 0 1-1.4 0l-4-4a1 1 0 1 1 1.4-1.42L9 11.6V3a1 1 0 0 1 1-1Zm-6 14a1 1 0 0 1 1-1h10a1 1 0 1 1 0 2H5a1 1 0 0 1-1-1Z"/></svg>
       Download for Mac
@@ -480,13 +480,13 @@
       <div class="stage" aria-hidden="true">
         <ul class="models">
           <li class="on">apple/on-device<span class="where">this Mac</span></li>
-          <li>tang/Qwen3-4B-4bit<span class="where">Metal</span></li>
-          <li>ollama/qwen3-coder:30b<span class="where">ollama</span></li>
-          <li>anthropic/claude-sonnet-5<span class="where">key</span></li>
+          <li>Qwen3-8B-4bit<span class="where">on mew</span></li>
+          <li>ollama/qwen3-coder:30b<span class="where">this Mac</span></li>
+          <li>Qwen3-Coder-Next<span class="where">Frog Cloud</span></li>
         </ul>
       </div>
-      <h3>Your models, your Mac</h3>
-      <p>Runs open models itself on Metal, or through ollama and LM Studio. Cloud keys are optional.</p>
+      <h3>Every model, and where it runs</h3>
+      <p>The picker lists models with the machine each would run on. Load one onto a node right from the picker. Cloud keys are optional.</p>
     </li>
     <li class="card" data-play="budget">
       <div class="stage" aria-hidden="true">
@@ -554,16 +554,16 @@
         <span class="line">Worked 42s<span class="skim"> · read 3 files</span> · edited 1 file</span>
       </div>
       <h3>Rewind anything</h3>
-      <p>Every turn is a checkpoint. Undo what it edited and what its commands did.</p>
+      <p>Every turn is a checkpoint. Undo what it edited and what its commands did, or fork a turn and keep every branch in the session tree.</p>
     </li>
     <li class="card" data-play="race">
       <div class="stage" aria-hidden="true">
-        <div class="lane" data-t="2600" data-pass="0"><span class="meta">attempt 1</span><span class="bar"><i></i></span><span class="res"></span></div>
-        <div class="lane" data-t="1900" data-pass="1"><span class="meta">attempt 2</span><span class="bar"><i></i></span><span class="res"></span></div>
-        <div class="lane" data-t="3100" data-pass="0"><span class="meta">attempt 3</span><span class="bar"><i></i></span><span class="res"></span></div>
+        <div class="lane" data-t="2600" data-pass="0"><span class="meta">on mew</span><span class="bar"><i></i></span><span class="res"></span></div>
+        <div class="lane" data-t="1900" data-pass="1"><span class="meta">this Mac</span><span class="bar"><i></i></span><span class="res"></span></div>
+        <div class="lane" data-t="3100" data-pass="0"><span class="meta">on jetson</span><span class="bar"><i></i></span><span class="res"></span></div>
       </div>
-      <h3>Race attempts</h3>
-      <p>Run one prompt 2–4 ways in parallel worktrees, score them with your tests, keep the best.</p>
+      <h3>The turn survives</h3>
+      <p>If a machine drops out mid-turn, the partial answer is dropped and the turn reruns on the next node with that model, with one line saying so.</p>
     </li>
     <li class="card" data-play="sandbox">
       <div class="stage" aria-hidden="true">
@@ -671,19 +671,35 @@
       <div class="bar"><i></i><i></i><i></i><span>zsh</span><button class="copy" type="button" aria-label="Copy the alias">Copy</button></div>
 <pre><span class="p">$ </span><span class="cmd">alias frog=/Applications/Frog.app/Contents/Resources/frog</span>
 <span class="p">$ </span>frog -m ollama/qwen3-coder:30b
-<span class="p">$ </span>frog -p "why does the build fail?"   <span class="c"># one-shot, to stdout</span></pre>
+<span class="p">$ </span>frog -p "why does the build fail?"   <span class="c"># one-shot, to stdout</span>
+<span class="p">$ </span>frog login                          <span class="c"># sign in to Frog Cloud</span></pre>
     </div>
+  </section>
+
+  <section class="cli" id="nodes">
+    <h2>Every frog is a node</h2>
+    <p>Pair another machine with a 6-digit code: no addresses, no keys to copy. The composer chip and the map show where the model runs. A Linux box with a GPU joins with one command.</p>
+    <div class="term">
+      <div class="bar"><i></i><i></i><i></i><span>your GPU box</span></div>
+<pre><span class="p">$ </span>curl -fsSL https://frog.toys/node | sh   <span class="c"># installs tang-llm, prints a pairing code</span></pre>
+    </div>
+  </section>
+
+  <section class="cloud" id="no-caps">
+    <h2>No caps</h2>
+    <p>Run as many agents as your hardware holds, never rate-limited. Six agents for 15 minutes on Qwen3-8B, with this Mac (M4 Max) added to mew (RTX 3090):</p>
+    <ul class="prices">
+      <li><b>41</b><span>tasks passed on Mac + mew</span></li>
+      <li><b>21</b><span>tasks passed on mew alone</span></li>
+      <li><b>0</b><span>rate-limit errors</span></li>
+    </ul>
+    <p>More hardware isn't free: one task got slower with the second machine. <a href="https://github.com/muni-works/frog/blob/main/docs/no-caps-bench.md">The bench</a></p>
   </section>
 
   <section class="cloud" id="cloud">
     <h2>Frog Cloud</h2>
-    <p>Slow machine? Run the same agent on Qwen3-Coder-Next, served by tang on H200s. Pay per token, in dollars. New accounts start with a small free credit, no card needed.</p>
-    <ul class="prices">
-      <li><b>$0.60</b><span>per million input tokens</span></li>
-      <li><b>$0.06</b><span>per million cached input tokens</span></li>
-      <li><b>$1.50</b><span>per million output tokens</span></li>
-    </ul>
-    <p><a href="https://api.frog.toys/pricing">Pricing</a></p>
+    <p>When you want more, run the same agent on Qwen3-Coder-Next, served by tang. Paid in dollars per token, from the Mac app or in the browser at frog.toys, with one look across both. New accounts start with a small free credit, no card needed.</p>
+    <p><a href="https://api.frog.toys/pricing">See pricing</a></p>
   </section>
 
   <footer>
@@ -902,7 +918,7 @@
         i.style.width = "100%";
         await pause(t);
         const pass = l.dataset.pass === "1";
-        $(l, ".res").textContent = pass ? "✓ tests pass" : "2 failing";
+        $(l, ".res").textContent = pass ? "✓ finished" : "dropped";
         if (pass) l.classList.add("win");
       }));
       el.classList.add("done");
