@@ -1131,6 +1131,15 @@ impl Agent {
             // The first pass flagged it: the flag is usually missing context, and
             // context is cheap. (The first pass never names Cam; it's a flag too.)
             Some(crate::auto::Verdict::Ask(why)) | Some(crate::auto::Verdict::Cam(why)) => {
+                // Auto mode: deny instead of carding. The model must know why and not retry blindly.
+                if self.mode == Mode::Auto {
+                    let deny_reason = if self.classifier.is_some() {
+                        format!("auto mode denied: {flag}; with context: {why}. Try a different approach or switch to default mode to ask.")
+                    } else {
+                        format!("auto mode denied: {flag}; with context: {why}. The classifier is unavailable. Try a different approach or switch to default mode to ask.")
+                    };
+                    return Err(("auto-mode", deny_reason));
+                }
                 self.second_pass(
                     item,
                     name,
@@ -1141,7 +1150,13 @@ impl Agent {
                 )
                 .await
             }
-            Some(crate::auto::Verdict::Failed(why)) => Err(("classifier", why)),
+            Some(crate::auto::Verdict::Failed(why)) => {
+                // Auto mode: deny instead of carding when classifier is unavailable
+                if self.mode == Mode::Auto {
+                    return Err(("auto-mode", format!("auto mode denied: the classifier is unavailable ({why}). Try a different approach or switch to default mode to ask.")));
+                }
+                Err(("classifier", why))
+            }
             // Nothing could judge: the built-in rules decide alone. A down classifier never
             // cards a call by itself; only a call no rule can prove harmless asks. A worker on
             // a BYOK model is the exception (docs/design/model-policy.md): it may not quietly
