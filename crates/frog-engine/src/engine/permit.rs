@@ -865,6 +865,13 @@ impl Agent {
         if name == sessions::START
             && let Some(spec) = input["model"].as_str().filter(|s| !s.trim().is_empty())
         {
+            // Before anything is created: the model resolves, its credential is live, and a
+            // hosted BYOK gateway lists it (docs/design/model-policy.md). The credential check
+            // exists because a session once started and then died on its first call with
+            // "ANTHROPIC_API_KEY not set" — one error, before the row, saying what IS usable.
+            crate::model_policy::check_credential_spec(&self.cfg, spec)
+                .await
+                .map_err(|e| anyhow::anyhow!("{e:#}"))?;
             crate::model_policy::check_spawn_spec(&self.cfg, spec)
                 .await
                 .map_err(|e| anyhow::anyhow!("{e:#}"))?;

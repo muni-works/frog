@@ -1352,7 +1352,7 @@ extension Conversation {
         }
         switch last.kind {
         case .tool(let name, _) where !last.done:
-            return ["Read", "Grep", "Glob", "CodeMap", "Docs", "WebFetch", "WebSearch", "Recall"].contains(name) ? .reading : .working
+            return ["Read", "Grep", "Glob", "CodeMap", "Docs", "Models", "WebFetch", "WebSearch", "Recall"].contains(name) ? .reading : .working
         case .message where !last.done: return .working
         default: return .thinking
         }

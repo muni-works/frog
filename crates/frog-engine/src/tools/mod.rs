@@ -5,6 +5,7 @@ pub mod visualize;
 pub mod docs;
 pub mod fs;
 pub mod image;
+pub mod models;
 pub mod notify;
 pub mod rank;
 pub mod screenshot;
@@ -288,6 +289,7 @@ pub fn specs() -> Vec<ToolSpec> {
         diagram::map_spec(),
         web::spec(),
         docs::spec(),
+        models::spec(),
     ]
 }
 
@@ -338,8 +340,9 @@ pub async fn run(name: &str, input: &Value, ctx: &mut Ctx) -> Result<Output> {
         "WebFetch" => web::run(input, ctx).await,
         "WebSearch" => websearch::run(input, ctx).await,
         "Docs" => docs::run(input, ctx).await,
+        models::TOOL => models::run(input, ctx).await,
         _ => bail!(
-            "unknown tool `{name}`. Available: Bash, Terminal, Read, Write, Edit, Glob, Grep, TodoWrite, Visualize, VisualGuide, Image, Screenshot, Compare, CodeMap, WebFetch, Docs"
+            "unknown tool `{name}`. Available: Bash, Terminal, Read, Write, Edit, Glob, Grep, TodoWrite, Visualize, VisualGuide, Image, Screenshot, Compare, CodeMap, WebFetch, Docs, Models"
         ),
     }
 }
@@ -358,6 +361,7 @@ pub fn label(name: &str, input: &Value, ctx: &Ctx) -> (String, String) {
         "CodeMap" => s("path"),
         "WebFetch" => s("url"),
         "WebSearch" => s("query"),
+        models::TOOL => String::new(),
         "Docs" => [s("package"), s("query")]
             .into_iter()
             .filter(|x| !x.is_empty())
