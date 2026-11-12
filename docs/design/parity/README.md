@@ -30,6 +30,28 @@ one look; `FROG_PREBUILT_DIR` picks the engine binaries (default: a scratch copy
 
 Re-run it after a layout or token change and commit the PNGs and `index.html` with it.
 
+## Fuzz: the cases that stress the transcript
+
+[`fuzz/cases.mjs`](fuzz/cases.mjs) holds twelve session logs that try to break the transcript:
+long unbroken strings and URLs, a long code block and a wide table, nested lists and quotes,
+CJK, Arabic and emoji, blank messages and thoughts, a flood of tool calls with a 400-line output
+and a 60-line diff, very long thoughts, a reply streaming inside an unclosed code fence, errors
+and notices, child sessions, a permission card, and images.
+
+```bash
+docs/design/parity/fuzz.sh
+```
+
+renders each in both apps (dark, light, and a narrow 680 pt window, the Mac's minimum) into
+`fuzz/shots/` at 1×, side by side in [`fuzz/index.html`](fuzz/index.html). `CASES="images
+thoughts"` and `VARIANTS=dark` narrow a run; `PARITY_SKIP_MAC=1` / `PARITY_SKIP_WEB=1` skip a side.
+The Mac sizes its window with `-FrogSnapshotSize WxH`. A case that must hold mid-turn ends on an
+open permission request, which is where `frog --replay` holds.
+
+The same cases are web regression tests: `apps/web/test/parity-fuzz.test.ts` folds and renders
+each one and pins what the first run found (`npm test` in `apps/web`). Add a case there when a
+transcript bug turns up, and re-run `fuzz.sh` after a transcript change.
+
 ## Model picker and Settings › Models
 
 [`models.html`](models.html) puts the picker, the Machines list and a machine's page side by side,
