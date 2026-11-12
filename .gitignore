@@ -6,3 +6,6 @@ site/dist/
 site/.wrangler/
 .be-target/
 .tt-target/
+
+# local release output (scripts/release-local.sh)
+/dist/
