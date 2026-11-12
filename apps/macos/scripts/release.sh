@@ -3,7 +3,7 @@
 #
 #   apps/macos/scripts/release.sh 0.2.0            # build, notarize, publish to GitHub
 #   apps/macos/scripts/release.sh 0.2.0 --local    # stop before GitHub: dist/ only
-#   apps/macos/scripts/release.sh 0.2.0 --unsigned # unsigned build, no notarization
+#   apps/macos/scripts/release.sh 0.2.0 --unsigned # unsigned build, no notarization, dist/ only
 #
 # One-time setup on the release Mac:
 #   1. A "Developer ID Application" certificate in the login Keychain (developer.apple.com).
@@ -43,7 +43,7 @@ if [[ $MODE != --unsigned ]]; then
     xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null 2>&1 \
         || fail "no notary credentials; run: xcrun notarytool store-credentials $NOTARY_PROFILE"
 fi
-if [[ $MODE != --local ]] && [[ $MODE != --unsigned ]]; then
+if [[ $MODE != --local ]] && [[ $MODE != --unsigned || -n ${FROG_PUBLISH_UNSIGNED:-} ]]; then
     gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1 && fail "$TAG already exists on $REPO"
 fi
 
@@ -84,8 +84,9 @@ if [[ $MODE == --unsigned ]]; then
   </channel>
 </rss>
 EOF
-    if [[ $MODE == --local ]]; then
-        step "Done: $DIST"
+    # An unsigned build stays local unless asked for: it would take the release's tag.
+    if [[ -z ${FROG_PUBLISH_UNSIGNED:-} ]]; then
+        step "Done: $DIST (set FROG_PUBLISH_UNSIGNED=1 to publish it as a prerelease)"
         exit 0
     fi
     step "Publishing $TAG to $REPO (unsigned prerelease)"
