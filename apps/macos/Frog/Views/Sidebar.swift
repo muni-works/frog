@@ -1602,24 +1602,27 @@ struct ConversationRow<Menu: View>: View {
     var body: some View {
         // The menu sits beside the open button, not inside it, so clicking it doesn't also open
         // the conversation.
+        // The whole row, padding included, is the click target: a tap gesture rather than a
+        // Button, because a Button under the pane drag's high-priority gesture lost clicks.
         HStack(alignment: .center, spacing: 8) {
-            Button(action: open) {
-                HStack(spacing: 6) {
-                    label
-                    if let summary {
-                        Text(summary).font(.frog(size: 10)).foregroundStyle(.secondary)
-                            .lineLimit(1).fixedSize().help(summary)
-                    }
-                    Spacer(minLength: 0)
+            HStack(spacing: 6) {
+                label
+                if let summary {
+                    Text(summary).font(.frog(size: 10)).foregroundStyle(.secondary)
+                        .lineLimit(1).fixedSize().help(summary)
                 }
-                .contentShape(.rect)
+                Spacer(minLength: 0)
             }
-            .buttonStyle(.plain)
             trailing
         }
         .padding(.horizontal, 10)
         .padding(.vertical, showPlace ? 6 : 5)
         .background(background, in: .rect(cornerRadius: 8))
+        .contentShape(.rect)
+        .onTapGesture(perform: open)
+        .accessibilityElement(children: .contain)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction(.default, open)
         .onHover { hovering = $0 }
         .contextMenu { DeferredMenu(make: menu) }
         // Onto a pane: its edge opens this beside it, its middle shows it there.

@@ -50,8 +50,6 @@ struct TreeRow<Menu: View>: View {
             disclosure
             title
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(.rect)
-                .onTapGesture(perform: open)
                 .accessibilityAddTraits(.isButton)
             trailing
         }
@@ -60,7 +58,10 @@ struct TreeRow<Menu: View>: View {
         .padding(.vertical, 5)
         .frame(minHeight: AttentionMetrics.rowHeight)
         .background(background, in: .rect(cornerRadius: 6))
+        // The whole row opens it, padding included; the disclosure and menu buttons inside
+        // keep their own clicks.
         .contentShape(.rect)
+        .onTapGesture(perform: open)
         .onHover { hovering = $0 }
         .contextMenu { menu() }
         .paneDraggable(.session(session), title: session.displayTitle)
