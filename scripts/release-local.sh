@@ -78,7 +78,8 @@ build_macos() {
     rustup target add aarch64-apple-darwin >/dev/null
     CARGO_BUILD_JOBS=4 cargo build --release --locked -p frog --target aarch64-apple-darwin
     local bin="$DIST/bin/aarch64-apple-darwin/frog"
-    mkdir -p "${bin:h}"; cp target/aarch64-apple-darwin/release/frog "$bin"; strip "$bin"
+    local tdir=$(cargo metadata --no-deps --format-version 1 -q | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')
+    mkdir -p "${bin:h}"; cp "$tdir/aarch64-apple-darwin/release/frog" "$bin"; strip "$bin"
     if security find-identity -v -p codesigning | grep -q "$SIGN_ID"; then
         codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$bin"
         codesign --verify --strict --verbose=2 "$bin"
