@@ -56,8 +56,7 @@ Then it just shows up:
   machines.
 - **The model picker lists models, not providers.** Each says where it would run. Pick one that
   isn't loaded and Frog loads it onto a node.
-- **The scheduler places every call** by estimated finish time and KV affinity, with fair queues
-  when several Macs share one node.
+- **The scheduler places every call** by estimated finish time and KV affinity.
 - **A dead machine doesn't kill the turn.** Close the lid on the box mid-turn. The partial answer is
   dropped, the turn reruns on the next node with that model, and one line tells you so. Frog owns
   the transcript, and KV is just a cache.
@@ -126,8 +125,6 @@ orders get quarantined before the model sees them ([quarantine](https://github.c
 
 ## What isn't done
 
-- The Mac app ships unsigned until our Apple developer enrollment clears. install.sh handles it for
-  the CLI; for the app, right-click → Open the first time.
 - Intel Macs build from source. Windows isn't supported.
 - Hot sessions don't move between machines yet — a turn reruns on the next node, it doesn't carry
   its KV over.

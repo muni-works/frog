@@ -70,7 +70,7 @@ One-shot, for scripts: `frog -p "why does the build fail?"` (add `--json` for ev
 - [config.example.toml](config.example.toml)
 - [Contributing](CONTRIBUTING.md) and [Security](SECURITY.md)
 
-Build from source with `cargo install --path crates/frog`. An unsigned `Frog.app` may need `xattr -dr com.apple.quarantine Frog.app`.
+Build from source with `cargo install --path crates/frog`.
 
 ## License
 
