@@ -43,7 +43,7 @@ Status: scoped 2026-11-12. Not started.
 | Qwen3 Coder Next, GLM, DeepSeek | Our cloud GPU paths only, never local |
 | Fit check | `node::need`: weights + 8k-position KV + 1 GB scratch |
 | Listing | `/node` reports `on_disk` |
-| Download | None in tang. Frog's `setup.rs::download_model` downloads to this Mac only: no resume, no progress to the app. |
+| Download | None in tang (we build it, from R2). Frog's `setup.rs::download_model` downloads to this Mac only: no resume, no progress to the app. |
 
 ### What we build
 
@@ -54,12 +54,21 @@ Status: scoped 2026-11-12. Not started.
    - `/node` reports `pulling: {model, done_bytes, total_bytes}`.
    - `DELETE /models/pull` cancels a pull; `POST /models/delete` removes a model that isn't running.
    - Hugging Face's API lists file sizes before anything downloads, so the node refuses a pull up front if the model won't fit in its memory or on its disk.
-2. **A curated catalog**
+   - Pulls come from our R2 mirror (below), not from Hugging Face. Each file is checked against its sha256 before the snapshot counts as on disk.
+2. **Weights on R2**
+   - We host the files, so downloads don't depend on Hugging Face uptime, rate limits or a repo being renamed or deleted. R2 doesn't charge for egress.
+   - Bucket `frog-weights`, served from `weights.frog.toys`. Same layout as the HF cache: `<org>/<name>/<sha>/<file>`. Range requests work.
+   - A mirror script copies a pinned HF revision to R2 and writes each file's sha256 and size into the catalog. It runs on a RunPod pod, not the Mac.
+   - Only mirror models whose licences allow redistribution:
+     - Qwen3 and gpt-oss are Apache-2.0;
+     - Gemma's terms require passing the licence along, so ship its `LICENSE` file with the weights.
+   - Hugging Face remains only the mirror script's source.
+3. **A curated catalog**
    - A small JSON file shipped with frog, so the list can change without a tang release.
    - Starts with `mlx-community/Qwen3-{0.6B,4B,8B,14B}-4bit` plus whatever the family check passes.
    - Each entry: id, display name, family, and weight bytes.
    - Browse shows only entries whose family the node supports. It labels each one "fits" or "too big" using the same check as `node::need`.
-3. **Frog's first-run setup uses the same downloader**, so there's one code path.
+4. **Frog's first-run setup uses the same downloader**, so there's one code path.
 
 ### Out of scope for now
 
@@ -72,7 +81,8 @@ Status: scoped 2026-11-12. Not started.
 
 1. **tang**:
    - verify each family loads on mew and the Mac;
-   - add `/models/pull`, its cancel and `/models/delete`;
+   - set up the `frog-weights` R2 mirror and its script;
+   - add `/models/pull` (from R2), its cancel and `/models/delete`;
    - add `pulling` to `/node`;
    - document it all in `docs/node-protocol.md`.
 2. **frog** (after frog#290 merges): the picker and Settings › Models, using `on_disk` and `pulling`. "Download a model" stays hidden until tang ships pull.
