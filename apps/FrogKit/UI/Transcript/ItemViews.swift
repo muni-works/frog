@@ -32,7 +32,7 @@ struct ItemView: View {
         case .tool("Visualize", let arg) where !item.done:
             HStack(spacing: TurnSpace.Inset.row) {
                 ProgressView().controlSize(.small)
-                Text(arg.isEmpty ? "Making a visual…" : "Making \(Widget(title: arg, code: "", html: "").displayTitle)…").font(.callout).foregroundStyle(.secondary)
+                Text(arg.isEmpty ? "Making a visual…" : "Making \(VisualWidget(title: arg, code: "", html: "").displayTitle)…").font(.callout).foregroundStyle(.secondary)
             }
         case .tool("Present", _) where item.result?.present != nil:
             PresentCard(present: item.result!.present!, act: conversation.act)

@@ -700,7 +700,7 @@ enum Item: Decodable, Sendable {
         /// An MCP App to host for this result.
         var app: AppView?
         /// Visualize's widget: the sandboxed document to load as is.
-        var widget: Widget?
+        var widget: VisualWidget?
     }
 
     private enum Key: String, CodingKey { case type, text }
@@ -786,7 +786,7 @@ struct MessagePart: Codable, Sendable, Hashable {
 
 /// An MCP App (`ui://` resource): its HTML and the tool's raw result, saved by the engine.
 /// widget.rs `Widget`: an interactive HTML/SVG visual and the engine's document around it.
-struct Widget: Decodable, Sendable, Hashable {
+struct VisualWidget: Decodable, Sendable, Hashable {
     var title: String
     var code: String
     var html: String

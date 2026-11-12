@@ -3,6 +3,7 @@
 // package the web app already has.
 //
 //   node web-shot.mjs <url> <out.png> <width> <height> <light|dark>
+//   WEB_SHOT_SCROLL='.widget' scrolls an element into view before the shot.
 import { spawn } from "node:child_process";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -36,6 +37,11 @@ await call("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-sch
 await call("Page.enable");
 await call("Page.navigate", { url });
 await new Promise((r) => setTimeout(r, Number(process.env.WEB_SHOT_WAIT ?? 6000)));
+// WEB_SHOT_SCROLL=<selector>: bring that element to the top first (the visuals shots).
+if (process.env.WEB_SHOT_SCROLL) {
+  await call("Runtime.evaluate", { expression: `document.querySelector(${JSON.stringify(process.env.WEB_SHOT_SCROLL)})?.scrollIntoView({block:'start'})` });
+  await new Promise((r) => setTimeout(r, 800));
+}
 const { data } = await call("Page.captureScreenshot", { format: "png" });
 writeFileSync(out, Buffer.from(data, "base64"));
 ws.close();

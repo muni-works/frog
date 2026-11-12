@@ -50,7 +50,6 @@ pub fn guide(_input: &Value, ctx: &mut Ctx) -> Result<Output> {
     ctx.visual_guide = true;
     Ok(Output {
         content: GUIDE_TEXT.to_string(),
-        display: Some("Read the visual guide".into()),
         ..Default::default()
     })
 }

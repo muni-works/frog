@@ -6,7 +6,7 @@ import WebKit
 /// CDNs. The shell reports its height and may ask a follow-up (`sendPrompt`), which only a
 /// click can trigger and which is rate-limited here; the ask shows up as your message.
 struct WidgetCard: View {
-    let widget: Widget
+    let widget: VisualWidget
     let conversation: Conversation
     @State private var height: CGFloat = 320
     @State private var showSource = false
@@ -117,7 +117,7 @@ struct PromptGate {
     }
 }
 
-extension Widget {
+extension VisualWidget {
     /// `casimir_plate_modes` → "Casimir plate modes"; titles already in words stay as they are.
     var displayTitle: String {
         guard !title.contains(" "), title.contains(where: { $0 == "_" || $0 == "-" }) else {
@@ -136,11 +136,14 @@ struct WidgetWebView: PlatformViewRepresentable {
 
     func makeCoordinator() -> Host { Host(self) }
 
-    func makeWeb(context: Context) -> WKWebView {
+    func makeWeb(context: Context) -> WKWebView { Self.makeWebView(html: html, host: context.coordinator) }
+
+    /// The locked-down web view, loaded with `html` and reporting to `host`.
+    static func makeWebView(html: String, host: Host) -> WKWebView {
         let config = WKWebViewConfiguration()
         // Nothing persists and nothing is shared with the app's other web views.
         config.websiteDataStore = .nonPersistent()
-        config.userContentController.add(WeakHandler(context.coordinator), name: "frog")
+        config.userContentController.add(WeakHandler(host), name: "frog")
         config.defaultWebpagePreferences.allowsContentJavaScript = true
         config.preferences.javaScriptCanOpenWindowsAutomatically = false
         #if os(iOS)
@@ -156,8 +159,8 @@ struct WidgetWebView: PlatformViewRepresentable {
         web.scrollView.backgroundColor = .clear
         web.scrollView.isScrollEnabled = false
         #endif
-        web.navigationDelegate = context.coordinator
-        web.uiDelegate = context.coordinator
+        web.navigationDelegate = host
+        web.uiDelegate = host
         web.loadHTMLString(html, baseURL: nil)
         return web
     }
