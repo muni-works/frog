@@ -48,7 +48,12 @@ fn schema() -> Value {
 /// model — `cloud/qwen3-coder-next` when the gateway lists it, else `cloud/deepseek-v4.1-flash`. A
 /// candidate this project's policy rejects is skipped for the next; none usable means
 /// no gists (the caller falls back to the argument).
-pub(crate) fn choose(cfg: &Config, dir: &std::path::Path) -> Option<(String, Profile)> {
+///
+/// `cloud_ok` is whether the session itself runs on a cloud model. When it doesn't, the
+/// default never reaches for a cloud one: the side-model sees tool output and transcript
+/// text, and a local session's output must not leave the user's machines unless they
+/// chose that (an explicit `gist_model` is that choice).
+pub(crate) fn choose(cfg: &Config, dir: &std::path::Path, cloud_ok: bool) -> Option<(String, Profile)> {
     let mut candidates: Vec<String> = match &cfg.gist_model {
         Some(spec) => vec![spec.clone()],
         None => vec![
@@ -60,6 +65,9 @@ pub(crate) fn choose(cfg: &Config, dir: &std::path::Path) -> Option<(String, Pro
     candidates.retain(|spec| spec != "apple/on-device" || crate::sidecar::available(crate::sidecar::APPLE));
     candidates.iter().find_map(|spec| {
         let (name, profile) = cfg.resolve(Some(spec)).ok()?;
+        if !cloud_ok && cfg.gist_model.is_none() && crate::harness::is_cloud(&profile) {
+            return None;
+        }
         crate::policy::check(dir, &name, &profile).ok()?;
         Some((name, profile))
     })
@@ -117,11 +125,11 @@ struct Words {
 /// empty vec when no side-model resolved or the call failed. One call per [`MAX_BATCH`]
 /// calls; identical calls are one entry in the prompt and get the same line. A hermetic
 /// config (benchmarks, engine tests) never asks: rows fall back to their argument.
-pub async fn write(cfg: &Config, dir: &std::path::Path, calls: &[Call<'_>]) -> Vec<String> {
+pub async fn write(cfg: &Config, dir: &std::path::Path, calls: &[Call<'_>], cloud_ok: bool) -> Vec<String> {
     if cfg.hermetic {
         return Vec::new();
     }
-    write_with(cfg, dir, calls, |profile| {
+    write_with(cfg, dir, calls, cloud_ok, |profile| {
         Box::pin(async {
             crate::sidecar::ensure(profile).await?;
             Ok(Provider::new(profile)?)
@@ -136,12 +144,13 @@ pub async fn write_with(
     cfg: &Config,
     dir: &std::path::Path,
     calls: &[Call<'_>],
+    cloud_ok: bool,
     mut provider: impl FnMut(&Profile) -> futures_util::future::BoxFuture<'_, anyhow::Result<Provider>>,
 ) -> Vec<String> {
     if calls.is_empty() {
         return Vec::new();
     }
-    let Some((_name, profile)) = choose(cfg, dir) else {
+    let Some((_name, profile)) = choose(cfg, dir, cloud_ok) else {
         return Vec::new();
     };
     // De-duplicated for the prompt: identical calls get the same line, however many rows.
@@ -360,6 +369,21 @@ mod tests {
             Call { tool, arg, outcome: ToolOutcome::Ok, output }
         }
 
+        #[test]
+        fn a_local_session_never_defaults_to_a_cloud_side_model() {
+            let dir = std::path::Path::new("/t");
+            // Apple's on-device model may or may not be here; whatever is chosen is local.
+            if let Some((name, profile)) = choose(&hermetic(), dir, false) {
+                assert!(!crate::harness::is_cloud(&profile), "{name} is cloud");
+            }
+            // A cloud session may use frog cloud's small model.
+            assert!(choose(&hermetic(), dir, true).is_some());
+            // An explicit gist_model is the user's choice, cloud or not.
+            let chosen = Config { gist_model: Some("cloud/deepseek-v4.1-flash".into()), ..hermetic() };
+            let (_, profile) = choose(&chosen, dir, false).expect("explicit gist_model");
+            assert!(crate::harness::is_cloud(&profile));
+        }
+
         #[tokio::test]
         async fn one_call_summarizes_a_batch_in_order() {
             let side = Side::gists(&["git log of the worktree", "searched the engine for gists"]);
@@ -367,7 +391,7 @@ mod tests {
                 call("Bash", "git log --oneline -5", "abc123 fix"),
                 call("Grep", "pending_gists", "3 matches"),
             ];
-            let out = write_with(&hermetic(), std::path::Path::new("/t"), &calls, |p| {
+            let out = write_with(&hermetic(), std::path::Path::new("/t"), &calls, true, |p| {
                 Box::pin({ let side = side.clone(); async move { side.provider(p) } })
             })
             .await;
@@ -382,7 +406,7 @@ mod tests {
                 call("Bash", "git log --oneline -5", "abc123 fix"),
                 call("Bash", "git log --oneline -5", "abc123 fix"),
             ];
-            let out = write_with(&hermetic(), std::path::Path::new("/t"), &calls, |p| {
+            let out = write_with(&hermetic(), std::path::Path::new("/t"), &calls, true, |p| {
                 Box::pin({ let side = side.clone(); async move { side.provider(p) } })
             })
             .await;
@@ -400,7 +424,7 @@ mod tests {
                 call("Bash", "gist", "out"),
                 call("Grep", "gist", "3 matches"),
             ];
-            let out = write_with(&hermetic(), std::path::Path::new("/t"), &calls, |p| {
+            let out = write_with(&hermetic(), std::path::Path::new("/t"), &calls, true, |p| {
                 Box::pin({ let side = side.clone(); async move { side.provider(p) } })
             })
             .await;
@@ -414,7 +438,7 @@ mod tests {
             // exactly as when no side-model resolved at all.
             let side = Side::text("garbage, no json".into());
             let calls = vec![call("Bash", "git log", "out")];
-            let out = write_with(&hermetic(), std::path::Path::new("/t"), &calls, |p| {
+            let out = write_with(&hermetic(), std::path::Path::new("/t"), &calls, true, |p| {
                 Box::pin({ let side = side.clone(); async move { side.provider(p) } })
             })
             .await;
@@ -424,7 +448,7 @@ mod tests {
 
         #[tokio::test]
         async fn no_calls_means_no_model_is_chosen() {
-            let out = write_with(&hermetic(), std::path::Path::new("/t"), &[], |_p| {
+            let out = write_with(&hermetic(), std::path::Path::new("/t"), &[], true, |_p| {
                 Box::pin(async {
                     unreachable!("no calls means no provider is built")
                 })
@@ -437,7 +461,7 @@ mod tests {
         async fn a_hermetic_config_never_asks_for_gists() {
             // Benchmarks and engine tests: no side-model call, whatever the calls. The row
             // falls back to the raw argument.
-            let out = write(&hermetic(), std::path::Path::new("/t"), &[call("Bash", "git log", "out")]).await;
+            let out = write(&hermetic(), std::path::Path::new("/t"), &[call("Bash", "git log", "out")], true).await;
             assert!(out.is_empty());
         }
 
@@ -467,7 +491,7 @@ mod tests {
                     output: "out",
                 })
                 .collect();
-            let out = write_with(&hermetic(), std::path::Path::new("/t"), &calls, |p| {
+            let out = write_with(&hermetic(), std::path::Path::new("/t"), &calls, true, |p| {
                 Box::pin({ let side = side.clone(); async move { side.provider(p) } })
             })
             .await;

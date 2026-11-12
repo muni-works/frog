@@ -2218,7 +2218,7 @@ impl Agent {
                 output,
             })
             .collect();
-        let gists = crate::gist::write(&self.cfg, &self.root, &calls).await;
+        let gists = crate::gist::write(&self.cfg, &self.root, &calls, crate::harness::is_cloud(&self.profile)).await;
         for ((id, ..), gist) in pending.iter().zip(gists) {
             if gist.is_empty() {
                 continue;
@@ -2252,10 +2252,11 @@ impl Agent {
             return;
         }
         let (cfg, root) = (self.cfg.clone(), self.root.clone());
+        let cloud_ok = crate::harness::is_cloud(&self.profile);
         let (journal, cache) = (self.shared.journal.clone(), self.chapter_titles.clone());
         let session = journal.session();
         tokio::spawn(async move {
-            let Some(title) = crate::chapter::write(&cfg, &root, &closed).await else {
+            let Some(title) = crate::chapter::write(&cfg, &root, &closed, cloud_ok).await else {
                 return;
             };
             cache.lock().unwrap().insert(key, title.clone());
