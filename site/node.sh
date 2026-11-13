@@ -20,6 +20,8 @@
 set -eu
 
 TANG_REPO="${TANG_REPO:-muni-works/tang}"
+# minisign public key for tang release signatures (same signer as frog's releases).
+TANG_MINISIGN_PUBKEY="${TANG_MINISIGN_PUBKEY:-RWRxRLpWXDJlkcb7OZvuKFrMJn/XlofsgSMtRT9i8UUtQHmfT4xM+Dov}"
 UNIT=tang-node.service
 
 err() { printf 'frog-node: error: %s\n' "$*" >&2; exit 1; }
@@ -124,6 +126,23 @@ else
   fetch "$base/$asset.sha256" "$tmp/sum" || err "download failed: $base/$asset.sha256"
   want=$(cut -d' ' -f1 <"$tmp/sum")
   [ "$(sha256 "$tmp/$asset")" = "$want" ] || err "checksum mismatch for $asset"
+  # A published .minisig must verify; a mismatch is fatal. No minisign: loud warning, or fatal
+  # with TANG_REQUIRE_SIGNATURE=1.
+  if fetch "$base/$asset.minisig" "$tmp/$asset.minisig" 2>/dev/null; then
+    if command -v minisign >/dev/null 2>&1; then
+      minisign -Vqm "$tmp/$asset" -x "$tmp/$asset.minisig" -P "$TANG_MINISIGN_PUBKEY" \
+        || err "signature verification failed for $asset; not installing"
+      info "signature verified"
+    elif [ "${TANG_REQUIRE_SIGNATURE:-}" = 1 ]; then
+      err "minisign not installed and TANG_REQUIRE_SIGNATURE=1"
+    else
+      printf '\nWARNING: %s is signed, but minisign is not installed, so the signature was\nWARNING: NOT checked (checksum only). Install minisign and rerun to verify.\n\n' "$asset" >&2
+    fi
+  elif [ "${TANG_REQUIRE_SIGNATURE:-}" = 1 ]; then
+    err "no signature published for $asset and TANG_REQUIRE_SIGNATURE=1"
+  else
+    info "warning: no signature published for $asset; checksum only"
+  fi
 fi
 
 if [ "$dry" = 0 ]; then
