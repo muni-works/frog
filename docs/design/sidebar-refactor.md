@@ -123,7 +123,7 @@ YOURS
 ### structure
 - **Chief tile** stays pinned on top, unchanged (#92).
 - **Needs you**: every session blocked on Cam (an approval, an ask, an elicitation), anywhere in the tree. Two lines per row: the title, and what it wants in muted text (the warning color stays on the glyph). Oldest first. Hidden when empty. It's a *lens*: the session also keeps its place in the tree with an orange dot. Clicking opens the session scrolled to its card. ⌘⇧0 opens the full inbox (background-work spec §2). Child reports and finished jobs never land here.
-- **Org**: the started-by tree (`Library.parents`), rooted at the chief. Managers are top-level rows, workers nest at any depth (indent 14pt, capped visually at 4 like `SessionNesting.maxDepth`). Sessions the chief started directly that aren't managers fold into "N done by chief".
+- **Org**: the started-by tree (`Library.parents`), rooted at the chief. Managers are top-level rows, workers nest at any depth — every level indents (`AttentionMetrics`: 14pt for the first four, then narrowing steps that never reach zero), with a rail per ancestor and an elbow into the row (`SessionNesting.Guide`). Sessions the chief started directly that aren't managers fold into "N done by chief".
 - **Yours**: root sessions Cam started himself, newest first. In Live scope only live and failed ones show.
 - **Footer**: `Archived (158)` opens the archive as a scope (search by day, as today). On the right, the live count and burn rate from the background-work ledger.
 
