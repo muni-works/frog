@@ -426,8 +426,8 @@ impl Agent {
                     // Still flagged after the second pass: the chief decides what
                     // the user shouldn't have to, when its grant list covers the
                     // class (docs/design/delegation.md). Only a `second-pass` flag
-                    // may route: `never-delegable`, a classifier outage and a hard
-                    // rule with no classifier always card the user.
+                    // may route: a `never-delegable` verdict, a classifier outage and
+                    // a hard rule with no classifier never reach the chief.
                     let routed = if layer == "second-pass" {
                         self.delegate_flagged(
                             item,
@@ -442,7 +442,8 @@ impl Agent {
                     };
                     match routed {
                         Chief::Decided(decision) => return decision,
-                        // Counted as a chief fallback already; it cards like any other.
+                        // Counted as a chief fallback already; it goes on to the deny
+                        // (auto mode) or the card, as any other flagged call does.
                         Chief::Fallback => {}
                         Chief::NoRoute => self.digest.count(if layer == "never-delegable" {
                             crate::digest::Which::NeverDelegable
