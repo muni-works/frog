@@ -6,9 +6,8 @@ use super::super::*;
 use crate::config::{Config, Profile, ProviderKind};
 use crate::engine::Options;
 use crate::message::{Block, Message, Role, Usage};
-use crate::protocol::{EndReason, Event, Image, Item, Mode, Op, Part, Stop};
-use crate::provider::scripted;
-use crate::provider::{Request, Response};
+use crate::protocol::{EndReason, Event, Image, Item, Mode, Op, Part};
+use crate::provider::{scripted, Response, Stop};
 use serde_json::json;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -45,7 +44,7 @@ fn bash_call() -> Block {
     }
 }
 
-fn until_idle(h: &mut Handle) -> Vec<Envelope> {
+async fn until_idle(h: &mut Handle) -> Vec<Envelope> {
     let mut out = Vec::new();
     loop {
         let env = h.events.recv().await.unwrap();
@@ -168,8 +167,11 @@ async fn two_queued_messages_ingest_once_in_order_at_the_boundary() {
         .join("\n---\n");
     assert!(joined.contains("one"), "{joined}");
     assert!(joined.contains("two"), "{joined}");
-    let count_one = joined.matches("\none\n").count();
-    assert_eq!(count_one, 1, "exactly once: {joined}");
+    // Count occurrences of each word (not the separator pattern)
+    let count_one = joined.matches("one").count();
+    let count_two = joined.matches("two").count();
+    assert_eq!(count_one, 1, "exactly one 'one': {joined}");
+    assert_eq!(count_two, 1, "exactly one 'two': {joined}");
 
     // The turn ended complete, not cancelled or errored.
     let ends: Vec<_> = evs
