@@ -1,4 +1,4 @@
-//! MCP OAuth: sign a server's user in with a browser when the server answers 401.
+//! MCP OAuth: sign a server's user in with a browser, when they ask for it.
 //!
 //! The streamable-HTTP transport connects unauthenticated; when the server answers `401`
 //! with a `WWW-Authenticate` challenge, [`authorize`] runs the MCP authorization flow
@@ -11,8 +11,15 @@
 //! sends `Authorization: Bearer`. Mid-session 401s refresh once, transparently, and retry
 //! (see `mcp::connect_one`); a refresh that fails names the server and asks to reconnect.
 //!
+//! **Connecting never calls [`authorize`].** A connect runs on every session open and every
+//! folder move, so opening a browser from there interrupts the user per conversation, for
+//! several servers at once, with no way to decline. `mcp::connect_one` reports
+//! [`crate::mcp::NeedsAuth`] instead; `mcp::sign_in` is the only caller here, and only from
+//! an explicit request (Settings → MCP → Sign in).
+//!
 //! Nothing here touches the MCP server's JSON-RPC surface: plain HTTP plus a browser. The
-//! open-in-browser step takes [`Browser`] so tests can drive the redirect themselves.
+//! open-in-browser step takes [`Browser`], which is both the seam tests drive the redirect
+//! with and the assertion point for "no browser during a connect".
 
 use anyhow::{Context, Result, anyhow, bail};
 use base64::Engine;
@@ -22,8 +29,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// How long the whole browser sign-in may take: the user finds the window, signs in,
-/// maybe answers a second factor. Past this the server stays disconnected; the session
-/// never waited on it (`connect_one` runs in the background).
+/// maybe answers a second factor. Past this the sign-in is reported as failed; nothing else
+/// is waiting on it, because a connect never starts one.
 pub const AUTH_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
 /// Opens a URL in a browser; overridable so tests can skip the real browser.
@@ -46,10 +53,27 @@ pub(crate) fn authorize_url(
 }
 
 /// The browser frog opens on macOS.
+///
+/// Every call is recorded, because the failure this guards against has no wrong return
+/// value: a connect that silently starts an OAuth flow returns exactly what a connect that
+/// didn't should, and the only visible symptom is a window appearing on someone's screen.
+/// Tests assert on [`opened`], never on an error.
 pub fn system_browser() -> Browser {
     Arc::new(|url: String| {
+        opened().lock().unwrap().push(url.clone());
+        // Under test nothing is launched: the URL is recorded for the assertion instead.
+        if cfg!(test) {
+            return;
+        }
         let _ = std::process::Command::new("open").arg(url).spawn();
     })
+}
+
+/// The URLs a browser was asked to open for MCP in this process, in order. A connect must
+/// leave this unchanged; only an explicit sign-in may add to it.
+pub fn opened() -> &'static Mutex<Vec<String>> {
+    static OPENED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    &OPENED
 }
 
 // ---- discovery ---------------------------------------------------------
@@ -1189,30 +1213,73 @@ pub(crate) mod tests {
         assert!(stored(&world.name).is_none(), "the dead grant is forgotten");
     }
 
-    /// The full connect path, through [`crate::mcp::connect_one`] via a one-server hub:
-    /// a 401-challenging server ends up connected with tools, after the fake browser
-    /// signed in.
+    /// The regression this whole module exists for now: **connecting never opens a browser.**
+    ///
+    /// The subtlety is that the old code was right by every return value — the connect
+    /// returned, the session went on, a browser just opened. So the assertion is on the
+    /// browser function itself ([`opened`]), which is the only thing that catches it. If
+    /// `authorize` is put back on the connect path, `opened` grows and this fails.
     #[tokio::test(flavor = "multi_thread")]
-    async fn connect_signs_in_and_lists_tools() {
+    async fn connect_never_opens_a_browser_and_reports_needs_auth() {
         let world = World::start("tok-4");
         let cfg = crate::mcp::ServerConfig {
             url: Some(world.url.clone()),
             ..Default::default()
         };
-        // The real `open` would launch a browser; the flow under test takes ours.
-        // connect_one uses `system_browser`, so substitute by pre-seeding: run the
-        // authorize flow ourselves first (the same leg), then connect.
-        let http = reqwest::Client::new();
-        authorize(
-            &http,
+        let before = opened().lock().unwrap().len();
+        let mut hub = crate::mcp::Hub::empty();
+        hub.connect_one_into(world.name.clone(), cfg).await;
+
+        // The browser: not at all. Every return value could have been right while this grew.
+        assert_eq!(
+            opened().lock().unwrap().len(),
+            before,
+            "connecting must not open a browser; it opened {:?}",
+            &opened().lock().unwrap()[before..]
+        );
+        // The state: distinguishable from a generic error, so a client can offer a button.
+        let status = hub
+            .status()
+            .into_iter()
+            .find(|s| s.name == world.name)
+            .expect("a challenged server still gets a row");
+        assert!(!status.connected);
+        assert!(status.needs_auth, "401 with a challenge is needs_auth: {:?}", status.error);
+        assert!(status.tools.is_empty(), "no tokens, so no tools");
+        assert!(stored(&world.name).is_none(), "nothing was signed in behind our back");
+
+        // And the server stays in the tool list as absent, not as a silent gap.
+        assert!(!hub.handles(&crate::mcp::exposed_name(&world.name, "echo")));
+    }
+
+    /// Signing in on request — the only path that opens a browser — then connecting lists
+    /// the tools.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn signing_in_on_request_connects_and_lists_tools() {
+        let world = World::start("tok-4b");
+        let cfg = crate::mcp::ServerConfig {
+            url: Some(world.url.clone()),
+            ..Default::default()
+        };
+        let before = opened().lock().unwrap().len();
+        // Records the call the way `system_browser` does, then plays the browser's part. The
+        // assertion below is about *this* callback being invoked: the contract is that a
+        // sign-in reaches the browser it was handed, and nothing else does.
+        crate::mcp::sign_in(
             &world.name,
-            &world.url,
+            &cfg,
             None,
-            Arc::new(fake_browser),
-            Duration::from_secs(10),
+            Arc::new(|url: String| {
+                opened().lock().unwrap().push(url.clone());
+                fake_browser(url);
+            }),
         )
         .await
-        .unwrap();
+        .expect("the flow completes");
+        assert!(
+            opened().lock().unwrap().len() > before,
+            "an explicit sign-in is the one thing that opens the browser"
+        );
         let mut hub = crate::mcp::Hub::empty();
         hub.connect_one_into(world.name.clone(), cfg).await;
         let status = hub
@@ -1221,11 +1288,12 @@ pub(crate) mod tests {
             .find(|s| s.name == world.name)
             .expect("the server appears in status");
         assert!(
-            status.connected,
-            "the challenging server connects with tokens: {:?}",
+            status.connected && !status.needs_auth,
+            "signed in, so it connects: {:?}",
             status.error
         );
         assert_eq!(status.tools, vec!["echo".to_string()]);
+        assert!(hub.handles(&crate::mcp::exposed_name(&world.name, "echo")));
     }
 
     #[test]

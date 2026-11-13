@@ -828,6 +828,11 @@ struct MCPStatus: Decodable, Identifiable {
     let error: String?
     let tools: [String]
     let quarantined: [Quarantined]
+    /// The server answered 401 and wants an OAuth sign-in: "Sign in" is the button for it,
+    /// and the only thing in frog that opens a browser for MCP. Older engines omit it.
+    let needsAuth: Bool?
+    /// The person already declined this server's sign-in (remembered across sessions).
+    let declined: Bool?
     var id: String { name }
 }
 
@@ -836,6 +841,8 @@ struct MCPStatus: Decodable, Identifiable {
 private struct MCPSettings: View {
     @State private var servers: [MCPStatus] = []
     @State private var loading = true
+    /// Servers with a sign-in in flight, so a second click doesn't open a second browser.
+    @State private var signingIn: Set<String> = []
 
     private var configURL: URL {
         FileManager.default.homeDirectoryForCurrentUser.appending(path: ".config/frog/config.toml")
@@ -852,15 +859,25 @@ private struct MCPSettings: View {
                 ForEach(servers) { s in
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
-                            Image(systemName: s.connected ? "checkmark.circle.fill" : "xmark.octagon.fill")
-                                .foregroundStyle(s.connected ? .green : .red)
+                            Image(systemName: icon(s))
+                                .foregroundStyle(tint(s))
                             Text(s.name).fontWeight(.medium)
                             Spacer()
                             if s.connected {
                                 Text("\(s.tools.count) tool\(s.tools.count == 1 ? "" : "s")").foregroundStyle(.secondary)
+                            } else if s.needsAuth == true {
+                                // Signed out is a state, not a failure: the button is the fix.
+                                Text(s.declined == true ? "signed out · you declined" : "signed out")
+                                    .foregroundStyle(.orange)
+                                if signingIn.contains(s.name) {
+                                    ProgressView().controlSize(.small)
+                                } else {
+                                    Button("Sign in") { signIn(s) }
+                                        .controlSize(.small)
+                                }
                             }
                         }
-                        if let e = s.error {
+                        if let e = s.error, s.needsAuth != true {
                             Text(e).font(.frog(size: 10)).foregroundStyle(.red).lineLimit(3)
                         } else if !s.tools.isEmpty {
                             Text(s.tools.joined(separator: " · ")).font(.frog(size: 10)).foregroundStyle(.secondary).lineLimit(3)
@@ -916,6 +933,35 @@ private struct MCPSettings: View {
         servers = (try? await Frog.json([MCPStatus].self, args: ["--mcp", "--json"],
                                          cwd: FileManager.default.homeDirectoryForCurrentUser)) ?? []
         loading = false
+    }
+
+    /// A server that wants a sign-in isn't broken: a key, not a red octagon.
+    private func icon(_ s: MCPStatus) -> String {
+        if s.connected { return "checkmark.circle.fill" }
+        if s.needsAuth == true { return "key.fill" }
+        return "xmark.octagon.fill"
+    }
+
+    private func tint(_ s: MCPStatus) -> Color {
+        if s.connected { return .green }
+        if s.needsAuth == true { return .orange }
+        return .red
+    }
+
+    /// The only thing in frog that opens a browser for MCP. It runs in this process (a
+    /// one-shot `frog --mcp-signin`), waits at most a few minutes, then reloads the list so
+    /// the server's tools show up without anyone pressing Refresh.
+    private func signIn(_ s: MCPStatus) {
+        guard !signingIn.contains(s.name) else { return }
+        signingIn.insert(s.name)
+        Task {
+            try? await Frog.run(args: ["--mcp-signin", s.name],
+                                cwd: FileManager.default.homeDirectoryForCurrentUser)
+            // Reload either way: a successful sign-in shows the tools, a declined or closed
+            // one leaves the row signed out, and the server's own state is the truth.
+            await load()
+            signingIn.remove(s.name)
+        }
     }
 }
 

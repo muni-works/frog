@@ -102,7 +102,37 @@ pub struct ServerStatus {
     pub tools: Vec<String>,
     /// Tools withheld because their description looked like prompt injection.
     pub quarantined: Vec<Quarantined>,
+    /// The server answered 401 with a challenge: it wants an OAuth sign-in, which only a
+    /// person asks for (Settings → MCP → Sign in). Distinct from a generic `error` so a
+    /// client can offer the button instead of showing a failure; connecting never opens a
+    /// browser on its own (see [`connect_one`]).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub needs_auth: bool,
+    /// Identifies this server and its configuration, so the "needs a sign-in" line shows
+    /// once per configuration rather than on every session open. Not on the wire.
+    #[serde(skip)]
+    pub auth_key: String,
 }
+
+/// A server that wants a sign-in: the 401/challenge answer to a connect attempt, as an
+/// error value so it travels through `Result` without a browser ever opening. [`connect_one`]
+/// returns it instead of running the OAuth flow; [`sign_in`] is the only thing that opens
+/// one, and only when a person asks.
+#[derive(Debug)]
+pub struct NeedsAuth {
+    /// The server's `WWW-Authenticate` header, when it sent one.
+    pub challenge: Option<String>,
+}
+
+impl std::fmt::Display for NeedsAuth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // `unavailable_reason` keys on these words, so the transcript line stays honest even
+        // for a client that reads only the error.
+        write!(f, "needs a sign-in (authorization required)")
+    }
+}
+
+impl std::error::Error for NeedsAuth {}
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Quarantined {
@@ -145,6 +175,65 @@ fn quarantine_key(server: &str, t: &Tool) -> String {
         h.update([0]);
     }
     format!("{:x}", h.finalize())
+}
+
+// ---- remembering that a sign-in was asked for, and refused ----
+
+/// The servers whose sign-in this machine has already said no to, one [`auth_key`] per line.
+///
+/// A refusal has to outlive the session it was made in. Every session open reconnects the
+/// configured servers, so without this the "X needs a sign-in" line comes back forever, as
+/// if nobody had ever declined. Keyed by server **and** its configuration: editing the URL
+/// or the headers is a change of mind, and asks again.
+fn refused_path() -> PathBuf {
+    crate::config::data_dir().join("mcp-signin-refused")
+}
+
+/// Whether this machine has already refused `key`'s sign-in.
+pub fn sign_in_refused(key: &str) -> bool {
+    refused_in(&refused_path(), key)
+}
+
+fn refused_in(path: &Path, key: &str) -> bool {
+    std::fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .any(|l| l == key)
+}
+
+/// Remember that `key`'s sign-in was declined, so no later session raises it again. Undone by
+/// [`forget_refusal`] when a person signs in from the settings panel.
+pub fn refuse_sign_in(key: &str) {
+    let _ = record_refused(&refused_path(), key);
+}
+
+fn record_refused(path: &Path, key: &str) -> std::io::Result<()> {
+    if path.parent().is_some_and(|d| std::fs::create_dir_all(d).is_err()) {
+        return Err(std::io::Error::other("no data dir"));
+    }
+    use std::io::Write;
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .and_then(|mut f| writeln!(f, "{key}"))
+}
+
+/// Forget a refusal: a sign-in succeeded, or the configuration changed enough to ask again.
+pub fn forget_refusal(key: &str) {
+    forget_refusal_in(&refused_path(), key)
+}
+
+fn forget_refusal_in(path: &Path, key: &str) {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return;
+    };
+    let kept: String = text
+        .lines()
+        .filter(|l| *l != key)
+        .map(|l| format!("{l}\n"))
+        .collect();
+    let _ = std::fs::write(path, kept);
 }
 
 type Emit = Box<dyn Fn(Event) + Send + Sync>;
@@ -417,13 +506,7 @@ impl Hub {
                         },
                     );
                 }
-                Err(e) => failed.push(ServerStatus {
-                    name,
-                    connected: false,
-                    error: Some(format!("{e:#}")),
-                    tools: Vec::new(),
-                    quarantined: Vec::new(),
-                }),
+                Err(e) => failed.push(failed_status(name, &cfg, &e)),
             }
         }
         // With deferred loading, start with the tools a server's own instructions name: its
@@ -489,13 +572,12 @@ impl Hub {
                     },
                 );
             }
-            Err(e) => self.inner.failed.write().unwrap().push(ServerStatus {
-                name,
-                connected: false,
-                error: Some(format!("{e:#}")),
-                tools: Vec::new(),
-                quarantined: Vec::new(),
-            }),
+            Err(e) => self
+                .inner
+                .failed
+                .write()
+                .unwrap()
+                .push(failed_status(name, &cfg, &e)),
         }
     }
 
@@ -585,6 +667,8 @@ impl Hub {
                 error: None,
                 tools: Vec::new(),
                 quarantined: Vec::new(),
+                needs_auth: false,
+                auth_key: String::new(),
             };
             for t in s.tools.read().unwrap().iter() {
                 match (!s.trust).then(|| suspicious(t)).flatten() {
@@ -1145,8 +1229,8 @@ async fn connect_one(
             None if crate::mcp_oauth::stored(&handler.server).is_some() => {
                 match crate::mcp_oauth::refresh(&plain, &handler.server, url).await {
                     Ok(_) => crate::mcp_oauth::bearer(&handler.server),
-                    // Transient (network, metadata): connect unauthenticated; the 401
-                    // path decides between a browser and a clear failure.
+                    // Transient (network, metadata): connect unauthenticated. The 401 path
+                    // reports a sign-in is wanted; it never opens a browser.
                     Err(_) => None,
                 }
             }
@@ -1159,28 +1243,14 @@ async fn connect_one(
         match handler.clone().serve(first).await {
             Ok(client) => client,
             Err(e) if authorization_required(&e) => {
-                // Sign in with the browser and reconnect. The session didn't wait: this
-                // whole function runs behind a spawned connect.
-                let challenge = e.auth_challenge().map(str::to_string);
-                crate::mcp_oauth::authorize(
-                    &plain,
-                    &handler.server,
-                    url,
-                    challenge.as_deref(),
-                    crate::mcp_oauth::system_browser(),
-                    crate::mcp_oauth::AUTH_TIMEOUT,
-                )
-                .await
-                .map_err(|e| anyhow!("`{}` needs a sign-in and it failed: {e:#}", handler.server))?;
-                let Some(tokens) = crate::mcp_oauth::bearer(&handler.server) else {
-                    bail!("`{}` signed in but the tokens didn't stick", handler.server);
-                };
-                handler
-                    .serve(StreamableHttpClientTransport::with_client(
-                        http,
-                        config_with_auth(&map, url, Some(tokens)),
-                    ))
-                    .await?
+                // Never sign in from here. Connecting runs on every session open (and every
+                // folder move), so opening a browser here means a system-modal window just
+                // for opening a chat — per conversation, for several servers at once. The
+                // server is reported as wanting a sign-in instead ([`NeedsAuth`]); a person
+                // asks for it from Settings → MCP, which calls [`sign_in`].
+                return Err(anyhow::Error::new(NeedsAuth {
+                    challenge: e.auth_challenge().map(str::to_string),
+                }));
             }
             Err(e) => return Err(e.into()),
         }
@@ -1209,6 +1279,79 @@ async fn connect_stdio(
     let client = handler.serve(transport).await?;
     let tools = client.list_all_tools().await?;
     Ok((client, tools))
+}
+
+/// A failed server's status. A [`NeedsAuth`] in the error chain is not a failure to report
+/// as one: it becomes `needs_auth`, so the client can offer a sign-in instead of showing a
+/// broken server.
+fn failed_status(name: String, cfg: &ServerConfig, e: &anyhow::Error) -> ServerStatus {
+    let needs_auth = e.downcast_ref::<NeedsAuth>().is_some();
+    let key = auth_key(&name, cfg);
+    ServerStatus {
+        name,
+        connected: false,
+        error: Some(if needs_auth {
+            // The one line a person reads. `Sign in` is the button's own words (Settings →
+            // MCP), so the sentence points at a thing that exists.
+            "Signed out: this server needs you to sign in (Settings → MCP).".to_string()
+        } else {
+            format!("{e:#}")
+        }),
+        tools: Vec::new(),
+        quarantined: Vec::new(),
+        needs_auth,
+        auth_key: key,
+    }
+}
+
+/// Identifies a server together with the configuration it was reached at: the key a
+/// remembered refusal is stored under, so changing the URL or the headers asks again.
+pub fn auth_key(name: &str, cfg: &ServerConfig) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    for part in [
+        name,
+        cfg.url.as_deref().unwrap_or(""),
+        cfg.command.as_deref().unwrap_or(""),
+    ] {
+        h.update(part.as_bytes());
+        h.update([0]);
+    }
+    for (k, v) in &cfg.headers {
+        h.update(k.as_bytes());
+        h.update([0]);
+        h.update(v.as_bytes());
+        h.update([0]);
+    }
+    format!("{:x}", h.finalize())
+}
+
+/// Sign a person in to `server` when they ask for it — the only place a browser opens for
+/// MCP. `open` is the browser (tests pass their own); the flow is the OAuth one from
+/// [`crate::mcp_oauth::authorize`], tokens stored under the server's name for the next
+/// connect to pick up.
+///
+/// Returns the tokens so the caller can reconnect, or fails in words a person can read.
+pub async fn sign_in(
+    server: &str,
+    cfg: &ServerConfig,
+    challenge: Option<&str>,
+    open: crate::mcp_oauth::Browser,
+) -> Result<crate::mcp_oauth::Tokens> {
+    let url = cfg
+        .url
+        .as_deref()
+        .context("only HTTP servers can ask you to sign in")?;
+    crate::mcp_oauth::authorize(
+        &plain_http(),
+        server,
+        url,
+        challenge,
+        open,
+        crate::mcp_oauth::AUTH_TIMEOUT,
+    )
+    .await
+    .map_err(|e| anyhow!("`{server}` needs a sign-in and it failed: {e:#}"))
 }
 
 /// A reqwest client with no default headers, for OAuth's own HTTP (discovery,
@@ -1494,12 +1637,13 @@ mod tests {
     }
 }
 
-/// Why a server didn't connect, in words: it wants a sign-in frog can't do yet, it isn't
-/// running, or it failed to start.
+/// Why a server didn't connect, in words: it wants a sign-in, it isn't running, or it
+/// failed to start.
 fn unavailable_reason(error: &str) -> &'static str {
     let e = error.to_ascii_lowercase();
     if e.contains("auth") || e.contains("401") || e.contains("403") || e.contains("unauthorized") {
-        "need a sign-in frog doesn't support yet"
+        // The fix is a button that exists (Settings → MCP → Sign in), so say so by name.
+        "need a sign-in (Settings → MCP → Sign in)"
     } else if e.contains("error sending request")
         || e.contains("connection refused")
         || e.contains("connect error")
@@ -1551,6 +1695,67 @@ pub fn unavailable_summary(failed: &[(String, String)]) -> Option<String> {
 mod unavailable_tests {
     use super::*;
 
+    /// A refusal outlives the session that made it: that's the whole point, since every
+    /// session open reconnects. Changing the server's configuration is a change of mind and
+    /// asks again.
+    #[test]
+    fn a_refusal_is_remembered_per_configuration() {
+        let dir = std::env::temp_dir().join(format!("frog-refuse-{}", crate::session::new_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("refused");
+        let cfg = ServerConfig {
+            url: Some("https://example.com/mcp".into()),
+            ..Default::default()
+        };
+        let key = auth_key("docs", &cfg);
+
+        assert!(!refused_in(&path, &key), "nothing declined yet");
+        record_refused(&path, &key).unwrap();
+        assert!(refused_in(&path, &key), "declining sticks");
+        assert!(!refused_in(&path, "another-server"), "and only for that server");
+
+        // A different URL or header is a different question, so it asks again.
+        let moved = ServerConfig {
+            url: Some("https://example.com/other".into()),
+            ..Default::default()
+        };
+        assert!(!refused_in(&path, &auth_key("docs", &moved)));
+        let mut headed = cfg.clone();
+        headed.headers.insert("X-Key".into(), "v".into());
+        assert!(!refused_in(&path, &auth_key("docs", &headed)));
+
+        // Signing in forgets it.
+        forget_refusal_in(&path, &key);
+        assert!(!refused_in(&path, &key));
+        // Removing a key that isn't there is a no-op, not a panic.
+        forget_refusal_in(&path, &key);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A needs-auth failure is its own state, not an error a client would draw as broken.
+    #[test]
+    fn a_sign_in_wanted_is_not_an_error_row() {
+        let cfg = ServerConfig {
+            url: Some("https://example.com/mcp".into()),
+            ..Default::default()
+        };
+        let e = anyhow::Error::new(NeedsAuth {
+            challenge: Some("Bearer".into()),
+        });
+        let st = failed_status("docs".into(), &cfg, &e);
+        assert!(st.needs_auth);
+        assert!(!st.connected);
+        assert!(
+            st.error.as_deref().unwrap_or("").contains("Settings"),
+            "the line points at the button: {:?}",
+            st.error
+        );
+        assert!(!st.auth_key.is_empty(), "the row carries its refusal key");
+
+        let other = failed_status("docs".into(), &cfg, &anyhow!("connection refused"));
+        assert!(!other.needs_auth, "an ordinary failure stays an error");
+    }
+
     #[test]
     fn failures_read_as_one_sentence() {
         let failed = vec![
@@ -1561,11 +1766,11 @@ mod unavailable_tests {
         ];
         assert_eq!(
             unavailable_summary(&failed).unwrap(),
-            "Some MCP servers aren't available: aws-mcp couldn't start; choji and runpod need a sign-in frog doesn't support yet; fusion isn't running."
+            "Some MCP servers aren't available: aws-mcp couldn't start; choji and runpod need a sign-in (Settings → MCP → Sign in); fusion isn't running."
         );
         assert_eq!(
             unavailable_summary(&failed[1..2]).unwrap(),
-            "Some MCP servers aren't available: choji needs a sign-in frog doesn't support yet."
+            "Some MCP servers aren't available: choji needs a sign-in (Settings → MCP → Sign in)."
         );
         assert!(unavailable_summary(&[]).is_none());
     }

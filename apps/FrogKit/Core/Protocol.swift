@@ -93,6 +93,9 @@ enum Op: Encodable, Sendable {
     case stopSubagent(id: String)
     /// An MCP App calling a tool on its own server.
     case appCall(id: String, server: String, tool: String, arguments: JSONValue)
+    /// Ask the engine to sign in to a configured MCP server: the one path that opens a
+    /// browser for MCP. `decline` records a refusal instead, so no later session asks again.
+    case mcpSignIn(server: String, decline: Bool = false)
     /// Open a pane the engine can drive: a shell, or a web preview.
     case paneOpen(kind: PaneKind, cwd: String? = nil, url: String? = nil, cols: Int? = nil, rows: Int? = nil)
     /// Keystrokes (or pasted text) for a terminal pane.
@@ -131,6 +134,7 @@ enum Op: Encodable, Sendable {
         case kind, cwd, url, cols, rows, data, level, message, status, call, result, error, mention, context, panes, draft
         case ask, choices, other, label, send, note, sessions, from, fromName = "from_name", more
         case deadline, pr, repo, number
+        case decline, servers, tools
     }
 
     func encode(to encoder: Encoder) throws {
@@ -204,6 +208,10 @@ enum Op: Encodable, Sendable {
             try c.encode(server, forKey: .server)
             try c.encode(tool, forKey: .tool)
             try c.encode(arguments, forKey: .arguments)
+        case .mcpSignIn(let server, let decline):
+            try c.encode("mcp_sign_in", forKey: .op)
+            try c.encode(server, forKey: .server)
+            if decline { try c.encode(true, forKey: .decline) }
         case .paneOpen(let kind, let cwd, let url, let cols, let rows):
             try c.encode("pane_open", forKey: .op)
             try c.encode(kind, forKey: .kind)
@@ -373,6 +381,45 @@ struct Degraded: Decodable, Sendable, Equatable {
     /// Every one, with its why, a line each (the badge's hover and popover).
     static func detail(_ list: [Degraded]) -> String {
         list.map { "\($0.what): \($0.why)" }.joined(separator: "\n")
+    }
+}
+
+/// One configured MCP server, from the engine's `mcp_servers` event: enough to draw a row
+/// with a working "Sign in" button, and to say why a server someone configured isn't
+/// offering its tools. A tool that's configured but not there is never silent.
+struct McpServerReport: Decodable, Sendable, Identifiable, Equatable {
+    var name: String
+    var connected: Bool
+    /// The server answered 401 and wants an OAuth sign-in. Not a failure: show the button.
+    var needsAuth: Bool
+    /// The person already declined this server's sign-in; remember it, don't ask again.
+    var declined: Bool
+    /// One line on how it's doing, when it isn't connected.
+    var error: String?
+    /// The tools it offers (`mcp__<server>__<tool>`), empty while signed out.
+    var tools: [String]
+    var id: String { name }
+
+    private enum Key: String, CodingKey { case name, connected, needsAuth, declined, error, tools }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Key.self)
+        name = try c.decode(String.self, forKey: .name)
+        connected = try c.decodeIfPresent(Bool.self, forKey: .connected) ?? false
+        needsAuth = try c.decodeIfPresent(Bool.self, forKey: .needsAuth) ?? false
+        declined = try c.decodeIfPresent(Bool.self, forKey: .declined) ?? false
+        error = try c.decodeIfPresent(String.self, forKey: .error)
+        tools = try c.decodeIfPresent([String].self, forKey: .tools) ?? []
+    }
+
+    /// What a person reads on the row: signed in, signed out, connecting, or why it failed.
+    var state: String {
+        if connected {
+            return tools.count == 1 ? "1 tool" : "\(tools.count) tools"
+        }
+        if needsAuth { return declined ? "signed out · you declined" : "signed out" }
+        if let error { return error }
+        return "connecting…"
     }
 }
 
@@ -971,6 +1018,14 @@ enum Event: Decodable, Sendable {
     /// An event from the subagent running as tool call `item`.
     indirect case subagent(item: String, inner: Event)
     case notice(level: String, message: String)
+    /// Every configured MCP server and how it's doing, the whole list after any change.
+    /// Durable: a replayed session shows the same "not signed in" rows, so a tool someone
+    /// configured never vanishes quietly.
+    case mcpServers([McpServerReport])
+    /// A person signed in to an MCP server from its row; the server is back with tools.
+    case mcpSignedIn(server: String, tools: [String])
+    /// A sign-in that didn't happen (declined, or the flow failed); `error` is the line to show.
+    case mcpSignedOut(server: String, error: String?)
     case error(EngineError)
     case status(Status)
     /// How many background pieces (Monitors, jobs, Tasks) run in the engine now; sent on
@@ -1161,6 +1216,16 @@ extension Event {
                 error: try c.decodeIfPresent(String.self, forKey: .error))
         case "notice":
             self = .notice(level: try c.decode(String.self, forKey: .level), message: try c.decode(String.self, forKey: .message))
+        case "mcp_servers":
+            self = .mcpServers(try c.decode([McpServerReport].self, forKey: .servers))
+        case "mcp_signed_in":
+            self = .mcpSignedIn(
+                server: try c.decode(String.self, forKey: .server),
+                tools: try c.decodeIfPresent([String].self, forKey: .tools) ?? [])
+        case "mcp_signed_out":
+            self = .mcpSignedOut(
+                server: try c.decode(String.self, forKey: .server),
+                error: try c.decodeIfPresent(String.self, forKey: .error))
         case "error":
             self = .error(try c.decode(EngineError.self, forKey: .error))
         case "status":

@@ -885,6 +885,14 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                         hub.host().emit(Event::AppResult { id, result, error });
                     });
                 }
+                // It changes which tools exist and starts a browser, so it goes through the
+                // work loop: the reconnect's delta installs at a turn boundary like any late
+                // server's, instead of racing the agent from here.
+                Op::McpSignIn { server, decline } => {
+                    if work_tx.send(Op::McpSignIn { server, decline }).is_err() {
+                        break;
+                    }
+                }
                 Op::Submit { text, images, more } => {
                     // Mid-turn the turn loop owns this queue: the parts park in order, and
                     // its next tool-call boundary delivers them as user messages of the
@@ -1558,6 +1566,9 @@ struct Agent {
     mcp: crate::mcp::Hub,
     /// Per-server completion events from concurrent MCP connection attempts.
     mcp_pending: Option<tokio::sync::mpsc::UnboundedReceiver<(String, crate::mcp::Hub)>>,
+    /// The servers a connect is still working on: configured, with no outcome yet. They get a
+    /// row saying so, instead of silently missing from the list.
+    mcp_connecting: std::collections::BTreeSet<String>,
     /// Completed MCP deltas queued until the next turn boundary.
     mcp_ready_queue: Vec<(String, crate::mcp::Hub)>,
     /// MCP tools that were loaded via `McpTools` in a previous session, to be restored on resume.
@@ -1872,6 +1883,7 @@ impl Agent {
             specs: tools::specs(),
             mcp: crate::mcp::Hub::empty(),
             mcp_pending: None,
+            mcp_connecting: std::collections::BTreeSet::new(),
             mcp_ready_queue: Vec::new(),
             loaded_tools,
             skills,
@@ -2522,6 +2534,9 @@ impl Agent {
                 self.emit(Event::ApprovalDigest { summary });
             }
             Op::Wake => self.wake(Vec::new()).await?,
+            // The only path that opens a browser for MCP, and only because a person asked
+            // (Settings → MCP → Sign in, or the transcript's card).
+            Op::McpSignIn { server, decline } => self.sign_in_mcp(server, decline),
             Op::SetMode { mode } => {
                 // The router already applied it (see `Shared::mode`), so the permit path has
                 // been running in it since the call; this reconciles the agent's copy. Kept

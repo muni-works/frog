@@ -7,6 +7,10 @@ impl Agent {
     /// their tools. Failures and quarantined tools become notices; nothing here is fatal.
     /// Start connecting the project's MCP servers in the background, so the prompt (and the
     /// first turn) doesn't wait on them; [`Self::poll_mcp`] installs them once they're up.
+    ///
+    /// This runs on every session open and every folder move, so it must never interrupt:
+    /// a server that wants an OAuth sign-in is reported as `needs_auth` and left alone. Only
+    /// [`Agent::sign_in_mcp`], from an explicit request, opens a browser.
     pub(super) fn connect_mcp(&mut self) {
         self.mcp_pending = None;
         if self.subagent {
@@ -24,6 +28,7 @@ impl Agent {
             move |event: Event| journal.emit(event)
         };
         let host = crate::mcp::Host::new(emit, self.rich && self.can_ask, &self.root);
+        self.mcp_connecting = servers.keys().cloned().collect();
         for (name, cfg) in servers {
             let tx = tx.clone();
             let host = host.clone();
@@ -34,6 +39,78 @@ impl Agent {
         }
         drop(tx);
         self.mcp_pending = Some(rx);
+        // Configuring a server is not the same as having its tools: say which are configured
+        // (and which want a sign-in) from the start, before any of them answers.
+        self.emit_mcp_servers();
+    }
+
+    /// A person asked to sign in to `server` — Settings → MCP → Sign in, or the transcript's
+    /// card ([`Op::McpSignIn`]). `decline` records a refusal instead.
+    ///
+    /// The sign-in itself runs in the background: the browser can sit open for minutes, and
+    /// the engine must stay responsive (the user may never finish, or may close the tab). The
+    /// outcome arrives as [`Event::McpSignedIn`] or [`Event::McpSignedOut`]; on success the
+    /// server's reconnect goes through the ordinary pending queue, so its tools are installed
+    /// at the next turn boundary like any late server's.
+    pub(super) fn sign_in_mcp(&mut self, server: String, decline: bool) {
+        if self.subagent {
+            return;
+        }
+        let Some(cfg) = crate::mcp::configured(&self.cfg, &self.root).remove(&server) else {
+            self.notice(
+                Level::Warn,
+                format!("`{server}` isn't a configured MCP server, so there is nothing to sign in to"),
+            );
+            return;
+        };
+        let key = crate::mcp::auth_key(&server, &cfg);
+        if decline {
+            crate::mcp::refuse_sign_in(&key);
+            self.emit(Event::McpSignedOut {
+                server,
+                error: None,
+            });
+            self.emit_mcp_servers();
+            return;
+        }
+        // Asked for on purpose, so no longer remembered as refused.
+        crate::mcp::forget_refusal(&key);
+        // The reconnect goes through the queue the engine already polls, so its tools land at
+        // the next turn boundary like any late server's. With no connect in flight (every
+        // server finished long ago), open one for it.
+        let tx = match self.mcp_pending.as_ref() {
+            Some(_) => None,
+            None => {
+                let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+                self.mcp_pending = Some(rx);
+                Some(tx)
+            }
+        };
+        // The live hub, so the reconnected server joins this session rather than a fresh one.
+        let host = self.mcp.host().clone();
+        let journal = self.shared.journal.clone();
+        tokio::spawn(async move {
+            match crate::mcp::sign_in(&server, &cfg, None, crate::mcp_oauth::system_browser()).await {
+                Ok(_) => {
+                    let delta = crate::mcp::Hub::connect_delta(host, server.clone(), cfg).await;
+                    let tools = delta
+                        .1
+                        .status()
+                        .into_iter()
+                        .find(|s| s.name == server)
+                        .map(|s| s.tools)
+                        .unwrap_or_default();
+                    if let Some(tx) = tx {
+                        let _ = tx.send(delta);
+                    }
+                    journal.emit(Event::McpSignedIn { server, tools });
+                }
+                Err(e) => journal.emit(Event::McpSignedOut {
+                    server,
+                    error: Some(format!("{e:#}")),
+                }),
+            }
+        });
     }
 
     /// Install the background MCP connection if it has finished.
@@ -57,11 +134,14 @@ impl Agent {
     }
 
     pub(super) fn merge_mcp(&mut self, delta: crate::mcp::Hub) {
-        let failed = delta
-            .status()
-            .into_iter()
-            .filter_map(|st| st.error.map(|e| (st.name, e)))
+        let status = delta.status();
+        let failed = status
+            .iter()
+            .filter_map(|st| st.error.clone().map(|e| (st.name.clone(), e)))
             .collect::<Vec<_>>();
+        for st in &status {
+            self.mcp_connecting.remove(&st.name);
+        }
         self.mcp.merge(delta);
         if let Some(line) = crate::mcp::unavailable_summary(&failed) {
             self.notice(Level::Info, line);
@@ -69,6 +149,42 @@ impl Agent {
         *self.shared.mcp.lock().unwrap() = Some(self.mcp.clone());
         self.sync_specs();
         self.apply_harness();
+        self.emit_mcp_servers();
+    }
+
+    /// Tell the client how every configured server is doing, the whole list. Sent when the
+    /// servers are configured, whenever a connect finishes and whenever a sign-in changes one,
+    /// so a server that is configured but not offering tools is always visible somewhere —
+    /// the failure mode of "built, tested, never switched on" is a tool list that quietly
+    /// lacks what a person set up.
+    pub(super) fn emit_mcp_servers(&mut self) {
+        if self.subagent {
+            return;
+        }
+        let servers = self.mcp.status();
+        if servers.is_empty() && !self.mcp.expected() {
+            return;
+        }
+        // Still connecting: they're configured, so they get a row even before they answer.
+        let mut reports: Vec<_> = servers
+            .iter()
+            .map(crate::protocol::McpServerReport::from)
+            .collect();
+        let connected: Vec<&str> = servers.iter().map(|s| s.name.as_str()).collect();
+        for name in self.mcp_connecting.clone() {
+            if !connected.contains(&name.as_str()) {
+                reports.push(crate::protocol::McpServerReport {
+                    name,
+                    connected: false,
+                    needs_auth: false,
+                    declined: false,
+                    error: None,
+                    tools: Vec::new(),
+                });
+            }
+        }
+        reports.sort_by(|a, b| a.name.cmp(&b.name));
+        self.emit(Event::McpServers { servers: reports });
     }
 
     /// Below this window (tokens), the prompt keeps to what a small model can hold: no
