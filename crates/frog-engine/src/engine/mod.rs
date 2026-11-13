@@ -32,6 +32,8 @@ mod compact;
 mod dispatch;
 mod permit;
 mod project;
+#[cfg(test)]
+mod tests_ingest;
 mod turn;
 mod window;
 
@@ -415,6 +417,13 @@ struct Shared {
     /// with the queue by `Op::ClearInbox` — the voided ones never run, so they stop
     /// counting. Saturating down: a clear that races a pop must not go negative.
     inbox_waiting: AtomicUsize,
+    /// `Op::Submit`s that arrived while a turn was running, parked here in order: the turn
+    /// loop drains them at the next tool-call boundary (as user messages of the running
+    /// turn, in order, each exactly once) instead of letting each start its own turn after
+    /// this one. Empty between turns — the router forwards straight through then, and any
+    /// leftovers here would be lost, so the work loop takes the queue at every boundary
+    /// including the last one before `Idle`.
+    submitted: Mutex<Vec<crate::protocol::Part>>,
     /// The mode the client asked for ([`Op::SetMode`]), as a [`Mode`] discriminant. The router
     /// stores it immediately (a safety setting, not conversation state), the permit path picks
     /// it up per decision, and the agent's `handle` reconciles its own copy and logs
@@ -656,6 +665,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         inbox_sent: Default::default(),
         inbox_void: Default::default(),
         inbox_waiting: Default::default(),
+        submitted: Default::default(),
         mode: AtomicU8::new(opts.mode as u8),
         wake_hold: Default::default(),
         journal,
@@ -874,6 +884,22 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                         };
                         hub.host().emit(Event::AppResult { id, result, error });
                     });
+                }
+                Op::Submit { text, images, more } => {
+                    // Mid-turn the turn loop owns this queue: the parts park in order, and
+                    // its next tool-call boundary delivers them as user messages of the
+                    // running turn (see `turn`). Nothing is running: straight through, a
+                    // turn of its own, as before.
+                    if router.working.load(Ordering::Relaxed) {
+                        let mut all = vec![crate::protocol::Part { text, images }];
+                        all.extend(more);
+                        router.submitted.lock().unwrap().extend(all);
+                    } else if work_tx
+                        .send(Op::Submit { text, images, more })
+                        .is_err()
+                    {
+                        break;
+                    }
                 }
                 op => {
                     if work_tx.send(op).is_err() {
@@ -1126,6 +1152,21 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             }
             shared.working.store(false, Ordering::Relaxed);
             agent.emit_status();
+            // Follow-ups the user sent while the turn ran, parked for its boundaries: any the
+            // turn never delivered (it had no tool call to stop at) go now, as the next turn,
+            // before the engine goes idle — the first is its input, the rest as `more`, in
+            // order, each with its images. Never lost.
+            let parked = take_submitted(&shared);
+            if !parked.is_empty() {
+                let mut parts = parked.into_iter();
+                let first = parts.next().expect("checked non-empty");
+                held = Some(Op::Submit {
+                    text: first.text,
+                    images: first.images,
+                    more: parts.collect(),
+                });
+                continue;
+            }
             // Background work that finished during the turn was parked (never injected into
             // it): it runs now, as the next turn, before the engine goes idle, so nobody sees
             // an idle session that is about to wake. A stop holds it instead.
@@ -1201,6 +1242,21 @@ fn draining(shared: &Shared) -> bool {
         .unwrap()
         .as_ref()
         .is_some_and(|s| !s.acked)
+}
+
+    /// Take everything the user submitted while the current turn has been running, in order.
+    /// The turn loop drains this at a tool-call boundary and delivers the entries as user
+    /// messages of the running turn, so the model reads them before its next step (they no
+    /// longer wait for the whole turn to end). Exactly once: drained is drained.
+    fn take_submitted(shared: &Shared) -> Vec<crate::protocol::Part> {
+        std::mem::take(&mut shared.submitted.lock().unwrap())
+    }
+
+/// Like [`drain_pending`], but for the composer's queue: yields first so the router task
+/// (which may hold a just-sent `Op::Submit` it hasn't recorded yet) gets to run.
+async fn submitted_pending(shared: &Shared) -> bool {
+    tokio::task::yield_now().await;
+    !shared.submitted.lock().unwrap().is_empty()
 }
 
 /// Like [`draining`], but yields first so the router task (which may be holding a freshly

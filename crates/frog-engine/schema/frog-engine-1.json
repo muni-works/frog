@@ -1150,6 +1150,42 @@
           "type": "object"
         },
         {
+          "description": "Follow-ups the user sent while this turn ran, ingested at a tool-call boundary\n(`Agent::ingest_submitted`): each is now a user message of the running turn, in the\norder sent. The transcript shows them in the turn at this step; a replay draws the\nsame rows from the log.",
+          "properties": {
+            "created": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "event": {
+              "const": "follow_ups_ingested",
+              "type": "string"
+            },
+            "seq": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session": {
+              "type": "string"
+            },
+            "texts": {
+              "description": "The ingested messages' texts, in order.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "event",
+            "texts",
+            "seq",
+            "session",
+            "created"
+          ],
+          "type": "object"
+        },
+        {
           "properties": {
             "created": {
               "format": "int64",
@@ -3517,6 +3553,27 @@
             "turn",
             "reason",
             "usage"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Follow-ups the user sent while this turn ran, ingested at a tool-call boundary\n(`Agent::ingest_submitted`): each is now a user message of the running turn, in the\norder sent. The transcript shows them in the turn at this step; a replay draws the\nsame rows from the log.",
+          "properties": {
+            "event": {
+              "const": "follow_ups_ingested",
+              "type": "string"
+            },
+            "texts": {
+              "description": "The ingested messages' texts, in order.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "event",
+            "texts"
           ],
           "type": "object"
         },

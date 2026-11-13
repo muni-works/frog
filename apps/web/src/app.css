@@ -198,8 +198,19 @@ button.tool:hover { color: var(--fg); }
 .plan-item span { width: 12px; flex: none; color: var(--frog); }
 .title-menu { position: relative; }
 .title-edit { font-size: 14px; font-weight: 600; padding: 2px 6px; max-width: 420px; }
+/* The queue above the tray: one small-caps QUEUED · n label, then quiet raised rows —
+   separation by fill, no lines. An entry's images show as small chips beside its text. */
 .cz-queue { margin: 0 8px 6px; display: flex; flex-direction: column; gap: 4px; }
-.cz-queued { display: flex; align-items: center; gap: 8px; padding: 4px 6px 4px 12px; border-radius: 10px; border: 1px dashed var(--line-strong); font-size: 13px; min-width: 0; }
+.cz-qhead { display: flex; align-items: baseline; gap: 8px; margin: 0 2px 3px; }
+.cz-qtitle { font-size: var(--size-label); font-weight: 600; letter-spacing: 0.6px; text-transform: uppercase; color: var(--muted); }
+.cz-qwhen { font-size: var(--size-label); color: var(--faint); }
+.cz-queued { display: flex; align-items: center; gap: 9px; padding: 7px 8px 7px 11px; border-radius: var(--radius-nested); background: var(--card); font-size: 13px; min-width: 0; }
+.cz-queued .ellip { flex: 1; min-width: 0; }
+.cz-qclip { width: 13px; height: 13px; flex: none; color: var(--muted); }
+.cz-qimgs { display: flex; gap: 4px; flex: none; }
+.cz-qimg { width: 22px; height: 22px; border-radius: 6px; object-fit: cover; display: block; background: var(--well); }
+.cz-qx { flex: none; border: 0; background: transparent; color: var(--faint); width: 20px; height: 20px; border-radius: var(--radius-pill); cursor: pointer; font: 600 12px/20px var(--font-sans); text-align: center; }
+.cz-qx:hover { background: var(--hover); color: var(--fg); }
 .cz-imgs { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .cz-img { position: relative; width: 56px; height: 56px; border-radius: 8px; overflow: hidden; border: 0; }
 .cz-img img { width: 100%; height: 100%; object-fit: cover; display: block; }

@@ -258,6 +258,8 @@ struct ComposerTextView: NSViewRepresentable {
         guard ComposerController.chars(tv) as String != text else { return }
         tv.string = text
         tv.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
+        context.coordinator.updating = true
+        defer { context.coordinator.updating = false }
         context.coordinator.fitHeightNow(tv)
     }
 
@@ -409,10 +411,18 @@ struct ComposerTextView: NSViewRepresentable {
 
         /// Fit it now, for the two places that are already off the edit (the first layout, and
         /// a binding write from SwiftUI), so the field never flashes at the wrong height.
+        ///
+        /// From `updateNSView` the write is deferred, not made: a binding written during the
+        /// view update is dropped, so a field cleared from outside (a message sent, the draft
+        /// restored) kept the height it had — an empty field at the cap, 180 pt tall. The next
+        /// run-loop turn is after that update, where the write lands.
         func fitHeightNow(_ tv: NSTextView) {
             heightScheduled = false
-            applyHeight(tv)
+            if updating { updateHeight(tv) } else { applyHeight(tv) }
         }
+
+        /// Inside `updateNSView`: a binding write here wouldn't reach SwiftUI.
+        var updating = false
     }
 }
 

@@ -468,6 +468,14 @@ pub enum Event {
         reason: EndReason,
         usage: TurnUsage,
     },
+    /// Follow-ups the user sent while this turn ran, ingested at a tool-call boundary
+    /// (`Agent::ingest_submitted`): each is now a user message of the running turn, in the
+    /// order sent. The transcript shows them in the turn at this step; a replay draws the
+    /// same rows from the log.
+    FollowUpsIngested {
+        /// The ingested messages' texts, in order.
+        texts: Vec<String>,
+    },
     ItemStarted {
         id: String,
         kind: ItemKind,
