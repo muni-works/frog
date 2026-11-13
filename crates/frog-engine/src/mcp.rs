@@ -593,12 +593,14 @@ impl Hub {
                     },
                 );
             }
-            Err(e) => self
-                .inner
-                .failed
-                .write()
-                .unwrap()
-                .push(failed_status(name, &cfg, &e)),
+            Err(e) => {
+                // One row per server, the newest outcome: a retried connect (a sign-in
+                // between attempts) must not leave the earlier failure beside it.
+                let status = failed_status(name.clone(), &cfg, &e);
+                let mut failed = self.inner.failed.write().unwrap();
+                failed.retain(|f| f.name != name);
+                failed.push(status);
+            }
         }
     }
 
@@ -640,11 +642,15 @@ impl Hub {
             .write()
             .unwrap()
             .extend(other.servers.into_inner().unwrap());
-        self.inner
-            .failed
-            .write()
-            .unwrap()
-            .extend(other.failed.into_inner().unwrap());
+        // A delta's outcome replaces what this hub knew about that server: a reconnected one
+        // shouldn't carry its old failure forward, and a failed one shouldn't leave a stale
+        // "connected" beside it.
+        let delta = other.failed.into_inner().unwrap();
+        let mut failed = self.inner.failed.write().unwrap();
+        for st in &delta {
+            failed.retain(|f| f.name != st.name);
+        }
+        failed.extend(delta);
         // `loaded` is left alone on purpose: the tools a session picked stay selected across a
         // server reconnecting (a fresh delta merged in), so they're offered again as soon as
         // the server's tools are back in the catalog — no new `McpTools` call needed.
@@ -1656,6 +1662,57 @@ mod tests {
         live.merge(delta);
         assert_eq!(live.loaded(), ["mcp__slow__ping"]);
         assert!(live.deferred());
+    }
+
+    /// A server that failed twice has one row, and the newest outcome wins: a retried connect
+    /// (a sign-in between attempts) must not leave the earlier failure beside it.
+    #[test]
+    fn a_server_that_failed_twice_has_one_row() {
+        let mut hub = Hub::empty();
+        let cfg = ServerConfig {
+            url: Some("https://example.com/mcp".into()),
+            ..Default::default()
+        };
+        let mut record = |e: &anyhow::Error| {
+            let st = failed_status("docs".into(), &cfg, e);
+            let mut failed = hub.inner.failed.write().unwrap();
+            failed.retain(|f| f.name != "docs");
+            failed.push(st);
+        };
+        record(&anyhow::Error::new(NeedsAuth { challenge: None }));
+        assert!(hub.status().iter().find(|s| s.name == "docs").unwrap().needs_auth);
+        record(&anyhow!("connection refused"));
+        let rows: Vec<_> = hub.status().into_iter().filter(|s| s.name == "docs").collect();
+        assert_eq!(rows.len(), 1, "one row per server: {rows:?}");
+        assert!(!rows[0].needs_auth, "the newest outcome wins");
+    }
+
+    /// A delta's outcome replaces what the hub knew about that server, instead of stacking
+    /// beside it: a reconnect's fresh failure shouldn't join the old one.
+    #[test]
+    fn a_merged_delta_replaces_the_older_failure_for_that_server() {
+        let mut hub = Hub::empty();
+        let cfg = ServerConfig {
+            url: Some("https://example.com/mcp".into()),
+            ..Default::default()
+        };
+        hub.inner.failed.write().unwrap().push(failed_status(
+            "docs".into(),
+            &cfg,
+            &anyhow::Error::new(NeedsAuth { challenge: None }),
+        ));
+        // A later attempt that fails for an ordinary reason.
+        let delta = Hub::empty();
+        delta
+            .inner
+            .failed
+            .write()
+            .unwrap()
+            .push(failed_status("docs".into(), &cfg, &anyhow!("connection refused")));
+        hub.merge(delta);
+        let rows: Vec<_> = hub.status().into_iter().filter(|s| s.name == "docs").collect();
+        assert_eq!(rows.len(), 1, "the delta's row replaces the old one: {rows:?}");
+        assert!(!rows[0].needs_auth);
     }
 
     #[test]
