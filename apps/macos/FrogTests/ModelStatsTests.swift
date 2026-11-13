@@ -15,17 +15,32 @@ final class ModelStatsTests: XCTestCase {
 
     func testMoney() {
         XCTAssertEqual(ModelStats.money(0), "Free")
-        XCTAssertEqual(ModelStats.money(0.004), "<1¢")
-        XCTAssertEqual(ModelStats.money(0.04), "4¢")
+        XCTAssertEqual(ModelStats.money(0.004), "<$0.01")
+        XCTAssertEqual(ModelStats.money(0.04), "$0.04")
         XCTAssertEqual(ModelStats.money(1.8412), "$1.84")
         XCTAssertEqual(ModelStats.speedText(38.4), "38 tok/s")
+        XCTAssertEqual(Dollars.format(0), "$0")
+        XCTAssertEqual(Dollars.format(15), "$15")
+        XCTAssertEqual(Dollars.format(0.6), "$0.60")
+        XCTAssertEqual(Dollars.format(12.5), "$12.50")
+        XCTAssertEqual(CloudFormat.dollars(1250), "$12.50")
+    }
+
+    func testWordSpeedsMigrateToTokens() throws {
+        let d = UserDefaults(suiteName: "ModelStatsTests.migrate")!
+        d.removePersistentDomain(forName: "ModelStatsTests.migrate")
+        // A store from before: speeds in words/s, no unit flag.
+        d.set(Data(#"{"models":{"tang/q":{"speeds":[45],"inputs":[],"outputs":[]}},"spend":{},"prices":{}}"#.utf8), forKey: "modelStats")
+        XCTAssertEqual(ModelStats(defaults: d).speed("tang/q")!, 60, accuracy: 1e-9)
+        // Migrated once: a second load doesn't divide again.
+        XCTAssertEqual(ModelStats(defaults: d).speed("tang/q")!, 60, accuracy: 1e-9)
     }
 
     func testSpeedIsAMedianInTokens() {
         let s = stats()
         XCTAssertNil(s.speed("tang/q"))
         for tps in [40.0, 60, 400] { s.record(usage(100, 10, tps: tps, model: "tang/q"), model: nil) }
-        // Median 60 tokens/s (stored as 45 words/s, read back in tokens).
+        // Median 60 tokens/s.
         XCTAssertEqual(s.speed("tang/q")!, 60, accuracy: 1e-9)
     }
 

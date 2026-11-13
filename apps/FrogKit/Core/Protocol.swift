@@ -1618,16 +1618,13 @@ extension CatalogModel {
     var price: String? {
         guard let i = costIn, let o = costOut else { return nil }
         if i == 0, o == 0 { return "Free" }
-        return "\(Self.dollars(i)) in · \(Self.dollars(o)) out per M"
+        return "\(Dollars.format(i)) in · \(Dollars.format(o)) out per M"
     }
 
     var contextLabel: String? {
         context.map { $0 >= 1_000_000 ? String(format: "%gM", Double($0) / 1_000_000) : "\($0 / 1000)k" }
     }
 
-    private static func dollars(_ v: Double) -> String {
-        v < 1 ? String(format: "$%.2f", v) : String(format: "$%g", (v * 100).rounded() / 100)
-    }
 }
 
 /// A PR bound to a session (the engine's `prs::PrBinding`): its identity, and what a client last

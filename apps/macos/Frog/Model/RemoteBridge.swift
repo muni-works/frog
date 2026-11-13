@@ -45,9 +45,9 @@ final class RemoteBridge {
 
     /// The bridge code as one generic password (mirrors the phone's `PairingCode`).
     private enum TokenStore {
-        static let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+        static var query: [String: Any] { [kSecClass as String: kSecClassGenericPassword,
                                            kSecAttrService as String: "toys.frog.remote",
-                                           kSecAttrAccount as String: "bridge-token"]
+                                           kSecAttrAccount as String: "bridge-token"] }
 
         static func read() -> String? {
             var q = query

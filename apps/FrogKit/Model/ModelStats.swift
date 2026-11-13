@@ -9,7 +9,7 @@ import Observation
 final class ModelStats {
     static let shared = ModelStats()
 
-    /// Words per token, roughly, for English and code.
+    /// Words per token, roughly, for English and code (word counts only; speeds are tokens/s).
     static let wordsPerToken = 0.75
     /// A turn's size before there's any history: 8k in, 1k out.
     static let defaultTurn = (input: 8_000.0, output: 1_000.0)
@@ -33,6 +33,17 @@ final class ModelStats {
         var energy: [String: [String: [Double]]]?
         /// How a cloud model's data center energy is estimated: spec → [basis, source].
         var estimates: [String: [String]]?
+        /// Speeds are tokens/s; nil in stores saved when they were words/s.
+        var speedsInTokens: Bool?
+    }
+
+    /// Earlier builds kept speeds in words/s (tokens × 0.75); bring them to tokens/s, once.
+    private static func migrated(_ s: Store) -> (Store, changed: Bool) {
+        guard s.speedsInTokens != true else { return (s, false) }
+        var s = s
+        for (spec, r) in s.models { s.models[spec]?.speeds = r.speeds.map { $0 / wordsPerToken } }
+        s.speedsInTokens = true
+        return (s, true)
     }
 
     private var store: Store
@@ -41,7 +52,13 @@ final class ModelStats {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        store = defaults.data(forKey: Self.key).flatMap { try? JSONDecoder().decode(Store.self, from: $0) } ?? Store()
+        let loaded = defaults.data(forKey: Self.key).flatMap { try? JSONDecoder().decode(Store.self, from: $0) }
+        store = Store(speedsInTokens: true)
+        if let loaded {
+            let (s, changed) = Self.migrated(loaded)
+            store = s
+            if changed { save() }
+        }
     }
 
     private func save() {
@@ -57,7 +74,7 @@ final class ModelStats {
     /// numbers are there before the Mac is.
     func adopt(_ data: Data, cap: Double) {
         guard let s = try? JSONDecoder().decode(Store.self, from: data) else { return }
-        store = s
+        store = Self.migrated(s).0
         save()
         monthlyCap = cap
     }
@@ -83,7 +100,7 @@ final class ModelStats {
     func record(_ usage: TurnUsage, model fallback: String?, at date: Date = .now) {
         guard let spec = usage.model ?? fallback, usage.modelCalls > 0 else { return }
         var r = store.models[spec] ?? Record()
-        if let tps = usage.tokensPerSec, tps > 0 { r.speeds = (r.speeds + [tps * Self.wordsPerToken]).suffix(Self.window) }
+        if let tps = usage.tokensPerSec, tps > 0 { r.speeds = (r.speeds + [tps]).suffix(Self.window) }
         r.inputs = (r.inputs + [Double(usage.inputTokens)]).suffix(Self.window)
         r.outputs = (r.outputs + [Double(usage.outputTokens)]).suffix(Self.window)
         store.models[spec] = r
@@ -264,10 +281,9 @@ final class ModelStats {
         return p.cost(usage)
     }
 
-    /// Median tokens/s on this Mac, once there's a turn to measure. (Recorded speeds are kept in
-    /// words/s, as they always were, so existing history still reads; they're converted here.)
+    /// Median tokens/s on this Mac, once there's a turn to measure.
     func speed(_ spec: String) -> Double? {
-        store.models[spec].flatMap { Self.median($0.speeds) }.map { $0 / Self.wordsPerToken }
+        store.models[spec].flatMap { Self.median($0.speeds) }
     }
 
     /// What a typical turn costs on a model, from this person's recent turn sizes.
@@ -329,7 +345,7 @@ final class ModelStats {
     /// "38 tok/s". Speed is always shown in tokens per second, never words.
     static func speedText(_ tokensPerSec: Double) -> String { "\(Int(tokensPerSec.rounded())) tok/s" }
 
-    /// An amount spent: "$0", "4¢", "$1.84".
+    /// An amount spent: "$0", "$0.04", "$1.84".
     static func spent(_ dollars: Double) -> String { dollars <= 0 ? "$0" : money(dollars) }
 
     // MARK: Energy
@@ -344,11 +360,18 @@ final class ModelStats {
         return (estimated ? "~" : "") + n + " Wh"
     }
 
-    /// Friendly money: "Free", "<1¢", "4¢", "$1.84".
-    static func money(_ dollars: Double) -> String {
-        if dollars <= 0 { return "Free" }
-        if dollars < 0.01 { return "<1¢" }
-        if dollars < 1 { return "\(Int((dollars * 100).rounded()))¢" }
-        return String(format: "$%.2f", dollars)
+    /// A price or cost: "Free", "<$0.01", "$0.04", "$1.84".
+    static func money(_ dollars: Double) -> String { dollars <= 0 ? "Free" : Dollars.format(dollars) }
+}
+
+/// The one way frog writes dollars: "$0", "<$0.01", "$0.04", "$1.84", "$15" (cents only when
+/// there are any). Costs, credit and per-token prices all go through it.
+enum Dollars {
+    nonisolated static func format(_ dollars: Double) -> String {
+        if dollars == 0 { return "$0" }
+        if dollars < 0 { return "-" + format(-dollars) }
+        if dollars < 0.01 { return "<$0.01" }
+        let cents = (dollars * 100).rounded()
+        return cents.truncatingRemainder(dividingBy: 100) == 0 ? "$\(Int(cents / 100))" : String(format: "$%.2f", cents / 100)
     }
 }
