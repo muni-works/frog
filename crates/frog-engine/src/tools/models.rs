@@ -42,11 +42,25 @@ pub struct Row {
 
 /// Whether `spec`'s credential resolves and a local engine it needs is here. Empty: yes.
 /// `Some(why)`: it would fail, with the fix. `None`: not checked (it needs a network reach or
-/// a state this machine doesn't hold), so say `unknown`.
-fn credential(cfg: &crate::config::Config, spec: &str) -> Option<String> {
+/// a state this machine doesn't hold), so say `unknown`. `custom` is the servers you added,
+/// whose keys the engine can't vouch for.
+fn credential(
+    cfg: &crate::config::Config,
+    spec: &str,
+    custom: &std::collections::BTreeMap<String, crate::providers::Custom>,
+) -> Option<String> {
     let Ok((_, profile)) = cfg.resolve(Some(spec)) else {
         return None;
     };
+    // What this check can't see, it refuses to grade: a paired node's key sits in the
+    // node's store and its health only shows in a `/node` poll, and a server you added
+    // (`gpu/llama3`) takes no key here but its own server may demand one. `live` would be
+    // a guess — and a wrong "live" is exactly the preflight bug again.
+    if profile.provider == crate::config::ProviderKind::Node
+        || custom.contains_key(spec.split_once('/').map_or(spec, |(p, _)| p))
+    {
+        return None;
+    }
     match crate::model_policy::credential_check(&profile) {
         Ok(()) => Some("live".into()),
         Err(e) => Some(e.to_string()),
@@ -57,6 +71,14 @@ fn credential(cfg: &crate::config::Config, spec: &str) -> Option<String> {
 /// presets frog can name a spec for, and this Mac's own engines. Catalog metadata (context,
 /// cost) rides along from the last cached list — never fetched here.
 pub fn rows(cfg: &crate::config::Config) -> Vec<Row> {
+    rows_with(cfg, &crate::providers::State::load().custom)
+}
+
+/// [`rows`] with the custom servers injected, so tests don't touch the real models.json.
+pub fn rows_with(
+    cfg: &crate::config::Config,
+    custom: &std::collections::BTreeMap<String, crate::providers::Custom>,
+) -> Vec<Row> {
     let mut out: Vec<Row> = Vec::new();
     let mut push = |r: Row| {
         if !out.iter().any(|x| x.spec == r.spec) {
@@ -72,7 +94,7 @@ pub fn rows(cfg: &crate::config::Config) -> Vec<Row> {
             context: info.as_ref().and_then(|m| m.context),
             cost_in: info.as_ref().and_then(|m| m.cost_in),
             cost_out: info.as_ref().and_then(|m| m.cost_out),
-            credential: credential(cfg, name).unwrap_or_else(|| "unknown".into()),
+            credential: credential(cfg, name, custom).unwrap_or_else(|| "unknown".into()),
             where_it_runs: cfg
                 .resolve(Some(name))
                 .map(|(_, p)| crate::model_policy::where_it_runs(name, &p))
@@ -92,11 +114,15 @@ pub fn rows(cfg: &crate::config::Config) -> Vec<Row> {
         push(Row {
             provider: provider_name(&spec),
             spec: spec.clone(),
-            model: info.as_ref().map_or(spec.rsplit('/').next().unwrap_or(&spec).to_string(), |m| m.name.clone()),
+            model: info
+                .as_ref()
+                .map_or(spec.rsplit('/').next().unwrap_or(&spec).to_string(), |m| {
+                    m.name.clone()
+                }),
             context: info.as_ref().and_then(|m| m.context),
             cost_in: info.as_ref().and_then(|m| m.cost_in),
             cost_out: info.as_ref().and_then(|m| m.cost_out),
-            credential: credential(cfg, &spec).unwrap_or_else(|| "unknown".into()),
+            credential: credential(cfg, &spec, custom).unwrap_or_else(|| "unknown".into()),
             where_it_runs: cfg
                 .resolve(Some(&spec))
                 .map(|(_, p)| crate::model_policy::where_it_runs(&spec, &p))
@@ -172,6 +198,36 @@ mod tests {
                 "{:?}",
                 local.credential
             );
+        }
+    }
+
+    /// What can't be checked without a network reach (a paired node, a server you added)
+    /// says unknown, never a guessed yes.
+    #[test]
+    fn uncheckable_credentials_say_unknown_not_live() {
+        let cfg = crate::config::Config::default();
+        let listed = rows(&cfg);
+        // The check needs a poll (and the key lives in the node store): unknown.
+        let node = listed.iter().find(|r| r.spec.starts_with("node/"));
+        if let Some(node) = node {
+            assert_eq!(node.credential, "unknown", "{}", node.credential);
+        }
+        // A custom server may need a key the engine can't see: unknown (its spec only
+        // resolves against `cfg` once the server is configured, so this also covers the
+        // resolve-failure arm).
+        let mut custom = std::collections::BTreeMap::new();
+        custom.insert(
+            "gpu".to_string(),
+            crate::providers::Custom {
+                name: "gpu".into(),
+                kind: crate::config::ProviderKind::Openai,
+                base_url: "http://gpu:8000/v1".into(),
+            },
+        );
+        let listed = rows_with(&cfg, &custom);
+        let gpu = listed.iter().find(|r| r.spec.starts_with("gpu/"));
+        if let Some(gpu) = gpu {
+            assert_eq!(gpu.credential, "unknown", "{}", gpu.credential);
         }
     }
 

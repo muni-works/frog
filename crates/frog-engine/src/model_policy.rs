@@ -283,10 +283,19 @@ pub fn credential_check(profile: &Profile) -> Result<()> {
         let env = crate::policy::is_cloud(profile)
             .then(|| {
                 let url = profile.base_url.as_deref().unwrap_or("");
+                // Hosted presets only (`local` ones take no key), by the provider kind
+                // first — an Anthropic profile is Anthropic's however it's configured —
+                // then by base URL for the OpenAI-compatible gateways. A preset with no
+                // static base URL (cloudflare, built per-request from the account id)
+                // can't be recognized here, so it just isn't matched.
                 crate::providers::PRESETS
                     .iter()
                     .filter(|p| !p.local)
-                    .find(|p| p.base_url.is_empty() || url.starts_with(p.base_url.trim_end_matches('/')))
+                    .find(|p| {
+                        (p.kind == profile.provider && url.is_empty())
+                            || (!p.base_url.is_empty()
+                                && url.starts_with(p.base_url.trim_end_matches('/')))
+                    })
                     .map(|p| (p.id, p.key_env.first(), p.key_url))
             })
             .flatten();
@@ -514,6 +523,21 @@ mod tests {
         p.api_key = Some("k".into());
         cfg.models.insert("mine".into(), p);
         assert!(check_credential_spec(&cfg, "mine").await.is_ok());
+        // The refusal names the right provider: Anthropic (ANTHROPIC_API_KEY, its key page),
+        // not whichever gateway is first in the preset list.
+        let mut cfg = crate::config::Config::default();
+        let p = Profile::new(ProviderKind::Anthropic, "claude-sonnet-5");
+        cfg.models.insert("anth".into(), p);
+        let e = check_credential_spec(&cfg, "anth").await.unwrap_err().to_string();
+        assert!(e.contains("anthropic has no key"), "{e}");
+        assert!(e.contains("ANTHROPIC_API_KEY"), "{e}");
+        assert!(e.contains("console.anthropic.com"), "{e}");
+        // A gateway profile names that gateway's variable.
+        let mut p = Profile::new(ProviderKind::Openai, "openai/gpt-5");
+        p.base_url = Some("https://openrouter.ai/api/v1".into());
+        cfg.models.insert("orn".into(), p);
+        let e = check_credential_spec(&cfg, "orn").await.unwrap_err().to_string();
+        assert!(e.contains("openrouter has no key") && e.contains("OPENROUTER_API_KEY"), "{e}");
     }
 
     /// A local model is never asked for a key; a sidecar model needs its binary and weights.
