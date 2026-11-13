@@ -1493,7 +1493,13 @@ async fn a_real_reset_mid_body_is_retried_to_a_clean_reply() {
 /// directly: a decode-kind error over a body read (headers arrived, the body stream broke) is
 /// retryable and classifies as a Connection error; a connect failure (nothing answered) is
 /// neither.
-#[tokio::test(start_paused = true)]
+///
+/// **Not `start_paused`.** This test speaks to a real loopback socket, and under a paused clock
+/// tokio auto-advances time whenever no task is ready — so the client's `connect_timeout` can
+/// fire before the spawned accept task has had its turn, and the test fails with a spurious
+/// `ConnectError(TimedOut)`: 4 runs in 6, measured on clean main. It has no timer of its own to
+/// fake; the only clock it touches is the socket's.
+#[tokio::test]
 async fn a_broken_body_stream_is_retryable_and_a_connect_failure_is_not() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     // The real reset, captured at the sse layer's own shape: read the body from a server that
