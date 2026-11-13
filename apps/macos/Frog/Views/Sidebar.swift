@@ -1632,7 +1632,7 @@ struct ConversationRow<Menu: View>: View {
 
     private var label: some View {
         ConversationRowLabel(session: session, live: live, end: session.end, pane: pane, showPlace: showPlace,
-                             detail: line.text, detailTint: line.tint, pr: line.pr, turns: line.turns,
+                             detail: line.text, detailTint: line.tint, prs: line.prs, turns: line.turns,
                              hideStatus: hovering)
     }
 

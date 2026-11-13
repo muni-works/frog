@@ -1390,6 +1390,9 @@ struct SessionInfo: Codable, Sendable, Identifiable, Hashable {
     /// The session that started it, from its log's header (a child the engine owned itself,
     /// headless or in the cloud). The Mac's own children are filed in `Library.parents`.
     var parent: String? = nil
+    /// The PRs bound to it (the engine's `Event::Prs`, read back by the listing). The sidebar's
+    /// row and the composer's git line both read this one list, so the two can't disagree.
+    var prs: [PrBinding] = []
 
     var displayTitle: String {
         let t = (title ?? firstInput ?? "Untitled").trimmingCharacters(in: .whitespacesAndNewlines)

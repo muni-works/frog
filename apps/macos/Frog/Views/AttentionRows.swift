@@ -167,7 +167,7 @@ struct TreeRow<Menu: View>: View {
 
     @ViewBuilder
     private var glyph: some View {
-        if let status = RowStatus.of(state, pr: line.pr) {
+        if let status = RowStatus.of(state, prs: line.prs) {
             RowStatusView(status: status).fixedSize()
         } else if pinned {
             Image(systemName: "pin.fill").font(.frog(size: 9)).foregroundStyle(Tokens.textTertiary).help("pinned")

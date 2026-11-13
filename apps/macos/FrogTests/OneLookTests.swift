@@ -48,10 +48,15 @@ final class OneLookTests: XCTestCase {
     }
 
     func testRowStatus() {
+        let merged = ComposerModel.summary([pr(271, .merged)])!
         XCTAssertEqual(RowStatus.derive(live: .running, end: .complete), .running)
         XCTAssertEqual(RowStatus.derive(live: .waiting, end: nil), .needsYou)
         XCTAssertEqual(RowStatus.derive(live: nil, end: .failed), .failed)
-        XCTAssertEqual(RowStatus.derive(live: nil, end: .complete, pr: 271), .pr(271))
+        XCTAssertEqual(RowStatus.derive(live: nil, end: .complete, prs: merged), .pr(merged))
         XCTAssertNil(RowStatus.derive(live: nil, end: .complete))
+    }
+
+    private func pr(_ n: Int, _ state: ComposerModel.PrState) -> ComposerModel.Pr {
+        .init(repo: "muni-works/frog", number: n, title: "t", state: state, checks: .init(ok: 0, total: 0))
     }
 }

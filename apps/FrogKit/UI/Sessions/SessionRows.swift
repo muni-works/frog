@@ -72,27 +72,29 @@ enum FolderTint {
 /// since you looked. Nothing when it's idle.
 enum RowStatus: Equatable {
     case running, needsYou, failed, unread
-    case pr(Int)
+    /// The session's PRs, as the composer's pill has them: count, worst state, label.
+    case pr(ComposerModel.Derived.Summary)
 
-    static func derive(live: SessionLive?, end: SessionInfo.End?, pr: Int? = nil) -> RowStatus? {
+    static func derive(live: SessionLive?, end: SessionInfo.End?,
+                       prs: ComposerModel.Derived.Summary? = nil) -> RowStatus? {
         switch SessionEndGlyph.derive(live: live, end: end) {
         case .running: return .running
         case .waiting: return .needsYou
         case .failed: return .failed
         case .unread: return .unread
-        case .idle: return pr.map(RowStatus.pr)
+        case .idle: return prs.map(RowStatus.pr)
         }
     }
 }
 
 extension RowStatus {
-    static func of(_ state: SessionNesting.State, pr: Int?) -> RowStatus? {
+    static func of(_ state: SessionNesting.State, prs: ComposerModel.Derived.Summary?) -> RowStatus? {
         switch state {
         case .running: .running
         case .waiting: .needsYou
         case .failed: .failed
         case .unread: .unread
-        case .done: pr.map(RowStatus.pr)
+        case .done: prs.map(RowStatus.pr)
         }
     }
 }
@@ -112,8 +114,13 @@ struct RowStatusView: View {
                 .help("Needs you").accessibilityLabel("Needs you")
         case .failed:
             Text("Failed").font(.frog(size: Tokens.Size.label, weight: .medium)).foregroundStyle(Tokens.fail)
-        case .pr(let n):
-            Text("#\(n)").font(.frog(size: Tokens.Size.label, design: .monospaced)).foregroundStyle(Tokens.textTertiary)
+        case .pr(let s):
+            // The composer's pill in miniature: its dot in the worst state's colour, its words.
+            HStack(spacing: 4) {
+                Circle().fill(Color.pr(s.worst)).frame(width: 6, height: 6)
+                Text(s.label).font(.frog(size: Tokens.Size.label, weight: .medium)).foregroundStyle(Tokens.textTertiary)
+            }
+            .help(s.label).accessibilityLabel(s.label)
         case .unread:
             Circle().fill(Tokens.accent).frame(width: 7, height: 7).help("Finished since you looked")
         }
@@ -152,7 +159,8 @@ struct ConversationRowLabel: View {
     /// What it's doing now, its question, or its last reply.
     var detail: String? = nil
     var detailTint: Color = Tokens.textSecondary
-    var pr: Int? = nil
+    /// The session's PRs, worded by `ComposerModel.summary`: the composer's pill, in miniature.
+    var prs: ComposerModel.Derived.Summary? = nil
     var turns: Int? = nil
     /// Hides the status (the Mac's hover menu takes its place).
     var hideStatus = false
@@ -174,7 +182,7 @@ struct ConversationRowLabel: View {
                     .lineLimit(1)
                     .fontWeight(live == .unread ? .semibold : .regular)
                 Spacer(minLength: 4)
-                if let status = RowStatus.derive(live: live, end: end ?? session.end, pr: pr) {
+                if let status = RowStatus.derive(live: live, end: end ?? session.end, prs: prs) {
                     RowStatusView(status: status).opacity(hideStatus ? 0 : 1)
                 }
             }

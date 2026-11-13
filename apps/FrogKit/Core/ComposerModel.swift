@@ -171,6 +171,17 @@ enum ComposerModel {
         prs.min { prOrder.firstIndex(of: $0.state)! < prOrder.firstIndex(of: $1.state)! }
     }
 
+    /// What a session's PRs amount to, worded once: the count, the worst state, and the label
+    /// the composer's pill and the sidebar's row both show ("3 PRs, all merged", "#312").
+    /// Nil with nothing bound.
+    static func summary(_ prs: [Pr]) -> Derived.Summary? {
+        guard let top = worst(prs) else { return nil }
+        let n = prs.count
+        let k = prs.filter { $0.state == top.state }.count
+        let label = n == 1 ? "#\(top.number)" : "\(n) PRs, \(k == n ? "all" : String(k)) \(prWord[top.state]!)"
+        return .init(count: n, worst: top.state, label: label)
+    }
+
     static func derive(_ s: State) -> Derived {
         let content = hasContent(s)
         let action: Action = switch s.busy {
@@ -192,11 +203,8 @@ enum ComposerModel {
             else if top?.state == .failing { git = .fix }
             else if w.ahead > 0 { git = .push }
             else if top?.state == .approved { git = .merge }
-            if let top {
-                let n = w.prs.count
-                let k = w.prs.filter { $0.state == top.state }.count
-                let label = n == 1 ? "#\(top.number)" : "\(n) PRs, \(k == n ? "all" : String(k)) \(prWord[top.state]!)"
-                summary = .init(count: n, worst: top.state, label: label)
+            if top != nil {
+                summary = Self.summary(w.prs)
             }
         }
         let disabled = s.busy == .sending || (s.busy == .idle && !content)

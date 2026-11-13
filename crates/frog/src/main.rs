@@ -1038,6 +1038,9 @@ fn list_sessions(
                     "forked_from": s.header.forked_from,
                     "parent": s.header.parent,
                     "cwd": s.header.cwd,
+                    // The bound PRs, so the sidebar's row and the composer's git line read
+                    // one list (the composer used to be the only place that had them).
+                    "prs": s.prs,
                 })
             })
             .collect();
