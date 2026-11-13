@@ -1302,8 +1302,9 @@ private struct ChiefTile: View {
 }
 
 /// Compact, title-only sidebar row, with its state glyph, trailing meta (age, commits ahead)
-/// and cached GitHub pull request indicator.
-private struct CompactSessionRow<Menu: View>: View {
+/// and cached GitHub pull request indicator. `private` except to the test target, which drives
+/// its hover state (SidebarHoverBadgeTests).
+struct CompactSessionRow<Menu: View>: View {
     let session: SessionInfo
     let selected: Bool
     let live: Library.Live?
@@ -1325,9 +1326,13 @@ private struct CompactSessionRow<Menu: View>: View {
     var onCollapse: (() -> Void)? = nil
     let open: () -> Void
     @ViewBuilder let menu: () -> Menu
-    @State private var hovering = false
+    /// Seeded by tests: a synthetic hover drives the row's own 450 ms title-expansion task.
+    var hovering = false
+    @State private var hoveringLive = false
     /// Hovered a moment: the title wraps to show all of itself and the meta steps aside.
     @State private var expandTitle = false
+    /// The pointer is on the row — for real, or because a test put it there.
+    private var hovered: Bool { hovering || hoveringLive }
 
     /// Nested under the session that started it: the row gives its width to the title.
     private var nested: Bool { depth > 0 }
@@ -1338,7 +1343,7 @@ private struct CompactSessionRow<Menu: View>: View {
     }
 
     /// Squeezed nested rows keep the suffix out of the way: hover or selection shows it.
-    private var showSuffix: Bool { hovering || selected }
+    private var showSuffix: Bool { hovered || selected }
 
     /// The row's state, combining live tracking with the listing's last-turn end. A turn
     /// that finished ok keeps a green check for ten seconds, then settles to nothing.
@@ -1357,27 +1362,31 @@ private struct CompactSessionRow<Menu: View>: View {
     /// read as live work, and that hasn't been looked at yet. Hovering ends it: the person is
     /// looking, so it has had its look.
     private var check: RowCheck {
-        RowCheck.of(fresh: freshComplete, finished: session.end == .complete, hovering: hovering)
+        RowCheck.of(fresh: freshComplete, finished: session.end == .complete, hovering: hovered)
     }
 
     var body: some View {
+        #if DEBUG
+        let _ = SidebarProbe.rowBodies += 1
+        let _ = expandTitle ? SidebarProbe.expandedBodies += 1 : ()
+        #endif
         // The tick re-checks the 30 s activity rule so the indicator and the title
         // emphasis fade together.
         content(working: live == nil && SidebarClock.shared.now.timeIntervalSince(session.modifiedDate) < 30)
         .padding(.vertical, expandTitle ? 4 : 0)
         .frame(minHeight: 28)
         .padding(.trailing, 3)
-        .background(selected || hovering ? Tokens.hover : .clear, in: .rect(cornerRadius: 8))
+        .background(selected || hovered ? Tokens.hover : .clear, in: .rect(cornerRadius: 8))
         .contentShape(.rect)
         .contextMenu { DeferredMenu(make: menu) }
         .paneDraggable(.session(session), title: session.displayTitle)
         .help(helpText)
-        .onHover { hovering = $0 }
+        .onHover { hoveringLive = $0 }
         // A pass of the pointer doesn't reflow the list; resting on a row does.
-        .task(id: hovering) {
-            guard hovering else { expandTitle = false; return }
+        .task(id: hovered) {
+            guard hovered else { expandTitle = false; return }
             try? await Task.sleep(for: .milliseconds(450))
-            guard !Task.isCancelled, hovering else { return }
+            guard !Task.isCancelled, hovered else { return }
             withAnimation(.snappy(duration: 0.15)) { expandTitle = true }
         }
         // Queued off the main thread (at most once a minute); no gh, no git in the row.
@@ -1428,6 +1437,9 @@ private struct CompactSessionRow<Menu: View>: View {
             // Resting on the row, the meta steps aside for the title; nested rows leave the
             // age and commit count to the tooltip.
             if let git, !expandTitle {
+                #if DEBUG
+                let _ = SidebarProbe.badgeBodies += 1
+                #endif
                 GitBadgeView(display: git.display, muted: !running && !selected, help: git.help, card: git.card)
                     .padding(.leading, 5)
             }
@@ -1450,7 +1462,7 @@ private struct CompactSessionRow<Menu: View>: View {
             glyphView.padding(.leading, 5)
             // Nested rows show the menu button only under the pointer (the context menu is
             // always there).
-            if !nested || hovering {
+            if !nested || hovered {
                 SwiftUI.Menu { menu() } label: {
                     Image(systemName: "ellipsis").font(.frog(size: 10)).frame(width: 14, height: 20)
                 }
