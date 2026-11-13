@@ -496,7 +496,7 @@ mod tests {
             home.join(".config/frog/models.json"),
             tmp.path().join("id_rsa"),
         ] {
-            let err = block_on(read(&json!({ "file_path": p }), &mut ctx)).unwrap_err();
+            let err = block_on(read(&json!({ "file_path": p }), &mut ctx)).err().expect("should be refused");
             assert!(
                 err.to_string().contains("holds credentials"),
                 "{}: {err}",
@@ -512,7 +512,7 @@ mod tests {
                 &json!({ "file_path": tmp.path().join("innocent.txt") }),
                 &mut ctx,
             ))
-            .unwrap_err();
+            .err().expect("should be refused");
             assert!(err.to_string().contains("holds credentials"), "{err}");
         }
         let ok = block_on(read(
@@ -537,15 +537,16 @@ mod tests {
                 .success()
         );
         let mut ctx = Ctx::new(tmp.path().to_path_buf());
-        let read_fifo = read(&json!({ "file_path": fifo }), &mut ctx);
+        let input = json!({ "file_path": fifo });
+        let read_fifo = read(&input, &mut ctx);
         let err = block_on(async {
             tokio::time::timeout(std::time::Duration::from_secs(5), read_fifo)
                 .await
                 .expect("Read hung on a FIFO")
         })
-        .unwrap_err();
+        .err().expect("should be refused");
         assert!(err.to_string().contains("regular file"), "{err}");
-        let err = block_on(read(&json!({ "file_path": "/dev/zero" }), &mut ctx)).unwrap_err();
+        let err = block_on(read(&json!({ "file_path": "/dev/zero" }), &mut ctx)).err().expect("should be refused");
         assert!(err.to_string().contains("regular file"), "{err}");
     }
 

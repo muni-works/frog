@@ -392,11 +392,14 @@ pub fn plain_read(name: &str, input: &serde_json::Value) -> bool {
                 && raw.len() <= 240
                 && labels.len() <= 5
                 && labels.iter().all(|l| l.len() <= 30)
+                // Hosts arrive lowercased, so encoded labels can't be told by case: subdomains
+                // (`en.`, `docs.`, `raw.`) get a small total instead.
+                && sub.iter().map(|l| l.len()).sum::<usize>() <= 24
                 && segments.len() <= 10
                 && query.len() <= 8
                 && pieces.clone().all(short)
                 && url.query().is_none_or(|q| q.len() <= 80)
-                && opaque <= 48
+                && opaque <= 32
         }
         _ => false,
     }
@@ -412,7 +415,10 @@ fn opaque(piece: &str) -> bool {
     let letters = piece.bytes().filter(u8::is_ascii_alphabetic).count();
     let upper = piece.bytes().filter(u8::is_ascii_uppercase).count();
     let lower = piece.bytes().filter(u8::is_ascii_lowercase).count();
-    (digits >= 3 && letters >= 3)
+    let classes = [digits, upper, lower].iter().filter(|c| **c > 0).count();
+    let separated = piece.contains(['-', '_', '.', '%', '+']);
+    (!separated && classes >= 2 && piece.len() >= 12)
+        || (digits >= 2 && letters >= 3)
         || (upper >= 3 && lower >= 3 && !piece.contains(['-', '_']))
         || entropy(piece) > 4.0
 }
