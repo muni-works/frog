@@ -542,16 +542,7 @@ impl Agent {
                             "the request still exceeds the model's context window after compaction"
                         );
                     }
-                    let Some(local) = self.cloud_fallback(&e) else {
-                        return Err(e);
-                    };
-                    self.notice(
-                        Level::Warn,
-                        format!("frog api unavailable ({e:#}) — continuing on {local}"),
-                    );
-                    self.set_model(&local).await?;
-                    self.model_flip_why = Some("frog api was unavailable, so it fell back".into());
-                    continue;
+                    return Err(e);
                 }
             };
             self.model_ready = true;

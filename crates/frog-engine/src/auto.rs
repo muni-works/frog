@@ -773,12 +773,15 @@ pub enum Sandbox {
     Off,
 }
 
-/// How a call is shown to the classifier.
+/// How a call is shown to the classifier. `scope` is the session's own ground (the shell's
+/// cwd, the checkout root, the paths this session created) so a sandbox escape can be
+/// weighed against what the sandbox would have allowed anyway.
 pub fn describe(
     name: &str,
     input: &Value,
     preview: Option<&crate::protocol::FileDiff>,
     sandbox: Sandbox,
+    scope: (&std::path::Path, &std::path::Path, &std::collections::HashSet<std::path::PathBuf>),
 ) -> String {
     let mut s = format!("tool: {name}\n");
     match name {
@@ -789,7 +792,17 @@ pub fn describe(
             ));
             match sandbox {
                 Sandbox::In => s.push_str("runs in the sandbox (writes only inside the project; credentials hidden)\n"),
-                Sandbox::Leaving => s.push_str("the agent asked to run this outside the sandbox, where it could write anywhere and read credentials\n"),
+                Sandbox::Leaving => {
+                    s.push_str("the agent asked to run this outside the sandbox, where it could write anywhere and read credentials\n");
+                    // A routine step on the session's own paths is the one case where the
+                    // escape was probably needless: the confined run would do the same work.
+                    // Say it here, so the first pass and the card can weigh it, instead of
+                    // leaving the agent's habit unexamined.
+                    let cmd = input["command"].as_str().unwrap_or("");
+                    if crate::approval::needless_escape(cmd, scope.0, scope.1, scope.2) {
+                        s.push_str("note: a build/test/file step like this normally runs fine inside the sandbox (its paths are all ones the sandbox allows); the agent may have asked to leave it out of habit\n");
+                    }
+                }
                 Sandbox::Off => {}
             }
         }

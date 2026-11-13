@@ -16,6 +16,12 @@
 #
 # The release lands on $FROG_RELEASE_REPO (muni-works/frog) as Frog.dmg and appcast.xml. frog.toys
 # redirects /download and /appcast.xml to the latest release's copies (site/vercel.json).
+#
+# The tag's release is shared with the CLI: .github/workflows/release.yml uploads the tarballs on
+# tag push. This script therefore uploads into a *draft* and only publishes once the asset set is
+# complete (scripts/release-assets.sh), so an incomplete release can never become releases/latest
+# and 404 `curl -fsSL https://frog.toys/install.sh | sh`. Publish order doesn't matter: whichever
+# publisher runs second finds the set complete and publishes.
 set -euo pipefail
 
 VERSION=${1:?usage: release.sh <version> [--local|--unsigned]}
@@ -46,7 +52,11 @@ if [[ $MODE != --unsigned ]]; then
         || fail "no notary credentials; run: xcrun notarytool store-credentials $NOTARY_PROFILE"
 fi
 if [[ $MODE != --local ]] && [[ $MODE != --unsigned || -n ${FROG_PUBLISH_UNSIGNED:-} ]]; then
-    gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1 && fail "$TAG already exists on $REPO"
+    # A published release can't be rebuilt into: it would need a re-tag, and the tag is what CI
+    # keyed its tarballs to. An existing draft is fine — that's CI having got here first.
+    if gh release view "$TAG" --repo "$REPO" --json isDraft --jq '.isDraft' 2>/dev/null | grep -qx false; then
+        fail "$TAG is already published on $REPO"
+    fi
 fi
 
 step "Building Frog $VERSION ($BUILD_NUMBER)"
@@ -159,7 +169,14 @@ if [[ $MODE == --local ]]; then
     exit 0
 fi
 
-step "Publishing $TAG to $REPO"
-gh release create "$TAG" "$DMG" "$DIST/appcast.xml" --repo "$REPO" \
-    --target "$(git rev-parse HEAD)" --title "Frog $VERSION" --generate-notes
+# Upload into the draft CI may have created, then publish only if the CLI is there too.
+step "Uploading the app to $TAG on $REPO"
+if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+    gh release upload "$TAG" "$DMG" "$DIST/appcast.xml" --repo "$REPO" --clobber
+else
+    gh release create "$TAG" "$DMG" "$DIST/appcast.xml" --repo "$REPO" \
+        --target "$(git rev-parse HEAD)" --title "Frog $VERSION" --draft --generate-notes
+fi
+step "Publishing $TAG once the CLI assets are there"
+"$ROOT/scripts/release-assets.sh" publish "$TAG"
 step "Done: https://github.com/$REPO/releases/tag/$TAG"

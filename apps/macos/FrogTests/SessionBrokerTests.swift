@@ -1133,6 +1133,73 @@ final class SessionBrokerTests: XCTestCase {
                                 input: .object(["id": .string(eng.id), "title": .string("  ")])), from: probe)
     }
 
+    // MARK: Self aliases
+
+    /// `self`, `me` and `this` name the session asking. RenameSession(id: "self") titles the
+    /// caller — what the app's own instruction files tell an agent to do (FROG.md), and what
+    /// used to come back as `No session "self"`.
+    @MainActor
+    func testSelfAliasRenamesTheCaller() throws {
+        let b = broker([chief, eng])
+        b.directoryIncludingArchived = { [self.chief, self.eng] }
+        let link = QueueLink()
+        let caller = Conversation(folder: URL(fileURLWithPath: "/tmp/self-rename"), link: link, replay: false, session: chief.id)
+        b.track(caller, as: chief.id)
+        for alias in ["self", "me", "this"] {
+            b.handle(SessionRequest(id: "r-\(alias)", item: "t-\(alias)", tool: "RenameSession",
+                                    input: .object(["id": .string(alias), "title": .string("renamed by \(alias)")])), from: caller)
+            XCTAssertEqual(caller.title, "renamed by \(alias)", alias)
+        }
+        let replies = link.sent.filter { $0["op"] as? String == "session_reply" }
+        XCTAssertEqual(replies.count, 3)
+        XCTAssertTrue(replies.allSatisfy { $0["error"] == nil }, "\(replies)")
+        XCTAssertTrue(replies.allSatisfy { ($0["result"] as? String)?.contains("Renamed \(chief.id)") == true }, "\(replies)")
+    }
+
+    /// SendMessage(to: "self") resolves to the caller and then hits the existing self-send
+    /// guard, so the message never leaves: the same "That's this session." a literal id got.
+    func testSelfAliasInSendMessageIsRefusedAsThisSession() {
+        let b = broker([chief, eng])
+        for alias in ["self", "me", "this"] {
+            guard case .failure(let e) = b.send(from: chief.id, name: chief.name, to: alias, message: "x", notifyWhenIdle: false) else {
+                return XCTFail("\(alias) routed a message to the caller itself")
+            }
+            XCTAssertEqual(e.message, "That's this session.", alias)
+        }
+        XCTAssertTrue(delivered.isEmpty)
+    }
+
+    /// A session actually named "self" wins over the alias, so a name that resolved before
+    /// still means what it did; the alias only fills in when nothing matches.
+    func testASessionNamedSelfBeatsTheAlias() throws {
+        let named = SessionBroker.Entry(id: "selfy-0009", name: "self", state: "idle")
+        let b = broker([chief, eng, named])
+        XCTAssertEqual(try b.resolve("self", caller: chief.id).get().id, named.id)
+        XCTAssertEqual(try b.resolve("self").get().id, named.id, "no caller: the name, exactly as before")
+        // Nothing named self: the caller.
+        let b2 = broker([chief, eng])
+        XCTAssertEqual(try b2.resolve("self", caller: chief.id).get().id, chief.id)
+        XCTAssertEqual(try b2.resolve("me", caller: eng.id).get().id, eng.id)
+        XCTAssertEqual(try b2.resolve("this", caller: eng.id).get().id, eng.id)
+        // An exact id still wins over the alias.
+        XCTAssertEqual(try b2.resolve(eng.id, caller: chief.id).get().id, eng.id)
+        // And with no caller the alias means nothing: a plain miss.
+        guard case .failure = b2.resolve("self") else { return XCTFail("resolved `self` with nobody asking") }
+    }
+
+    /// A miss says what IS there, so the model can pick without spending a call on a listing
+    /// (a handful of rows, never the whole dump); with nothing at all it says that.
+    func testAMissListsWhatIsAvailable() throws {
+        let b = broker([chief, eng])
+        guard case .failure(let e) = b.resolve("nobody") else { return XCTFail("resolved") }
+        XCTAssertTrue(e.message.hasPrefix("No session \"nobody\"."), e.message)
+        XCTAssertTrue(e.message.contains("Chief of Staff (chief-0001)"), e.message)
+        XCTAssertTrue(e.message.contains("Eng Manager (eng-0002)"), e.message)
+        let empty = broker([])
+        guard case .failure(let none) = empty.resolve("nobody") else { return XCTFail("resolved") }
+        XCTAssertTrue(none.message.contains("no sessions exist yet"), none.message)
+    }
+
     // MARK: MoveSession
 
     /// A scratch parentage store, so broker tests never touch the app's defaults.

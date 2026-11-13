@@ -67,6 +67,7 @@ One-shot, for scripts: `frog -p "why does the build fail?"` (add `--json` for ev
 - [Quickstart](docs/quickstart.md)
 - [Reference](docs/reference.md): providers, Frog Cloud (sign-in, fallback, other agents), tools, permissions, sessions, memory
 - [Model policy](docs/design/model-policy.md)
+- [Releasing](docs/releasing.md): the two publishers, the draft rule, and the asset guard
 - [config.example.toml](config.example.toml)
 - [Contributing](CONTRIBUTING.md) and [Security](SECURITY.md)
 

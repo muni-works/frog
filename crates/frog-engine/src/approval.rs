@@ -192,6 +192,16 @@ fn destructive_anywhere(cmd: &str) -> bool {
     }
 }
 
+/// Whether an escape request (`unsandboxed: true`) was almost certainly needless: the
+/// command is a routine build/test/file step (`routine`) touching only the session's
+/// checkout and its own scratch (`own_scope`) — the very paths the sandbox allows, so the
+/// confined run would do the same work. Session logs (20261112) showed every carded
+/// build/test had `unsandboxed: true` on the call itself while the confined run passes;
+/// this is how the card says so instead of repeating the boilerplate.
+pub fn needless_escape(cmd: &str, cwd: &Path, root: &Path, created: &HashSet<PathBuf>) -> bool {
+    routine(cmd) && own_scope(cmd, cwd, root, created)
+}
+
 /// Whether `cmd` is a routine build/test step: every top-level segment is a
 /// known build or test tool (with a build/test subcommand), a plain file
 /// operation, or a command the read-only parser proves harmless. Anything the

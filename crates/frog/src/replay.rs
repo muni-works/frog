@@ -159,6 +159,8 @@ pub async fn run(spec: &str, speed: f64, ask: bool) -> Result<()> {
             vision: false,
             degraded: Vec::new(),
             ran_on: None,
+            // A replay shows finished turns; nothing is in flight while it plays.
+            waiting: None,
         },
         ops,
     };
