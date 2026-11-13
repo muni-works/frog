@@ -411,12 +411,21 @@ struct TurnUsage: Decodable, Sendable {
 }
 
 /// Who ran a Frog Cloud model: `frog` (Frog Cloud's GPUs) or a third party (`workers-ai`).
+///
+/// The data stays truthful on purpose (Cam, 2026-11-12): `id`, `name` and `isThirdParty` say who
+/// really answered, because a cache miss or a cost spike is debugged from them. What a user reads
+/// is `displayName`, which never names an upstream.
 struct ServedBy: Decodable, Sendable, Equatable {
     var id: String
     var name: String
     var thirdParty: Bool?
 
     var isThirdParty: Bool { thirdParty ?? (id != "frog") }
+
+    /// The only name a user sees: Frog Cloud, whichever upstream proxied the call (Cam,
+    /// 2026-11-12, superseding the gateway plan's decisions 1 and 8 as far as upstream naming
+    /// goes). Views render this, never `name`; the engine and web carry the same helper.
+    var displayName: String { "Frog Cloud" }
 }
 
 /// Watt-hours: the whole Mac above its idle power, and a hosted model's data center, estimated.

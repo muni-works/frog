@@ -10,6 +10,14 @@ enum ModelSections {
     /// engine still lists them all; turning this off brings the full list back.
     static let frogCloudOnly = true
 
+    /// Cam, 2026-11-12: "everything remote will go through frog cloud, let's not worry about the
+    /// providers in the app." The picker offers This Mac and Frog Cloud only, so bringing your
+    /// own provider (a preset's key, a server of your own) is hidden, not deleted: presets,
+    /// Keychain keys, `ProviderStore` and the Settings plumbing all stay, reachable but
+    /// unadvertised. Flip this one constant to bring the "Add a Provider…" and "Add Server…"
+    /// entry points back.
+    static let providersHidden = true
+
     /// `usable`: what frog listed (plus the current model, even if it wasn't listed).
     /// `suggested`: what frog recommends downloading.
     /// Frog Cloud's models are only what the engine listed (Frog Cloud's own `/v1/models`, its
