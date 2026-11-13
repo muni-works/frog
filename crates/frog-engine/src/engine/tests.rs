@@ -6440,9 +6440,14 @@ mod egress_tests {
         let _ = std::fs::remove_dir_all(dir);
 
         // Leaving the sandbox past an enforced list asks in auto too; headless, it's denied.
+        // The command must not be a routine local step: where a shell sandbox exists
+        // (macOS), `echo hi` + `unsandboxed` is a needless escape and gets that wording.
         let (mut h, dir) = egress_engine(
             vec![
-                bash_call("out", json!({ "command": "echo hi", "unsandboxed": true })),
+                bash_call(
+                    "out",
+                    json!({ "command": "curl -sS https://pkgs.example.org/x", "unsandboxed": true }),
+                ),
                 reply(vec![text("ok")], Stop::End),
             ],
             true,
