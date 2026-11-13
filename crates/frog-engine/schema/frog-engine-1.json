@@ -6612,7 +6612,7 @@
       "type": "object"
     },
     "ServedBy": {
-      "description": "Who runs a frog cloud model: `frog` (its own GPUs) or a third party (`workers-ai`).",
+      "description": "Who runs a frog cloud model: `frog` (its own GPUs) or a third party (`workers-ai`).\n\nThe data is truthful on purpose (Cam, 2026-11-12: presentation becomes opaque, data stays\ntruthful). `id`, `name` and `third_party` say who really answered, because a cache miss or a\ncost spike is debugged from them. What a user *reads* comes from [`Self::display_name`],\nwhich never names an upstream.",
       "properties": {
         "id": {
           "type": "string"

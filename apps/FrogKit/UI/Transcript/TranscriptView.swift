@@ -604,9 +604,11 @@ struct EndView: View {
                         ModelLabel(model: ModelIdentity.of(spec, in: models), size: .caption)
                     }
                     // Who served it is a place tag too: a Frog Cloud turn is cloud green whoever's
-                    // GPUs answered (docs/models.md, "Place color").
+                    // GPUs answered (docs/models.md, "Place color"), and reads as Frog Cloud
+                    // whoever proxied it (Cam, 2026-11-12: the upstream is opaque to the user;
+                    // `servedBy.name` keeps it for the log).
                     if let s = usage.servedBy {
-                        Text(s.name).foregroundStyle(Color.place(.frogCloud))
+                        Text(s.displayName).foregroundStyle(Color.place(.frogCloud))
                     }
                     // What it cost (cloud) or how fast it wrote; each opens its working.
                     if let c = ModelStats.shared.cost(of: usage) {
