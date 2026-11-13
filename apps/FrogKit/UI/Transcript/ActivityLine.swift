@@ -80,6 +80,8 @@ struct ActivityLine: View {
                 ForEach(Array(VerbLine.lines(group.done).enumerated()), id: \.offset) { i, v in
                     HStack(alignment: .firstTextBaseline, spacing: 0) {
                         VerbLineView(line: v)
+                            .help(v.helpText)
+                            .focusable()
                         if i == 0 {
                             Text(verbatim: "  ")
                             chevron
@@ -595,6 +597,9 @@ struct VerbLine: Equatable {
     var quiet = false
     /// The step it says, for putting a failed command's output under its own line.
     var itemID: String?
+    /// The raw arguments, kept for the row's `help` even when a gist replaces the line:
+    /// hover gives back the truth the gist may elide.
+    var rawArgs: String?
 
     static func == (a: VerbLine, b: VerbLine) -> Bool {
         a.icon == b.icon && a.verb == b.verb && a.arg == b.arg && a.detail == b.detail
@@ -622,38 +627,54 @@ struct VerbLine: Equatable {
             return nil
         case .tool(let name, let arg):
             let failed = item.result.map { $0.outcome == .error } ?? false
-            var v = VerbLine(icon: ToolLook.icon(name), verb: "Used \(ToolIcon.title(name))", arg: arg.isEmpty ? nil : short(arg), failed: failed)
+            var v = VerbLine(icon: ToolLook.icon(name), verb: "", arg: arg.isEmpty ? nil : short(arg), failed: failed)
+            v.rawArgs = arg.isEmpty ? nil : arg
             v.denied = item.result?.outcome == .denied
             v.itemID = item.id
-            switch name {
-            case "Read": v.verb = "Read"
-            case "Grep", "Glob":
-                v.verb = "Searched for"
-                let n = item.output.split(separator: "\n", omittingEmptySubsequences: true).count
-                if item.result?.outcome == .ok, !item.output.isEmpty { v.detail = "\(n) match\(n == 1 ? "" : "es")" }
-            case "Edit", "MultiEdit":
-                v.verb = "Edited"
-                v.diff = item.result?.diff.map { ($0.added, $0.removed) }
-            case "Write":
-                v.verb = item.result?.diff?.created == true ? "Created" : "Wrote"
-                v.diff = item.result?.diff.map { ($0.added, $0.removed) }
-            case "Bash", "!":
-                v.verb = "Ran"
+            // The engine's gist says what the call did ("searched the engine for where gists
+            // flush"): it is the row's line, where the tool's own verb would only say ran
+            // twice. A failure keeps its verb — "Ran cargo test — failed" is the fact a gist
+            // would hide. The raw argument leads until both answer.
+            if let gist = item.gist, item.done, !failed { v.verb = gist; v.arg = nil }
+            else if name == "Bash" || name == "!" {
+                // A failure keeps its verb ("Ran cargo test — failed" is the fact a gist
+                // would hide). Without one, the command is the line — "Ran" beside it would
+                // say ran twice.
                 v.arg = arg.split(separator: "\n").first.map { String($0.prefix(120)) }
-            case "WebFetch":
-                v.verb = "Fetched"
-                v.arg = URL(string: arg)?.host() ?? arg
-            case "WebSearch": v.verb = "Searched the web for"
-            case "Task": v.verb = "Ran an agent"; v.arg = arg.isEmpty ? nil : arg
-            case "TodoWrite": v.verb = "Updated the plan"; v.arg = nil
-            case "Diagram": v.verb = "Drew"; if arg.isEmpty { v.verb = "Drew a diagram" }
-            case "Visualize": v.verb = "Made a visual"; v.arg = nil
-            case "VisualGuide": v.verb = "Read the visual guide"; v.arg = nil
-            case "Present": v.verb = "Showed results"; v.arg = nil
-            case "Ask": v.verb = "Asked you"; v.arg = nil
-            case "Skill": v.verb = "Used the skill"
-            case "UseFolder": v.verb = "Moved to"
-            default: break
+                if failed { v.verb = "Ran" }
+            }
+            else {
+                switch name {
+                case "Read": v.verb = "Read"
+                case "Grep", "Glob":
+                    v.verb = "Searched for"
+                    let n = item.output.split(separator: "\n", omittingEmptySubsequences: true).count
+                    if item.result?.outcome == .ok, !item.output.isEmpty { v.detail = "\(n) match\(n == 1 ? "" : "es")" }
+                case "Edit", "MultiEdit":
+                    v.verb = "Edited"
+                    v.diff = item.result?.diff.map { ($0.added, $0.removed) }
+                case "Write":
+                    v.verb = item.result?.diff?.created == true ? "Created" : "Wrote"
+                    v.diff = item.result?.diff.map { ($0.added, $0.removed) }
+                case "WebFetch":
+                    v.verb = "Fetched"
+                    v.arg = URL(string: arg)?.host() ?? arg
+                case "WebSearch": v.verb = "Searched the web for"
+                case "Task": v.verb = "Ran an agent"; v.arg = arg.isEmpty ? nil : arg
+                case "TodoWrite": v.verb = "Updated the plan"; v.arg = nil
+                case "Diagram": v.verb = "Drew"; if arg.isEmpty { v.verb = "Drew a diagram" }
+                case "Visualize": v.verb = "Made a visual"; v.arg = nil
+                case "VisualGuide": v.verb = "Read the visual guide"; v.arg = nil
+                case "Present": v.verb = "Showed results"; v.arg = nil
+                case "Ask": v.verb = "Asked you"; v.arg = nil
+                case "Skill": v.verb = "Used the skill"
+                case "UseFolder": v.verb = "Moved to"
+                default: break
+                }
+                // A tool the switch doesn't know (an MCP call, most of all) used to read
+                // "Used mcp__github__list_issues"; the gist names it when it lands, and
+                // until then the raw argument is the line. A command is a command.
+                if v.verb.isEmpty, v.arg == nil, !arg.isEmpty { v.arg = short(arg) }
             }
             return v
         }
@@ -665,6 +686,17 @@ struct VerbLine: Equatable {
         let parts = arg.split(separator: "/")
         return parts.count > 3 ? parts.suffix(3).joined(separator: "/") : arg
     }
+
+    /// The row's `help`: the raw command or full arguments, the truth the line may elide.
+    var helpText: String {
+        if let raw = rawArgs, !raw.isEmpty { return raw }
+        switch (verb, arg) {
+        case ("", .some(let a)): return a
+        case (_, .some(let a)): return "\(verb) \(a)"
+        case ("", nil): return ""
+        case (let v, nil): return v
+        }
+    }
 }
 
 struct VerbLineView: View {
@@ -673,27 +705,55 @@ struct VerbLineView: View {
     var body: some View {
         if line.quiet {
             Text(line.verb)
-                .font(.callout)
+                .font(.frog(size: Tokens.Size.status))
                 .foregroundStyle(Tokens.textTertiary)
         } else {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 text
-                    .font(.callout)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 if line.failed { FailedTag() } else if line.denied { DeniedTag() }
             }
+            // 12.5 × 1.6 = 20: the web's line box. `lineSpacing` adds to SwiftUI's default
+            // leading (~1.28), hence the difference. Applied to the row, not the Text —
+            // these modifiers don't return Text.
+            .font(.frog(size: Tokens.Size.status))
+            .lineSpacing(Tokens.Size.status * (1.6 - 1.28))
         }
     }
 
+    /// The row, at the web's rhythm: 12.5 pt type on a 20 pt line (12.5 × 1.6), so six calls
+    /// read as a list rather than a block. The icon and the fallback command are `faint`
+    /// (5.3:1 on the dark canvas), the gist or a switch verb `muted` (8.3:1); a failure's
+    /// verb goes to `warn`, where the web's error rows are.
     private var text: Text {
-        var t = Text(Image(systemName: line.icon)).foregroundStyle(Tokens.textTertiary)
+        // The icon's tint, computed from Tokens.text: over the dark canvas, `text` (0.925)
+        // at alpha 0.691 composites to #a3a3a3 — the muted the web's icons read (0.65 would
+        // give #999999; the old textTertiary was #505050 at 2.60:1, under the 4.5 minimum).
+        // Light composites toward white, so the alpha solves against 1.0 there; the result
+        // lands on the light muted #5e5e5e either way.
+        func raised() -> Color {
+            func alpha(to target: Double, base: Double, over canvas: Double) -> Double {
+                (target - canvas) / (base - canvas)
+            }
+            return Color(
+                light: (0.106, 0.114, 0.102, min(alpha(to: 0.369, base: 0.106, over: 1.0), 1)),
+                dark: (0.925, 0.925, 0.925, min(alpha(to: 0.639, base: 0.925, over: 0.0), 1)))
+        }
+        let iconTint = raised()
+        var t = Text(Image(systemName: line.icon)).foregroundStyle(iconTint)
             + Text(verbatim: "  ")
-            + Text(line.verb).foregroundStyle(Tokens.textSecondary)
+        if !line.verb.isEmpty {
+            t = t + Text(line.verb).foregroundStyle(line.failed ? Tokens.warn : Tokens.textSecondary)
+        }
         if let arg = line.arg {
-            t = t + Text(verbatim: " ") + Text(verbatim: arg)
+            // No verb, no gist: the argument is the line — a command is a command — so it
+            // reads as one, in mono at the faint step, uncapitalised, like the web's.
+            let fallback = line.verb.isEmpty
+            t = t + Text(verbatim: fallback ? "" : " ")
+                + Text(verbatim: arg)
                 .font(.frog(size: Tokens.Size.status, design: .monospaced))
-                .foregroundStyle(Tokens.text)
+                .foregroundStyle(fallback ? Tokens.textTertiary : Tokens.text)
         }
         if let d = line.detail {
             t = t + Text(verbatim: " · \(d)").foregroundStyle(Tokens.textTertiary)

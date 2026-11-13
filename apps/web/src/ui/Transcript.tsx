@@ -62,7 +62,7 @@ const TOOL_LOOK: Record<string, { verb: [string, string]; icon: string }> = {
 }
 const OTHER = { verb: ['Using', 'Used'] as [string, string], icon: 'M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z' }
 
-function ToolLine({ e }: { e: Entry }) {
+export function ToolLine({ e }: { e: Entry }) {
   const [open, setOpen] = useState<boolean | null>(null)
   const name = (e.name ?? '').toLowerCase()
   const look = TOOL_LOOK[name] ?? OTHER
@@ -82,7 +82,10 @@ function ToolLine({ e }: { e: Entry }) {
             ? <span className="tool-spin" />
             : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={look.icon} /></svg>}
         </span>
-        <span className="tool-verb">{look.verb[e.done ? 1 : 0]}</span>
+        {/* The verb stays for a running call and a failure ("Ran cargo test — failed"). A
+            finished row drops it: a gist already says what it did, and a raw command reads
+            as itself ("a command is a command"), so "Ran" beside either says ran twice. */}
+        {(state === 'run' || state === 'err') && <span className="tool-verb">{look.verb[e.done ? 1 : 0]}</span>}
         {what && <span className={`tool-what${e.done && e.gist ? ' gist' : ''}`}>{what}</span>}
         {state === 'err' && <span className="tool-tag err">failed</span>}
         {state === 'denied' && <span className="tool-tag">denied</span>}
