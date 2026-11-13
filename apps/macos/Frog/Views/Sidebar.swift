@@ -1370,8 +1370,6 @@ struct CompactSessionRow<Menu: View>: View {
         let _ = SidebarProbe.rowBodies += 1
         let _ = expandTitle ? SidebarProbe.expandedBodies += 1 : ()
         #endif
-        // The tick re-checks the 30 s activity rule so the indicator and the title
-        // emphasis fade together.
         content(working: live == nil && SidebarClock.shared.now.timeIntervalSince(session.modifiedDate) < 30)
         .padding(.vertical, expandTitle ? 4 : 0)
         .frame(minHeight: 28)
@@ -1434,30 +1432,14 @@ struct CompactSessionRow<Menu: View>: View {
             .contentShape(.rect)
             .onTapGesture(perform: open)
             .accessibilityAddTraits(.isButton)
-            // Resting on the row, the meta steps aside for the title; nested rows leave the
-            // age and commit count to the tooltip.
-            if let git, !expandTitle {
+            // The badge stays while the pointer is on the row: information must not be
+            // hover-only (the title may truncate a little sooner — that's the honest trade).
+            if let git {
                 #if DEBUG
                 let _ = SidebarProbe.badgeBodies += 1
                 #endif
                 GitBadgeView(display: git.display, muted: !running && !selected, help: git.help, card: git.card)
                     .padding(.leading, 5)
-            }
-            if !expandTitle, !nested {
-                let now = SidebarClock.shared.now
-                Group {
-                    // Running shows the spinner whether the app knows it live (a conversation
-                    // open here, following a worker included) or only from recent activity.
-                    if live == .running || live == nil, now.timeIntervalSince(session.modifiedDate) < 30 {
-                        Text(SessionAgeShort.age(session.modifiedDate, now: now))
-                            .font(.system(size: 11, design: .rounded).monospacedDigit())
-                            .foregroundStyle(.tertiary).padding(.leading, 5).padding(.trailing, 2)
-                    } else {
-                        Text(SessionAgeShort.age(session.modifiedDate, now: now))
-                            .font(.system(size: 11, design: .rounded).monospacedDigit())
-                            .foregroundStyle(.tertiary).padding(.leading, 5).padding(.trailing, 2)
-                    }
-                }
             }
             glyphView.padding(.leading, 5)
             // Nested rows show the menu button only under the pointer (the context menu is
