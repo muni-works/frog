@@ -1326,7 +1326,7 @@ struct CompactSessionRow<Menu: View>: View {
     let open: () -> Void
     @ViewBuilder let menu: () -> Menu
     @State private var hovering = false
-    /// Hovered a moment: the title wraps to show all of itself and the meta steps aside.
+    /// Hovered a moment: the title wraps to show all of itself.
     @State private var expandTitle = false
 
     /// Nested under the session that started it: the row gives its width to the title.
@@ -1729,27 +1729,13 @@ struct CompactRowContent<Menu: View>: View {
             .contentShape(.rect)
             .onTapGesture(perform: row.open)
             .accessibilityAddTraits(.isButton)
-            // Resting on the row, the meta steps aside for the title; nested rows leave the
-            // age and commit count to the tooltip.
-            if let git = row.git, !expandTitle {
+            // The badge is information: it stays in the row for as long as the pointer is on
+            // it, even once the title has unwrapped — it must not pop out under the cursor
+            // (Cam, 2026-11-13, three reports). The age and commit count stay nested-only,
+            // left to the tooltip.
+            if let git = row.git {
                 GitBadgeView(display: git.display, muted: !running && !row.selected, help: git.help, card: git.card)
                     .padding(.leading, 5)
-            }
-            if !expandTitle, !row.nested {
-                let now = SidebarClock.shared.now
-                Group {
-                    // Running shows the spinner whether the app knows it live (a conversation
-                    // open here, following a worker included) or only from recent activity.
-                    if row.live == .running || row.live == nil, now.timeIntervalSince(row.session.modifiedDate) < 30 {
-                        Text(SessionAgeShort.age(row.session.modifiedDate, now: now))
-                            .font(.system(size: 11, design: .rounded).monospacedDigit())
-                            .foregroundStyle(.tertiary).padding(.leading, 5).padding(.trailing, 2)
-                    } else {
-                        Text(SessionAgeShort.age(row.session.modifiedDate, now: now))
-                            .font(.system(size: 11, design: .rounded).monospacedDigit())
-                            .foregroundStyle(.tertiary).padding(.leading, 5).padding(.trailing, 2)
-                    }
-                }
             }
             row.glyphView.padding(.leading, 5)
             // Nested rows show the menu button only under the pointer (the context menu is
