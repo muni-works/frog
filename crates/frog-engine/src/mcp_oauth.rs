@@ -61,12 +61,28 @@ pub(crate) fn authorize_url(
 pub fn system_browser() -> Browser {
     Arc::new(|url: String| {
         opened().lock().unwrap().push(url.clone());
-        // Under test nothing is launched: the URL is recorded for the assertion instead.
+        // Under test nothing is launched: the URL is recorded for the assertion instead. A
+        // test that needs the flow to *finish* (a session's Sign in button) installs a stand-in
+        // with `set_test_browser`.
         if cfg!(test) {
+            if let Some(play) = TEST_BROWSER.lock().unwrap().clone() {
+                play(url);
+            }
             return;
         }
         let _ = std::process::Command::new("open").arg(url).spawn();
     })
+}
+
+/// A test's stand-in for the browser: what to do with an authorization URL so the flow can
+/// complete without a real one.
+static TEST_BROWSER: Mutex<Option<Arc<dyn Fn(String) + Send + Sync>>> = Mutex::new(None);
+
+/// Play the browser's part in tests: `play` gets each authorization URL the engine opens.
+/// `None` restores the record-only behaviour.
+#[cfg(test)]
+pub(crate) fn set_test_browser(play: Option<Arc<dyn Fn(String) + Send + Sync>>) {
+    *TEST_BROWSER.lock().unwrap() = play;
 }
 
 /// The URLs a browser was asked to open for MCP in this process, in order. A connect must

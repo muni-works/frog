@@ -620,13 +620,15 @@ async fn run() -> Result<bool> {
         }
         if !cli.json {
             for st in &status {
-                match (&st.error, st.needs_auth) {
-                    (Some(e), _) => println!("✗ {}  {e}", st.name),
-                    (None, true) => println!(
+                // A server wanting a sign-in also carries an error line (it is one), so it
+                // must be matched first or the actionable line never shows.
+                match (st.needs_auth, &st.error) {
+                    (true, _) => println!(
                         "✗ {}  not signed in · sign in from Settings → MCP in the app",
                         st.name
                     ),
-                    (None, false) => println!(
+                    (false, Some(e)) => println!("✗ {}  {e}", st.name),
+                    (false, None) => println!(
                         "✓ {}  {} tools: {}",
                         st.name,
                         st.tools.len(),

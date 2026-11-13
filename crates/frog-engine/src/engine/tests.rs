@@ -1973,6 +1973,27 @@ async fn titled_sessions_are_not_renamed_by_the_fallback() {
     );
 }
 
+/// The refusal state's override is process-wide, so the tests that use it take turns.
+static REFUSALS: Mutex<()> = Mutex::new(());
+
+/// A scratch dir for MCP refusal state, held for the test's life: the lock keeps the tests
+/// that use it from racing, and dropping it restores the real data dir.
+struct RefusalDir(#[allow(dead_code)] std::sync::MutexGuard<'static, ()>);
+
+impl RefusalDir {
+    fn new() -> Self {
+        let guard = REFUSALS.lock().unwrap_or_else(|e| e.into_inner());
+        crate::mcp::refusals_in(Some(tmp_store().join("refusals")));
+        Self(guard)
+    }
+}
+
+impl Drop for RefusalDir {
+    fn drop(&mut self) {
+        crate::mcp::refusals_in(None);
+    }
+}
+
 fn tmp_store() -> PathBuf {
     let d = std::env::temp_dir().join(format!("frog-engine-test-{}", session::new_id()));
     std::fs::create_dir_all(&d).unwrap();
@@ -12322,3 +12343,322 @@ async fn prs_bind_from_gh_pr_create_and_by_hand() {
     let _ = std::fs::remove_dir_all(base);
 }
 
+
+
+/// The whole point of this change, end to end through a real engine: opening a session whose
+/// project configures a server that answers 401 must not open a browser, must report the
+/// server as `needs_auth`, and must leave that server's tools out of the model's list.
+///
+/// The assertion that matters is [`crate::mcp_oauth::opened`]: the old code was right by
+/// every return value — the connect returned, the turn ran, the session went on — while a
+/// system-modal window appeared. Only counting browser calls catches that.
+#[tokio::test]
+async fn a_session_with_a_server_that_wants_a_sign_in_opens_no_browser() {
+    let _memory = crate::mcp_oauth::use_memory_store();
+    let (web, mock) = crate::mcp_oauth::tests::start_mock("tok-session");
+    let dir = tmp_store();
+    // The project's own server, at the mock's OAuth-protected `/mcp`.
+    let cfg = json!({"mcpServers": {"protected": {"type": "http", "url": web.url("/mcp")}}});
+    std::fs::write(dir.join(".mcp.json"), cfg.to_string()).unwrap();
+    let before = crate::mcp_oauth::opened().lock().unwrap().len();
+
+    let (mut h, sent) = engine_sent(
+        vec![reply(vec![text("done")], Stop::End)],
+        Some(dir.clone()),
+        None,
+        None,
+        dir.clone(),
+    );
+    // Wait for the connect to settle: the server's row arrives saying it wants a sign-in.
+    let mut events = Vec::new();
+    let report = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let env = h.events.recv().await.unwrap();
+            let found = match &env.event {
+                Event::McpServers { servers } => {
+                    servers.iter().find(|s| s.name == "protected").cloned()
+                }
+                _ => None,
+            };
+            events.push(env);
+            if let Some(s) = found.filter(|s| s.needs_auth || s.connected) {
+                break s;
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|e| {
+        // Check the browser first even on the way out: with `authorize` back on the connect
+        // path this is where the test lands (the connect sits in the 15-minute sign-in
+        // instead of reporting), and the browser is the thing worth naming.
+        let opened = crate::mcp_oauth::opened().lock().unwrap();
+        assert_eq!(
+            opened.len(),
+            before,
+            "opening a session opened a browser: {:?}",
+            &opened[before..]
+        );
+        panic!(
+            "no settled report for `protected`: {e:?}; events: {:#?}",
+            events
+                .iter()
+                .map(|e| format!("{:?}", e.event))
+                .collect::<Vec<_>>()
+        );
+    });
+
+    // 1. No browser. This is the assertion; every return value would have been right anyway.
+    assert_eq!(
+        crate::mcp_oauth::opened().lock().unwrap().len(),
+        before,
+        "opening a session opened a browser: {:?}",
+        &crate::mcp_oauth::opened().lock().unwrap()[before..]
+    );
+
+    // 2. The state is its own thing, not a generic error, so a client can offer a button.
+    assert!(
+        report.needs_auth,
+        "401 with a challenge is needs_auth, not a bare error: {report:?}"
+    );
+    assert!(!report.connected);
+    assert!(report.tools.is_empty(), "signed out means no tools: {:?}", report.tools);
+
+    // 3. Its tools are absent from what the model is offered. (`run` waits for the startup
+    //    `Idle` first and the loop above already consumed it, so the turn is driven by hand.)
+    h.ops
+        .send(Op::Submit {
+            text: "hello".into(),
+            images: Vec::new(),
+            more: Vec::new(),
+        })
+        .unwrap();
+    loop {
+        if matches!(h.events.recv().await.unwrap().event, Event::Idle) {
+            break;
+        }
+    }
+    let sent = sent.lock().unwrap()[0].clone();
+    assert!(
+        !sent.contains("mcp__protected__echo"),
+        "a signed-out server's tools must not be offered: {sent}"
+    );
+    // Not silent either: the prompt says which server is configured and why it's missing.
+    assert!(
+        sent.contains("protected"),
+        "the model is told about the configured-but-signed-out server: {sent}"
+    );
+
+    shutdown(h).await;
+    drop(mock);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+
+/// Declining is remembered, so the next session doesn't raise it again: the row still says the
+/// server is signed out (never silent), but as "you declined" rather than a fresh ask.
+#[tokio::test]
+async fn a_declined_sign_in_is_remembered_by_the_next_session() {
+    let _memory = crate::mcp_oauth::use_memory_store();
+    let _refusals = RefusalDir::new();
+    let (web, mock) = crate::mcp_oauth::tests::start_mock("tok-decline");
+    let dir = tmp_store();
+    let cfg = json!({"mcpServers": {"protected": {"type": "http", "url": web.url("/mcp")}}});
+    std::fs::write(dir.join(".mcp.json"), cfg.to_string()).unwrap();
+    let opened_before = crate::mcp_oauth::opened().lock().unwrap().len();
+
+    // Session 1: the server is signed out, and the person declines it.
+    let (mut h, _sent) = engine_sent(
+        vec![reply(vec![text("ok")], Stop::End)],
+        Some(dir.clone()),
+        None,
+        None,
+        dir.clone(),
+    );
+    let mut seen = Vec::new();
+    loop {
+        let env = h.events.recv().await.unwrap();
+        let declined = match &env.event {
+            Event::McpServers { servers } => servers
+                .iter()
+                .find(|s| s.name == "protected")
+                .is_some_and(|s| s.needs_auth),
+            _ => false,
+        };
+        seen.push(env);
+        if declined {
+            break;
+        }
+    }
+    h.ops
+        .send(Op::McpSignIn {
+            server: "protected".into(),
+            decline: true,
+        })
+        .unwrap();
+    // The answer: a fresh list with the refusal recorded.
+    let mut declined_row = None;
+    tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            let env = h.events.recv().await.unwrap();
+            if let Event::McpServers { servers } = &env.event
+                && let Some(s) = servers.iter().find(|s| s.name == "protected" && s.declined)
+            {
+                declined_row = Some(s.clone());
+                break;
+            }
+        }
+    })
+    .await
+    .expect("the refusal is reported");
+    shutdown(h).await;
+    assert!(
+        declined_row.unwrap().needs_auth,
+        "declining doesn't make it connected; it stays signed out"
+    );
+
+    // Session 2, same project: still signed out, still marked as declined, still no browser.
+    let (mut h2, _s2) = engine_sent(
+        vec![reply(vec![text("ok")], Stop::End)],
+        Some(dir.clone()),
+        None,
+        None,
+        dir.clone(),
+    );
+    let mut row = None;
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let env = h2.events.recv().await.unwrap();
+            if let Event::McpServers { servers } = &env.event
+                && let Some(s) = servers.iter().find(|s| s.name == "protected" && s.needs_auth)
+            {
+                row = Some(s.clone());
+                break;
+            }
+        }
+    })
+    .await
+    .expect("the next session still reports it");
+    let row = row.unwrap();
+    assert!(row.declined, "the refusal outlived the session that made it: {row:?}");
+    assert_eq!(
+        crate::mcp_oauth::opened().lock().unwrap().len(),
+        opened_before,
+        "neither session opened a browser"
+    );
+    shutdown(h2).await;
+    drop(mock);
+    // Leave the machine as we found it: the refusal is per configuration, and the next test
+    // (or a real session) shouldn't inherit this one's.
+    crate::mcp::forget_refusal(&crate::mcp::auth_key(
+        "protected",
+        &crate::mcp::ServerConfig {
+            url: Some(web.url("/mcp")),
+            ..Default::default()
+        },
+    ));
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Signing in from the card (or Settings) is what brings the tools back: the same session,
+/// the same live hub, no restart. The browser opens here — and only here.
+#[tokio::test]
+async fn signing_in_from_the_session_installs_the_tools() {
+    let _memory = crate::mcp_oauth::use_memory_store();
+    let _refusals = RefusalDir::new();
+    let (web, mock) = crate::mcp_oauth::tests::start_mock("tok-signin");
+    let dir = tmp_store();
+    let cfg = json!({"mcpServers": {"protected": {"type": "http", "url": web.url("/mcp")}}});
+    std::fs::write(dir.join(".mcp.json"), cfg.to_string()).unwrap();
+
+    let (mut h, sent) = engine_sent(
+        vec![
+            reply(vec![text("first")], Stop::End),
+            reply(vec![text("second")], Stop::End),
+        ],
+        Some(dir.clone()),
+        None,
+        None,
+        dir.clone(),
+    );
+    // Wait until the server is reported signed out (the connect has settled).
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let env = h.events.recv().await.unwrap();
+            if let Event::McpServers { servers } = &env.event
+                && servers
+                    .iter()
+                    .any(|s| s.name == "protected" && s.needs_auth)
+            {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("the server is reported signed out");
+    let before = crate::mcp_oauth::opened().lock().unwrap().len();
+    // The engine's browser would launch `open`; here it plays the browser's part instead, so
+    // the flow can complete: the mock's authorization endpoint is the redirect frog's own
+    // listener expects.
+    crate::mcp_oauth::set_test_browser(Some(Arc::new(crate::mcp_oauth::tests::fake_browser)));
+
+    // The person presses Sign in.
+    h.ops
+        .send(Op::McpSignIn {
+            server: "protected".into(),
+            decline: false,
+        })
+        .unwrap();
+    let mut signed_in = false;
+    let mut row_connected = false;
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let env = h.events.recv().await.unwrap();
+            match &env.event {
+                Event::McpSignedIn { server, tools } if server == "protected" => {
+                    signed_in = true;
+                    assert_eq!(tools, &["echo".to_string()], "the tools come back with it");
+                }
+                Event::McpServers { servers } => {
+                    row_connected |= servers.iter().any(|s| s.name == "protected" && s.connected);
+                }
+                _ => {}
+            }
+            if signed_in && row_connected {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("the sign-in completes and the server connects");
+
+    // The browser: opened by this explicit request, and not by anything else.
+    assert!(
+        crate::mcp_oauth::opened().lock().unwrap().len() > before,
+        "an explicit sign-in is the one thing that opens a browser"
+    );
+
+    // And the tools are now offered to the model.
+    h.ops
+        .send(Op::Submit {
+            text: "hello".into(),
+            images: Vec::new(),
+            more: Vec::new(),
+        })
+        .unwrap();
+    loop {
+        if matches!(h.events.recv().await.unwrap().event, Event::Idle) {
+            break;
+        }
+    }
+    let sent = sent.lock().unwrap();
+    let last = sent.last().cloned().unwrap_or_default();
+    assert!(
+        last.contains("mcp__protected__echo"),
+        "after signing in the server's tools are offered: {last}"
+    );
+    drop(sent);
+    shutdown(h).await;
+    crate::mcp_oauth::set_test_browser(None);
+    drop(mock);
+    let _ = std::fs::remove_dir_all(dir);
+}

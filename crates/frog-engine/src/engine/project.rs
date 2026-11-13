@@ -13,6 +13,7 @@ impl Agent {
     /// [`Agent::sign_in_mcp`], from an explicit request, opens a browser.
     pub(super) fn connect_mcp(&mut self) {
         self.mcp_pending = None;
+        self.mcp_tx = None;
         if self.subagent {
             return;
         }
@@ -37,7 +38,9 @@ impl Agent {
                 let _ = tx.send(delta);
             });
         }
-        drop(tx);
+        // Kept, not dropped: the queue's sender outlives this loop so a sign-in's reconnect
+        // can join it later (see `sign_in_mcp`).
+        self.mcp_tx = Some(tx);
         self.mcp_pending = Some(rx);
         // Configuring a server is not the same as having its tools: say which are configured
         // (and which want a sign-in) from the start, before any of them answers.
@@ -50,8 +53,7 @@ impl Agent {
     /// The sign-in itself runs in the background: the browser can sit open for minutes, and
     /// the engine must stay responsive (the user may never finish, or may close the tab). The
     /// outcome arrives as [`Event::McpSignedIn`] or [`Event::McpSignedOut`]; on success the
-    /// server's reconnect goes through the ordinary pending queue, so its tools are installed
-    /// at the next turn boundary like any late server's.
+    /// reconnect goes through the ordinary pending queue and installs as soon as it lands.
     pub(super) fn sign_in_mcp(&mut self, server: String, decline: bool) {
         if self.subagent {
             return;
@@ -65,7 +67,14 @@ impl Agent {
         };
         let key = crate::mcp::auth_key(&server, &cfg);
         if decline {
-            crate::mcp::refuse_sign_in(&key);
+            // If it can't be recorded, say so: a refusal that quietly fails to stick comes
+            // back next session, which is the whole complaint this change fixes.
+            if let Err(e) = crate::mcp::refuse_sign_in(&key) {
+                self.notice(
+                    Level::Warn,
+                    format!("couldn't remember declining `{server}`'s sign-in ({e}); it will ask again next session"),
+                );
+            }
             self.emit(Event::McpSignedOut {
                 server,
                 error: None,
@@ -75,15 +84,16 @@ impl Agent {
         }
         // Asked for on purpose, so no longer remembered as refused.
         crate::mcp::forget_refusal(&key);
-        // The reconnect goes through the queue the engine already polls, so its tools land at
-        // the next turn boundary like any late server's. With no connect in flight (every
-        // server finished long ago), open one for it.
-        let tx = match self.mcp_pending.as_ref() {
-            Some(_) => None,
+        // The reconnect reports through the queue the engine polls, so its tools install as
+        // soon as it lands — between turns, or mid-turn at the next step (a mid-turn merge
+        // waits for the step after it, since tools change the prompt's cached prefix).
+        let tx = match &self.mcp_tx {
+            Some(tx) => tx.clone(),
             None => {
                 let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+                self.mcp_tx = Some(tx.clone());
                 self.mcp_pending = Some(rx);
-                Some(tx)
+                tx
             }
         };
         // The live hub, so the reconnected server joins this session rather than a fresh one.
@@ -100,9 +110,7 @@ impl Agent {
                         .find(|s| s.name == server)
                         .map(|s| s.tools)
                         .unwrap_or_default();
-                    if let Some(tx) = tx {
-                        let _ = tx.send(delta);
-                    }
+                    let _ = tx.send(delta);
                     journal.emit(Event::McpSignedIn { server, tools });
                 }
                 Err(e) => journal.emit(Event::McpSignedOut {

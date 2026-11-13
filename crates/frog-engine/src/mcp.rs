@@ -186,7 +186,25 @@ fn quarantine_key(server: &str, t: &Tool) -> String {
 /// if nobody had ever declined. Keyed by server **and** its configuration: editing the URL
 /// or the headers is a change of mind, and asks again.
 fn refused_path() -> PathBuf {
+    // Tests point this at a scratch file (see `refusals_in`): a refusal is real user state,
+    // and a test must never write into the person's data dir, nor depend on being allowed to.
+    if let Some(dir) = refusals_dir() {
+        return dir.join("mcp-signin-refused");
+    }
     crate::config::data_dir().join("mcp-signin-refused")
+}
+
+/// Where refusals are recorded. The data dir, unless a test has redirected it.
+fn refusals_dir() -> Option<PathBuf> {
+    REFUSALS_DIR.lock().unwrap().clone()
+}
+
+/// Route refusals to `dir` for this process. Tests only; `None` restores the data dir.
+static REFUSALS_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+#[cfg(test)]
+pub(crate) fn refusals_in(dir: Option<PathBuf>) {
+    *REFUSALS_DIR.lock().unwrap() = dir;
 }
 
 /// Whether this machine has already refused `key`'s sign-in.
@@ -203,20 +221,23 @@ fn refused_in(path: &Path, key: &str) -> bool {
 
 /// Remember that `key`'s sign-in was declined, so no later session raises it again. Undone by
 /// [`forget_refusal`] when a person signs in from the settings panel.
-pub fn refuse_sign_in(key: &str) {
-    let _ = record_refused(&refused_path(), key);
+///
+/// Returns the write's outcome so the caller can say so: a refusal that silently failed to
+/// stick is the bug this exists to prevent, coming back next session.
+pub fn refuse_sign_in(key: &str) -> std::io::Result<()> {
+    record_refused(&refused_path(), key)
 }
 
 fn record_refused(path: &Path, key: &str) -> std::io::Result<()> {
-    if path.parent().is_some_and(|d| std::fs::create_dir_all(d).is_err()) {
-        return Err(std::io::Error::other("no data dir"));
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
     }
     use std::io::Write;
-    std::fs::OpenOptions::new()
+    let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(path)
-        .and_then(|mut f| writeln!(f, "{key}"))
+        .open(path)?;
+    writeln!(file, "{key}")
 }
 
 /// Forget a refusal: a sign-in succeeded, or the configuration changed enough to ask again.
@@ -659,8 +680,21 @@ impl Hub {
     }
 
     pub fn status(&self) -> Vec<ServerStatus> {
-        let mut all: Vec<ServerStatus> = self.inner.failed.read().unwrap().clone();
-        for (name, s) in self.inner.servers.read().unwrap().iter() {
+        // A server that failed once and connected later (a sign-in, a refresh, the server
+        // coming up) is connected: its old failure is history, not a second row. Without this
+        // a signed-in server shows up twice — once "signed out", once with its tools — and
+        // the "Sign in" button never goes away.
+        let servers = self.inner.servers.read().unwrap();
+        let mut all: Vec<ServerStatus> = self
+            .inner
+            .failed
+            .read()
+            .unwrap()
+            .iter()
+            .filter(|f| !servers.contains_key(&f.name))
+            .cloned()
+            .collect();
+        for (name, s) in servers.iter() {
             let mut st = ServerStatus {
                 name: name.clone(),
                 connected: true,
@@ -808,6 +842,26 @@ impl Hub {
             out.push_str(&format!(
                 "\n\nMCP servers {} offer more tools than are loaded. The loaded ones are in your tool list; call them directly (never through Bash). For anything else, call `{SEARCH_TOOL}` with a few keywords (or `select:name,name`) to load it; loaded tools can be called from your next step.",
                 counts.join(", ")
+            ));
+        }
+        // A configured server whose tools are missing because nobody signed in: say it, so the
+        // model doesn't conclude the tool doesn't exist and work around it. This is the
+        // counterweight to never opening a browser on connect — silent absence is the other
+        // failure mode.
+        let signed_out: Vec<String> = self
+            .inner
+            .failed
+            .read()
+            .unwrap()
+            .iter()
+            .filter(|f| f.needs_auth)
+            .map(|f| format!("`{}`", f.name))
+            .collect();
+        if !signed_out.is_empty() {
+            out.push_str(&format!(
+                "\n\nMCP servers {} {} signed out, so none of their tools are available in this session. The person can sign in from Settings → MCP in the frog app; until then, don't claim to use those tools, and say so if the task needs one.",
+                signed_out.join(", "),
+                if signed_out.len() == 1 { "is" } else { "are" }
             ));
         }
         out
@@ -1694,6 +1748,7 @@ pub fn unavailable_summary(failed: &[(String, String)]) -> Option<String> {
 #[cfg(test)]
 mod unavailable_tests {
     use super::*;
+
 
     /// A refusal outlives the session that made it: that's the whole point, since every
     /// session open reconnects. Changing the server's configuration is a change of mind and
