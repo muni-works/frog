@@ -12544,6 +12544,7 @@ async fn prs_bind_from_gh_pr_create_and_by_hand() {
 /// system-modal window appeared. Only counting browser calls catches that.
 #[tokio::test]
 async fn a_session_with_a_server_that_wants_a_sign_in_opens_no_browser() {
+    let _turn = crate::mcp_oauth::browser_tests();
     let _memory = crate::mcp_oauth::use_memory_store();
     let (web, mock) = crate::mcp_oauth::tests::start_mock("tok-session");
     let dir = tmp_store();
@@ -12598,11 +12599,14 @@ async fn a_session_with_a_server_that_wants_a_sign_in_opens_no_browser() {
     });
 
     // 1. No browser. This is the assertion; every return value would have been right anyway.
+    // One snapshot: locking `opened()` again inside the message would deadlock on the guard
+    // this expression already holds.
+    let opened_now = crate::mcp_oauth::opened().lock().unwrap().clone();
     assert_eq!(
-        crate::mcp_oauth::opened().lock().unwrap().len(),
+        opened_now.len(),
         before,
         "opening a session opened a browser: {:?}",
-        &crate::mcp_oauth::opened().lock().unwrap()[before..]
+        &opened_now[before..]
     );
 
     // 2. The state is its own thing, not a generic error, so a client can offer a button.
@@ -12649,6 +12653,7 @@ async fn a_session_with_a_server_that_wants_a_sign_in_opens_no_browser() {
 #[tokio::test]
 async fn a_declined_sign_in_is_remembered_by_the_next_session() {
     let _memory = crate::mcp_oauth::use_memory_store();
+    let _turn = crate::mcp_oauth::browser_tests();
     let _refusals = RefusalDir::new();
     let (web, mock) = crate::mcp_oauth::tests::start_mock("tok-decline");
     let dir = tmp_store();
@@ -12754,6 +12759,7 @@ async fn a_declined_sign_in_is_remembered_by_the_next_session() {
 #[tokio::test]
 async fn signing_in_from_the_session_installs_the_tools() {
     let _memory = crate::mcp_oauth::use_memory_store();
+    let _turn = crate::mcp_oauth::browser_tests();
     let _refusals = RefusalDir::new();
     let (web, mock) = crate::mcp_oauth::tests::start_mock("tok-signin");
     let dir = tmp_store();
@@ -12789,7 +12795,7 @@ async fn signing_in_from_the_session_installs_the_tools() {
     // The engine's browser would launch `open`; here it plays the browser's part instead, so
     // the flow can complete: the mock's authorization endpoint is the redirect frog's own
     // listener expects.
-    crate::mcp_oauth::set_test_browser(Some(Arc::new(crate::mcp_oauth::tests::fake_browser)));
+    let _browser = crate::mcp_oauth::test_browser(Arc::new(crate::mcp_oauth::tests::fake_browser));
 
     // The person presses Sign in.
     h.ops
@@ -12848,7 +12854,6 @@ async fn signing_in_from_the_session_installs_the_tools() {
     );
     drop(sent);
     shutdown(h).await;
-    crate::mcp_oauth::set_test_browser(None);
     drop(mock);
     let _ = std::fs::remove_dir_all(dir);
 }

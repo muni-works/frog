@@ -78,11 +78,34 @@ pub fn system_browser() -> Browser {
 /// complete without a real one.
 static TEST_BROWSER: Mutex<Option<Arc<dyn Fn(String) + Send + Sync>>> = Mutex::new(None);
 
-/// Play the browser's part in tests: `play` gets each authorization URL the engine opens.
-/// `None` restores the record-only behaviour.
+/// The browser stand-in and [`opened`] are process-wide, so tests that use either take turns
+/// on this. A test asserting "no browser opened" must not run beside one that deliberately
+/// opens one, or it sees that test's URL.
+static BROWSER_TESTS: Mutex<()> = Mutex::new(());
+
+/// Take the browser tests' turn. Returns a guard; hold it for the test's life.
 #[cfg(test)]
-pub(crate) fn set_test_browser(play: Option<Arc<dyn Fn(String) + Send + Sync>>) {
-    *TEST_BROWSER.lock().unwrap() = play;
+pub(crate) fn browser_tests() -> std::sync::MutexGuard<'static, ()> {
+    BROWSER_TESTS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Play the browser's part in tests: the returned guard keeps `play` in place for its life and
+/// restores the record-only behaviour after — or on a panic, which matters because the tests
+/// that set one run beside tests that assert no browser opened.
+#[cfg(test)]
+pub(crate) fn test_browser(play: Arc<dyn Fn(String) + Send + Sync>) -> TestBrowser {
+    *TEST_BROWSER.lock().unwrap() = Some(play);
+    TestBrowser
+}
+
+#[cfg(test)]
+pub(crate) struct TestBrowser;
+
+#[cfg(test)]
+impl Drop for TestBrowser {
+    fn drop(&mut self) {
+        *TEST_BROWSER.lock().unwrap() = None;
+    }
 }
 
 /// The URLs a browser was asked to open for MCP in this process, in order. A connect must
@@ -1237,6 +1260,7 @@ pub(crate) mod tests {
     /// `authorize` is put back on the connect path, `opened` grows and this fails.
     #[tokio::test(flavor = "multi_thread")]
     async fn connect_never_opens_a_browser_and_reports_needs_auth() {
+        let _turn = browser_tests();
         let world = World::start("tok-4");
         let cfg = crate::mcp::ServerConfig {
             url: Some(world.url.clone()),
@@ -1247,11 +1271,14 @@ pub(crate) mod tests {
         hub.connect_one_into(world.name.clone(), cfg).await;
 
         // The browser: not at all. Every return value could have been right while this grew.
+        // One snapshot, taken before the assertion: locking `opened()` again inside the
+        // message would deadlock on the guard this expression already holds.
+        let opened_now = opened().lock().unwrap().clone();
         assert_eq!(
-            opened().lock().unwrap().len(),
+            opened_now.len(),
             before,
             "connecting must not open a browser; it opened {:?}",
-            &opened().lock().unwrap()[before..]
+            &opened_now[before..]
         );
         // The state: distinguishable from a generic error, so a client can offer a button.
         let status = hub
@@ -1272,6 +1299,7 @@ pub(crate) mod tests {
     /// the tools.
     #[tokio::test(flavor = "multi_thread")]
     async fn signing_in_on_request_connects_and_lists_tools() {
+        let _turn = browser_tests();
         let world = World::start("tok-4b");
         let cfg = crate::mcp::ServerConfig {
             url: Some(world.url.clone()),
