@@ -591,6 +591,9 @@ struct VerbLine: Equatable {
     var failed = false
     /// You said no: a quiet "denied" tag, not a red failure (as on the web).
     var denied = false
+    /// Yolo ran the call outside the shell sandbox: a quiet "sandbox" tag, not a second
+    /// notice row (its `EgressWidened` said so; the row is the record).
+    var sandboxEscaped = false
     /// A thought: quieter, no icon.
     var quiet = false
     /// The step it says, for putting a failed command's output under its own line.
@@ -599,6 +602,7 @@ struct VerbLine: Equatable {
     static func == (a: VerbLine, b: VerbLine) -> Bool {
         a.icon == b.icon && a.verb == b.verb && a.arg == b.arg && a.detail == b.detail
             && a.diff?.added == b.diff?.added && a.diff?.removed == b.diff?.removed && a.failed == b.failed && a.denied == b.denied
+            && a.sandboxEscaped == b.sandboxEscaped
     }
 
     /// A group's lines: a thought only when nothing else happened, repeated plan updates once.
@@ -624,6 +628,7 @@ struct VerbLine: Equatable {
             let failed = item.result.map { $0.outcome == .error } ?? false
             var v = VerbLine(icon: ToolLook.icon(name), verb: "Used \(ToolIcon.title(name))", arg: arg.isEmpty ? nil : short(arg), failed: failed)
             v.denied = item.result?.outcome == .denied
+            v.sandboxEscaped = item.sandboxEscaped
             v.itemID = item.id
             switch name {
             case "Read": v.verb = "Read"
@@ -682,6 +687,7 @@ struct VerbLineView: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 if line.failed { FailedTag() } else if line.denied { DeniedTag() }
+                if line.sandboxEscaped { SandboxTag() }
             }
         }
     }
@@ -727,5 +733,18 @@ struct FailedTag: View {
             .padding(.horizontal, 6)
             .padding(.vertical, 1)
             .background(Tokens.fail.opacity(0.14), in: .rect(cornerRadius: 5))
+    }
+}
+
+/// A call that ran outside the shell sandbox, on its own row (yolo's `EgressWidened` said
+/// `sandbox_left`): "⌫ sandbox", quiet, on the hover fill like `DeniedTag`.
+struct SandboxTag: View {
+    var body: some View {
+        Text(verbatim: "⌫ sandbox")
+            .font(.frog(size: 11, weight: .medium))
+            .foregroundStyle(Tokens.textSecondary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 1)
+            .background(Tokens.hover, in: .rect(cornerRadius: 5))
     }
 }
