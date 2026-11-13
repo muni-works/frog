@@ -1290,8 +1290,7 @@ fn classify(e: &anyhow::Error) -> EngineError {
             message: c.0.clone(),
         };
     }
-    // The same transport classes retryable() accepts, plus a plain connect failure (which the
-    // retry arm handles through cloud_fallback): all of them are the network, not frog.
+    // The same transport classes retryable() accepts, plus a plain connect failure: all of them are the network, not frog.
     let network = e
         .chain()
         .filter_map(|c| c.downcast_ref::<reqwest::Error>())
@@ -1329,15 +1328,6 @@ fn retryable(e: &anyhow::Error) -> bool {
     e.chain()
         .filter_map(|c| c.downcast_ref::<reqwest::Error>())
         .any(|r| r.is_timeout() || r.is_body() || r.is_decode() || (r.is_request() && !r.is_connect()))
-}
-
-/// frog's local model server answers (it listens on 127.0.0.1:8911 when running).
-fn local_server_up() -> bool {
-    std::net::TcpStream::connect_timeout(
-        &std::net::SocketAddr::from(([127, 0, 0, 1], 8911)),
-        Duration::from_millis(200),
-    )
-    .is_ok()
 }
 
 pub(crate) fn now_ms() -> i64 {
