@@ -45,6 +45,7 @@ final class TokensTests: XCTestCase {
     private let colors: [String: Color] = [
         "canvas": Tokens.canvas, "sidebar": Tokens.sidebar, "raised": Tokens.raised, "bubble": Tokens.bubble,
         "well": Tokens.well, "hover": Tokens.hover, "hairline": Tokens.hairline, "hairlineStrong": Tokens.hairlineStrong,
+        "line": Tokens.line,
         "text": Tokens.text, "textSecondary": Tokens.textSecondary, "textTertiary": Tokens.textTertiary,
         "textQuaternary": Tokens.textQuaternary, "accent": Tokens.accent, "signal": Tokens.signal, "fail": Tokens.fail,
         "placeLocal": Tokens.placeLocal, "placeCloud": Tokens.placeCloud,
