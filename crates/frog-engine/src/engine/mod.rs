@@ -1630,6 +1630,9 @@ struct Agent {
     /// Calls denied on a card this turn (hash of tool + arguments → what the denial said):
     /// an identical retry this turn doesn't ask again, it ends the turn (`BlockedOnApproval`).
     turn_denied: HashMap<u64, String>,
+    /// Calls auto mode denied without a card this turn (hash of tool + arguments): the
+    /// person heard about each one once, and the loop guard below handles repeats.
+    turn_denied_unasked: HashSet<u64>,
     /// How many times each carded call (hash of tool + arguments) was denied this session;
     /// at `DENIED_LIMIT` it's auto-denied without a card for the rest of the session.
     session_denied: HashMap<u64, u32>,
@@ -1899,6 +1902,7 @@ impl Agent {
             prefix_allow: Vec::new(),
             last_note: None,
             turn_denied: HashMap::new(),
+            turn_denied_unasked: HashSet::new(),
             session_denied: HashMap::new(),
             blocked: None,
             vision: false,

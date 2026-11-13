@@ -302,6 +302,7 @@ impl Agent {
         self.turn_usage = TurnUsage::default();
         // A new turn may ask again what the last one was denied (the session's breaker still holds).
         self.turn_denied.clear();
+        self.turn_denied_unasked.clear();
         self.blocked = None;
         // Wakes a stop held go along with this turn (below); later ones start turns again.
         self.shared.wake_hold.store(false, Ordering::SeqCst);
