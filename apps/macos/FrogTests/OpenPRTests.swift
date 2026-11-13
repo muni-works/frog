@@ -98,7 +98,9 @@ final class OpenPRTests: XCTestCase {
         XCTAssertTrue(OpenPR.offers(.auto, eligible))
         // "auto" is not auto: it resolves to "ask" and offers nothing more.
         XCTAssertEqual(OpenPR.Setting.auto.effective, .ask)
-        XCTAssertEqual(OpenPR.Setting.default, .ask)
+        // The default is `ask` in code: a config that says nothing about it parses to `ask`.
+        XCTAssertEqual(OpenPR.Setting(rawValue: "ask"), .some(.ask))
+        // And `auto` does not smuggle an excluded session past the predicate.
         XCTAssertFalse(OpenPR.offers(.auto, .init(worktree: true, ahead: 2, hasChildren: true)))
     }
 }

@@ -31,7 +31,10 @@ enum OpenPR {
     }
 
     /// Everything the decision depends on. Each one is a reason not to open a PR on its own.
-    struct Input: Equatable, Sendable {
+    /// `Codable` because the composer carries it in `ComposerModel.State`, which is `Codable`
+    /// for the shared vectors. Decoding is lenient and defaults every unstated fact to "no":
+    /// a client that only knows part of the story never gets an offer it didn't earn.
+    struct Input: Codable, Equatable, Sendable {
         /// The session was started with `worktree: true`: its own branch off the base.
         var worktree: Bool
         /// Commits on that branch its base doesn't have.
@@ -46,6 +49,24 @@ enum OpenPR {
         var readOnly: Bool
         /// This session opted out (see `optedOut(in:)`).
         var optedOut: Bool
+
+        private enum K: String, CodingKey {
+            case worktree, ahead, hasPR, depth, hasChildren, readOnly, optedOut
+        }
+
+        /// Lenient on the way in: every fact but the two that define the case defaults to
+        /// false/0, so a client that only knows part of the story (the shared vectors state
+        /// only what the case is about) still decodes, and the unstated facts read as "no".
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: K.self)
+            worktree = try c.decodeIfPresent(Bool.self, forKey: .worktree) ?? false
+            ahead = try c.decodeIfPresent(Int.self, forKey: .ahead) ?? 0
+            hasPR = try c.decodeIfPresent(Bool.self, forKey: .hasPR) ?? false
+            depth = try c.decodeIfPresent(Int.self, forKey: .depth) ?? 0
+            hasChildren = try c.decodeIfPresent(Bool.self, forKey: .hasChildren) ?? false
+            readOnly = try c.decodeIfPresent(Bool.self, forKey: .readOnly) ?? false
+            optedOut = try c.decodeIfPresent(Bool.self, forKey: .optedOut) ?? false
+        }
 
         init(
             worktree: Bool,

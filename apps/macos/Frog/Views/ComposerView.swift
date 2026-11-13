@@ -128,15 +128,15 @@ struct ComposerView: View {
         s.confirm = local.confirm
         s.stackOpen = local.stackOpen
         s.memory = local.memory
-        s.openPRSetting = conversation.status?.openPrWhenDone.flatMap(OpenPR.Setting.init(rawValue:))
-        s.openPR = openPRInput
+        s.openPrWhenDone = conversation.status?.openPrWhenDone.flatMap(OpenPR.Setting.init(rawValue:))
+        s.openPr = openPrInput
         return s
     }
 
     /// What `OpenPR.shouldOpenPR` decides on (FrogKit/Core/OpenPR.swift). Every fact comes from
     /// what the app already knows: the tree it was started in, the branch's commits, the PRs
     /// bound to it, where it sits in the started-by tree, and whether it only reads.
-    var openPRInput: OpenPR.Input {
+    var openPrInput: OpenPR.Input {
         let id = conversation.sessionID
         let library = Library.shared
         let row = id.flatMap { sid in library.sessions.first { $0.id == sid } }

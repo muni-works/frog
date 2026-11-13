@@ -802,9 +802,12 @@ pub enum Event {
     QueuedEvents {
         items: Vec<String>,
     },
-    /// The wakes turn `turn` opened with, in order: delivered as one batch with its input
-    /// (a message, a session message), ahead of it. A turn started on wakes alone carries
-    /// them as its input instead.
+    /// Background wakes delivered with turn `turn`, in order. Two deliveries: the ones it
+    /// opened with, as one batch ahead of its input (a message, a session message; a turn
+    /// started on wakes alone carries them as its input instead); and any that ended while the
+    /// turn ran, which the engine appends to the running history so the model's next call sees
+    /// them (`turn` → the same turn, a later event). Clients append both to the turn's rows, in
+    /// arrival order, rather than replacing them.
     WakesDelivered {
         turn: u64,
         wakes: Vec<String>,

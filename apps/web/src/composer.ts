@@ -49,7 +49,11 @@ export interface State {
   memory: { modelByPlace: Record<string, Model>; worktreeByRepo: Record<string, boolean>; branchByRepo: Record<string, string> }
   /** `[git] open_pr_when_done`. Absent: "ask", the default. "auto" reads as "ask". */
   openPrWhenDone?: OpenPrSetting
-  /** What `shouldOpenPr` decides on. Absent: unknown, and Open PR behaves as it always has. */
+  /**
+   * What `shouldOpenPr` decides on. Absent: unknown, and the chip stays plain — the web's cloud
+   * sessions report no worktree and no session tree, so they never earn the emphasis. The Mac,
+   * which knows all of it, is where `ask` actually shows.
+   */
   openPr?: OpenPrInput
 }
 
@@ -226,8 +230,9 @@ export function derive(s: State): Derived {
   }
   if (gitAction === 'open_pr' && setting === 'off') gitAction = null
   // The predicate decides the action's emphasis, not whether it exists: a manager can still
-  // open a PR by hand, it just isn't urged to.
-  const openPr = gitAction === 'open_pr' && (s.openPr ? offersOpenPr(setting, s.openPr) : true)
+  // open a PR by hand, it just isn't urged to. Facts the composer doesn't have earn nothing,
+  // so an absent `openPr` leaves the chip as plain as it has always been.
+  const openPr = gitAction === 'open_pr' && s.openPr !== undefined && offersOpenPr(setting, s.openPr)
   return { action, sendDisabled: s.busy === 'sending' || (s.busy === 'idle' && !content), gitAction, prSummary, canSwitchBranch, openPr }
 }
 

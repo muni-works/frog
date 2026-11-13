@@ -82,11 +82,11 @@ enum ComposerModel {
         var memory = Memory()
         /// What `[git] open_pr_when_done` says here. Nil: an older engine that doesn't report
         /// it, which reads as `ask`.
-        var openPRSetting: OpenPR.Setting?
+        var openPrWhenDone: OpenPR.Setting?
         /// The facts `OpenPR.shouldOpenPR` decides on. Nil: the composer doesn't know them
         /// (the web's cloud sessions have no worktree at all), and Open PR behaves as it
         /// always has — offered on "commits ahead, no PR".
-        var openPR: OpenPR.Input?
+        var openPr: OpenPR.Input?
     }
 
     struct Derived: Codable, Equatable, Sendable {
@@ -98,7 +98,7 @@ enum ComposerModel {
         var canSwitchBranch: Bool
         /// The Open PR action is the predicate's (the work is done, and opening one is
         /// wanted): the git line draws it as the line's one emphatic control.
-        var openPR: Bool
+        var openPr: Bool
     }
 
     enum Intent: Equatable, Sendable {
@@ -205,7 +205,7 @@ enum ComposerModel {
         var canSwitch = true
         // `[git] open_pr_when_done`: "off" means the branch is yours to push, so the Open PR
         // action isn't offered at all. Unset (an older engine) reads as the default, "ask".
-        let setting = s.openPRSetting ?? .ask
+        let setting = s.openPrWhenDone ?? .ask
         if case .session(let w) = s.where {
             canSwitch = !w.dirty
             let top = worst(w.prs)
@@ -222,11 +222,13 @@ enum ComposerModel {
         }
         if git == .open_pr, !setting.offers { git = nil }
         // The predicate decides the action's emphasis, not its existence: a manager or a
-        // read-only session can still open a PR by hand, it just isn't urged to.
-        let wanted = git == .open_pr && (s.openPR.map { OpenPR.offers(setting, $0) } ?? true)
+        // read-only session can still open a PR by hand, it just isn't urged to. Facts the
+        // composer doesn't have earn nothing, so an absent input leaves the chip as plain as
+        // it has always been.
+        let wanted = git == .open_pr && (s.openPr.map { OpenPR.offers(setting, $0) } ?? false)
         let disabled = s.busy == .sending || (s.busy == .idle && !content)
         return Derived(action: action, sendDisabled: disabled, gitAction: git, prSummary: summary,
-                       canSwitchBranch: canSwitch, openPR: wanted)
+                       canSwitchBranch: canSwitch, openPr: wanted)
     }
 
     /// The key a model is remembered under: the folder, the cloud repo, or chat.

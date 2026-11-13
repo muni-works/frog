@@ -2338,6 +2338,264 @@
    ]
   },
   {
+   "name": "open PR when the work is done is urged",
+   "row": "Top line \u00b7 Open PR",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 2,
+     "prs": []
+    },
+    "openPr": {
+     "worktree": true,
+     "ahead": 2
+    }
+   },
+   "intent": {
+    "type": "type",
+    "text": ""
+   },
+   "expect": {
+    "derived": {
+     "gitAction": "open_pr",
+     "openPr": true
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "off: open PR is not offered at all",
+   "row": "Top line \u00b7 Open PR",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 2,
+     "prs": []
+    },
+    "openPr": {
+     "worktree": true,
+     "ahead": 2
+    },
+    "openPrWhenDone": "off"
+   },
+   "intent": {
+    "type": "type",
+    "text": ""
+   },
+   "expect": {
+    "derived": {
+     "gitAction": null,
+     "openPr": false
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "ask offers it; auto is parsed and offers the same",
+   "row": "Top line \u00b7 Open PR",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 2,
+     "prs": []
+    },
+    "openPr": {
+     "worktree": true,
+     "ahead": 2
+    },
+    "openPrWhenDone": "ask"
+   },
+   "intent": {
+    "type": "type",
+    "text": ""
+   },
+   "expect": {
+    "derived": {
+     "gitAction": "open_pr",
+     "openPr": true
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "a manager is not urged, but may still open one",
+   "row": "Top line \u00b7 Open PR",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 2,
+     "prs": []
+    },
+    "openPr": {
+     "worktree": true,
+     "ahead": 2,
+     "depth": 0,
+     "hasChildren": true
+    }
+   },
+   "intent": {
+    "type": "type",
+    "text": ""
+   },
+   "expect": {
+    "derived": {
+     "gitAction": "open_pr",
+     "openPr": false
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "read-only is not urged",
+   "row": "Top line \u00b7 Open PR",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 2,
+     "prs": []
+    },
+    "openPr": {
+     "worktree": true,
+     "ahead": 2,
+     "readOnly": true
+    }
+   },
+   "intent": {
+    "type": "type",
+    "text": ""
+   },
+   "expect": {
+    "derived": {
+     "gitAction": "open_pr",
+     "openPr": false
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "opted out is not urged",
+   "row": "Top line \u00b7 Open PR",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 2,
+     "prs": []
+    },
+    "openPr": {
+     "worktree": true,
+     "ahead": 2,
+     "optedOut": true
+    }
+   },
+   "intent": {
+    "type": "type",
+    "text": ""
+   },
+   "expect": {
+    "derived": {
+     "gitAction": "open_pr",
+     "openPr": false
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "no worktree is not urged",
+   "row": "Top line \u00b7 Open PR",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 2,
+     "prs": []
+    },
+    "openPr": {
+     "worktree": false,
+     "ahead": 2
+    }
+   },
+   "intent": {
+    "type": "type",
+    "text": ""
+   },
+   "expect": {
+    "derived": {
+     "gitAction": "open_pr",
+     "openPr": false
+    }
+   },
+   "effects": []
+  },
+  {
    "name": "open PR without gh auth: connect GitHub",
    "row": "Top line \u00b7 Open PR",
    "given": {

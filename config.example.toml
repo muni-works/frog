@@ -81,3 +81,14 @@ max_tokens = 32000
 # ]
 # chief_timeout_secs = 300              # then the card falls back to you
 # rollup = true                         # one approvals roll-up notice per day, at most
+
+# What the composer does about a pull request when a session's work is done
+# (docs/plans/2026-11-13-open-pr-when-done.md).
+#   "off"  — nothing is offered; the branch is yours to push.
+#   "ask"  — the git line's Open PR chip, when the work is done. The default.
+#   "auto" — NOT IMPLEMENTED YET: parsed, documented, and behaves as "ask".
+# The offer only ever appears for a session with its own worktree, commits ahead of
+# its base, no PR yet, that isn't a manager (a top-level session with children) or
+# read-only, and didn't put `open-pr: off` in its first prompt.
+# [git]
+# open_pr_when_done = "ask"

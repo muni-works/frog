@@ -2805,7 +2805,7 @@
           "type": "object"
         },
         {
-          "description": "The wakes turn `turn` opened with, in order: delivered as one batch with its input\n(a message, a session message), ahead of it. A turn started on wakes alone carries\nthem as its input instead.",
+          "description": "Background wakes delivered with turn `turn`, in order. Two deliveries: the ones it\nopened with, as one batch ahead of its input (a message, a session message; a turn\nstarted on wakes alone carries them as its input instead); and any that ended while the\nturn ran, which the engine appends to the running history so the model's next call sees\nthem (`turn` → the same turn, a later event). Clients append both to the turn's rows, in\narrival order, rather than replacing them.",
           "properties": {
             "created": {
               "format": "int64",
@@ -4627,7 +4627,7 @@
           "type": "object"
         },
         {
-          "description": "The wakes turn `turn` opened with, in order: delivered as one batch with its input\n(a message, a session message), ahead of it. A turn started on wakes alone carries\nthem as its input instead.",
+          "description": "Background wakes delivered with turn `turn`, in order. Two deliveries: the ones it\nopened with, as one batch ahead of its input (a message, a session message; a turn\nstarted on wakes alone carries them as its input instead); and any that ended while the\nturn ran, which the engine appends to the running history so the model's next call sees\nthem (`turn` → the same turn, a later event). Clients append both to the turn's rows, in\narrival order, rather than replacing them.",
           "properties": {
             "event": {
               "const": "wakes_delivered",
