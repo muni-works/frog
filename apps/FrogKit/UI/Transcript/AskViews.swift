@@ -3,16 +3,36 @@ import SwiftUI
 
 // MARK: - Ask
 
-/// The model asking the user to choose. One pick answers right away; with `multi`, picks
-/// toggle and Answer sends them. The user can also type their own answer, or skip.
+/// What a click on an Ask option does. A plain click on a single-choice card answers at once
+/// (faster than a confirm, and nothing is ambiguous); anything else puts the card into
+/// pick-and-confirm, where the number of picks is the person's, not the model's.
+enum AskClick: Equatable {
+    case answer(String)
+    case toggle(picking: Bool)
+
+    /// `multi` is the model's guess at the arity, not a verdict on it. `drafting` is whether the
+    /// person has typed something: answering would throw it away, and an answer that drops what
+    /// they typed isn't the answer they gave.
+    static func click(multi: Bool, picking: Bool, drafting: Bool, label: String) -> AskClick {
+        if multi || picking { return .toggle(picking: picking) }
+        if drafting { return .toggle(picking: true) }
+        return .answer(label)
+    }
+}
+
+/// The model asking the user to choose. One pick answers right away; with `multi`, or once the
+/// person starts picking more than one, picks toggle and Answer sends them. The user can also
+/// type their own answer, or skip.
 struct QuestionCard: View {
     let question: Question
     let conversation: Conversation
     @State private var picked: Set<String> = []
+    @State private var picking = false
     @State private var other = ""
     @FocusState private var typing: Bool
 
     private var multi: Bool { question.multi ?? false }
+    private var several: Bool { multi || picking }
     private var allowOther: Bool { question.allowOther ?? true }
 
     var body: some View {
@@ -37,7 +57,7 @@ struct QuestionCard: View {
                     .onSubmit(send)
             }
             HStack(spacing: 8) {
-                if multi || !other.isEmpty {
+                if several || !other.isEmpty {
                     Button(action: send) {
                         Text("Answer").frame(minWidth: 56)
                     }
@@ -47,6 +67,13 @@ struct QuestionCard: View {
                     .help("Answer (⌘↩)")
                 }
                 Spacer()
+                if !multi {
+                    // The arity is the person's: a card the model called single can be answered
+                    // with two picks, without having to type first.
+                    Button(picking ? "Pick one" : "Pick several") { picking.toggle() }
+                        .buttonStyle(.glass)
+                        .help(picking ? "Answer with one pick" : "Answer with several picks")
+                }
                 Button("Skip") { conversation.answer(question: []) }
                     .buttonStyle(.glass)
                     .keyboardShortcut(.escape, modifiers: [])
@@ -60,15 +87,16 @@ struct QuestionCard: View {
     private func option(_ o: Question.Option, index: Int) -> some View {
         let on = picked.contains(o.label)
         return Button {
-            if multi {
+            switch AskClick.click(multi: multi, picking: picking, drafting: !other.trimmingCharacters(in: .whitespaces).isEmpty, label: o.label) {
+            case .answer(let label):
+                conversation.answer(question: [label])
+            case .toggle(let startsPicking):
+                picking = startsPicking
                 if on { picked.remove(o.label) } else { picked.insert(o.label) }
-            } else {
-                // A pick answers on its own; a half-typed draft isn't part of it.
-                conversation.answer(question: [o.label])
             }
         } label: {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
-                if multi {
+                if several {
                     Image(systemName: on ? "checkmark.square.fill" : "square")
                         .foregroundStyle(on ? Color.accentColor : .secondary)
                 } else {
