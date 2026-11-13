@@ -1303,7 +1303,7 @@ private struct ChiefTile: View {
 
 /// Compact, title-only sidebar row, with its state glyph, trailing meta (age, commits ahead)
 /// and cached GitHub pull request indicator.
-private struct CompactSessionRow<Menu: View>: View {
+struct CompactSessionRow<Menu: View>: View {
     let session: SessionInfo
     let selected: Bool
     let live: Library.Live?
@@ -1330,15 +1330,15 @@ private struct CompactSessionRow<Menu: View>: View {
     @State private var expandTitle = false
 
     /// Nested under the session that started it: the row gives its width to the title.
-    private var nested: Bool { depth > 0 }
+    var nested: Bool { depth > 0 }
 
     /// The worktree branch name, when it isn't just the slugged title.
-    private var suffix: String? {
+    var suffix: String? {
         RowSuffix.visible(SessionList.worktreeName(session.folder), title: session.displayTitle)
     }
 
     /// Squeezed nested rows keep the suffix out of the way: hover or selection shows it.
-    private var showSuffix: Bool { hovering || selected }
+    func showSuffix(_ hovering: Bool) -> Bool { hovering || selected }
 
     /// The row's state, combining live tracking with the listing's last-turn end. A turn
     /// that finished ok keeps a green check for ten seconds, then settles to nothing.
@@ -1385,85 +1385,18 @@ private struct CompactSessionRow<Menu: View>: View {
     }
 
     private func content(working: Bool) -> some View {
-        // A working row keeps its title at full opacity, like the selected row.
-        let running = working || live == .running
-        return HStack(spacing: 0) {
-            if nested {
-                // Nested rows keep their width for the title: one guide line per parent,
-                // unbroken down its children, ending in an elbow at the last.
-                TreeGuide(last: lastChild).frame(width: 10).padding(.vertical, -1)
-                    .padding(.leading, CGFloat(depth - 1) * Self.indent + 4)
-            } else {
-                Color.clear.frame(width: 6)
-            }
-            if folded > 0 {
-                Button { onFold?() } label: {
-                    Image(systemName: "chevron.right").font(.frog(size: 8, weight: .bold))
-                        .rotationEffect(.degrees(foldOpen ? 90 : 0))
-                        .frame(width: 12, height: 20).contentShape(.rect)
-                }
-                .buttonStyle(.plain).foregroundStyle(.tertiary)
-                    .help("\(folded) older on this branch")
-            } else {
-                Color.clear.frame(width: nested ? 2 : 6)
-            }
-            // The title takes the width it has; a branch suffix only when it says something
-            // the title doesn't (a slugged title never repeats itself). The child badge is its
-            // own button, so the open target is a tap on the rest rather than a wrapping button.
-            HStack(spacing: 5) {
-                Text(session.displayTitle).lineLimit(expandTitle ? 3 : 1).truncationMode(.tail)
-                    .font(.frog(size: 13))
-                    .foregroundStyle(Color.primary.opacity(selected || running ? 1 : 0.82))
-                if let suffix, showSuffix {
-                    Text(suffix).lineLimit(1)
-                        .font(.frog(size: 11)).foregroundStyle(.tertiary)
-                        .help(suffix)
-                }
-                if counts.total > 0 { childBadge }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(.rect)
-            .onTapGesture(perform: open)
-            .accessibilityAddTraits(.isButton)
-            // Resting on the row, the meta steps aside for the title; nested rows leave the
-            // age and commit count to the tooltip.
-            if let git, !expandTitle {
-                GitBadgeView(display: git.display, muted: !running && !selected, help: git.help, card: git.card)
-                    .padding(.leading, 5)
-            }
-            if !expandTitle, !nested {
-                let now = SidebarClock.shared.now
-                Group {
-                    // Running shows the spinner whether the app knows it live (a conversation
-                    // open here, following a worker included) or only from recent activity.
-                    if live == .running || live == nil, now.timeIntervalSince(session.modifiedDate) < 30 {
-                        Text(SessionAgeShort.age(session.modifiedDate, now: now))
-                            .font(.system(size: 11, design: .rounded).monospacedDigit())
-                            .foregroundStyle(.tertiary).padding(.leading, 5).padding(.trailing, 2)
-                    } else {
-                        Text(SessionAgeShort.age(session.modifiedDate, now: now))
-                            .font(.system(size: 11, design: .rounded).monospacedDigit())
-                            .foregroundStyle(.tertiary).padding(.leading, 5).padding(.trailing, 2)
-                    }
-                }
-            }
-            glyphView.padding(.leading, 5)
-            // Nested rows show the menu button only under the pointer (the context menu is
-            // always there).
-            if !nested || hovering {
-                SwiftUI.Menu { menu() } label: {
-                    Image(systemName: "ellipsis").font(.frog(size: 10)).frame(width: 14, height: 20)
-                }
-                .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).foregroundStyle(.secondary)
-            }
-        }
+        // The row's one line, as a plain value: `hovering` and `expandTitle` arrive as
+        // parameters, so a test can render the row frozen mid-hover (the `EndView`
+        // pattern) without a real pointer.
+        CompactRowContent(row: self, menu: menu, working: working, hovering: hovering, expandTitle: expandTitle)
     }
 
     /// Indent per nesting level (computed: a generic type can't store statics).
     static var indent: CGFloat { 8 }
 
     /// The title, with the worktree name (when there is one) underneath in the tooltip.
-    private var helpText: String {
+    /// Internal for the row tests (the tooltip carries the age the row no longer shows).
+    var helpText: String {
         var lines = [session.displayTitle]
         if let wt = SessionList.worktreeName(session.folder) { lines.append(wt) }
         if nested {
@@ -1476,7 +1409,7 @@ private struct CompactSessionRow<Menu: View>: View {
 
     /// The children's count; collapsed, how they stand ("· 4 running · 1 waiting"). Clicking
     /// it folds the children into the row or shows them again.
-    private var childBadge: some View {
+    var childBadge: some View {
         let n = counts.total
         return Button { onCollapse?() } label: {
             HStack(spacing: 3) {
@@ -1501,7 +1434,7 @@ private struct CompactSessionRow<Menu: View>: View {
     /// The state glyph: a spinner while running, an amber dot waiting on you, red for a turn
     /// that ended in error, tinted for unseen, nothing for idle.
     @ViewBuilder
-    private var glyphView: some View {
+    var glyphView: some View {
         switch glyph {
         case .running:
             ProgressView().controlSize(.mini).scaleEffect(0.7).frame(width: 12, height: 12).help("working")
@@ -1741,5 +1674,92 @@ struct TreeGuide: View {
         }
         .frame(maxHeight: .infinity)
         .accessibilityHidden(true)
+    }
+}
+
+/// The compact row's one line, extracted so `hovering` and `expandTitle` arrive as plain
+/// values rather than private `@State`: a test can render the row frozen mid-hover (the
+/// `EndView(hovering:)` pattern, OpacityViewTests) and assert what it draws.
+struct CompactRowContent<Menu: View>: View {
+    let row: CompactSessionRow<Menu>
+    @ViewBuilder var menu: () -> Menu
+    /// Whether the app knows the session live but not open (only the 30 s activity rule uses it).
+    var working: Bool
+    var hovering: Bool
+    var expandTitle: Bool
+
+    var body: some View {
+        // A working row keeps its title at full opacity, like the selected row.
+        let running = working || row.live == .running
+        return HStack(spacing: 0) {
+            if row.nested {
+                // Nested rows keep their width for the title: one guide line per parent,
+                // unbroken down its children, ending in an elbow at the last.
+                TreeGuide(last: row.lastChild).frame(width: 10).padding(.vertical, -1)
+                    .padding(.leading, CGFloat(row.depth - 1) * CompactSessionRow<Menu>.indent + 4)
+            } else {
+                Color.clear.frame(width: 6)
+            }
+            if row.folded > 0 {
+                Button { row.onFold?() } label: {
+                    Image(systemName: "chevron.right").font(.frog(size: 8, weight: .bold))
+                        .rotationEffect(.degrees(row.foldOpen ? 90 : 0))
+                        .frame(width: 12, height: 20).contentShape(.rect)
+                }
+                .buttonStyle(.plain).foregroundStyle(.tertiary)
+                    .help("\(row.folded) older on this branch")
+            } else {
+                Color.clear.frame(width: row.nested ? 2 : 6)
+            }
+            // The title takes the width it has; a branch suffix only when it says something
+            // the title doesn't (a slugged title never repeats itself). The child badge is its
+            // own button, so the open target is a tap on the rest rather than a wrapping button.
+            HStack(spacing: 5) {
+                Text(row.session.displayTitle).lineLimit(expandTitle ? 3 : 1).truncationMode(.tail)
+                    .font(.frog(size: 13))
+                    .foregroundStyle(Color.primary.opacity(row.selected || running ? 1 : 0.82))
+                if let suffix = row.suffix, row.showSuffix(hovering) {
+                    Text(suffix).lineLimit(1)
+                        .font(.frog(size: 11)).foregroundStyle(.tertiary)
+                        .help(suffix)
+                }
+                if row.counts.total > 0 { row.childBadge }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(.rect)
+            .onTapGesture(perform: row.open)
+            .accessibilityAddTraits(.isButton)
+            // Resting on the row, the meta steps aside for the title; nested rows leave the
+            // age and commit count to the tooltip.
+            if let git = row.git, !expandTitle {
+                GitBadgeView(display: git.display, muted: !running && !row.selected, help: git.help, card: git.card)
+                    .padding(.leading, 5)
+            }
+            if !expandTitle, !row.nested {
+                let now = SidebarClock.shared.now
+                Group {
+                    // Running shows the spinner whether the app knows it live (a conversation
+                    // open here, following a worker included) or only from recent activity.
+                    if row.live == .running || row.live == nil, now.timeIntervalSince(row.session.modifiedDate) < 30 {
+                        Text(SessionAgeShort.age(row.session.modifiedDate, now: now))
+                            .font(.system(size: 11, design: .rounded).monospacedDigit())
+                            .foregroundStyle(.tertiary).padding(.leading, 5).padding(.trailing, 2)
+                    } else {
+                        Text(SessionAgeShort.age(row.session.modifiedDate, now: now))
+                            .font(.system(size: 11, design: .rounded).monospacedDigit())
+                            .foregroundStyle(.tertiary).padding(.leading, 5).padding(.trailing, 2)
+                    }
+                }
+            }
+            row.glyphView.padding(.leading, 5)
+            // Nested rows show the menu button only under the pointer (the context menu is
+            // always there).
+            if !row.nested || hovering {
+                SwiftUI.Menu { menu() } label: {
+                    Image(systemName: "ellipsis").font(.frog(size: 10)).frame(width: 14, height: 20)
+                }
+                .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).foregroundStyle(.secondary)
+            }
+        }
     }
 }
