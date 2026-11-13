@@ -21,7 +21,9 @@ it only when the choice is genuinely theirs: the request is ambiguous in a way t
 settle, or the options trade off in ways they care about (scope, an irreversible change, a \
 public API). Don't ask about things you can find out yourself or that have an obvious default; \
 pick it and say so. Give 2-4 short options, each with an optional one-line detail, and put the \
-one you recommend first."
+one you recommend first. The user picks the number of things themselves: one, several, or none \
+and their own words, so set `multi` when the options aren't exclusive (\"which of these should I \
+fix too?\") and leave it off when picking two would contradict itself (\"which fix?\")."
             .into(),
         schema: json!({
             "type": "object",
@@ -99,14 +101,22 @@ pub fn parse(input: &Value) -> Result<Question> {
 
 /// What the model gets back. Picks that weren't offered are dropped, so a client can't put
 /// words in the user's mouth through `choices`; that's what `other` is for.
+///
+/// How many picks there are is the person's decision, not `multi`'s: the model's flag is which
+/// card the client draws first, and a person who answers a single-choice question with two
+/// picks has given two picks. Cutting the extras here would record an answer they didn't give,
+/// the same way a redirect reply recorded as an answer does.
 pub fn result(q: &Question, answer: &Answer) -> String {
-    let picked: Vec<&str> = answer
-        .choices
-        .iter()
-        .filter(|c| q.options.iter().any(|o| &o.label == *c))
-        .map(String::as_str)
-        .take(if q.multi { MAX_OPTIONS } else { 1 })
-        .collect();
+    let mut picked: Vec<&str> = Vec::new();
+    for c in &answer.choices {
+        let c = c.as_str();
+        if picked.len() == MAX_OPTIONS {
+            break;
+        }
+        if q.options.iter().any(|o| o.label == c) && !picked.contains(&c) {
+            picked.push(c);
+        }
+    }
     let other = answer
         .other
         .as_deref()
@@ -142,6 +152,30 @@ mod tests {
     }
 
     #[test]
+    fn the_description_teaches_multi() {
+        // The bug that hid this feature: the schema had `multi`, the description never said
+        // its name, so the model had no reason to set it and every card came out single-pick.
+        let d = spec().description;
+        assert!(d.contains("`multi`"), "the Ask description never mentions multi: {d}");
+        assert!(d.contains("2-4 short options"), "the option guidance left: {d}");
+        assert!(d.contains("Don't ask about things you can find out yourself"));
+    }
+
+    #[test]
+    fn parses_multi() {
+        let q = parse(&json!({
+            "question": "?",
+            "options": ["a", "b"],
+            "multi": true
+        }))
+        .unwrap();
+        assert!(q.multi);
+        assert!(q.allow_other, "allow_other still defaults to true with multi");
+        let off = parse(&json!({"question": "?", "options": ["a", "b"], "allow_other": false})).unwrap();
+        assert!(!off.allow_other);
+    }
+
+    #[test]
     fn rejects_too_few_or_duplicate_options() {
         let one = parse(&json!({"question": "?", "options": ["a"]}));
         assert!(one.unwrap_err().to_string().contains("2-4 options"));
@@ -161,9 +195,15 @@ mod tests {
             result(&q, &a(&["Truncate"], None)),
             "The user chose: Truncate"
         );
-        // Not an option, and only one pick when not multi.
+        // Both picks are the person's answer, and both reach the model, in the order they made
+        // them: a pick order is the only preference signal a click carries.
         assert_eq!(
-            result(&q, &a(&["Rewrite it", "Checksum", "Truncate"], None)),
+            result(&q, &a(&["Checksum", "Truncate"], None)),
+            "The user chose: Checksum, Truncate"
+        );
+        // Not an option: dropped, and the real pick survives.
+        assert_eq!(
+            result(&q, &a(&["Rewrite it", "Checksum"], None)),
             "The user chose: Checksum"
         );
         assert_eq!(
@@ -171,5 +211,50 @@ mod tests {
             "The user answered in their own words: neither, revert"
         );
         assert!(result(&q, &a(&[], None)).starts_with("The user dismissed"));
+        // Picks and typed words together: the free-form box is part of the answer, not a race
+        // with it.
+        assert_eq!(
+            result(&q, &a(&["Truncate"], Some("and the docs"))),
+            "The user chose: Truncate. They added: and the docs"
+        );
+    }
+
+    #[test]
+    fn picks_survive_a_question_the_model_called_single() {
+        // The clamp that recorded an answer nobody gave: two picks on a `multi: false`
+        // question came back to the model as one pick.
+        let mut q = q();
+        assert!(!q.multi);
+        let answer = Answer {
+            choices: vec!["Truncate".into(), "Checksum".into()],
+            other: None,
+        };
+        assert_eq!(result(&q, &answer), "The user chose: Truncate, Checksum");
+        q.multi = true;
+        assert_eq!(result(&q, &answer), "The user chose: Truncate, Checksum");
+    }
+
+    #[test]
+    fn picks_never_repeat_and_never_exceed_the_options() {
+        let q = q();
+        let answer = Answer {
+            // The same pick twice (a client's bug), then too many.
+            choices: vec!["Truncate".into(), "Truncate".into(), "Checksum".into()],
+            other: None,
+        };
+        assert_eq!(result(&q, &answer), "The user chose: Truncate, Checksum");
+        let many = Question {
+            options: (0..MAX_OPTIONS)
+                .map(|i| AskOption { label: format!("o{i}"), detail: None })
+                .collect(),
+            ..parse(&json!({"question": "?", "options": ["a", "b"]})).unwrap()
+        };
+        let all = Answer {
+            choices: (0..MAX_OPTIONS + 3).map(|i| format!("o{i}")).collect(),
+            other: None,
+        };
+        let text = result(&many, &all);
+        let picks = text.trim_start_matches("The user chose: ");
+        assert_eq!(picks.split(", ").count(), MAX_OPTIONS, "{text}");
     }
 }
