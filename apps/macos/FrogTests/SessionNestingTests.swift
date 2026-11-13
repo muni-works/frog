@@ -189,7 +189,8 @@ final class SessionNestingTests: XCTestCase {
         XCTAssertEqual(out.map(\.depth), [0, 1, 2, 1, 0, 0, 1])
     }
 
-    /// The guide line's elbow goes on the last child at each depth.
+    /// The guide line's elbow goes on the last child at each depth (through `guides`, which
+    /// is what the sidebar draws from).
     func testLastChildrenEndTheGuide() {
         func info(_ id: String) -> SessionInfo {
             SessionInfo(id: id, modified: 0, created: 0, model: "m", firstInput: nil, title: id, forkedFrom: nil, cwd: nil)
@@ -201,6 +202,72 @@ final class SessionNestingTests: XCTestCase {
             .row(info("d"), depth: 1, counts: .init(), collapsed: false),
             .row(info("e"), depth: 0, counts: .init(), collapsed: false),
         ]
-        XCTAssertEqual(SessionNesting.lastChildren(e), ["c", "d"], "the last child at each depth closes the guide")
+        let g = SessionNesting.guides(e)
+        XCTAssertEqual(g.filter { $0.value.last && $0.value.depth > 0 }.keys.sorted(), ["c", "d"],
+                       "the last child at each depth closes the guide")
+    }
+
+    /// Depth is real, not capped: a fifth-level worker sits deeper than a fourth, so the
+    /// sidebar can say how deep it is. (It used to clamp at 4 and line them up.)
+    func testDepthIsNotCapped() {
+        let parents = ["b": "a", "c": "b", "d": "c", "e": "d", "f": "e"]
+        let out = SessionNesting.indented(["a", "b", "c", "d", "e", "f"]) { parents[$0] }
+        XCTAssertEqual(out.map(\.depth), [0, 1, 2, 3, 4, 5])
+
+        let entries = rows([:], parents: parents, order: ["a", "b", "c", "d", "e", "f"])
+        XCTAssertEqual(entries.map(\.depth), [0, 1, 2, 3, 4, 5], "rows carry the real depth too")
+    }
+
+    /// The rails: a column carries on while an ancestor below still has a sibling to come,
+    /// and the last child of a parent ends in an elbow.
+    func testGuidesDrawAncestorsAndElbows() {
+        // a › b, c; b › d, e  — d and e are last-siblings inside b, c closes a.
+        let list = [("a", 0), ("b", 1), ("d", 2), ("e", 2), ("c", 1)]
+        let g = SessionNesting.guides(list)
+        // `rails` is one entry per column LEFT of the row's own; its own column is the elbow.
+        XCTAssertEqual(g["a"], SessionNesting.Guide(depth: 0, rails: [], last: true, continues: true),
+                       "a's children hang right below it")
+        XCTAssertEqual(g["b"], SessionNesting.Guide(depth: 1, rails: [], last: false, continues: true),
+                       "b's own column carries on: c is still to come, and d/e hang under it")
+        XCTAssertEqual(g["d"], SessionNesting.Guide(depth: 2, rails: [true], last: false),
+                       "a's column runs on past b's subtree")
+        XCTAssertEqual(g["e"], SessionNesting.Guide(depth: 2, rails: [true], last: true),
+                       "e is b's last child: elbow, and a's column still runs to c")
+        XCTAssertEqual(g["c"], SessionNesting.Guide(depth: 1, rails: [], last: true),
+                       "c is a's last child: elbow")
+    }
+
+    /// Two subtrees side by side: the first's rail closes, so the second's column isn't
+    /// carried by the first subtree's rows.
+    func testGuidesDoNotCarryAClosedSubtree() {
+        let list = [("a", 0), ("a1", 1), ("b", 0), ("b1", 1), ("b2", 1)]
+        let g = SessionNesting.guides(list)
+        XCTAssertEqual(g["a1"]?.last, true)
+        XCTAssertEqual(g["b1"]?.last, false)
+        XCTAssertEqual(g["b2"]?.last, true)
+        XCTAssertEqual(g["b"]?.rails, [], "a root has no columns left of it")
+    }
+
+    /// A single six-deep chain with one sibling at the bottom (the snapshot fixture): every
+    /// column that runs down the tree does so through every row in its span, with no hole.
+    /// Column `c` is drawn on a row at depth > c; it must not vanish mid-subtree.
+    func testAColumnRunsUnbrokenThroughItsSubtree() {
+        let list = [("root", 0), ("l1", 1), ("l2", 2), ("l3", 3), ("l4", 4), ("l5", 5), ("sibling", 1)]
+        let g = SessionNesting.guides(list)
+
+        // Column 1 hangs under l1: drawn by l2…l5 and by sibling (which shares the column),
+        // not by l1 itself (it owns the column) and not by root.
+        XCTAssertNil(g["root"]?.rails.first, "a root has no columns left of it")
+        XCTAssertEqual(g["l1"]?.rails, [], "l1 owns column 1; it has no columns left of it")
+        for id in ["l2", "l3", "l4", "l5"] {
+            XCTAssertEqual(g[id]?.rail(0), true, "\(id) sits under l1, so column 1 runs on")
+        }
+        // Column 2 hangs under l2: l3…l5 only — l5 is where it closes (the sibling is a child
+        // of l1, at depth 1), so l5 draws columns 1 but not 2.
+        XCTAssertEqual(g["l5"]?.rails, [true, false, false, false],
+                       "l2's subtree closed at l5: only l1's column runs past it")
+        XCTAssertEqual(g["l5"]?.continues, false, "a leaf: its elbow ends the column")
+        XCTAssertEqual(g["l2"]?.continues, true, "its child l3 is listed right under it")
+        XCTAssertEqual(g["l4"]?.rails, [true, true, true], "l3's column still runs to l4")
     }
 }
