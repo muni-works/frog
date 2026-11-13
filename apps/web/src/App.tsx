@@ -15,6 +15,7 @@ import { Pond, HowItWorks, Trust, Muni } from './ui/Pond'
 import { Inspector } from './ui/Inspector'
 import { SessionList } from './ui/SessionList'
 import { Starting } from './ui/Starting'
+import { useMachines } from './machines'
 import { creditLine, Palette, Settings, type Command, type SettingsTab } from './ui/Overlays'
 import { Transcript } from './ui/Transcript'
 import { safeHref } from './ui/href'
@@ -120,6 +121,7 @@ export default function App() {
   }, [])
   const cloud = useCloud(key, DEV_KEY ? undefined : signedOut)
   const models = useModels(DEV_KEY ? null : key)
+  const machines = useMachines(key)
   // The remembered pick only while Frog Cloud still lists it (Qwen3 Coder Next drops out when no GPU node
   // runs): otherwise the default, never a model nothing would answer.
   const chosenModel = newModel && models.some((m) => m.id === idOf(newModel)) ? idOf(newModel) : defaultModel(models)
@@ -408,7 +410,7 @@ export default function App() {
         </div>
         <div className="dock"><div>
           <Composer repo="Connect a repo" onSend={() => {}} onSignIn={(provider, text) => leave(text || null, provider)} autoFocus chips={starterChips}
-            model={chosenModel} models={models} onManage={() => openSettings('Models')} onModel={setNewModel} mode={newMode} onMode={setNewMode} />
+            model={chosenModel} models={models} machines={machines} onManage={() => openSettings('Models')} onModel={setNewModel} mode={newMode} onMode={setNewMode} />
           {leaving && <div className="det" style={{ textAlign: 'center' }}>Opening {leaving === 'google' ? 'Google' : 'GitHub'}… your message is saved.</div>}
         </div></div>
         <footer className="muni-foot"><a href="https://muni.works" target="_blank" rel="noreferrer" aria-label="Municipal Robotics"><Muni /></a></footer>
@@ -547,7 +549,7 @@ export default function App() {
             <Composer key={current.id} session autoFocus usage={account ? { sub: account.subscription ?? null, credit: creditLine(account).replace(/ credit$/, ''), onBilling: () => openSettings('Billing'), onOpen: refreshAccount } : undefined} context={ct.context} compacting={!!compacting[current.id]}
               onCompact={(focus) => { setCompacting((c) => ({ ...c, [current.id]: (ct.marks ?? []).length + 1 })); cloud?.send(current.id, { op: 'compact', ...(focus ? { focus } : {}) }) }} chips={ct.next && !ct.running ? [{ text: ct.next.text, send: true, act: ct.next.act }] : undefined} state={ct.running || opening[current.id] ? 'working' : paused ? 'paused' : 'idle'} startedAt={ct.startedAt} waiting={!!(ct.ask || ct.question || ct.elicitation)}
               repo={current.repo} branch={current.branch} pr={current.pr} adds={adds} dels={dels}
-              model={idOf(ct.model)} models={models} onManage={() => openSettings('Models')} onModel={(id) => cloud?.send(current.id, { op: 'set_model', spec: spec(id) })}
+              model={idOf(ct.model)} models={models} machines={machines} onManage={() => openSettings('Models')} onModel={(id) => cloud?.send(current.id, { op: 'set_model', spec: spec(id) })}
               mode={ct.mode ?? 'default'} onMode={(mode) => cloud?.send(current.id, { op: 'set_mode', mode })}
               queued={queue[current.id]} restore={restore} vision={ct.vision}
               onUnqueue={(i) => { const q = queue[current.id] ?? []; setRestore(q[i]); setQueue({ ...queue, [current.id]: q.filter((_, j) => j !== i) }) }}
@@ -569,7 +571,7 @@ export default function App() {
               <Composer usage={account ? { sub: account.subscription ?? null, credit: creditLine(account).replace(/ credit$/, ''), onBilling: () => openSettings('Billing'), onOpen: refreshAccount } : undefined} repo={view.repo} draft={draft} autoFocus pickRepo={view.pick} chips={starterChips}
                 recent={[...new Set(sessions.map((s) => s.repo).filter(Boolean))]} repos={repoList.repos.map((r) => r.name)} install={repoList.install} onRepo={(repo) => setView({ kind: 'new', repo })}
                 onConnectGithub={key && account && !account.handle && !DEV_KEY ? (text) => leave(text || null, 'github', key) : undefined}
-                model={chosenModel} models={models} onManage={() => openSettings('Models')} onModel={setNewModel} mode={newMode} onMode={setNewMode}
+                model={chosenModel} models={models} machines={machines} onManage={() => openSettings('Models')} onModel={setNewModel} mode={newMode} onMode={setNewMode}
                 onSend={(text, images) => { setDraft(undefined); start(text, view.repo, images) }} />
             </div>
           </div>
@@ -578,12 +580,12 @@ export default function App() {
       </main>
 
       {view.kind === 'session' && current && ct && inspector && (
-        <Inspector onClose={() => setInspector(false)} thread={ct} branch={current.branch} hasPr={!!current.pr} onCommit={() => commit(current)} onPr={() => push(current)} send={(op) => cloud?.send(current.id, op)} />
+        <Inspector onClose={() => setInspector(false)} thread={ct} branch={current.branch} hasPr={!!current.pr} onCommit={() => commit(current)} onPr={() => push(current)} machines={machines} send={(op) => cloud?.send(current.id, op)} />
       )}
 
       {palette && <Palette commands={commands} sessions={sessions} onOpen={(id) => setView({ kind: 'session', id })} onClose={() => setPalette(false)}
         text={(id) => thread(id).turns.flatMap((u) => [u.input, ...u.entries.filter((e) => e.kind === 'message').map((e) => e.text)]).join('\n')} />}
-      {settings && <Settings account={account} apiKey={key && !DEV_KEY ? key : undefined} tab={settingsTab} models={models} onTopUp={key && !DEV_KEY ? (d) => topUp(key, d) : undefined} onSubscribe={key && !DEV_KEY ? (p) => subscribe(key, p) : undefined} onConnect={key && !DEV_KEY ? (p) => leave(null, p, key, false) : undefined} onSignOut={() => { if (key && !DEV_KEY) signOut(key); signedOut() }} onClose={() => setSettings(false)} />}
+      {settings && <Settings account={account} apiKey={key && !DEV_KEY ? key : undefined} tab={settingsTab} models={models} machines={machines} onTopUp={key && !DEV_KEY ? (d) => topUp(key, d) : undefined} onSubscribe={key && !DEV_KEY ? (p) => subscribe(key, p) : undefined} onConnect={key && !DEV_KEY ? (p) => leave(null, p, key, false) : undefined} onSignOut={() => { if (key && !DEV_KEY) signOut(key); signedOut() }} onClose={() => setSettings(false)} />}
       {toast && <div className="toast" role="status">{toast}</div>}
     </div>
   )

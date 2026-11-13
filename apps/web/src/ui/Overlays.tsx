@@ -3,8 +3,10 @@ import { useEffect, useMemo, useState } from 'react'
 import { notifyOn, notifySupported, setNotify } from '../alerts'
 import { billingHistory, billingPortal, createKey, firstName, listKeys, portalErrorMessage, revokeKey, type Account, type KeyInfo, type Provider } from '../auth'
 import { friendly } from '../cloud/client'
-import { modelName, type Model } from '../models'
+import { modelName, placeColor, type Model } from '../models'
+import { canPull, displayName, memoryLine, runningLine, setShowCloud, useShowCloud, type Machine } from '../machines'
 import type { SessionSummary } from '../cloud/protocol'
+import { DownloadAppChip } from './DownloadChip'
 import { useLayer } from './layers'
 
 export interface Command { id: string; label: string; hint?: string; run: () => void }
@@ -191,7 +193,7 @@ function History({ apiKey }: { apiKey: string }) {
   )
 }
 
-export function Settings({ account, apiKey, tab: initial = 'Account', models = [], onConnect, onSignOut, onClose, onTopUp, onSubscribe }: { account: Account | null; apiKey?: string; tab?: SettingsTab; models?: Model[]; onConnect?: (provider: Provider) => void; onSignOut: () => void; onClose: () => void; onTopUp?: (dollars: number) => Promise<void>; onSubscribe?: (plan: string) => Promise<void> }) {
+export function Settings({ account, apiKey, tab: initial = 'Account', models = [], machines = [], machine, onConnect, onSignOut, onClose, onTopUp, onSubscribe }: { account: Account | null; apiKey?: string; tab?: SettingsTab; models?: Model[]; machines?: Machine[]; machine?: string; onConnect?: (provider: Provider) => void; onSignOut: () => void; onClose: () => void; onTopUp?: (dollars: number) => Promise<void>; onSubscribe?: (plan: string) => Promise<void> }) {
   const [tab, setTab] = useState<SettingsTab>(initial)
   useLayer(true, onClose)
   return (
@@ -215,7 +217,7 @@ export function Settings({ account, apiKey, tab: initial = 'Account', models = [
             {apiKey && <Keys apiKey={apiKey} />}
             {notifySupported() && <Notify />}
           </>)}
-          {tab === 'Models' && <ModelsSettings account={account} onBilling={() => setTab('Billing')} />}
+          {tab === 'Models' && <ModelsSettings account={account} machines={machines} machine={machine} onBilling={() => setTab('Billing')} />}
           {tab === 'Billing' && (<>
             <h2>Billing</h2>
             <Subscription account={account} apiKey={apiKey} onSubscribe={onSubscribe} />
@@ -274,14 +276,70 @@ function perM(p: number | null) {
   return p == null ? '—' : `$${(p * 1e6).toFixed(2)}`
 }
 
-/** Settings › Models: the web runs every session in Frog Cloud. */
-function ModelsSettings({ account, onBilling }: { account: Account | null; onBilling: () => void }) {
+/** Settings › Models, as on the Mac: your machines (every node, This Mac included, the same
+ *  row), a page per machine, then Frog Cloud. Pairing happens in the Mac app. */
+function ModelsSettings({ account, machines, machine, onBilling }: { account: Account | null; machines: Machine[]; machine?: string; onBilling: () => void }) {
+  const [open, setOpen] = useState<string | null>(machine ?? null)
+  const cloud = useShowCloud()
+  const d = machines.find((m) => m.id === open)
+  if (d) return <MachinePage machine={d} machines={machines} onBack={() => setOpen(null)} />
   return (<>
     <h2>Models</h2>
+    <div className="set-h">Machines</div>
+    <div className="set-group">
+      {machines.map((m) => (
+        <button key={m.id} type="button" className="set-row set-machine" onClick={() => setOpen(m.id)}>
+          <div style={{ flex: 1, minWidth: 0 }}><b>{m.name}</b>{m.thisMac && <span className="det" style={{ marginLeft: 6 }}>This Mac</span>}<div className="det">{m.hardware}</div></div>
+          <span className={m.model ? '' : 'det'}>{runningLine(m)}</span>
+          <span className="cz-dot" style={{ background: placeColor('local'), opacity: m.online ? 1 : 0.25 }} aria-hidden="true" />
+          <span className="det">›</span>
+        </button>
+      ))}
+      <div className="set-row"><div style={{ flex: 1 }}><b>Pair a machine</b><div className="det wrap">Machines you pair show here, with their models.</div></div><DownloadAppChip label="Pair machines in the Mac app" machines={machines} /></div>
+    </div>
     <div className="set-h">Frog Cloud</div>
     <div className="set-group">
       <div className="set-row"><div style={{ flex: 1 }}>Account</div><span className="det">{[account?.name ?? firstName(account), account?.email].filter(Boolean).join(' · ') || 'Signed in'}</span></div>
       <div className="set-row"><div style={{ flex: 1 }}>Credit</div><span className="num">{creditLine(account).replace(/ credit$/, '')}</span><button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={onBilling}>Add credit…</button></div>
+      <label className="set-row"><div style={{ flex: 1 }}>Show cloud models in the picker</div><input type="checkbox" role="switch" checked={cloud} onChange={(e) => setShowCloud(e.target.checked)} /></label>
+    </div>
+  </>)
+}
+
+/** A machine's page: status and memory, its models, and the node. Read-only on the web: what the
+ *  Mac app does here (stop a model, rename or unpair the node) is a chip, not a dead button. */
+function MachinePage({ machine: d, machines, onBack }: { machine: Machine; machines: readonly Machine[]; onBack: () => void }) {
+  const used = d.freeBytes == null || !d.totalBytes ? 0 : 1 - Math.min(d.freeBytes, d.totalBytes) / d.totalBytes
+  return (<>
+    <button type="button" className="f-btn f-btn--plain f-btn--small" onClick={onBack}>‹ Models</button>
+    <h2>{d.name}</h2>
+    <div className="set-group">
+      <div className="set-row"><div style={{ flex: 1 }}>Status</div><span className="det">{!d.online ? 'Not answering' : d.model ? 'Ready' : 'Idle'}</span></div>
+      <div className="set-row"><div style={{ flex: 1 }}>Hardware</div><span className="det">{d.hardware}</span></div>
+      <div className="set-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 4 }}>
+        <div className="ctx-bar"><span style={{ width: `${used * 100}%`, background: placeColor('local') }} /></div>
+        <span className="det">{memoryLine(d)}</span>
+      </div>
+    </div>
+    <div className="set-h">Models</div>
+    <div className="set-group">
+      {d.models.length === 0 && <div className="set-row det">{d.online ? 'No models on this machine.' : 'Not answering.'}</div>}
+      {d.models.map((m) => (
+        <div key={m.hash} className="set-row">
+          <span className="radio" aria-hidden="true" style={{ borderColor: m.loaded ? placeColor('local') : 'var(--line-strong)' }}>{m.loaded && <span style={{ background: placeColor('local') }} />}</span>
+          <div style={{ flex: 1 }}>{displayName(m.name)}{m.quant && <span className="det" style={{ marginLeft: 6 }}>{m.quant}</span>}</div>
+          {m.loaded && d.decode ? <span className="det">{Math.round(d.decode)} tok/s</span> : null}
+          {m.loaded && <DownloadAppChip label="Stop it in the Mac app" machines={machines} />}
+          {!m.loaded && canPull() && <button type="button" className="f-btn f-btn--bordered f-btn--small" disabled>Delete</button>}
+        </div>
+      ))}
+      {canPull() && <div className="set-row"><button type="button" className="f-btn f-btn--bordered f-btn--small" disabled>Download a model…</button></div>}
+    </div>
+    <div className="set-h">Node</div>
+    <div className="set-group">
+      <label className="set-row"><div style={{ flex: 1 }}>Share with my other machines</div><input type="checkbox" role="switch" checked disabled /></label>
+      <div className="set-row"><div style={{ flex: 1 }}>Name</div><span>{d.name}</span><DownloadAppChip label="Rename it in the Mac app" machines={machines} /></div>
+      {!d.thisMac && <div className="set-row"><DownloadAppChip label={`Unpair ${d.name} in the Mac app`} machines={machines} /></div>}
     </div>
   </>)
 }

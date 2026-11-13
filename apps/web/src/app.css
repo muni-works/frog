@@ -127,6 +127,8 @@ a { color: var(--frog); }
 .set-x { position: absolute; top: 12px; right: 12px; }
 .set-h { margin: 18px 0 6px; font-size: 12px; font-weight: 600; color: var(--muted); }
 .set-group { display: flex; flex-direction: column; gap: 2px; }
+.set-machine { width: 100%; text-align: left; font: inherit; color: inherit; cursor: pointer; }
+.set-machine:hover { background: var(--hover); }
 .radio { width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid; display: inline-flex; align-items: center; justify-content: center; flex: none; }
 .radio span { width: 7px; height: 7px; border-radius: 50%; }
 .set-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 0; border-radius: 10px; }
