@@ -95,6 +95,9 @@ func call(_ name: String, _ a: [String: Any], _ desk: Desktop) async throws -> [
                 return text(try await desk.after(app, "Typed into [\(index)]."))
             }
         }
+        if desk.focusIsSecure(app.processIdentifier) {
+            throw Desktop.Failure.message("the focused field is a password field; frog never types into those. Ask the user to fill it in.")
+        }
         desk.typeKeys(s, pid: app.processIdentifier)
         return text(try await desk.after(app, "Typed \(s.count) characters as keystrokes."))
     case "key":

@@ -67,8 +67,8 @@ final class Desktop {
 
     private func window(_ pid: pid_t) -> AXUIElement? {
         let app = AXUIElementCreateApplication(pid)
-        if let w = attr(app, kAXFocusedWindowAttribute) { return (w as! AXUIElement) }
-        if let w = attr(app, kAXMainWindowAttribute) { return (w as! AXUIElement) }
+        if let w = axElement(attr(app, kAXFocusedWindowAttribute)) { return w }
+        if let w = axElement(attr(app, kAXMainWindowAttribute)) { return w }
         return (attr(app, kAXWindowsAttribute) as? [AXUIElement])?.first
     }
 
@@ -215,6 +215,17 @@ final class Desktop {
         string(el, kAXRoleAttribute) == "AXSecureTextField" || string(el, kAXSubroleAttribute) == "AXSecureTextField"
     }
 
+    /// Whether keystrokes sent now would land in a password field: the app's focused element,
+    /// or the system-wide one (secure input can be focused in another process).
+    func focusIsSecure(_ pid: pid_t) -> Bool {
+        let app = AXUIElementCreateApplication(pid)
+        let wide = AXUIElementCreateSystemWide()
+        for root in [app, wide] {
+            if let el = axElement(attr(root, kAXFocusedUIElementAttribute)), isSecure(el) { return true }
+        }
+        return false
+    }
+
     /// Insert text at the element's caret (or replace its value), through accessibility.
     func setText(_ el: AXUIElement, _ text: String, replace: Bool) -> Bool {
         AXUIElementSetAttributeValue(el, kAXFocusedAttribute as CFString, kCFBooleanTrue)
@@ -280,6 +291,12 @@ final class Desktop {
     }()
 
     // MARK: AX helpers
+
+    /// `v` as an AXUIElement, if that's what it really is (no force cast on foreign values).
+    private func axElement(_ v: AnyObject?) -> AXUIElement? {
+        guard let v, CFGetTypeID(v) == AXUIElementGetTypeID() else { return nil }
+        return (v as! AXUIElement)
+    }
 
     private func attr(_ el: AXUIElement, _ name: String) -> AnyObject? {
         var v: AnyObject?
