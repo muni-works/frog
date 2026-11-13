@@ -1094,6 +1094,8 @@ extension Event {
         case running
         case status, text, log, items, wakes
         case urgency, body, prs
+        /// The MCP server list and a sign-in's outcome.
+        case servers, server, tools
     }
 
     init(from decoder: Decoder) throws {
