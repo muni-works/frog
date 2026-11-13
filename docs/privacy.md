@@ -1,8 +1,9 @@
 # What frog counts
 
 Frog has no telemetry. The Mac app, the CLI and the node send nothing about you or your work
-to us. Everything we count is counted on our servers, from requests that already reach them,
-and kept as anonymous totals.
+to us for counting. Everything we count is counted on our servers, from requests that already
+reach them, and kept as anonymous totals. Some features do make network calls of their own;
+[every one is listed below](#network-calls-frog-makes).
 
 ## Never collected
 
@@ -12,6 +13,21 @@ and kept as anonymous totals.
 - IP addresses (not stored, not logged by us, not used for counting)
 - device names, hardware ids, or any id that tells one install or Mac from another
 - cookies or fingerprints on frog.toys
+
+## Network calls frog makes
+
+Besides the model provider you pick (your prompts and code go there, and nowhere else, to get
+an answer), frog reaches these on its own:
+
+| what | where | when | what's sent |
+|---|---|---|---|
+| iPhone push relay | `https://frog.toys/api/push` (override: `FROG_PUSH_RELAY`) | Mac app only, and only once a paired iPhone has registered and a push secret is set (Settings › General or `FROG_PUSH_SECRET`). Fires when a session asks permission, when frog's `Ask` tool asks you something, when the model calls `Notify`, and to update a Live Activity | the phone's APNs device token, the conversation title and project folder name, and the question: for a command, the command line (first 300 characters); for an edit, the file name and the reason; for `Ask`, the question text (first 300 characters); a short diff preview; for `Notify`, its message. The relay forwards it to Apple's push service and keeps nothing. No secret set: real-phone pushes never leave the Mac |
+| model catalog | `https://models.dev/api.json` | when a model list is built (the picker, `--list-models`), at most every 6 hours; cached | nothing beyond an ordinary HTTPS request |
+| provider model lists | each connected provider's own models endpoint (OpenRouter, Vercel, OpenAI, Frog Cloud, ollama, LM Studio, …) | same as above, per connected provider, cached | your key for that provider, to that provider only |
+| model downloads | Hugging Face (`huggingface.co`) | when you download a local model (setup, the picker, `frog setup`) | the repo and file names being downloaded |
+| local servers | `localhost:11434` (ollama), `localhost:1234` (LM Studio) | when picking a default model or listing models | nothing beyond a request on this machine |
+| updates | `https://frog.toys/appcast.xml` | Mac app, about once a day (counted below) | the app version in the User-Agent |
+| installer | `api.github.com/repos/muni-works/frog/releases/latest`, then `github.com` release assets | `install.sh` with no `FROG_VERSION`, and `/node` (tang from `github.com`) | an ordinary HTTPS request; GitHub's own logging applies |
 
 ## What's counted
 
