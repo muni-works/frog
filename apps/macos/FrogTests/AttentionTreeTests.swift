@@ -43,7 +43,9 @@ final class AttentionTreeTests: XCTestCase {
 
     func testLiveScopeFoldsSettledWorkAndQuietManagers() {
         let out = layout(states, parents: parents, order: order)
-        XCTAssertEqual(ids(out.org), ["fm", ">w1", ">fm+2 1x", "tang [-]", "lleaf", "chief:+1"])
+        // One level: fm's finished workers (w3 failed, w2 done) are rows of their own under it,
+        // not a "+2 done" fold. The scope still keeps settled roots out ("chief:+1").
+        XCTAssertEqual(ids(out.org), ["fm", ">w1", ">w3", ">w2", "tang [-]", "lleaf", "chief:+1"])
         XCTAssertEqual(ids(out.yours), ["mine", "yours:+1"])
         XCTAssertEqual(out.topLevels.map(\.id), ["fm", "tang", "lleaf", "mine"])
     }
@@ -58,9 +60,11 @@ final class AttentionTreeTests: XCTestCase {
         XCTAssertTrue(ids(out.org).contains("lleaf"))
     }
 
-    func testAQuietManagerOpensThroughItsDoneRow() {
+    /// One level: opening a quiet manager lists its children directly, with no "+N done" row
+    /// between it and them.
+    func testAQuietManagerOpensStraightToItsChildren() {
         let out = layout(states, parents: parents, openDone: ["tang"], order: order)
-        XCTAssertEqual(Array(ids(out.org).drop(while: { $0 != "tang" }).prefix(3)), ["tang", ">tang+1", ">t1"])
+        XCTAssertEqual(Array(ids(out.org).drop(while: { $0 != "tang" }).prefix(2)), ["tang", ">t1"])
     }
 
     func testTheSessionOnScreenIsNeverFolded() {
@@ -74,7 +78,8 @@ final class AttentionTreeTests: XCTestCase {
 
     func testTodayShowsTodaysSettledWorkAndFoldsTheRestAsEarlier() {
         let out = layout(states, parents: parents, scope: .today, recent: ["w2", "leaf"], order: order)
-        XCTAssertEqual(ids(out.org), ["fm", ">w1", ">w2", ">fm+1 1x", "tang [-]", "leaf", "lleaf"])
+        // One level: w2 (today) and w3 (not) are both fm's rows; nothing folds inside fm.
+        XCTAssertEqual(ids(out.org), ["fm", ">w1", ">w3", ">w2", "tang [-]", "leaf", "lleaf"])
     }
 
     func testAllShowsEverything() {

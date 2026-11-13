@@ -132,24 +132,26 @@ enum SessionNesting {
         return out
     }
 
-    /// Rows in tree order: each session followed by the ones it started. A child counts as
-    /// settled only when it and everything under it is (a quiet manager whose workers run
-    /// stays up). Settled children collapse under a `.done` row unless their parent is in
-    /// `openDone`; `keep` (the session on screen, say) is never tucked away. Children sort by
-    /// state (`State`'s order), roots by `before`. A parent in `collapsed` shows none of its
-    /// children, only their counts. With `foldQuiet`, so does a parent with nothing live under
-    /// it (a quiet manager: one line, "6 done") until its done row is opened (`openDone`).
+    /// Rows in tree order: each session followed by the ones it started, and nothing in
+    /// between. Expanding a session shows its children — finished ones included — with no
+    /// second fold inside it (a "+N done" row under a parent was one accordion too many).
+    /// A child counts as settled only when it and everything under it is (a quiet manager
+    /// whose workers run stays up). Children sort by state (`State`'s order), roots by
+    /// `before`. A parent in `collapsed` shows none of its children, only their counts; with
+    /// `foldQuiet`, so does a quiet parent (settled, nothing live or kept under it) until it's
+    /// in `opened` — the whole of a quiet manager is one line until you open it.
     ///
     /// - Parameters:
     ///   - parent: the session that started `id`, if any (only parents in `items` nest).
     ///   - state: a session's own state.
     ///   - before: the list's order, for roots and for children within a state.
+    ///   - opened: parents whose quiet fold the person has opened.
     static func rows(
         _ items: [SessionInfo],
         parent: (String) -> String?,
         state: (SessionInfo) -> State,
         before: (SessionInfo, SessionInfo) -> Bool,
-        openDone: Set<String> = [],
+        opened: Set<String> = [],
         keep: Set<String> = [],
         collapsed: Set<String> = [],
         foldQuiet: Bool = false
@@ -201,31 +203,20 @@ enum SessionNesting {
             let kids = (children[s.id] ?? []).filter { !placed.contains($0.id) }
             var counts = Counts()
             kids.forEach { counts.add(effective($0)) }
-            // A quiet parent (nothing live under it, nothing kept) folds to its counts unless
-            // its done row was opened.
-            let quiet = foldQuiet && effective(s).settled && !openDone.contains(s.id)
+            // A quiet parent (nothing live under it, nothing kept) folds to its counts until the
+            // person opens it.
+            let quiet = foldQuiet && effective(s).settled && !opened.contains(s.id)
                 && !kids.contains(where: { holdsKept($0) })
             let folded = (collapsed.contains(s.id) || quiet) && !kids.isEmpty
             out.append(.row(s, depth: depth, counts: counts, collapsed: folded))
             if folded { kids.forEach(hide); return }
             let next = min(depth + 1, maxDepth)
-            // Most urgent first; the list's order within a state.
-            let ordered = kids.sorted { a, b in
+            // Most urgent first; the list's order within a state. Settled children are rows
+            // like any other: there's no second fold inside a session.
+            kids.sorted { a, b in
                 let (ea, eb) = (effective(a), effective(b))
                 return ea != eb ? ea < eb : before(a, b)
-            }
-            let active = ordered.filter { !effective($0).settled || keep.contains($0.id) }
-            let settled = ordered.filter { effective($0).settled && !keep.contains($0.id) }
-            active.forEach { walk($0, next) }
-            guard !settled.isEmpty else { return }
-            let open = openDone.contains(s.id)
-            let failed = settled.count(where: { effective($0) == .failed })
-            out.append(.done(parent: s.id, depth: next, count: settled.count, failed: failed, open: open))
-            if open {
-                settled.forEach { walk($0, next) }
-            } else {
-                settled.forEach(hide)
-            }
+            }.forEach { walk($0, next) }
         }
         roots.sorted(by: before).forEach { walk($0, 0) }
         // A parent cycle leaves sessions no root reaches: list them as roots, not lose them.

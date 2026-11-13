@@ -12,6 +12,7 @@
 use crate::config::data_dir;
 use crate::message::{Block, Message};
 use crate::protocol::{EndReason, Envelope, Event};
+use crate::prs::PrBinding;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
@@ -456,6 +457,9 @@ pub struct Info {
     pub title: Option<String>,
     /// The last turn's end, once one has finished (see `EndState`).
     pub end: Option<EndState>,
+    /// The PRs bound to the session, as the newest `Event::Prs` had them. The sidebar's row and
+    /// the composer's git line both read these, so the two can't disagree about a thread.
+    pub prs: Vec<PrBinding>,
 }
 
 /// What `list` reads out of one log: everything but whether it's in use right now.
@@ -469,6 +473,9 @@ struct Scanned {
     open: bool,
     /// Last conversation activity, ms.
     active: i64,
+    /// The newest `Event::Prs`; empty when the session never bound one.
+    #[serde(default)]
+    prs: Vec<PrBinding>,
 }
 
 /// `list`'s summaries, keyed by session id and stamped with the log's size and mtime: reading
@@ -501,10 +508,16 @@ fn scan(p: &Path) -> Option<Scanned> {
     // since merely resuming a session appends bookkeeping records, which would reorder the
     // list every time you open one.
     let mut active = header.created;
+    // The newest bound-PR list: the engine keeps it whole, so the last one wins.
+    let mut prs: Vec<PrBinding> = Vec::new();
     for l in lines {
-        // Only these three events matter: skip parsing the rest (tool output, screenshots),
+        // Only these four events matter: skip parsing the rest (tool output, screenshots),
         // which is nearly all of a log's bytes.
-        if !(l.contains("\"turn_started\"") || l.contains("\"turn_ended\"") || l.contains("\"titled\"")) {
+        if !(l.contains("\"turn_started\"")
+            || l.contains("\"turn_ended\"")
+            || l.contains("\"titled\"")
+            || l.contains("\"prs\""))
+        {
             continue;
         }
         match serde_json::from_str(&l) {
@@ -541,6 +554,13 @@ fn scan(p: &Path) -> Option<Scanned> {
                         ..
                     },
             }) => title = Some(t),
+            Ok(Record::Event {
+                env:
+                    Envelope {
+                        event: Event::Prs { prs: list },
+                        ..
+                    },
+            }) => prs = list,
             _ => {}
         }
     }
@@ -551,6 +571,7 @@ fn scan(p: &Path) -> Option<Scanned> {
         end,
         open,
         active,
+        prs,
     })
 }
 
@@ -658,7 +679,15 @@ pub fn list(dir: &Path, cwd: Option<&Path>, ids: Option<&[String]>) -> Result<Ve
 /// folded in, since it's per session rather than per file.
 fn info(id: String, scanned: Scanned, dir: &Path) -> Info {
     let in_use = Log::in_use(dir, &id);
-    let Scanned { header, first_input, title, end, open, active } = scanned;
+    let Scanned {
+        header,
+        first_input,
+        title,
+        end,
+        open,
+        active,
+        prs,
+    } = scanned;
     let modified = std::time::UNIX_EPOCH + std::time::Duration::from_millis(active.max(0) as u64);
     Info {
         id,
@@ -674,6 +703,7 @@ fn info(id: String, scanned: Scanned, dir: &Path) -> Info {
         } else {
             end
         },
+        prs,
     }
 }
 
@@ -1079,6 +1109,34 @@ mod tests {
             list(&dir, None, None).unwrap().iter().find(|i| i.id == "quiet").unwrap().end,
             None
         );
+    }
+
+    /// The sidebar's row reads the listing, so the bound PRs have to reach it from the log: the
+    /// engine keeps `Event::Prs` whole, and the newest one wins.
+    #[test]
+    fn list_reports_the_bound_prs() {
+        let dir = tmp();
+        let mut log = Log::create(&dir, header("a")).unwrap();
+        assert!(list(&dir, None, None).unwrap()[0].prs.is_empty(), "nothing bound yet");
+
+        let one = PrBinding::new("muni-works/frog", 312);
+        log.append(&ev(1, Event::Prs { prs: vec![one.clone()] })).unwrap();
+        drop(log);
+        assert_eq!(list(&dir, None, None).unwrap()[0].prs, vec![one.clone()]);
+
+        // A second binding, then one written back with the state gh saw: the whole list each
+        // time, the newest winning.
+        let mut log = Log::open(&dir, "a").unwrap();
+        let merged = PrBinding::new("muni-works/frog", 300);
+        log.append(&ev(2, Event::Prs { prs: vec![merged.clone(), one.clone()] })).unwrap();
+        let mut seen = one;
+        seen.state = "merged".into();
+        seen.checks = Some((4, 4));
+        log.append(&ev(3, Event::Prs { prs: vec![merged, seen.clone()] })).unwrap();
+        drop(log);
+        let listed = list(&dir, None, None).unwrap();
+        assert_eq!(listed[0].prs.len(), 2);
+        assert_eq!(listed[0].prs[1], seen, "the state a client wrote back is the one listed");
     }
 
     #[test]

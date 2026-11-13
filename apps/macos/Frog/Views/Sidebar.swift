@@ -179,7 +179,7 @@ struct SessionList: View {
         }
         return SessionNesting.rows(
             folds.map(\.session), parent: { parentOf[$0] }, state: rowState, before: before,
-            openDone: openDone, keep: current.map { [$0] } ?? [], collapsed: collapsedParents)
+            opened: openDone, keep: current.map { [$0] } ?? [], collapsed: collapsedParents)
     }
 
     private func toggleChildren(_ parent: String) {
@@ -188,7 +188,9 @@ struct SessionList: View {
         }
     }
 
-    private func toggleDone(_ parent: String) {
+    /// Open or close a quiet row (a manager with nothing live under it). One state, because
+    /// there is one fold: the row's own disclosure.
+    private func toggleOpen(_ parent: String) {
         withAnimation(.snappy(duration: 0.2)) {
             if openDone.remove(parent) == nil { openDone.insert(parent) }
         }
@@ -482,26 +484,29 @@ struct SessionList: View {
         }
     }
 
-    /// A row's disclosure: a quiet manager (folded by the scope) opens its done row; one
-    /// opened that way folds back; anything else collapses to its counts or shows them again.
+    /// A row's disclosure: a quiet manager (settled, nothing live under it) opens to its
+    /// children; anything else collapses to its counts or shows them again. One fold, one
+    /// level — there is no done row to route through.
     private func toggleNode(_ id: String, collapsed: Bool, counts: SessionNesting.Counts) {
         let live = counts.waiting + counts.running + counts.unread
         if collapsed && !collapsedParents.contains(id) {
-            toggleDone(id)
+            toggleOpen(id)
         } else if !collapsed && live == 0 && scope != .all && openDone.contains(id) {
-            toggleDone(id)
+            toggleOpen(id)
         } else {
             toggleChildren(id)
         }
     }
 
-    /// Settled work folded into one line: "18 done · 1 failed", "12 earlier", "4 done by chief".
+    /// Settled root sessions folded into one line: "18 done · 1 failed", "12 earlier", "4 done
+    /// by chief". The only fold that stands between sibling trees — nothing folds inside a
+    /// session (`SessionNesting.rows` lists a parent's children directly).
     private func foldRow(parent: String, depth: Int, count: Int, failed: Int, open: Bool,
                          git: GitRowBadge? = nil) -> some View {
         let what = parent == AttentionTree.chiefFold ? "done by chief"
             : scope == .today && parent != AttentionTree.yoursFold ? "earlier" : "done"
         return HStack(spacing: 0) {
-            Button { toggleDone(parent) } label: {
+            Button { toggleOpen(parent) } label: {
                 HStack(spacing: 0) {
                     Color.clear.frame(width: AttentionMetrics.leading(depth))
                     Image(systemName: "chevron.right").font(.frog(size: 8, weight: .bold))
@@ -623,7 +628,7 @@ struct SessionList: View {
 
     /// A parent's finished children folded into one line: "+3 done", with how many failed.
     private func doneRow(parent: String, count: Int, failed: Int, open: Bool) -> some View {
-        Button { toggleDone(parent) } label: {
+        Button { toggleOpen(parent) } label: {
             HStack(spacing: 4) {
                 Image(systemName: "chevron.right").font(.frog(size: 8, weight: .bold))
                     .rotationEffect(.degrees(open ? 90 : 0))
@@ -1343,6 +1348,15 @@ private struct CompactSessionRow<Menu: View>: View {
         session.end == .complete && abs(Date().timeIntervalSince(session.modifiedDate)) < 10
     }
 
+    /// The check a finished row keeps. A turn that just ended flashes it (a real signal: the
+    /// conversation is on screen, so `live` moved when the turn did). A worker that finished a
+    /// while ago keeps a quiet one until the pointer comes to it — a finished worker shouldn't
+    /// read as live work, and that hasn't been looked at yet. Hovering ends it: the person is
+    /// looking, so it has had its look.
+    private var check: RowCheck {
+        RowCheck.of(fresh: freshComplete, finished: session.end == .complete, hovering: hovering)
+    }
+
     var body: some View {
         // The tick re-checks the 30 s activity rule so the indicator and the title
         // emphasis fade together.
@@ -1495,13 +1509,17 @@ private struct CompactSessionRow<Menu: View>: View {
         case .unread:
             Circle().fill(Color.accentColor).frame(width: 6, height: 6).help("finished while you were away")
         case .idle:
-            // A finished worker keeps a quiet check so it never reads as live work; a
-            // top-level row only flashes it.
-            if freshComplete || (depth > 0 && session.end == .complete) {
-                Image(systemName: "checkmark.circle.fill").font(.frog(size: 11))
-                    .foregroundStyle(.green.opacity(freshComplete ? 1 : 0.6)).help("done")
-            } else {
+            // Nothing for idle work that's been seen. The check is for a row that finished and
+            // hasn't had its look yet; the pointer arriving counts as the look (see `check`).
+            switch check {
+            case .none:
                 EmptyView()
+            case .fresh:
+                Image(systemName: "checkmark.circle.fill").font(.frog(size: 11))
+                    .foregroundStyle(.green).help("done")
+            case .quiet:
+                Image(systemName: "checkmark.circle.fill").font(.frog(size: 11))
+                    .foregroundStyle(.green.opacity(0.6)).help("done")
             }
         }
     }
@@ -1632,7 +1650,7 @@ struct ConversationRow<Menu: View>: View {
 
     private var label: some View {
         ConversationRowLabel(session: session, live: live, end: session.end, pane: pane, showPlace: showPlace,
-                             detail: line.text, detailTint: line.tint, pr: line.pr, turns: line.turns,
+                             detail: line.text, detailTint: line.tint, prs: line.prs, turns: line.turns,
                              hideStatus: hovering)
     }
 

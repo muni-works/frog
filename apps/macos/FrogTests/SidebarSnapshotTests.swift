@@ -242,6 +242,62 @@ final class SidebarSnapshotTests: XCTestCase {
         }
     }
 
+    /// The sidebar's rows and the composer's pill, one above the other, from one list of bound
+    /// PRs: sidebar-prs-{light,dark}.png. What the bug was: "3 PRs, all merged" in the composer
+    /// and "#312" in the row, with the other two invisible.
+    func testRenderPRsAgreeing() throws {
+        let sessions: [SessionInfo] = [
+            Self.s("three", "three PRs bound", ago: 1).withPrs([
+                .init(repo: "muni-works/frog", number: 300, title: "tray", state: "merged"),
+                .init(repo: "muni-works/frog", number: 301, title: "hover", state: "merged"),
+                .init(repo: "muni-works/frog", number: 312, title: "chip hover", state: "merged"),
+            ]),
+            Self.s("one", "one PR bound", ago: 2).withPrs([
+                .init(repo: "muni-works/frog", number: 312, title: "chip hover", state: "merged"),
+            ]),
+            Self.s("worst", "two merged, one failing", ago: 3).withPrs([
+                .init(repo: "muni-works/frog", number: 300, title: "tray", state: "merged"),
+                .init(repo: "muni-works/frog", number: 301, title: "hover", state: "failing"),
+            ]),
+        ]
+
+        /// The composer's own view of a session: the same bindings, through the one summary.
+        func tray(_ s: SessionInfo) -> ComposerModel.State {
+            var state = ComposerModel.State(
+                model: .init(id: "local/qwen3-4b", name: "Qwen3 4B · On this Mac", place: .local, node: nil),
+                where: .session(.init(repo: "muni-works/frog", branch: "frog/pr-chip-hover",
+                                      worktree: true, worktreePath: s.cwd,
+                                      diff: .init(add: 12, del: 3, files: 2), dirty: false, ahead: 0,
+                                      prs: GitIndex.shared.prs(s.prs))))
+            state.draft = .init(text: "", attachments: [], caret: 0)
+            return state
+        }
+        for (look, name) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
+            Library.shared.stage(sessions: sessions)
+            try render(VStack(alignment: .leading, spacing: 12) {
+                ForEach(sessions) { s in
+                    VStack(alignment: .leading, spacing: 5) {
+                        // The row, as the sidebar draws it…
+                        HStack(spacing: 0) {
+                            Text(s.displayTitle).font(.frog(size: 13)).lineLimit(1)
+                            Spacer(minLength: 6)
+                            if let status = RowStatus.of(.done, prs: Library.shared.rowLine(s).prs) {
+                                RowStatusView(status: status).fixedSize()
+                            }
+                        }
+                        .padding(.horizontal, 10)
+                        // …and the same thread's composer, from the same bound list.
+                        TrayPreview(state: tray(s))
+                    }
+                }
+            }
+            .padding(16)
+            .frame(maxHeight: .infinity, alignment: .top)
+            .background(.background), size: CGSize(width: 620, height: 360), to: "sidebar-prs-\(name)", appearance: look)
+            Library.shared.unstage()
+        }
+    }
+
     /// The ask card: two answers and a ⋯, into ask-card-{light,dark}.png.
     func testRenderAskCard() throws {
         let c = Conversation(folder: URL(fileURLWithPath: "/tmp/demo"), link: nil, replay: false, session: "s")
@@ -252,5 +308,14 @@ final class SidebarSnapshotTests: XCTestCase {
             try render(PermissionCard(request: request, conversation: c).padding(16).background(.background),
                        size: CGSize(width: 560, height: 200), to: "ask-card-\(name)", appearance: look)
         }
+    }
+}
+
+private extension SessionInfo {
+    /// The same session with bound PRs, as the listing carries them.
+    func withPrs(_ prs: [PrBinding]) -> SessionInfo {
+        var s = self
+        s.prs = prs
+        return s
     }
 }

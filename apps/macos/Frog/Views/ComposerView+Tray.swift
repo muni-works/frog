@@ -141,8 +141,14 @@ extension ComposerView {
     func gitTask(_ work: @escaping () async -> GitActions.Failure?) {
         Task {
             if let f = await work() { dispatch(.failed(code: f.code, detail: f.detail)) }
-            gitIndex.refreshPrs(conversation.prs, in: workspace.folder.path)
+            gitIndex.refreshPrs(conversation.prs, in: workspace.folder.path, writeBack: gitIndexWriteBack)
         }
+    }
+
+    /// What gh saw, back to the engine. The sidebar reads the session listing, so unless the log
+    /// holds the latest state the two disagree the moment this conversation closes.
+    var gitIndexWriteBack: (PrBinding) -> Void {
+        { pr in conversation.send(.bindPr(pr)) }
     }
 
     /// `#12`, `owner/name#12` or a PR URL.
