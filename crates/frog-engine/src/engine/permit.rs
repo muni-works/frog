@@ -865,14 +865,18 @@ impl Agent {
         if name == sessions::START
             && let Some(spec) = input["model"].as_str().filter(|s| !s.trim().is_empty())
         {
-            // Before anything is created: the model resolves, its credential is live, and a
-            // hosted BYOK gateway lists it (docs/design/model-policy.md). The credential check
-            // exists because a session once started and then died on its first call with
-            // "ANTHROPIC_API_KEY not set" — one error, before the row, saying what IS usable.
-            crate::model_policy::check_credential_spec(&self.cfg, spec)
+            // Before anything is created: the model resolves, a hosted BYOK gateway lists it,
+            // and its credential is live (docs/design/model-policy.md). Ordered most-specific
+            // first: whether the gateway serves the model says more than whether a key exists,
+            // and a model it doesn't list fails on call 1 whatever the key. (The key first
+            // refused "gpt-9" for a missing key when the real answer was that the gateway has
+            // never heard of it.) The credential check exists because a session once started
+            // and died on its first call with "ANTHROPIC_API_KEY not set" — one error, before
+            // the row, saying what IS usable.
+            crate::model_policy::check_spawn_spec(&self.cfg, spec)
                 .await
                 .map_err(|e| anyhow::anyhow!("{e:#}"))?;
-            crate::model_policy::check_spawn_spec(&self.cfg, spec)
+            crate::model_policy::check_credential_spec(&self.cfg, spec)
                 .await
                 .map_err(|e| anyhow::anyhow!("{e:#}"))?;
         }

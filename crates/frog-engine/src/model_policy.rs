@@ -273,10 +273,28 @@ pub async fn check_spawn_spec(cfg: &crate::config::Config, spec: &str) -> Result
 pub fn credential_check(profile: &Profile) -> Result<()> {
     // The same resolution a provider client would do (`Provider::new` reads `p.api_key()`);
     // failing here, before a session row exists, is the point.
+    //
+    // Only a hosted preset frog can name is checked. A profile pointing at a URL frog doesn't
+    // recognize is the user's own gateway: whether it wants a key is that gateway's business
+    // (many local ones take none), and auth may ride in a header `extra` sends, which
+    // `api_key()` cannot see. Refusing those refused working setups.
+    let recognized = profile
+        .base_url
+        .as_deref()
+        .filter(|u| !u.is_empty())
+        .is_none_or(|url| {
+            crate::providers::PRESETS.iter().any(|p| {
+                !p.local
+                    && ((p.kind == profile.provider && url.is_empty())
+                        || (!p.base_url.is_empty()
+                            && url.starts_with(p.base_url.trim_end_matches('/'))))
+            })
+        });
     let need_key = profile.sidecar.is_none()
         && !matches!(profile.provider, ProviderKind::Ollama | ProviderKind::Codex)
         && profile.provider != ProviderKind::Node
-        && crate::policy::is_cloud(profile);
+        && crate::policy::is_cloud(profile)
+        && recognized;
     if need_key && profile.api_key().is_none() {
         // The spec may be a profile name, so the subject is the provider (kind or gateway),
         // and the fix names its usual variable or key page when frog knows them.
