@@ -1323,6 +1323,11 @@ pub struct RanOn {
 }
 
 /// Who runs a frog cloud model: `frog` (its own GPUs) or a third party (`workers-ai`).
+///
+/// The data is truthful on purpose (Cam, 2026-11-12: presentation becomes opaque, data stays
+/// truthful). `id`, `name` and `third_party` say who really answered, because a cache miss or a
+/// cost spike is debugged from them. What a user *reads* comes from [`Self::display_name`],
+/// which never names an upstream.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 pub struct ServedBy {
     pub id: String,
@@ -1332,6 +1337,14 @@ pub struct ServedBy {
 }
 
 impl ServedBy {
+    /// The only name a user sees. A Frog Cloud turn reads as Frog Cloud whoever proxied it
+    /// (Cam, 2026-11-12, superseding the gateway plan's decisions 1 and 8 as far as upstream
+    /// naming goes). Views render this, never `name`; the apps carry the same helper
+    /// (`ServedBy.displayName` in Swift, `servedByName` on web).
+    pub fn display_name(&self) -> &'static str {
+        "Frog Cloud"
+    }
+
     /// From an id alone (the `x-frog-upstream` header), naming the ones frog cloud uses.
     pub fn from_id(id: &str) -> Self {
         let name = match id {
@@ -1346,7 +1359,9 @@ impl ServedBy {
         }
     }
 
-    /// A `/v1/models` entry's `served_by` object.
+    /// A `/v1/models` entry's `served_by` object. Its `name` is kept verbatim: it's the real
+    /// upstream, for the log. Display goes through [`Self::display_name`], so this path can't
+    /// leak it either.
     pub fn parse(v: &serde_json::Value) -> Option<Self> {
         let id = v["id"].as_str().filter(|s| !s.is_empty())?;
         let known = Self::from_id(id);
@@ -1630,6 +1645,44 @@ mod tests {
         assert_eq!((u.model_calls, &u.timing), (1, &None));
         // And it serializes back without the new field.
         assert_eq!(serde_json::to_string(&u).unwrap(), old);
+    }
+
+    /// Cam, 2026-11-12: a Frog Cloud turn reads as "Frog Cloud" whoever proxied it, and the
+    /// data behind the label stays true (the log and cost accounting need the real upstream).
+    #[test]
+    fn an_upstream_never_reaches_the_display_name() {
+        // From `x-frog-upstream` alone.
+        let s = ServedBy::from_id("workers-ai");
+        assert_eq!(s.display_name(), "Frog Cloud");
+        assert_eq!((s.id.as_str(), s.name.as_str(), s.third_party), ("workers-ai", "Cloudflare Workers AI", true));
+        // An unknown third party is opaque too, and still names itself in the data.
+        let s = ServedBy::from_id("some-new-upstream");
+        assert_eq!(s.display_name(), "Frog Cloud");
+        assert_eq!((s.name.as_str(), s.third_party), ("some-new-upstream", true));
+        // Frog Cloud's own GPUs are the one case where the data already agrees.
+        let s = ServedBy::from_id("frog");
+        assert_eq!(s.display_name(), "Frog Cloud");
+        assert!(!s.third_party);
+    }
+
+    /// The leak the brief missed: `/v1/models` may carry an explicit `served_by.name`, which
+    /// `parse` keeps verbatim. Display must not use it.
+    #[test]
+    fn a_listed_served_by_name_never_reaches_the_display_name() {
+        let listed = serde_json::json!({
+            "id": "workers-ai",
+            "name": "Cloudflare Workers AI",
+            "third_party": true
+        });
+        let s = ServedBy::parse(&listed).unwrap();
+        assert_eq!(s.display_name(), "Frog Cloud");
+        assert_eq!((s.id.as_str(), s.name.as_str(), s.third_party), ("workers-ai", "Cloudflare Workers AI", true));
+        // Even an upstream frog has never heard of, named however the gateway likes.
+        let listed = serde_json::json!({"id": "acme", "name": "Acme Inference Ltd."});
+        let s = ServedBy::parse(&listed).unwrap();
+        assert_eq!(s.display_name(), "Frog Cloud");
+        assert_eq!(s.name, "Acme Inference Ltd.");
+        assert!(s.third_party);
     }
 
     #[test]
