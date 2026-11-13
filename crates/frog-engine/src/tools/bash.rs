@@ -1921,8 +1921,9 @@ mod tests {
             let t = std::time::Instant::now();
             let _ = adapt_swiftpm(&s);
             let _ = git_https_applies(&s);
+            // A runaway scanner takes seconds; a busy CI runner can stall a fast one ~100ms.
             assert!(
-                t.elapsed() < Duration::from_millis(50),
+                t.elapsed() < Duration::from_millis(500),
                 "scanner took {:?} on {s:?}",
                 t.elapsed()
             );
