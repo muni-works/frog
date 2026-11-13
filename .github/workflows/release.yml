@@ -296,6 +296,12 @@ jobs:
       # it isn't. A CLI-only tag (no app published yet) stays a draft and keeps the last good
       # release serving — that is a pass, not a failure: release.sh publishes it later.
       - name: publish once the asset set is complete
+        # release-assets.sh shells out to `gh`, which needs a token of its own: uploading used
+        # softprops/action-gh-release (it brings its own). Without this, the script answered
+        # "no release 'v0.3.0' on muni-works/frog" — the release exists, the CLI just wasn't
+        # authenticated — and a complete draft stayed unpublished on a tag that shipped fine.
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: .release-tools/scripts/release-assets.sh publish "$TAG"
       # Push the rendered formula to the tap when a token for it is configured.
       - name: update homebrew tap
