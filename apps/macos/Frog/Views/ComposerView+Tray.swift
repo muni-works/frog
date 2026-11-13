@@ -115,7 +115,10 @@ extension ComposerView {
                 gitTask { await GitActions.reopen(repo, Int(n), in: dir) }
             }
         case "archive":
-            if let id = conversation.sessionID { SessionBroker.shared.archive(id, true) }
+            // The git line's Archive (a merged PR): it archives the conversation in this pane,
+            // so the pane follows to a new session. The shared decision, not the broker's
+            // `archive`, which the ArchiveSession tool also uses and must never navigate with.
+            if let id = conversation.sessionID { ArchiveNav.archive(id, from: workspace) }
         case "gh_auth_login": GitActions.ghAuthLogin()
         case "open_url": if case .string(let u) = e.fields["url"], let url = URL(string: u) { NSWorkspace.shared.open(url) }
         case "copy":
