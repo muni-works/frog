@@ -8963,6 +8963,162 @@ async fn a_finished_bash_job_reports_its_exit_and_output() {
     );
 }
 
+/// A background job that ends while the turn is still running is in the *next model call of
+/// that turn*, not the turn after it: `take_notices` drains at the same tool boundary that
+/// already flushes session messages and pane reports. Before that it parked until the turn
+/// ended, so a model working through a long turn reasoned about a stale world.
+#[tokio::test]
+async fn a_wake_landing_mid_turn_reaches_the_next_call_of_that_turn() {
+    let dir = tmp_store();
+    // A monitor that fires 1s in, while the 3s Bash call is still running: the notice is
+    // parked before the turn's second step starts, and drops here.
+    let script = vec![
+        reply(
+            vec![
+                call("m", "Monitor", json!({"after_s": 1, "note": "pod check"})),
+                call("b", "Bash", json!({"command": "sleep 3; echo slept"})),
+            ],
+            Stop::ToolUse,
+        ),
+        reply(vec![text("turn one done")], Stop::End),
+    ];
+    // A store of its own: the replay below needs a log on disk, and `store: None` leaves the
+    // journal with nowhere to write (so `events_after` finds no file). The session id is the
+    // engine's own either way — `tmp_store` only names the directory.
+    let store = tmp_store();
+    let (mut h, sent) = engine_sent(script, Some(store.clone()), None, None, dir.clone());
+    drive(&mut h, |e| matches!(e, Event::Idle)).await;
+    submit(&h, "set a timer and work");
+    let evs = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+    // The timer fired mid-turn...
+    assert!(
+        evs.iter()
+            .any(|e| matches!(&e.event, Event::BackgroundDone { id, status, .. }
+                if id == "mon-1" && status == "done")),
+        "the timer fired during the turn"
+    );
+    // ...and the turn's own second call carries it, before the turn ends.
+    assert_eq!(
+        sent.lock().unwrap().len(),
+        2,
+        "two calls: the tool batch, then the step that ends the turn"
+    );
+    let second = request_messages(&sent, 1);
+    let texts = user_texts(&second);
+    assert!(
+        texts.iter().any(|t| t.contains("<wakeup id=mon-1")
+            && t.contains("pod check")),
+        "the model's next look at the world carries the wake: {texts:?}"
+    );
+    // The turn ended on its own step, not because a wake forced a new one.
+    assert_eq!(
+        evs.iter()
+            .filter(|e| matches!(e.event, Event::TurnStarted { .. }))
+            .count(),
+        1,
+        "the wake did not start a turn of its own"
+    );
+    // ...and the transcript shows it: the row that marked the turn has the wake, so the user
+    // watches the model react to something on screen. Durable, and it names this turn.
+    let delivered = evs
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::WakesDelivered { turn, wakes } => Some((*turn, wakes.clone())),
+            _ => None,
+        })
+        .expect("the wake is delivered as an event, not only as a prompt");
+    assert_eq!(delivered.0, 1, "it belongs to the turn that was running");
+    assert!(
+        delivered.1.len() == 1 && delivered.1[0].starts_with("<wakeup id=mon-1"),
+        "{delivered:?}"
+    );
+    let sid = evs[0].session.clone();
+    shutdown(h).await;
+    let logged = session::events_after(&store, &sid, 0).unwrap();
+    assert!(
+        logged
+            .iter()
+            .any(|e| matches!(&e.event, Event::WakesDelivered { turn: 1, .. })),
+        "a reopened session replays the row where it landed"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+    let _ = std::fs::remove_dir_all(store);
+}
+
+/// The other half of that: draining at the boundary must not break the turn-start path. A wake
+/// parked before a turn starts still rides in as that turn's input (as it always did), and the
+/// boundary drain of the *same* notices never happens — one delivery, not two, and never an
+/// empty `WakesDelivered` (an activity row for nothing).
+#[tokio::test]
+async fn a_wake_taken_at_turn_start_is_not_delivered_twice_mid_turn() {
+    let dir = tmp_store();
+    // Turn one sets a timer and ends at once; the timer fires with nothing running, so it wakes
+    // a turn of its own — that turn's *first step* is the boundary under test. It has to make a
+    // call for the boundary to run at all, which it does (the scripted reply).
+    let script = vec![
+        reply(
+            vec![call("m", "Monitor", json!({"after_s": 1, "note": "check"}))],
+            Stop::ToolUse,
+        ),
+        reply(vec![text("turn one done")], Stop::End),
+        reply(vec![text("the timer woke me")], Stop::End),
+    ];
+    let (mut h, sent) = engine_sent(script, None, None, None, dir.clone());
+    drive(&mut h, |e| matches!(e, Event::Idle)).await;
+    submit(&h, "set a timer");
+    drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+    // The timer fires while nothing runs: it parks and wakes a turn of its own.
+    let wake_turn = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+    let delivered: Vec<u64> = wake_turn
+        .iter()
+        .filter_map(|e| match &e.event {
+            Event::WakesDelivered { turn, wakes } => {
+                assert!(!wakes.is_empty(), "an empty WakesDelivered is a row for nothing");
+                Some(*turn)
+            }
+            _ => None,
+        })
+        .collect();
+    // A turn started *on* the wake carries it as its input instead (protocol.rs), so no
+    // event: what must not appear is a second, empty one from the boundary drain.
+    assert!(
+        delivered.is_empty(),
+        "a wake turn carries its wakes as input, so nothing is delivered: {delivered:?}"
+    );
+    let input = wake_turn
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::TurnStarted { input, .. } => Some(input.clone()),
+            _ => None,
+        })
+        .unwrap();
+    assert!(input.starts_with("<wakeup id=mon-1"), "{input}");
+    // Exactly one turn ran on the wake, and the boundary it reached mid-turn (its own first
+    // step) found the queue already empty — so it did not push the wake into the history a
+    // second time.
+    assert_eq!(
+        wake_turn
+            .iter()
+            .filter(|e| matches!(e.event, Event::TurnStarted { .. }))
+            .count(),
+        1,
+        "one turn for the one wake"
+    );
+    // The wake reached the model exactly once: one user block in the wake turn's request.
+    // (Counting occurrences in the raw requests would overcount — the Monitor tool's own
+    // result text mentions `<wakeup id=mon-1>` — and a second user block is exactly what a
+    // boundary drain that found the queue unemptied would add.)
+    let last = request_messages(&sent, 2);
+    let wakes: Vec<String> = user_texts(&last)
+        .into_iter()
+        .filter(|t| t.starts_with("<wakeup id=mon-1"))
+        .collect();
+    assert_eq!(wakes.len(), 1, "delivered once, not twice: {wakes:?}");
+    drive(&mut h, |e| matches!(e, Event::Idle)).await;
+    shutdown(h).await;
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 /// The sleep guard: a long bare wait (the specimen: `sleep 570; wc -l …; tail …`, a
 /// 9.5-minute blocking turn) runs as a background job. The tool returns at once with a note
 /// saying so, a Warn notice tells the user, and the turn's next step runs right away.
@@ -9061,10 +9217,11 @@ async fn a_second_long_sleep_while_one_waits_is_refused() {
 }
 
 /// Events never interrupt a turn: two timers that fire while a turn is busy (a 3s command)
-/// are parked, the turn completes normally, and they run as the next turn, in the order
-/// they fired, before the engine goes idle (no `Idle` between the two turns).
+/// join *that* turn at its next step, in the order they fired — as one batch, never as a
+/// turn of their own and never an `Idle` in between. (Before the boundary drain they parked
+/// through to the turn's end and ran as the next turn; that is the behaviour this replaces.)
 #[tokio::test]
-async fn wakes_mid_turn_queue_for_the_boundary_in_order() {
+async fn wakes_mid_turn_join_that_turn_in_order() {
     let dir = tmp_store();
     let script = vec![
         reply(
@@ -9076,9 +9233,8 @@ async fn wakes_mid_turn_queue_for_the_boundary_in_order() {
             Stop::ToolUse,
         ),
         reply(vec![text("turn one done")], Stop::End),
-        reply(vec![text("both timers seen")], Stop::End),
     ];
-    let mut h = engine_with(script, true, None, None, None, dir.clone());
+    let (mut h, sent) = engine_sent(script, None, None, None, dir.clone());
     drive(&mut h, |e| matches!(e, Event::Idle)).await;
     submit(&h, "set two timers and work");
     let first = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
@@ -9104,21 +9260,36 @@ async fn wakes_mid_turn_queue_for_the_boundary_in_order() {
         1,
         "nothing started mid-turn"
     );
-    let next = drive(&mut h, |e| matches!(e, Event::TurnStarted { .. })).await;
-    assert!(
-        !next.iter().any(|e| matches!(e.event, Event::Idle)),
-        "the wake runs before the engine goes idle"
-    );
-    let input = next
+    // One delivery, on the running turn, holding both in the order they fired.
+    let batches: Vec<Vec<String>> = first
         .iter()
-        .find_map(|e| match &e.event {
-            Event::TurnStarted { input, .. } => Some(input.clone()),
+        .filter_map(|e| match &e.event {
+            Event::WakesDelivered { turn: 1, wakes } => Some(wakes.clone()),
             _ => None,
         })
-        .unwrap();
-    let (a, b) = (input.find("first").unwrap(), input.find("second").unwrap());
-    assert!(input.starts_with("<wakeup id=mon-1") && a < b, "{input}");
-    drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        .collect();
+    assert_eq!(batches.len(), 1, "one boundary, one delivery: {batches:?}");
+    let (a, b) = (batches[0].join("\n"), batches[0][0].clone());
+    assert!(b.starts_with("<wakeup id=mon-1"), "{batches:?}");
+    assert_eq!(batches[0].len(), 2, "{batches:?}");
+    assert!(
+        batches[0][1].starts_with("<wakeup id=mon-2"),
+        "in the order they fired: {batches:?}"
+    );
+    // ...and the model's second call carried both, before the turn ended.
+    let texts = user_texts(&request_messages(&sent, 1));
+    let joined = texts.join("\n");
+    let (fi, si) = (
+        joined.find("first").expect("the first timer"),
+        joined.find("second").expect("the second timer"),
+    );
+    assert!(fi < si, "fired in order: {joined}");
+    // The turn ended on its own step: no turn of its own for the wakes, and no Idle first.
+    let after = drive(&mut h, |e| matches!(e, Event::Idle)).await;
+    assert!(
+        !after.iter().any(|e| matches!(e.event, Event::TurnStarted { .. })),
+        "the wakes did not start a turn of their own"
+    );
     shutdown(h).await;
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -9179,11 +9350,13 @@ async fn an_informational_message_is_read_without_a_turn() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// Everything waiting at a boundary goes as one batch: a wake that fired mid-turn and a
-/// session message that arrived mid-turn open one turn together (wake as its input, the
-/// message as `more`), and clients see the queue while it waits.
+/// The wake and the session message take different roads now, and neither is lost. The wake,
+/// which fired mid-turn, goes into the running turn at its boundary (`WakesDelivered` names
+/// that turn, and clients clear the queue they showed while it waited). The session message,
+/// which arrived too late for that boundary, still opens the next turn — as its input, with no
+/// wake row, because the wake already landed.
 #[tokio::test]
-async fn a_boundary_flushes_wakes_and_messages_as_one_batch() {
+async fn a_wake_joins_the_turn_and_a_late_message_opens_the_next() {
     let dir = tmp_store();
     let script = vec![
         reply(
@@ -9194,9 +9367,9 @@ async fn a_boundary_flushes_wakes_and_messages_as_one_batch() {
             Stop::ToolUse,
         ),
         reply(vec![text("turn one")], Stop::End),
-        reply(vec![text("saw both")], Stop::End),
+        reply(vec![text("got the message")], Stop::End),
     ];
-    let mut h = engine_with(script, true, None, None, None, dir.clone());
+    let (mut h, sent) = engine_sent(script, None, None, None, dir.clone());
     drive(&mut h, |e| matches!(e, Event::Idle)).await;
     submit(&h, "work");
     let parked = drive(
@@ -9208,7 +9381,7 @@ async fn a_boundary_flushes_wakes_and_messages_as_one_batch() {
         !parked
             .iter()
             .any(|e| matches!(e.event, Event::TurnEnded { .. })),
-        "parked mid-turn"
+        "the wake waited mid-turn"
     );
     h.ops
         .send(Op::Deliver {
@@ -9217,7 +9390,21 @@ async fn a_boundary_flushes_wakes_and_messages_as_one_batch() {
             message: "serving:true".into(),
         })
         .unwrap();
-    drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+    let first = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+    // The wake landed on turn 1, at the boundary, and the queue clients saw is empty now.
+    assert!(
+        first.iter().any(|e| matches!(&e.event,
+            Event::WakesDelivered { turn: 1, wakes } if wakes[0].contains("pod check"))),
+        "the wake joins the running turn"
+    );
+    assert!(
+        first
+            .iter()
+            .any(|e| matches!(&e.event, Event::QueuedEvents { items } if items.is_empty())),
+        "the flush empties the queue clients see"
+    );
+    // The session message opens the next turn alone: it is its input, and there is no `more`
+    // and no wake row — the wake is not delivered a second time.
     let next = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
     let (input, more) = next
         .iter()
@@ -9227,24 +9414,27 @@ async fn a_boundary_flushes_wakes_and_messages_as_one_batch() {
         })
         .unwrap();
     assert!(
-        input.starts_with("<wakeup id=mon-1") && input.contains("pod check"),
+        input.starts_with("<session-message from=\"s9\"") && input.contains("serving:true"),
         "{input}"
     );
-    assert_eq!(more.len(), 1, "{more:?}");
+    assert!(more.is_empty(), "{more:?}");
     assert!(
-        more[0].text.starts_with("<session-message from=\"s9\"")
-            && more[0].text.contains("serving:true")
-    );
-    assert!(
-        next.iter()
-            .any(|e| matches!(&e.event, Event::QueuedEvents { items } if items.is_empty())),
-        "the flush empties the queue clients see"
+        !next.iter().any(|e| matches!(e.event, Event::WakesDelivered { .. })),
+        "the wake was already delivered"
     );
     let turns = next
         .iter()
         .filter(|e| matches!(e.event, Event::TurnStarted { .. }))
         .count();
-    assert_eq!(turns, 1, "one batch, one turn");
+    assert_eq!(turns, 1, "one turn for the one message");
+    // The wake rode turn 1's second call, and the turn after carries it once in the history
+    // (it is still there to read) — not twice. A block count, not a substring: the Monitor
+    // tool's own result text mentions `<wakeup id=mon-1>` too.
+    let last = user_texts(&request_messages(&sent, 2))
+        .into_iter()
+        .filter(|t| t.starts_with("<wakeup id=mon-1"))
+        .count();
+    assert_eq!(last, 1, "delivered once, carried once");
     drive(&mut h, |e| matches!(e, Event::Idle)).await;
     shutdown(h).await;
     let _ = std::fs::remove_dir_all(dir);

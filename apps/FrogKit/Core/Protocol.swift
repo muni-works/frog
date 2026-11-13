@@ -1459,6 +1459,41 @@ struct SessionInfo: Codable, Sendable, Identifiable, Hashable {
     /// row and the composer's git line both read this one list, so the two can't disagree.
     var prs: [PrBinding] = []
 
+    /// Decoding by hand, for the fields older listings don't carry. A `var` with a default is
+    /// still a *required* key to Swift's synthesised `Decodable` — so adding `prs` here made
+    /// every listing that predates it (and every fixture modelling one) fail with "Key 'prs'
+    /// not found". Optional keys belong in `decodeIfPresent`, not in a default value.
+    init(from c: Decoder) throws {
+        let k = try c.container(keyedBy: CodingKeys.self)
+        id = try k.decode(String.self, forKey: .id)
+        modified = try k.decode(Int64.self, forKey: .modified)
+        created = try k.decode(Int64.self, forKey: .created)
+        model = try k.decode(String.self, forKey: .model)
+        firstInput = try k.decodeIfPresent(String.self, forKey: .firstInput)
+        title = try k.decodeIfPresent(String.self, forKey: .title)
+        end = try k.decodeIfPresent(End.self, forKey: .end)
+        forkedFrom = try k.decodeIfPresent(ForkPoint.self, forKey: .forkedFrom)
+        cwd = try k.decodeIfPresent(String.self, forKey: .cwd)
+        parent = try k.decodeIfPresent(String.self, forKey: .parent)
+        prs = try k.decodeIfPresent([PrBinding].self, forKey: .prs) ?? []
+    }
+
+    init(id: String, modified: Int64, created: Int64, model: String, firstInput: String? = nil,
+         title: String? = nil, end: End? = nil, forkedFrom: ForkPoint? = nil, cwd: String? = nil,
+         parent: String? = nil, prs: [PrBinding] = []) {
+        self.id = id
+        self.modified = modified
+        self.created = created
+        self.model = model
+        self.firstInput = firstInput
+        self.title = title
+        self.end = end
+        self.forkedFrom = forkedFrom
+        self.cwd = cwd
+        self.parent = parent
+        self.prs = prs
+    }
+
     var displayTitle: String {
         let t = (title ?? firstInput ?? "Untitled").trimmingCharacters(in: .whitespacesAndNewlines)
         return Self.titleLine(t) ?? "Untitled"

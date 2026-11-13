@@ -1029,8 +1029,10 @@ final class Conversation {
             // Live only: a replayed log has no queue.
             if !replaying { queuedEvents = items }
         case .wakesDelivered(let n, let wakes):
+            // Appended: a turn can get wakes twice — the batch it opened with, and any that
+            // ended while it ran (the engine appends those to its history mid-turn).
             if let i = turns.lastIndex(where: { $0.number == n }) {
-                turns[i].wakes = wakes
+                turns[i].wakes += wakes
             }
         case .synced:
             replaying = false
