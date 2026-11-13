@@ -1301,7 +1301,7 @@ private struct ChiefTile: View {
     }
 }
 
-/// Compact, title-only sidebar row, with its state glyph, trailing meta (age, commits ahead)
+/// Compact, title-only sidebar row, with its state glyph, trailing meta (commits ahead)
 /// and cached GitHub pull request indicator. `private` except to the test target, which drives
 /// its hover state (SidebarHoverBadgeTests).
 struct CompactSessionRow<Menu: View>: View {
@@ -1461,7 +1461,8 @@ struct CompactSessionRow<Menu: View>: View {
         var lines = [session.displayTitle]
         if let wt = SessionList.worktreeName(session.folder) { lines.append(wt) }
         if nested {
-            // The row leaves its age to the tooltip: "active 5m ago", "active now".
+            // The row doesn't draw an age; nested rows carry it in the tooltip instead:
+            // "active 5m ago", "active now".
             let age = SessionAgeShort.age(session.modifiedDate, now: .now)
             lines.append(age == "now" || age.contains(" ") ? "active \(age)" : "active \(age) ago")
         }
