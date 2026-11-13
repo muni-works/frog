@@ -1348,6 +1348,15 @@ private struct CompactSessionRow<Menu: View>: View {
         session.end == .complete && abs(Date().timeIntervalSince(session.modifiedDate)) < 10
     }
 
+    /// The check a finished row keeps. A turn that just ended flashes it (a real signal: the
+    /// conversation is on screen, so `live` moved when the turn did). A worker that finished a
+    /// while ago keeps a quiet one until the pointer comes to it — a finished worker shouldn't
+    /// read as live work, and that hasn't been looked at yet. Hovering ends it: the person is
+    /// looking, so it has had its look.
+    private var check: RowCheck {
+        RowCheck.of(fresh: freshComplete, finished: session.end == .complete, hovering: hovering)
+    }
+
     var body: some View {
         // The tick re-checks the 30 s activity rule so the indicator and the title
         // emphasis fade together.
@@ -1500,13 +1509,17 @@ private struct CompactSessionRow<Menu: View>: View {
         case .unread:
             Circle().fill(Color.accentColor).frame(width: 6, height: 6).help("finished while you were away")
         case .idle:
-            // A finished worker keeps a quiet check so it never reads as live work; a
-            // top-level row only flashes it.
-            if freshComplete || (depth > 0 && session.end == .complete) {
-                Image(systemName: "checkmark.circle.fill").font(.frog(size: 11))
-                    .foregroundStyle(.green.opacity(freshComplete ? 1 : 0.6)).help("done")
-            } else {
+            // Nothing for idle work that's been seen. The check is for a row that finished and
+            // hasn't had its look yet; the pointer arriving counts as the look (see `check`).
+            switch check {
+            case .none:
                 EmptyView()
+            case .fresh:
+                Image(systemName: "checkmark.circle.fill").font(.frog(size: 11))
+                    .foregroundStyle(.green).help("done")
+            case .quiet:
+                Image(systemName: "checkmark.circle.fill").font(.frog(size: 11))
+                    .foregroundStyle(.green.opacity(0.6)).help("done")
             }
         }
     }

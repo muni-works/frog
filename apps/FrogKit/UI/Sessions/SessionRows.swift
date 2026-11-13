@@ -67,6 +67,22 @@ enum FolderTint {
     }
 }
 
+/// The check a finished row shows, if any. A turn that just ended flashes one; a row that
+/// finished a while ago keeps a quiet one until the pointer arrives (looking is the thing that
+/// ends it). Pure, so the rule is testable without a window.
+enum RowCheck: Equatable {
+    case none, fresh, quiet
+
+    /// - Parameters:
+    ///   - fresh: the last turn ended within the flash window.
+    ///   - finished: the session's last turn ended cleanly.
+    ///   - hovering: the pointer is on the row.
+    static func of(fresh: Bool, finished: Bool, hovering: Bool) -> RowCheck {
+        guard finished, !hovering else { return .none }
+        return fresh ? .fresh : .quiet
+    }
+}
+
 /// A row's status, on the right of its first line, as the web shows it: Running with a
 /// breathing dot, Needs you, Failed, a pull request, or a green dot for a turn that finished
 /// since you looked. Nothing when it's idle.
