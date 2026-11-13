@@ -447,6 +447,30 @@ impl Agent {
             if !reports.is_empty() {
                 self.push_user(reports.join("\n"));
             }
+            // Background work that ended while the last step ran (`<job-done>`,
+            // `<monitor-done>`, `<wakeup>`, a task's report): the same notices turn start
+            // delivers, at the same place as the two drains above, so a job that finishes
+            // during a long turn is in the model's next look at the world instead of the turn
+            // after this one. A turn start already took the ones parked before it
+            // (`turn_with`), so nothing arrives twice; and a `Wake` with nothing parked is
+            // dropped by the work loop, so emptying the queue here starts no turn of its own
+            // (and `wake` finds them gone and falls through to `deliver`).
+            let wakes = self.shared.bg.take_notices();
+            if !wakes.is_empty() {
+                // Two halves, because they answer two different questions. `push_user` is how
+                // the model gets them: the same channel the drains above use, appended below
+                // the tool results already in the history, so the cached prefix holds.
+                // `WakesDelivered` is how the *transcript* shows them: the wake rows a turn
+                // that opened on them gets, with no user bubble (`TurnLead` reads a wake input
+                // as rows and never as someone typing). Emitting nothing would leave the user
+                // watching the model react to a `<job-done>` that never reached the screen.
+                // Durable, so a reopened session replays the row where it landed.
+                self.emit(Event::WakesDelivered {
+                    turn: self.conv.turn,
+                    wakes: wakes.clone(),
+                });
+                self.push_user(wakes.join("\n\n"));
+            }
             // What's queued behind this turn (session messages): the queue is drained only
             // at the boundary, so a long turn would otherwise never know it has mail. One
             // line as a user message — the system prompt is static and cached, so it can't
