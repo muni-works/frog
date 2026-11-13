@@ -32,6 +32,7 @@ mod compact;
 mod dispatch;
 mod permit;
 mod project;
+#[cfg(test)]
 mod tests_ingest;
 mod turn;
 mod window;
