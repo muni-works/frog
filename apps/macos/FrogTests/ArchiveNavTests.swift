@@ -64,7 +64,7 @@ final class ArchiveNavTests: XCTestCase {
         }
 
         var forwarded = 0
-        ArchiveNav.archive(id, from: workspace) { _ in forwarded += 1 }
+        ArchiveNav.archive(id, from: workspace, forward: { _ in forwarded += 1 })
 
         XCTAssertTrue(Library.shared.archived.contains(id), "archived")
         XCTAssertEqual(forwarded, 1, "and the view followed, exactly once")
@@ -82,7 +82,7 @@ final class ArchiveNavTests: XCTestCase {
         }
 
         var forwarded = 0
-        ArchiveNav.archive(other, from: workspace) { _ in forwarded += 1 }
+        ArchiveNav.archive(other, from: workspace, forward: { _ in forwarded += 1 })
 
         XCTAssertTrue(Library.shared.archived.contains(other), "archived")
         XCTAssertEqual(forwarded, 0, "but the user stayed where they were")
@@ -101,13 +101,48 @@ final class ArchiveNavTests: XCTestCase {
         XCTAssertEqual(workspace.showing, id, "showing the restored session is not a navigation")
     }
 
+    /// An engine that records being stopped: the conversation on screen in a worktree holds
+    /// that worktree's lock, so archiving has to stop it before a new session can start there.
+    private final class StoppableLink: ConversationLink {
+        var onEvent: (Envelope?) -> Void = { _ in }
+        func send(_ op: Op) {}
+        var stopped = false
+        func stop() { stopped = true }
+        var endDescription: String { "" }
+        var isAlive: Bool { true }
+    }
+
+    /// The bug this guards: archiving the session on screen in a worktree showed the refusal
+    /// ("one engine per worktree…") instead of a new conversation, because the archived
+    /// session's engine still held the lock. The engine must be stopped as part of the archive.
+    ///
+    /// Removing `leaving?.stop(reason: "archived")` fails this — the conversation that was on
+    /// screen is still alive afterwards.
+    func testArchivingTheOpenSessionStopsItsEngine() async throws {
+        let id = "test-\(UUID().uuidString)"
+        let dir = FileManager.default.temporaryDirectory.appending(path: "archive-nav-\(UUID().uuidString)")
+        let workspace = Workspace(folder: dir, fresh: true)
+        let link = StoppableLink()
+        let leaving = Conversation(folder: dir, link: link, replay: false, session: id)
+        workspace.testShow(leaving)
+        defer {
+            workspace.stop()
+            Library.shared.setArchived(id, false)
+        }
+        XCTAssertTrue(link.isAlive, "the engine is running before the archive")
+
+        ArchiveNav.archive(id, from: workspace)
+
+        XCTAssertTrue(link.stopped, "archiving what's on screen stops its engine, freeing the worktree")
+    }
+
     // MARK: The default the views actually get
 
     /// The test above injects the forward, so it would still pass with the real navigation
     /// deleted — it proves the decision, not that a view moves. This one calls the helper the
     /// way the menus do, with the default `newSession()`, and watches the screen change.
     /// Removing `forward(workspace)` (or the default's `newSession()`) fails it.
-    func testTheDefaultForwardReallyReplacesTheConversationOnScreen() {
+    func testTheDefaultForwardReallyReplacesTheConversationOnScreen() async throws {
         let id = "test-\(UUID().uuidString)"
         let workspace = workspace(showing: id)
         defer {
@@ -118,6 +153,12 @@ final class ArchiveNavTests: XCTestCase {
         XCTAssertEqual(workspace.showing, id)
 
         ArchiveNav.archive(id, from: workspace)  // exactly what the row menu and title menu call
+        // The real navigation stops the engine first and starts the new session once its
+        // worktree is free, so it lands a moment later.
+        let deadline = ContinuousClock.now + .seconds(5)
+        while workspace.showing == id, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
 
         XCTAssertTrue(Library.shared.archived.contains(id), "archived")
         XCTAssertFalse(workspace.conversation === before, "the archived conversation left the screen")
