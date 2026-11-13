@@ -68,6 +68,7 @@ impl Running {
             vision: false,
             degraded: Vec::new(),
             ran_on: None,
+            waiting: None,
         }
     }
 }
