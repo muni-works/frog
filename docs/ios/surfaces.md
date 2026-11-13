@@ -107,8 +107,8 @@ bottleneck.
 
 **Already built.**
 
-- `apps/ios-spike` proves that tang-llm links and runs in an iPhone app. It's capped by the free
-  team's memory limit, and no benchmarks are committed.
+- A spike (`apps/ios-spike`, removed in November 2026; in git history) showed tang-llm links and
+  runs in an iPhone app, capped by the free team's memory limit. No benchmarks were committed.
 - `frog --listen` (crates/frog/src/listen.rs) answers one turn per HTTPS request from any
   client. It's `--chat` only and can't ask for permission. The iOS "house" client that used it
   was removed in October 2026.
