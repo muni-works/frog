@@ -410,7 +410,15 @@ impl Agent {
                     return Decision::Allow;
                 }
                 Err((layer, why)) => {
-                    self.decision(item, layer, "ask", &why, took);
+                    // Audit what happened, not what would have: auto mode never shows a
+                    // card, so its outcome is a deny the moment the verdict flags the call.
+                    self.decision(
+                        item,
+                        layer,
+                        if self.mode == Mode::Auto { "deny" } else { "ask" },
+                        &why,
+                        took,
+                    );
                     reason = Some(format!(
                         "Auto mode asked because {}.",
                         why.trim_end_matches('.')
@@ -442,6 +450,15 @@ impl Agent {
                             crate::digest::Which::Blocked
                         }),
                     }
+                    // Auto mode has no one to ask: it denies and moves on, saying why
+                    // to the model so it can change course (Cam, 2026-11-12). The chief
+                    // got its chance above — a grant is a decision, not a prompt. The
+                    // day's roll-up still goes out: with no cards, this is where it lands.
+                    if self.mode == Mode::Auto {
+                        let decision = self.denied_unasked(item, name, arg, &why, input);
+                        self.daily_digest_notice();
+                        return decision;
+                    }
                     self.daily_digest_notice();
                 }
             }
@@ -457,27 +474,33 @@ impl Agent {
             && self.mode == Mode::Auto
             && self.can_ask
         {
-            if let Some(why) = crate::delegation::hard_class(
+            let why = match crate::delegation::hard_class(
                 name,
                 input,
                 &self.ctx.cwd,
                 &self.ctx.root,
                 &self.created,
             ) {
-                let why = format!("it {why} (never delegated)");
-                self.decision(item, "never-delegable", "ask", &why, 0);
-                self.digest.count(crate::digest::Which::NeverDelegable);
-                reason = Some(why);
-            } else {
-                let reason = match hosts.len() {
-                    0 => "It would run outside the sandbox, past the session's network allow-list."
+                Some(why) => {
+                    let why = format!("it {why} (never delegated)");
+                    self.digest.count(crate::digest::Which::NeverDelegable);
+                    why
+                }
+                None => match hosts.len() {
+                    0 => "it would run outside the sandbox, past the session's network allow-list"
                         .to_string(),
                     _ => format!(
-                        "It would reach {}, which isn't on this session's network allow-list.",
+                        "it would reach {}, which isn't on this session's network allow-list",
                         hosts.join(", ")
                     ),
-                };
-                match self.delegate_flagged(item, name, arg, input, reason).await {
+                },
+            };
+            // A never-delegable call never routes; everything else gets the chief's chance.
+            let routed = if why.ends_with("(never delegated)") {
+                Chief::NoRoute
+            } else {
+                let flag = format!("{}.", why.trim_end_matches('.'));
+                match self.delegate_flagged(item, name, arg, input, flag).await {
                     Chief::Decided(decision) => {
                         // The same grant an answered card makes: these hosts for the run,
                         // or for the rest of the session.
@@ -499,11 +522,18 @@ impl Agent {
                         }
                         return decision;
                     }
-                    // Counted and audited (delegated:chief fell back) already; it cards.
-                    Chief::Fallback => {}
-                    // No chief, class not granted, or not interactive: the card, as before.
-                    Chief::NoRoute => self.digest.count(crate::digest::Which::Blocked),
+                    // Counted and audited (delegated:chief fell back) already.
+                    Chief::Fallback => Chief::Fallback,
+                    Chief::NoRoute => Chief::NoRoute,
                 }
+            };
+            match routed {
+                // A chief outage in auto mode is the same no-card case as no chief: deny.
+                Chief::Fallback | Chief::NoRoute => {
+                    self.digest.count(crate::digest::Which::Blocked);
+                    return self.denied_unasked(item, name, arg, &why, input);
+                }
+                Chief::Decided(decision) => return decision,
             }
         }
         if !self.can_ask {
@@ -794,6 +824,37 @@ impl Agent {
     pub(super) fn record_denial(&mut self, call: u64, why: String) {
         self.turn_denied.insert(call, why);
         *self.session_denied.entry(call).or_insert(0) += 1;
+    }
+
+    /// Auto mode's answer to a call its verdict flagged: deny it without a card. The model
+    /// gets the reason and the way out (change course, or the person switching to default
+    /// mode); the person gets one quiet line naming the call, and the audit says auto mode
+    /// denied it — never that they did (Cam, 2026-11-12: "in auto mode we shouldn't prompt
+    /// for permission, just deny and move on"). Not `record_denial`: that bookkeeping counts
+    /// refusals a person made, and its turn-breaker would end the turn on the model's next try.
+    pub(super) fn denied_unasked(
+        &mut self,
+        item: &str,
+        name: &str,
+        arg: &str,
+        why: &str,
+        input: &Value,
+    ) -> Decision {
+        self.decision(item, "auto-mode", "deny", why, 0);
+        self.last_note = Some(format!(
+            "auto mode denied this call ({why}). Try a different approach; if it really is what the user wants, switch to default mode and run it again."
+        ));
+        // Once per call per turn: a model that keeps reaching for it gets the tool result
+        // and the loop guard's re-plan, not a fresh line each time.
+        if self.turn_denied_unasked.insert(call_hash(name, input)) {
+            self.notice(
+                Level::Info,
+                format!(
+                    "auto mode denied `{name} {arg}`: {why}. Switch to default mode to run it."
+                ),
+            );
+        }
+        Decision::Deny
     }
 
     /// Just before a card would go up: never burn an approval window on a call already
@@ -1131,15 +1192,6 @@ impl Agent {
             // The first pass flagged it: the flag is usually missing context, and
             // context is cheap. (The first pass never names Cam; it's a flag too.)
             Some(crate::auto::Verdict::Ask(why)) | Some(crate::auto::Verdict::Cam(why)) => {
-                // Auto mode: deny instead of carding. The model must know why and not retry blindly.
-                if self.mode == Mode::Auto {
-                    let deny_reason = if self.classifier.is_some() {
-                        format!("auto mode denied: {flag}; with context: {why}. Try a different approach or switch to default mode to ask.")
-                    } else {
-                        format!("auto mode denied: {flag}; with context: {why}. The classifier is unavailable. Try a different approach or switch to default mode to ask.")
-                    };
-                    return Err(("auto-mode", deny_reason));
-                }
                 self.second_pass(
                     item,
                     name,
@@ -1150,13 +1202,7 @@ impl Agent {
                 )
                 .await
             }
-            Some(crate::auto::Verdict::Failed(why)) => {
-                // Auto mode: deny instead of carding when classifier is unavailable
-                if self.mode == Mode::Auto {
-                    return Err(("auto-mode", format!("auto mode denied: the classifier is unavailable ({why}). Try a different approach or switch to default mode to ask.")));
-                }
-                Err(("classifier", why))
-            }
+            Some(crate::auto::Verdict::Failed(why)) => Err(("classifier", why)),
             // Nothing could judge: the built-in rules decide alone. A down classifier never
             // cards a call by itself; only a call no rule can prove harmless asks. A worker on
             // a BYOK model is the exception (docs/design/model-policy.md): it may not quietly
