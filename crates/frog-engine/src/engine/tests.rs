@@ -9911,8 +9911,8 @@ fn classifier_cfg(base: &str, fallback: Option<&str>) -> Config {
 
 /// Item 1 (org reliability): with the classifier unreachable, a read-only call the
 /// classifier would have judged runs on the built-in rules with no card, a delete of
-/// scratch the session didn't make still cards, and the outage is one notice, not one
-/// per call.
+/// scratch the session didn't make is denied (auto mode never cards), and the outage is
+/// one notice, not one per call.
 #[tokio::test]
 async fn an_unreachable_classifier_falls_back_to_the_rules_not_to_cards() {
     let script = vec![
@@ -9955,24 +9955,22 @@ async fn an_unreachable_classifier_falls_back_to_the_rules_not_to_cards() {
         &e.event,
         Event::AutoApproved { item, reason } if item == "shot" && reason.contains("rules decided")
     )));
+    assert!(!carded("rm"), "auto mode never cards: {:?}", names(&evs));
+    // The deny says which rule gap kept it from running, not just that the classifier is down.
+    let outcome = outcome_of(&evs, "rm");
+    assert_eq!(outcome, Some(ToolOutcome::Denied));
+    let out = tool_output(&evs, "rm").unwrap_or_default();
     assert!(
-        carded("rm"),
-        "a delete outside its own scratch must still card"
-    );
-    // The card says which rule gap made it ask, not just that the classifier is down.
-    let reason = evs.iter().find_map(|e| match &e.event {
-        Event::PermissionRequest { item, reason, .. } if item == "rm" => reason.clone(),
-        _ => None,
-    });
-    assert!(
-        reason
-            .unwrap_or_default()
-            .contains("no built-in rule covers it")
+        out.contains("no built-in rule covers it"),
+        "{out}"
     );
     let notices: Vec<&str> = evs
         .iter()
         .filter_map(|e| match &e.event {
-            Event::Notice { message, .. } if message.contains("classifier") => {
+            // The outage line itself, not the per-call auto-mode deny lines.
+            Event::Notice { message, .. }
+                if message.contains("classifier") && !message.starts_with("auto mode denied") =>
+            {
                 Some(message.as_str())
             }
             _ => None,
