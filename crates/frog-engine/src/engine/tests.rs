@@ -5957,6 +5957,49 @@ async fn sessions_capability_offers_the_tools_and_frames_messages() {
     assert!(req.contains("no user authority"));
 }
 
+/// `Models`: one read-only call answering "what can I run right now?", offered in a project,
+/// running without a card, and saying per model whether its credential is live.
+#[tokio::test]
+async fn models_tool_lists_credentials_without_asking() {
+    let script = vec![
+        reply(
+            vec![Block::ToolUse {
+                id: "m".into(),
+                name: "Models".into(),
+                input: json!({}),
+            }],
+            Stop::ToolUse,
+        ),
+        reply(vec![text("ok")], Stop::End),
+    ];
+    let mut h = engine(script, true);
+    while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+    submit(&h, "what can I run?");
+    let mut saw_permission = None;
+    loop {
+        match h.events.recv().await.unwrap().event {
+            Event::PermissionRequest { id, name, .. } => {
+                saw_permission = Some(name);
+                h.ops
+                    .send(Op::Permission { id, decision: Decision::Deny, note: None })
+                    .unwrap();
+            }
+            Event::ItemCompleted {
+                item: Item::ToolCall { name, output, outcome, .. },
+                ..
+            } if name == "Models" => {
+                assert_eq!(outcome, ToolOutcome::Ok);
+                assert!(output.contains("credential:"), "{output}");
+                break;
+            }
+            Event::TurnEnded { .. } => panic!("the Models call never completed (saw card for {saw_permission:?})"),
+            _ => {}
+        }
+    }
+    shutdown(h).await;
+    assert!(saw_permission.is_none(), "a read-only tool never cards");
+}
+
 #[tokio::test]
 async fn archive_session_round_trips_through_the_client() {
     // ArchiveSession/UnarchiveSession are client-carried like the rest: the engine hands

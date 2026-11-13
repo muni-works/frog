@@ -265,6 +265,111 @@ pub async fn check_spawn_spec(cfg: &crate::config::Config, spec: &str) -> Result
     check_spawn(&name, &profile).await
 }
 
+/// Whether a session started on `profile` would get past its first model call: the provider's
+/// credential resolves, and any local engine it needs is here. Reads only what frog already
+/// reads (`Profile::api_key`, `providers::key_source`) — the same code a call would run — so
+/// "yes" means the key exists where the request would find it. It doesn't call the provider:
+/// a revoked key, an empty wallet and a wrong URL are for the first call to report.
+pub fn credential_check(profile: &Profile) -> Result<()> {
+    // The same resolution a provider client would do (`Provider::new` reads `p.api_key()`);
+    // failing here, before a session row exists, is the point.
+    //
+    // Only a hosted preset frog can name is checked. A profile pointing at a URL frog doesn't
+    // recognize is the user's own gateway: whether it wants a key is that gateway's business
+    // (many local ones take none), and auth may ride in a header `extra` sends, which
+    // `api_key()` cannot see. Refusing those refused working setups.
+    let recognized = profile
+        .base_url
+        .as_deref()
+        .filter(|u| !u.is_empty())
+        .is_none_or(|url| {
+            crate::providers::PRESETS.iter().any(|p| {
+                !p.local
+                    && ((p.kind == profile.provider && url.is_empty())
+                        || (!p.base_url.is_empty()
+                            && url.starts_with(p.base_url.trim_end_matches('/'))))
+            })
+        });
+    let need_key = profile.sidecar.is_none()
+        && !matches!(profile.provider, ProviderKind::Ollama | ProviderKind::Codex)
+        && profile.provider != ProviderKind::Node
+        && crate::policy::is_cloud(profile)
+        && recognized;
+    if need_key && profile.api_key().is_none() {
+        // The spec may be a profile name, so the subject is the provider (kind or gateway),
+        // and the fix names its usual variable or key page when frog knows them.
+        let env = crate::policy::is_cloud(profile)
+            .then(|| {
+                let url = profile.base_url.as_deref().unwrap_or("");
+                // Hosted presets only (`local` ones take no key), by the provider kind
+                // first — an Anthropic profile is Anthropic's however it's configured —
+                // then by base URL for the OpenAI-compatible gateways. A preset with no
+                // static base URL (cloudflare, built per-request from the account id)
+                // can't be recognized here, so it just isn't matched.
+                crate::providers::PRESETS
+                    .iter()
+                    .filter(|p| !p.local)
+                    .find(|p| {
+                        (p.kind == profile.provider && url.is_empty())
+                            || (!p.base_url.is_empty()
+                                && url.starts_with(p.base_url.trim_end_matches('/')))
+                    })
+                    .map(|p| (p.id, p.key_env.first(), p.key_url))
+            })
+            .flatten();
+        bail!(
+            "{}",
+            match env {
+                Some((id, Some(e), page)) => format!(
+                    "{id} has no key frog could send: set {e} or reconnect it in Settings ({page})"
+                ),
+                Some((id, None, _)) => format!("{id} has no key frog could send"),
+                None => format!(
+                    "{} has no key frog could send",
+                    profile.model.rsplit('/').next().unwrap_or(&profile.model)
+                ),
+            }
+        );
+    }
+    // This Mac's own engines: startable, or not (a missing binary is a setup step, not a key).
+    if let Some(sidecar) = &profile.sidecar {
+        if !crate::sidecar::available(sidecar) {
+            bail!(
+                "{} isn't available on this machine; run `frog setup`",
+                if sidecar == crate::sidecar::APPLE { "the Apple Intelligence sidecar" } else { "frog's engine (tang-llm)" }
+            );
+        }
+        // A tang model must be downloaded (`ensure` would refuse at start; same words).
+        if sidecar != crate::sidecar::APPLE && !crate::setup::model_present(&profile.model) {
+            bail!(
+                "{} isn't downloaded; run `frog setup` (or `frog setup {}`)",
+                profile.model,
+                profile.model
+            );
+        }
+    }
+    Ok(())
+}
+
+/// [`credential_check`] for a spec a client named, in one place with [`check_spawn_spec`] so
+/// both run before any session row exists (the real bug that asked for this: a session was
+/// created, then its first call died on `ANTHROPIC_API_KEY not set`).
+pub async fn check_credential_spec(cfg: &crate::config::Config, spec: &str) -> Result<()> {
+    let (_, profile) = cfg.resolve(Some(spec))?;
+    if let Err(e) = credential_check(&profile) {
+        // The refusal carries what IS usable, so the next attempt names a model that works
+        // instead of repeating the failure (a session row was never created).
+        let err = match crate::models::usable_summary(cfg).await {
+            Some(list) => anyhow::anyhow!("{e}.\nUsable right now: {list}"),
+            None => anyhow::anyhow!(
+                "{e}.\nNothing is usable right now: no local model is installed and no provider key is set (see `frog --models` and `frog account`)."
+            ),
+        };
+        return Err(err);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -416,5 +521,56 @@ mod tests {
         let unknown = check_spawn_spec(&cfg, "no-such-provider/x").await.unwrap_err();
         assert!(format!("{unknown}").contains("unknown provider"), "{unknown}");
         TEST_LISTS.with(|l| *l.borrow_mut() = None);
+    }
+
+    /// The credential check says what IS usable, not only what failed (the real bug: a session
+    /// was created and then died on `ANTHROPIC_API_KEY not set`).
+    #[tokio::test]
+    async fn spawn_credential_refusal_names_what_is_usable() {
+        // A cloud profile with no key anywhere: refused, and the refusal says something is
+        // usable anyway (a test config's own model: frog's engine or the env key).
+        let cfg = crate::config::Config::default();
+        let e = check_credential_spec(&cfg, "anthropic/claude-opus-5-5")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("no key frog could send"), "{e}");
+        assert!(e.contains("Usable right now") || e.contains("Nothing is usable"), "{e}");
+        // One with a key: starts.
+        let mut cfg = crate::config::Config::default();
+        let mut p = Profile::new(ProviderKind::Anthropic, "claude-sonnet-5");
+        p.api_key = Some("k".into());
+        cfg.models.insert("mine".into(), p);
+        assert!(check_credential_spec(&cfg, "mine").await.is_ok());
+        // The refusal names the right provider: Anthropic (ANTHROPIC_API_KEY, its key page),
+        // not whichever gateway is first in the preset list.
+        let mut cfg = crate::config::Config::default();
+        let p = Profile::new(ProviderKind::Anthropic, "claude-sonnet-5");
+        cfg.models.insert("anth".into(), p);
+        let e = check_credential_spec(&cfg, "anth").await.unwrap_err().to_string();
+        assert!(e.contains("anthropic has no key"), "{e}");
+        assert!(e.contains("ANTHROPIC_API_KEY"), "{e}");
+        assert!(e.contains("console.anthropic.com"), "{e}");
+        // A gateway profile names that gateway's variable.
+        let mut p = Profile::new(ProviderKind::Openai, "openai/gpt-5");
+        p.base_url = Some("https://openrouter.ai/api/v1".into());
+        cfg.models.insert("orn".into(), p);
+        let e = check_credential_spec(&cfg, "orn").await.unwrap_err().to_string();
+        assert!(e.contains("openrouter has no key") && e.contains("OPENROUTER_API_KEY"), "{e}");
+    }
+
+    /// A local model is never asked for a key; a sidecar model needs its binary and weights.
+    #[tokio::test]
+    async fn local_models_need_no_key_and_a_sidecar_needs_its_setup() {
+        let mut sidecar = Profile::new(ProviderKind::Openai, "mlx-community/Qwen3-4B-4bit");
+        sidecar.sidecar = Some("mlx-community/Qwen3-4B-4bit".into());
+        if crate::sidecar::available("tang") && crate::setup::model_present("mlx-community/Qwen3-4B-4bit") {
+            assert!(credential_check(&sidecar).is_ok());
+        } else {
+            assert!(credential_check(&sidecar).is_err(), "missing setup says so");
+        }
+        // ollama is keyless by design.
+        let ollama = profile(ProviderKind::Ollama, Some("http://localhost:11434"));
+        assert!(credential_check(&ollama).is_ok());
     }
 }
