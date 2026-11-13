@@ -583,7 +583,7 @@ export default function App() {
 
       {palette && <Palette commands={commands} sessions={sessions} onOpen={(id) => setView({ kind: 'session', id })} onClose={() => setPalette(false)}
         text={(id) => thread(id).turns.flatMap((u) => [u.input, ...u.entries.filter((e) => e.kind === 'message').map((e) => e.text)]).join('\n')} />}
-      {settings && <Settings account={account} apiKey={key && !DEV_KEY ? key : undefined} tab={settingsTab} models={models} onTopUp={key && !DEV_KEY ? (d) => topUp(key, d) : undefined} onSubscribe={key && !DEV_KEY ? (p) => subscribe(key, p) : undefined} onConnect={key && !DEV_KEY ? (p) => leave(null, p, key, false) : undefined} onSignOut={signedOut} onClose={() => setSettings(false)} />}
+      {settings && <Settings account={account} apiKey={key && !DEV_KEY ? key : undefined} tab={settingsTab} models={models} onTopUp={key && !DEV_KEY ? (d) => topUp(key, d) : undefined} onSubscribe={key && !DEV_KEY ? (p) => subscribe(key, p) : undefined} onConnect={key && !DEV_KEY ? (p) => leave(null, p, key, false) : undefined} onSignOut={() => { if (key && !DEV_KEY) signOut(key); signedOut() }} onClose={() => setSettings(false)} />}
       {toast && <div className="toast" role="status">{toast}</div>}
     </div>
   )
