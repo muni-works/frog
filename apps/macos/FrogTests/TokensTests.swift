@@ -45,6 +45,9 @@ final class TokensTests: XCTestCase {
     private let colors: [String: Color] = [
         "canvas": Tokens.canvas, "sidebar": Tokens.sidebar, "raised": Tokens.raised, "bubble": Tokens.bubble,
         "well": Tokens.well, "hover": Tokens.hover, "hairline": Tokens.hairline, "hairlineStrong": Tokens.hairlineStrong,
+        // Rails that nest content (quotes, tool output, the started-by tree): `ed91d93a` added
+        // the token and its JSON entry but not this line, so the set comparison below failed
+        // for everyone who ran the suite after it landed on main.
         "line": Tokens.line,
         "text": Tokens.text, "textSecondary": Tokens.textSecondary, "textTertiary": Tokens.textTertiary,
         "textQuaternary": Tokens.textQuaternary, "accent": Tokens.accent, "signal": Tokens.signal, "fail": Tokens.fail,
