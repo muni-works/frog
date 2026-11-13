@@ -108,6 +108,11 @@ pub struct Profile {
     /// Anthropic's API (5m through a gateway), the conversation 5m.
     #[serde(default)]
     pub cache_ttl: Option<String>,
+    /// How long one model request may run before it's abandoned, in seconds. Covers the whole
+    /// request, not just the connect: a socket that goes quiet mid-stream otherwise hangs
+    /// forever. Unset: [`crate::provider::DEFAULT_REQUEST_TIMEOUT_SECS`].
+    #[serde(default)]
+    pub request_timeout_secs: Option<u64>,
 }
 
 impl Profile {
@@ -132,6 +137,7 @@ impl Profile {
             thinking_display: None,
             effort: None,
             cache_ttl: None,
+            request_timeout_secs: None,
         }
     }
 

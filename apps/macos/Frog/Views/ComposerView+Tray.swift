@@ -53,16 +53,40 @@ extension ComposerView {
         switchFolder?(folder)
     }
 
+    /// The queued images: the effect names them (`Attachment`s), and the count matches the
+    /// draft's own ones — the view passes those along (it holds the bytes; the reducer
+    /// carries metadata only, like the web).
+    static func images(_ json: JSON?, from attachments: [ToolImage]) -> [ToolImage] {
+        guard case .array(let files) = json, files.count == attachments.count else { return [] }
+        return attachments
+    }
+
     func run(_ e: ComposerModel.Effect, _ s: ComposerModel.State) {
         let dir = workspace.folder
         switch e.type {
         case "submit", "queue":
-            if case .string(let t) = e.fields["text"], t != s.draft.text.trimmingCharacters(in: .whitespacesAndNewlines) || s.pending == .aside {
+            // A git action's own turn carries text the field doesn't hold: the draft stays.
+            // The draft itself goes through sendDraft, which clears it (on ack for a submit).
+            if case .string(let t) = e.fields["text"], t != s.draft.text.trimmingCharacters(in: .whitespacesAndNewlines) {
                 conversation.submit(t)  // a git action's own turn: the draft stays
             } else {
                 sendDraft()
             }
             if e.type == "submit" { dispatch(.ack) }
+        case "queued":
+            // The reducer cleared the draft state already; the view's own field follows it.
+            // The images go with the text: Conversation.submit queues them behind the turn.
+            if case .string(let t) = e.fields["text"] {
+                conversation.submit(t, images: Self.images(e.fields["attachments"], from: attachments))
+                FrogSounds.shared.play(.plip)
+                text = ""
+                attachments = []
+                mention = nil
+                suggestions = []
+                draftSave?.cancel()
+                draftSave = nil
+                drafts.clear(id: conversation.sessionID, folder: workspace.folder)
+            }
         case "start_session":
             if case .folder(_, _, true, true, _) = s.where {
                 makeWorktreeAndSend()

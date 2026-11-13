@@ -19,6 +19,13 @@ export const placeOf = (spec: string | null | undefined): Place =>
  *  model name, place tag and "where it runs" chip takes its color from here, never its own. */
 export const placeColor = (p: Place): string => (p === 'cloud' ? 'var(--place-cloud)' : 'var(--place-local)')
 
+/** The only name a user sees for who served a turn: Frog Cloud, whichever upstream proxied the
+ *  call (Cam, 2026-11-12, superseding the gateway plan's decisions 1 and 8 as far as upstream
+ *  naming goes). `served_by.name` stays the real upstream in the log, for cache and cost
+ *  debugging; views render this. Mirrors the engine's `ServedBy::display_name` and FrogKit's
+ *  `ServedBy.displayName`. */
+export const servedByName = (_s: { id: string; name: string }): string => 'Frog Cloud'
+
 /** Frog Cloud's old model ids and their explicit names today. The gateway still answers the
  *  old ones; a remembered pick or an old session's spec reads as today's id. */
 const OLD_IDS: Record<string, string> = { bull: 'deepseek-v4.1-flash', tree: 'glm-5.3-flash', dart: 'qwen3-coder-next' }

@@ -959,11 +959,13 @@ impl Pool {
             };
             (max(p, op), max(d, od))
         });
-        // (placed, cached tokens, interactive work on it)
-        let mut scored: Vec<(Placed, u64, bool, u64)> = cands
+        // (placed, cached tokens, interactive work on it, free memory, own rate evidence)
+        let mut scored: Vec<(Placed, u64, bool, u64, bool)> = cands
             .into_iter()
             .map(|(mut at, info, m)| {
                 let (op, od) = own(&at, &m);
+                // Whether this node's estimate rests on its own numbers rather than a peer's.
+                let known = op.is_some() || od.is_some();
                 let prefill = op.or(peer.0).unwrap_or(PREFILL_TOK_S);
                 let decode = od.or(peer.1).unwrap_or(DECODE_TOK_S);
                 let s = state.get(&at.node_id);
@@ -1038,20 +1040,22 @@ impl Pool {
                         .values()
                         .any(|f| f.node == at.node_id && !f.background);
                 let free = info.map_or(0, |i| i.free_bytes);
-                (at, cached, busy, free)
+                (at, cached, busy, free, known)
             })
             .collect();
-        if call.background && scored.iter().any(|(_, _, busy, _)| !busy) {
-            scored.retain(|(_, _, busy, _)| !busy);
+        if call.background && scored.iter().any(|(_, _, busy, ..)| !busy) {
+            scored.retain(|(_, _, busy, ..)| !busy);
         }
         let best = scored
             .iter()
             .map(|(at, ..)| at.eta)
             .fold(f64::INFINITY, f64::min);
-        // Within the tie band: the KV holder, then where it last ran, then loaded, then most
-        // free memory, then a paired node before this Mac.
-        let rank = |(at, cached, _, free): &(Placed, u64, bool, u64)| {
+        // Within the tie band: a node whose rates are its own over one borrowing a peer's
+        // (a guess must not beat evidence on a coin flip), then the KV holder, then where it
+        // last ran, then loaded, then most free memory, then a paired node before this Mac.
+        let rank = |(at, cached, _, free, known): &(Placed, u64, bool, u64, bool)| {
             (
+                *known,
                 *cached,
                 call.last.is_some_and(|l| at.node_id == l || at.name == l),
                 at.start.is_none(),
@@ -1586,7 +1590,17 @@ mod tests {
                 prefix: None,
             },
         );
-        assert_eq!(pool.schedule(Q4, &call(5000)).unwrap().name, "b");
+        // b is the only node with measured rates; a borrows them from its peer, so the two
+        // estimates tie within TIE. The evidence wins the tie, not the round-trip jitter.
+        let at = pool.schedule(Q4, &call(5000)).unwrap();
+        assert_eq!(at.name, "b");
+        // b's 6 s is its measured finish; without `observe` both nodes fall back to the
+        // default rates and estimate ~27 s, so this catches a lost measurement too.
+        assert!(
+            at.eta > 5.9 && at.eta < 10.0,
+            "b's measured 6 s estimate was not used: {}",
+            at.eta
+        );
     }
 
     #[tokio::test]

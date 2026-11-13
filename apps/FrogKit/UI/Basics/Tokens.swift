@@ -27,28 +27,28 @@ enum Tokens {
     static let hairline = Color(light: (0.0, 0.0, 0.0, 0), dark: (1.0, 1.0, 1.0, 0))
     /// Field strokes: a faint wash, for the few controls that still need an edge.
     static let hairlineStrong = Color(light: (0.0, 0.0, 0.0, 0.05), dark: (1.0, 1.0, 1.0, 0.06))
-    /// Primary text on the Mac.
-    static let text = Color(light: (0.102, 0.102, 0.102, 1), dark: (0.925, 0.925, 0.925, 1))
-    /// Secondary text on the Mac.
-    static let textSecondary = Color(light: (0.102, 0.102, 0.102, 0.62), dark: (0.925, 0.925, 0.925, 0.58))
-    /// Tertiary text on the Mac.
-    static let textTertiary = Color(light: (0.102, 0.102, 0.102, 0.42), dark: (0.925, 0.925, 0.925, 0.34))
-    /// Hints, the faintest meta.
-    static let textQuaternary = Color(light: (0.102, 0.102, 0.102, 0.28), dark: (0.925, 0.925, 0.925, 0.2))
+    /// Primary text on the Mac (solid, same as fg).
+    static let text = Color(light: (0.106, 0.114, 0.102, 1), dark: (0.925, 0.925, 0.925, 1))
+    /// Secondary text on the Mac (solid, same as muted).
+    static let textSecondary = Color(light: (0.369, 0.369, 0.369, 1), dark: (0.639, 0.639, 0.639, 1))
+    /// Tertiary text on the Mac (solid, same as faint).
+    static let textTertiary = Color(light: (0.463, 0.463, 0.463, 1), dark: (0.502, 0.502, 0.502, 1))
+    /// Hints, the faintest meta (solid, same as faint).
+    static let textQuaternary = Color(light: (0.502, 0.502, 0.502, 1), dark: (0.502, 0.502, 0.502, 1))
     /// THE accent: running, selected, verified, send. The only decorative color.
     static let accent = Color(light: (0.18, 0.62, 0.31, 1), dark: (0.345, 0.8, 0.435, 1))
-    /// Needs-you on the Mac, never decoration. (Web: notice; to converge.)
+    /// Needs-you on the Mac (amber). Deprecated; use notice instead.
     static let signal = Color(light: (0.8, 0.522, 0.122, 1), dark: (0.898, 0.647, 0.294, 1))
-    /// Failed on the Mac. (Web: warn; to converge.)
+    /// Failed on the Mac. Deprecated; use warn instead.
     static let fail = Color(light: (0.851, 0.251, 0.231, 1), dark: (1.0, 0.412, 0.38, 1))
     /// Where a model runs: local (this Mac or a paired node). Blue, the same lightness as the green beside it; 4.3:1 on white, 8.3:1 on black (the green is 3.4:1 and 10:1). Only through placeColor / Color.place(_:).
     static let placeLocal = Color(light: (0.204, 0.471, 0.878, 1), dark: (0.392, 0.643, 1.0, 1))
     /// Where a model runs: any cloud (Frog Cloud, Anthropic, OpenAI). Frog green, the accent. Only through placeColor / Color.place(_:).
     static let placeCloud = Color(light: (0.18, 0.62, 0.31, 1), dark: (0.345, 0.8, 0.435, 1))
     /// A PR's dot (pr.*): checks failing. Worst first: failing > checks > draft > approved > closed > merged. Only through prColor / Color.pr(_:).
-    static let prFailing = Color(light: (0.851, 0.251, 0.231, 1), dark: (1.0, 0.412, 0.38, 1))
+    static let prFailing = Color(light: (0.851, 0.251, 0.231, 1), dark: (0.898, 0.467, 0.373, 1))
     /// A PR's dot: checks running.
-    static let prChecks = Color(light: (0.8, 0.522, 0.122, 1), dark: (0.898, 0.647, 0.294, 1))
+    static let prChecks = Color(light: (0.8, 0.522, 0.122, 1), dark: (1.0, 0.624, 0.039, 1))
     /// A PR's dot: a draft.
     static let prDraft = Color(light: (0.541, 0.541, 0.541, 1), dark: (0.557, 0.557, 0.557, 1))
     /// A PR's dot: approved and mergeable.

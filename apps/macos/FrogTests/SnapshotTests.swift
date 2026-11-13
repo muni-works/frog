@@ -519,6 +519,12 @@ extension SnapshotTests {
         try render(
             PaneArea(conversation: c, height: 400, width: .constant(480)).background(Color(nsColor: .windowBackgroundColor)),
             size: CGSize(width: 480, height: 400), to: "pane-area")
+        // The bug: the Changes tab with no changes. The card should fill its height; the
+        // "No Changes Yet" view centered in it once shrank the whole card to its content.
+        hub.selected = .changes
+        try render(
+            PaneArea(conversation: c, height: 400, width: .constant(480)).background(Color(nsColor: .windowBackgroundColor)),
+            size: CGSize(width: 480, height: 400), to: "pane-area-empty-changes")
         print("snapshots: \(outDir.path)")
     }
 

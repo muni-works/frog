@@ -192,6 +192,14 @@ export function Composer(p: ComposerProps) {
     setText('')
     setImages([])
   }
+  /** The queued effect: the entry (text and images) goes onto the queue prop — the app
+   * routes a send while working there — and the field clears, the way send clears it. */
+  const queueDraft = (e: Effect) => {
+    const files = (e.attachments as unknown[] | undefined)?.length === images.length ? images : []
+    p.onSend?.(String(e.text ?? ''), files)
+    setText('')
+    setImages([])
+  }
   const placeholder = working ? 'Working… Esc interrupts · Return queues a follow-up'
     : paused ? 'Paused · out of credits'
     : p.session ? 'Reply to Frog, @ a file, ! a command'
@@ -222,10 +230,11 @@ export function Composer(p: ComposerProps) {
   const d = derive(tray)
   const run = (e: Effect, next: Tray) => {
     switch (e.type) {
-      case 'submit': case 'queue': case 'start_session':
+      case 'submit': case 'start_session':
         if (next.pending === 'aside') p.onSend(String(e.text ?? ''), [])
         else send()
         break
+      case 'queued': queueDraft(e); break
       case 'interrupt': p.onStop?.(); break
       case 'set_mode': p.onMode?.(fromTray(e.mode as Tray['mode'])); break
       case 'open_login': setMenu('signin'); break
@@ -349,10 +358,20 @@ export function Composer(p: ComposerProps) {
 
       {!!p.queued?.length && (
         <div className="cz-queue" aria-label="Queued messages">
+          <div className="cz-qhead">
+            <span className="cz-qtitle">Queued · {p.queued.length}</span>
+            <span className="cz-qwhen">{working ? 'goes in at the next tool step' : 'sends when the turn ends'}</span>
+          </div>
           {p.queued.map((q, i) => (
             <div key={i} className="cz-queued">
-              <span className="det">Queued</span><span className="ellip" style={{ flex: 1 }}>{q.text || `${q.images.length} image${q.images.length === 1 ? '' : 's'}`}</span>
-              <button type="button" className="f-btn f-btn--plain" aria-label="Take back" title="Take back to edit" onClick={() => p.onUnqueue?.(i)}>✕</button>
+              <svg className="cz-qclip" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M21 12.8l-8.5 8.4a5 5 0 0 1-7-7l8.4-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.4a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/></svg>
+              <span className="ellip">{q.text || `${q.images.length} image${q.images.length === 1 ? '' : 's'}`}</span>
+              {!!q.images.length && (
+                <span className="cz-qimgs">{q.images.map((im, j) => (
+                  <img key={j} className="cz-qimg" src={`data:${im.mime};base64,${im.data}`} alt="" />
+                ))}</span>
+              )}
+              <button type="button" className="cz-qx" aria-label="Take back to the field" title="Take back to edit" onClick={() => p.onUnqueue?.(i)}>✕</button>
             </div>
           ))}
         </div>

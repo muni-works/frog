@@ -1,6 +1,6 @@
 //! Models a client can offer: configured profiles plus whatever the local ollama has installed.
 
-use crate::config::{Config, Profile, ProviderKind, ToolMode};
+use crate::config::{Config, Profile, ProviderKind, ToolMode, LOCAL_DEFAULT};
 use crate::harness::{self, Caps, Tier};
 use serde::Serialize;
 use std::path::Path;
@@ -254,6 +254,50 @@ fn runnable_snapshot(dir: &Path) -> bool {
         && dir.join("tokenizer.json").is_file()
         && dir.join("tokenizer_config.json").is_file()
         && cfg.is_some_and(|c| c["model_type"] == "qwen3")
+}
+
+/// The one line naming what would answer right now, for a spawn refusal that has to say what
+/// IS usable, not only what isn't. Cheap: keychains, files and one list the CLI already keeps;
+/// no network beyond a 3 s ollama ping, and the provider keys' sources are all frog reads
+/// anyway. `None`: nothing here can answer.
+pub async fn usable_summary(cfg: &Config) -> Option<String> {
+    if crate::sidecar::available("tang") && crate::setup::model_present(local_repo_of_default()) {
+        return Some(format!("`{}` on frog's own engine, this Mac", LOCAL_DEFAULT));
+    }
+    if let Some(tag) = best_local(&ollama_tags(&local_ollama()).await) {
+        return Some(format!("`ollama/{tag}`, running in ollama"));
+    }
+    if let Some(id) = best_local(&server_models("http://localhost:1234/v1", None).await) {
+        return Some(format!("`lmstudio/{id}`, running in LM Studio"));
+    }
+    if crate::sidecar::available(crate::sidecar::APPLE) {
+        return Some("`apple/on-device`, Apple Intelligence on this Mac".into());
+    }
+    if let Some((spec, why)) = pick_remote(
+        crate::providers::key_source(crate::providers::CLOUD)
+            .and_then(|_| crate::catalog::cloud_default(&crate::catalog::cloud_models())),
+        cfg.models.keys().next().filter(|n| key_lives(cfg, n)).cloned(),
+        std::env::var_os("ANTHROPIC_API_KEY").is_some(),
+    ) {
+        return Some(format!("`{spec}`, {why}"));
+    }
+    None
+}
+
+/// The local default's checkpoint repo (`qwen3-4b` → its Hugging Face repo).
+fn local_repo_of_default() -> &'static str {
+    let model = LOCAL_DEFAULT.split_once('/').map_or(LOCAL_DEFAULT, |(_, m)| m);
+    crate::providers::LOCAL_MODELS
+        .iter()
+        .find(|(short, _)| *short == model)
+        .map_or("mlx-community/Qwen3-4B-4bit", |(_, repo)| *repo)
+}
+
+/// A named profile's spec, when its provider's credential resolves (no network).
+fn key_lives(cfg: &Config, name: &str) -> bool {
+    cfg.models
+        .get(name)
+        .is_some_and(|p| p.api_key().is_some() || p.sidecar.is_some())
 }
 
 /// The model a bare `frog` starts on when nothing names one (no `-m`, `FROG_MODEL`,

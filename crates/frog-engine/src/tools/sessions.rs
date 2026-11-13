@@ -34,6 +34,13 @@ pub const MOVE: &str = "MoveSession";
 /// The chief's answer to a delegated approval (docs/design/delegation.md).
 pub const RESOLVE: &str = "ResolveDelegated";
 
+/// The names a session may use for itself (`RenameSession(id: "self")` and the like).
+/// Both resolvers — the Mac's `SessionBroker.resolve` and the engine's `kids::find` — honour
+/// them, and an exact id or name match always wins, so nothing that worked before changes.
+pub fn is_self(who: &str) -> bool {
+    matches!(who.trim().to_ascii_lowercase().as_str(), "self" | "me" | "this")
+}
+
 pub fn is_tool(name: &str) -> bool {
     matches!(
         name,
@@ -86,7 +93,7 @@ no turn starts for it."
             schema: json!({
                 "type": "object",
                 "properties": {
-                    "to": { "type": "string", "description": "session id or name" },
+                    "to": { "type": "string", "description": "session id or name; \"self\" (or me, this) is the calling session" },
                     "message": { "type": "string" },
                     "notify_when_idle": { "type": "boolean" },
                     "informational": { "type": "boolean", "description": "pure status, no reply wanted: marked read without starting a turn" }
@@ -136,7 +143,7 @@ running isn't stopped (StopSession does that)."
                 .into(),
             schema: json!({
                 "type": "object",
-                "properties": { "id": { "type": "string", "description": "session id or name" } },
+                "properties": { "id": { "type": "string", "description": "session id or name; \"self\" (or me, this) is the calling session" } },
                 "required": ["id"]
             }),
         },
@@ -146,7 +153,7 @@ running isn't stopped (StopSession does that)."
                 .into(),
             schema: json!({
                 "type": "object",
-                "properties": { "id": { "type": "string", "description": "session id or name" } },
+                "properties": { "id": { "type": "string", "description": "session id or name; \"self\" (or me, this) is the calling session" } },
                 "required": ["id"]
             }),
         },
@@ -160,7 +167,7 @@ uses — no more grepping session logs."
                 .into(),
             schema: json!({
                 "type": "object",
-                "properties": { "id": { "type": "string", "description": "session id or name" } },
+                "properties": { "id": { "type": "string", "description": "session id or name; \"self\" (or me, this) is the calling session" } },
                 "required": ["id"]
             }),
         },
@@ -174,7 +181,7 @@ its logs."
             schema: json!({
                 "type": "object",
                 "properties": {
-                    "id": { "type": "string", "description": "session id or name" },
+                    "id": { "type": "string", "description": "session id or name; \"self\" (or me, this) is the calling session" },
                     "last_n": { "type": "integer", "description": "how many items (default 20)" },
                     "kinds": { "type": "array", "items": { "type": "string" }, "description": "message, reasoning, tool, notice" }
                 },
@@ -190,7 +197,7 @@ runs next as usual, unless clear_queue: true cancels it, so the session stays st
             schema: json!({
                 "type": "object",
                 "properties": {
-                    "id": { "type": "string", "description": "session id or name" },
+                    "id": { "type": "string", "description": "session id or name; \"self\" (or me, this) is the calling session" },
                     "clear_queue": { "type": "boolean", "description": "also cancel the messages queued in its inbox, so none of them starts its next turn (default false)" }
                 },
                 "required": ["id"]
@@ -206,7 +213,7 @@ a running turn obeys it at its next tool call."
             schema: json!({
                 "type": "object",
                 "properties": {
-                    "id": { "type": "string", "description": "session id or name" },
+                    "id": { "type": "string", "description": "session id or name; \"self\" (or me, this) is the calling session" },
                     "mode": { "type": "string", "enum": ["default", "accept-edits", "auto", "yolo"] },
                     "yolo": { "type": "boolean", "description": "explicit confirmation for mode: yolo" }
                 },
@@ -222,7 +229,7 @@ the model it started with."
             schema: json!({
                 "type": "object",
                 "properties": {
-                    "id": { "type": "string", "description": "session id or name" },
+                    "id": { "type": "string", "description": "session id or name; \"self\" (or me, this) is the calling session" },
                     "model": { "type": "string", "description": "provider/model spec" }
                 },
                 "required": ["id", "model"]
@@ -261,7 +268,7 @@ sidebar: the title lands in the session's log, so it survives restarts."
             schema: json!({
                 "type": "object",
                 "properties": {
-                    "id": { "type": "string", "description": "session id or name" },
+                    "id": { "type": "string", "description": "session id or name; \"self\" (or me, this) is the calling session" },
                     "title": { "type": "string" }
                 },
                 "required": ["id", "title"]
@@ -278,7 +285,7 @@ session under itself or a descendant (that would be a cycle)."
             schema: json!({
                 "type": "object",
                 "properties": {
-                    "id": { "type": "string", "description": "session id or name" },
+                    "id": { "type": "string", "description": "session id or name; \"self\" (or me, this) is the calling session" },
                     "parent": { "type": ["string", "null"], "description": "the new parent's id or name; null unparents (top-level)" }
                 },
                 "required": ["id"]

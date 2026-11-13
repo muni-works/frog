@@ -38,10 +38,10 @@ frog's, or from frog's to the user's:
   answer at all, the session may continue on frog's built-in rules (auto mode) or on a local
   model, with a notice saying so. A worker may not: it fails, and the session that started it
   decides what to do.
-- **frog cloud may fall back to a local model** when it is unreachable or out of capacity (502,
-  503) — that is tier 1 to the Mac, not a hop into someone's BYOK account, and it is already
-  documented (`FROG_FALLBACK_MODEL`). It never falls back on a credit error (402): the fix is
-  money, not a different model.
+- **frog cloud never falls back to a local model.** When it is unreachable or out of capacity
+  (502, 503) the turn stops with the error and the thread is left untouched. Switching a
+  cloud-sized history onto a small local window forced pruning and a compaction that couldn't
+  fit, which wrecked every open thread during a short outage (removed 2026-11-12).
 
 ## Fail-fast semantics, by error class
 

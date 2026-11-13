@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { TurnUsage } from '../cloud/protocol'
-import { currentId, idOf, modelName, placeColor, placeOf, type Model } from '../models'
+import { currentId, idOf, modelName, placeColor, placeOf, servedByName, type Model } from '../models'
 import { money, seconds, tokens, turnCost } from '../usage'
 import { CopyButton, IconButton } from './Transcript'
 
@@ -33,8 +33,9 @@ export function TurnFooter({ usage, models, answer, pinned, onRetry }: { usage: 
         {onRetry && <IconButton label="Try again" icon="retry" onClick={onRetry} />}
       </span>
       {id && <span className="turn-model" style={{ color: placeColor(placeOf(usage.model)) }}>{modelName(id)}</span>}
-      {/* Who served it is a place tag: a Frog Cloud turn is cloud green whoever's GPUs answered. */}
-      {usage.served_by && <span style={{ color: placeColor('cloud') }}>{usage.served_by.name}</span>}
+      {/* Who served it is a place tag: a Frog Cloud turn is cloud green whoever's GPUs answered,
+          and reads as Frog Cloud whoever proxied it (Cam, 2026-11-12). */}
+      {usage.served_by && <span style={{ color: placeColor('cloud') }}>{servedByName(usage.served_by)}</span>}
       {cost && (
         <button type="button" className="turn-plate" aria-expanded={open} title="Cost of this turn" onClick={() => setOpen(!open)}>{money(cost.total)}</button>
       )}

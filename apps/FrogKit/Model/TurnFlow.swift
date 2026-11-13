@@ -285,6 +285,7 @@ enum ActivityWords {
         case "Ask": return [.text(calls.count == 1 ? "asked you" : "asked you \(count(calls.count, "question"))")]
         case "CodeMap": return [.text("mapped the code")]
         case "Docs": return [.text("read the docs")]
+        case "Models": return [.text("listed the models")]
         case "Skill": return [.text(args.count == 1 && !args[0].isEmpty ? "used the \(args[0]) skill" : "used \(count(calls.count, "skill"))")]
         case "Recall": return [.text("looked through past sessions")]
         case "UseFolder":
@@ -326,6 +327,7 @@ enum ActivityWords {
             case "Ask": return "Asked you"
             case "CodeMap": return "Mapped the code"
             case "Docs": return arg.isEmpty ? "Read the docs" : "Read the docs for \(arg)"
+            case "Models": return "Listed the models"
             case "Skill": return "Used the \(arg) skill"
             case "Recall": return arg.isEmpty ? "Looked through past sessions" : "Looked through past sessions for “\(arg)”"
             case "UseFolder": return "Moved to \(arg.isEmpty ? "a folder" : arg)"
@@ -359,6 +361,7 @@ enum ActivityWords {
             case "Ask": return "Waiting for your answer…"
             case "CodeMap": return "Mapping the code…"
             case "Docs": return "Reading the docs…"
+            case "Models": return "Listing the models…"
             case "Recall": return "Looking through past sessions…"
             case "UseFolder": return "Moving to a folder…"
             default: return "Using \(ToolIcon.title(name))…"

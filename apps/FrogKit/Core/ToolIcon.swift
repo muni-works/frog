@@ -23,6 +23,7 @@ enum ToolIcon {
         case "WebFetch": "globe"
         case "WebSearch": "magnifyingglass.circle"
         case "Docs": "book"
+        case "Models": "cpu"
         case "Task": "person.2"
         case "Skill": "sparkles.rectangle.stack"
         case "Recall": "clock.arrow.circlepath"

@@ -13,7 +13,9 @@ import { deflateSync } from "node:zlib";
 
 const t0 = Date.UTC(2026, 10, 12, 12, 0, 0);
 const model = "cloud/glm-5.3-flash";
-const served = { id: "frog", name: "Frog Cloud" };
+// A third party upstream, not `frog`: the shots prove the opacity (Cam, 2026-11-12). Both apps
+// render "Frog Cloud" for this, so the committed PNGs are unchanged by the record behind it.
+const served = { id: "workers-ai", name: "Cloudflare Workers AI", third_party: true };
 
 // --- builders ------------------------------------------------------------------------------------
 const say = (id, type, text) => [

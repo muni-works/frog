@@ -229,7 +229,7 @@ enum ComposerModel {
             n.draft = Draft()
             n.lastSent = text
             n.queued += 1
-            return (n, [Effect("queue", ["text": .string(text), "attachments": files])])
+            return (n, [Effect("queued", ["text": .string(text), "attachments": files])])
         case .idle:
             n.busy = .sending
             n.pending = .draft
@@ -245,7 +245,7 @@ enum ComposerModel {
         let effect = ["text": JSON.string(text), "attachments": .array([])]
         if s.busy == .working {
             n.queued += 1
-            return (n, [Effect("queue", effect)])
+            return (n, [Effect("queued", effect)])
         }
         n.busy = .sending
         n.pending = .aside

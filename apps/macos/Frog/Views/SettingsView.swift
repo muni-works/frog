@@ -269,7 +269,9 @@ struct ModelSettings: View {
                     .fixedSize()
                 }
             }
-            if !unconnected.isEmpty {
+            // Cam, 2026-11-12: Frog Cloud serves, so adding your own provider isn't advertised.
+            // The presets and Keychain keys stay; only this entry point is hidden.
+            if !unconnected.isEmpty, !ModelSections.providersHidden {
                 Menu(cloudProviders.isEmpty ? "Add a Provider…" : "Add Another Provider…") {
                     ForEach(unconnected) { p in
                         Button(p.name) { keyFor = p }
@@ -334,7 +336,11 @@ struct ModelSettings: View {
                 }
                 .help(p.baseUrl)
             }
-            Button("Add Server…") { addingServer = true }
+            // Cam, 2026-11-12: hidden with the providers above; `ServerSheet` and the add-server
+            // path in `ProviderStore` stay for when it comes back.
+            if !ModelSections.providersHidden {
+                Button("Add Server…") { addingServer = true }
+            }
         } header: {
             Text("Servers and Apps")
         } footer: {

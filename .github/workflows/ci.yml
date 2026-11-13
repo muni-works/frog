@@ -88,9 +88,12 @@ jobs:
             -derivedDataPath build/ci-release -destination 'platform=macOS,arch=arm64' \
             CODE_SIGN_IDENTITY="-" DEVELOPMENT_TEAM="" CODE_SIGN_STYLE="Manual"
 
-      # The remote app's targets (iPhone, iPad, watch, extensions): the same Swift as the Mac,
-      # but these five targets compile FrogKit/UI/Basics without UI/Transcript, which is where
+      # The remote app's targets (iPhone, iPad, extensions): the same Swift as the Mac, but
+      # these targets compile FrogKit/UI/Basics without UI/Transcript, which is where
       # cross-folder drift breaks them. Simulator destinations, so no signing is needed.
+      # (The Watch app was cut in fb778843, which removed the FrogWatch and FrogWatchWidgets
+      # targets from project.yml; its build step is gone with them. Restore the targets first
+      # if Watch comes back.)
       - name: generate iOS project
         run: cd apps/ios && xcodegen generate --quiet
       - name: build iOS app
@@ -99,13 +102,6 @@ jobs:
           xcodebuild build -quiet \
             -project FrogRemote.xcodeproj -scheme Frog -configuration Debug \
             -derivedDataPath build/ci -destination 'generic/platform=iOS Simulator' \
-            CODE_SIGNING_ALLOWED=NO
-      - name: build watch app
-        run: |
-          cd apps/ios
-          xcodebuild build -quiet \
-            -project FrogRemote.xcodeproj -scheme FrogWatch -configuration Debug \
-            -derivedDataPath build/ci -destination 'generic/platform=watchOS Simulator' \
             CODE_SIGNING_ALLOWED=NO
 
   web:

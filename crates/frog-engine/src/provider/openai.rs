@@ -18,14 +18,15 @@ pub struct Client {
 }
 
 impl Client {
-    /// `anthropic/*` on Vercel's or Cloudflare's AI Gateway: both also serve the Anthropic
-    /// Messages API (same base, `/v1/messages`), which keeps `cache_control`, thinking and
-    /// effort and returns real cache usage, none of which survive the chat-completions
-    /// translation.
+    /// `anthropic/*` on Vercel's or Cloudflare's AI Gateway, or on OpenRouter: all three also
+    /// serve the Anthropic Messages API (same base, `/v1/messages`), which keeps `cache_control`,
+    /// thinking and effort and returns real cache usage, none of which survive the
+    /// chat-completions translation.
     fn gateway_claude(&self) -> Option<super::anthropic::Client> {
         let base = self.base.trim_end_matches('/');
-        let gateway =
-            base.contains("ai-gateway.vercel.sh") || super::anthropic::on_cloudflare(base);
+        let gateway = base.contains("ai-gateway.vercel.sh")
+            || super::anthropic::on_cloudflare(base)
+            || super::anthropic::on_openrouter(base);
         if !gateway || !self.model.starts_with("anthropic/") {
             return None;
         }
@@ -640,6 +641,53 @@ mod gateway_tests {
     }
 
     #[test]
+    fn openrouter_anthropic_models_use_the_messages_api() {
+        // The preset's base (providers.rs): `gateway_claude` strips `/v1`, and the Messages
+        // path adds it back. Pin the URL the request actually lands on, so a preset change
+        // can't silently send `/api/v1/v1/messages` or `/api/messages`.
+        let c = client(
+            "https://openrouter.ai/api/v1",
+            "anthropic/claude-opus-5.5",
+            Some("or-key"),
+        )
+        .gateway_claude()
+        .unwrap();
+        assert_eq!(c.base, "https://openrouter.ai/api");
+        assert_eq!(c.messages_url(), "https://openrouter.ai/api/v1/messages");
+        assert_eq!(c.model, "anthropic/claude-opus-5.5");
+        assert_eq!(c.key, "or-key");
+        // OpenRouter takes the key as a bearer; `x-api-key` there is a 401.
+        assert!(super::super::anthropic::wants_bearer(&c.base));
+    }
+
+    #[test]
+    fn vercel_and_cloudflare_messages_urls_and_auth_are_unchanged() {
+        let v = client(
+            "https://ai-gateway.vercel.sh/v1",
+            "anthropic/claude-opus-5.5",
+            Some("k"),
+        )
+        .gateway_claude()
+        .unwrap();
+        assert_eq!(v.messages_url(), "https://ai-gateway.vercel.sh/v1/messages");
+        // Vercel keeps Anthropic's own header.
+        assert!(!super::super::anthropic::wants_bearer(&v.base));
+        let c = client(
+            "https://api.cloudflare.com/client/v4/accounts/abc/ai/v1",
+            "anthropic/claude-opus-5.5",
+            Some("k"),
+        )
+        .gateway_claude()
+        .unwrap();
+        assert_eq!(
+            c.messages_url(),
+            "https://api.cloudflare.com/client/v4/accounts/abc/ai/v1/messages"
+        );
+        // Cloudflare takes the bearer, as before.
+        assert!(super::super::anthropic::wants_bearer(&c.base));
+    }
+
+    #[test]
     fn other_models_and_hosts_stay_on_chat_completions() {
         let v = "https://ai-gateway.vercel.sh/v1";
         assert!(
@@ -654,7 +702,7 @@ mod gateway_tests {
         );
         assert!(
             client(
-                "https://openrouter.ai/api/v1",
+                "https://api.openai.com/v1",
                 "anthropic/claude-opus-5.5",
                 Some("k")
             )
