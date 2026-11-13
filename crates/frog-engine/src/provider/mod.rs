@@ -14,6 +14,12 @@ use serde_json::{Value, json};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+/// How long one model request may run before it's abandoned: ten minutes. Generous enough for
+/// a long prefill and a long answer on a slow local model, tight enough that a dead socket
+/// surfaces in minutes rather than hanging the turn. Override per profile with
+/// `request_timeout_secs`.
+pub const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 600;
+
 #[derive(Clone, Debug)]
 pub struct ToolSpec {
     /// Owned so tools discovered at runtime (MCP servers) fit alongside the built-ins.
@@ -111,6 +117,9 @@ pub struct HttpError {
     /// The edge's billing verdict for this refusal, when it said (its `x-frog-billing`
     /// response header). `None` from every other provider — then the body decides.
     pub billing: Option<Billing>,
+    /// How long the provider asked us to wait before retrying (its `retry-after` header, in
+    /// seconds). `None` when it sent none, or sent a date instead of a delay.
+    pub retry_after: Option<Duration>,
 }
 
 impl std::fmt::Display for HttpError {
@@ -122,6 +131,17 @@ impl std::fmt::Display for HttpError {
 impl std::error::Error for HttpError {}
 
 impl HttpError {
+    /// A `retry-after` header as a delay. The spec allows either delta-seconds or an HTTP
+    /// date; every provider that sends one in practice sends seconds, and a date would need a
+    /// date parser for a case that doesn't occur — so an unparseable value is `None` and the
+    /// retry falls back to its own backoff.
+    pub fn retry_after_header(v: &str) -> Option<Duration> {
+        v.trim()
+            .parse::<u64>()
+            .ok()
+            .map(Duration::from_secs)
+    }
+
     /// What a person would want to read: the provider's own `error.message` when its body is
     /// JSON (OpenAI's shape, which frog cloud uses), else the status alone.
     pub fn summary(&self) -> String {
@@ -285,10 +305,20 @@ pub enum Provider {
 }
 
 impl Provider {
-    pub fn new(p: &Profile) -> Result<Self> {
-        let http = reqwest::Client::builder()
+    /// The HTTP client every provider call goes through. A connect timeout alone leaves an
+    /// established socket that goes quiet (a dead upstream, a stream that stalls mid-flight)
+    /// waiting forever, so the whole request is bounded too.
+    pub fn http_client(p: &Profile) -> Result<reqwest::Client> {
+        Ok(reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(10))
-            .build()?;
+            .timeout(Duration::from_secs(
+                p.request_timeout_secs.unwrap_or(DEFAULT_REQUEST_TIMEOUT_SECS),
+            ))
+            .build()?)
+    }
+
+    pub fn new(p: &Profile) -> Result<Self> {
+        let http = Self::http_client(p)?;
         let key = p.api_key();
         let extra = p.extra.clone();
         Ok(match p.provider {
@@ -559,7 +589,9 @@ pub fn deep_merge(a: &mut Value, b: &Value) {
 
 #[cfg(test)]
 mod http_error_tests {
-    use super::{Billing, HttpError};
+    use super::{Billing, DEFAULT_REQUEST_TIMEOUT_SECS, HttpError, Provider};
+    use crate::config::{Profile, ProviderKind};
+    use std::time::Duration;
 
     #[test]
     fn summary_is_the_providers_own_message() {
@@ -567,10 +599,76 @@ mod http_error_tests {
             status: 429,
             body: r#"{"error":{"message":"deepseek-v4.1-flash is busy right now","type":"rate_limit_error"}}"#.into(),
             billing: None,
+            retry_after: None,
         };
         assert_eq!(e.summary(), "deepseek-v4.1-flash is busy right now");
-        let plain = HttpError { status: 502, body: "<html>bad gateway</html>".into(), billing: None };
+        let plain = HttpError { status: 502, body: "<html>bad gateway</html>".into(), billing: None, retry_after: None };
         assert_eq!(plain.summary(), "HTTP 502");
+    }
+
+    #[test]
+    fn a_busy_provider_can_say_how_long_to_wait() {
+        // delta-seconds, as providers actually send it.
+        assert_eq!(
+            HttpError::retry_after_header("120"),
+            Some(Duration::from_secs(120))
+        );
+        assert_eq!(
+            HttpError::retry_after_header(" 7 "),
+            Some(Duration::from_secs(7))
+        );
+        // No header, an empty one, or a form we don't parse: back off on our own clock.
+        assert_eq!(HttpError::retry_after_header(""), None);
+        assert_eq!(HttpError::retry_after_header("soon"), None);
+        assert_eq!(
+            HttpError::retry_after_header("Wed, 21 Oct 2026 07:28:00 GMT"),
+            None
+        );
+    }
+
+    #[test]
+    fn a_request_has_a_total_timeout_not_just_a_connect_one() {
+        let mut p = Profile::new(ProviderKind::Openai, "m");
+        p.base_url = Some("http://127.0.0.1:1/v1".into());
+        assert_eq!(p.request_timeout_secs, None);
+        // The default is generous for a slow local prefill, and finite: a dead socket has to
+        // surface in minutes, not hang the turn.
+        assert!(DEFAULT_REQUEST_TIMEOUT_SECS >= 300);
+        assert!(DEFAULT_REQUEST_TIMEOUT_SECS <= 1800);
+        // Both clients build with either setting.
+        assert!(Provider::http_client(&p).is_ok());
+        p.request_timeout_secs = Some(45);
+        assert!(Provider::http_client(&p).is_ok());
+    }
+
+    /// The bug this bounds: a socket that accepts and then says nothing. With only a connect
+    /// timeout the request hangs forever; with the total timeout it fails.
+    #[tokio::test]
+    async fn a_socket_that_never_answers_fails_instead_of_hanging() {
+        use tokio::io::AsyncReadExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        // Accept and read, never write: connected, then silent.
+        tokio::spawn(async move {
+            let (mut s, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 1024];
+            let _ = s.read(&mut buf).await;
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        });
+        let mut p = Profile::new(ProviderKind::Openai, "m");
+        p.base_url = Some(format!("http://{addr}/v1"));
+        // One second, so the test is quick; the shape is what production runs.
+        p.request_timeout_secs = Some(1);
+        let http = Provider::http_client(&p).unwrap();
+        let started = std::time::Instant::now();
+        let r = http.get(format!("http://{addr}/v1/models")).send().await;
+        let e = r.expect_err("a silent socket must not answer");
+        assert!(e.is_timeout(), "expected a timeout, got {e}");
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "took {:?}",
+            started.elapsed()
+        );
     }
 
     #[test]
@@ -580,6 +678,7 @@ mod http_error_tests {
                 status: 402,
                 body: "{}".into(),
                 billing: Billing::from_header(v),
+                retry_after: None,
             }
         };
         let yes = admitted("credit: 4200000");
@@ -595,12 +694,12 @@ mod http_error_tests {
         assert!(!zero.billing_admitted());
         // A non-credit header (or none): the body decides.
         assert!(!admitted("allowance").billing_admitted());
-        assert!(!HttpError { status: 402, body: "{}".into(), billing: None }.billing_admitted());
+        assert!(!HttpError { status: 402, body: "{}".into(), billing: None, retry_after: None }.billing_admitted());
     }
 
     #[test]
     fn the_body_admits_when_it_says_credit_semantics() {
-        let with = |body: &str| HttpError { status: 402, body: body.into(), billing: None };
+        let with = |body: &str| HttpError { status: 402, body: body.into(), billing: None, retry_after: None };
         // frog cloud's 5-hour window: credit semantics, admitted.
         let five = with(
             r#"{"error":{"message":"5-hour plan limit reached; add credit to keep going at usage prices","type":"insufficient_quota","code":402}}"#,
@@ -617,6 +716,7 @@ mod http_error_tests {
             status: 429,
             body: r#"{"error":{"message":"deepseek-v4.1-flash is busy"}}"#.into(),
             billing: None,
+            retry_after: None,
         };
         assert!(!busy.is_billing());
     }

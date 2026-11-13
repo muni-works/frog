@@ -63,40 +63,69 @@ struct SendButton: View {
     }
 }
 
-/// What's queued to send when the turn ends: a quiet strip above the field, one small-caps
-/// QUEUED tag for all of it, each message on a line with an ✕ that takes it back to edit.
+/// What's queued to send: one small-caps QUEUED · n label, then one quiet raised row per
+/// message — the text on a line with an ✕ that takes it back to edit, and its images as small
+/// chips (a queued image must be visible, not just counted). `streaming`: the row says when
+/// they go in — at the next tool step of the running turn — instead of "when the turn ends".
 struct QueuedMessages: View {
     let conversation: Conversation
+    var streaming = false
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: TurnSpace.Inset.row) {
-            Text("QUEUED")
-                .font(.frog(size: Tokens.Size.label, weight: .semibold))
-                .tracking(0.6)
-                .foregroundStyle(Tokens.textTertiary)
-            VStack(alignment: .leading, spacing: TurnSpace.Inset.tight) {
-                ForEach(Array(conversation.queue.map(\.text).enumerated()), id: \.offset) { i, text in
-                    HStack(alignment: .firstTextBaseline, spacing: TurnSpace.Inset.snug) {
-                        Text(text)
-                            .font(.frog(size: Tokens.Size.secondary))
-                            .foregroundStyle(Tokens.textSecondary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                        Spacer(minLength: TurnSpace.Inset.row)
-                        Button("Back to the Field", systemImage: "xmark") { conversation.unqueue(at: i) }
-                            .help("Take it out of the queue and back into the field to edit")
-                            .labelStyle(.iconOnly)
-                            .buttonStyle(.borderless)
-                            .font(.frog(size: Tokens.Size.label, weight: .semibold))
-                            .foregroundStyle(Tokens.textTertiary)
-                    }
+        VStack(alignment: .leading, spacing: TurnSpace.Inset.tight) {
+            HStack(alignment: .firstTextBaseline, spacing: TurnSpace.Inset.row) {
+                Text("QUEUED · \(conversation.queue.count)")
+                    .font(.frog(size: Tokens.Size.label, weight: .semibold))
+                    .tracking(0.6)
+                    .foregroundStyle(Tokens.textSecondary)
+                if streaming {
+                    Circle().fill(Tokens.accent).frame(width: 6, height: 6)
+                        .help("The turn is working; the queued messages go in at its next tool step")
+                    Text("goes in at the next tool step")
+                        .font(.frog(size: Tokens.Size.label))
+                        .foregroundStyle(Tokens.textTertiary)
+                } else {
+                    Text("sends when the turn ends")
+                        .font(.frog(size: Tokens.Size.label))
+                        .foregroundStyle(Tokens.textTertiary)
                 }
             }
-        }
-        .padding(.horizontal, TurnSpace.Inset.tight)
-        .padding(.bottom, TurnSpace.Inset.snug)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(Tokens.hairline).frame(height: 0.5)
+            ForEach(Array(conversation.queue.enumerated()), id: \.offset) { i, queued in
+                HStack(alignment: .center, spacing: TurnSpace.Inset.snug) {
+                    Image(systemName: "paperclip")
+                        .font(.frog(size: 10, weight: .semibold))
+                        .foregroundStyle(Tokens.textSecondary)
+                        .help("Queued message")
+                    Text(queued.text.isEmpty ? "\(queued.images.count) image\(queued.images.count == 1 ? "" : "s")" : queued.text)
+                        .font(.frog(size: Tokens.Size.secondary))
+                        .foregroundStyle(Tokens.text)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    if !queued.images.isEmpty {
+                        HStack(spacing: 4) {
+                            ForEach(Array(queued.images.prefix(3).enumerated()), id: \.offset) { _, img in
+                                if let image = img.image {
+                                    Image(platformImage: image)
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fill)
+                                        .frame(width: 22, height: 22)
+                                        .clipShape(.rect(cornerRadius: 6, style: .continuous))
+                                }
+                            }
+                        }
+                    }
+                    Spacer(minLength: TurnSpace.Inset.row)
+                    Button("Back to the Field", systemImage: "xmark") { conversation.unqueue(at: i) }
+                        .help("Take it out of the queue and back into the field to edit")
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.borderless)
+                        .font(.frog(size: Tokens.Size.label, weight: .semibold))
+                        .foregroundStyle(Tokens.textTertiary)
+                }
+                .padding(.horizontal, 11)
+                .padding(.vertical, 7)
+                .background(Tokens.raised, in: .rect(cornerRadius: 8, style: .continuous))
+            }
         }
     }
 }

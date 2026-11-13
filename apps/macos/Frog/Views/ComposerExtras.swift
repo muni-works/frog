@@ -42,7 +42,7 @@ struct ComposerNotices: View {
             if !pending.isEmpty {
                 PendingEventsStrip(pending: pending, busy: conversation.busy) { conversation.dismissWakes() }
             }
-            if !conversation.queue.isEmpty { QueuedMessages(conversation: conversation) }
+            if !conversation.queue.isEmpty { QueuedMessages(conversation: conversation, streaming: conversation.busy) }
             if let next = conversation.next, next.act, !conversation.busy {
                 Button { conversation.act(Present.Choice(label: next.text, send: nil)) } label: {
                     Label(next.text, systemImage: "arrow.up.forward")

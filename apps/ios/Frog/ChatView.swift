@@ -209,7 +209,7 @@ struct ChatView: View {
                 if let openError { Text(openError).font(.caption).foregroundStyle(.orange) }
             }
             if !conversation.queue.isEmpty {
-                QueuedMessages(conversation: conversation)
+                QueuedMessages(conversation: conversation, streaming: conversation.busy)
             }
             if !attachments.isEmpty {
                 AttachmentStrip(images: $attachments, blind: conversation.status?.vision == false ? identity?.name : nil)

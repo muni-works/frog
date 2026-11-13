@@ -3,6 +3,48 @@
 use super::*;
 
 impl Agent {
+    /// The composer's queue, drained at a tool-call boundary (see the boundary in `turn`):
+    /// every parked follow-up joins the conversation now, in order, each its own user block
+    /// (text, then its images), exactly as `more` lays them out at a turn's start — so the
+    /// model reads them as part of the running turn instead of after it. Emits
+    /// [`Event::FollowUpsIngested`] so the transcript shows where each landed. Never
+    /// reorders: the queue is FIFO and the drain is one take.
+    fn ingest_submitted(&mut self) {
+        let parts = take_submitted(&self.shared);
+        if parts.is_empty() {
+            return;
+        }
+        let texts: Vec<String> = parts.iter().map(|p| p.text.clone()).collect();
+        for part in parts {
+            let (text, named) = crate::image_paths::attach(&part.text);
+            let mut text = self.expand_mentions(&text);
+            let (extra, files) = self.attach_named(&part.text);
+            text.push_str(&extra);
+            let pointed: Vec<std::path::PathBuf> = part
+                .text
+                .split_whitespace()
+                .filter_map(|t| t.strip_prefix('@'))
+                .map(|t| {
+                    self.ctx
+                        .resolve(t.trim_end_matches([',', ')', ':', ';', '?', '!', '.']))
+                })
+                .chain(files.iter().cloned())
+                .collect();
+            for p in &pointed {
+                text.push_str(&self.rules_for(p));
+            }
+            let mut images = part.images;
+            images.extend(named);
+            self.conv.inputs.push(text.clone());
+            self.push_user(text);
+            self.attach_images(images);
+        }
+        // The user's messages are on disk before the model sees them (one fsync per accepted
+        // message, as at a turn's start).
+        self.sync_log();
+        self.emit(Event::FollowUpsIngested { texts });
+    }
+
     /// Append user text, merging into a trailing user message so roles always alternate.
     pub(super) fn push_user(&mut self, text: String) {
         match self.conv.messages.last() {
@@ -500,16 +542,7 @@ impl Agent {
                             "the request still exceeds the model's context window after compaction"
                         );
                     }
-                    let Some(local) = self.cloud_fallback(&e) else {
-                        return Err(e);
-                    };
-                    self.notice(
-                        Level::Warn,
-                        format!("frog api unavailable ({e:#}) — continuing on {local}"),
-                    );
-                    self.set_model(&local).await?;
-                    self.model_flip_why = Some("frog api was unavailable, so it fell back".into());
-                    continue;
+                    return Err(e);
                 }
             };
             self.model_ready = true;
@@ -696,6 +729,13 @@ impl Agent {
             // races this future against the token; whichever wins, the turn ends cancelled.
             if self.shared.cancel.lock().unwrap().is_cancelled() {
                 return Err(Interrupted.into());
+            }
+            // The composer's queue: follow-ups the user sent while this turn ran go in at the
+            // tool-call boundary, as user messages before the model's next step (claude's
+            // between-tool-calls ingest). The whole parked batch goes, in order, each its own
+            // text block after the results; a boundary with nothing parked costs nothing.
+            if submitted_pending(&self.shared).await {
+                self.ingest_submitted();
             }
         };
         // A suspended turn ends exactly here, before any warm-up (there's no next turn to
