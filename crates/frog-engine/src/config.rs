@@ -348,6 +348,67 @@ pub struct Config {
     /// `[memory]`: `compiled = "auto" | "on" | "off"` (see `compiled_memory`).
     #[serde(default)]
     pub memory: crate::compiled_memory::Settings,
+    /// `[git]`: what the composer does about a pull request once a session's work is done.
+    #[serde(default)]
+    pub git: GitConfig,
+}
+
+/// `[git]`: what happens to a branch when the work on it is done.
+#[derive(Clone, Debug, Deserialize)]
+pub struct GitConfig {
+    /// `open_pr_when_done`: "off", "ask" (the default) or "auto".
+    ///
+    /// - `off`: nothing is offered; the branch is yours to push.
+    /// - `ask`: the composer's git line offers **Open PR** when the work is done — a session
+    ///   that started in its own worktree, has commits ahead of its base, and has no PR yet.
+    ///   `shouldOpenPR` (FrogKit) is that predicate; managers and read-only sessions are
+    ///   excluded there, not here, because only the client knows the session tree.
+    /// - `auto`: **parsed and documented, deliberately not wired.** It behaves exactly like
+    ///   `ask` today. Opening a PR without being asked is the part worth getting right, and
+    ///   it stays unbuilt until `ask` has been used enough to say what it should do.
+    #[serde(default)]
+    pub open_pr_when_done: OpenPr,
+}
+
+impl Default for GitConfig {
+    fn default() -> Self {
+        Self { open_pr_when_done: OpenPr::Ask }
+    }
+}
+
+/// `[git] open_pr_when_done`: off, ask (the default), or auto (deferred).
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum OpenPr {
+    /// Nothing is offered.
+    Off,
+    /// The composer offers Open PR once the work is done. The default.
+    #[default]
+    Ask,
+    /// Open it without asking. Not implemented: reads as `Ask` (see [`GitConfig`]).
+    Auto,
+}
+
+impl OpenPr {
+    /// What this setting does *now*. `Auto` is deliberately not implemented, so it does what
+    /// `Ask` does; the client reads this rather than the raw value, so a stray `auto` can never
+    /// grow teeth by accident.
+    pub fn effective(self) -> OpenPr {
+        match self {
+            // The auto path is deliberately not wired until `ask` has been used. This is the
+            // one line to change when it is.
+            OpenPr::Auto => OpenPr::Ask,
+            other => other,
+        }
+    }
+
+    /// The word the client gets: "off" or "ask" (never "auto", which isn't implemented).
+    pub fn effective_word(self) -> &'static str {
+        match self.effective() {
+            OpenPr::Off => "off",
+            _ => "ask",
+        }
+    }
 }
 
 /// `[delegation]`: who a still-flagged call is offered to before the user.
@@ -706,6 +767,33 @@ mod tests {
         assert_eq!(cfg.irc.channel.as_deref(), Some("#frog"));
         assert_eq!(cfg.irc.account.as_deref(), Some("cam-mac"));
         assert_eq!(cfg.irc.url, "wss://example.invalid/bus");
+    }
+
+    #[test]
+    fn open_pr_when_done_defaults_to_ask_and_auto_is_not_wired() {
+        // The default is `ask`, in code and only in code: nobody's config.toml is touched.
+        assert_eq!(Config::default().git.open_pr_when_done, OpenPr::Ask);
+        assert_eq!(OpenPr::default(), OpenPr::Ask);
+        // A config that says nothing about it gets `ask`.
+        let cfg: Config = toml::from_str("").unwrap();
+        assert_eq!(cfg.git.open_pr_when_done, OpenPr::Ask);
+
+        for (word, parsed, effective) in [
+            ("off", OpenPr::Off, "off"),
+            ("ask", OpenPr::Ask, "ask"),
+            // Parsed, accepted, and deliberately inert: `auto` behaves as `ask` today.
+            ("auto", OpenPr::Auto, "ask"),
+        ] {
+            let cfg: Config = toml::from_str(&format!("[git]\nopen_pr_when_done = \"{word}\"")).unwrap();
+            assert_eq!(cfg.git.open_pr_when_done, parsed, "[git] open_pr_when_done = {word}");
+            assert_eq!(cfg.git.open_pr_when_done.effective_word(), effective);
+        }
+        // `auto` offers exactly what `ask` offers; it never offers more.
+        assert_eq!(OpenPr::Auto.effective(), OpenPr::Ask);
+        assert_eq!(OpenPr::Off.effective(), OpenPr::Off);
+        // Anything else is a typo, and a typo must not silently pick a behaviour.
+        let bad: Result<Config, _> = toml::from_str("[git]\nopen_pr_when_done = \"always\"");
+        assert!(bad.is_err(), "an unknown value is an error, not a guess");
     }
 
     #[test]

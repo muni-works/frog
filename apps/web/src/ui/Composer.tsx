@@ -421,7 +421,9 @@ export function Composer(p: ComposerProps) {
               )}
               {!d.prSummary && p.pr && <span className="cz-pill num" title={`Bound to ${p.pr}`}>{p.pr}</span>}
               {d.gitAction && (
-                <button type="button" className={`cz-act${outline('git_action')}`} disabled={tray.busy === 'sending'} onClick={() => dispatch({ type: 'git_action' })}>{GIT_LABEL[d.gitAction]}</button>
+                <button type="button" className={`cz-act${outline('git_action')}${d.openPr ? ' cz-act--go' : ''}`} disabled={tray.busy === 'sending'}
+                  title={d.openPr ? 'The work is done: push this branch and open a pull request' : undefined}
+                  onClick={() => dispatch({ type: 'git_action' })}>{GIT_LABEL[d.gitAction]}</button>
               )}
             </div>
           )

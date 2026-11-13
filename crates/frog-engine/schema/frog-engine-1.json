@@ -6794,6 +6794,11 @@
         "model": {
           "type": "string"
         },
+        "open_pr_when_done": {
+          "default": "ask",
+          "description": "`[git] open_pr_when_done` as it applies here: \"off\" or \"ask\". Never \"auto\", which is\nparsed but deliberately not wired (see `config::GitConfig`). The composer offers Open PR\nwhen this is \"ask\" and its own `shouldOpenPR` holds.",
+          "type": "string"
+        },
         "ran_on": {
           "anyOf": [
             {
@@ -6804,6 +6809,10 @@
             }
           ],
           "description": "Where the last model call ran, for a pooled model (`node/…`): the composer chip."
+        },
+        "read_only": {
+          "description": "This session only reads (a read-only child): it never opens a PR.",
+          "type": "boolean"
         },
         "tier": {
           "$ref": "#/$defs/Tier"

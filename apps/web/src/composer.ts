@@ -47,6 +47,24 @@ export interface State {
   confirm: 'yolo' | 'merge' | 'archive' | null
   stackOpen: boolean
   memory: { modelByPlace: Record<string, Model>; worktreeByRepo: Record<string, boolean>; branchByRepo: Record<string, string> }
+  /** `[git] open_pr_when_done`. Absent: "ask", the default. "auto" reads as "ask". */
+  openPrWhenDone?: OpenPrSetting
+  /** What `shouldOpenPr` decides on. Absent: unknown, and Open PR behaves as it always has. */
+  openPr?: OpenPrInput
+}
+
+/** `[git] open_pr_when_done`: "auto" is parsed but deliberately not wired (see OpenPr.swift). */
+export type OpenPrSetting = 'off' | 'ask' | 'auto'
+
+/** The facts the Open PR predicate needs. Mirrors FrogKit's `OpenPR.Input`. */
+export interface OpenPrInput {
+  worktree: boolean
+  ahead: number
+  hasPR?: boolean
+  depth?: number
+  hasChildren?: boolean
+  readOnly?: boolean
+  optedOut?: boolean
 }
 
 export type Intent =
@@ -94,6 +112,8 @@ export interface Derived {
   gitAction: GitAction | null
   prSummary: { count: number; worst: PrState; label: string } | null
   canSwitchBranch: boolean
+  /** Open PR is the predicate's (the work is done, and opening one is wanted). */
+  openPr: boolean
 }
 
 export const MAX_ATTACHMENT = 20_000_000
@@ -141,6 +161,39 @@ function worst(prs: Pr[]): Pr | null {
   return w
 }
 
+/** A manager: a top-level session with sessions under it (mirrors OpenPR.Input.isManager). */
+const isManager = (i: OpenPrInput) => (i.depth ?? 0) === 0 && i.hasChildren === true
+
+/**
+ * When the composer offers to open a pull request (FrogKit/Core/OpenPR.swift is the same
+ * predicate, and the tests assert both). All of: its own worktree, commits ahead of the base,
+ * no PR yet, not a manager, not read-only, not opted out.
+ */
+export function shouldOpenPr(i: OpenPrInput): boolean {
+  return i.worktree && i.ahead > 0 && !i.hasPR && !isManager(i) && !i.readOnly && !i.optedOut
+}
+
+/** `[git] open_pr_when_done` as it applies now: "auto" is not implemented and reads as "ask". */
+export function effectiveOpenPr(setting: OpenPrSetting | undefined): 'off' | 'ask' {
+  return setting === 'off' ? 'off' : 'ask'
+}
+
+/** Whether the setting offers Open PR for this session (off never does; auto == ask). */
+export function offersOpenPr(setting: OpenPrSetting | undefined, i: OpenPrInput): boolean {
+  return effectiveOpenPr(setting) === 'ask' && shouldOpenPr(i)
+}
+
+/** The first-prompt marker that turns the offer off for one session: `open-pr: off`. */
+export function optedOutOfOpenPr(firstPrompt: string | null | undefined): boolean {
+  if (!firstPrompt) return false
+  return firstPrompt.split('\n').some((line) => {
+    const l = line.trim().toLowerCase()
+    if (!l.startsWith('open-pr:')) return false
+    const value = l.slice('open-pr:'.length).trim()
+    return value === 'off' || value === 'never'
+  })
+}
+
 export function derive(s: State): Derived {
   const content = hasContent(s)
   const action: Action =
@@ -151,6 +204,8 @@ export function derive(s: State): Derived {
   let gitAction: GitAction | null = null
   let prSummary: Derived['prSummary'] = null
   let canSwitchBranch = true
+  // `[git] open_pr_when_done = "off"`: the branch is yours to push, so nothing is offered.
+  const setting = effectiveOpenPr(s.openPrWhenDone)
   if (s.where.kind === 'session') {
     const w = s.where
     canSwitchBranch = !w.dirty
@@ -169,7 +224,11 @@ export function derive(s: State): Derived {
       prSummary = { count: n, worst: top.state, label }
     }
   }
-  return { action, sendDisabled: s.busy === 'sending' || (s.busy === 'idle' && !content), gitAction, prSummary, canSwitchBranch }
+  if (gitAction === 'open_pr' && setting === 'off') gitAction = null
+  // The predicate decides the action's emphasis, not whether it exists: a manager can still
+  // open a PR by hand, it just isn't urged to.
+  const openPr = gitAction === 'open_pr' && (s.openPr ? offersOpenPr(setting, s.openPr) : true)
+  return { action, sendDisabled: s.busy === 'sending' || (s.busy === 'idle' && !content), gitAction, prSummary, canSwitchBranch, openPr }
 }
 
 /** The key a model is remembered under: the folder, the cloud repo, or chat. */

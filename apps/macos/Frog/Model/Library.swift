@@ -295,6 +295,30 @@ final class Library {
         return false
     }
 
+    // MARK: The started-by tree
+
+    /// How deep `id` sits in the started-by tree: 0 at the top, 1 for a session a session
+    /// started, and so on. Bounded by the recorded parents, so a cycle can't hang it.
+    func depth(of id: String) -> Int {
+        Self.depth(of: id, in: parents)
+    }
+
+    static func depth(of id: String, in parents: [String: String]) -> Int {
+        var seen: Set<String> = [id]
+        var d = 0
+        var at = parents[id]
+        while let current = at, seen.insert(current).inserted {
+            d += 1
+            at = parents[current]
+        }
+        return d
+    }
+
+    /// Whether any session was started by `id`: it is a manager.
+    func hasChildren(_ id: String) -> Bool {
+        parents.values.contains(id)
+    }
+
     // MARK: Stored model and mode
 
     /// Durable per-session overrides, applied by the next engine start (SetSessionModel /

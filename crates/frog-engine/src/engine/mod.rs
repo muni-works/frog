@@ -924,6 +924,14 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                 format!("[delegation] chief_classes: ignoring unknown class(es) {unknown}"),
             );
         }
+        if agent.cfg.git.open_pr_when_done == crate::config::OpenPr::Auto {
+            // Said once at startup, so nobody wonders why branches pile up: the setting parses,
+            // and does what `ask` does until the unattended path is built.
+            agent.notice(
+                Level::Warn,
+                "[git] open_pr_when_done = \"auto\" is not implemented yet: it behaves as \"ask\"",
+            );
+        }
         agent.connect_mcp();
         // Restore MCP tools that were loaded in a previous session
         if !agent.loaded_tools.is_empty() {
@@ -2146,6 +2154,8 @@ impl Agent {
             degraded: self.degraded(),
             ran_on: self.provider.ran_on(),
             waiting: self.waiting(),
+            open_pr_when_done: self.cfg.git.open_pr_when_done.effective_word().into(),
+            read_only: self.subagent,
         }));
     }
 
