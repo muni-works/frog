@@ -51,7 +51,7 @@ enum AttentionTree {
     ///   - parent: who started a session (`Library.parents`, branch folds applied).
     ///   - chief: the chief of staff: its children are the top level, it's drawn as the tile.
     ///   - recent: settled today, for `.today`.
-    ///   - openDone: open folds — parents' done rows, `chiefFold`, `yoursFold`.
+    ///   - openDone: open folds — a quiet manager's, `chiefFold`, `yoursFold`.
     ///   - keep: never folded away (the session on screen).
     static func layout(
         _ items: [SessionInfo],
@@ -82,7 +82,7 @@ enum AttentionTree {
         }
         let entries = SessionNesting.rows(
             tree, parent: up, state: state, before: before,
-            openDone: openDone, keep: shown, collapsed: collapsed, foldQuiet: scope != .all)
+            opened: openDone, keep: shown, collapsed: collapsed, foldQuiet: scope != .all)
 
         var chiefLeaves: [SessionInfo] = []
         var yourLeaves: [SessionInfo] = []

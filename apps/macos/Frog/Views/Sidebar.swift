@@ -179,7 +179,7 @@ struct SessionList: View {
         }
         return SessionNesting.rows(
             folds.map(\.session), parent: { parentOf[$0] }, state: rowState, before: before,
-            openDone: openDone, keep: current.map { [$0] } ?? [], collapsed: collapsedParents)
+            opened: openDone, keep: current.map { [$0] } ?? [], collapsed: collapsedParents)
     }
 
     private func toggleChildren(_ parent: String) {
@@ -188,7 +188,9 @@ struct SessionList: View {
         }
     }
 
-    private func toggleDone(_ parent: String) {
+    /// Open or close a quiet row (a manager with nothing live under it). One state, because
+    /// there is one fold: the row's own disclosure.
+    private func toggleOpen(_ parent: String) {
         withAnimation(.snappy(duration: 0.2)) {
             if openDone.remove(parent) == nil { openDone.insert(parent) }
         }
@@ -482,26 +484,29 @@ struct SessionList: View {
         }
     }
 
-    /// A row's disclosure: a quiet manager (folded by the scope) opens its done row; one
-    /// opened that way folds back; anything else collapses to its counts or shows them again.
+    /// A row's disclosure: a quiet manager (settled, nothing live under it) opens to its
+    /// children; anything else collapses to its counts or shows them again. One fold, one
+    /// level — there is no done row to route through.
     private func toggleNode(_ id: String, collapsed: Bool, counts: SessionNesting.Counts) {
         let live = counts.waiting + counts.running + counts.unread
         if collapsed && !collapsedParents.contains(id) {
-            toggleDone(id)
+            toggleOpen(id)
         } else if !collapsed && live == 0 && scope != .all && openDone.contains(id) {
-            toggleDone(id)
+            toggleOpen(id)
         } else {
             toggleChildren(id)
         }
     }
 
-    /// Settled work folded into one line: "18 done · 1 failed", "12 earlier", "4 done by chief".
+    /// Settled root sessions folded into one line: "18 done · 1 failed", "12 earlier", "4 done
+    /// by chief". The only fold that stands between sibling trees — nothing folds inside a
+    /// session (`SessionNesting.rows` lists a parent's children directly).
     private func foldRow(parent: String, depth: Int, count: Int, failed: Int, open: Bool,
                          git: GitRowBadge? = nil) -> some View {
         let what = parent == AttentionTree.chiefFold ? "done by chief"
             : scope == .today && parent != AttentionTree.yoursFold ? "earlier" : "done"
         return HStack(spacing: 0) {
-            Button { toggleDone(parent) } label: {
+            Button { toggleOpen(parent) } label: {
                 HStack(spacing: 0) {
                     Color.clear.frame(width: AttentionMetrics.leading(depth))
                     Image(systemName: "chevron.right").font(.frog(size: 8, weight: .bold))
@@ -623,7 +628,7 @@ struct SessionList: View {
 
     /// A parent's finished children folded into one line: "+3 done", with how many failed.
     private func doneRow(parent: String, count: Int, failed: Int, open: Bool) -> some View {
-        Button { toggleDone(parent) } label: {
+        Button { toggleOpen(parent) } label: {
             HStack(spacing: 4) {
                 Image(systemName: "chevron.right").font(.frog(size: 8, weight: .bold))
                     .rotationEffect(.degrees(open ? 90 : 0))
