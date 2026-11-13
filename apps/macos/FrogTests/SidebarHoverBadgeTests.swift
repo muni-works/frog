@@ -36,8 +36,8 @@ final class SidebarHoverBadgeTests: XCTestCase {
         return s
     }
 
-    /// A pointer parked on the row.
-    private func hoveredRow(_ session: SessionInfo) -> some View {
+    /// A pointer parked on the row (`hovering`), or one at rest.
+    private func hoveredRow(_ session: SessionInfo, hovering: Bool = true) -> some View {
         HStack(spacing: 0) {
             CompactSessionRow(session: session, selected: false, live: nil, depth: 0, git: GitTreeBadges.leaf(
                 session, members: [session], settled: true, open: { _ in }
@@ -68,5 +68,41 @@ final class SidebarHoverBadgeTests: XCTestCase {
                       "the row never expanded its title, so this test proved nothing")
         XCTAssertGreaterThan(SidebarProbe.badgeBodies, earlyBadge,
                              "the badge left the row when the title expanded under the pointer")
+    }
+
+    /// The hover, frame by frame: a row at rest, the pointer arriving (before the 450 ms
+    /// expand), and after it. The badge must be present in all three and the row must not
+    /// change width — into sidebar-hover-{rest,300ms,600ms}.png, for review beside the
+    /// sidebar-git shots. The title is long enough to truncate, so the frames show the
+    /// trade the fix makes: on hover the title gives up a little width to the badge, and
+    /// the badge keeps its place. Each frame is its own test method: one shared method's
+    /// three renders converged to the hovered state in all three files.
+    func testRowAtRest() throws { try frame("rest", hovering: false, after: 0.2) }
+    func testRowHoveredBeforeExpand() throws { try frame("300ms", hovering: true, after: 0.3) }
+    func testRowHoveredAfterExpand() throws { try frame("600ms", hovering: true, after: 0.6) }
+
+    private func frame(_ name: String, hovering: Bool, after: TimeInterval) throws {
+        let s = stage()
+        var long = s
+        long.title = "sidebar hover badge stays visible while the pointer rests on the row"
+        SidebarProbe.reset()
+        let host = NSHostingView(rootView: hoveredRow(long, hovering: hovering))
+        host.frame = CGRect(origin: .zero, size: CGSize(width: 300, height: 32))
+        let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = host
+        window.orderFront(nil)
+        host.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(after))
+        // The frame must show the state its name claims: expanded only after the 450 ms.
+        XCTAssertEqual(SidebarProbe.expandedBodies > 0, name == "600ms",
+                       "\(name) rendered the wrong hover state (expanded: \(SidebarProbe.expandedBodies > 0))")
+        XCTAssertGreaterThan(SidebarProbe.badgeBodies, 0, "\(name) lost the badge")
+        guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return XCTFail("no bitmap") }
+        host.cacheDisplay(in: host.bounds, to: rep)
+        let out = FileManager.default.temporaryDirectory.appending(path: "frog-snapshots")
+        try FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+        try XCTUnwrap(rep.representation(using: .png, properties: [:])).write(to: out.appending(path: "sidebar-hover-\(name).png"))
+        XCTAssertGreaterThan(try Data(contentsOf: out.appending(path: "sidebar-hover-\(name).png")).count, 4_000,
+                             "\(name) looks blank")
     }
 }
