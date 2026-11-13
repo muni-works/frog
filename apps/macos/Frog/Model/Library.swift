@@ -23,6 +23,11 @@ final class Library {
 
     /// Frog Cloud's list changed (`CloudSessions` polls it): its rows join this Mac's.
     func cloudChanged(_ rows: [CloudGateway.Session]) {
+        #if DEBUG
+        // A staging snapshot owns the list: the 15 s poll must not paste the real account's
+        // cloud rows over its fixtures mid-render.
+        if staged { return }
+        #endif
         let mapped = rows.filter { $0.archived != true }.map(Self.row)
         // A sandbox still starting reads as running.
         for r in rows where r.archived != true {
