@@ -135,6 +135,26 @@ final class SessionNestingTests: XCTestCase {
         XCTAssertEqual(ids(tree(["m"])), ["m", ">a", ">b"], "opened: its children, directly")
     }
 
+    /// Archiving the session you're reading (#316) clears the view, so `keep` goes empty. The
+    /// tree must still list every row: nothing vanishes because the kept id did.
+    func testArchivingTheCurrentSessionLeavesTheTreeIntact() {
+        let parents = ["a": "m", "b": "m"]
+        let states: [String: State] = ["m": .done, "a": .done, "b": .done]
+        let items = [session("m", modified: 3), session("a", modified: 2), session("b", modified: 1)]
+        let withCurrent = SessionNesting.rows(
+            items, parent: { parents[$0] }, state: { states[$0.id] ?? .done },
+            before: { $0.modified > $1.modified }, keep: ["b"], foldQuiet: true)
+        XCTAssertEqual(ids(withCurrent), ["m", ">a", ">b"], "the row on screen holds its parent open")
+
+        // The view cleared: same tree, `keep` empty. Every session is still reachable — the
+        // quiet parent folds to one line rather than the rows disappearing.
+        let archived = SessionNesting.rows(
+            items, parent: { parents[$0] }, state: { states[$0.id] ?? .done },
+            before: { $0.modified > $1.modified }, keep: [], foldQuiet: true)
+        XCTAssertEqual(ids(archived), ["m [-]"], "still one row, now folded")
+        XCTAssertEqual(SessionNesting.blocks(archived).count, 1, "no block lost")
+    }
+
     func testCollapsingAChildlessRowDoesNothing() {
         let out = rows(["x": .running], parents: [:], collapsed: ["x"], order: ["x"])
         XCTAssertEqual(ids(out), ["x"])
