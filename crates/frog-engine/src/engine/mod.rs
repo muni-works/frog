@@ -1518,6 +1518,9 @@ struct Agent {
     subagent: bool,
     chat: bool,
     store: Option<PathBuf>,
+    /// This session's `Ask` ledger (`<store>/questions/<id>.jsonl`): what it asked and how
+    /// each question stands, shared with its tree (see `questions`). `None` without a store.
+    ledger: Option<crate::questions::File>,
     last_call: Duration,
     /// The model call in flight, if any: when this attempt started, which attempt it is, and
     /// the provider's `retry-after` when a busy answer gave one. `Status.waiting` reads it, so
@@ -1852,6 +1855,7 @@ impl Agent {
             subagent: o.subagent,
             chat: o.chat,
             store: o.store,
+            ledger: None,
             last_call: Duration::ZERO,
             call_started: Mutex::new(None),
             active_turn: None,
@@ -1911,6 +1915,12 @@ impl Agent {
             chapter_titles: Default::default(),
             shared,
         };
+        // The question ledger goes beside this session's log, keyed on the id it actually runs
+        // (a resumed session's, not a fresh one's).
+        agent.ledger = agent
+            .store
+            .as_ref()
+            .map(|dir| crate::questions::File::new(dir, &agent.conv.session_id));
         if resumed {
             // A session that died mid-turn may have dangling tool calls, and a turn that never
             // ended: end it, cancelled, so clients don't show it running forever.
