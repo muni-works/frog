@@ -41,6 +41,7 @@ struct PaneArea: View {
                     } else {
                         ContentUnavailableView("No Changes Yet", systemImage: "plusminus",
                                                description: Text("Files Frog edits show up here."))
+                            .frame(maxHeight: .infinity, alignment: .top)
                     }
                 }
                 // Panes stay mounted behind the front one: the engine keeps reading a preview

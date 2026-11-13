@@ -1568,6 +1568,24 @@ pub struct Status {
     /// Where the last model call ran, for a pooled model (`node/…`): the composer chip.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ran_on: Option<RanOn>,
+    /// A model call in flight right now, and how long it has been waiting. `None` between
+    /// calls. This is what tells "waiting on the model" from "hung": a session sitting here
+    /// longer than the request timeout is about to fail, not working.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waiting: Option<Waiting>,
+}
+
+/// A model call the engine is waiting on: which attempt, how long so far, and the provider's
+/// own `retry-after` when a busy answer gave one.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct Waiting {
+    /// Seconds since this attempt started.
+    pub seconds: u64,
+    /// 1 for the first try, 2 for the first retry, and so on.
+    pub attempt: u32,
+    /// The provider asked us to wait this long (its `retry-after`), when it said.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_after_secs: Option<u64>,
 }
 
 /// One way a session runs degraded, for the header badge and SessionStatus.

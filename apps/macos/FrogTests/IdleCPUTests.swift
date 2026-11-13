@@ -25,7 +25,15 @@ final class IdleCPUTests: XCTestCase {
         let w = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
         w.isReleasedWhenClosed = false; w.contentView = host; w.orderFront(nil)
         defer { w.close() }
-        pump(1.0)
+        // Settle: wait until a short window actually costs nothing, rather than sleeping a fixed
+        // second that a loaded runner's slower first layout overruns (startup work then lands inside
+        // the measurement and reads as the view being busy). Bounded, times `TestRunner.slack` on CI.
+        let deadline = Date().addingTimeInterval(20 * TestRunner.slack)
+        while Date() < deadline {
+            let was = cpu(), from = Date()
+            pump(0.5)
+            if (cpu() - was) / Date().timeIntervalSince(from) < 0.01 { break }
+        }
         let c0 = cpu(), t0 = Date()
         pump(3.0)
         return (cpu() - c0) / Date().timeIntervalSince(t0)
