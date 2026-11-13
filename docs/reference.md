@@ -170,7 +170,7 @@ searxng_url = "http://localhost:8888"   # SearXNG's JSON API (/search?format=jso
 
 ## Permissions
 
-`default` asks before edits and shell commands. `accept-edits` lets edits through without asking. `yolo` never asks. **shift+tab** cycles the mode. Read-only commands such as `ls`, `git status`, and `rg` run without asking, as long as they don't include pipes or redirects.
+New sessions start in `auto` (below). A `--resume` with no mode flag keeps the mode the session saved, or `default` if it saved none. `default` asks before edits and shell commands. `accept-edits` lets edits through without asking. `yolo` never asks. **shift+tab** cycles the mode; `--mode default|auto|accept-edits|yolo` (or `--auto`, `--accept-edits`, `--yolo`) picks one at start. Read-only commands such as `ls`, `git status`, and `rg` run without asking, as long as they don't include pipes or redirects.
 
 
 **Auto mode.** `--auto`, or `/mode auto` in the terminal. Every step that would otherwise ask goes to a local classifier first.
