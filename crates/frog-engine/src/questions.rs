@@ -19,13 +19,17 @@
 //! Only an answer with a real choice or real words is an answer. A dismissal — the card closed,
 //! the turn interrupted, an empty `Answer` — records **nothing** as an answer, so "never
 //! answered" stays distinguishable from "answered" forever, across a restart and across every
-//! session in the tree. That is requirement 5, and it is why [`Answered::of`] is the only way
-//! to build one.
+//! session in the tree. That is requirement 5. It is enforced twice on purpose: by
+//! [`Answered::of`], which turns a client's `Answer` into a record (the writer's gate), and by
+//! [`Answered::is_real`], which [`fold`] checks on every line it reads (the reader's gate), so
+//! neither a client nor a hand-edited or torn line can settle a question nobody answered.
 //!
 //! # Where the records live, and why there
 //!
-//! `<store>/<session id>.questions.jsonl`, beside that session's log: same directory, same
-//! append-only JSONL, same torn-last-line tolerance. **One file per session, one writer per
+//! `<store>/questions/<session id>.jsonl`, in a subdirectory beside the session logs: same
+//! append-only JSONL, same torn-last-line tolerance. A subdirectory, not the log directory
+//! itself, because `session::list` walks that directory for `*.jsonl` and would re-scan every
+//! ledger on every listing. **One file per session, one writer per
 //! file** — each session's own engine appends only to its own file, exactly as it writes only
 //! its own `<id>.jsonl`. That is what makes this safe across the many engine processes a tree
 //! runs: no two writers ever touch the same file, so no record is lost to a rewrite race.
@@ -45,8 +49,14 @@ use std::path::{Path, PathBuf};
 /// How many recent answered rows a file keeps before it is compacted down to the live set.
 const KEEP: usize = 512;
 
-/// The suffix that marks a ledger file beside the session logs.
-pub const SUFFIX: &str = ".questions.jsonl";
+/// The suffix that marks a ledger file.
+pub const SUFFIX: &str = ".jsonl";
+
+/// The subdirectory of the store that holds the ledgers, beside (not among) the session logs.
+/// A subdirectory matters: `session::list` walks the sessions directory for `*.jsonl` and scans
+/// each one, so a ledger sitting there would be re-read every listing and never cached — it has
+/// no `Header` line, so it is skipped, but the work is wasted every time.
+pub const DIR: &str = "questions";
 
 /// The normalization two questions must share to count as the same question.
 ///
@@ -79,8 +89,10 @@ pub struct Answered {
 }
 
 impl Answered {
-    /// An answer worth recording, or `None` for a dismissal. The only place one is built, so
-    /// no caller can record a dismissal as an answer by accident.
+    /// An answer worth recording, or `None` for a dismissal. Callers use this rather than the
+    /// struct literal so an empty answer can't be recorded by accident; the literal is reachable
+    /// (the fields are public for the JSON shape) and the disk path is checked again on read by
+    /// [`is_real`], because a hand-edited or half-written line is not a caller.
     pub fn of(answer: &Answer, options: &[AskOption], allow_other: bool, at_ms: i64) -> Option<Self> {
         let choices: Vec<String> = answer
             .choices
@@ -104,6 +116,13 @@ impl Answered {
             other,
             at_ms,
         })
+    }
+
+    /// Whether this is an answer at all: something the user picked or wrote. Requirement 5 is
+    /// enforced here, on the way *out of storage* as well, so a record can't become a settled
+    /// answer that nobody gave — not from a client, not from a torn or edited line.
+    pub fn is_real(&self) -> bool {
+        !self.choices.is_empty() || self.other.as_deref().is_some_and(|o| !o.trim().is_empty())
     }
 
     /// One line for a model: "Dev, Max" or "neither, revert".
@@ -233,8 +252,10 @@ pub fn fold(lines: impl IntoIterator<Item = String>) -> Vec<Asked> {
             }
             Entry::Answered { id, answer } => {
                 if let Some(&i) = at.get(&id) {
-                    // The first answer stands: a second card's click can't rewrite it.
-                    if rows[i].answer.is_none() {
+                    // The first answer stands: a second card's click can't rewrite it. And an
+                    // answer with nothing in it is not an answer: a hand-edited or torn line
+                    // can't settle a question the user never answered (requirement 5).
+                    if rows[i].answer.is_none() && answer.is_real() {
                         rows[i].answer = Some(answer);
                         rows[i].dismissed_ms = None;
                     }
@@ -260,10 +281,10 @@ pub struct File {
 }
 
 impl File {
-    /// `<dir>/<session id>.questions.jsonl`.
+    /// `<dir>/questions/<session id>.jsonl`, beside the session logs' own directory.
     pub fn new(dir: &Path, session: &str) -> Self {
         Self {
-            path: dir.join(format!("{session}{SUFFIX}")),
+            path: dir.join(DIR).join(format!("{session}{SUFFIX}")),
             session: session.to_string(),
         }
     }
@@ -733,6 +754,23 @@ mod tests {
         let rows = f.read();
         assert_eq!(rows.len(), KEEP + 1);
         assert!(rows.iter().any(|r| r.question == "still open" && r.is_open()));
+    }
+
+    /// A record on disk claiming an answer with nothing in it (hand-edited, or a line from an
+    /// older bug) must not settle the question: the reader's gate, as `Answered::of` is the
+    /// writer's. Requirement 5 is about the record surviving, so it is checked on the way out
+    /// of storage too.
+    #[test]
+    fn a_stored_answer_with_nothing_in_it_does_not_settle() {
+        let d = dir();
+        let f = File::new(&d, "s");
+        f.ask(&q("Raise the GPU cap?"), "q1", None, 1);
+        let mut text = std::fs::read_to_string(f.path()).unwrap();
+        text.push_str("{\"record\":\"answered\",\"id\":\"q1\",\"at_ms\":5}\n");
+        std::fs::write(f.path(), text).unwrap();
+        let row = &f.read()[0];
+        assert_eq!(row.state(), "open", "an empty answer on disk is not an answer");
+        assert!(row.answer.is_none());
     }
 
     /// A torn last line (a crash mid-write) costs that line and nothing else, as with logs.

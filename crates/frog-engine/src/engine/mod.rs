@@ -1472,7 +1472,7 @@ struct Agent {
     subagent: bool,
     chat: bool,
     store: Option<PathBuf>,
-    /// This session's `Ask` ledger (`<store>/<id>.questions.jsonl`): what it asked and how
+    /// This session's `Ask` ledger (`<store>/questions/<id>.jsonl`): what it asked and how
     /// each question stands, shared with its tree (see `questions`). `None` without a store.
     ledger: Option<crate::questions::File>,
     last_call: Duration,

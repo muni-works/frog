@@ -1061,17 +1061,6 @@ impl Agent {
         })
     }
 
-    /// This session's title, when one is set: names the session in a shared question.
-    fn title(&self) -> Option<String> {
-        self.shared
-            .journal
-            .title
-            .lock()
-            .unwrap()
-            .clone()
-            .filter(|t| !t.trim().is_empty())
-    }
-
     /// The sessions in this one's tree — itself, its ancestors, its descendants — as the client
     /// that owns parentage reports it. Without a client that hosts sessions there is no
     /// parentage to read, so the tree is just this session.
