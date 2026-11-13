@@ -500,7 +500,8 @@ pub struct SandboxConfig {
     #[serde(default)]
     pub allow_keychain: bool,
     /// Outbound network policy. Unset (default): open. `"dev"`: only GitHub, crates.io, npm
-    /// and Swift package hosts (via a local proxy). macOS only; Linux stays open.
+    /// and Swift package hosts (via a local proxy) on macOS; on Linux, where bwrap can't
+    /// filter by host, no network at all. `"none"`: no network (loopback only).
     #[serde(default)]
     pub network: Option<String>,
     /// Let sandboxed git reads reach GitHub over https instead of ssh: a per-command config

