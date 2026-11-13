@@ -110,7 +110,10 @@ export function sessionCount(name: string, output: string): string | null {
   }
 }
 
-function ToolLine({ e }: { e: Entry }) {
+/** Exported for `test/toolrow-render.test.ts`, which draws this row and reads the DOM back:
+ * the only way a test can see what the browser is actually handed, since the helpers above can
+ * stay correct while the row stops using them. */
+export function ToolLine({ e }: { e: Entry }) {
   const [open, setOpen] = useState<boolean | null>(null)
   const name = (e.name ?? '').toLowerCase()
   const look = TOOL_LOOK[name] ?? OTHER
