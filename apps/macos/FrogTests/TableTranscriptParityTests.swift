@@ -49,7 +49,11 @@ final class TableTranscriptParityTests: XCTestCase {
         let d = try! JSONSerialization.data(withJSONObject: [s]); return String(String(decoding: d, as: UTF8.self).dropFirst().dropLast())
     }
     private func views<T: NSView>(_ v: NSView, _: T.Type) -> [T] { ((v as? T).map { [$0] } ?? []) + v.subviews.flatMap { views($0, T.self) } }
-    private var scroll: NSScrollView { views(host, NSScrollView.self).max { ($0.documentView?.frame.height ?? 0) < ($1.documentView?.frame.height ?? 0) }! }
+    /// The transcript's scroll view: the tallest one mounted. Nil before the first layout, which the
+    /// waits below poll through, so they must not force-unwrap it.
+    private var scrollView: NSScrollView? {
+        views(host, NSScrollView.self).max { ($0.documentView?.frame.height ?? 0) < ($1.documentView?.frame.height ?? 0) }
+    }
 
     private func turn(_ c: Conversation, _ n: Int, answer: String? = nil) {
         send(c, #""turn_started","turn":\#(n),"input":\#(Self.json("Question \(n)"))"#)
@@ -76,19 +80,24 @@ final class TableTranscriptParityTests: XCTestCase {
         window.isReleasedWhenClosed = false
         window.contentView = host
         window.orderFront(nil)
-        // The container asked for, and its first rows laid out (a stack that has built no text yet
-        // has not laid out, and every assertion below is about laid-out rows).
+        // The container asked for, laid out and settled: every mounted row has a real height and
+        // the view has opened at the end. Waiting for the first row alone is not enough — a table
+        // still measuring its rows answers `rect(ofRow:)` from estimates, so a jump taken then
+        // lands at the top and the test fails on correct code.
         let ready = wait() {
             let mountedTable = !self.views(self.host, NSTableView.self).isEmpty
-            guard mountedTable == table, self.scroll.documentView?.frame.height ?? 0 > 0 else { return false }
-            return self.views(self.host, MessageTextView.self).contains { !$0.frame.isEmpty }
+            guard mountedTable == table,
+                  let doc = self.scrollView?.documentView, doc.frame.height > 0 else { return false }
+            let rows = self.views(self.host, MessageTextView.self)
+            return !rows.isEmpty && rows.allSatisfy { !$0.frame.isEmpty } && self.atEnd()
         }
-        XCTAssertTrue(ready, "the container asked for is the one mounted")
+        XCTAssertTrue(ready, "the container asked for is the one mounted, settled at the end")
         return c
     }
 
     private func atEnd() -> Bool {
-        let s = scroll, clip = s.contentView.bounds
+        guard let s = scrollView else { return false }
+        let clip = s.contentView.bounds
         return clip.maxY - s.contentInsets.bottom >= (s.documentView?.frame.height ?? 0) - 30
     }
 
@@ -120,7 +129,7 @@ final class TableTranscriptParityTests: XCTestCase {
             jumpBox.id = target
             XCTAssertTrue(wait() { self.visible.contains(target) },
                           "table \(table): the jumped-to turn is on screen")
-            XCTAssertFalse(atEnd(), "table \(table): a jump stops following")
+            XCTAssertTrue(wait() { !self.atEnd() }, "table \(table): a jump stops following")
             window.close()
         }
     }
