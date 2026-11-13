@@ -20,7 +20,7 @@ import { creditLine, Palette, Settings, type Command, type SettingsTab } from '.
 import { Transcript } from './ui/Transcript'
 import { safeHref } from './ui/href'
 import { askLine } from './ui/ask'
-import { sessionMissing } from './ui/guards'
+import { sessionMissing, viewAfterArchive } from './ui/guards'
 
 /** `pick`: open the composer's repo menu (back from sign-in, or ⌘K Connect a repo). */
 /** Placeholder session ids, shown while POST /v1/sessions is in flight. */
@@ -300,7 +300,11 @@ export default function App() {
     try {
       const next = await cloud!.gateway.archive(s.id, archived)
       setSessions((all) => all.map((x) => (x.id === s.id ? { ...x, ...next } : x)))
-      say(archived ? 'Archived. Find it under View options → Archived.' : 'Moved back to your sessions.')
+      // Archiving the session on screen clears the view to a new one (as the Mac does, and as
+      // Delete already does below). Archiving another session leaves you where you are, and
+      // unarchiving never navigates: you're in the archive, restoring things.
+      if (archived) setView((v) => viewAfterArchive(v, s.id, archived))
+      say(archived ? 'Archived. Find it under View options → Archived.' : 'Unarchived. Back in your sessions.')
     } catch (e) {
       say(`Couldn't ${archived ? 'archive' : 'restore'} it: ${friendly(e)}`)
     }

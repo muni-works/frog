@@ -104,7 +104,7 @@ struct SessionList: View {
     /// changes `workspace.conversation`'s contents every 30 Hz batch, and a sidebar that
     /// tracked that re-derived the whole list per delta (the workspace's `currentSession`
     /// mirrors the id as the conversation opens and moves).
-    private var current: String? { workspace.opening ?? workspace.currentSession }
+    private var current: String? { workspace.showing }
     private var folded: Set<String> { Set(foldedRaw.split(separator: "\n").map(String.init)) }
     private var filtering: Bool { showArchived || !query.trimmingCharacters(in: .whitespaces).isEmpty }
 
@@ -1193,9 +1193,12 @@ struct SessionList: View {
         moveMenu(s)
         Divider()
         if library.archived.contains(s.id) {
+            // Unarchive never navigates: you're in the archive, restoring things, and stay.
             Button("Unarchive") { library.setArchived(s.id, false) }
         } else {
-            Button("Archive") { library.setArchived(s.id, true) }
+            // The row you're reading archives out from under you: the view follows to a new
+            // session (ArchiveNav). Any other row leaves you where you are.
+            Button("Archive") { ArchiveNav.archive(s.id, from: workspace) }
         }
     }
 }

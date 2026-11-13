@@ -150,7 +150,10 @@ export function SessionList(p: {
   const { groups, failed, total } = useMemo(() => {
     // A sandbox that never got a turn in, and isn't open, is clutter: it folds.
     const neverStarted = (s: SessionSummary) => s.state === 'error' && s.id !== p.current && !p.thread(s.id).turns.length
-    // Show: the active list, or what's been archived (the open session stays either way).
+    // Show: the active list, or what's been archived. The open session is not kept in either
+    // one: archiving it clears the view to a new session (App's `archive`), so it can't be
+    // archived and still on screen. The one row that stays is a session whose archive hasn't
+    // come back from the gateway yet — the poll's next list drops it.
     const pool = p.sessions.filter((s) => !!s.archived === view.archived || s.id === p.current)
     const failed = view.archived ? [] : pool.filter(neverStarted)
     const when = (s: SessionSummary) => (view.sort === 'created' ? s.created ?? s.updated : s.updated)

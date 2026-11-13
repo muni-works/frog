@@ -632,10 +632,9 @@ extension WorkspaceView {
         }
         .disabled(conversation.sessionID == nil)
         if let id = conversation.sessionID {
-            Button("Archive") {
-                Library.shared.setArchived(id, true)
-                workspace.newSession()
-            }
+            // This menu is the open conversation's own: archiving it always clears the view,
+            // which is what ArchiveNav decides for every view of a session.
+            Button("Archive") { ArchiveNav.archive(id, from: workspace) }
             Divider()
             Button("Delete…", role: .destructive) {
                 deletingSession = id
