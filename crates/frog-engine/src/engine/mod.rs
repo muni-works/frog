@@ -1290,8 +1290,7 @@ fn classify(e: &anyhow::Error) -> EngineError {
             message: c.0.clone(),
         };
     }
-    // The same transport classes retryable() accepts, plus a plain connect failure (which the
-    // retry arm handles through cloud_fallback): all of them are the network, not frog.
+    // The same transport classes retryable() accepts, plus a plain connect failure: all of them are the network, not frog.
     let network = e
         .chain()
         .filter_map(|c| c.downcast_ref::<reqwest::Error>())
@@ -1329,15 +1328,6 @@ fn retryable(e: &anyhow::Error) -> bool {
     e.chain()
         .filter_map(|c| c.downcast_ref::<reqwest::Error>())
         .any(|r| r.is_timeout() || r.is_body() || r.is_decode() || (r.is_request() && !r.is_connect()))
-}
-
-/// frog's local model server answers (it listens on 127.0.0.1:8911 when running).
-fn local_server_up() -> bool {
-    std::net::TcpStream::connect_timeout(
-        &std::net::SocketAddr::from(([127, 0, 0, 1], 8911)),
-        Duration::from_millis(200),
-    )
-    .is_ok()
 }
 
 pub(crate) fn now_ms() -> i64 {
@@ -1473,6 +1463,11 @@ struct Agent {
     chat: bool,
     store: Option<PathBuf>,
     last_call: Duration,
+    /// The model call in flight, if any: when this attempt started, which attempt it is, and
+    /// the provider's `retry-after` when a busy answer gave one. `Status.waiting` reads it, so
+    /// a session waiting on a slow or dead model says so instead of looking merely busy. A
+    /// `Mutex` because the call path holds `&self`.
+    call_started: Mutex<Option<(Instant, u32, Option<u64>)>>,
     active_turn: Option<u64>,
     /// The context window actually in effect (config, bounded by what the server reports).
     window: u64,
@@ -1802,6 +1797,7 @@ impl Agent {
             chat: o.chat,
             store: o.store,
             last_call: Duration::ZERO,
+            call_started: Mutex::new(None),
             active_turn: None,
             window,
             est: Estimator::default(),
@@ -2093,7 +2089,20 @@ impl Agent {
             vision: self.vision,
             degraded: self.degraded(),
             ran_on: self.provider.ran_on(),
+            waiting: self.waiting(),
         }));
+    }
+
+    /// The model call in flight, if one is: how long this attempt has run, which attempt it
+    /// is, and any `retry-after` the provider gave. `None` between calls.
+    fn waiting(&self) -> Option<crate::protocol::Waiting> {
+        let held = self.call_started.lock().unwrap();
+        let (started, attempt, retry_after_secs) = (*held)?;
+        Some(crate::protocol::Waiting {
+            seconds: started.elapsed().as_secs(),
+            attempt,
+            retry_after_secs,
+        })
     }
 
     /// What this session runs degraded on now, each with why: text tool calls it didn't ask
