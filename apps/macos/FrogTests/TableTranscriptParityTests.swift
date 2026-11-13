@@ -30,6 +30,21 @@ final class TableTranscriptParityTests: XCTestCase {
         c.ingest(try! JSONDecoder.frog.decode(Envelope.self, from: Data(line.utf8)))
     }
     private func pump(_ s: TimeInterval) { RunLoop.main.run(until: Date().addingTimeInterval(s)) }
+
+    /// Spin the run loop until `condition` holds, giving up after `timeout` (times `TestRunner.slack`
+    /// on CI, whose runner is a loaded shared VM). A fixed `pump` is a guess at how long layout and
+    /// following take; when the guess is wrong the assertion races it and fails on a slow runner, on
+    /// unchanged code. These tests wait for the state they assert on instead, then assert it.
+    @discardableResult
+    private func wait(timeout: TimeInterval = 10, until condition: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout * TestRunner.slack)
+        while Date() < deadline {
+            if condition() { return true }
+            pump(0.02)
+        }
+        return condition()
+    }
+
     private static func json(_ s: String) -> String {
         let d = try! JSONSerialization.data(withJSONObject: [s]); return String(String(decoding: d, as: UTF8.self).dropFirst().dropLast())
     }
@@ -61,8 +76,14 @@ final class TableTranscriptParityTests: XCTestCase {
         window.isReleasedWhenClosed = false
         window.contentView = host
         window.orderFront(nil)
-        pump(0.5)
-        XCTAssertEqual(!views(host, NSTableView.self).isEmpty, table, "the container asked for is the one mounted")
+        // The container asked for, and its first rows laid out (a stack that has built no text yet
+        // has not laid out, and every assertion below is about laid-out rows).
+        let ready = wait() {
+            let mountedTable = !self.views(self.host, NSTableView.self).isEmpty
+            guard mountedTable == table, self.scroll.documentView?.frame.height ?? 0 > 0 else { return false }
+            return self.views(self.host, MessageTextView.self).contains { !$0.frame.isEmpty }
+        }
+        XCTAssertTrue(ready, "the container asked for is the one mounted")
         return c
     }
 
@@ -71,11 +92,15 @@ final class TableTranscriptParityTests: XCTestCase {
         return clip.maxY - s.contentInsets.bottom >= (s.documentView?.frame.height ?? 0) - 30
     }
 
+    /// Everything the transcript has drawn as message text, mounted rows joined.
+    private func drawnText() -> String { views(host, MessageTextView.self).map(\.string).joined() }
+
     func testOpensAtTheEnd() {
         for table in [false, true] {
             let c = open(table: table, turns: 120)
-            XCTAssertTrue(atEnd(), "table \(table): opens at the end")
-            XCTAssertTrue(visible.contains(c.turns.last!.id), "table \(table): reports the last turn visible")
+            XCTAssertTrue(wait() { self.atEnd() }, "table \(table): opens at the end")
+            XCTAssertTrue(wait() { self.visible.contains(c.turns.last!.id) },
+                          "table \(table): reports the last turn visible")
             window.close()
         }
     }
@@ -93,8 +118,8 @@ final class TableTranscriptParityTests: XCTestCase {
             let c = open(table: table, turns: 200)
             let target = c.turns[40].id
             jumpBox.id = target
-            pump(0.8)
-            XCTAssertTrue(visible.contains(target), "table \(table): the jumped-to turn is on screen")
+            XCTAssertTrue(wait() { self.visible.contains(target) },
+                          "table \(table): the jumped-to turn is on screen")
             XCTAssertFalse(atEnd(), "table \(table): a jump stops following")
             window.close()
         }
@@ -109,13 +134,15 @@ final class TableTranscriptParityTests: XCTestCase {
             send(c, #""item_started","id":"live","kind":{"type":"message"}"#)
             for i in 0..<12 {
                 send(c, #""item_delta","id":"live","delta":{"type":"text","text":"word\#(i) "}"#)
-                pump(0.03)
+                // Each delta drawn before the next is sent, so this is a stream and not one buffered
+                // write: wait for the words so far rather than sleeping a guessed interval.
+                wait(timeout: 5) { self.drawnText().contains("word\(i) ") }
             }
             send(c, #""item_delta","id":"live","delta":{"type":"text","text":"\n\nlast-line"}"#)
-            pump(0.6)
-            let text = views(host, MessageTextView.self).map(\.string).joined()
-            XCTAssertTrue(text.contains("last-line"), "table \(table): the streamed words are drawn")
-            XCTAssertTrue(atEnd(), "table \(table): follows a short answer to the end")
+            XCTAssertTrue(wait() { self.drawnText().contains("last-line") },
+                          "table \(table): the streamed words are drawn")
+            XCTAssertTrue(wait() { self.atEnd() },
+                          "table \(table): follows a short answer to the end")
             window.close()
         }
     }
@@ -123,7 +150,12 @@ final class TableTranscriptParityTests: XCTestCase {
     func testResizeRelaysOutVisibleRows() {
         for table in [false, true] {
             _ = open(table: table, turns: 60)
-            window.setContentSize(NSSize(width: 520, height: 700)); pump(0.4)
+            window.setContentSize(NSSize(width: 520, height: 700))
+            // Rows on screen, narrowed to the new width, and the view still following the end.
+            XCTAssertTrue(wait() {
+                let narrow = self.views(self.host, MessageTextView.self).filter { $0.window != nil && !$0.visibleRect.isEmpty }
+                return !narrow.isEmpty && narrow.allSatisfy { $0.frame.width <= 520 } && self.atEnd()
+            }, "table \(table): rows narrowed to the window")
             let narrow = views(host, MessageTextView.self).filter { $0.window != nil && !$0.visibleRect.isEmpty }
             XCTAssertFalse(narrow.isEmpty, "table \(table): text on screen")
             XCTAssertTrue(narrow.allSatisfy { $0.frame.width <= 520 }, "table \(table): rows narrowed to the window")
