@@ -97,35 +97,6 @@ impl Agent {
         Ok(())
     }
 
-    /// frog cloud is unreachable (offline) or out of capacity (503, 502): carry on with a local
-    /// model instead of failing the turn. `FROG_FALLBACK_MODEL` picks which. A credit error
-    /// (402) is not this: the fix is money, not another model (docs/design/model-policy.md).
-    pub(super) fn cloud_fallback(&self, e: &anyhow::Error) -> Option<String> {
-        let prov = self.profile_name.split_once('/')?.0;
-        if crate::providers::canonical(prov) != crate::providers::CLOUD {
-            return None;
-        }
-        let offline = e
-            .chain()
-            .filter_map(|c| c.downcast_ref::<reqwest::Error>())
-            .any(|r| r.is_connect());
-        let unavailable = e
-            .downcast_ref::<HttpError>()
-            .is_some_and(|h| matches!(h.status, 502 | 503));
-        if !offline && !unavailable {
-            return None;
-        }
-        Some(
-            std::env::var("FROG_FALLBACK_MODEL")
-                .ok()
-                .filter(|m| !m.is_empty())
-                .map(|m| crate::providers::normalize(&m))
-                .unwrap_or_else(|| crate::config::LOCAL_DEFAULT.into()),
-        )
-        // Only to a local model that's actually there: a fallback to nothing just fails later.
-        .filter(|m| !m.starts_with("local/") || local_server_up())
-    }
-
     pub(super) async fn call(
         &self,
         label: &str,
@@ -217,11 +188,15 @@ impl Agent {
                 ..Default::default()
             };
             let sent = Instant::now();
+            // A call in flight: `Status.waiting` reports it, so a session waiting on a slow
+            // or dead model says so instead of looking merely busy. Published, because the
+            // client learns state from events and this is the only moment the wait begins.
+            *self.call_started.lock().unwrap() = Some((sent, attempt + 1, None));
+            self.emit_status();
             // The engine log: what was sent, and a note while nothing has come back, so a
             // slow provider or a hang shows up while it's happening, not just after.
             let heard = Arc::new(std::sync::atomic::AtomicBool::new(false));
-            let watchdog = self.cfg.log_calls.then(|| {
-                eprintln!(
+            let watchdog = self.cfg.log_calls.then(|| {                eprintln!(
                     "call {call} {label} → {} · ~{prompt} tokens in · {} tools{}{}",
                     self.profile_name,
                     specs.len(),
@@ -377,6 +352,9 @@ impl Agent {
             match r {
                 // Unparseable JSON-mode output is kept as a plain answer and counted as a failure.
                 Ok(resp) if json_mode => {
+                    // The answer is in, JSON-mode or not: this call isn't waiting any more.
+                    // Cleared here as well as below, because this arm returns early.
+                    *self.call_started.lock().unwrap() = None;
                     return Ok(match from_json_mode(resp.clone()) {
                         Some(resp) => (resp, streamed),
                         None => (
@@ -388,7 +366,11 @@ impl Agent {
                         ),
                     });
                 }
-                Ok(resp) => return Ok((resp, streamed)),
+                Ok(resp) => {
+                    // The answer is in: this call is no longer waiting on the model.
+                    *self.call_started.lock().unwrap() = None;
+                    return Ok((resp, streamed));
+                }
                 // A billing refusal is a state transition, not an error: "transition to
                 // credits, but make it obvious". One typed, informational line names the
                 // window and the credit balance; the provider's raw JSON never goes up. When
@@ -409,6 +391,7 @@ impl Agent {
                         self.emit(Event::ItemsDiscarded { ids });
                     }
                     if !billing.admitted {
+                        *self.call_started.lock().unwrap() = None;
                         return Err(BillingRefused {
                             window: billing.window.to_string(),
                             reason: billing.reason,
@@ -428,6 +411,7 @@ impl Agent {
                     // admit didn't hold (or the credit ran out), and the turn ends with the
                     // honest typed reason instead of spinning.
                     if attempt > 0 {
+                        *self.call_started.lock().unwrap() = None;
                         return Err(BillingRefused {
                             window: billing.window.to_string(),
                             reason: billing.reason,
@@ -484,14 +468,17 @@ impl Agent {
                     }
                     return Err(e);
                 }
-                // A busy or briefly unreachable provider is retried before anything falls
-                // back: one 503, dropped connection or mid-stream gateway error shouldn't end
+                // A busy or briefly unreachable provider is retried before the turn
+                // stops: one 503, dropped connection or mid-stream gateway error shouldn't end
                 // a long task. When the broken attempt had already streamed a partial reply,
                 // its items are discarded and the step runs again from scratch. Three retries
                 // at 1 s, 2 s and 4 s, and ONE line for the whole storm.
                 Err(e)
                     if attempt < model_policy::MAX_RETRIES
-                        && (retryable(&e) || self.cloud_fallback(&e).is_some()) =>
+                        && (retryable(&e)
+                            || e.chain()
+                                .filter_map(|c| c.downcast_ref::<reqwest::Error>())
+                                .any(|r| r.is_connect())) =>
                 {
                     attempt += 1;
                     let ids: Vec<String> = streamed
@@ -518,7 +505,22 @@ impl Agent {
                             ),
                         );
                     }
-                    tokio::time::sleep(model_policy::retry_wait(attempt)).await;
+                    // A busy provider may say how long to wait; keep it for the status line
+                    // and wait that long instead of our own backoff when it's longer.
+                    let asked = e
+                        .downcast_ref::<HttpError>()
+                        .and_then(|h| h.retry_after)
+                        .map(|d| d.as_secs());
+                    let wait = model_policy::retry_wait(attempt).max(
+                        asked
+                            .map(Duration::from_secs)
+                            .unwrap_or(Duration::ZERO),
+                    );
+                    if asked.is_some() {
+                        *self.call_started.lock().unwrap() = Some((Instant::now(), attempt + 1, asked));
+                        self.emit_status();
+                    }
+                    tokio::time::sleep(wait).await;
                 }
                 Err(e) => {
                     // The last attempt (or one that isn't retryable) may leave a streamed
@@ -532,6 +534,7 @@ impl Agent {
                     if !ids.is_empty() {
                         self.emit(Event::ItemsDiscarded { ids });
                     }
+                    *self.call_started.lock().unwrap() = None;
                     return Err(e);
                 }
             }

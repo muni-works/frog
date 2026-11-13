@@ -129,7 +129,7 @@ impl Client {
                     return Err(StreamError { message }.into());
                 }
                 Fail::Http { status, body } => {
-                    return Err(HttpError { status, body, billing: None }.into());
+                    return Err(HttpError { status, body, billing: None, retry_after: None }.into());
                 }
                 Fail::Billing { status, body, billing } => {
                     return Err(HttpError {
@@ -138,6 +138,7 @@ impl Client {
                         billing: billing
                             .as_deref()
                             .and_then(super::Billing::from_header),
+                        retry_after: None,
                     }
                     .into());
                 }
