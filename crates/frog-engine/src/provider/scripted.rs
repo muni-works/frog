@@ -66,6 +66,9 @@ pub struct Client {
     /// Each request as the server would see it: the system prompt, the tools' names, then the
     /// messages as JSON.
     pub sent: Arc<Mutex<Vec<String>>>,
+    /// Each request's fixed part in full: the system prompt, then every tool's name,
+    /// description and schema in the order sent. For prompt-size and cache-prefix tests.
+    pub fixed: Arc<Mutex<Vec<(String, Vec<(String, String, String)>)>>>,
     /// Stream each tool call's arguments as `StreamEvent::ToolReady`, then keep "decoding" for
     /// this long before the next block, as a model still writing its reply would.
     pub tool_args: Option<Duration>,
@@ -85,6 +88,7 @@ impl Client {
         Self {
             responses: Mutex::new(responses.into()),
             sent: Default::default(),
+            fixed: Default::default(),
             tool_args: None,
             fails: Default::default(),
             attempts: Default::default(),
@@ -103,6 +107,19 @@ impl Client {
             .map(|t| format!("<tool {}>", t.name))
             .collect();
         self.attempts.lock().unwrap().push(tokio::time::Instant::now());
+        self.fixed.lock().unwrap().push((
+            req.system.to_string(),
+            req.tools
+                .iter()
+                .map(|t| {
+                    (
+                        t.name.to_string(),
+                        t.description.to_string(),
+                        t.schema.to_string(),
+                    )
+                })
+                .collect(),
+        ));
         self.sent.lock().unwrap().push(format!(
             "{}{tools}{}",
             req.system,

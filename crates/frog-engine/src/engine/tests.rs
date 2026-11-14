@@ -3693,6 +3693,13 @@ async fn stale_reads_are_pruned_when_the_turn_ends_and_logged() {
         .into_iter()
         .filter(|s| crate::kids::handles(&s.name))
         .collect();
+    // Rarely used tools are deferred: the catalog names them, ToolSearch loads them.
+    let (deferred, mut specs): (Vec<_>, Vec<_>) =
+        [tools::specs(), vec![crate::present::spec(false)], local_sessions]
+            .concat()
+            .into_iter()
+            .partition(|s| tools::deferred::is_deferred(&s.name));
+    specs.push(crate::mcp::search_spec());
     let fixed = fixed_chars(
         &(prompt::system_prompt(
             &dir,
@@ -3701,8 +3708,9 @@ async fn stale_reads_are_pruned_when_the_turn_ends_and_logged() {
                 ..Config::default()
             },
             "test",
-        ) + tools::sessions::LOCAL_PROMPT),
-        &[tools::specs(), vec![crate::present::spec(false)], local_sessions].concat(),
+        ) + tools::sessions::LOCAL_PROMPT
+            + &tools::deferred::catalog(&deferred)),
+        &specs,
     );
     let read_chars: usize = big.lines().map(|l| 6 + 1 + l.len() + 1).sum();
     let window = context::Estimator::default()
@@ -4615,8 +4623,8 @@ async fn loaded_mcp_tools_survive_an_engine_respawn() {
     let evs = run_now(&mut h, "and again").await;
     let tools = offered_tools(&sent.lock().unwrap());
     assert!(
-        tools.contains(&"McpTools".to_string()),
-        "McpTools wasn't offered after the respawn: {tools:?}"
+        tools.contains(&"ToolSearch".to_string()),
+        "ToolSearch wasn't offered after the respawn: {tools:?}"
     );
     assert!(
         tools.contains(&"mcp__slow__tool7".to_string()),
@@ -4643,8 +4651,8 @@ async fn mcp_tools_is_offered_before_any_server_connects() {
     run(&mut h, "first").await;
     let tools = offered_tools(&sent.lock().unwrap());
     assert!(
-        tools.contains(&"McpTools".to_string()),
-        "McpTools wasn't offered before the server connected: {tools:?}"
+        tools.contains(&"ToolSearch".to_string()),
+        "ToolSearch wasn't offered before the server connected: {tools:?}"
     );
     shutdown(h).await;
 }

@@ -794,7 +794,8 @@ impl Hub {
     }
 
     pub fn handles(&self, tool: &str) -> bool {
-        (tool == SEARCH_TOOL && self.deferred()) || self.find(tool).is_some()
+        ((tool == SEARCH_TOOL || tool == LEGACY_SEARCH_TOOL) && self.deferred())
+            || self.find(tool).is_some()
     }
 
     /// Re-list tools on servers that announced a change. Returns true if any did.
@@ -892,7 +893,7 @@ impl Hub {
                 )));
             }
             return Ok(Output::text(
-                "MCP servers are still connecting; call `McpTools` again in a moment.",
+                "MCP servers are still connecting; call `ToolSearch` again in a moment.",
             ));
         }
         let picked: Vec<&Entry> = if let Some(names) = query.strip_prefix("select:") {
@@ -950,7 +951,7 @@ impl Hub {
 
     /// Run a tool for the model. `item` is the tool call's id, for progress.
     pub async fn call(&self, item: &str, tool: &str, input: &Value) -> Result<Output> {
-        if tool == SEARCH_TOOL {
+        if tool == SEARCH_TOOL || tool == LEGACY_SEARCH_TOOL {
             return self.search(input);
         }
         let entry = self.find(tool).context("unknown MCP tool")?;
@@ -1202,12 +1203,15 @@ impl Hub {
     }
 }
 
-pub const SEARCH_TOOL: &str = "McpTools";
+pub const SEARCH_TOOL: &str = "ToolSearch";
+/// The search tool's old name: sessions logged before the rename (and models that remember it)
+/// still reach it.
+pub const LEGACY_SEARCH_TOOL: &str = "McpTools";
 
-fn search_spec() -> ToolSpec {
+pub fn search_spec() -> ToolSpec {
     ToolSpec {
         name: SEARCH_TOOL.into(),
-        description: "Find and load tools from connected MCP servers. Search with a few keywords (e.g. \"export stl\"), or load exact tools with `select:name,name`. Matching tools become callable from your next step.".into(),
+        description: "Load tools that aren't in your list yet (More tools in the system prompt, and connected MCP servers' tools). Search with a few keywords (e.g. \"export stl\"), or load exact tools with `select:name,name`. Matching tools become callable from your next step.".into(),
         schema: serde_json::json!({
             "type": "object",
             "properties": {"query": {"type": "string", "description": "Keywords, or select:name,name"}},
@@ -1645,7 +1649,7 @@ mod tests {
         // While the server is down the selection still counts as deferred: the search tool
         // stays offered.
         assert!(live.deferred());
-        assert_eq!(live.specs().first().map(|s| s.name.to_string()), Some("McpTools".into()));
+        assert_eq!(live.specs().first().map(|s| s.name.to_string()), Some("ToolSearch".into()));
 
         // A fresh delta (the server reconnected) merges in; the delta has no loaded tools.
         let delta = Hub {

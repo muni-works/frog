@@ -559,7 +559,7 @@ fn kind(name: &str) -> ToolKind {
     match name {
         "Read" => ToolKind::Read,
         "Edit" | "Write" => ToolKind::Edit,
-        "Grep" | "Glob" | "CodeMap" | "McpTools" | "WebSearch" | "Docs" => ToolKind::Search,
+        "Grep" | "Glob" | "CodeMap" | "McpTools" | "ToolSearch" | "WebSearch" | "Docs" => ToolKind::Search,
         "WebFetch" => ToolKind::Fetch,
         "Bash" => ToolKind::Execute,
         "Task" | "TodoWrite" | "Skill" => ToolKind::Think,
