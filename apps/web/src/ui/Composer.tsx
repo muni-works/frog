@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { composing } from './guards'
 import type { Image, Mode } from '../cloud/protocol'
 import { inOutPrice, modelName, modes, placeColor, placeOf, spec, type Model } from '../models'
-import { machineModels, places, tag, useShowCloud, type Machine } from '../machines'
+import { machineModels, places, tag, type Machine } from '../machines'
 import { barTone, canCompact, ringLabel, ringTone } from '../usage'
 import { parseRepo } from '../store'
 import type { Provider } from '../auth'
@@ -122,7 +122,8 @@ function useTimer(since?: number) {
 export function Composer(p: ComposerProps) {
   const [text, setText] = useState(p.draft ?? '')
   const [menu, setMenu] = useState<'plus' | 'model' | 'mode' | 'repo' | 'signin' | null>(p.pickRepo ? 'repo' : p.openModels ? 'model' : null)
-  const showCloudModels = useShowCloud()
+  // The web runs only in Frog Cloud, so its models always show (no Show cloud models switch here).
+  const showCloudModels = true
   // A machine's model runs from the Mac app; where there's an app to send them to, its rows give
   // way to one download hint, and on a phone (or once they have the app) they stay as they were.
   const machineChip = useDownloadChip(p.machines ?? [])
