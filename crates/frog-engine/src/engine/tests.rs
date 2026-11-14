@@ -12864,3 +12864,52 @@ async fn signing_in_from_the_session_installs_the_tools() {
     drop(mock);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// A turn that only searches is told once, after `STEP_NUDGE_AFTER` calls, to say what it
+/// knows and act; the turn carries on and ends on its own. An edit resets the count.
+#[tokio::test]
+async fn many_calls_without_progress_get_one_nudge_and_the_turn_goes_on() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.txt"), "needle\n").unwrap();
+    let grep = |i: usize| {
+        reply(
+            vec![Block::ToolUse {
+                id: format!("g{i}"),
+                name: "Grep".into(),
+                input: json!({ "pattern": format!("needle{i}|needle") }),
+            }],
+            Stop::ToolUse,
+        )
+    };
+    let n = super::turn::STEP_NUDGE_AFTER;
+    let mut script: Vec<Response> = (0..n + 3).map(grep).collect();
+    script.push(reply(vec![text("found it")], Stop::End));
+    let (mut h, sent) = engine_sent(script, None, None, None, dir.path().to_path_buf());
+    let evs = run(&mut h, "where is needle").await;
+    assert!(names(&evs).iter().any(|n| n == "turn_ended"));
+    let sent = sent.lock().unwrap();
+    let nudges = |req: &str| req.matches("without changing anything").count();
+    // After `n` calls that only searched, the next request carries it; then it stays one line
+    // in the history, never repeated.
+    assert_eq!(nudges(&sent[n - 1]), 0);
+    assert_eq!(nudges(&sent[n]), 1);
+    assert_eq!(nudges(sent.last().unwrap()), 1);
+}
+
+#[test]
+fn edits_and_passing_checks_count_as_progress_reads_and_failures_dont() {
+    use super::turn::progressed;
+    let call = |name: &str, input: Value| vec![("c".to_string(), name.to_string(), input)];
+    let res = |content: &str, is_error: bool| {
+        vec![Block::ToolResult { id: "c".into(), name: String::new(), content: content.into(), is_error }]
+    };
+    assert!(progressed(&call("Edit", json!({})), &res("ok", false)));
+    assert!(!progressed(&call("Edit", json!({})), &res("no match", true)));
+    assert!(progressed(&call("Bash", json!({ "command": "cargo test -p x" })), &res("ok", false)));
+    assert!(!progressed(
+        &call("Bash", json!({ "command": "npm test" })),
+        &res("1 failed\n[exit code 1]", false)
+    ));
+    assert!(!progressed(&call("Bash", json!({ "command": "grep -rn x ." })), &res("x", false)));
+    assert!(!progressed(&call("Read", json!({})), &res("x", false)));
+}

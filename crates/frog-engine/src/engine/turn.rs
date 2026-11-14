@@ -264,7 +264,10 @@ impl Agent {
         // batch at its start (and shown with it, ahead of its input).
         let wakes = self.shared.bg.take_notices();
         // Refused waits count within a turn (see `Batch::Waiting`).
-        self.shared.bg.long_wait_refusals.store(0, std::sync::atomic::Ordering::Relaxed);
+        self.shared
+            .bg
+            .long_wait_refusals
+            .store(0, std::sync::atomic::Ordering::Relaxed);
         self.emit(Event::TurnStarted {
             turn,
             input: input.to_string(),
@@ -412,6 +415,9 @@ impl Agent {
         let mut continuing = false;
         // A reply asking for files it could Read is nudged once, before any tool has run.
         let (mut nudged, mut used_tools) = (false, false);
+        // Model calls since the last edit or passing check, and whether this stretch was
+        // already told to act (see `STEP_NUDGE`).
+        let (mut idle, mut step_nudged) = (0usize, false);
         let reason = loop {
             steps += 1;
             let limit = if self.subagent {
@@ -488,6 +494,14 @@ impl Agent {
                     self.notice(Level::Info, note.clone());
                     self.push_user(note);
                 }
+            }
+            if idle >= STEP_NUDGE_AFTER && !step_nudged {
+                step_nudged = true;
+                self.notice(
+                    Level::Info,
+                    format!("{idle} model calls without an edit or a passing check; asked the model to act"),
+                );
+                self.push_user(STEP_NUDGE.to_string());
             }
             // Between turns, pruning starts at PRUNE_AT; inside one, only once the window is
             // nearly full, since a prune rewrites the prefix the server has cached.
@@ -735,8 +749,16 @@ impl Agent {
             reply_item = None;
             continuing = false;
             reply_text.clear();
+            let called = uses.clone();
             match self.run_tools(uses, &mut guard, streamed.early).await? {
-                Batch::Continue => {}
+                Batch::Continue => {
+                    let results = self.conv.messages.last().map(|m| m.content.as_slice());
+                    if progressed(&called, results.unwrap_or_default()) {
+                        (idle, step_nudged) = (0, false);
+                    } else {
+                        idle += 1;
+                    }
+                }
                 Batch::Denied => break EndReason::Denied,
                 Batch::Looping => break EndReason::Looping,
                 Batch::Waiting => break EndReason::Complete,
@@ -788,6 +810,51 @@ impl Agent {
         self.end_turn(turn, reason);
         Ok(())
     }
+}
+
+/// Model calls in a row without an edit or a passing check before the model is told to act.
+/// From the 2026-11-14 runs: Claude finished a trace-the-code question in 5 calls and DeepSeek
+/// in 10, while GLM took 56 on it, and long tasks' first edit came by about call 20. Fifteen
+/// leaves honest exploration alone and catches the spirals early.
+pub(super) const STEP_NUDGE_AFTER: usize = 15;
+
+/// The one line that says so. It never ends the turn: the model may still need to look.
+pub(super) const STEP_NUDGE: &str = "You've made many calls without changing anything or running a check. \
+Say in a sentence or two what you know so far, then act on it: make the change, run the check, or answer.";
+
+/// Whether a batch moved the task forward: an edit that applied, or a build/test/check command
+/// that passed. Reads and searches, however useful, don't count.
+pub(super) fn progressed(calls: &[(String, String, Value)], results: &[Block]) -> bool {
+    calls.iter().any(|(id, name, input)| {
+        let Some((content, failed)) = results.iter().find_map(|b| match b {
+            Block::ToolResult {
+                id: rid,
+                content,
+                is_error,
+                ..
+            } if rid == id => Some((content.as_str(), *is_error)),
+            _ => None,
+        }) else {
+            return false;
+        };
+        if failed {
+            return false;
+        }
+        match name.as_str() {
+            "Write" | "Edit" => true,
+            "Bash" => {
+                let cmd = input["command"].as_str().unwrap_or("");
+                const CHECKS: &[&str] = &[
+                    "test", "check", "build", "clippy", "lint", "tsc", "pytest", "vitest", "jest",
+                ];
+                !content.contains("[exit code")
+                    && cmd
+                        .split(|c: char| !c.is_alphanumeric())
+                        .any(|w| CHECKS.contains(&w))
+            }
+            _ => false,
+        }
+    })
 }
 
 /// Sent after a reply cut off at the output limit inside a tool call (no text came back, and
