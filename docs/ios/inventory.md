@@ -23,8 +23,8 @@ first half is wrong and the second half is right, and both matter:
   `UI/Transcript`. Nobody noticed, because no build checks those targets. This is the
   feature-drift risk, already happening.
 - **Nothing has run on a real device.** `DEVELOPMENT_TEAM 54SNZV8YN8` is a free personal team.
-  Free teams get no APNs, no TestFlight and no increased-memory entitlement (see the ios-spike
-  commit message). The APNs push relay exists in code but isn't deployed. Everything so far has
+  Free teams get no APNs, no TestFlight and no increased-memory entitlement (see the commit
+  message that added the since-removed `apps/ios-spike`). The APNs push relay exists in code but isn't deployed. Everything so far has
   been tested in the Simulator against `-fixtures` recordings or a loopback Mac.
 
 ## Targets (`apps/ios/project.yml`, XcodeGen, iOS/watchOS 26.0, Swift 6)
@@ -40,9 +40,8 @@ first half is wrong and the second half is right, and both matter:
 
 Elsewhere:
 
-- `apps/ios-spike/` (TangSpike) runs tang-llm inside an iPhone app through an xcframework. It
-  benches prefill and decode at 512/2k/4k tokens. It's capped at the default memory limit
-  because free teams can't get the increased-memory entitlement. No results are committed.
+- `apps/ios-spike/` (TangSpike, tang-llm in an iPhone app through an xcframework) was removed in
+  November 2026. It never committed results; recover it from git history if on-device tang returns.
 - `crates/puck` is an ESP32 round-AMOLED "puck" that talks to `frog --serve`. It's another
   remote surface, out of scope here.
 

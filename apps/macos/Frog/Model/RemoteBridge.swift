@@ -1,5 +1,6 @@
 import Foundation
 import Network
+import Security
 
 /// Lets frog on your iPhone watch this Mac's conversations and answer them: a WebSocket that
 /// speaks the engine protocol. Loopback only for now (the iOS simulator reaches it); a LAN and
@@ -22,19 +23,49 @@ final class RemoteBridge {
         set { UserDefaults.standard.set(newValue, forKey: "remoteEnabled") }
     }
 
-    /// What a client must present. Made once, kept in defaults.
+    /// What a client must present. Made once, kept in the Keychain.
     /// A new code: every paired phone has to pair again.
     static func newToken() {
-        UserDefaults.standard.removeObject(forKey: "remoteToken")
+        TokenStore.write("")
         _ = token
     }
 
     static var token: String {
-        if let t = UserDefaults.standard.string(forKey: "remoteToken"), !t.isEmpty { return t }
+        // Codes kept in defaults by earlier builds move to the Keychain.
+        if let old = UserDefaults.standard.string(forKey: "remoteToken") {
+            if !old.isEmpty { TokenStore.write(old) }
+            UserDefaults.standard.removeObject(forKey: "remoteToken")
+        }
+        if let t = TokenStore.read(), !t.isEmpty { return t }
         let alphabet = Array("abcdefghjkmnpqrstuvwxyz23456789")
         let t = String((0..<20).map { _ in alphabet.randomElement()! })
-        UserDefaults.standard.set(t, forKey: "remoteToken")
+        TokenStore.write(t)
         return t
+    }
+
+    /// The bridge code as one generic password (mirrors the phone's `PairingCode`).
+    private enum TokenStore {
+        static var query: [String: Any] { [kSecClass as String: kSecClassGenericPassword,
+                                           kSecAttrService as String: "toys.frog.remote",
+                                           kSecAttrAccount as String: "bridge-token"] }
+
+        static func read() -> String? {
+            var q = query
+            q[kSecReturnData as String] = true
+            q[kSecMatchLimit as String] = kSecMatchLimitOne
+            var out: AnyObject?
+            guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let data = out as? Data else { return nil }
+            return String(data: data, encoding: .utf8)
+        }
+
+        static func write(_ code: String) {
+            SecItemDelete(query as CFDictionary)
+            guard !code.isEmpty else { return }
+            var q = query
+            q[kSecValueData as String] = Data(code.utf8)
+            q[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+            SecItemAdd(q as CFDictionary, nil)
+        }
     }
 
     private var listener: NWListener?
