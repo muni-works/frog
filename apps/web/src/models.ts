@@ -53,9 +53,10 @@ export function price(m: Model) {
 /** "$0.80/M out": a cloud model's price per million output tokens, as the picker shows it. */
 export const outputPrice = (m: Model) => (m.output == null ? '' : `$${(m.output * 1e6).toFixed(2)}/M out`)
 
-/** The model a new session starts on: GLM-5.3 Flash while Frog Cloud lists it (it always
- *  serves it), else the first it lists. Nothing is built in: no list, no default. */
-export const defaultModel = (models: Model[]) => (models.find((m) => currentId(m.id) === 'glm-5.3-flash') ?? models[0])?.id
+/** The model a new session starts on: DeepSeek V4.1 Flash while Frog Cloud lists it, else the
+ *  first it lists. Nothing is built in: no list, no default. Same pick as the engine's
+ *  `catalog::cloud_default` (2026-11-14: 89 s vs GLM-5.3 Flash's 179 s on one agent task). */
+export const defaultModel = (models: Model[]) => (models.find((m) => currentId(m.id) === 'deepseek-v4.1-flash') ?? models[0])?.id
 
 /** The smallest context window worth offering for agent sessions. */
 const MIN_AGENT_CONTEXT = 64_000

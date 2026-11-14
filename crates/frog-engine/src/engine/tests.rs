@@ -8619,7 +8619,7 @@ async fn a_headless_childs_prompts_relay_through_the_parent_and_it_archives() {
     let start = call(
         "s",
         "StartSession",
-        json!({"title": "writer", "prompt": "create child.txt", "cwd": ".", "worktree": false}),
+        json!({"title": "writer", "prompt": "create child.txt", "cwd": ".", "worktree": false, "head_start": {"check": "test -f child.txt"}}),
     );
     let archive = call("a", "ArchiveSession", json!({"id": "writer"}));
     let script = vec![
@@ -8659,6 +8659,141 @@ async fn a_headless_childs_prompts_relay_through_the_parent_and_it_archives() {
         &e.event,
         Event::ChildSession { id, state, .. } if *id == child && state == "archived"
     )));
+    shutdown(h).await;
+}
+
+/// Ask back: a child unsure of its brief asks `SendMessage(to: "parent")` and keeps going.
+/// The question wakes the idle parent; the parent's answer reaches the child inside the
+/// same turn (at its next tool-call boundary), not as a turn after it finished.
+#[tokio::test]
+async fn a_child_asks_its_parent_and_gets_the_answer_mid_turn() {
+    let dir = tmp_store();
+    let store = dir.join(".store");
+    let ask = call(
+        "q",
+        "SendMessage",
+        json!({"to": "parent", "message": "tabs or spaces in child.txt?"}),
+    );
+    let write = call(
+        "w",
+        "Write",
+        json!({"file_path": "child.txt", "content": "hi\n"}),
+    );
+    script_child(
+        &dir,
+        vec![
+            reply(vec![ask], Stop::ToolUse),
+            reply(vec![write], Stop::ToolUse),
+            reply(vec![text("wrote child.txt with tabs")], Stop::End),
+        ],
+    );
+    let start = call(
+        "s",
+        "StartSession",
+        json!({"title": "asker", "prompt": "create child.txt", "cwd": ".", "worktree": false,
+               "head_start": {"files": ["child.txt: new"], "check": "test -f child.txt"}}),
+    );
+    let answer = call("a", "SendMessage", json!({"to": "asker", "message": "use tabs"}));
+    let script = vec![
+        reply(vec![start], Stop::ToolUse),
+        reply(vec![text("started")], Stop::End),
+        reply(vec![answer], Stop::ToolUse),
+        reply(vec![text("answered")], Stop::End),
+        reply(vec![text("thanks")], Stop::End),
+    ];
+    let mut h = engine_with(script, true, Some(store.clone()), None, None, dir.clone());
+    drive(&mut h, |e| matches!(e, Event::Idle)).await;
+    submit(&h, "have a session write it");
+    // The child's Write waits on a card relayed here; hold it until the parent has answered,
+    // so the answer lands while the child's turn is still running.
+    let mut held: Option<String> = None;
+    let mut answered = false;
+    let mut evs = Vec::new();
+    loop {
+        let env = tokio::time::timeout(Duration::from_secs(30), h.events.recv())
+            .await
+            .expect("timed out")
+            .unwrap();
+        match &env.event {
+            Event::PermissionRequest { id, .. } => held = Some(id.clone()),
+            Event::ItemCompleted { item: Item::ToolCall { name, output, .. }, .. }
+                if name == "SendMessage" && output.starts_with("Queued for asker") =>
+            {
+                answered = true
+            }
+            _ => {}
+        }
+        if answered && let Some(id) = held.take() {
+            h.ops
+                .send(Op::Permission { id, decision: Decision::Allow, note: None })
+                .unwrap();
+        }
+        let done = matches!(&env.event, Event::TurnStarted { input, .. } if input.contains("wrote child.txt"));
+        evs.push(env);
+        if done {
+            break;
+        }
+    }
+    drive(&mut h, |e| matches!(e, Event::Idle)).await;
+    let woke = evs.iter().find_map(|e| match &e.event {
+        Event::TurnStarted { input, .. } if input.contains("tabs or spaces") => Some(input.clone()),
+        _ => None,
+    });
+    assert!(woke.is_some_and(|w| w.contains("name=\"asker\"")), "the question woke the parent");
+    let child = evs
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::ChildSession { id, .. } => Some(id.clone()),
+            _ => None,
+        })
+        .unwrap();
+    let log = std::fs::read_dir(&store)
+        .unwrap()
+        .flatten()
+        .find(|f| f.file_name().to_string_lossy().contains(&child))
+        .map(|f| std::fs::read_to_string(f.path()).unwrap())
+        .expect("the child's log");
+    // Mid-turn: ingested as a follow-up of the running turn, and the child ran one turn.
+    let answer_at = log.find("use tabs").expect("the answer reached the child");
+    let first_end = log.find("\"turn_ended\",\"turn\":1").expect("turn 1 ended");
+    assert!(answer_at < first_end, "answer arrived after the turn, not mid-turn:\n{log}");
+    assert!(!log.contains("\"turn\":2"), "the answer started a second turn:\n{log}");
+    // Titled by the parent, not by the head start that opens its brief.
+    assert!(log.contains("\"title\":\"asker\""), "{log}");
+    // The child's first turn starts with the parent's head start.
+    assert!(log.contains("Head start from your parent"), "{log}");
+    shutdown(h).await;
+}
+
+/// A write-capable child with a one-line brief and no head start is refused before it
+/// exists: that brief is what left a child guessing for minutes.
+#[tokio::test]
+async fn a_bare_one_line_brief_is_refused() {
+    let dir = tmp_store();
+    let start = call(
+        "s",
+        "StartSession",
+        json!({"title": "vague", "prompt": "fix the auth thing", "cwd": ".", "worktree": false}),
+    );
+    let script = vec![
+        reply(vec![start], Stop::ToolUse),
+        reply(vec![text("ok")], Stop::End),
+    ];
+    let mut h = engine_with(script, true, None, None, None, dir.clone());
+    drive(&mut h, |e| matches!(e, Event::Idle)).await;
+    submit(&h, "split it");
+    let evs = drive(&mut h, |e| matches!(e, Event::Idle)).await;
+    let (outcome, output) = evs
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::ItemCompleted { item: Item::ToolCall { name, outcome, output, .. }, .. }
+                if name == "StartSession" => Some((*outcome, output.clone())),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(outcome, ToolOutcome::Error);
+    assert!(output.contains("head_start"), "{output}");
+    assert!(!evs.iter().any(|e| matches!(e.event, Event::ChildSession { .. })));
     shutdown(h).await;
 }
 
@@ -11830,7 +11965,7 @@ async fn start_session_refuses_a_model_its_gateway_does_not_list() {
             vec![Block::ToolUse {
                 id: id.into(),
                 name: "StartSession".into(),
-                input: json!({ "title": "a worker", "prompt": "do it", "model": model }),
+                input: json!({ "title": "a worker", "prompt": "do it", "model": model, "head_start": { "check": "cargo test" } }),
             }],
             Stop::ToolUse,
         )

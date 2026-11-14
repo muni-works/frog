@@ -56,6 +56,35 @@ pub struct Kids {
     relay: Mutex<Option<Arc<crate::background::Registry>>>,
 }
 
+/// Each live child's way back to its parent, by child session id: the parent's inbox (weak,
+/// so a gone parent drops the message) and the child's name as the parent knows it. Every
+/// engine of a tree runs in this process, so a child asking `SendMessage(to: "parent")`
+/// finds its parent here without a client in between.
+static PARENTS: std::sync::LazyLock<
+    Mutex<std::collections::HashMap<String, (mpsc::WeakUnboundedSender<Op>, String)>>,
+> = std::sync::LazyLock::new(Default::default);
+
+/// A child's message to its parent: queued in the parent's inbox like any session message,
+/// so it wakes an idle (waiting) parent with the question.
+pub fn send_to_parent(child: &str, message: String) -> Result<()> {
+    if message.trim().is_empty() {
+        bail!("`message` is required");
+    }
+    let (tx, name) = PARENTS
+        .lock()
+        .unwrap()
+        .get(child)
+        .map(|(tx, name)| (tx.upgrade(), name.clone()))
+        .ok_or_else(|| anyhow!("no parent session to reach from here"))?;
+    let tx = tx.ok_or_else(|| anyhow!("your parent session has exited"))?;
+    tx.send(Op::Deliver {
+        from: child.into(),
+        from_name: name,
+        message,
+    })
+    .map_err(|_| anyhow!("your parent session has exited"))
+}
+
 /// The tools the engine answers itself when no client hosts sessions.
 pub fn handles(name: &str) -> bool {
     use crate::tools::sessions::*;
@@ -273,6 +302,17 @@ impl Kids {
             images: Vec::new(),
             more: Vec::new(),
         })?;
+        // Named by the parent: its brief opens with the head start, which is no title. Sent
+        // after the first input so the log is open and the title lands in it.
+        handle.ops.send(Op::SetTitle {
+            title: name.clone(),
+        })?;
+        if let Some(inbox) = self.inbox.lock().unwrap().clone() {
+            PARENTS
+                .lock()
+                .unwrap()
+                .insert(id.clone(), (inbox, name.clone()));
+        }
         let (kids, id2) = (self.clone(), id.clone());
         kids.announce(&id, &relay);
         tokio::spawn(async move {
