@@ -40,6 +40,8 @@ export interface ComposerProps {
   adds?: number
   dels?: number
   startedAt?: number
+  /** The model's speed while working, in tokens per second. */
+  speed?: number | null
   /** The running turn is blocked on a permission ask. */
   waiting?: boolean
   draft?: string
@@ -508,7 +510,7 @@ export function Composer(p: ComposerProps) {
           {p.context?.window || p.usage?.sub ? <ContextRing used={p.context?.used ?? null} window={p.context?.window ?? 0} usage={p.usage} onCompact={p.onCompact && !working ? () => p.onCompact!() : undefined} compacting={p.compacting} /> : null}
           <span style={{ flex: 1 }} />
           <span style={{ fontSize: 12, color: paused ? 'var(--warn)' : p.waiting ? 'var(--notice)' : 'var(--muted)', whiteSpace: 'nowrap' }}>
-            {working && p.waiting ? '' : working ? `Working · ${timer}` : paused ? 'Out of credits' : ''}
+            {working && p.waiting ? '' : working ? `Working · ${timer}${p.speed && p.speed > 0 ? ` · ${Math.round(p.speed)} tok/s` : ''}` : paused ? 'Out of credits' : ''}
           </span>
           {p.onSignIn && !text.trim() && !images.length ? (
             <button type="button" className="cz-signin" aria-expanded={menu === 'signin'} onClick={() => setMenu(menu === 'signin' ? null : 'signin')}>
