@@ -29,7 +29,7 @@ model is in use and whether it's free or billed. Frog Cloud is one `frog login` 
 
 ## No cross-tier fallback chains
 
-A model call has exactly one model. There is no chain that hops from the user's provider to
+A model call stays in its tier. There is no chain that hops from the user's provider to
 frog's, or from frog's to the user's:
 
 - **A worker on BYOK fails fast.** One line names the provider and the fix, the turn ends with the
@@ -38,8 +38,18 @@ frog's, or from frog's to the user's:
   answer at all, the session may continue on frog's built-in rules (auto mode) or on a local
   model, with a notice saying so. A worker may not: it fails, and the session that started it
   decides what to do.
+- **A busy Frog Cloud model may hand a call to another Frog Cloud model** (same tier, same
+  account, added 2026-11-14). Only after the session's model used its whole retry budget on a
+  429/5xx, only to a model the platform lists that takes tools and whose window holds the
+  thread, and only when `cloud_fallback` is on (the default) and the folder allows cloud
+  models. One line says so ("Frog Cloud: deepseek-v4.1-flash is still busy, so glm-5.3-flash
+  is answering for now. The session's model hasn't changed."); calls go to the stand-in for
+  two minutes, then the session's model is tried again. The stand-in gets one retry; if it
+  fails too the turn ends on the session model's own error. A dropped connection never falls
+  back (no other model fixes the network), and BYOK never does.
 - **frog cloud never falls back to a local model.** When it is unreachable or out of capacity
-  (502, 503) the turn stops with the error and the thread is left untouched. Switching a
+  (502, 503) and no other Frog Cloud model can take the call, the turn stops with the error
+  and the thread is left untouched. Switching a
   cloud-sized history onto a small local window forced pruning and a compaction that couldn't
   fit, which wrecked every open thread during a short outage (removed 2026-11-12).
 
@@ -58,14 +68,23 @@ Fail-fast means the *first* answer decides: no retry, no fallback model, no seco
 provider's own message stays in the `turn_ended` error (`EngineError::Provider { status, message }`)
 so a client can show the truth; the notice is the one-line fix, not a summary of the body.
 
+A turn that ends on passing trouble (429, 5xx, a mid-stream gateway error) is different: its
+`message` is frog's own plain line — what happened, that the work so far is kept, what to do —
+and the provider's body stays in the engine log. Frog Cloud's `502 "<model> answered 402,
+retry"` is its upstream's bill: it reads "Frog Cloud had a problem upstream … It isn't your
+account or your billing", never as the user's credit.
+
 ## One retry policy
 
 Every retried model call — main loop, classifier, subagent — uses the same numbers:
 
-- **429 and 5xx: back off 1 s, 2 s, 4 s. Three retries (four attempts) at most.** No jitter, no
-  doubling past 4 s, no per-model budget.
+- **429 and 5xx: back off 1, 2, 4, 8, 16 s, each spread ±25 %. Five retries (six attempts) at
+  most.** A `retry-after` is the floor when it is longer, capped at 60 s. No per-model budget.
+  (Three retries over 7 s ended 32 of 320 turns on 2026-11-13 while Frog Cloud was briefly
+  busy; the notice count, not the retry count, was what made the old storms loud.)
 - **One notice per call, not one per attempt.** A retry storm is a single line in the transcript
-  ("bull is busy right now — retrying (up to 3)"), not a card or a line per try.
+  ("Frog Cloud is busy — retrying"), not a card or a line per try. The working line reads
+  "busy, retrying…" and `Status.waiting` carries the attempt while it waits.
 - A broken attempt that already streamed a partial reply discards its items and re-runs the step,
   as before.
 - **401/402/404 never retry.** Retrying a wrong key or an empty wallet only spends time.

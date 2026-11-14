@@ -84,6 +84,14 @@ fn write_cache(provider: &str, models: &[Model]) {
 pub static TEST_CACHE: std::sync::Mutex<Option<std::collections::HashMap<String, Model>>> =
     std::sync::Mutex::new(None);
 
+/// frog cloud's list for one test: per thread, so parallel tests never see each other's (a
+/// test's engine runs on its own single-threaded runtime).
+#[cfg(test)]
+thread_local! {
+    pub static TEST_CLOUD: std::cell::RefCell<Option<Vec<Model>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 /// What's known about one model, from the cache alone (no network): for `resolve`.
 pub fn cached(spec: &str) -> Option<Model> {
     #[cfg(test)]
@@ -106,6 +114,10 @@ pub fn cached(spec: &str) -> Option<Model> {
 /// frog cloud's models, without the network: the last list `/v1/models` gave (empty when it
 /// was never reached). frog cloud's own list is the only word on what it serves.
 pub fn cloud_models() -> Vec<Model> {
+    #[cfg(test)]
+    if let Some(listed) = TEST_CLOUD.with(|c| c.borrow().clone()) {
+        return listed;
+    }
     #[cfg(test)]
     {
         let seeded: Vec<Model> = TEST_CACHE

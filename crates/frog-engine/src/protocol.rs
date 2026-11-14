@@ -1270,6 +1270,13 @@ pub enum EngineError {
 impl std::fmt::Display for EngineError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
+            // The engine's own plain line for a busy or broken provider stands alone; a
+            // provider's body keeps its status in front.
+            Self::Provider { message, .. }
+                if message.contains("Your work so far is kept") =>
+            {
+                write!(f, "{message}")
+            }
             Self::Provider { status, message } => write!(f, "provider error ({status}): {message}"),
             Self::Billing { status, message } => write!(f, "billing refused ({status}): {message}"),
             Self::Connection { message } => write!(f, "connection failed: {message}"),

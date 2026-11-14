@@ -939,12 +939,12 @@ async fn headless_denial_is_reported_and_turn_continues() {
 async fn incomplete_stream_is_retried_before_failing() {
     // A stream that ended before the terminal chunk is retried with backoff; when every
     // attempt dies the same way, the typed error ends the turn.
-    let script = (0..4)
+    let script = (0..6)
         .map(|_| reply(vec![text("partial")], Stop::Incomplete))
         .collect();
     let mut h = engine(script, true);
     let evs = run(&mut h, "hi").await;
-    // Three retries, and ONE notice for the whole storm (docs/design/model-policy.md).
+    // Five retries, and ONE notice for the whole storm (docs/design/model-policy.md).
     let notices: Vec<&str> = evs
         .iter()
         .filter_map(|e| match &e.event {
@@ -953,7 +953,7 @@ async fn incomplete_stream_is_retried_before_failing() {
         })
         .collect();
     assert_eq!(notices.len(), 1, "{notices:?}");
-    assert!(notices[0].contains("retrying (up to 3 times)"), "{notices:?}");
+    assert!(notices[0].contains("— retrying"), "{notices:?}");
     assert!(evs.iter().any(|e| matches!(
         &e.event,
         Event::TurnEnded {
@@ -979,7 +979,7 @@ async fn a_gateway_error_before_any_output_is_retried() {
     // (docs/design/model-policy.md) — and the turn completed with the good reply.
     let notices = notices(&evs);
     assert_eq!(notices.len(), 1, "{notices:?}");
-    assert!(notices[0].contains("retrying (up to 3 times)"), "{notices:?}");
+    assert!(notices[0].contains("— retrying"), "{notices:?}");
     assert!(evs.iter().any(|e| matches!(
         e.event,
         Event::TurnEnded {
@@ -1215,27 +1215,27 @@ async fn a_second_billing_refusal_ends_the_turn_typed() {
     )));
 }
 
-/// A busy provider retries 1 s, 2 s, 4 s and no further: four attempts, one notice for the
-/// whole storm (docs/design/model-policy.md).
+/// A busy provider retries after 1, 2, 4, 8 and 16 s and no further: six attempts, one notice
+/// for the whole storm (docs/design/model-policy.md).
 #[tokio::test(start_paused = true)]
-async fn a_rate_limited_provider_backs_off_one_two_four_and_stops() {
+async fn a_rate_limited_provider_backs_off_and_stops() {
     let mut p = Profile::new(ProviderKind::Ollama, "test");
     p.tool_mode = ToolMode::Native;
-    let fails = (0..6)
+    let fails = (0..8)
         .map(|_| scripted::Fail::http(429, "{\"error\":{\"message\":\"deepseek-v4.1-flash is busy\"}}"))
         .collect();
     let (mut h, _, attempts) = engine_profile_timed(fails, vec![], p);
     let evs = run(&mut h, "hi").await;
     let starts = attempts.lock().unwrap().clone();
-    assert_eq!(starts.len(), 4, "three retries after the first attempt");
+    assert_eq!(starts.len(), 6, "five retries after the first attempt");
     let gaps: Vec<u64> = starts
         .windows(2)
         .map(|w| (w[1] - w[0]).as_secs())
         .collect();
-    assert_eq!(gaps, [1, 2, 4], "{gaps:?}");
+    assert_eq!(gaps, [1, 2, 4, 8, 16], "{gaps:?}");
     let notices = notices(&evs);
     assert_eq!(notices.len(), 1, "one notice for the storm: {notices:?}");
-    assert!(notices[0].contains("retrying (up to 3 times)"), "{notices:?}");
+    assert!(notices[0].contains("— retrying"), "{notices:?}");
     assert!(evs.iter().any(|e| matches!(
         &e.event,
         Event::TurnEnded {
@@ -1247,11 +1247,316 @@ async fn a_rate_limited_provider_backs_off_one_two_four_and_stops() {
     )));
 }
 
+/// frog cloud's busy answer, as its gateway sends it.
+const CLOUD_BUSY: &str = "{\"error\":{\"message\":\"deepseek-v4.1-flash is busy right now\",\"type\":\"rate_limit_error\",\"code\":429}}";
+/// The gateway's upstream billing error: a 502 whose words say 402.
+const CLOUD_UPSTREAM_402: &str = "{\"error\":{\"message\":\"deepseek-v4.1-flash answered 402, retry\",\"type\":\"api_error\",\"code\":502}}";
+
+/// A session on `spec` (a Frog Cloud profile) whose provider fails `fails` first. Frog Cloud
+/// lists `glm-5.3-flash` beside the session's model for this test's thread, and `stand_in`
+/// is what that model answers with if the engine falls back to it.
+struct CloudRig {
+    h: Handle,
+    /// Each attempt on the session's own model.
+    attempts: Arc<Mutex<Vec<tokio::time::Instant>>>,
+    /// Each attempt on the stand-in.
+    alt_attempts: Arc<Mutex<Vec<tokio::time::Instant>>>,
+}
+
+fn cloud_rig(
+    spec: &str,
+    fails: Vec<scripted::Fail>,
+    script: Vec<Response>,
+    stand_in: Option<(Vec<scripted::Fail>, Vec<Response>)>,
+    cloud_fallback: bool,
+) -> CloudRig {
+    let listed = |id: &str| crate::catalog::Model {
+        spec: format!("cloud/{id}"),
+        provider: "cloud".into(),
+        id: id.into(),
+        name: id.into(),
+        context: Some(200_000),
+        tools: true,
+        ..Default::default()
+    };
+    crate::catalog::TEST_CLOUD.with(|c| {
+        *c.borrow_mut() = Some(vec![listed("deepseek-v4.1-flash"), listed("glm-5.3-flash")])
+    });
+    let mut profile = Profile::new(ProviderKind::Openai, "deepseek-v4.1-flash");
+    profile.base_url = Some("https://api.frog.toys/v1".into());
+    profile.tool_mode = ToolMode::Native;
+    let opts = Options {
+        cfg: Config {
+            hermetic: true,
+            cloud_fallback,
+            ..Config::default()
+        },
+        profile_name: spec.into(),
+        profile,
+        cwd: std::env::temp_dir(),
+        mode: Mode::Default,
+        can_ask: true,
+        resume: None,
+        store: None,
+        sandbox: false,
+        rich: false,
+        subagent: false,
+        chat: false,
+    };
+    let client = scripted::Client::new(script);
+    *client.fails.lock().unwrap() = fails.into();
+    let attempts = client.attempts.clone();
+    let alt = scripted::Client::new(stand_in.as_ref().map_or_else(Vec::new, |s| s.1.clone()));
+    let alt_attempts = alt.attempts.clone();
+    if let Some((alt_fails, _)) = stand_in {
+        *alt.fails.lock().unwrap() = alt_fails.into();
+        *client.fallback.lock().unwrap() = Some(Box::new(alt));
+    }
+    CloudRig {
+        h: start(opts, Provider::Scripted(client)).unwrap(),
+        attempts,
+        alt_attempts,
+    }
+}
+
+fn completed_messages(evs: &[Envelope]) -> Vec<String> {
+    evs.iter()
+        .filter_map(|e| match &e.event {
+            Event::ItemCompleted {
+                item: Item::Message { text },
+                ..
+            } => Some(text.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn end_reason(evs: &[Envelope]) -> EndReason {
+    evs.iter()
+        .find_map(|e| match &e.event {
+            Event::TurnEnded { reason, .. } => Some(reason.clone()),
+            _ => None,
+        })
+        .expect("the turn ended")
+}
+
+/// Frog Cloud says "busy" twice and then answers: the turn completes, and what the person
+/// saw meanwhile is one plain line and a "retrying" working state — never the JSON
+/// (17 of 320 turns ended on this 429 on 2026-11-13).
+#[tokio::test(start_paused = true)]
+async fn a_busy_frog_cloud_is_retried_quietly_and_the_turn_completes() {
+    let mut rig = cloud_rig(
+        "cloud/deepseek-v4.1-flash",
+        vec![scripted::Fail::http(429, CLOUD_BUSY), scripted::Fail::http(429, CLOUD_BUSY)],
+        vec![reply(vec![text("all good")], Stop::End)],
+        None,
+        true,
+    );
+    let evs = run(&mut rig.h, "hi").await;
+    assert_eq!(end_reason(&evs), EndReason::Complete);
+    assert_eq!(completed_messages(&evs), ["all good"]);
+    assert_eq!(rig.attempts.lock().unwrap().len(), 3);
+    assert_eq!(notices(&evs), ["Frog Cloud is busy — retrying"]);
+    assert!(evs.iter().any(|e| matches!(
+        &e.event,
+        Event::Progress { label, .. } if label == "busy, retrying…"
+    )));
+    let waited: Vec<u32> = evs
+        .iter()
+        .filter_map(|e| match &e.event {
+            Event::Status(s) => s.waiting.as_ref().map(|w| w.attempt),
+            _ => None,
+        })
+        .collect();
+    assert!(waited.contains(&2) && waited.contains(&3), "{waited:?}");
+}
+
+/// A busy answer's `retry-after` is the wait: 7 s where our own backoff would be 1 s, and an
+/// hour is capped at a minute.
+#[tokio::test(start_paused = true)]
+async fn a_retry_after_is_honored_and_capped() {
+    let busy = |retry_after| scripted::Fail::Busy {
+        status: 429,
+        body: CLOUD_BUSY.into(),
+        retry_after,
+    };
+    let mut rig = cloud_rig(
+        "cloud/deepseek-v4.1-flash",
+        vec![busy(7), busy(3600)],
+        vec![reply(vec![text("all good")], Stop::End)],
+        None,
+        true,
+    );
+    let evs = run(&mut rig.h, "hi").await;
+    assert_eq!(end_reason(&evs), EndReason::Complete);
+    let starts = rig.attempts.lock().unwrap().clone();
+    let gaps: Vec<u64> = starts.windows(2).map(|w| (w[1] - w[0]).as_secs()).collect();
+    assert_eq!(gaps, [7, 60]);
+    assert!(evs.iter().any(|e| matches!(
+        &e.event,
+        Event::Status(s) if s.waiting.as_ref().is_some_and(|w| w.retry_after_secs == Some(7))
+    )));
+}
+
+/// The gateway's `502 "<model> answered 402, retry"` is its upstream's bill, not the
+/// user's: retried like any 5xx, with no billing line and no "out of credit" ending.
+#[tokio::test(start_paused = true)]
+async fn the_gateways_upstream_402_is_retried_and_is_not_the_users_billing() {
+    let mut rig = cloud_rig(
+        "cloud/deepseek-v4.1-flash",
+        vec![scripted::Fail::http(502, CLOUD_UPSTREAM_402)],
+        vec![reply(vec![text("all good")], Stop::End)],
+        None,
+        true,
+    );
+    let evs = run(&mut rig.h, "hi").await;
+    assert_eq!(end_reason(&evs), EndReason::Complete);
+    assert_eq!(notices(&evs), ["Frog Cloud had a problem upstream — retrying"]);
+    assert!(!evs.iter().any(|e| matches!(e.event, Event::BillingLimit { .. })));
+}
+
+/// The session's Frog Cloud model stays busy through every retry: another Frog Cloud model
+/// answers that call, the transcript says so, and the turn completes. The next call goes
+/// straight to the stand-in instead of spending the whole budget on the busy model again.
+#[tokio::test(start_paused = true)]
+async fn a_frog_cloud_model_busy_past_every_retry_hands_the_call_to_another() {
+    let mut rig = cloud_rig(
+        "cloud/deepseek-v4.1-flash",
+        (0..6).map(|_| scripted::Fail::http(429, CLOUD_BUSY)).collect(),
+        vec![],
+        Some((
+            vec![],
+            vec![
+                reply(vec![text("from the stand-in")], Stop::End),
+                reply(vec![text("again from the stand-in")], Stop::End),
+            ],
+        )),
+        true,
+    );
+    let evs = run(&mut rig.h, "hi").await;
+    assert_eq!(end_reason(&evs), EndReason::Complete);
+    assert_eq!(completed_messages(&evs), ["from the stand-in"]);
+    assert_eq!(rig.attempts.lock().unwrap().len(), 6, "the whole budget first");
+    assert_eq!(rig.alt_attempts.lock().unwrap().len(), 1);
+    assert_eq!(
+        notices(&evs),
+        [
+            "Frog Cloud is busy — retrying",
+            "Frog Cloud: deepseek-v4.1-flash is still busy, so glm-5.3-flash is answering for now. The session's model hasn't changed.",
+        ]
+    );
+    // The session's model is what it was: nothing switched it.
+    assert!(!evs.iter().any(|e| matches!(e.event, Event::ModelChanged { .. })));
+    let evs = turn_again(&mut rig.h, "and again").await;
+    assert_eq!(end_reason(&evs), EndReason::Complete);
+    assert_eq!(completed_messages(&evs), ["again from the stand-in"]);
+    assert_eq!(rig.attempts.lock().unwrap().len(), 6, "the busy model isn't asked again yet");
+    assert_eq!(rig.alt_attempts.lock().unwrap().len(), 2);
+    assert!(notices(&evs).is_empty(), "said once: {:?}", notices(&evs));
+}
+
+/// The policy says no: with `cloud_fallback` off the model is never swapped, and a BYOK
+/// session never hops to Frog Cloud whatever is listed. The turn ends instead.
+#[tokio::test(start_paused = true)]
+async fn nothing_falls_back_when_the_policy_does_not_allow_it() {
+    for (spec, allowed) in [("cloud/deepseek-v4.1-flash", false), ("vercel/openai/gpt-5", true)] {
+        let mut rig = cloud_rig(
+            spec,
+            (0..6).map(|_| scripted::Fail::http(429, CLOUD_BUSY)).collect(),
+            vec![],
+            Some((vec![], vec![reply(vec![text("from the stand-in")], Stop::End)])),
+            allowed,
+        );
+        let evs = run(&mut rig.h, "hi").await;
+        assert!(
+            matches!(
+                end_reason(&evs),
+                EndReason::Error { error: EngineError::Provider { status: 429, .. } }
+            ),
+            "{spec}"
+        );
+        assert_eq!(rig.alt_attempts.lock().unwrap().len(), 0, "{spec}");
+        assert_eq!(notices(&evs).len(), 1, "{spec}: only the retry line");
+    }
+}
+
+/// The stand-in is busy too (one retry of its own): the turn ends, on the session model's
+/// own trouble, in plain words.
+#[tokio::test(start_paused = true)]
+async fn a_stand_in_that_fails_too_ends_the_turn_on_the_sessions_own_error() {
+    let unavailable = "{\"error\":{\"message\":\"no inference capacity right now, retry shortly\",\"type\":\"service_unavailable\",\"code\":503}}";
+    let mut rig = cloud_rig(
+        "cloud/deepseek-v4.1-flash",
+        (0..6).map(|_| scripted::Fail::http(429, CLOUD_BUSY)).collect(),
+        vec![reply(vec![text("never reached")], Stop::End)],
+        Some((
+            (0..4).map(|_| scripted::Fail::http(503, unavailable)).collect(),
+            vec![],
+        )),
+        true,
+    );
+    let evs = run(&mut rig.h, "hi").await;
+    assert_eq!(rig.attempts.lock().unwrap().len(), 6);
+    assert_eq!(rig.alt_attempts.lock().unwrap().len(), 2, "one retry on the stand-in");
+    let EndReason::Error { error: EngineError::Provider { status, message } } = end_reason(&evs)
+    else {
+        panic!("{:?}", end_reason(&evs));
+    };
+    assert_eq!(status, 429);
+    assert!(message.starts_with("Frog Cloud was too busy to answer (deepseek-v4.1-flash)"), "{message}");
+    // The next turn starts on the session's own model again: the detour is over.
+    let evs = turn_again(&mut rig.h, "again").await;
+    assert_eq!(completed_messages(&evs), ["never reached"]);
+    assert_eq!(rig.attempts.lock().unwrap().len(), 7);
+}
+
+/// When a turn does end on a busy or broken Frog Cloud, the error says what happened, that
+/// the work is kept and what to do — never the gateway's JSON, and an upstream 402 is never
+/// called the user's billing (15 turns ended on that 502 on 2026-11-13).
+#[tokio::test(start_paused = true)]
+async fn a_turn_that_ends_on_frog_cloud_trouble_says_so_plainly() {
+    for (status, body, opening) in [
+        (429, CLOUD_BUSY, "Frog Cloud was too busy to answer (deepseek-v4.1-flash), even after retrying."),
+        (
+            502,
+            CLOUD_UPSTREAM_402,
+            "Frog Cloud had a problem upstream (deepseek-v4.1-flash), even after retrying. It isn't your account or your billing.",
+        ),
+    ] {
+        let mut rig = cloud_rig(
+            "cloud/deepseek-v4.1-flash",
+            (0..6).map(|_| scripted::Fail::http(status, body)).collect(),
+            vec![],
+            None,
+            true,
+        );
+        let evs = run(&mut rig.h, "hi").await;
+        let EndReason::Error { error } = end_reason(&evs) else {
+            panic!("{status}: {:?}", end_reason(&evs));
+        };
+        let EngineError::Provider { status: got, message } = &error else {
+            panic!("{status}: {error:?}");
+        };
+        assert_eq!(*got, status);
+        assert!(message.starts_with(opening), "{message}");
+        assert!(
+            message.ends_with("Your work so far is kept: send a message in a minute to carry on from here, or pick another model."),
+            "{message}"
+        );
+        assert!(!message.contains('{') && !message.contains("402"), "{message}");
+        // What a client that prints the error shows (the CLI): the line alone.
+        assert_eq!(error.to_string(), *message);
+        for n in notices(&evs) {
+            assert!(!n.contains('{'), "{n}");
+        }
+    }
+}
+
 #[tokio::test(start_paused = true)]
 async fn a_mid_stream_error_retries_only_up_to_budget() {
-    // The gateway keeps failing: 3 retries with backoff, then the turn ends with the
+    // The gateway keeps failing: 5 retries with backoff, then the turn ends with the
     // typed error.
-    let fails = (0..=3)
+    let fails = (0..=5)
             .map(|_| {
                 scripted::Fail::partial(
                     "partial",
@@ -1261,13 +1566,13 @@ async fn a_mid_stream_error_retries_only_up_to_budget() {
             .collect();
     let mut h = engine_fail(fails, vec![]);
     let evs = run(&mut h, "hi").await;
-    // Three retries, ONE notice for the whole storm (docs/design/model-policy.md).
+    // Five retries, ONE notice for the whole storm (docs/design/model-policy.md).
     let retries = evs
         .iter()
         .filter(|e| {
             matches!(
                 e.event,
-                Event::Notice { message: ref m, .. } if m.contains("retrying (up to 3 times)")
+                Event::Notice { message: ref m, .. } if m.contains("— retrying")
             )
         })
         .count();
@@ -1277,7 +1582,7 @@ async fn a_mid_stream_error_retries_only_up_to_budget() {
         evs.iter()
             .filter(|e| matches!(e.event, Event::ItemsDiscarded { .. }))
             .count(),
-        4
+        6
     );
     assert!(evs.iter().any(|e| matches!(
         &e.event,
@@ -1335,12 +1640,12 @@ async fn a_connection_reset_mid_body_is_retried() {
     )));
 }
 
-/// The reset keeps killing the body: 3 retries with backoff inside the one retry budget, one
+/// The reset keeps killing the body: 5 retries with backoff inside the one retry budget, one
 /// notice for the storm, every partial discarded, then the existing failure path — the typed
 /// Provider error (classified from the stream error, status 502), not a new one.
 #[tokio::test(start_paused = true)]
 async fn a_connection_reset_exhausting_the_budget_ends_with_the_existing_failure_path() {
-    let fails = (0..=3)
+    let fails = (0..=5)
         .map(|_| scripted::Fail::partial("partial", "connection reset by peer"))
         .collect();
     let mut h = engine_fail(fails, vec![]);
@@ -1353,12 +1658,12 @@ async fn a_connection_reset_exhausting_the_budget_ends_with_the_existing_failure
         })
         .collect();
     assert_eq!(notices.len(), 1, "{notices:?}");
-    assert!(notices[0].contains("retrying (up to 3 times)"), "{notices:?}");
+    assert!(notices[0].contains("— retrying"), "{notices:?}");
     assert_eq!(
         evs.iter()
             .filter(|e| matches!(e.event, Event::ItemsDiscarded { .. }))
             .count(),
-        4,
+        6,
         "every failed attempt discarded its partial"
     );
     assert!(evs.iter().any(|e| matches!(
@@ -1558,7 +1863,7 @@ async fn a_broken_body_stream_is_retryable_and_a_connect_failure_is_not() {
     // Both are the network, not frog: a connect failure classifies as Connection, with the
     // provider's own message underneath (the decode error was asserted retryable above).
     assert!(matches!(
-        classify(&refused),
+        classify("test", &refused),
         EngineError::Connection { .. }
     ));
 }
@@ -8042,7 +8347,7 @@ async fn a_broken_stream_discards_what_started_early() {
         name: "Edit".into(),
         input: json!({ "file_path": "a.rs", "old_string": "fn a()", "new_string": "fn z()" }),
     };
-    let script = (0..4)
+    let script = (0..6)
         .map(|_| {
             // The read streams, then the stream ends without the server saying it's done;
             // every retry breaks the same way.
