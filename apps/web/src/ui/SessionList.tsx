@@ -190,6 +190,7 @@ export function SessionList(p: {
     const status = glyph === 'run' ? (s.state === 'starting' ? 'Starting' : 'Running') : glyph === 'ask' ? 'Needs you' : glyph === 'fail' ? 'Failed' : glyph === 'paused' ? 'Paused' : null
     return (
       <button key={s.id} type="button" className={`srow${s.id === p.current ? ' on' : ''}${(detail && s.id === p.current) || !view.compact ? ' two' : ''}`} onClick={() => p.onOpen(s.id)}
+        aria-label={rowName(p.title(s), status ?? (glyph === 'unread' ? 'New' : null), repo, !!s.pr && s.pr)} aria-current={s.id === p.current ? 'page' : undefined}
         style={depth ? { paddingLeft: 10 + depth * 16 } : undefined}
         onContextMenu={(e) => { e.preventDefault(); setCtx({ s, x: e.clientX, y: e.clientY }) }}
         title={s.state === 'error' ? (s.error ? plainError(s.error) : "The sandbox couldn't start") : undefined}>
@@ -291,4 +292,9 @@ export function SessionList(p: {
       </>}
     </div>
   )
+}
+
+/** A session row's accessible name: its title, then state, repo and PR, in a phrase. */
+export function rowName(title: string, status: string | null, repo: string | null, pr: string | false): string {
+  return [title, status, repo && `in ${repo}`, pr && `pull request ${pr}`].filter(Boolean).join(', ')
 }

@@ -14,7 +14,8 @@ interface InspectorProps {
   branch?: string
   hasPr: boolean
   onCommit: () => void
-  onPr: () => void
+  /** Absent in a session without a repo: there's nowhere to push. */
+  onPr?: () => void
   send: (op: Op) => void
   machines?: readonly Machine[]
   /** Open on this tab (tests); default: the one remembered for this browser. */
@@ -66,7 +67,7 @@ export function Inspector({ thread, onCommit, onPr, hasPr, send, onClose, machin
       </div>
       {pane === 'changes' && (
         <div className="insp-body">
-          {thread.changes.length === 0 && <div className="insp-empty det wrap">Files Frog changes in this session show up here, ready to commit or open as a PR.</div>}
+          {thread.changes.length === 0 && <div className="insp-empty det wrap">Files Frog changes in this session show up here, ready to commit{onPr ? ' or open as a PR' : ''}.</div>}
           {thread.changes.length > 0 && (
             <div className="files-head">
               <b>{thread.changes.length} file{thread.changes.length === 1 ? '' : 's'}</b>
@@ -85,7 +86,7 @@ export function Inspector({ thread, onCommit, onPr, hasPr, send, onClose, machin
           {thread.changes.length > 0 && (
             <div className="insp-acts">
               <button type="button" className="f-btn f-btn--bordered" onClick={onCommit}>Commit</button>
-              <button type="button" className="f-btn f-btn--prominent" onClick={onPr}>{hasPr ? 'Push' : 'Open PR'}</button>
+              {onPr && <button type="button" className="f-btn f-btn--prominent" onClick={onPr}>{hasPr ? 'Push' : 'Open PR'}</button>}
             </div>
           )}
         </div>

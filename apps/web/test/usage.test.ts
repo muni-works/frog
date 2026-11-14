@@ -22,3 +22,15 @@ test("formats like the Mac app", () => {
   assert.equal(seconds(400), "0.4s");
   assert.equal(seconds(125_000), "2m 5s");
 });
+
+// frog.toys review: the ring read "Usage and context, 100%" with context at 1% (the weekly plan
+// was full), and "Compact now" was offered at 1% context.
+import { canCompact, ringLabel } from "../src/usage.ts";
+test("the usage ring names the plan and the context apart", () => {
+  assert.equal(ringLabel(1, 0.01), "Plan 100% used, context 1% full");
+  assert.equal(ringLabel(null, 0.4), "Context 40% full");
+});
+test("compacting isn't offered at trivial context", () => {
+  assert.equal(canCompact(1_000, 128_000), false);
+  assert.equal(canCompact(64_000, 128_000), true);
+});

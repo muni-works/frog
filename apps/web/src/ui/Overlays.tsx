@@ -4,7 +4,7 @@ import { notifyOn, notifySupported, setNotify } from '../alerts'
 import { billingHistory, billingPortal, createKey, firstName, listKeys, portalErrorMessage, revokeKey, type Account, type KeyInfo, type Provider } from '../auth'
 import { friendly } from '../cloud/client'
 import { modelName, placeColor, type Model } from '../models'
-import { canPull, displayName, memoryLine, runningLine, setShowCloud, useShowCloud, type Machine } from '../machines'
+import { canPull, displayName, memoryLine, runningLine, type Machine } from '../machines'
 import type { SessionSummary } from '../cloud/protocol'
 import { DownloadAppChip } from './DownloadChip'
 import { useLayer } from './layers'
@@ -167,7 +167,7 @@ function Keys({ apiKey }: { apiKey: string }) {
         </div>
       ) : (
         <form className="set-row" onSubmit={(e) => { e.preventDefault(); createKey(apiKey, name).then((r) => { setMade(r.key); setName(''); load() }, () => setError("Couldn't make a key. Try again.")) }}>
-          <input className="f-input" style={{ flex: 1 }} value={name} onChange={(e) => setName(e.target.value)} placeholder="New API key name (optional)" aria-label="New API key name" />
+          <input className="f-field" style={{ flex: 1 }} value={name} onChange={(e) => setName(e.target.value)} placeholder="New API key name (optional)" aria-label="New API key name" />
           <button type="submit" className="f-btn f-btn--bordered f-btn--small">Create key</button>
         </form>
       )}
@@ -280,7 +280,6 @@ function perM(p: number | null) {
  *  row), a page per machine, then Frog Cloud. Pairing happens in the Mac app. */
 function ModelsSettings({ account, machines, machine, onBilling }: { account: Account | null; machines: Machine[]; machine?: string; onBilling: () => void }) {
   const [open, setOpen] = useState<string | null>(machine ?? null)
-  const cloud = useShowCloud()
   const d = machines.find((m) => m.id === open)
   if (d) return <MachinePage machine={d} machines={machines} onBack={() => setOpen(null)} />
   return (<>
@@ -295,13 +294,12 @@ function ModelsSettings({ account, machines, machine, onBilling }: { account: Ac
           <span className="det">›</span>
         </button>
       ))}
-      <div className="set-row"><div style={{ flex: 1 }}><b>Pair a machine</b><div className="det wrap">Machines you pair show here, with their models.</div></div><DownloadAppChip label="Pair machines in the Mac app" machines={machines} /></div>
+      <div className="set-row"><div style={{ flex: 1 }}><b>Pair a machine</b><div className="det wrap">Machines you pair show here, with their models. <a href="/mac">Get the Mac app</a></div></div><DownloadAppChip label="Pair machines in the Mac app" machines={machines} /></div>
     </div>
     <div className="set-h">Frog Cloud</div>
     <div className="set-group">
       <div className="set-row"><div style={{ flex: 1 }}>Account</div><span className="det">{[account?.name ?? firstName(account), account?.email].filter(Boolean).join(' · ') || 'Signed in'}</span></div>
       <div className="set-row"><div style={{ flex: 1 }}>Credit</div><span className="num">{creditLine(account).replace(/ credit$/, '')}</span><button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={onBilling}>Add credit…</button></div>
-      <label className="set-row"><div style={{ flex: 1 }}>Show cloud models in the picker</div><input type="checkbox" role="switch" checked={cloud} onChange={(e) => setShowCloud(e.target.checked)} /></label>
     </div>
   </>)
 }
