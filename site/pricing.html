@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pricing · Frog</title>
+<meta name="description" content="Local models are free. Frog Cloud is pay per token: prices per million tokens, plans and starting credit.">
+<meta name="theme-color" content="#f6f5f1" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#141513" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon.png">
+<style>
+  /* Same tokens and footer as /mac (site/index.html). */
+  :root {
+    --bg: #f6f5f1; --fg: #1b1d1a; --muted: #6b6f68; --faint: #a3a69e; --line: #e2e0d8;
+    --card: #ffffff; --well: #f1f0eb; --accent: #2e9e4f; --pad: rgb(46 158 79 / .22);
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141513; --fg: #ecebe6; --muted: #9a9d95; --faint: #62655f; --line: #2a2c28;
+      --card: #1c1e1b; --well: #232522; --accent: #58cc6f; --pad: rgb(88 204 111 / .22);
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 17px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: var(--pad); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 8px; }
+  p, li { text-wrap: pretty; }
+  code { font-family: var(--mono); font-size: .88em; }
+  main { max-width: 720px; margin: 0 auto; padding: 64px 20px 40px; }
+  .back { font-size: 14px; color: var(--muted); text-decoration: none; }
+  .back:hover { color: var(--fg); }
+  h1 { font: 700 44px/1.05 -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif; letter-spacing: -0.03em; margin: 18px 0 10px; }
+  .lede { font-size: 19px; color: var(--muted); margin: 0 0 8px; text-wrap: balance; }
+  h2 { font-size: 17px; margin: 48px 0 6px; }
+  section > p, section > ul { color: var(--muted); font-size: 15px; }
+  section > p b, section > ul b { color: var(--fg); }
+  section > ul { padding-left: 20px; }
+  a { color: var(--accent); text-underline-offset: 3px; }
+  .note { font-size: 13px; color: var(--faint); }
+  .table { overflow-x: auto; background: var(--card); border: 1px solid var(--line); border-radius: 12px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: 0; }
+  th { font-size: 12px; font-weight: 600; color: var(--muted); }
+  td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td .det { display: block; font-size: 12px; color: var(--muted); }
+  .cards { list-style: none; margin: 0 0 12px; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .cards li { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+  .cards b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; }
+  .cards span { font-size: 12px; color: var(--muted); }
+  .sum { background: var(--well); border-radius: 12px; padding: 14px 16px; font-size: 14px; color: var(--muted); }
+  .sum .row { display: flex; justify-content: space-between; gap: 12px; font-variant-numeric: tabular-nums; }
+  .sum .total { color: var(--fg); font-weight: 600; border-top: 1px solid var(--line); margin-top: 6px; padding-top: 6px; }
+  footer {
+    margin-top: 72px; padding-top: 20px; border-top: 1px solid var(--line);
+    display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--muted);
+  }
+  footer svg { width: 20px; height: 20px; }
+  footer svg path { fill: var(--accent); }
+  footer a { color: inherit; text-decoration-color: var(--faint); }
+  footer a:hover { color: var(--fg); }
+  footer .end { margin-left: auto; font-family: var(--mono); font-size: 12px; color: var(--faint); }
+  footer nav { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+  @media (max-width: 560px) {
+    main { padding-top: 40px; }
+    h1 { font-size: 36px; }
+    .cards { grid-template-columns: 1fr; }
+    th, td { padding: 9px 10px; }
+    footer { flex-wrap: wrap; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <a class="back" href="/mac/">← Frog</a>
+  <h1>Pricing</h1>
+  <p class="lede">Local models are free. Frog Cloud is pay per token, in dollars per million tokens.</p>
+
+  <section>
+    <h2>On your own machines: $0</h2>
+    <p>Models that run on your Mac or on your own nodes (Apple's on-device model, MLX, ollama, LM Studio, tang) cost nothing. No account, no key, no limits beyond your hardware. Using your own provider key (OpenRouter, OpenAI and others) is billed by that provider, not by us.</p>
+  </section>
+
+  <section>
+    <h2>Frog Cloud models</h2>
+    <p>Prices per million tokens. Cached input is the part of the prompt the model has already seen, like earlier turns of the same conversation.</p>
+    <div class="table">
+      <table>
+        <thead><tr><th>Model</th><th class="n">Input</th><th class="n">Cached input</th><th class="n">Output</th></tr></thead>
+        <tbody>
+          <tr><td>Qwen3 Coder Next<span class="det">Frog Cloud GPUs; OpenRouter when ours are full</span></td><td class="n">$0.60</td><td class="n">$0.06</td><td class="n">$1.50</td></tr>
+          <tr><td>Qwen3 8B<span class="det">Frog Cloud GPUs</span></td><td class="n">$0.05</td><td class="n">$0.005</td><td class="n">$0.20</td></tr>
+          <tr><td>Qwen3 VL 8B<span class="det">Frog Cloud GPUs · images</span></td><td class="n">$0.15</td><td class="n">$0.015</td><td class="n">$0.60</td></tr>
+          <tr><td>GLM-5.3 Flash<span class="det">via OpenRouter · images · 1M context</span></td><td class="n">$0.18</td><td class="n">$0.036</td><td class="n">$0.60</td></tr>
+          <tr><td>DeepSeek V4.1 Flash<span class="det">via OpenRouter · images · 1M context</span></td><td class="n">$0.36</td><td class="n">$0.0072</td><td class="n">$1.44</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">The same list the apps show, from <code>api.frog.toys/v1/models</code>. You pay the price in effect when the tokens are used.</p>
+  </section>
+
+  <section>
+    <h2>What a turn costs</h2>
+    <p>One turn on Qwen3 Coder Next, mid-conversation: 40,000 tokens of context, 30,000 of them cached from earlier turns, and a 2,000-token reply.</p>
+    <div class="sum">
+      <div class="row"><span>10,000 input × $0.60/M</span><span>$0.0060</span></div>
+      <div class="row"><span>30,000 cached input × $0.06/M</span><span>$0.0018</span></div>
+      <div class="row"><span>2,000 output × $1.50/M</span><span>$0.0030</span></div>
+      <div class="row total"><span>About</span><span>$0.01</span></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Credit</h2>
+    <ul class="cards">
+      <li><b>$5</b><span>free credit when you sign up and connect GitHub, once per GitHub account</span></li>
+      <li><b>$5–$100</b><span>top-ups of $5, $10, $25, $50 or $100, through Stripe</span></li>
+      <li><b>No expiry</b><span>no seats, no minimum; credit pays for tokens as you use them</span></li>
+    </ul>
+    <p class="note">Credit isn't refundable and has no cash value. See the <a href="/terms">terms</a>.</p>
+  </section>
+
+  <section>
+    <h2>Plans</h2>
+    <p>Optional. A plan includes an allowance of Frog Cloud usage every 5 hours and every week. Past it, turns keep going on credit at the prices above. Change or cancel any time from Settings › Billing.</p>
+    <div class="table">
+      <table>
+        <thead><tr><th>Plan</th><th>Allowance</th><th class="n">Concurrent streams</th><th class="n">Price</th></tr></thead>
+        <tbody>
+          <tr><td><b>Pro</b><span class="det">For steady daily use</span></td><td>Every 5 hours and every week</td><td class="n">2</td><td class="n">$20/mo</td></tr>
+          <tr><td><b>Max 5x</b><span class="det">More at once</span></td><td>5× Pro</td><td class="n">4</td><td class="n">$100/mo</td></tr>
+          <tr><td><b>Max 20x</b><span class="det">For heavy use</span></td><td>20× Pro</td><td class="n">8</td><td class="n">$200/mo</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    <svg viewBox="0 0 100 100" aria-hidden="true"><path fill-rule="evenodd" d="M12 30a18 18 0 1 0 36 0a18 18 0 1 0 -36 0Z M23.5 27a6.5 6.5 0 1 0 13 0a6.5 6.5 0 1 0 -13 0Z"/><path fill-rule="evenodd" d="M52 30a18 18 0 1 0 36 0a18 18 0 1 0 -36 0Z M63.5 27a6.5 6.5 0 1 0 13 0a6.5 6.5 0 1 0 -13 0Z"/><path fill-rule="evenodd" d="M8 62a42 29 0 1 0 84 0a42 29 0 1 0 -84 0Z M31 66Q50 82 69 66Q50 75 31 66Z M41.5 53a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0 -5 0Z M53.5 53a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0 -5 0Z"/></svg>
+    <span>Made by <a href="https://campedersen.com">Cam Pedersen</a></span>
+    <nav aria-label="Site">
+      <a href="/pricing">Pricing</a>
+      <a href="https://api.frog.toys/docs">Docs</a>
+      <a href="/privacy">Privacy</a>
+      <a href="https://github.com/muni-works/frog/blob/main/docs/privacy.md">What we count</a>
+      <a href="/terms">Terms</a>
+      <a href="https://api.frog.toys/status">Status</a>
+    </nav>
+    <span class="end">toys.frog</span>
+  </footer>
+</main>
+</body>
+</html>

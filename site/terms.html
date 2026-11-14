@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Terms · Frog</title>
+<meta name="description" content="Frog and Frog Cloud terms: the service, acceptable use, billing and refunds.">
+<meta name="theme-color" content="#f6f5f1" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#141513" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon.png">
+<style>
+  /* Same tokens and footer as /mac (site/index.html). */
+  :root {
+    --bg: #f6f5f1; --fg: #1b1d1a; --muted: #6b6f68; --faint: #a3a69e; --line: #e2e0d8;
+    --card: #ffffff; --well: #f1f0eb; --accent: #2e9e4f; --pad: rgb(46 158 79 / .22);
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141513; --fg: #ecebe6; --muted: #9a9d95; --faint: #62655f; --line: #2a2c28;
+      --card: #1c1e1b; --well: #232522; --accent: #58cc6f; --pad: rgb(88 204 111 / .22);
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 17px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: var(--pad); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 8px; }
+  p, li { text-wrap: pretty; }
+  code { font-family: var(--mono); font-size: .88em; }
+  main { max-width: 720px; margin: 0 auto; padding: 64px 20px 40px; }
+  .back { font-size: 14px; color: var(--muted); text-decoration: none; }
+  .back:hover { color: var(--fg); }
+  h1 { font: 700 44px/1.05 -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif; letter-spacing: -0.03em; margin: 18px 0 10px; }
+  .lede { font-size: 19px; color: var(--muted); margin: 0 0 8px; text-wrap: balance; }
+  h2 { font-size: 17px; margin: 48px 0 6px; }
+  section > p, section > ul { color: var(--muted); font-size: 15px; }
+  section > p b, section > ul b { color: var(--fg); }
+  section > ul { padding-left: 20px; }
+  a { color: var(--accent); text-underline-offset: 3px; }
+  .note { font-size: 13px; color: var(--faint); }
+  .table { overflow-x: auto; background: var(--card); border: 1px solid var(--line); border-radius: 12px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: 0; }
+  th { font-size: 12px; font-weight: 600; color: var(--muted); }
+  td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td .det { display: block; font-size: 12px; color: var(--muted); }
+  .cards { list-style: none; margin: 0 0 12px; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .cards li { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+  .cards b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; }
+  .cards span { font-size: 12px; color: var(--muted); }
+  .sum { background: var(--well); border-radius: 12px; padding: 14px 16px; font-size: 14px; color: var(--muted); }
+  .sum .row { display: flex; justify-content: space-between; gap: 12px; font-variant-numeric: tabular-nums; }
+  .sum .total { color: var(--fg); font-weight: 600; border-top: 1px solid var(--line); margin-top: 6px; padding-top: 6px; }
+  footer {
+    margin-top: 72px; padding-top: 20px; border-top: 1px solid var(--line);
+    display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--muted);
+  }
+  footer svg { width: 20px; height: 20px; }
+  footer svg path { fill: var(--accent); }
+  footer a { color: inherit; text-decoration-color: var(--faint); }
+  footer a:hover { color: var(--fg); }
+  footer .end { margin-left: auto; font-family: var(--mono); font-size: 12px; color: var(--faint); }
+  footer nav { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+  @media (max-width: 560px) {
+    main { padding-top: 40px; }
+    h1 { font-size: 36px; }
+    .cards { grid-template-columns: 1fr; }
+    th, td { padding: 9px 10px; }
+    footer { flex-wrap: wrap; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <a class="back" href="/mac/">← Frog</a>
+  <h1>Terms</h1>
+  <p class="lede">The short version: use frog for your own work, pay for the Frog Cloud tokens you use, and know it's early software.</p>
+
+  <section>
+    <h2>The service</h2>
+    <p>Frog is a coding agent made by Municipal Robotics. The Mac app, the CLI and the node software run on your own machines. Frog Cloud is our optional hosted service: models you can use from the apps, an API, and sandboxes that work on your GitHub repositories. Our <a href="/privacy">privacy page</a> says what leaves your machine.</p>
+  </section>
+
+  <section>
+    <h2>Your account</h2>
+    <p>Frog Cloud accounts sign in with GitHub or Google. One person, one account. Keep your API keys secret: you pay for whatever they're used for. If you give the Frog Cloud GitHub App access to a repository, its sessions can read it and push <code>frog/</code> branches and open pull requests there. Remove the App on GitHub any time.</p>
+  </section>
+
+  <section>
+    <h2>Acceptable use</h2>
+    <p>Don't use frog or Frog Cloud for anything unlawful; to attack, probe or overload it or anyone else; to mine cryptocurrency, send spam or run unrelated workloads in a sandbox; to work on repositories you aren't allowed to change; or to get around its limits or billing, including making extra accounts to collect sign-up credit. We may suspend accounts or revoke keys that do.</p>
+  </section>
+
+  <section>
+    <h2>Billing and refunds</h2>
+    <ul>
+      <li>Frog Cloud is pay per token, at the prices on the <a href="/pricing">pricing page</a>, in effect when the tokens are used.</li>
+      <li>Credit is prepaid in dollars through Stripe. A new account gets $5 of credit once per GitHub account.</li>
+      <li>Plans are monthly, billed through Stripe, and you can cancel any time from Settings › Billing. Past a plan's allowance, usage comes from credit.</li>
+      <li>Credit isn't refundable and has no cash value. If a payment is refunded we remove the credit it bought; if one is disputed we may pause the account while we look.</li>
+      <li>A request already running when your credit runs out finishes, so your balance can dip slightly below zero. Top up before the next one.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>No warranty</h2>
+    <p>Frog is provided as is, without warranties of any kind, and Frog Cloud has no uptime guarantee. An agent can make mistakes: review what it changes before you rely on it. To the extent the law allows, Municipal Robotics isn't liable for indirect or consequential damages, and our total liability is limited to what you paid us in the last three months.</p>
+  </section>
+
+  <section>
+    <h2>Changes and contact</h2>
+    <p>We may change these terms or our prices; we'll post changes here before they apply. Questions: <a href="mailto:cam@muni.works">cam@muni.works</a>.</p>
+  </section>
+
+  <footer>
+    <svg viewBox="0 0 100 100" aria-hidden="true"><path fill-rule="evenodd" d="M12 30a18 18 0 1 0 36 0a18 18 0 1 0 -36 0Z M23.5 27a6.5 6.5 0 1 0 13 0a6.5 6.5 0 1 0 -13 0Z"/><path fill-rule="evenodd" d="M52 30a18 18 0 1 0 36 0a18 18 0 1 0 -36 0Z M63.5 27a6.5 6.5 0 1 0 13 0a6.5 6.5 0 1 0 -13 0Z"/><path fill-rule="evenodd" d="M8 62a42 29 0 1 0 84 0a42 29 0 1 0 -84 0Z M31 66Q50 82 69 66Q50 75 31 66Z M41.5 53a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0 -5 0Z M53.5 53a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0 -5 0Z"/></svg>
+    <span>Made by <a href="https://campedersen.com">Cam Pedersen</a></span>
+    <nav aria-label="Site">
+      <a href="/pricing">Pricing</a>
+      <a href="https://api.frog.toys/docs">Docs</a>
+      <a href="/privacy">Privacy</a>
+      <a href="https://github.com/muni-works/frog/blob/main/docs/privacy.md">What we count</a>
+      <a href="/terms">Terms</a>
+      <a href="https://api.frog.toys/status">Status</a>
+    </nav>
+    <span class="end">toys.frog</span>
+  </footer>
+</main>
+</body>
+</html>
