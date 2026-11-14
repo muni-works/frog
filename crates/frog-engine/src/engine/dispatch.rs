@@ -476,8 +476,9 @@ root {}. Re-`cd` if you need the old location back.</system-note>",
             } else if seen >= LOOP_REPLAN {
                 let msg = format!(
                     "Not run: this exact call already ran {} times this turn with the same result. \
-Don't repeat it. Change the arguments or try a different approach.",
-                    seen - 1
+Don't repeat it. {}",
+                    seen - 1,
+                    super::repeat_fix(&name)
                 );
                 text(
                     ToolOutcome::Error,

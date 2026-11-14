@@ -212,8 +212,18 @@ returns the same slice. Use offset={} (with a limit) to read the next part, or G
         ),
         _ => {
             let _ = input;
-            format!("{lead} Change the arguments or try a different approach.")
+            format!("{lead} {}", repeat_fix(name))
         }
+    }
+}
+
+/// The one-line way out of a repeated call, by tool: what to do instead of calling again.
+fn repeat_fix(name: &str) -> &'static str {
+    match name {
+        "JobOutput" => "Asking again doesn't make the job finish: you get a <job-done> message when it exits. Do other work or end your turn; to wait for a line in its output, use Monitor.",
+        "Read" => "The file hasn't changed: use the result you have, pass a different offset/limit, or Grep for the part you need.",
+        "Monitor" => "It was refused or is already armed: fix the arguments the error named, or end your turn and wait for its <monitor-done> message.",
+        _ => "Change the arguments or try a different approach.",
     }
 }
 /// Model calls per top-level turn: uncapped unless `FROG_MAX_STEPS` sets one. Runaway loops are

@@ -62,9 +62,13 @@ pub struct Question {
 pub fn parse(input: &Value) -> Result<Question> {
     let question = input["question"].as_str().unwrap_or("").trim().to_string();
     if question.is_empty() {
-        bail!("`question` is required");
+        bail!("`question` is required: put the question's text in `question` and call Ask again");
     }
-    let options: Vec<AskOption> = match &input["options"] {
+    // Some models send the array as a JSON string (`"options": "[{\"label\": …}]"`).
+    let unquoted = input["options"]
+        .as_str()
+        .and_then(|s| serde_json::from_str::<Value>(s).ok());
+    let options: Vec<AskOption> = match unquoted.as_ref().unwrap_or(&input["options"]) {
         Value::Array(a) => a
             .iter()
             .filter_map(|o| match o {
@@ -81,7 +85,7 @@ pub fn parse(input: &Value) -> Result<Question> {
     };
     if !(MIN_OPTIONS..=MAX_OPTIONS).contains(&options.len()) {
         bail!(
-            "give {MIN_OPTIONS}-{MAX_OPTIONS} options with a `label` each (got {})",
+            "give {MIN_OPTIONS}-{MAX_OPTIONS} options with a `label` each (got {}): `options` is an array like [{{\"label\": \"Yes\"}}, {{\"label\": \"No\"}}]. For an open question, ask it in your reply instead of with Ask.",
             options.len()
         );
     }
@@ -173,6 +177,25 @@ mod tests {
         assert!(q.allow_other, "allow_other still defaults to true with multi");
         let off = parse(&json!({"question": "?", "options": ["a", "b"], "allow_other": false})).unwrap();
         assert!(!off.allow_other);
+    }
+
+    /// Logged: `options` sent as a JSON string, refused with "got 0".
+    #[test]
+    fn options_sent_as_a_json_string_are_parsed() {
+        let q = parse(&json!({
+            "question": "Raise the cap?",
+            "options": "[{\"label\": \"Raise cap\", \"detail\": \"to $65\"}, {\"label\": \"Keep it\"}]"
+        }))
+        .unwrap();
+        assert_eq!(q.options.len(), 2);
+        assert_eq!(q.options[0].label, "Raise cap");
+    }
+
+    #[test]
+    fn no_options_names_the_fix() {
+        let err = parse(&json!({"question": "?"})).unwrap_err().to_string();
+        assert!(err.contains("`options` is an array like"), "{err}");
+        assert!(err.contains("ask it in your reply"), "{err}");
     }
 
     #[test]

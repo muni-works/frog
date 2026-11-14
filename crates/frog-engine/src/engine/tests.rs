@@ -8040,14 +8040,25 @@ async fn edits_and_commands_never_start_early_nor_anything_after_them() {
     assert!(r2.contains("fn z()"), "{r2}");
 }
 
+/// A repeated JobOutput or Read is told what to do instead, in one line (the generic "change
+/// the arguments" sent models round again: ~20 repeats in a day's logs).
+#[test]
+fn a_repeated_call_names_the_fix_for_its_tool() {
+    let job = super::repeat_nudge("JobOutput", &json!({"id": "job-1"}), "job-1 (running)", 2);
+    assert!(job.contains("<job-done>") && job.contains("Monitor"), "{job}");
+    assert!(super::repeat_fix("Read").contains("offset/limit"));
+    assert!(super::repeat_fix("Grep").contains("Change the arguments"));
+}
+
 #[tokio::test(start_paused = true)]
 async fn a_broken_stream_discards_what_started_early() {
     let dir = tmp_store();
     std::fs::write(dir.join("a.rs"), "fn a() {}\n").unwrap();
+    // A Write, which needs the Read (an Edit with an exact old_string no longer does).
     let edit = Block::ToolUse {
         id: "e1".into(),
-        name: "Edit".into(),
-        input: json!({ "file_path": "a.rs", "old_string": "fn a()", "new_string": "fn z()" }),
+        name: "Write".into(),
+        input: json!({ "file_path": "a.rs", "content": "fn z() {}\n" }),
     };
     let script = (0..4)
         .map(|_| {
@@ -8084,7 +8095,7 @@ async fn a_broken_stream_discards_what_started_early() {
         )
     };
     assert!(!evs.iter().any(tool_item));
-    // The early read never counted: the edit still needs a read first.
+    // The early read never counted: the write still needs a read first.
     h.ops
         .send(Op::Submit {
             text: "edit it".into(),
