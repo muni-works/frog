@@ -286,7 +286,7 @@ export function Composer(p: ComposerProps) {
           <div className="cz-menu-h">{machineChip ? 'Run it on your Mac' : 'Your machines'}</div>
           {machineChip
             ? <div className="cz-menu-note"><DownloadAppChip label="Runs from the Mac app" machines={p.machines} /></div>
-            : machineRows.length === 0 && <div className="det cz-menu-note">No models on your machines yet.</div>}
+            : machineRows.length === 0 && <div className="det cz-menu-note">No models on your machines yet. <a href="/mac">Get the Mac app</a></div>}
           {machineRows.map((m) => (
             <button key={m.spec} type="button" role="menuitemradio" aria-checked={false} disabled title="Runs from the Mac app">
               <span className="cz-dot" style={{ background: placeColor('local') }} aria-hidden="true" />

@@ -295,7 +295,7 @@ function ModelsSettings({ account, machines, machine, onBilling }: { account: Ac
           <span className="det">›</span>
         </button>
       ))}
-      <div className="set-row"><div style={{ flex: 1 }}><b>Pair a machine</b><div className="det wrap">Machines you pair show here, with their models.</div></div><DownloadAppChip label="Pair machines in the Mac app" machines={machines} /></div>
+      <div className="set-row"><div style={{ flex: 1 }}><b>Pair a machine</b><div className="det wrap">Machines you pair show here, with their models. <a href="/mac">Get the Mac app</a></div></div><DownloadAppChip label="Pair machines in the Mac app" machines={machines} /></div>
     </div>
     <div className="set-h">Frog Cloud</div>
     <div className="set-group">
