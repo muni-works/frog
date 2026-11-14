@@ -21,3 +21,7 @@ export function keptTitle(id: string, engine: string | null, listed: string, sto
 export function keepTitle(id: string, title: string, store: Store | null = local()) {
   try { store?.setItem(KEY + id, title) } catch { /* memory only */ }
 }
+
+/** What a session's changes look like, so a commit can hide the +N −N pill until they move. */
+export const changeSig = (changes: readonly { path: string; added: number; removed: number }[]) =>
+  changes.map((c) => `${c.path}:${c.added}:${c.removed}`).join('|')

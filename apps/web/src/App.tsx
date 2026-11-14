@@ -4,7 +4,7 @@ import { finishSignIn, firstName, me, savedKey, signIn, signOut, subscribe, topU
 import { friendly, type ConnectionState } from './cloud/client'
 import type { SessionSummary } from './cloud/protocol'
 import type { Image, Mode } from './cloud/protocol'
-import { keepTitle, keptTitle } from './titles'
+import { changeSig, keepTitle, keptTitle } from './titles'
 import { defaultModel, idOf, spec, useModels } from './models'
 import { plainError } from './errors'
 import type { DecideOpts } from './ui/Transcript'
@@ -320,8 +320,13 @@ export default function App() {
   }
 
   // Commit and push are asks to the agent, so they show up in the conversation like any step.
-  const commit = (s: SessionSummary) => send(s.id, 'Commit the changes with a clear message.')
-  const push = (s: SessionSummary) => send(s.id, s.pr ? `Commit the changes and push to ${s.pr}.` : 'Commit the changes, push the branch and open a pull request.')
+  // A session without a repo has no remote to push to (and the gateway can't hand files back
+  // or make a repo yet), so its one git step is a local commit.
+  // The +N −N pill goes once a commit turn finishes, until the changes move again.
+  const [committed, setCommitted] = useState<Record<string, { turn: number; sig: string | null }>>({})
+  const commitAsk = (s: SessionSummary, text: string) => { setCommitted((c) => ({ ...c, [s.id]: { turn: thread(s.id).turns.length, sig: null } })); send(s.id, text) }
+  const commit = (s: SessionSummary) => commitAsk(s, 'Commit the changes with a clear message.')
+  const push = (s: SessionSummary) => !s.repo ? commit(s) : commitAsk(s, s.pr ? `Commit the changes and push to ${s.pr}.` : 'Commit the changes, push the branch and open a pull request.')
 
   const leave = (after: string | null, provider: Provider = 'github', connect?: string, pick = !!connect) => { setLeavingFor(provider); signIn(after ?? undefined, provider, connect, pick).catch(() => setLeavingFor(null)) }
 
@@ -364,6 +369,13 @@ export default function App() {
 
 
 
+
+  useEffect(() => {
+    if (!current || !ct || ct.running) return
+    const d = committed[current.id]
+    if (d && d.sig === null && ct.turns.length > d.turn && ct.ended?.type === 'complete')
+      setCommitted((c) => ({ ...c, [current.id]: { ...d, sig: changeSig(ct.changes) } }))
+  }, [current, ct, committed])
 
   // ---------- signed out ----------
   // Ticks follow the socket; a message leaves the outbox when its turn starts.
@@ -421,8 +433,11 @@ export default function App() {
   )
 
   // ---------- signed in ----------
-  const adds = ct?.changes.reduce((n, c) => n + c.added, 0) ?? 0
-  const dels = ct?.changes.reduce((n, c) => n + c.removed, 0) ?? 0
+  const sig = changeSig(ct?.changes ?? [])
+  const done = current ? committed[current.id] : undefined
+  const clean = !!done && done.sig === sig
+  const adds = clean ? 0 : ct?.changes.reduce((n, c) => n + c.added, 0) ?? 0
+  const dels = clean ? 0 : ct?.changes.reduce((n, c) => n + c.removed, 0) ?? 0
   const paused = ct ? outOfCredits(ct) : false
   const cs = current ? conn[current.id] : undefined
 
@@ -582,7 +597,7 @@ export default function App() {
       </main>
 
       {view.kind === 'session' && current && ct && inspector && (
-        <Inspector onClose={() => setInspector(false)} thread={ct} branch={current.branch} hasPr={!!current.pr} onCommit={() => commit(current)} onPr={() => push(current)} machines={machines} send={(op) => cloud?.send(current.id, op)} />
+        <Inspector onClose={() => setInspector(false)} thread={ct} branch={current.branch} hasPr={!!current.pr} onCommit={() => commit(current)} onPr={current.repo ? () => push(current) : undefined} machines={machines} send={(op) => cloud?.send(current.id, op)} />
       )}
 
       {palette && <Palette commands={commands} sessions={sessions} onOpen={(id) => setView({ kind: 'session', id })} onClose={() => setPalette(false)}
