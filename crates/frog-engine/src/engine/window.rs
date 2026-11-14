@@ -28,6 +28,8 @@ impl Agent {
         if !self.chat && !self.subagent {
             self.system
                 .push_str(prompt::panes_prompt(self.shared.panes.client()));
+            self.system
+                .push_str(&tools::deferred::catalog(&self.deferrable));
         }
         if !self.plain_chat() {
             self.system.push_str(&self.mcp.prompt());

@@ -284,11 +284,39 @@ impl Agent {
         if self.compiled.is_some() {
             specs.push(crate::compiled_memory::spec());
         }
-        // MCP tools last: servers that connect late (or tools loaded on demand) then only
-        // append to the list, and the prefix before them stays cached.
-        if !self.subagent {
-            specs.extend(self.mcp.specs());
+        // Rarely used built-ins wait until called or loaded (`tools::deferred`): every call
+        // re-sends each listed tool, and a plain coding turn needs only the core set.
+        let defer = !self.subagent && !self.chat && !self.small_window();
+        let mut held = Vec::new();
+        if defer {
+            let (out, keep): (Vec<ToolSpec>, Vec<ToolSpec>) = specs
+                .into_iter()
+                .partition(|s| tools::deferred::is_deferred(&s.name));
+            specs = keep;
+            held = out;
         }
+        // MCP tools last: servers that connect late (or tools loaded on demand) then only
+        // append to the list, and the prefix before them stays cached. One search tool loads
+        // both kinds, in the MCP tools' place.
+        if !self.subagent {
+            let mcp: Vec<ToolSpec> = self
+                .mcp
+                .specs()
+                .into_iter()
+                .filter(|s| s.name != crate::mcp::SEARCH_TOOL)
+                .collect();
+            if !held.is_empty() || self.mcp.deferred() {
+                specs.push(crate::mcp::search_spec());
+            }
+            specs.extend(mcp);
+        }
+        // Loaded built-ins after everything, in load order: loading one only appends.
+        for name in &self.loaded_builtin {
+            if let Some(s) = held.iter().find(|s| &s.name == name) {
+                specs.push(s.clone());
+            }
+        }
+        self.deferrable = held;
         // A small model chatting just talks: offered any tool, it calls one on every turn
         // (Apple's on-device model drew diagrams of "hello"). With none, it can only answer.
         if self.plain_chat() {

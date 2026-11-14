@@ -1004,17 +1004,17 @@ pub fn specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: MONITOR.into(),
-            description: "Watch for something in the background and get a message when it happens, instead of polling yourself. With `command`: run it every `interval_s` seconds until its output matches `until_regex` or it exits with code `until_exit` (true means 0), or `timeout_s` passes. The command runs like Bash (same sandbox and permissions). With only `after_s`: a timer that wakes you after that many seconds. Give each a `subject` (`b300-retry`, `sweep`): re-arming the same subject replaces the pending one instead of stacking another, and the wakeup names it. At most 5 timers can be pending. With `cancel`: stop pending timers/monitors by id, subject, or `all`, as soon as what they watch stops mattering.".into(),
+            description: "Get a message when something happens instead of polling. `command` (runs like Bash): rerun every `interval_s` until its output matches `until_regex`, it exits with `until_exit` (true: 0), or `timeout_s`. Only `after_s`: a timer (at most 5 pending). A `subject` names it; re-arming a subject replaces the pending one. `cancel`: stop by id, subject or `all` once it stops mattering.".into(),
             schema: json!({"type": "object", "properties": {
                 "command": {"type": "string", "description": "Shell command to poll"},
-                "until_regex": {"type": "string", "description": "Stop when the command's output matches this regex"},
-                "until_exit": {"type": ["integer", "boolean"], "description": "Stop when the command exits with this code (true: 0)"},
-                "timeout_s": {"type": "integer", "description": "Give up after this many seconds (default 600)"},
-                "interval_s": {"type": "integer", "description": "Seconds between polls (default 5)"},
-                "after_s": {"type": "integer", "description": "Timer only: wake after this many seconds"},
-                "note": {"type": "string", "description": "Timer only: a reminder to include in the wakeup"},
-                "subject": {"type": "string", "description": "What this watches, one short token (e.g. `b300-retry`). A pending timer/monitor with the same subject is replaced"},
-                "cancel": {"type": "string", "description": "Stop pending timers/monitors instead of starting one: an id, a subject, or `all`"}
+                "until_regex": {"type": "string", "description": "regex"},
+                "until_exit": {"type": ["integer", "boolean"], "description": "exit code (true: 0)"},
+                "timeout_s": {"type": "integer", "description": "default 600"},
+                "interval_s": {"type": "integer", "description": "default 5"},
+                "after_s": {"type": "integer", "description": "timer: wake after this many seconds"},
+                "note": {"type": "string", "description": "timer: reminder in the wakeup"},
+                "subject": {"type": "string", "description": "one short token, e.g. `b300-retry`"},
+                "cancel": {"type": "string", "description": "id, subject or `all`"}
             }}),
         },
     ]

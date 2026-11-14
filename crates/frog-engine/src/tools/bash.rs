@@ -16,12 +16,12 @@ over cat/sed/find/grep. Avoid interactive commands; they will hang until the tim
     let mut props = json!({
         "command": { "type": "string", "description": "The command to run" },
         "timeout": { "type": "integer", "description": "Timeout in milliseconds (default 120000, max 600000)" },
-        "run_in_background": { "type": "boolean", "description": "Start the command as a background job and return its id at once, for servers, watchers and long builds. Its output goes to a file; you're told when it exits (exit code and the tail of its output). Read it with JobOutput, stop it with JobStop." }
+        "run_in_background": { "type": "boolean", "description": "Run as a background job (servers, watchers, long builds): returns its id at once, and you're told when it exits with the tail of its output. JobOutput reads it, JobStop stops it." }
     });
     if available() {
-        description.push_str(" Commands run in a sandbox: they can write only inside the project (and, in a git worktree, its git dirs so commit works), temp folders, toolchain caches and paths the user configured, and can't read credentials (~/.ssh, ~/.aws, ...). Network access works; swift builds get SwiftPM's inner sandbox disabled (frog's is the boundary), and read-only git commands can go over https to GitHub when configured. If a command fails because of the sandbox and genuinely needs more (installing globally, git push over ssh), run it again with unsandboxed: true; the user will be asked.");
-        props["unsandboxed"] = json!({ "type": "boolean", "description": "Run outside the sandbox. Asks the user first. Only after the sandbox actually blocked this command — never because you think it might: builds, tests and most git already work inside it, and an unneeded escape makes the user approve the very build that would have just run. If a confined run fails with `Operation not permitted` or a read-only error, rerun it unsandboxed." });
-        props["allow_hosts"] = json!({ "type": "array", "items": { "type": "string" }, "description": "Hosts beyond the session's network allow-list this command needs. Asks the user first; only after a connection was blocked." });
+        description.push_str(" Commands run in a sandbox: writes only inside the project (and its git dirs), temp folders, toolchain caches and configured paths; no credentials (~/.ssh, ~/.aws, ...); network works.");
+        props["unsandboxed"] = json!({ "type": "boolean", "description": "Run outside the sandbox; asks the user. Only to rerun a command the sandbox actually blocked (`Operation not permitted`, a read-only error), never in advance: builds, tests and most git work inside it." });
+        props["allow_hosts"] = json!({ "type": "array", "items": { "type": "string" }, "description": "Extra hosts this command needs, after a connection was blocked; asks the user." });
     }
     ToolSpec {
         name: "Bash".into(),

@@ -118,8 +118,84 @@ impl Agent {
         )))
     }
 
-    /// Run a tool, streaming its live output as ephemeral `Output` deltas on item `id`.
+    /// Run a tool, streaming its live output as ephemeral `Output` deltas on item `id`. A
+    /// deferred built-in called by name loads for the rest of the session; if this first call
+    /// fails, the error carries its schema so the retry gets it right.
     pub(super) async fn run_tool(
+        &mut self,
+        id: &str,
+        name: &str,
+        input: &Value,
+    ) -> Result<tools::Output> {
+        let schema = self.load_builtin(name);
+        let out = Box::pin(self.run_tool_inner(id, name, input)).await;
+        match (out, schema) {
+            (Err(e), Some(schema)) => Err(anyhow::anyhow!(
+                "{e:#}\n`{name}` is in your tool list now. Its full definition: {schema}"
+            )),
+            (out, _) => out,
+        }
+    }
+
+    /// Load the deferred built-in `name` if it isn't yet. Returns its definition when it was
+    /// loaded just now.
+    pub(super) fn load_builtin(&mut self, name: &str) -> Option<String> {
+        let spec = self.deferrable.iter().find(|s| s.name == name)?;
+        if self.loaded_builtin.iter().any(|n| n == name) {
+            return None;
+        }
+        let def = format!("{} {}", spec.description, spec.schema);
+        self.loaded_builtin.push(name.to_string());
+        self.record_loaded();
+        Some(def)
+    }
+
+    /// Every loaded tool (built-in and MCP), for the resume to restore.
+    fn record_loaded(&mut self) {
+        let mut tools = self.loaded_builtin.clone();
+        tools.extend(self.mcp.loaded());
+        self.record(crate::session::Record::LoadedTools { tools });
+    }
+
+    /// `ToolSearch`: load deferred built-ins, then (with many) MCP tools.
+    async fn tool_search(&mut self, id: &str, name: &str, input: &Value) -> Result<tools::Output> {
+        let query = input["query"].as_str().unwrap_or("");
+        let picked = tools::deferred::pick(&self.deferrable, query);
+        let mut text = String::new();
+        if !picked.is_empty() {
+            text.push_str("Loaded these tools; call them directly from your next step:\n");
+            for n in &picked {
+                if !self.loaded_builtin.contains(n) {
+                    self.loaded_builtin.push(n.clone());
+                }
+                let line = tools::deferred::DEFERRED
+                    .iter()
+                    .find(|(d, _)| d == n)
+                    .map_or(n.as_str(), |(_, l)| l);
+                text.push_str(&format!("- {line}\n"));
+            }
+        }
+        if self.mcp.deferred() {
+            let hub = self.mcp.clone();
+            match hub.call(id, name, input).await {
+                Ok(out) if picked.is_empty() => {
+                    self.record_loaded();
+                    return Ok(out);
+                }
+                Ok(out) if out.content.starts_with("Loaded") => text.push_str(&out.content),
+                Ok(_) => {}
+                Err(e) if picked.is_empty() => return Err(e),
+                Err(_) => {}
+            }
+        }
+        if picked.is_empty() {
+            anyhow::bail!("no tools match `{query}`; give a few keywords, or `select:name,name`");
+        }
+        self.record_loaded();
+        Ok(tools::Output::text(text))
+    }
+
+    async fn run_tool_inner(
         &mut self,
         id: &str,
         name: &str,
@@ -241,19 +317,12 @@ root {}. Re-`cd` if you need the old location back.</system-note>",
         if name == crate::panes::PREVIEW {
             return self.shared.panes.preview(input, self.subagent).await;
         }
+        if name == crate::mcp::SEARCH_TOOL || name == crate::mcp::LEGACY_SEARCH_TOOL {
+            return self.tool_search(id, name, input).await;
+        }
         if self.mcp.handles(name) {
             let hub = self.mcp.clone();
-            let out = hub.call(id, name, input).await;
-            // Record loaded tools if McpTools was called
-            if name == crate::mcp::SEARCH_TOOL {
-                if out.is_ok() {
-                    let loaded = hub.loaded();
-                    if !loaded.is_empty() {
-                        self.record(crate::session::Record::LoadedTools { tools: loaded });
-                    }
-                }
-            }
-            return out;
+            return hub.call(id, name, input).await;
         }
         let (tx, mut rx) = mpsc::unbounded_channel::<String>();
         self.ctx.progress = Some(tx);
@@ -323,6 +392,10 @@ root {}. Re-`cd` if you need the old location back.</system-note>",
     pub(super) fn offers(&self, name: &str) -> bool {
         self.specs.iter().any(|s| s.name == name)
             || (name.starts_with("mcp__") && self.mcp.handles(name))
+            // A deferred built-in: calling it loads it (see `run_tool`).
+            || self.deferrable.iter().any(|s| s.name == name)
+            || (name == crate::mcp::LEGACY_SEARCH_TOOL
+                && self.specs.iter().any(|s| s.name == crate::mcp::SEARCH_TOOL))
     }
 
     /// A context to run `name` in on the side (while its reply is still streaming, or beside

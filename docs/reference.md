@@ -117,7 +117,8 @@ headers = { Authorization = "Bearer ${DOCS_TOKEN}" }
 - Their tools appear as `mcp__<server>__<tool>`, and every call asks permission.
 - If a tool's description looks like prompt injection or hides Unicode, frog quarantines it and the model never sees it. Set `trust = true` on a server to skip this check. See [quarantine.md](quarantine.md).
 - `frog --mcp` lists each server's status, its tools and anything quarantined.
-- **Big servers:** past 40 tools, frog loads tools on demand instead of sending every schema. It starts with the tools the server's own instructions mention. The model finds the rest with `McpTools` (keywords, or `select:name,name`).
+- **Big servers:** past 40 tools, frog loads tools on demand instead of sending every schema. It starts with the tools the server's own instructions mention. The model finds the rest with `ToolSearch` (keywords, or `select:name,name`).
+- **Built-in tools on demand:** rarely used built-ins (Present, Visualize, Image, Screenshot, Compare, CodeMap, Docs, Notify, Next, Recall, Terminal, Preview, the session-management tools and others) stay out of the tool list until the model calls one by name or loads it with `ToolSearch`; the system prompt names each in one line. A plain coding call carries only the core tools.
 - **Richer servers:** frog follows tool-list changes mid-session and shows progress on running calls. It also answers roots requests.
 - MCP is opt-in. Bash alone is often cheaper.
 

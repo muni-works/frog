@@ -34,6 +34,8 @@ mod permit;
 mod project;
 #[cfg(test)]
 mod tests_ingest;
+#[cfg(test)]
+mod tests_prompt;
 mod turn;
 mod window;
 
@@ -935,8 +937,11 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         agent.connect_mcp();
         // Restore MCP tools that were loaded in a previous session
         if !agent.loaded_tools.is_empty() {
-            agent.mcp.restore_loaded(&agent.loaded_tools);
-            agent.loaded_tools.clear();
+            let (builtin, mcp): (Vec<String>, Vec<String>) = std::mem::take(&mut agent.loaded_tools)
+                .into_iter()
+                .partition(|n| tools::deferred::is_deferred(n));
+            agent.loaded_builtin = builtin;
+            agent.mcp.restore_loaded(&mcp);
         }
         agent.resolve_window().await;
         agent.note_text_mode_from_probe();
@@ -1591,6 +1596,11 @@ struct Agent {
     mcp_ready_queue: Vec<(String, crate::mcp::Hub)>,
     /// MCP tools that were loaded via `McpTools` in a previous session, to be restored on resume.
     loaded_tools: Vec<String>,
+    /// The deferred built-ins this session has (`tools::deferred`): out of the tool list until
+    /// called or loaded. Recomputed with the specs.
+    deferrable: Vec<ToolSpec>,
+    /// Deferred built-ins loaded so far, in load order: they go at the end of the tool list.
+    loaded_builtin: Vec<String>,
     /// Agent Skills found for this project, and the ones already loaded this session.
     skills: std::collections::BTreeMap<String, crate::skills::Skill>,
     /// The user's memory notes (none for subagents or in-memory engines), loaded when the
@@ -1905,6 +1915,8 @@ impl Agent {
             mcp_connecting: std::collections::BTreeSet::new(),
             mcp_ready_queue: Vec::new(),
             loaded_tools,
+            deferrable: Vec::new(),
+            loaded_builtin: Vec::new(),
             skills,
             memory,
             compiled: None,
