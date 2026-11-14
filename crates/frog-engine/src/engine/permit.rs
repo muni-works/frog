@@ -887,11 +887,33 @@ impl Agent {
                 .await
                 .map_err(|e| anyhow::anyhow!("{e:#}"))?;
         }
+        let mut input = input.clone();
+        // The child's first turn carries the parent's head start; a bare one-liner is refused.
+        if name == sessions::START {
+            input["prompt"] = Value::String(sessions::brief(&input)?);
+        }
+        // A child asking its parent: "parent" names it wherever the child runs.
+        if name == sessions::SEND
+            && let Some(parent) = self.cfg.parent_session.clone()
+            && sessions::names_parent(input["to"].as_str().unwrap_or(""), &parent)
+        {
+            if !self.shared.sessions.enabled() {
+                let me = self.conv.session_id.clone();
+                let text = input["message"].as_str().unwrap_or("").to_string();
+                crate::kids::send_to_parent(&me, text)?;
+                return Ok(tools::Output {
+                    content: "Sent to your parent. Keep working on what is clear; its answer \
+arrives as a <session-message from=\"parent\"> in this turn."
+                        .into(),
+                    ..Default::default()
+                });
+            }
+            input["to"] = Value::String(parent);
+        }
         if !self.shared.sessions.enabled() {
-            return self.local_session_tool(name, input).await;
+            return self.local_session_tool(name, &input).await;
         }
         // A write-capable child gets its own worktree unless the call says otherwise.
-        let mut input = input.clone();
         if name == sessions::START && input.get("worktree").is_none() {
             input["worktree"] = Value::Bool(crate::kids::wants_worktree(&input));
         }

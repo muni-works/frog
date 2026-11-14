@@ -21,6 +21,12 @@ impl Agent {
         } else if !self.subagent && !self.chat {
             self.system.push_str(crate::tools::sessions::LOCAL_PROMPT);
         }
+        if !self.subagent && !self.chat {
+            self.system.push_str(crate::tools::sessions::DELEGATE_PROMPT);
+            if self.cfg.parent_session.is_some() {
+                self.system.push_str(crate::tools::sessions::CHILD_PROMPT);
+            }
+        }
         if !self.subagent && self.irc().is_some() {
             self.system.push_str(crate::irc::PROMPT);
             self.system.push_str(crate::irc::APPROVAL_PROMPT);

@@ -754,6 +754,20 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                     router.mode.store(mode as u8, Ordering::SeqCst);
                     let _ = work_tx.send(Op::SetMode { mode });
                 }
+                // The parent's answer to a child (engine-owned children, see `kids`) joins
+                // the child's running turn at its next tool-call boundary, like a follow-up,
+                // so a child that asked a question and kept working gets the answer now
+                // rather than after it finishes. Leftovers run as the next turn.
+                Op::Deliver {
+                    from,
+                    from_name,
+                    message,
+                } if from == "parent" && router.working.load(Ordering::Relaxed) => {
+                    router.submitted.lock().unwrap().push(crate::protocol::Part {
+                        text: crate::tools::sessions::wrap(&from, &from_name, &message),
+                        images: Vec::new(),
+                    });
+                }
                 op @ Op::Deliver { .. } => {
                     router.inbox_sent.fetch_add(1, Ordering::SeqCst);
                     if work_tx.send(op).is_err() {
