@@ -387,6 +387,8 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
       </div>
       {/* How the turn ended stays with the turn: stopping a later one doesn't clear it. */}
       {turn.reason?.type === 'cancelled' && <div className="tool">Stopped</div>}
+      {/* A denied step ends the turn: say so in words (the engine's own sentence when it sends one). */}
+      {endNote(turn.reason) && <div className="det wrap turn-note">{endNote(turn.reason)}</div>}
       {/* Any other ending that isn't a finished answer says so, never silence. */}
       {turn.reason && !['complete', 'cancelled', 'error', 'denied'].includes(turn.reason.type) && (
         <div role="status" className="banner warn">
@@ -463,6 +465,15 @@ function Elapsed({ since }: { since: number }) {
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t) }, [])
   const s = Math.max(0, Math.floor((now - since) / 1000))
   return <>{s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`}</>
+}
+
+/** A plain line under a turn that ended on a denial, or with a sentence from the engine
+ *  (`message` on the end reason, for any ending other than an error, which has its banner). */
+export function endNote(reason: unknown): string | null {
+  const r = reason as { type?: string; message?: unknown } | null | undefined
+  if (!r || r.type === 'error') return null
+  if (typeof r.message === 'string' && r.message.trim()) return r.message.trim()
+  return r.type === 'denied' ? 'Frog stopped here because you denied a step. Say how to go on, or send a new task.' : null
 }
 
 /** Why a turn stopped without finishing, in a line. */
