@@ -45,7 +45,7 @@ const COLD = [
   'Make a personal site from my GitHub profile',
   'Write a web scraper for a recipe site',
   'Compare three ways to build a job queue',
-  'Build a pomodoro timer in Rust',
+  'Build a pomodoro timer CLI in Python',
 ]
 
 export function pickStarters(n = 3, cold = false): string[] {
