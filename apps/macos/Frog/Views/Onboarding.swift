@@ -317,7 +317,7 @@ struct BiggerModelLine: View {
                         .buttonStyle(.link)
                         .foregroundStyle(cloud.place.color)
                 } else {
-                    Button("add a cloud key") {
+                    Button("use Frog Cloud") {
                         settingsTab = "models"
                         openSettings()
                     }
