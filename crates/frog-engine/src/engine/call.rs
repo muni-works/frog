@@ -1,10 +1,12 @@
 //! Calling the model: the request on the wire, retries and fallbacks.
 //!
 //! One retry policy for every call (docs/design/model-policy.md): a busy provider (429, 5xx, a
-//! dropped stream) gets three retries at 1 s, 2 s and 4 s, with one notice in the transcript and
-//! no card; a wrong key, an empty wallet or a model the gateway doesn't serve (401/402/404) gets
-//! none, and the one line saying how to fix it goes up before the turn ends with the provider's
-//! own error.
+//! dropped stream) gets five retries with jittered backoff (about 1, 2, 4, 8 and 16 s, or the
+//! provider's `retry-after` when that is longer), with one quiet notice in the transcript and
+//! no card. A `cloud/*` model that is still busy after that hands the call to another Frog
+//! Cloud model, with a line saying so; the session's model doesn't change. A wrong key, an
+//! empty wallet or a model the gateway doesn't serve (401/402/404) gets no retry, and the one
+//! line saying how to fix it goes up before the turn ends.
 
 use super::*;
 use crate::model_policy::{self, is_fail_fast};
@@ -50,14 +52,97 @@ fn billing(e: &anyhow::Error) -> Option<BillingRefusal> {
     })
 }
 
+/// Another Frog Cloud model answering for the session's own, which stayed busy through its
+/// whole retry budget.
+struct StandIn {
+    spec: String,
+    provider: Arc<Provider>,
+    /// The session model's error that sent this call here: what the turn ends with if the
+    /// stand-in fails too. `None` when the call started here (an earlier call's detour).
+    original: Option<anyhow::Error>,
+}
+
+/// Whether `e` is passing trouble the same request may get past: what the retry arm takes.
+fn passing(e: &anyhow::Error) -> bool {
+    retryable(e)
+        || e.chain()
+            .filter_map(|c| c.downcast_ref::<reqwest::Error>())
+            .any(|r| r.is_connect())
+}
+
+/// Whether another model could do better: the gateway answered and said this model is busy
+/// or its upstream broke. A dropped connection is the network, which no other model fixes.
+fn worth_a_stand_in(e: &anyhow::Error) -> bool {
+    e.downcast_ref::<HttpError>().is_some_and(|_| retryable(e)) || e.is::<StreamError>()
+}
+
 /// Most node failovers in one call: each takes a node out, so this only bounds a pool that
 /// keeps coming back between attempts.
 const MAX_FAILOVERS: u32 = 4;
 
 impl Agent {
-    /// One model request. Streams item events (unless `quiet`) and retries transient errors
-    /// that happen before anything streamed. Without `offer_tools` the model can only answer:
-    /// in `json` mode a summary request that offers tools gets a tool call back, not a summary.
+    /// The stand-in an earlier call left in place, while it is still fresh.
+    fn detour(&self) -> Option<StandIn> {
+        let mut held = self.detour.lock().unwrap();
+        match &*held {
+            Some((since, spec, provider)) if since.elapsed() < model_policy::DETOUR_TTL => {
+                Some(StandIn {
+                    spec: spec.clone(),
+                    provider: provider.clone(),
+                    original: None,
+                })
+            }
+            _ => {
+                *held = None;
+                None
+            }
+        }
+    }
+
+    /// Another Frog Cloud model for a call the session's own couldn't take, when the policy
+    /// allows one: the session is on `cloud/*`, `cloud_fallback` is on, the model fits the
+    /// call (`need` prompt tokens) and this folder may use it. `None` ends the turn instead.
+    fn cloud_fallback(&self, need: u64, tried: &[String]) -> Option<(String, Arc<Provider>)> {
+        if !self.cfg.cloud_fallback {
+            return None;
+        }
+        let models = crate::catalog::cloud_models();
+        for spec in
+            model_policy::cloud_fallbacks(&self.profile_name, &models, need, self.vision, tried)
+        {
+            let Ok((name, profile)) = self.cfg.resolve(Some(&spec)) else {
+                continue;
+            };
+            if crate::policy::check(&self.root, &name, &profile).is_err() {
+                continue;
+            }
+            // A scripted session's stand-in is scripted too (and absent unless the test
+            // gave one, so no other test ever falls back).
+            #[cfg(test)]
+            if let Provider::Scripted(c) = &self.provider {
+                let alt = c.fallback.lock().unwrap().take()?;
+                return Some((name, Arc::new(Provider::Scripted(*alt))));
+            }
+            if let Ok(p) = Provider::new(&profile) {
+                return Some((name, Arc::new(p.with_cwd(&self.root))));
+            }
+        }
+        None
+    }
+
+    /// Drop what a failed attempt had streamed: the step runs again from scratch.
+    fn discard_partial(&self, streamed: &Streamed) {
+        let ids: Vec<String> = streamed
+            .message
+            .iter()
+            .chain(streamed.reasoning.iter())
+            .cloned()
+            .collect();
+        if !ids.is_empty() {
+            self.emit(Event::ItemsDiscarded { ids });
+        }
+    }
+
     pub(super) async fn set_model(&mut self, spec: &str) -> Result<()> {
         let (name, profile) = self
             .cfg
@@ -81,6 +166,8 @@ impl Agent {
             .with_cwd(&self.root);
         self.profile_name = name;
         self.profile = profile;
+        // A stand-in was for the old model: the new one starts on itself.
+        *self.detour.lock().unwrap() = None;
         if self.cfg.compare_model.is_none() {
             self.ctx.judge = Some(self.profile.clone());
         }
@@ -97,6 +184,10 @@ impl Agent {
         Ok(())
     }
 
+    /// One model request. Streams item events (unless `quiet`) and retries transient errors,
+    /// discarding whatever a failed attempt streamed. Without `offer_tools` the model can only
+    /// answer: in `json` mode a summary request that offers tools gets a tool call back, not a
+    /// summary.
     pub(super) async fn call(
         &self,
         label: &str,
@@ -172,6 +263,18 @@ impl Agent {
         // fact, not one per step.
         let mut billing_line = false;
         let mut failovers = 0;
+        // Another Frog Cloud model answering this call: the one an earlier call fell back to
+        // (with a single retry of its own), or the one this call falls back to below.
+        let mut alt = self.detour();
+        if alt.is_some() {
+            attempt = model_policy::MAX_RETRIES - model_policy::FALLBACK_RETRIES;
+        }
+        // Stand-ins that failed this call, and whether this call already fell back once.
+        let mut tried: Vec<String> = Vec::new();
+        let mut fell_back = false;
+        // One retry line per call, and the backoff step on the model being called now.
+        let mut noticed = alt.is_some();
+        let mut backoff = 0;
         loop {
             self.emit(Event::Progress {
                 label: label.into(),
@@ -244,8 +347,10 @@ impl Agent {
                     delta: Delta::Text { text },
                 });
             };
-            let r = self
-                .provider
+            let via = alt.as_ref().map(|a| a.provider.clone());
+            let r = via
+                .as_deref()
+                .unwrap_or(&self.provider)
                 .complete(&req, &mut |e| {
                     started = true;
                     heard.store(true, Ordering::Relaxed);
@@ -347,6 +452,36 @@ impl Agent {
             // failure as a gateway error event; retried the same way, partials and all.
             let r = match r {
                 Ok(resp) if resp.stop == Stop::Incomplete => Err(IncompleteStream.into()),
+                other => other,
+            };
+            // A stand-in that failed for good (its one retry spent, or an answer no retry
+            // changes): it's out for this call and the detour ends. The turn then ends on the
+            // session model's own error; a call that started on the detour goes back to the
+            // session's model with a fresh budget. A billing refusal is the same wallet
+            // whichever model asked, so the billing arm takes that.
+            let r = match r {
+                Err(e)
+                    if alt.is_some()
+                        && billing(&e).is_none()
+                        && !(attempt < model_policy::MAX_RETRIES && passing(&e)) =>
+                {
+                    self.discard_partial(&streamed);
+                    *self.detour.lock().unwrap() = None;
+                    let failed = alt.take().expect("checked above");
+                    tried.push(failed.spec);
+                    backoff = 0;
+                    match failed.original {
+                        Some(original) => {
+                            attempt = model_policy::MAX_RETRIES;
+                            Err(original)
+                        }
+                        None => {
+                            attempt = 0;
+                            noticed = false;
+                            continue;
+                        }
+                    }
+                }
                 other => other,
             };
             match r {
@@ -469,70 +604,80 @@ impl Agent {
                     return Err(e);
                 }
                 // A busy or briefly unreachable provider is retried before the turn
-                // stops: one 503, dropped connection or mid-stream gateway error shouldn't end
-                // a long task. When the broken attempt had already streamed a partial reply,
-                // its items are discarded and the step runs again from scratch. Three retries
-                // at 1 s, 2 s and 4 s, and ONE line for the whole storm.
-                Err(e)
-                    if attempt < model_policy::MAX_RETRIES
-                        && (retryable(&e)
-                            || e.chain()
-                                .filter_map(|c| c.downcast_ref::<reqwest::Error>())
-                                .any(|r| r.is_connect())) =>
-                {
+                // stops: one 429, 503, dropped connection or mid-stream gateway error shouldn't
+                // end a long task. When the broken attempt had already streamed a partial
+                // reply, its items are discarded and the step runs again from scratch. Five
+                // retries with jittered backoff, and ONE quiet line for the whole storm.
+                Err(e) if attempt < model_policy::MAX_RETRIES && passing(&e) => {
                     attempt += 1;
-                    let ids: Vec<String> = streamed
-                        .message
-                        .iter()
-                        .chain(streamed.reasoning.iter())
-                        .cloned()
-                        .collect();
-                    if !ids.is_empty() {
-                        self.emit(Event::ItemsDiscarded { ids });
-                    }
+                    backoff += 1;
+                    self.discard_partial(&streamed);
                     // One notice total, on the first retry: a storm is one line, not one per
-                    // attempt and not a card.
-                    if attempt == 1 {
-                        let why = e
-                            .downcast_ref::<HttpError>()
-                            .map(HttpError::summary)
-                            .unwrap_or_else(|| format!("{e:#}"));
+                    // attempt and not a card. Plain words; the provider's body stays in the
+                    // engine log.
+                    if !noticed {
+                        noticed = true;
                         self.notice(
                             Level::Info,
-                            format!(
-                                "{why} — retrying (up to {} times)",
-                                model_policy::MAX_RETRIES
-                            ),
+                            model_policy::retrying_line(&self.profile_name, trouble_of(&e)),
                         );
                     }
-                    // A busy provider may say how long to wait; keep it for the status line
-                    // and wait that long instead of our own backoff when it's longer.
-                    let asked = e
-                        .downcast_ref::<HttpError>()
-                        .and_then(|h| h.retry_after)
-                        .map(|d| d.as_secs());
-                    let wait = model_policy::retry_wait(attempt).max(
-                        asked
-                            .map(Duration::from_secs)
-                            .unwrap_or(Duration::ZERO),
-                    );
-                    if asked.is_some() {
-                        *self.call_started.lock().unwrap() = Some((Instant::now(), attempt + 1, asked));
-                        self.emit_status();
-                    }
+                    // A busy provider may say how long to wait: that is the floor (capped),
+                    // our own backoff when it's longer, and jitter so sessions that failed
+                    // together don't all come back together.
+                    let asked = e.downcast_ref::<HttpError>().and_then(|h| h.retry_after);
+                    let wait = model_policy::retry_delay(backoff, asked, model_policy::jitter());
+                    // The wait shows as what it is: `Status.waiting` carries the attempt (and
+                    // the provider's retry-after), and the working line says "retrying".
+                    *self.call_started.lock().unwrap() =
+                        Some((Instant::now(), attempt + 1, asked.map(|d| d.as_secs())));
+                    self.emit_status();
+                    self.emit(Event::Progress {
+                        label: "busy, retrying…".into(),
+                        completed: None,
+                        total: None,
+                    });
                     tokio::time::sleep(wait).await;
                 }
                 Err(e) => {
                     // The last attempt (or one that isn't retryable) may leave a streamed
                     // partial dangling: drop it, as the retry arm does.
-                    let ids: Vec<String> = streamed
-                        .message
-                        .iter()
-                        .chain(streamed.reasoning.iter())
-                        .cloned()
-                        .collect();
-                    if !ids.is_empty() {
-                        self.emit(Event::ItemsDiscarded { ids });
+                    self.discard_partial(&streamed);
+                    // The session's Frog Cloud model used its whole budget and is still busy
+                    // (or its upstream still broken): another Frog Cloud model takes this
+                    // call, and the next couple of minutes' calls, when the policy allows one.
+                    // The transcript says so, and the session's model doesn't change.
+                    if alt.is_none()
+                        && !fell_back
+                        && worth_a_stand_in(&e)
+                        && let Some((spec, provider)) = self.cloud_fallback(prompt, &tried)
+                    {
+                        fell_back = true;
+                        noticed = true;
+                        backoff = 0;
+                        attempt = model_policy::MAX_RETRIES - model_policy::FALLBACK_RETRIES;
+                        let still = match trouble_of(&e) {
+                            model_policy::Trouble::Busy => "is still busy",
+                            model_policy::Trouble::NoCapacity => "still has nothing free",
+                            _ => "is still failing upstream",
+                        };
+                        self.notice(
+                            Level::Info,
+                            format!(
+                                "{}: {} {still}, so {} is answering for now. The session's model hasn't changed.",
+                                model_policy::served_by(&self.profile_name),
+                                model_policy::model_name(&self.profile_name),
+                                model_policy::model_name(&spec),
+                            ),
+                        );
+                        *self.detour.lock().unwrap() =
+                            Some((Instant::now(), spec.clone(), provider.clone()));
+                        alt = Some(StandIn {
+                            spec,
+                            provider,
+                            original: Some(e),
+                        });
+                        continue;
                     }
                     *self.call_started.lock().unwrap() = None;
                     return Err(e);

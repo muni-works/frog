@@ -272,6 +272,11 @@ pub struct Config {
     /// are the same as without it; only the waiting overlaps.
     #[serde(default = "default_true")]
     pub early_tools: bool,
+    /// When the session's Frog Cloud model stays busy through every retry, let another Frog
+    /// Cloud model answer that call (with a line in the transcript) instead of ending the
+    /// turn. Off: the turn ends and the model is never swapped (docs/design/model-policy.md).
+    #[serde(default = "default_true")]
+    pub cloud_fallback: bool,
     /// The model auto mode's classifier uses (a profile or provider/model). Default:
     /// Apple's on-device model where it exists, else frog cloud's small model
     /// (`cloud/deepseek-v4.1-flash`, or `cloud/qwen3-coder-next` when the gateway lists it); the

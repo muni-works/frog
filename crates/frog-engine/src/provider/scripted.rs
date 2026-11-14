@@ -16,6 +16,8 @@ pub enum Fail {
     Stream { partial: Vec<Block>, message: String },
     /// A non-2xx answer, before anything streams.
     Http { status: u16, body: String },
+    /// A busy answer that says how long to wait (its `retry-after`, in seconds).
+    Busy { status: u16, body: String, retry_after: u64 },
     /// The edge's billing refusal: a 402 with its `x-frog-billing` header, as frog cloud
     /// sends it.
     Billing {
@@ -78,6 +80,9 @@ pub struct Client {
     /// interrupt mid-call deterministically. (A `Notify` permit set before the waiter
     /// registers would be lost, so the gate is flags the call polls until the test flips it.)
     pub hold: Option<Arc<(std::sync::atomic::AtomicBool, std::sync::atomic::AtomicBool)>>,
+    /// The client another Frog Cloud model answers with, when the engine falls back to one
+    /// (taken once; without it a scripted session never falls back).
+    pub fallback: Mutex<Option<Box<Client>>>,
 }
 
 impl Client {
@@ -89,6 +94,7 @@ impl Client {
             fails: Default::default(),
             attempts: Default::default(),
             hold: None,
+            fallback: Default::default(),
         }
     }
 
@@ -130,6 +136,15 @@ impl Client {
                 }
                 Fail::Http { status, body } => {
                     return Err(HttpError { status, body, billing: None, retry_after: None }.into());
+                }
+                Fail::Busy { status, body, retry_after } => {
+                    return Err(HttpError {
+                        status,
+                        body,
+                        billing: None,
+                        retry_after: Some(Duration::from_secs(retry_after)),
+                    }
+                    .into());
                 }
                 Fail::Billing { status, body, billing } => {
                     return Err(HttpError {

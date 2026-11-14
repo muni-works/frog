@@ -1164,7 +1164,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                     }
                 } else {
                     EndReason::Error {
-                        error: classify(&e),
+                        error: classify(&agent.profile_name, &e),
                     }
                 };
                 match (agent.active_turn.take(), reason) {
@@ -1324,7 +1324,22 @@ fn kept(s: crate::summary::Summary) -> crate::protocol::KeptSummary {
     }
 }
 
-fn classify(e: &anyhow::Error) -> EngineError {
+/// The kind of passing trouble a retryable error was, for the words the transcript uses.
+fn trouble_of(e: &anyhow::Error) -> crate::model_policy::Trouble {
+    use crate::model_policy::Trouble;
+    if let Some(h) = e.downcast_ref::<HttpError>() {
+        return crate::model_policy::trouble(h.status, &h.body).unwrap_or(Trouble::Upstream);
+    }
+    if e.is::<StreamError>() {
+        return Trouble::Upstream;
+    }
+    Trouble::Dropped
+}
+
+/// The error a turn on `spec` ends with. Passing trouble (a busy or broken provider that
+/// outlasted the retries) carries plain words — what happened, that the work is kept, what to
+/// do — never the provider's body, which stays in the engine log.
+fn classify(spec: &str, e: &anyhow::Error) -> EngineError {
     // A billing refusal the billing arm didn't take (an op outside a turn, say): the
     // provider's clean message, never its raw JSON dump.
     if let Some(b) = e.downcast_ref::<crate::engine::call::BillingRefused>() {
@@ -1345,16 +1360,19 @@ fn classify(e: &anyhow::Error) -> EngineError {
         }
         return EngineError::Provider {
             status: h.status,
-            message: h.body.clone(),
+            message: match crate::model_policy::trouble(h.status, &h.body) {
+                Some(t) => crate::model_policy::gave_up_line(spec, t),
+                None => h.body.clone(),
+            },
         };
     }
     if e.is::<IncompleteStream>() {
         return EngineError::IncompleteStream;
     }
-    if let Some(s) = e.downcast_ref::<StreamError>() {
+    if e.is::<StreamError>() {
         return EngineError::Provider {
             status: 502,
-            message: s.message.clone(),
+            message: crate::model_policy::gave_up_line(spec, trouble_of(e)),
         };
     }
     // The node pool's one line: nowhere to place the call, or the last node with the model
@@ -1547,6 +1565,10 @@ struct Agent {
     /// a session waiting on a slow or dead model says so instead of looking merely busy. A
     /// `Mutex` because the call path holds `&self`.
     call_started: Mutex<Option<(Instant, u32, Option<u64>)>>,
+    /// Another Frog Cloud model answering for the session's own, which stayed busy through a
+    /// whole retry budget: since when, its spec and its client. Calls go there until it's
+    /// stale (`model_policy::DETOUR_TTL`) or it fails; the session's model never changes.
+    detour: Mutex<Option<(Instant, String, Arc<Provider>)>>,
     active_turn: Option<u64>,
     /// The context window actually in effect (config, bounded by what the server reports).
     window: u64,
@@ -1883,6 +1905,7 @@ impl Agent {
             store: o.store,
             last_call: Duration::ZERO,
             call_started: Mutex::new(None),
+            detour: Mutex::new(None),
             active_turn: None,
             window,
             est: Estimator::default(),
