@@ -27,7 +27,8 @@ pub fn spec() -> ToolSpec {
         name: TOOL.into(),
         description: "Show the user an interactive visual: a self-contained HTML or SVG widget (inline CSS/JS) drawn inline in the \
 conversation. Use it when the user asks to see or visualize something, or to build intuition for a concept with a knob worth \
-turning (physics, maths, algorithms) or data with a shape. Not for every answer. Call VisualGuide first, once per conversation. \
+turning (physics, maths, algorithms) or data with a shape. Not for every answer. Call VisualGuide first, once per conversation \
+(skip it and the guide comes back with your first result). \
 Make it interactive (sliders, toggles, draggable points) with stat tiles that update; colours only via CSS variables \
 (var(--fg), var(--muted), var(--line), var(--c1)…var(--c8)); transparent background; no network."
             .into(),
@@ -69,17 +70,22 @@ pub fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
             MAX_CODE / 1000
         );
     }
-    // Small models skip the read-me and paint white static boxes; the cost of one retry is
-    // worth the guide (and the retry carries the code they already wrote).
-    if !ctx.visual_guide {
-        bail!(
-            "call VisualGuide first (once per conversation), then call Visualize again with the widget rewritten to follow it."
-        );
-    }
     let title = input["title"].as_str().unwrap_or("").trim();
     let title = if title.is_empty() { "Visual" } else { title };
     let w = Widget::new(title, code);
     let notes = lint(&w.code);
+    // The guide loads itself on first use. Small models skip the read-me and paint white
+    // static boxes, so a widget that breaks its rules still costs one retry (with the guide
+    // in hand, no separate VisualGuide call). One that follows them is shown: most refusals
+    // in the session logs were widgets already written to the kit, in a session whose guide
+    // call was before a restart.
+    let unguided = !std::mem::replace(&mut ctx.visual_guide, true);
+    if unguided && !notes.is_empty() {
+        bail!(
+            "not shown: the widget breaks the Visualize guide, which you hadn't loaded:\n- {}\nHere is the guide (no need to call VisualGuide now). Call Visualize again with the widget rewritten to follow it.\n\n{GUIDE_TEXT}",
+            notes.join("\n- ")
+        );
+    }
     let mut content = format!(
         "The visual \"{}\" is shown to the user ({} KB). Don't describe it control by control; continue the explanation and refer to it.",
         w.title,
@@ -88,6 +94,10 @@ pub fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
     if !notes.is_empty() {
         content.push_str("\nFix next time:\n- ");
         content.push_str(&notes.join("\n- "));
+    }
+    if unguided {
+        content.push_str("\n\nYou hadn't loaded the design guide; here it is for your next visual (no need to call VisualGuide):\n\n");
+        content.push_str(GUIDE_TEXT);
     }
     Ok(Output {
         content,
@@ -100,6 +110,42 @@ pub fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const GOOD: &str = "<div class=\"row\"><input type=\"range\" id=\"v\"></div><script>1</script>";
+
+    /// Visualize before VisualGuide used to be refused outright (5 of a day's calls).
+    #[test]
+    fn the_first_visual_is_shown_without_the_guide_and_brings_it_along() {
+        let mut ctx = Ctx::new(std::env::temp_dir());
+        let input = json!({ "title": "t", "widget_code": GOOD });
+        let out = run(&input, &mut ctx).unwrap();
+        assert!(out.widget.is_some());
+        assert!(
+            out.content.contains("cdn.jsdelivr.net"),
+            "the guide didn't come along"
+        );
+        // Once only.
+        let out = run(&input, &mut ctx).unwrap();
+        assert!(!out.content.contains("cdn.jsdelivr.net"));
+    }
+
+    #[test]
+    fn an_unguided_visual_that_breaks_the_rules_gets_the_guide_instead_of_a_bare_refusal() {
+        let mut ctx = Ctx::new(std::env::temp_dir());
+        let bad = json!({ "title": "t", "widget_code": "<html><body>hi</body></html>" });
+        let Err(err) = run(&bad, &mut ctx) else {
+            panic!("a whole document was shown unguided")
+        };
+        let err = err.to_string();
+        assert!(err.contains("Send a fragment"), "{err}");
+        assert!(
+            err.contains("cdn.jsdelivr.net"),
+            "the guide isn't in the refusal: {err}"
+        );
+        // The retry needs no VisualGuide call, and after the guide a lint is a note, not a refusal.
+        assert!(run(&json!({ "title": "t", "widget_code": GOOD }), &mut ctx).is_ok());
+        assert!(run(&bad, &mut ctx).is_ok());
+    }
 
     #[test]
     fn guide_covers_the_essentials() {

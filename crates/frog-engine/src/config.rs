@@ -245,6 +245,11 @@ pub struct Config {
     /// done or failed. `--serve` turns it on; the TUI draws on the terminal and leaves it off.
     #[serde(skip)]
     pub log_calls: bool,
+    /// The engine runs inside a Frog Cloud sandbox VM (`--serve-ws`, started by the gateway):
+    /// the whole machine is disposable and holds none of the user's own credentials, so the
+    /// approval copy says what's true there instead of "read your credentials".
+    #[serde(skip)]
+    pub cloud_sandbox: bool,
     /// Run shell commands in a sandbox (writes only in the project, credentials hidden), so
     /// they run without asking. Set false to have every command ask instead.
     #[serde(default = "default_true")]

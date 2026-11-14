@@ -13,7 +13,10 @@ pub fn spec() -> ToolSpec {
 and keeps its directory between calls, so don't prefix commands with `cd /abs/path &&`; cd once if you need to. \
 Use for builds, tests, git, and other terminal operations. To look at files use Grep and Read (several files per \
 call), not grep/sed/cat/ls; to change one use Edit, not a python or sed script. Avoid interactive commands; they \
-will hang until the timeout.",
+will hang until the timeout. \
+To wait for a build, CI or anything slow, don't `sleep N; <check>` (it holds the turn and hits the timeout): \
+start the slow command with run_in_background and you're told when it exits, or use Monitor to poll a check \
+until it shows what you're waiting for.",
     );
     let mut props = json!({
         "command": { "type": "string", "description": "The command to run" },
@@ -225,7 +228,7 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
     };
     let (stdout, stderr, status) = match tokio::time::timeout(timeout, collect).await {
         Ok(r) => r?,
-        Err(_) => bail!("command timed out after {}s", timeout.as_secs()),
+        Err(_) => bail!("{}", timed_out(timeout.as_secs())),
     };
     // Finished normally: leave any backgrounded processes alone.
     std::mem::forget(group);
@@ -348,6 +351,19 @@ fn read_hint(cmd: &str, cwd: &std::path::Path) -> Option<&'static str> {
         ),
         _ => None,
     }
+}
+
+/// What a timeout says: the fix, not just the fact (models reran the same command, or slept
+/// and polled, for want of it).
+fn timed_out(secs: u64) -> String {
+    let longer = if secs < 600 {
+        "raise `timeout` (max 600000 ms), or "
+    } else {
+        ""
+    };
+    format!(
+        "command timed out after {secs}s and was killed. If it just needs longer, {longer}run it with run_in_background: true (you're told when it exits). To wait for something else to finish, use Monitor rather than sleep."
+    )
 }
 
 /// How much of a command's stdout frog keeps while reading (stderr gets a quarter). The model
@@ -2237,6 +2253,7 @@ mod tests {
             started.elapsed()
         );
         assert!(err.to_string().contains("timed out"), "{err}");
+        assert!(err.to_string().contains("run_in_background"), "{err}");
         assert!(
             sleeper_gone(&ws).await,
             "the timed-out `sleep 30` is still running"

@@ -33,6 +33,8 @@ mod dispatch;
 mod permit;
 mod project;
 #[cfg(test)]
+mod tests_compact;
+#[cfg(test)]
 mod tests_ingest;
 mod turn;
 mod window;
@@ -212,8 +214,18 @@ returns the same slice. Use offset={} (with a limit) to read the next part, or G
         ),
         _ => {
             let _ = input;
-            format!("{lead} Change the arguments or try a different approach.")
+            format!("{lead} {}", repeat_fix(name))
         }
+    }
+}
+
+/// The one-line way out of a repeated call, by tool: what to do instead of calling again.
+fn repeat_fix(name: &str) -> &'static str {
+    match name {
+        "JobOutput" => "Asking again doesn't make the job finish: you get a <job-done> message when it exits. Do other work or end your turn; to wait for a line in its output, use Monitor.",
+        "Read" => "The file hasn't changed: use the result you have, pass a different offset/limit, or Grep for the part you need.",
+        "Monitor" => "It was refused or is already armed: fix the arguments the error named, or end your turn and wait for its <monitor-done> message.",
+        _ => "Change the arguments or try a different approach.",
     }
 }
 /// Model calls per top-level turn: uncapped unless `FROG_MAX_STEPS` sets one. Runaway loops are
@@ -2401,6 +2413,11 @@ impl Agent {
                 act: next.act,
             });
         }
+        // A denial ends the turn with only a "denied" tag on the row; say in words what
+        // happened, once, so Mac and web both show a sentence instead of a bare tag.
+        if reason == EndReason::Denied {
+            self.notice(Level::Info, DENIED_ENDING);
+        }
         self.emit(Event::TurnEnded {
             turn,
             reason: reason.clone(),
@@ -2866,3 +2883,7 @@ fn bash_allowed(cmd: &str, extra: &[String]) -> bool {
 
 #[cfg(test)]
 mod tests;
+
+/// The transcript's sentence after a denied command ends the turn.
+pub(crate) const DENIED_ENDING: &str =
+    "Stopped here because you denied that command. The work so far is kept; say how to go on.";
