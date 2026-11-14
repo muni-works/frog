@@ -394,60 +394,10 @@ fn segment_read_only(seg: &str) -> bool {
     }
 }
 
-/// Credential locations a command must not touch (read or write) without asking:
-/// reading any of these can hand a secret to the model or exfiltrate it.
-const CREDENTIALS: &[&str] = &[
-    "~/.ssh",
-    "~/.aws",
-    "~/.gnupg",
-    "~/.netrc",
-    ".netrc",
-    "~/.config/gcloud",
-    "keychain",
-    "security find-generic-password",
-    "security find-internet-password",
-    "security dump-keychain",
-    ".env",
-    "credentials.json",
-    "service-account",
-    "~/.wrangler",
-    "~/.config/wrangler",
-    "~/.gh",
-    "~/.config/gh",
-    "id_rsa",
-    "id_ed25519",
-    "authorized_keys",
-];
-
-/// Environment variable names that hold secrets.
-const SECRET_ENV: &[&str] = &[
-    "aws_secret_access_key",
-    "aws_session_token",
-    "api_key",
-    "apikey",
-    "secret_key",
-    "access_token",
-    "auth_token",
-    "private_key",
-    "gcp_service_account",
-];
-
-/// Whether the command mentions a credential path or a keychain read. Checked
-/// against the raw command (so it also flags what the parser can't parse), with
-/// `~` and `$HOME` forms both matched. False positives are fine: they only ask.
+/// Whether the command mentions a credential path, a keychain read or a secret variable
+/// (the shared list in [`crate::credentials`]). False positives are fine: they only ask.
 pub fn touches_credentials(cmd: &str) -> bool {
-    let lowered = cmd.to_lowercase();
-    if CREDENTIALS.iter().any(|c| {
-        if *c == ".env" {
-            // A file mention, not the word "environment".
-            lowered.contains(".env") && !lowered.contains("environment")
-        } else {
-            lowered.contains(c)
-        }
-    }) {
-        return true;
-    }
-    SECRET_ENV.iter().any(|v| lowered.contains(v))
+    crate::credentials::mentioned(cmd)
 }
 
 #[cfg(test)]

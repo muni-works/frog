@@ -171,7 +171,7 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
     };
     let progress = ctx.progress.clone();
     let collect = async {
-        let (mut out, mut err) = (Vec::new(), Vec::new());
+        let (mut out, mut err) = (Capped::new(OUTPUT_CAP), Capped::new(OUTPUT_CAP / 4));
         let (mut buf, mut ebuf) = ([0u8; 8192], [0u8; 4096]);
         let (mut out_done, mut err_done) = (false, false);
         while !(out_done && err_done) {
@@ -179,7 +179,7 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
                 r = stdout.read(&mut buf), if !out_done => match r? {
                     0 => out_done = true,
                     n => {
-                        out.extend_from_slice(&buf[..n]);
+                        out.push(&buf[..n]);
                         if let Some(p) = &progress {
                             let _ = p.send(String::from_utf8_lossy(&buf[..n]).into_owned());
                         }
@@ -187,7 +187,7 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
                 },
                 r = stderr.read(&mut ebuf), if !err_done => match r? {
                     0 => err_done = true,
-                    n => err.extend_from_slice(&ebuf[..n]),
+                    n => err.push(&ebuf[..n]),
                 },
                 // The user pressed Stop: SIGTERM the group (SIGKILL follows after a grace),
                 // then let the reads see EOF so the result is recorded, not dropped.
@@ -203,7 +203,7 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
             }
         }
         let status = child.wait().await?;
-        anyhow::Ok((out, err, status))
+        anyhow::Ok((out.finish(), err.finish(), status))
     };
     let (stdout, stderr, status) = match tokio::time::timeout(timeout, collect).await {
         Ok(r) => r?,
@@ -239,6 +239,13 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
     };
     if let Some(call) = &egress {
         egress_note(call, ctx, &mut raw);
+        if cfg!(target_os = "linux")
+            && jail.is_some()
+            && ctx.egress.as_ref().is_some_and(|e| e.enforced())
+            && blocked_network(&raw)
+        {
+            raw.push_str("\n(On Linux, frog can't enforce the network allow-list by host inside the sandbox, so sandboxed commands get no network at all. If the task needs the network, run the command again with unsandboxed: true; the user will be asked.)");
+        }
     }
     if jail.is_some() && blocked(&raw) {
         raw.push_str("\n(This ran in frog's sandbox, which allows writes only inside the project, temp folders and toolchain caches, and hides credentials. If the command genuinely needs more, run it again with unsandboxed: true; the user will be asked.)");
@@ -254,6 +261,66 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         widget: None,
         ..Default::default()
     })
+}
+
+/// How much of a command's stdout frog keeps while reading (stderr gets a quarter). The model
+/// sees at most ~30k characters anyway; the cap stops `yes` or a runaway log from growing
+/// frog's memory without bound before that cut.
+const OUTPUT_CAP: usize = 4 << 20;
+
+/// An output buffer that keeps the first and last halves of `cap` bytes and counts what it
+/// dropped between them, so memory stays bounded however much a command prints.
+struct Capped {
+    cap: usize,
+    head: Vec<u8>,
+    tail: std::collections::VecDeque<u8>,
+    dropped: usize,
+}
+
+impl Capped {
+    fn new(cap: usize) -> Self {
+        Self {
+            cap,
+            head: Vec::new(),
+            tail: std::collections::VecDeque::new(),
+            dropped: 0,
+        }
+    }
+
+    fn push(&mut self, mut bytes: &[u8]) {
+        let half = self.cap / 2;
+        if self.head.len() < half {
+            let n = (half - self.head.len()).min(bytes.len());
+            self.head.extend_from_slice(&bytes[..n]);
+            bytes = &bytes[n..];
+        }
+        let keep = self.cap - half;
+        if bytes.len() >= keep {
+            self.dropped += self.tail.len() + bytes.len() - keep;
+            self.tail.clear();
+            self.tail.extend(&bytes[bytes.len() - keep..]);
+            return;
+        }
+        let over = (self.tail.len() + bytes.len()).saturating_sub(keep);
+        self.tail.drain(..over);
+        self.dropped += over;
+        self.tail.extend(bytes);
+    }
+
+    fn finish(self) -> Vec<u8> {
+        let mut out = self.head;
+        if self.dropped > 0 {
+            out.extend_from_slice("\n…\n".as_bytes());
+        }
+        out.extend(self.tail);
+        // Last, so the model's middle cut keeps it.
+        if self.dropped > 0 {
+            out.extend_from_slice(
+                format!("\n[{} bytes of output dropped]", self.dropped).as_bytes(),
+            );
+        }
+        out
+    }
 }
 
 /// The user's shell, sandboxed exactly as a foreground call would be, in `ctx.cwd`, ready for
@@ -290,7 +357,10 @@ pub fn shell_call(
     // The egress allow-list binds sandboxed commands only: an approved `unsandboxed` call is
     // the user's own grant past it.
     let egress = ctx.egress.as_ref().filter(|e| jail.is_some() && e.active());
-    let enforce = egress.is_some_and(|e| e.enforced()) && cfg!(target_os = "macos");
+    // macOS routes the sandbox through the proxy; Linux's bwrap can't reach the host's
+    // loopback from its own network namespace, so there an enforced list fails closed (no
+    // network at all, see `bubblewrap`).
+    let enforce = egress.is_some_and(|e| e.enforced());
     let enforced_extra;
     let extra = if enforce {
         enforced_extra = SandboxConfig {
@@ -307,11 +377,12 @@ pub fn shell_call(
         // a `cd` into another checkout doesn't open its refs and objects for writing.
         Some(root) => sandboxed(root, &shell, extra, &git_dirs(&ctx.root))?,
     };
-    // The sandbox hides frog's key files, so it hides the same keys in its environment:
-    // `env | curl …` would otherwise send ANTHROPIC_API_KEY anywhere the network allows.
+    // The sandbox hides frog's key files, so it hides the same secrets in its environment:
+    // `env | curl …` would otherwise send ANTHROPIC_API_KEY, GH_TOKEN or AWS keys anywhere
+    // the network allows.
     if jail.is_some() {
         for (k, _) in std::env::vars_os() {
-            if k.to_str().is_some_and(|k| k.ends_with("_API_KEY")) {
+            if k.to_str().is_some_and(crate::credentials::is_secret_env) {
                 command.env_remove(k);
             }
         }
@@ -378,6 +449,20 @@ pub fn shell_call(
         .env("GIT_PAGER", "cat")
         .env("FROG", "1");
     Ok((command, jail, call))
+}
+
+/// Whether output looks like a connection that failed for lack of a network.
+fn blocked_network(raw: &str) -> bool {
+    let l = raw.to_ascii_lowercase();
+    [
+        "could not resolve",
+        "network is unreachable",
+        "temporary failure in name resolution",
+        "name or service not known",
+        "failed to connect",
+    ]
+    .iter()
+    .any(|m| l.contains(m))
 }
 
 /// After an allow-list command: name the hosts a client that ignored the proxy couldn't
@@ -608,29 +693,8 @@ const CACHE_EXEC: &[&str] = &[
 const DEFAULT_READABLE: &[&str] = &[".gitconfig", ".cargo/config.toml", ".gitignore_global"];
 
 /// Credentials a sandboxed command can't read, so a prompt-injected command can't read them
-/// and send them over the network.
-const SECRETS: &[&str] = &[
-    ".ssh",
-    ".aws",
-    ".gnupg",
-    ".netrc",
-    ".docker/config.json",
-    ".kube",
-    ".config/gh",
-    ".config/gcloud",
-    ".azure",
-    ".password-store",
-    "Library/Keychains",
-    // frog's config dir holds config.toml (which may embed `api_key`) and models.json. The
-    // non-secret file agents read, config.toml, is allowed by name after the deny — keys
-    // added to this dir later (providers' `keys*`) stay hidden.
-    ".config/frog",
-    ".npmrc",
-    ".pypirc",
-    ".git-credentials",
-    ".config/op",
-    ".vault-token",
-];
+/// and send them over the network. Shared with Read and the classifier.
+const SECRETS: &[&str] = crate::credentials::HOME_SECRETS;
 
 /// Whether the git-https overlay should apply to this command: it's git with a read-only-ish
 /// subcommand (fetch, ls-remote, clone, submodule update, status, diff, log, show, branch,
@@ -906,7 +970,7 @@ fn seatbelt(
         .map(|p| format!("\n  (subpath \"{}\")", quote(p)))
         .collect();
     let network = match extra.network.as_deref() {
-        Some("dev") => {
+        Some("dev") | Some("none") => {
             "\n(deny network-outbound)\n(allow network-outbound (remote ip \"localhost:*\"))"
                 .to_string()
         }
@@ -946,8 +1010,9 @@ fn seatbelt(
 
 /// Linux: bubblewrap. The whole filesystem read-only, the workspace, temp dirs and existing
 /// toolchain caches bound writable over it, then credentials masked last so they stay hidden
-/// even when the workspace contains them (a project at `~`). Network, `/proc` and `/dev` are
-/// shared, like seatbelt's `allow default`. No `--die-with-parent` or `--new-session`: a
+/// even when the workspace contains them (a project at `~`). `/proc` and `/dev` are shared,
+/// like seatbelt's `allow default`; the network is too unless `sandbox.network` (or an
+/// enforced egress list) restricts it, which unshares it (`denies_network`). No `--die-with-parent` or `--new-session`: a
 /// command's background processes outlive it the way they do unsandboxed, and staying in our
 /// process group is what lets a timeout kill them all.
 fn bubblewrap(
@@ -1004,8 +1069,22 @@ fn bubblewrap(
             cmd.arg("--ro-bind").arg("/dev/null").arg(&secret);
         }
     }
+    if denies_network(extra) {
+        cmd.arg("--unshare-net");
+    }
     cmd.arg("--").arg(shell);
     cmd
+}
+
+/// Whether bwrap gives the command its own empty network namespace (loopback only). Any
+/// `sandbox.network` other than unset/"open" does: `"none"` asks for it, and the allow-lists
+/// (`"dev"`, an enforced egress list) can't be enforced by name on Linux, since the sandbox
+/// can't reach a proxy on the host's loopback from its own namespace. They fail closed.
+fn denies_network(extra: &SandboxConfig) -> bool {
+    extra
+        .network
+        .as_deref()
+        .is_some_and(|n| !n.is_empty() && n != "open")
 }
 
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
@@ -1063,28 +1142,41 @@ mod tests {
         false
     }
 
-    /// Provider keys in frog's environment don't reach sandboxed commands.
+    /// Provider keys, tokens and other secret-shaped variables in frog's environment don't
+    /// reach sandboxed commands; ordinary ones do.
     #[tokio::test]
-    async fn sandbox_strips_api_keys_from_the_environment() {
+    async fn sandbox_strips_secrets_from_the_environment() {
         if !available() {
             eprintln!("no OS sandbox here; skipping");
             return;
         }
-        // A name no other test or tool reads, so setting it can't race anything.
-        unsafe { std::env::set_var("FROG_SANDBOX_TEST_API_KEY", "sk-leak") };
+        // Names no other test or tool reads, so setting them can't race anything.
+        const VARS: &[&str] = &[
+            "FROG_SANDBOX_TEST_API_KEY",
+            "FROG_SANDBOX_TEST_TOKEN",
+            "FROG_SANDBOX_TEST_SECRET_X",
+            "RUNPOD_SECRET_frog_sandbox_test",
+        ];
+        for v in VARS {
+            unsafe { std::env::set_var(v, "sk-leak") };
+        }
+        unsafe { std::env::set_var("FROG_SANDBOX_TEST_PLAIN", "kept") };
         let ws = std::env::temp_dir().join(format!("frog-envkey-{}", crate::session::new_id()));
         std::fs::create_dir_all(&ws).unwrap();
         let ws = ws.canonicalize().unwrap();
         let mut ctx = Ctx::new(ws.clone());
         ctx.sandbox = Some(ws.clone());
         let out = run(
-            &json!({ "command": "echo \"key=[${FROG_SANDBOX_TEST_API_KEY:-}]\"" }),
+            &json!({ "command": "env | grep -c sk-leak; echo \"plain=[${FROG_SANDBOX_TEST_PLAIN:-}]\"" }),
             &mut ctx,
         )
         .await
         .unwrap();
-        unsafe { std::env::remove_var("FROG_SANDBOX_TEST_API_KEY") };
-        assert!(out.content.contains("key=[]"), "{}", out.content);
+        for v in VARS.iter().chain(&["FROG_SANDBOX_TEST_PLAIN"]) {
+            unsafe { std::env::remove_var(v) };
+        }
+        assert!(out.content.starts_with('0'), "{}", out.content);
+        assert!(out.content.contains("plain=[kept]"), "{}", out.content);
         let _ = std::fs::remove_dir_all(&ws);
     }
 
@@ -2062,6 +2154,100 @@ mod tests {
             sleeper_gone(&ws).await,
             "the timed-out `sleep 30` is still running"
         );
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    /// Output is bounded while it's read: the head and tail survive, the middle is counted.
+    #[test]
+    fn capped_output_keeps_head_and_tail_within_the_cap() {
+        let mut c = Capped::new(100);
+        for i in 0..10_000u32 {
+            c.push(format!("{i:05}\n").as_bytes());
+            assert!(c.head.len() + c.tail.len() <= 100);
+        }
+        let out = String::from_utf8(c.finish()).unwrap();
+        assert!(out.starts_with("00000\n"), "{out}");
+        assert!(out.contains("09999\n"), "{out}");
+        assert!(out.contains("bytes of output dropped"), "{out}");
+        // A single huge chunk too.
+        let mut c = Capped::new(100);
+        c.push(&vec![b'a'; 1 << 20]);
+        assert!(c.head.len() + c.tail.len() <= 100);
+    }
+
+    /// A command printing far more than the cap doesn't make frog buffer all of it.
+    #[tokio::test]
+    async fn runaway_output_is_capped_while_reading() {
+        let ws = std::env::temp_dir().join(format!("frog-cap-{}", crate::session::new_id()));
+        std::fs::create_dir_all(&ws).unwrap();
+        let mut ctx = Ctx::new(ws.clone());
+        let n = OUTPUT_CAP * 3;
+        let out = run(
+            &json!({ "command": format!("head -c {n} /dev/zero | tr '\\0' a") }),
+            &mut ctx,
+        )
+        .await
+        .unwrap();
+        let dropped = n - OUTPUT_CAP;
+        assert!(
+            out.content
+                .contains(&format!("[{dropped} bytes of output dropped]")),
+            "{}",
+            &out.content[..out.content.len().min(400)]
+        );
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    /// Linux: `sandbox.network = "none"` gives bwrap its own network namespace, loopback only.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn bubblewrap_denies_network_when_configured() {
+        if !available() {
+            eprintln!("no bwrap here; skipping");
+            return;
+        }
+        let ws = std::env::temp_dir().join(format!("frog-net-{}", crate::session::new_id()));
+        std::fs::create_dir_all(&ws).unwrap();
+        let ws = ws.canonicalize().unwrap();
+        let ifaces = "cat /proc/net/dev | tail -n +3 | cut -d: -f1 | tr -d ' ' | sort | tr '\\n' ,";
+        let mut ctx = Ctx::new(ws.clone());
+        ctx.sandbox = Some(ws.clone());
+        // Open by default: the host's interfaces are visible.
+        let open = run(&json!({ "command": ifaces }), &mut ctx).await.unwrap();
+        ctx.sandbox_extra.network = Some("none".into());
+        let shut = run(&json!({ "command": ifaces }), &mut ctx).await.unwrap();
+        assert_eq!(shut.content.trim(), "lo,", "open: {}", open.content);
+        // And a connection out fails outright.
+        let tcp = run(
+            &json!({ "command": "(exec 3<>/dev/tcp/1.1.1.1/80) 2>&1; echo rc=$?" }),
+            &mut ctx,
+        )
+        .await
+        .unwrap();
+        assert!(!tcp.content.contains("rc=0"), "{}", tcp.content);
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    /// Linux: an enforced egress allow-list can't be enforced by host inside bwrap, so it
+    /// fails closed (no network) instead of leaving the network open as it used to.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn bubblewrap_enforced_egress_fails_closed() {
+        if !available() {
+            eprintln!("no bwrap here; skipping");
+            return;
+        }
+        let ws = std::env::temp_dir().join(format!("frog-eg-{}", crate::session::new_id()));
+        std::fs::create_dir_all(&ws).unwrap();
+        let ws = ws.canonicalize().unwrap();
+        let mut ctx = egress_ctx(&ws, crate::egress::Mode::Enforce, &["example.com"]);
+        let out = run(
+            &json!({ "command": "cat /proc/net/dev | tail -n +3 | cut -d: -f1 | tr -d ' ' | sort | tr '\\n' ," }),
+            &mut ctx,
+        )
+        .await
+        .unwrap();
+        assert_eq!(out.content.trim(), "lo,", "{}", out.content);
         let _ = std::fs::remove_dir_all(&ws);
     }
 }
