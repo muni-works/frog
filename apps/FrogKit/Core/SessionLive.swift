@@ -35,3 +35,20 @@ enum SessionEndGlyph: Equatable, Sendable {
         }
     }
 }
+
+/// What a session-list refresh covers: some sessions, or all of them. Refreshes coalesce (a
+/// new call replaces the one waiting), so the scopes merge: nothing asked for is dropped.
+enum RefreshScope: Equatable, Sendable {
+    case ids(Set<String>)
+    case full
+
+    /// The ids to re-list; empty means every session.
+    var ids: Set<String> {
+        if case .ids(let ids) = self { ids } else { [] }
+    }
+
+    static func merged(_ a: RefreshScope?, _ b: RefreshScope) -> RefreshScope {
+        guard case .ids(let x) = a ?? b, case .ids(let y) = b else { return .full }
+        return .ids(x.union(y))
+    }
+}

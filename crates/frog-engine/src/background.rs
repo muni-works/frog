@@ -253,6 +253,14 @@ impl Registry {
     }
 
     /// Whether piece `id` is still running.
+    /// How a job that has exited ended (`done`, `failed`, `stopped`); `None` while it runs or
+    /// when there's no such job.
+    pub fn job_ended(&self, id: &str) -> Option<String> {
+        let entries = self.entries.lock().unwrap();
+        let e = entries.get(id)?;
+        (e.kind == Kind::Job && !e.running).then(|| e.status.clone())
+    }
+
     pub fn is_running(&self, id: &str) -> bool {
         self.entries.lock().unwrap().get(id).is_some_and(|e| e.running)
     }
@@ -651,6 +659,40 @@ fn tail(text: &str, lines: usize) -> String {
 
 /// `Bash { run_in_background: true }` (already permitted): start the job, its output going to
 /// a file in `dir`, and return its id.
+/// The background jobs a command names (`job-65`, or its `…/job-65.log`), in order, once each.
+pub fn jobs_named(command: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let bytes = command.as_bytes();
+    for (at, _) in command.match_indices("job-") {
+        if at > 0 && (bytes[at - 1].is_ascii_alphanumeric() || bytes[at - 1] == b'-') {
+            continue;
+        }
+        let digits: String = command[at + 4..].chars().take_while(|c| c.is_ascii_digit()).collect();
+        let id = format!("job-{digits}");
+        if !digits.is_empty() && !out.contains(&id) {
+            out.push(id);
+        }
+    }
+    out
+}
+
+/// Why a wait on these jobs is pointless: every job the command names has already exited, so
+/// sleeping and looking again shows the same thing. `None` when it names none, or one still runs.
+pub fn waits_on_finished(reg: &Registry, command: &str) -> Option<String> {
+    let named = jobs_named(command);
+    let ended: Vec<String> = named.iter().filter_map(|id| reg.job_ended(id)).collect();
+    if named.is_empty() || ended.len() != named.len() {
+        return None;
+    }
+    let list: Vec<String> =
+        named.iter().zip(&ended).map(|(id, how)| format!("{id} ({how})")).collect();
+    Some(format!(
+        "Not started: {} already exited, so waiting won't change its output. Read it now with JobOutput {{\"id\": \"{}\"}}; if it printed nothing, the command produced no output (a filter like grep or -quiet can swallow it all): rerun it without the filter instead of waiting.",
+        list.join(", "),
+        named[0]
+    ))
+}
+
 pub fn start_job(reg: &Arc<Registry>, input: &Value, ctx: &Ctx, dir: &Path) -> Result<Output> {
     let cmd = str_arg(input, "command")?.to_string();
     let (mut command, _) = crate::tools::bash::shell(input, &shell_ctx(ctx))?;
@@ -693,6 +735,13 @@ pub fn start_job(reg: &Arc<Registry>, input: &Value, ctx: &Ctx, dir: &Path) -> R
         };
         let code = status.ok().and_then(|s| s.code()).unwrap_or(-1);
         let out = tail_file(&file2, 20);
+        // An empty tail read as "still running" to a model that then polled the empty log
+        // for three hours (yolo-one-row, 2026-11-14): say it's over and printed nothing.
+        let out = if out.trim().is_empty() {
+            format!("(job {id2} has exited and printed nothing; its log will stay empty, so don't wait on it)")
+        } else {
+            out
+        };
         let notice = format!("<job-done id={id2} exit={code}>\n{out}\n</job-done>");
         let state = if code == 0 { "done" } else { "failed" };
         reg2.finish(&id2, state, String::new(), notice);
@@ -1092,6 +1141,24 @@ mod tests {
         );
         let read = run(&reg, JOB_OUTPUT, &json!({"id": "job-1", "tail": 1}), &ctx).unwrap();
         assert!(read.content.ends_with("two"), "{}", read.content);
+    }
+
+    #[tokio::test]
+    async fn a_silent_job_says_it_exited_and_a_wait_on_it_is_refused() {
+        let (reg, _) = registry();
+        let dir = tmp();
+        let ctx = Ctx::new(dir.clone());
+        start_job(&reg, &json!({"command": "true"}), &ctx, &dir.join("jobs")).unwrap();
+        let wait = "sleep 310 && date && wc -c /x/sessions/s.jobs/job-1.log";
+        assert_eq!(waits_on_finished(&reg, wait), None, "still running: a wait is fair");
+        let notice = wait_notice(&reg).await;
+        assert!(notice.contains("has exited and printed nothing"), "{notice}");
+        let why = waits_on_finished(&reg, wait).expect("job-1 is over");
+        assert!(why.contains("job-1 (done) already exited"), "{why}");
+        // A job that doesn't exist, or no job at all, is not this guard's business.
+        assert_eq!(waits_on_finished(&reg, "sleep 300; tail job-9.log"), None);
+        assert_eq!(waits_on_finished(&reg, "sleep 300; cargo test"), None);
+        assert_eq!(jobs_named("tail job-2.log job-2 my-job-3 job-x job-10"), ["job-2", "job-10"]);
     }
 
     #[tokio::test]

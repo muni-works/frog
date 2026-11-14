@@ -251,10 +251,19 @@ root {}. Re-`cd` if you need the old location back.</system-note>",
         // behind it) for minutes, so it runs as a background job and the turn goes on.
         if name == "Bash"
             && !self.subagent
-            && !tools::bool_arg(input, "run_in_background")
             && let Some(secs) = crate::auto::long_wait(input["command"].as_str().unwrap_or(""))
         {
-            return self.background_wait(input, secs);
+            // Waiting on a job that already exited shows the same log every time
+            // (yolo-one-row: 116 sleeps over hours on an empty, finished job's log).
+            if let Some(why) = crate::background::waits_on_finished(
+                &self.shared.bg,
+                input["command"].as_str().unwrap_or(""),
+            ) {
+                anyhow::bail!(why);
+            }
+            if !tools::bool_arg(input, "run_in_background") {
+                return self.background_wait(input, secs);
+            }
         }
         if crate::background::handles(name)
             || (name == "Bash" && tools::bool_arg(input, "run_in_background"))
