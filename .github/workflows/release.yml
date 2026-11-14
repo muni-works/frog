@@ -237,14 +237,15 @@ jobs:
       - name: combined checksums
         run: cd dist && cat ./*.sha256 > SHA256SUMS
       # install.sh verifies <tarball>.minisig against the key embedded in it. The secret is
-      # an unencrypted minisign key (`minisign -G -W`); without it, no .minisig is published.
+      # an unencrypted minisign key (`minisign -G -W`); without it, the release fails.
       - name: minisign tarballs
         env:
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
         run: |
           if [ -z "$MINISIGN_SECRET_KEY" ]; then
-            echo "::warning::MINISIGN_SECRET_KEY not set; release tarballs are unsigned"
-            exit 0
+            # A tag release must be signed: install.sh verifies the .minisig.
+            echo "::error::MINISIGN_SECRET_KEY not set; refusing to publish unsigned release tarballs"
+            exit 1
           fi
           sudo apt-get install -y -qq minisign >/dev/null
           printf '%s\n' "$MINISIGN_SECRET_KEY" > "$RUNNER_TEMP/minisign.key"

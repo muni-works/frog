@@ -171,7 +171,7 @@ export function Pond() {
 const PITCH = [
   { i: '☾', title: 'Ship while you sleep', text: 'Hand Frog the bug before bed. Wake up to a tested pull request.' },
   { i: '⧉', title: 'Five at once, laptop closed', text: 'Every session gets its own cloud machine. Start a few, go to lunch.' },
-  { i: '$', title: 'Open models, honest prices', text: 'Fast open-weight coders. Pay for the tokens you use. No seats, no subscription.' },
+  { i: '$', title: 'Open models, honest prices', text: 'Fast open-weight coders. Pay for the tokens you use. Plans if you want them.' },
 ]
 
 export function HowItWorks() {

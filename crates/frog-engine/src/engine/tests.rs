@@ -2900,6 +2900,72 @@ async fn shutdown(mut h: Handle) {
     while h.events.recv().await.is_some() {}
 }
 
+/// The session's own command removed the folder its shell stood in (an agent cleaning up the
+/// worktree it had `cd`-ed into — "frog manager", 2026-11-14). That's not news to anyone: no
+/// warning row, the shell is back at the session root at once, and the model reads why in
+/// that call's own result. The next command runs from the root without a notice.
+#[tokio::test]
+async fn removing_its_own_cwd_falls_back_quietly() {
+    let base = std::env::temp_dir().join(format!("frog-cwd-self-{}", session::new_id()));
+    let project = base.join("project");
+    std::fs::create_dir_all(project.join("wt")).unwrap();
+    let call = |id: &str, cmd: &str| Block::ToolUse {
+        id: id.into(),
+        name: "Bash".into(),
+        input: json!({ "command": cmd }),
+    };
+    let script = vec![
+        reply(vec![call("c", "cd wt")], Stop::ToolUse),
+        reply(vec![call("r", "rm -rf \"$PWD\"")], Stop::ToolUse),
+        reply(vec![call("e", "echo still-here")], Stop::ToolUse),
+        reply(vec![text("done")], Stop::End),
+    ];
+    let mut profile = Profile::new(ProviderKind::Ollama, "test");
+    profile.tool_mode = ToolMode::Native;
+    let opts = Options {
+        cfg: Config {
+            hermetic: true,
+            ..Config::default()
+        },
+        profile_name: "test".into(),
+        profile,
+        cwd: project.clone(),
+        mode: Mode::Yolo,
+        can_ask: true,
+        resume: None,
+        store: None,
+        sandbox: false,
+        rich: false,
+        subagent: false,
+        chat: false,
+    };
+    let mut h = start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap();
+    let evs = run(&mut h, "clean up").await;
+    assert!(!project.join("wt").exists());
+    let notices = notices(&evs);
+    assert!(
+        !notices.iter().any(|n| n.contains("is gone")),
+        "a warning row for the session's own cleanup: {notices:?}"
+    );
+    let outputs: Vec<&str> = evs
+        .iter()
+        .filter_map(|e| match &e.event {
+            Event::ItemCompleted {
+                item: Item::ToolCall { name, output, .. },
+                ..
+            } if name == "Bash" => Some(output.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        outputs.iter().any(|o| o.contains("back in the session root")),
+        "{outputs:?}"
+    );
+    assert!(outputs.iter().any(|o| o.contains("still-here")), "{outputs:?}");
+    shutdown(h).await;
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 /// A working directory deleted out from under the session (a worktree cleaned up) would
 /// fail every Bash call with "No such file or directory", even `echo`. The tool falls back
 /// to the session root and says so — to the user as a notice, and to the model in its next
@@ -4534,7 +4600,7 @@ async fn long_tool_turn_compacts_again_after_new_messages_fill_the_window() {
     let work = |id: &str| {
         reply(
             vec![
-                text(&"Long implementation analysis. ".repeat(1200)),
+                text(&"Long implementation analysis. ".repeat(650)),
                 Block::ToolUse {
                     id: id.into(),
                     name: "Read".into(),
@@ -6906,22 +6972,27 @@ mod egress_tests {
         // The declared hosts are granted: the later call, which declares nothing, reaches them.
         assert!(egress_hits(&evs).is_empty(), "nothing was blocked");
         assert!(!tool_output(&evs, "after").contains("frog blocked"));
-        // The quiet line is in the transcript as info, not a warning.
+        // Leaving the sandbox restates a property of the call itself, so it belongs on the
+        // call's row, not as a second row: the transcript shows one record per shape, the
+        // `EgressWidened` event (durable, replayed) plus the row the client draws from it.
+        // A notice here rendered twice on the Mac ("Ran …" then "ⓘ Yolo: …").
         assert!(
-            evs.iter().any(|e| matches!(
+            !evs.iter().any(|e| matches!(
                 &e.event,
-                Event::Notice { level: Level::Info, message }
-                    if message.contains("yolo: `echo hi` ran outside the sandbox")
+                Event::Notice { message, .. }
+                    if message.contains("ran outside the sandbox")
             )),
-            "the sandbox line is a quiet info row"
+            "one row per call: no second notice restating the tool row"
         );
+        // The hosts variant is a notice: which hosts got granted this session is a fence
+        // state the user couldn't see otherwise (it can persist past the turn).
         assert!(
             evs.iter().any(|e| matches!(
                 &e.event,
                 Event::Notice { level: Level::Info, message }
                     if message.contains("reaches pkgs.example.org, now allowed this session")
             )),
-            "the hosts line is a quiet info row"
+            "the hosts line stays a quiet info row"
         );
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -6996,13 +7067,15 @@ mod egress_tests {
             vec![("both".to_string(), Vec::new(), true)],
             "one row: it left the sandbox"
         );
+        // The fact is the durable event, not a second notice row: a row for the call and a
+        // row for what the call already says is the double render this module exists to keep
+        // off the transcript.
         assert!(
-            evs.iter().any(|e| matches!(
+            !evs.iter().any(|e| matches!(
                 &e.event,
-                Event::Notice { level: Level::Info, message }
-                    if message.contains("`echo hi` ran outside the sandbox")
+                Event::Notice { message, .. } if message.contains("ran outside the sandbox")
             )),
-            "the row says what actually happened"
+            "leaving the sandbox rides the call's row, never a second notice"
         );
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -10190,7 +10263,8 @@ async fn a_prompt_past_the_hard_limit_compacts_before_the_call() {
         reply(vec![text("Done.")], Stop::End),
     ];
     let (mut h, sent) = engine_sent(script, None, None, Some(8192), std::env::temp_dir());
-    let evs = run(&mut h, &"Do the long thing. ".repeat(1600)).await;
+    // Past the hard limit, but not so far past the window that it's summarized in parts.
+    let evs = run(&mut h, &"Do the long thing. ".repeat(1000)).await;
     assert_eq!(
         evs.iter()
             .filter(|e| matches!(e.event, Event::Compacted { .. }))
@@ -10318,11 +10392,12 @@ async fn a_context_overflow_twice_ends_the_turn_with_a_clear_error() {
         )
     };
     let client = scripted::Client::new(vec![reply(vec![text("Summary.")], Stop::End)]);
+    // The step, the summary request, then the summary in parts and in smaller parts.
     client
         .fails
         .lock()
         .unwrap()
-        .extend([overflow(), overflow()]);
+        .extend([overflow(), overflow(), overflow(), overflow()]);
     let opts = Options {
         cfg: Config {
             hermetic: true,
@@ -11527,6 +11602,83 @@ async fn a_denied_call_retried_in_the_same_turn_ends_it_blocked() {
     // It round-trips as a tagged reason.
     let v = serde_json::to_value(EndReason::BlockedOnApproval { denial: "x".into() }).unwrap();
     assert_eq!(v, json!({"type": "blocked_on_approval", "denial": "x"}));
+}
+
+/// The unsandboxed card's reason as the user would see it, with the engine told whether it
+/// runs in a Frog Cloud sandbox VM.
+async fn escape_reason(cloud: bool) -> String {
+    let cfg = Config {
+        hermetic: true,
+        sandbox_shell: false,
+        cloud_sandbox: cloud,
+        ..Config::default()
+    };
+    let script = vec![
+        reply(
+            vec![Block::ToolUse {
+                id: "b".into(),
+                name: "Bash".into(),
+                input: json!({ "command": "brew install jq", "unsandboxed": true }),
+            }],
+            Stop::ToolUse,
+        ),
+        reply(vec![text("ok")], Stop::End),
+    ];
+    let mut h = engine_perm_cfg(script, Mode::Default, cfg);
+    let evs = turn_answering(&mut h, |_| Some((Decision::Deny, None))).await;
+    shutdown(h).await;
+    evs.iter()
+        .find_map(|e| match &e.event {
+            Event::PermissionRequest { reason, .. } => reason.clone(),
+            _ => None,
+        })
+        .expect("leaving the sandbox cards with a reason")
+}
+
+/// On the user's own machine the card warns about credentials; that stays.
+#[tokio::test]
+async fn local_escape_card_warns_about_credentials() {
+    assert_eq!(
+        escape_reason(false).await,
+        "Runs outside the sandbox: it can change files anywhere and read your credentials."
+    );
+}
+
+/// In a Frog Cloud sandbox VM there are no credentials of the user's to read: the card says
+/// what's true there (Cam's launch review, 2026-11-14).
+#[tokio::test]
+async fn cloud_escape_card_says_cloud_machine_not_credentials() {
+    let reason = escape_reason(true).await;
+    assert!(!reason.contains("credentials"), "{reason}");
+    assert_eq!(
+        reason,
+        "Runs outside the command sandbox, inside your cloud machine: it can change anything on that machine and reach the network."
+    );
+}
+
+/// A denied command ends the turn with one plain sentence, not just the row's tag.
+#[tokio::test]
+async fn a_denied_command_leaves_a_sentence() {
+    let script = vec![
+        reply(
+            vec![Block::ToolUse {
+                id: "b".into(),
+                name: "Bash".into(),
+                input: json!({ "command": "brew install jq", "unsandboxed": true }),
+            }],
+            Stop::ToolUse,
+        ),
+        reply(vec![text("ok")], Stop::End),
+    ];
+    let mut h = engine_perm(script, Mode::Default, None);
+    let evs = turn_answering(&mut h, |_| Some((Decision::Deny, None))).await;
+    shutdown(h).await;
+    assert_eq!(ended(&evs), Some(EndReason::Denied));
+    let said: Vec<_> = notices(&evs)
+        .into_iter()
+        .filter(|n| n == DENIED_ENDING)
+        .collect();
+    assert_eq!(said.len(), 1, "{:?}", notices(&evs));
 }
 
 /// (5) An identical carded call denied twice in a session never asks again: the third

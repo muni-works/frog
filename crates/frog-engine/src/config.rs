@@ -245,6 +245,11 @@ pub struct Config {
     /// done or failed. `--serve` turns it on; the TUI draws on the terminal and leaves it off.
     #[serde(skip)]
     pub log_calls: bool,
+    /// The engine runs inside a Frog Cloud sandbox VM (`--serve-ws`, started by the gateway):
+    /// the whole machine is disposable and holds none of the user's own credentials, so the
+    /// approval copy says what's true there instead of "read your credentials".
+    #[serde(skip)]
+    pub cloud_sandbox: bool,
     /// Run shell commands in a sandbox (writes only in the project, credentials hidden), so
     /// they run without asking. Set false to have every command ask instead.
     #[serde(default = "default_true")]
@@ -505,7 +510,8 @@ pub struct SandboxConfig {
     #[serde(default)]
     pub allow_keychain: bool,
     /// Outbound network policy. Unset (default): open. `"dev"`: only GitHub, crates.io, npm
-    /// and Swift package hosts (via a local proxy). macOS only; Linux stays open.
+    /// and Swift package hosts (via a local proxy) on macOS; on Linux, where bwrap can't
+    /// filter by host, no network at all. `"none"`: no network (loopback only).
     #[serde(default)]
     pub network: Option<String>,
     /// Let sandboxed git reads reach GitHub over https instead of ssh: a per-command config

@@ -299,9 +299,13 @@ final class SidebarSnapshotTests: XCTestCase {
     }
 
     /// The started-by tree's rails, at every depth a session can sit at: a six-deep chain
-    /// (depths 0–5, so the cap shows) beside a sibling leaf, both list modes, both looks, and
-    /// with a nested row selected — tree-rails-*.png. The chain is the whole point: a row at
-    /// depth 5 must look deeper than one at depth 4, and its guide must survive selection.
+    /// (depths 0–5) beside a sibling leaf, in every grouping and both looks, with a nested row
+    /// selected — tree-rails-*.png. The chain is the whole point: a row at depth 5 must look
+    /// deeper than one at depth 4, and its guide must survive selection.
+    ///
+    /// Both groupings matter. The date list always drew a guide (`TreeGuide`); the **org** tree
+    /// (`TreeRow`) drew none, so "the rail is faint" was really "the org tree has no rail".
+    /// Rendered as `tree-rails-<group>-<mode>-<pick>-<look>`.
     func testRenderTreeRails() throws {
         // root › depth1 › depth2 › depth3 › depth4 › depth5, plus a sibling at depth 1.
         let chain = ["d1", "d2", "d3", "d4", "d5"]
@@ -320,22 +324,27 @@ final class SidebarSnapshotTests: XCTestCase {
             Library.shared.stage(sessions: sessions, live: live, parents: parents, chief: nil, archived: [])
         }
         UserDefaults.standard.set(true, forKey: "calmSidebar")
-        UserDefaults.standard.set("date", forKey: "sidebarGroup")
         UserDefaults.standard.set("activity", forKey: "sidebarSort")
         let compactSaved = UserDefaults.standard.object(forKey: "compactSidebar")
         defer { UserDefaults.standard.set(compactSaved, forKey: "compactSidebar") }
 
         // The row on screen: a nested one, so its selection fill has a rail to either side.
         let ws = Workspace(folder: URL(fileURLWithPath: "/Users/cam/Developer/frog/.frog/worktrees/d3"), resume: "d3")
-        for (dense, mode) in [(false, "two-line"), (true, "compact")] {
-            UserDefaults.standard.set(dense, forKey: "compactSidebar")
-            for (selected, pick) in [(nil, "plain"), ("d3", "selected")] {
-                for (look, name) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
-                    restage()  // the sidebar's onAppear refresh can replace a staged listing
-                    ws.opening = selected
-                    try render(SessionList(workspace: ws, maxHeight: 420).background(.background),
-                               size: CGSize(width: 300, height: 420), to: "tree-rails-\(mode)-\(pick)-\(name)",
-                               appearance: look)
+        // The org tree is the one the brief's screenshot came from; the date list is the one
+        // that always had a guide. Both are renders now, to prove they agree.
+        for group in ["org", "date"] {
+            UserDefaults.standard.set(group, forKey: "sidebarGroup")
+            for (dense, mode) in [(false, "two-line"), (true, "compact")] {
+                UserDefaults.standard.set(dense, forKey: "compactSidebar")
+                for (selected, pick) in [(nil, "plain"), ("d3", "selected")] {
+                    for (look, name) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
+                        restage()  // the sidebar's onAppear refresh can replace a staged listing
+                        ws.opening = selected
+                        try render(SessionList(workspace: ws, maxHeight: 460).background(Tokens.sidebar),
+                                   size: CGSize(width: 300, height: 460),
+                                   to: "tree-rails-\(group)-\(mode)-\(pick)-\(name)",
+                                   appearance: look)
+                    }
                 }
             }
         }
