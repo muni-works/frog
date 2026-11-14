@@ -280,7 +280,9 @@ button.tool:hover { color: var(--fg); }
 .trust li { display: flex; align-items: center; gap: 6px; }
 .trust li::before { content: '✓'; color: var(--frog); font-size: 11px; }
 @media (prefers-reduced-motion: reduce) { .beta-pill i { animation: none; } }
-.muni-foot { display: flex; justify-content: center; padding: 0 0 14px; }
+.muni-foot { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 0 0 14px; }
+.muni-foot .foot-links { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 14px; font-size: 12px; }
+.muni-foot .foot-links a { text-decoration: none; }
 .muni-foot a { display: flex; color: var(--faint); transition: color .2s; }
 .muni-foot a:hover, .muni-foot a:focus-visible { color: #ff8a1f; }
 .cz-chips { position: absolute; left: 0; right: 0; bottom: calc(100% + 4px); display: flex; flex-wrap: wrap; gap: 6px; padding: 0 4px; overflow: hidden; height: 28px; align-content: flex-start; }
