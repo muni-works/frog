@@ -90,3 +90,20 @@ test("an opened short result is text, never a terminal block", () => {
   assert.match(denied, /tool-said-body/, "one line in a <pre> reads as a payload it isn't")
   assert.doesNotMatch(denied, /tool-out/)
 })
+
+// "frog manager" (2026-11-14): forty rows read `cd /Users/cam/Developer/frog && …`, the meaning
+// cut off the end. The command leads, a worktree shows by name, the full command stays on hover.
+const bash = (arg: string, over: Partial<Entry> = {}): Entry =>
+  sent({ name: "Bash", arg, output: "ok", ...over })
+
+test("a cd prefix gives way to the command, and a worktree shows by name", () => {
+  const root = draw(bash("cd /Users/cam/Developer/frog && git log --oneline -2"))
+  assert.match(root, /class="tool-what"[^>]*>git log --oneline -2</, "the command leads the row")
+  assert.doesNotMatch(root, /· in /, "the session root on every row is noise")
+  assert.match(root, /title="cd \/Users\/cam\/Developer\/frog &amp;&amp; git log --oneline -2"/, "full command on hover")
+  const wt = draw(bash('cd "/Users/cam/Developer/frog/.frog/worktrees/audit334" && timeout 600 cargo test'))
+  assert.match(wt, />timeout 600 cargo test</)
+  assert.match(wt, /· in audit334/)
+  // Not that shape: as it was.
+  assert.match(draw(bash("cd foo || true")), />cd foo \|\| true</)
+})
