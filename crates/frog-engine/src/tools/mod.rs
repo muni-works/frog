@@ -1,7 +1,6 @@
 pub mod bash;
 pub mod compare;
 pub mod diagram;
-pub mod visualize;
 pub mod docs;
 pub mod fs;
 pub mod image;
@@ -13,6 +12,7 @@ pub mod search;
 pub mod sessions;
 pub mod todo;
 pub mod visual;
+pub mod visualize;
 pub mod web;
 pub mod websearch;
 
@@ -365,6 +365,14 @@ pub fn label(name: &str, input: &Value, ctx: &Ctx) -> (String, String) {
     let s = |k: &str| input[k].as_str().unwrap_or("").to_string();
     let arg = match name {
         "Bash" => s("command").lines().next().unwrap_or("").to_string(),
+        "Read" if input["files"].is_array() => input["files"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|f| f.as_str().or(f["file_path"].as_str()))
+            .map(|p| ctx.display(&ctx.resolve(p)))
+            .collect::<Vec<_>>()
+            .join(", "),
         "Read" | "Write" | "Edit" => ctx.display(&ctx.resolve(&s("file_path"))),
         "Glob" | "Grep" => s("pattern"),
         "Diagram" | visualize::TOOL => s("title"),
