@@ -400,6 +400,12 @@ final class SessionBroker {
                 c.replySession(r.id, result: .string(
                     "\(on ? "Archived" : "Unarchived") \(e.name) (\(e.id)).\(on ? " Its log is kept; UnarchiveSession brings it back.\(cancelled)" : " It's back in the sidebar.")"))
             case .failure(let e):
+                // Archiving what's already archived (a stale id, a retry) leaves it where the
+                // caller wants it: say so as a result, not as "No session".
+                if on, case .success(let gone) = resolve(key, caller: sender, includeArchived: true) {
+                    return c.replySession(r.id, result: .string(
+                        "\(gone.name) (\(gone.id)) is already archived; nothing to do."))
+                }
                 c.replySession(r.id, error: e.message)
             }
         case "SessionStatus":
