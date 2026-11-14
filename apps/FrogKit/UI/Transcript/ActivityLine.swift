@@ -831,7 +831,12 @@ struct VerbLine: Equatable {
                 // A failure keeps its verb ("Ran cargo test — failed" is the fact a gist
                 // would hide). Without one, the command is the line — "Ran" beside it would
                 // say ran twice.
-                v.arg = arg.split(separator: "\n").first.map { String($0.prefix(120)) }
+                // `cd /Users/…/frog && git log` on forty rows reads as forty identical rows
+                // with the meaning truncated away: the command leads, and the place shows only
+                // when it's a worktree ("in audit334"). The full command stays the row's help.
+                let (cmd, place) = Self.splitCd(arg)
+                v.arg = cmd.split(separator: "\n").first.map { String($0.prefix(120)) }
+                if let place { v.detail = "in \(place)" }
                 if failed { v.verb = "Ran" }
             }
             else {
@@ -887,6 +892,33 @@ struct VerbLine: Equatable {
             }
             return v
         }
+    }
+
+    /// A command that opens with `cd <dir> &&` (or `;`), split into the rest and a short name
+    /// for the place: a worktree's own name (`…/worktrees/audit334` → "audit334"), or nil for
+    /// anywhere else — the session root on every row is the noise this strips. Anything that
+    /// isn't that shape comes back whole.
+    static func splitCd(_ command: String) -> (command: String, place: String?) {
+        let trimmed = command.drop { $0 == " " }
+        guard trimmed.hasPrefix("cd ") else { return (command, nil) }
+        var rest = trimmed.dropFirst(3).drop { $0 == " " }
+        var dir = ""
+        if let q = rest.first, q == "\"" || q == "'" {
+            guard let end = rest.dropFirst().firstIndex(of: q) else { return (command, nil) }
+            dir = String(rest[rest.index(after: rest.startIndex)..<end])
+            rest = rest[rest.index(after: end)...]
+        } else {
+            let end = rest.firstIndex { $0 == " " || $0 == ";" || $0 == "&" || $0 == "\n" } ?? rest.endIndex
+            dir = String(rest[..<end])
+            rest = rest[end...]
+        }
+        rest = rest.drop { $0 == " " }
+        if rest.hasPrefix("&&") { rest = rest.dropFirst(2) } else if rest.hasPrefix(";") { rest = rest.dropFirst() } else { return (command, nil) }
+        let cmd = rest.drop { $0 == " " }
+        guard !dir.isEmpty, !cmd.isEmpty else { return (command, nil) }
+        let parts = dir.split(separator: "/")
+        let place = parts.firstIndex(of: "worktrees").flatMap { i in i + 1 < parts.count ? String(parts[i + 1]) : nil }
+        return (String(cmd), place)
     }
 
     /// A path from its repo down, not from /Users.

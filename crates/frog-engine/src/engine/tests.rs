@@ -2595,6 +2595,72 @@ async fn shutdown(mut h: Handle) {
     while h.events.recv().await.is_some() {}
 }
 
+/// The session's own command removed the folder its shell stood in (an agent cleaning up the
+/// worktree it had `cd`-ed into — "frog manager", 2026-11-14). That's not news to anyone: no
+/// warning row, the shell is back at the session root at once, and the model reads why in
+/// that call's own result. The next command runs from the root without a notice.
+#[tokio::test]
+async fn removing_its_own_cwd_falls_back_quietly() {
+    let base = std::env::temp_dir().join(format!("frog-cwd-self-{}", session::new_id()));
+    let project = base.join("project");
+    std::fs::create_dir_all(project.join("wt")).unwrap();
+    let call = |id: &str, cmd: &str| Block::ToolUse {
+        id: id.into(),
+        name: "Bash".into(),
+        input: json!({ "command": cmd }),
+    };
+    let script = vec![
+        reply(vec![call("c", "cd wt")], Stop::ToolUse),
+        reply(vec![call("r", "rm -rf \"$PWD\"")], Stop::ToolUse),
+        reply(vec![call("e", "echo still-here")], Stop::ToolUse),
+        reply(vec![text("done")], Stop::End),
+    ];
+    let mut profile = Profile::new(ProviderKind::Ollama, "test");
+    profile.tool_mode = ToolMode::Native;
+    let opts = Options {
+        cfg: Config {
+            hermetic: true,
+            ..Config::default()
+        },
+        profile_name: "test".into(),
+        profile,
+        cwd: project.clone(),
+        mode: Mode::Yolo,
+        can_ask: true,
+        resume: None,
+        store: None,
+        sandbox: false,
+        rich: false,
+        subagent: false,
+        chat: false,
+    };
+    let mut h = start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap();
+    let evs = run(&mut h, "clean up").await;
+    assert!(!project.join("wt").exists());
+    let notices = notices(&evs);
+    assert!(
+        !notices.iter().any(|n| n.contains("is gone")),
+        "a warning row for the session's own cleanup: {notices:?}"
+    );
+    let outputs: Vec<&str> = evs
+        .iter()
+        .filter_map(|e| match &e.event {
+            Event::ItemCompleted {
+                item: Item::ToolCall { name, output, .. },
+                ..
+            } if name == "Bash" => Some(output.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        outputs.iter().any(|o| o.contains("back in the session root")),
+        "{outputs:?}"
+    );
+    assert!(outputs.iter().any(|o| o.contains("still-here")), "{outputs:?}");
+    shutdown(h).await;
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 /// A working directory deleted out from under the session (a worktree cleaned up) would
 /// fail every Bash call with "No such file or directory", even `echo`. The tool falls back
 /// to the session root and says so — to the user as a notice, and to the model in its next

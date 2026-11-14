@@ -113,6 +113,18 @@ export function sessionCount(name: string, output: string): string | null {
 /** Exported for `test/toolrow-render.test.ts`, which draws this row and reads the DOM back:
  * the only way a test can see what the browser is actually handed, since the helpers above can
  * stay correct while the row stops using them. */
+/** A command that opens with `cd <dir> &&` (or `;`): the rest, and a worktree's name for the
+ * place (`…/worktrees/audit334` → "audit334"; anywhere else, the session root most of all,
+ * is noise and gets none). Null when the command isn't that shape. */
+export function splitCd(command: string): { command: string; place: string } | null {
+  const m = /^\s*cd\s+(?:"([^"]+)"|'([^']+)'|([^\s;&]+))\s*(?:&&|;)\s*([\s\S]+)$/.exec(command)
+  if (!m) return null
+  const dir = m[1] ?? m[2] ?? m[3] ?? ''
+  const parts = dir.split('/')
+  const i = parts.indexOf('worktrees')
+  return { command: m[4], place: i >= 0 && parts[i + 1] ? parts[i + 1] : '' }
+}
+
 export function ToolLine({ e }: { e: Entry }) {
   const [open, setOpen] = useState<boolean | null>(null)
   const name = (e.name ?? '').toLowerCase()
@@ -129,7 +141,12 @@ export function ToolLine({ e }: { e: Entry }) {
   // arrived: a raw shell command or MCP arguments read as nothing, and the gist says what the
   // call did. The engine's own one-line display ("Read 54 lines") goes in the opened detail,
   // so the verb isn't said twice.
-  const what = (e.done && e.gist) || e.arg || (e.done && e.display) || (TOOL_LOOK[name] ? '' : e.name)
+  // A shell command that opens with `cd <dir> &&` leads with the command instead, and names
+  // the place only when it's a worktree: forty `cd /Users/…/frog && …` rows read identical,
+  // with the meaning cut off the end. The full command stays on hover and in the opened body.
+  const cd = (name === 'bash' || name === '!') && e.arg ? splitCd(e.arg) : null
+  const what = (e.done && e.gist) || cd?.command || e.arg || (e.done && e.display) || (TOOL_LOOK[name] ? '' : e.name)
+  const place = !(e.done && e.gist) && cd?.place ? cd.place : ''
   return (
     <div className={`tool-row ${state}`}>
       <button type="button" className="tool" aria-expanded={whole ? false : shown} onClick={() => { if (!whole) setOpen(!shown) }}>
@@ -142,7 +159,8 @@ export function ToolLine({ e }: { e: Entry }) {
             finished row drops it: a gist already says what it did, and a raw command reads
             as itself ("a command is a command"), so "Ran" beside either says ran twice. */}
         {(state === 'run' || state === 'err') && <span className="tool-verb">{look.verb[e.done ? 1 : 0]}</span>}
-        {what && <span className={`tool-what${e.done && e.gist ? ' gist' : ''}`}>{what}</span>}
+        {what && <span className={`tool-what${e.done && e.gist ? ' gist' : ''}`} title={cd ? e.arg : undefined}>{what}</span>}
+        {place && <span className="tool-said">· in {place}</span>}
         {said && <span className="tool-said">· {said}</span>}
         {state === 'err' && <span className="tool-tag err">failed</span>}
         {state === 'denied' && <span className="tool-tag">denied</span>}
@@ -153,7 +171,7 @@ export function ToolLine({ e }: { e: Entry }) {
           {/* The raw call stays readable when the row's line is something else: with a gist on
               the row, this is the argument it summarized. The engine's own display leads, as
               upstream had it ("Read 54 lines"), with the argument under it. */}
-          {e.arg && (e.gist || e.display) && (
+          {e.arg && (e.gist || e.display || cd) && (
             <>
               {e.display && <div className="tool-arg">{e.display}</div>}
               <div className="tool-arg">{e.arg}</div>
