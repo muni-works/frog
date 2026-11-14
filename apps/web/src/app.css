@@ -562,6 +562,12 @@ button.tool:hover .tool-ic { color: var(--muted); }
 .tool-what.gist { font: 13px/20px var(--font-sans); color: var(--muted); }
 button.tool:hover .tool-what { color: var(--muted); }
 .tool-tag { flex: none; font-size: 11px; color: var(--muted); background: var(--hover); border-radius: 5px; padding: 0 6px; line-height: 17px; }
+/* A short result said on the row itself ("Sent to ops; delivered"), quiet so it reads as an
+   aside to the call rather than another argument. The Mac's `VerbLine.detail` is the same. */
+.tool-said { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 13px/20px var(--font-sans); color: var(--faint); }
+/* A short result in its opened body: text, never a terminal block (one line in a <pre> reads
+   as a payload it isn't). */
+.tool-said-body { font: 13px/20px var(--font-sans); color: var(--muted); white-space: pre-wrap; }
 .tool-tag.err { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
 .tool-n { flex: none; font: 12px/20px var(--font-mono); font-variant-numeric: tabular-nums; }
 .tool-n.add { color: var(--frog); } .tool-n.del { color: var(--warn); }
