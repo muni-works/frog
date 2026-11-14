@@ -919,13 +919,17 @@ final class Conversation {
         case .egressBlocked(let host, _, _, let tool, let command, let enforced):
             // The tripwire: a row in the transcript, warning-styled when it was blocked.
             note(Self.egressNotice(host: host, tool: tool, command: command, enforced: enforced), warning: enforced)
-        case .egressWidened(let item, _, _, _, let sandboxLeft):
+        case .egressWidened(let item, let tool, let command, let hosts, let sandboxLeft):
             // Yolo ran a call that widened the fence. Leaving the sandbox restates a property
             // of the call itself, so it rides the call's own row as a tag — a second notice
-            // row rendered the transcript twice for one push. The hosts variant stays a
-            // notice: which hosts got granted is a fence state (it outlives the turn) the
-            // row can't show, and the engine only sends it there.
-            if sandboxLeft { upsert(item) { $0.sandboxEscaped = true } }
+            // row rendered the transcript twice for one push. The hosts grant keeps its quiet
+            // row: which hosts got allowed is a fence state (it outlives the turn) the row
+            // can't show, and an info notice is a log line here, never a row.
+            if sandboxLeft {
+                upsert(item) { $0.sandboxEscaped = true }
+            } else if let line = Self.widenedNotice(tool: tool, command: command, hosts: hosts, sandboxLeft: false) {
+                note(line, warning: false)
+            }
         case .permissionDecision:
             // Bookkeeping for the ask rate; nothing to show.
             break
@@ -1321,6 +1325,16 @@ final class Conversation {
         return enforced
             ? "Blocked a connection to \(host): it isn't on this session's network allow-list (\(what))."
             : "A command reached \(host), which isn't on the network allow-list (\(what))."
+    }
+
+    /// The transcript row for an `egress_widened` event that granted hosts: yolo ran what
+    /// another mode would have carded, and the hosts it named are now allowed for the
+    /// session. One quiet line, never a warning. A sandbox-leaving call gets no row — its
+    /// fact rides the call's own row as a tag.
+    nonisolated static func widenedNotice(tool: String, command: String, hosts: [String], sandboxLeft: Bool) -> String? {
+        guard !sandboxLeft, !hosts.isEmpty else { return nil }
+        let what = command.isEmpty ? tool : "`\(command)`"
+        return "Yolo: \(what) reaches \(hosts.joined(separator: ", ")), now allowed for this session."
     }
 
     func note(_ text: String, warning: Bool) {
