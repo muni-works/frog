@@ -417,8 +417,12 @@ export default function App() {
         <div className="home-hero">
           <Pond />
           <Mark size={56} />
-          <span className="beta-pill"><i />Now in beta · $5 free to start</span>
+          <span className="beta-pill"><i />Now in beta</span>
           <h1>What should we work on?</h1>
+          <div className="home-sub">
+            <p>Frog is a coding agent for your repos: open models, on your machines or in Frog Cloud.</p>
+            <p><b>$5 free to start.</b></p>
+          </div>
           <HowItWorks />
           <Trust />
         </div>
