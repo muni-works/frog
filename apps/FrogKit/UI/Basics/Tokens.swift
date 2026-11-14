@@ -43,6 +43,8 @@ enum Tokens {
     static let signal = Color(light: (0.8, 0.522, 0.122, 1), dark: (0.898, 0.647, 0.294, 1))
     /// Failed on the Mac. Deprecated; use warn instead.
     static let fail = Color(light: (0.851, 0.251, 0.231, 1), dark: (1.0, 0.412, 0.38, 1))
+    /// Failed, removed, over a limit (reddish-orange). The Mac's failure rows move here from fail.
+    static let warn = Color(light: (0.769, 0.318, 0.239, 1), dark: (0.898, 0.467, 0.373, 1))
     /// Where a model runs: local (this Mac or a paired node). Blue, the same lightness as the green beside it; 4.3:1 on white, 8.3:1 on black (the green is 3.4:1 and 10:1). Only through placeColor / Color.place(_:).
     static let placeLocal = Color(light: (0.204, 0.471, 0.878, 1), dark: (0.392, 0.643, 1.0, 1))
     /// Where a model runs: any cloud (Frog Cloud, Anthropic, OpenAI). Frog green, the accent. Only through placeColor / Color.place(_:).
