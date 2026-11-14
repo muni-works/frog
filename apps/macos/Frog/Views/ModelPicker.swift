@@ -136,7 +136,11 @@ struct ModelMenu: View {
             }
         case .cloud(let m):
             switch m.state {
-            case .ready where workspace.mustAskForCloud: asking = m
+            // Picking a cloud model is the answer: it goes, with nothing to click through
+            // (Cam, 2026-11-13). The folder still has a policy — `keep it on your devices`
+            // leaves cloud models shown as not-allowed in the list, and picking one there
+            // opens the sheet to change that policy, because that is the one case where the
+            // person said no and the question is real.
             case .notAllowed: asking = m
             case .overCap:
                 settingsTab = "billing"
@@ -241,11 +245,22 @@ struct ModelMenu: View {
     }
 
     /// "$0.80/M out": a cloud model's price per million output tokens.
+    ///
+    /// `Prices` is already dollars per **million** (`ModelStats.Prices`, filled from the
+    /// engine's `cost_out`, which `catalog::per_million` converted at parse time), so there is
+    /// nothing to scale here. This used to multiply by 1,000,000 and showed
+    /// "$1440000.00/M out" for a model that costs $1.44.
     @MainActor
     static func outputPrice(_ spec: String) -> String? {
-        guard let p = ModelStats.shared.prices(spec), p.output > 0 else { return nil }
-        let perM = p.output * 1_000_000
-        return String(format: perM < 1 ? "$%.2f/M out" : "$%.2f/M out", perM)
+        guard let p = ModelStats.shared.prices(spec) else { return nil }
+        return priceLine(p.output)
+    }
+
+    /// The one formatting of a per-million output price, so a test can pin it without an
+    /// engine, a gateway or the shared stats store.
+    static func priceLine(_ perMillionOutput: Double) -> String? {
+        guard perMillionOutput > 0 else { return nil }
+        return String(format: "$%.2f/M out", perMillionOutput)
     }
 }
 
