@@ -40,6 +40,8 @@ struct Turn {
 }
 
 const MAX_BODY: usize = 64 << 10;
+/// The whole request head, read before the token is checked.
+const MAX_HEAD: u64 = 16 << 10;
 
 pub async fn run(addr: &str, token: String, t: Template) -> Result<()> {
     anyhow::ensure!(
@@ -99,15 +101,19 @@ fn parse_head(lines: &[String]) -> Option<Head> {
 
 /// The latest turn's answer in session `id`: its last message, once the turn has ended.
 fn answer(store: &std::path::Path, id: &str) -> Option<serde_json::Value> {
-    if id.is_empty()
-        || !id
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    {
+    if !valid_id(id) {
         return None;
     }
     let events = frog_engine::session::events_after(store, id, 0).ok()?;
     Some(last_answer(events.into_iter().map(|e| e.event)))
+}
+
+/// A session id that can't step out of the store: letters, digits, `-` and `_`.
+fn valid_id(id: &str) -> bool {
+    !id.is_empty()
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
 fn last_answer(events: impl Iterator<Item = Event>) -> serde_json::Value {
@@ -147,11 +153,15 @@ async fn respond(sock: &mut TcpStream, status: &str, body: &str) -> Result<()> {
 async fn handle(mut sock: TcpStream, token: &str, t: &Template) -> Result<()> {
     let mut reader = BufReader::new(&mut sock);
     let mut lines = Vec::new();
+    let mut left = MAX_HEAD;
     loop {
         let mut l = String::new();
-        if reader.read_line(&mut l).await? == 0 || lines.len() > 64 {
+        let n = (&mut reader).take(left).read_line(&mut l).await?;
+        // Closed, too many lines, or out of budget before the line ended.
+        if n == 0 || lines.len() > 64 || !l.ends_with('\n') {
             return Ok(());
         }
+        left -= n as u64;
         let l = l.trim_end().to_string();
         if l.is_empty() {
             break;
@@ -196,6 +206,9 @@ async fn handle(mut sock: TcpStream, token: &str, t: &Template) -> Result<()> {
         Ok(t) if !t.text.trim().is_empty() => t,
         _ => return respond(&mut sock, "400 Bad Request", "want {\"text\": ...}").await,
     };
+    if turn.session.as_deref().is_some_and(|id| !valid_id(id)) {
+        return respond(&mut sock, "400 Bad Request", "bad session id").await;
+    }
     let mut h = match (t.make)(turn.session, turn.model) {
         Ok(opts) => match frog_engine::spawn_checked(opts).await {
             Ok(h) => h,
@@ -268,6 +281,38 @@ mod tests {
         .unwrap();
         assert_eq!(h.bearer, None);
         assert!(parse_head(&lines(&["POST /x", "content-length: nope"])).is_none());
+    }
+
+    #[test]
+    fn session_ids_stay_in_the_store() {
+        assert!(valid_id("2026-11-13_abc"));
+        for bad in ["", "../etc", "a/b", "..", "a.b", "a\\b"] {
+            assert!(!valid_id(bad), "{bad}");
+        }
+    }
+
+    /// A head longer than MAX_HEAD, with no newline, is dropped without a reply.
+    #[tokio::test]
+    async fn long_head_lines_are_cut_off() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (sock, _) = listener.accept().await.unwrap();
+            let t = Template {
+                store: std::env::temp_dir(),
+                make: Box::new(|_, _| anyhow::bail!("no engine in tests")),
+            };
+            handle(sock, "0123456789abcdef", &t).await
+        });
+        let mut c = TcpStream::connect(addr).await.unwrap();
+        let junk = vec![b'a'; MAX_HEAD as usize + 1024];
+        // The server may hang up mid-write; that's the point.
+        let _ = c.write_all(&junk).await;
+        let done = tokio::time::timeout(std::time::Duration::from_secs(5), server).await;
+        assert!(done.is_ok(), "server kept reading an endless header line");
+        let mut reply = Vec::new();
+        let _ = c.read_to_end(&mut reply).await;
+        assert!(reply.is_empty());
     }
 
     #[test]

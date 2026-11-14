@@ -121,7 +121,7 @@ export type Event =
   | { event: "compaction_failed"; detail?: string }
   | { event: "context_pruned"; results: number; tokens_before: number; tokens_after: number }
   | { event: "next_suggested"; turn: number; text: string; act?: boolean }
-  | { event: "status"; model: string; mode: Mode; context_tokens: number | null; context_window: number; todos?: Todo[]; vision?: boolean }
+  | { event: "status"; model: string; mode: Mode; context_tokens: number | null; context_window: number; todos?: Todo[]; vision?: boolean; tokens_per_sec?: number | null }
   | { event: "question"; id: string; item: string; question: string; options: { label: string; detail?: string }[]; multi?: boolean; allow_other?: boolean }
   | { event: "question_resolved"; id: string; choices?: string[]; other?: string }
   | { event: "elicitation"; id: string; server: string; message: string; schema?: ElicitSchema; url?: string }

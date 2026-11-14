@@ -33,6 +33,8 @@ mod dispatch;
 mod permit;
 mod project;
 #[cfg(test)]
+mod tests_compact;
+#[cfg(test)]
 mod tests_ingest;
 mod turn;
 mod window;
@@ -212,8 +214,18 @@ returns the same slice. Use offset={} (with a limit) to read the next part, or G
         ),
         _ => {
             let _ = input;
-            format!("{lead} Change the arguments or try a different approach.")
+            format!("{lead} {}", repeat_fix(name))
         }
+    }
+}
+
+/// The one-line way out of a repeated call, by tool: what to do instead of calling again.
+fn repeat_fix(name: &str) -> &'static str {
+    match name {
+        "JobOutput" => "Asking again doesn't make the job finish: you get a <job-done> message when it exits. Do other work or end your turn; to wait for a line in its output, use Monitor.",
+        "Read" => "The file hasn't changed: use the result you have, pass a different offset/limit, or Grep for the part you need.",
+        "Monitor" => "It was refused or is already armed: fix the arguments the error named, or end your turn and wait for its <monitor-done> message.",
+        _ => "Change the arguments or try a different approach.",
     }
 }
 /// Model calls per top-level turn: uncapped unless `FROG_MAX_STEPS` sets one. Runaway loops are
@@ -885,6 +897,14 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                         hub.host().emit(Event::AppResult { id, result, error });
                     });
                 }
+                // It changes which tools exist and starts a browser, so it goes through the
+                // work loop: the reconnect's delta installs at a turn boundary like any late
+                // server's, instead of racing the agent from here.
+                Op::McpSignIn { server, decline } => {
+                    if work_tx.send(Op::McpSignIn { server, decline }).is_err() {
+                        break;
+                    }
+                }
                 Op::Submit { text, images, more } => {
                     // Mid-turn the turn loop owns this queue: the parts park in order, and
                     // its next tool-call boundary delivers them as user messages of the
@@ -957,9 +977,24 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                     op = work_rx.recv() => op,
                     result = agent.mcp_ready() => {
                         if let Some((_name, delta)) = result {
-                            agent.mcp_ready_queue.push((_name, delta));
+                            // A server's outcome changes which tools exist and what the
+                            // server list says. Idle (nobody's op is running) it installs now,
+                            // not at the next op: a session nobody is typing in would
+                            // otherwise show "connecting…" forever, and the whole point is
+                            // that a server someone configured is never silently missing.
+                            //
+                            // Mid-turn it waits for the step boundary instead (see `turn`):
+                            // tools change the harness and the prompt's cached prefix, and
+                            // re-applying both between the tool call and the model call would
+                            // desync the specs from what the harness measured.
+                            if agent.shared.working.load(Ordering::Relaxed) {
+                                agent.mcp_ready_queue.push((_name, delta));
+                            } else {
+                                agent.merge_mcp(delta);
+                            }
                         } else {
                             agent.mcp_pending = None;
+                            agent.mcp_tx = None;
                         }
                         agent.emit_status();
                         continue;
@@ -1558,6 +1593,12 @@ struct Agent {
     mcp: crate::mcp::Hub,
     /// Per-server completion events from concurrent MCP connection attempts.
     mcp_pending: Option<tokio::sync::mpsc::UnboundedReceiver<(String, crate::mcp::Hub)>>,
+    /// The sender that feeds `mcp_pending`, kept so a later connect (a sign-in's reconnect)
+    /// joins the same queue instead of being dropped for want of a channel.
+    mcp_tx: Option<tokio::sync::mpsc::UnboundedSender<(String, crate::mcp::Hub)>>,
+    /// The servers a connect is still working on: configured, with no outcome yet. They get a
+    /// row saying so, instead of silently missing from the list.
+    mcp_connecting: std::collections::BTreeSet<String>,
     /// Completed MCP deltas queued until the next turn boundary.
     mcp_ready_queue: Vec<(String, crate::mcp::Hub)>,
     /// MCP tools that were loaded via `McpTools` in a previous session, to be restored on resume.
@@ -1872,6 +1913,8 @@ impl Agent {
             specs: tools::specs(),
             mcp: crate::mcp::Hub::empty(),
             mcp_pending: None,
+            mcp_tx: None,
+            mcp_connecting: std::collections::BTreeSet::new(),
             mcp_ready_queue: Vec::new(),
             loaded_tools,
             skills,
@@ -2370,6 +2413,11 @@ impl Agent {
                 act: next.act,
             });
         }
+        // A denial ends the turn with only a "denied" tag on the row; say in words what
+        // happened, once, so Mac and web both show a sentence instead of a bare tag.
+        if reason == EndReason::Denied {
+            self.notice(Level::Info, DENIED_ENDING);
+        }
         self.emit(Event::TurnEnded {
             turn,
             reason: reason.clone(),
@@ -2522,6 +2570,9 @@ impl Agent {
                 self.emit(Event::ApprovalDigest { summary });
             }
             Op::Wake => self.wake(Vec::new()).await?,
+            // The only path that opens a browser for MCP, and only because a person asked
+            // (Settings → MCP → Sign in, or the transcript's card).
+            Op::McpSignIn { server, decline } => self.sign_in_mcp(server, decline),
             Op::SetMode { mode } => {
                 // The router already applied it (see `Shared::mode`), so the permit path has
                 // been running in it since the call; this reconciles the agent's copy. Kept
@@ -2832,3 +2883,7 @@ fn bash_allowed(cmd: &str, extra: &[String]) -> bool {
 
 #[cfg(test)]
 mod tests;
+
+/// The transcript's sentence after a denied command ends the turn.
+pub(crate) const DENIED_ENDING: &str =
+    "Stopped here because you denied that command. The work so far is kept; say how to go on.";

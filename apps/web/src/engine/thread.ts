@@ -57,6 +57,8 @@ export interface Thread {
   /** What the engine says it's doing right now (`progress`, or a `notice` such as a retry),
    * while a turn runs. Ephemeral: cleared when output arrives or the turn ends. */
   activity: { text: string; warn: boolean } | null
+  /** The latest model call's speed from `status`, in tokens per second (as the Mac shows it). */
+  speed?: number | null
   question: Question | null
   elicitation: Elicitation | null
   /** The session's plan (TodoWrite), from the latest `status`. */
@@ -148,7 +150,7 @@ function apply(t: Thread, ev: Event, created: number): Thread {
     case 'permission_request':
       return { ...t, ask: { id: ev.id, item: ev.item, name: ev.name, arg: ev.arg, always: ev.always, preview: ev.preview, reason: ev.reason } }
     case 'status':
-      return { ...t, model: ev.model, mode: ev.mode, context: { used: ev.context_tokens, window: ev.context_window }, todos: ev.todos ?? t.todos, vision: ev.vision ?? t.vision }
+      return { ...t, model: ev.model, mode: ev.mode, context: { used: ev.context_tokens, window: ev.context_window }, todos: ev.todos ?? t.todos, vision: ev.vision ?? t.vision, speed: ev.tokens_per_sec ?? t.speed ?? null }
     case 'pane_opened':
       return { ...t, panes: { ...t.panes, [ev.id]: { id: ev.id, kind: ev.kind, title: ev.title, cwd: ev.cwd, url: ev.url, closed: false } } }
     case 'pane_closed': {

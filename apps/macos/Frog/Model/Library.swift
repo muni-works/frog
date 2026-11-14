@@ -23,6 +23,11 @@ final class Library {
 
     /// Frog Cloud's list changed (`CloudSessions` polls it): its rows join this Mac's.
     func cloudChanged(_ rows: [CloudGateway.Session]) {
+        #if DEBUG
+        // A staging snapshot owns the list: the 15 s poll must not paste the real account's
+        // cloud rows over its fixtures mid-render.
+        if staged { return }
+        #endif
         let mapped = rows.filter { $0.archived != true }.map(Self.row)
         // A sandbox still starting reads as running.
         for r in rows where r.archived != true {
@@ -129,12 +134,17 @@ final class Library {
     private func apply(_ listed: [SessionInfo]) {
         guard listed != local else { return }
         local = listed
+        let all = listed + cloud
         // Children the engine owned itself name their parent in their log: file them in the
-        // tree too, unless the sidebar already has (a MoveSession wins).
+        // tree too, unless the sidebar already has (a MoveSession wins). Through `liveParent`
+        // like every other recording path, so an archived parent files under its live ancestor.
         for s in listed {
-            if let p = s.parent, parents[s.id] == nil, p != s.id { parents[s.id] = p }
+            guard let p = s.parent, parents[s.id] == nil else { continue }
+            if let resolved = Self.liveParent(p, of: s.id, sessions: all, archived: archived, parents: parents) {
+                parents[s.id] = resolved
+            }
         }
-        sessions = listed + cloud
+        sessions = all
         self.listed = Dictionary(listed.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         GitIndex.shared.listingChanged(listed)
         archiveQuietChats()
@@ -241,9 +251,41 @@ final class Library {
 
     // MARK: Sessions started by sessions
 
+    /// `StartSession`: file the new session under the session that started it. The recorded
+    /// parent is resolved first (`liveParent`), so a manager archived since it started the
+    /// child doesn't leave the child pointing at a row the sidebar no longer has.
     func setParent(of child: String, to parent: String) {
-        parents[child] = parent
+        let resolved = Self.liveParent(parent, of: child, sessions: sessions, archived: archived, parents: parents)
+        if let resolved { parents[child] = resolved } else { parents.removeValue(forKey: child) }
         UserDefaults.standard.set(parents, forKey: "sessionParents")
+        onOrderInvalidated?()
+    }
+
+    /// The parent to record for `child`: `wanted` itself when the sidebar has a row for it,
+    /// else the nearest ancestor it does have, else nil.
+    ///
+    /// A parent must be a session the sidebar can show. Archiving hides a session's row but
+    /// keeps it in `sessions`, so a child filed under an archived manager was recorded
+    /// against an id no row carries, and the tree dropped the child to the root (dangling
+    /// parents, 2026-11-13). Cam archives managers routinely, so this is the ordinary case:
+    /// the child files under the nearest live ancestor, and with none it is a top-level row
+    /// rather than a reference to a ghost.
+    ///
+    /// This is the one place that decides, shared by `setParent` (`StartSession`), `move`
+    /// (`MoveSession`) and the engine's own header parent (`apply`), so no path can record a
+    /// dangling reference. It reads the archive live, never migrating what's stored: archive
+    /// state changes at runtime, and rewriting the dictionary would fight it.
+    static func liveParent(_ wanted: String?, of child: String, sessions: [SessionInfo],
+                           archived: Set<String>, parents: [String: String]) -> String? {
+        let live = Set(sessions.map(\.id)).subtracting(archived)
+        // The child is never its own ancestor, and an existing cycle still terminates.
+        var seen: Set<String> = [child]
+        var at = wanted
+        while let current = at, seen.insert(current).inserted {
+            if live.contains(current) { return current }
+            at = parents[current]
+        }
+        return nil
     }
 
     /// Why a [`Library.move`] was refused; the message is the tool's error.
@@ -261,23 +303,29 @@ final class Library {
 
     /// `MoveSession`: re-file `child` under `parent` (nil unparents; a top-level row
     /// again). Sidebar nesting only — the log, model, mode and history are the session's
-    /// own. Refuses a move that would nest a session under itself or a descendant (the
-    /// sidebar's tree walks tolerate a cycle, but one must never be recorded). Unparenting
-    /// an unparented session is a successful no-op. `parents` is observed, so the sidebar's
-    /// grouping re-derives on the change.
+    /// own. The parent is resolved first (`liveParent`): asking for an archived or vanished
+    /// session files the child under its nearest live ancestor, or unparents it, because a
+    /// recorded parent the sidebar has no row for drops the child to the root. Refuses a move
+    /// that would nest a session under itself or a descendant (the sidebar's tree walks
+    /// tolerate a cycle, but one must never be recorded). Unparenting an unparented session
+    /// is a successful no-op. The recorded parent comes back in the success. `parents` is
+    /// observed, so the sidebar's grouping re-derives on the change.
     @discardableResult
     func move(_ child: String, to parent: String?) -> Result<String?, MoveRefusal> {
-        if let parent {
-            guard !Self.wouldCycle(child, parent: parent, in: parents) else {
+        let resolved = parent.flatMap {
+            Self.liveParent($0, of: child, sessions: sessions, archived: archived, parents: parents)
+        }
+        if let resolved {
+            guard !Self.wouldCycle(child, parent: resolved, in: parents) else {
                 return .failure(.nestsWithinItself)
             }
-            parents[child] = parent
+            parents[child] = resolved
         } else {
             guard parents.removeValue(forKey: child) != nil else { return .success(nil) }
         }
         UserDefaults.standard.set(parents, forKey: "sessionParents")
         onOrderInvalidated?()
-        return .success(parent)
+        return .success(resolved)
     }
 
     /// Whether moving `child` under `parent` would close a loop: its own descendant. The

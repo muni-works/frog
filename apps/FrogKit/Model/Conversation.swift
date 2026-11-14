@@ -59,6 +59,18 @@ final class Conversation {
     let folder: URL
     private(set) var sessionID: String?
     private(set) var status: Status?
+    /// The configured MCP servers and their state, from the engine's `mcp_servers`. Kept even
+    /// when everything is fine so the composer can say when one a person configured needs a
+    /// sign-in — the case where its tools are silently missing from the model's list.
+    private(set) var mcpServers: [McpServerReport] = []
+
+    /// Servers someone configured that want a sign-in, so their tools are missing from the
+    /// model's list right now. Nil when there are none: the transcript card for them shows
+    /// only when there's something to say.
+    var signedOutServers: [McpServerReport]? {
+        let out = mcpServers.filter { !$0.connected && $0.needsAuth }
+        return out.isEmpty ? nil : out
+    }
     private(set) var turns: [TurnState] = [] {
         didSet {
             // Published apart from `turns` so views that only need "has anything been said"
@@ -919,9 +931,17 @@ final class Conversation {
         case .egressBlocked(let host, _, _, let tool, let command, let enforced):
             // The tripwire: a row in the transcript, warning-styled when it was blocked.
             note(Self.egressNotice(host: host, tool: tool, command: command, enforced: enforced), warning: enforced)
-        case .egressWidened(_, let tool, let command, let hosts, let sandboxLeft):
-            // Yolo acted without asking: one quiet row where another mode would have carded.
-            note(Self.widenedNotice(tool: tool, command: command, hosts: hosts, sandboxLeft: sandboxLeft), warning: false)
+        case .egressWidened(let item, let tool, let command, let hosts, let sandboxLeft):
+            // Yolo ran a call that widened the fence. Leaving the sandbox restates a property
+            // of the call itself, so it rides the call's own row as a tag — a second notice
+            // row rendered the transcript twice for one push. The hosts grant keeps its quiet
+            // row: which hosts got allowed is a fence state (it outlives the turn) the row
+            // can't show, and an info notice is a log line here, never a row.
+            if sandboxLeft {
+                upsert(item) { $0.sandboxEscaped = true }
+            } else if let line = Self.widenedNotice(tool: tool, command: command, hosts: hosts, sandboxLeft: false) {
+                note(line, warning: false)
+            }
         case .permissionDecision:
             // Bookkeeping for the ask rate; nothing to show.
             break
@@ -989,6 +1009,13 @@ final class Conversation {
         case .status(let s):
             // Written only when it changed: every view of it rebuilds on a write.
             if status != s { status = s }
+        case .mcpServers(let report):
+            if mcpServers != report { mcpServers = report }
+        case .mcpSignedIn(let server, _):
+            note("Signed in to \(server).", warning: false)
+        case .mcpSignedOut(let server, let error):
+            // A decline is the person's own click, so it's quiet; a failed flow says why.
+            if let error { note("Couldn't sign in to \(server): \(error)", warning: true) }
         case .background(let running):
             backgroundRunning = running
         case .backgroundStarted(let id, let kind, let label, let log):
@@ -1010,8 +1037,10 @@ final class Conversation {
             // Live only: a replayed log has no queue.
             if !replaying { queuedEvents = items }
         case .wakesDelivered(let n, let wakes):
+            // Appended: a turn can get wakes twice — the batch it opened with, and any that
+            // ended while it ran (the engine appends those to its history mid-turn).
             if let i = turns.lastIndex(where: { $0.number == n }) {
-                turns[i].wakes = wakes
+                turns[i].wakes += wakes
             }
         case .synced:
             replaying = false
@@ -1319,13 +1348,13 @@ final class Conversation {
             : "A command reached \(host), which isn't on the network allow-list (\(what))."
     }
 
-    /// The transcript row for an `egress_widened` event: yolo ran what another mode would
-    /// have carded. One quiet line, never a warning.
-    nonisolated static func widenedNotice(tool: String, command: String, hosts: [String], sandboxLeft: Bool) -> String {
+    /// The transcript row for an `egress_widened` event that granted hosts: yolo ran what
+    /// another mode would have carded, and the hosts it named are now allowed for the
+    /// session. One quiet line, never a warning. A sandbox-leaving call gets no row — its
+    /// fact rides the call's own row as a tag.
+    nonisolated static func widenedNotice(tool: String, command: String, hosts: [String], sandboxLeft: Bool) -> String? {
+        guard !sandboxLeft, !hosts.isEmpty else { return nil }
         let what = command.isEmpty ? tool : "`\(command)`"
-        if sandboxLeft {
-            return "Yolo: \(what) ran outside the sandbox; it can change files anywhere and read your credentials."
-        }
         return "Yolo: \(what) reaches \(hosts.joined(separator: ", ")), now allowed for this session."
     }
 
