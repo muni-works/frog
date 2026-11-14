@@ -436,8 +436,11 @@ mod tests {
             .filter(|l| l.ends_with(":hello"))
             .count();
         assert_eq!(shown, 5, "content: {}", output.content);
+        // Which footer depends on the walk order too: a file left out entirely is named with
+        // its count; when the cap lands inside the last file (a, b, c on Linux), it's the cap.
         assert!(
-            output.content.contains("more matches in"),
+            output.content.contains("more matches in")
+                || output.content.contains("limited to 5 results"),
             "{}",
             output.content
         );
