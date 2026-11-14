@@ -1,5 +1,6 @@
 pub mod bash;
 pub mod compare;
+pub mod deferred;
 pub mod diagram;
 pub mod visualize;
 pub mod docs;
@@ -304,7 +305,7 @@ pub fn kind(name: &str) -> Kind {
         "WebFetch" | "WebSearch" => Kind::Net,
         // MCP tools can do anything their server does: ask, like Bash.
         n if n.starts_with("mcp__") => Kind::Exec,
-        crate::mcp::SEARCH_TOOL => Kind::Read,
+        crate::mcp::SEARCH_TOOL | crate::mcp::LEGACY_SEARCH_TOOL => Kind::Read,
         // A subagent can only read.
         crate::subagent::TOOL => Kind::Read,
         crate::skills::TOOL => Kind::Read,
