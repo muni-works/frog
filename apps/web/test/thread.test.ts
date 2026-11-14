@@ -170,3 +170,11 @@ test("a repeated turn_started is the same turn, and a reused number after an end
   assert.equal(t.turns[0].reason?.type, "complete");
   assert.equal(t.turns[1].reason?.type, "cancelled");
 });
+
+test("the model's speed follows status, in tokens per second", () => {
+  let t = emptyThread;
+  t = reduce(t, env({ event: "status", model: "cloud/qwen3-coder-next", mode: "default", context_tokens: 1, context_window: 2, tokens_per_sec: 41.6 }));
+  assert.equal(t.speed, 41.6);
+  t = reduce(t, env({ event: "status", model: "cloud/qwen3-coder-next", mode: "default", context_tokens: 1, context_window: 2 }));
+  assert.equal(t.speed, 41.6, "a status without a speed keeps the last one");
+});

@@ -54,6 +54,14 @@ jobs:
           restore-keys: sidecars-${{ runner.os }}-
       - name: install xcodegen
         run: brew install xcodegen
+      # ToolRowRenderTests reads the rendered tool row back out of its PNG, which is the only
+      # way a test can see the label drawn twice (a hosted SwiftUI view exposes no text to the
+      # accessibility tree). Without this the test skips, and the pixel half of the guard is
+      # absent from CI. Cached: it's a formula, not a build.
+      - name: install tesseract (the tool row's readback)
+        run: |
+          brew install tesseract || brew upgrade tesseract
+          tesseract --version | head -1
       - name: generate project
         run: cd apps/macos && xcodegen generate --quiet
       # build-engine.sh (pre-build phase) builds frog + the frog-apple/frog-desktop sidecars.

@@ -34,8 +34,9 @@ struct Cli {
     /// Speak the engine protocol over stdio (Op JSON lines in, Event JSON lines out).
     #[arg(long, conflicts_with = "print")]
     serve: bool,
-    /// With --serve: speak it over a websocket on ADDR (e.g. 0.0.0.0:7070) instead of stdio,
+    /// With --serve: speak it over a websocket on ADDR (e.g. 127.0.0.1:7070) instead of stdio,
     /// one peer at a time, with `GET /health` on the same port. For Frog Cloud's gateway.
+    /// Beyond loopback it needs FROG_SERVE_WS_TOKEN, which every peer must present.
     #[arg(long, value_name = "ADDR", requires = "serve")]
     serve_ws: Option<String>,
     /// With --serve-ws: session store root (default: frog's data dir).
@@ -145,9 +146,14 @@ struct Cli {
     #[arg(long)]
     session_tree: bool,
     /// Connect the configured MCP servers (config.toml and ./.mcp.json), list their tools, and
-    /// exit (JSON with --json).
+    /// exit (JSON with --json). A server that wants a sign-in is reported, never signed in:
+    /// connecting doesn't open a browser.
     #[arg(long)]
     mcp: bool,
+    /// Sign in to a configured MCP server in the browser, then exit. This is what the app's
+    /// "Sign in" button runs; it's the only frog command that opens a browser for MCP.
+    #[arg(long, value_name = "SERVER")]
+    mcp_signin: Option<String>,
     /// Read Mermaid from stdin, lay it out, and print the diagram (JSON with --json) and exit.
     #[arg(long)]
     mermaid: bool,
@@ -431,6 +437,7 @@ async fn run() -> Result<bool> {
     cfg.energy |= cli.energy;
     // The engine log is stderr, which only a client like the Mac app keeps.
     cfg.log_calls |= cli.serve;
+    cfg.cloud_sandbox = cli.serve_ws.is_some();
     if cli.no_shell_sandbox {
         cfg.sandbox_shell = false;
     }
@@ -577,6 +584,30 @@ async fn run() -> Result<bool> {
         }
         return Ok(true);
     }
+    if let Some(server) = &cli.mcp_signin {
+        let mut configured = frog_engine::mcp::configured(&cfg, &cwd);
+        let cfg_of = configured
+            .remove(server)
+            .with_context(|| format!("`{server}` isn't a configured MCP server here"))?;
+        println!("signing in to `{server}` in your browser…");
+        let browser: frog_engine::mcp_oauth::Browser = std::sync::Arc::new(|url: String| {
+            let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+            let opened = std::process::Command::new(opener)
+                .arg(&url)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success());
+            if !opened {
+                eprintln!("open this to sign in:\n  {url}");
+            }
+        });
+        frog_engine::mcp::sign_in(server, &cfg_of, None, browser).await?;
+        // Signed in on purpose, so a remembered refusal no longer applies.
+        frog_engine::mcp::forget_refusal(&frog_engine::mcp::auth_key(server, &cfg_of));
+        println!("signed in to `{server}`");
+        return Ok(true);
+    }
     if cli.mcp {
         let servers = frog_engine::mcp::configured(&cfg, &cwd);
         let hub =
@@ -591,9 +622,15 @@ async fn run() -> Result<bool> {
         }
         if !cli.json {
             for st in &status {
-                match &st.error {
-                    Some(e) => println!("✗ {}  {e}", st.name),
-                    None => println!(
+                // A server wanting a sign-in also carries an error line (it is one), so it
+                // must be matched first or the actionable line never shows.
+                match (st.needs_auth, &st.error) {
+                    (true, _) => println!(
+                        "✗ {}  not signed in · sign in from Settings → MCP in the app",
+                        st.name
+                    ),
+                    (false, Some(e)) => println!("✗ {}  {e}", st.name),
+                    (false, None) => println!(
                         "✓ {}  {} tools: {}",
                         st.name,
                         st.tools.len(),
@@ -704,6 +741,9 @@ async fn run() -> Result<bool> {
     }
     if let Some(addr) = &cli.listen {
         let token = std::env::var("FROG_LISTEN_TOKEN").unwrap_or_default();
+        // Keep it from the agent's tools, which inherit this environment.
+        // SAFETY: before any engine or task that reads the environment starts.
+        unsafe { std::env::remove_var("FROG_LISTEN_TOKEN") };
         let (cfg, sandbox, chat, dir) = (cfg.clone(), cli.sandbox, cli.chat, store.clone());
         let make = move |resume, model: Option<String>| -> Result<Options> {
             let (profile_name, profile) = match model {
@@ -732,6 +772,15 @@ async fn run() -> Result<bool> {
         listen::run(addr, token, template).await?;
         return Ok(true);
     }
+    // Checked before the engine starts, so a refused bind costs nothing.
+    let ws_token = std::env::var(ws::TOKEN_ENV).ok().filter(|t| !t.is_empty());
+    // Keep it from the agent's tools, which inherit this environment.
+    // SAFETY: before the engine or any task that reads the environment starts.
+    unsafe { std::env::remove_var(ws::TOKEN_ENV) };
+    if let Some(addr) = &cli.serve_ws {
+        let insecure = std::env::var(ws::INSECURE_ENV).is_ok_and(|v| v == "1");
+        ws::check_bind(addr, ws_token.as_deref(), insecure)?;
+    }
     let handle = frog_engine::spawn_checked(Options {
         cfg: cfg.clone(),
         profile_name,
@@ -754,7 +803,7 @@ async fn run() -> Result<bool> {
 
     let mut prompt = cli.prompt.join(" ");
     if let Some(addr) = &cli.serve_ws {
-        ws::serve(handle, addr).await?;
+        ws::serve(handle, addr, ws_token).await?;
         return Ok(true);
     }
     if cli.serve {

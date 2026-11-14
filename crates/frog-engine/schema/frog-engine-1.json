@@ -3094,6 +3094,118 @@
           "type": "object"
         },
         {
+          "description": "The configured MCP servers and how each is doing, the whole list, sent whenever one\nconnects, fails, or a sign-in changes its state. Durable, so a replayed session shows\nthe same \"not signed in\" rows: a tool the user configured must never vanish silently.",
+          "properties": {
+            "created": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "event": {
+              "const": "mcp_servers",
+              "type": "string"
+            },
+            "seq": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "servers": {
+              "items": {
+                "$ref": "#/$defs/McpServerReport"
+              },
+              "type": "array"
+            },
+            "session": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "servers",
+            "seq",
+            "session",
+            "created"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A person signed in to an MCP server from its card ([`Op::McpSignIn`]): the browser\nfinished, the tokens are stored and the server reconnected with its tools.",
+          "properties": {
+            "created": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "event": {
+              "const": "mcp_signed_in",
+              "type": "string"
+            },
+            "seq": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "server": {
+              "type": "string"
+            },
+            "session": {
+              "type": "string"
+            },
+            "tools": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "event",
+            "server",
+            "tools",
+            "seq",
+            "session",
+            "created"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A sign-in that didn't happen: the person declined, or the flow failed. `error` is the\none line to show. Either way the server stays `needs_auth`; a decline is remembered,\nso no later session asks again.",
+          "properties": {
+            "created": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "event": {
+              "const": "mcp_signed_out",
+              "type": "string"
+            },
+            "seq": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "server": {
+              "type": "string"
+            },
+            "session": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "server",
+            "seq",
+            "session",
+            "created"
+          ],
+          "type": "object"
+        },
+        {
           "description": "The model asked for the person's attention (its `Notify` tool): a banner, a Dock bounce,\na push to the phone — whatever the client does with a notification. The engine never\nsends one on its own (a finished reply is already on screen); this is only ever the\nmodel's deliberate call. Live only: a replaying client shows the tool call's row, not a\nsecond alert for something that happened hours ago.",
           "properties": {
             "body": {
@@ -4811,6 +4923,73 @@
           "type": "object"
         },
         {
+          "description": "The configured MCP servers and how each is doing, the whole list, sent whenever one\nconnects, fails, or a sign-in changes its state. Durable, so a replayed session shows\nthe same \"not signed in\" rows: a tool the user configured must never vanish silently.",
+          "properties": {
+            "event": {
+              "const": "mcp_servers",
+              "type": "string"
+            },
+            "servers": {
+              "items": {
+                "$ref": "#/$defs/McpServerReport"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "event",
+            "servers"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A person signed in to an MCP server from its card ([`Op::McpSignIn`]): the browser\nfinished, the tokens are stored and the server reconnected with its tools.",
+          "properties": {
+            "event": {
+              "const": "mcp_signed_in",
+              "type": "string"
+            },
+            "server": {
+              "type": "string"
+            },
+            "tools": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "event",
+            "server",
+            "tools"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A sign-in that didn't happen: the person declined, or the flow failed. `error` is the\none line to show. Either way the server stays `needs_auth`; a decline is remembered,\nso no later session asks again.",
+          "properties": {
+            "error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "event": {
+              "const": "mcp_signed_out",
+              "type": "string"
+            },
+            "server": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "server"
+          ],
+          "type": "object"
+        },
+        {
           "description": "The model asked for the person's attention (its `Notify` tool): a banner, a Dock bounce,\na push to the phone — whatever the client does with a notification. The engine never\nsends one on its own (a finished reply is already on screen); this is only ever the\nmodel's deliberate call. Live only: a replaying client shows the tool call's row, not a\nsecond alert for something that happened hours ago.",
           "properties": {
             "body": {
@@ -5530,6 +5709,44 @@
       ],
       "type": "string"
     },
+    "McpServerReport": {
+      "description": "One configured MCP server, as [`Event::McpServers`] reports it: enough to draw a row with\na working sign-in button, and to say why a server someone configured isn't offering tools.",
+      "properties": {
+        "connected": {
+          "type": "boolean"
+        },
+        "declined": {
+          "description": "The person already declined this server's sign-in (remembered across sessions): the\nrow still says so, without asking again.",
+          "type": "boolean"
+        },
+        "error": {
+          "description": "One line on how it's doing, when it isn't connected.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "needs_auth": {
+          "description": "The server wants an OAuth sign-in: show \"not signed in\" and a button, never a failure.",
+          "type": "boolean"
+        },
+        "tools": {
+          "description": "The tools it offers, by their `mcp__<server>__<tool>` names.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "connected"
+      ],
+      "type": "object"
+    },
     "Mode": {
       "oneOf": [
         {
@@ -6093,6 +6310,27 @@
             "id",
             "server",
             "tool"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A person asked to sign in to a configured MCP server (Settings → MCP → Sign in, or the\ntranscript's sign-in card). The only path that opens a browser for MCP: connecting\nnever does (it reports `needs_auth` instead). Answered with\n[`Event::McpSignedIn`]; with `decline`, with [`Event::McpSignedOut`] — the refusal is\nremembered, so no later session asks again.",
+          "properties": {
+            "decline": {
+              "default": false,
+              "type": "boolean"
+            },
+            "op": {
+              "const": "mcp_sign_in",
+              "type": "string"
+            },
+            "server": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "server"
           ],
           "type": "object"
         },

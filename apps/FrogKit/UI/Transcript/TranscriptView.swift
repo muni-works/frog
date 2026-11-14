@@ -498,6 +498,13 @@ struct TranscriptTrailer: View {
             OverflowRescueView(conversation: conversation)
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
         }
+        // A server someone configured that isn't signed in to: its tools are missing from the
+        // model's list, so say so here too — never only in Settings, where nobody looks.
+        if let out = conversation.signedOutServers {
+            SignedOutCard(servers: out, conversation: conversation)
+                .padding(.top, space.turn)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+        }
     }
 }
 

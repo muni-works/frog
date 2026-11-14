@@ -1973,6 +1973,27 @@ async fn titled_sessions_are_not_renamed_by_the_fallback() {
     );
 }
 
+/// The refusal state's override is process-wide, so the tests that use it take turns.
+static REFUSALS: Mutex<()> = Mutex::new(());
+
+/// A scratch dir for MCP refusal state, held for the test's life: the lock keeps the tests
+/// that use it from racing, and dropping it restores the real data dir.
+struct RefusalDir(#[allow(dead_code)] std::sync::MutexGuard<'static, ()>);
+
+impl RefusalDir {
+    fn new() -> Self {
+        let guard = REFUSALS.lock().unwrap_or_else(|e| e.into_inner());
+        crate::mcp::refusals_in(Some(tmp_store().join("refusals")));
+        Self(guard)
+    }
+}
+
+impl Drop for RefusalDir {
+    fn drop(&mut self) {
+        crate::mcp::refusals_in(None);
+    }
+}
+
 fn tmp_store() -> PathBuf {
     let d = std::env::temp_dir().join(format!("frog-engine-test-{}", session::new_id()));
     std::fs::create_dir_all(&d).unwrap();
@@ -2572,6 +2593,72 @@ async fn the_worktree_lock_follows_a_folder_change() {
 async fn shutdown(mut h: Handle) {
     h.ops.send(Op::Shutdown).unwrap();
     while h.events.recv().await.is_some() {}
+}
+
+/// The session's own command removed the folder its shell stood in (an agent cleaning up the
+/// worktree it had `cd`-ed into — "frog manager", 2026-11-14). That's not news to anyone: no
+/// warning row, the shell is back at the session root at once, and the model reads why in
+/// that call's own result. The next command runs from the root without a notice.
+#[tokio::test]
+async fn removing_its_own_cwd_falls_back_quietly() {
+    let base = std::env::temp_dir().join(format!("frog-cwd-self-{}", session::new_id()));
+    let project = base.join("project");
+    std::fs::create_dir_all(project.join("wt")).unwrap();
+    let call = |id: &str, cmd: &str| Block::ToolUse {
+        id: id.into(),
+        name: "Bash".into(),
+        input: json!({ "command": cmd }),
+    };
+    let script = vec![
+        reply(vec![call("c", "cd wt")], Stop::ToolUse),
+        reply(vec![call("r", "rm -rf \"$PWD\"")], Stop::ToolUse),
+        reply(vec![call("e", "echo still-here")], Stop::ToolUse),
+        reply(vec![text("done")], Stop::End),
+    ];
+    let mut profile = Profile::new(ProviderKind::Ollama, "test");
+    profile.tool_mode = ToolMode::Native;
+    let opts = Options {
+        cfg: Config {
+            hermetic: true,
+            ..Config::default()
+        },
+        profile_name: "test".into(),
+        profile,
+        cwd: project.clone(),
+        mode: Mode::Yolo,
+        can_ask: true,
+        resume: None,
+        store: None,
+        sandbox: false,
+        rich: false,
+        subagent: false,
+        chat: false,
+    };
+    let mut h = start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap();
+    let evs = run(&mut h, "clean up").await;
+    assert!(!project.join("wt").exists());
+    let notices = notices(&evs);
+    assert!(
+        !notices.iter().any(|n| n.contains("is gone")),
+        "a warning row for the session's own cleanup: {notices:?}"
+    );
+    let outputs: Vec<&str> = evs
+        .iter()
+        .filter_map(|e| match &e.event {
+            Event::ItemCompleted {
+                item: Item::ToolCall { name, output, .. },
+                ..
+            } if name == "Bash" => Some(output.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        outputs.iter().any(|o| o.contains("back in the session root")),
+        "{outputs:?}"
+    );
+    assert!(outputs.iter().any(|o| o.contains("still-here")), "{outputs:?}");
+    shutdown(h).await;
+    let _ = std::fs::remove_dir_all(&base);
 }
 
 /// A working directory deleted out from under the session (a worktree cleaned up) would
@@ -4208,7 +4295,7 @@ async fn long_tool_turn_compacts_again_after_new_messages_fill_the_window() {
     let work = |id: &str| {
         reply(
             vec![
-                text(&"Long implementation analysis. ".repeat(1200)),
+                text(&"Long implementation analysis. ".repeat(650)),
                 Block::ToolUse {
                     id: id.into(),
                     name: "Read".into(),
@@ -6580,22 +6667,27 @@ mod egress_tests {
         // The declared hosts are granted: the later call, which declares nothing, reaches them.
         assert!(egress_hits(&evs).is_empty(), "nothing was blocked");
         assert!(!tool_output(&evs, "after").contains("frog blocked"));
-        // The quiet line is in the transcript as info, not a warning.
+        // Leaving the sandbox restates a property of the call itself, so it belongs on the
+        // call's row, not as a second row: the transcript shows one record per shape, the
+        // `EgressWidened` event (durable, replayed) plus the row the client draws from it.
+        // A notice here rendered twice on the Mac ("Ran …" then "ⓘ Yolo: …").
         assert!(
-            evs.iter().any(|e| matches!(
+            !evs.iter().any(|e| matches!(
                 &e.event,
-                Event::Notice { level: Level::Info, message }
-                    if message.contains("yolo: `echo hi` ran outside the sandbox")
+                Event::Notice { message, .. }
+                    if message.contains("ran outside the sandbox")
             )),
-            "the sandbox line is a quiet info row"
+            "one row per call: no second notice restating the tool row"
         );
+        // The hosts variant is a notice: which hosts got granted this session is a fence
+        // state the user couldn't see otherwise (it can persist past the turn).
         assert!(
             evs.iter().any(|e| matches!(
                 &e.event,
                 Event::Notice { level: Level::Info, message }
                     if message.contains("reaches pkgs.example.org, now allowed this session")
             )),
-            "the hosts line is a quiet info row"
+            "the hosts line stays a quiet info row"
         );
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -6670,13 +6762,15 @@ mod egress_tests {
             vec![("both".to_string(), Vec::new(), true)],
             "one row: it left the sandbox"
         );
+        // The fact is the durable event, not a second notice row: a row for the call and a
+        // row for what the call already says is the double render this module exists to keep
+        // off the transcript.
         assert!(
-            evs.iter().any(|e| matches!(
+            !evs.iter().any(|e| matches!(
                 &e.event,
-                Event::Notice { level: Level::Info, message }
-                    if message.contains("`echo hi` ran outside the sandbox")
+                Event::Notice { message, .. } if message.contains("ran outside the sandbox")
             )),
-            "the row says what actually happened"
+            "leaving the sandbox rides the call's row, never a second notice"
         );
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -8012,14 +8106,25 @@ async fn edits_and_commands_never_start_early_nor_anything_after_them() {
     assert!(r2.contains("fn z()"), "{r2}");
 }
 
+/// A repeated JobOutput or Read is told what to do instead, in one line (the generic "change
+/// the arguments" sent models round again: ~20 repeats in a day's logs).
+#[test]
+fn a_repeated_call_names_the_fix_for_its_tool() {
+    let job = super::repeat_nudge("JobOutput", &json!({"id": "job-1"}), "job-1 (running)", 2);
+    assert!(job.contains("<job-done>") && job.contains("Monitor"), "{job}");
+    assert!(super::repeat_fix("Read").contains("offset/limit"));
+    assert!(super::repeat_fix("Grep").contains("Change the arguments"));
+}
+
 #[tokio::test(start_paused = true)]
 async fn a_broken_stream_discards_what_started_early() {
     let dir = tmp_store();
     std::fs::write(dir.join("a.rs"), "fn a() {}\n").unwrap();
+    // A Write, which needs the Read (an Edit with an exact old_string no longer does).
     let edit = Block::ToolUse {
         id: "e1".into(),
-        name: "Edit".into(),
-        input: json!({ "file_path": "a.rs", "old_string": "fn a()", "new_string": "fn z()" }),
+        name: "Write".into(),
+        input: json!({ "file_path": "a.rs", "content": "fn z() {}\n" }),
     };
     let script = (0..4)
         .map(|_| {
@@ -8056,7 +8161,7 @@ async fn a_broken_stream_discards_what_started_early() {
         )
     };
     assert!(!evs.iter().any(tool_item));
-    // The early read never counted: the edit still needs a read first.
+    // The early read never counted: the write still needs a read first.
     h.ops
         .send(Op::Submit {
             text: "edit it".into(),
@@ -8942,6 +9047,162 @@ async fn a_finished_bash_job_reports_its_exit_and_output() {
     );
 }
 
+/// A background job that ends while the turn is still running is in the *next model call of
+/// that turn*, not the turn after it: `take_notices` drains at the same tool boundary that
+/// already flushes session messages and pane reports. Before that it parked until the turn
+/// ended, so a model working through a long turn reasoned about a stale world.
+#[tokio::test]
+async fn a_wake_landing_mid_turn_reaches_the_next_call_of_that_turn() {
+    let dir = tmp_store();
+    // A monitor that fires 1s in, while the 3s Bash call is still running: the notice is
+    // parked before the turn's second step starts, and drops here.
+    let script = vec![
+        reply(
+            vec![
+                call("m", "Monitor", json!({"after_s": 1, "note": "pod check"})),
+                call("b", "Bash", json!({"command": "sleep 3; echo slept"})),
+            ],
+            Stop::ToolUse,
+        ),
+        reply(vec![text("turn one done")], Stop::End),
+    ];
+    // A store of its own: the replay below needs a log on disk, and `store: None` leaves the
+    // journal with nowhere to write (so `events_after` finds no file). The session id is the
+    // engine's own either way — `tmp_store` only names the directory.
+    let store = tmp_store();
+    let (mut h, sent) = engine_sent(script, Some(store.clone()), None, None, dir.clone());
+    drive(&mut h, |e| matches!(e, Event::Idle)).await;
+    submit(&h, "set a timer and work");
+    let evs = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+    // The timer fired mid-turn...
+    assert!(
+        evs.iter()
+            .any(|e| matches!(&e.event, Event::BackgroundDone { id, status, .. }
+                if id == "mon-1" && status == "done")),
+        "the timer fired during the turn"
+    );
+    // ...and the turn's own second call carries it, before the turn ends.
+    assert_eq!(
+        sent.lock().unwrap().len(),
+        2,
+        "two calls: the tool batch, then the step that ends the turn"
+    );
+    let second = request_messages(&sent, 1);
+    let texts = user_texts(&second);
+    assert!(
+        texts.iter().any(|t| t.contains("<wakeup id=mon-1")
+            && t.contains("pod check")),
+        "the model's next look at the world carries the wake: {texts:?}"
+    );
+    // The turn ended on its own step, not because a wake forced a new one.
+    assert_eq!(
+        evs.iter()
+            .filter(|e| matches!(e.event, Event::TurnStarted { .. }))
+            .count(),
+        1,
+        "the wake did not start a turn of its own"
+    );
+    // ...and the transcript shows it: the row that marked the turn has the wake, so the user
+    // watches the model react to something on screen. Durable, and it names this turn.
+    let delivered = evs
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::WakesDelivered { turn, wakes } => Some((*turn, wakes.clone())),
+            _ => None,
+        })
+        .expect("the wake is delivered as an event, not only as a prompt");
+    assert_eq!(delivered.0, 1, "it belongs to the turn that was running");
+    assert!(
+        delivered.1.len() == 1 && delivered.1[0].starts_with("<wakeup id=mon-1"),
+        "{delivered:?}"
+    );
+    let sid = evs[0].session.clone();
+    shutdown(h).await;
+    let logged = session::events_after(&store, &sid, 0).unwrap();
+    assert!(
+        logged
+            .iter()
+            .any(|e| matches!(&e.event, Event::WakesDelivered { turn: 1, .. })),
+        "a reopened session replays the row where it landed"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+    let _ = std::fs::remove_dir_all(store);
+}
+
+/// The other half of that: draining at the boundary must not break the turn-start path. A wake
+/// parked before a turn starts still rides in as that turn's input (as it always did), and the
+/// boundary drain of the *same* notices never happens — one delivery, not two, and never an
+/// empty `WakesDelivered` (an activity row for nothing).
+#[tokio::test]
+async fn a_wake_taken_at_turn_start_is_not_delivered_twice_mid_turn() {
+    let dir = tmp_store();
+    // Turn one sets a timer and ends at once; the timer fires with nothing running, so it wakes
+    // a turn of its own — that turn's *first step* is the boundary under test. It has to make a
+    // call for the boundary to run at all, which it does (the scripted reply).
+    let script = vec![
+        reply(
+            vec![call("m", "Monitor", json!({"after_s": 1, "note": "check"}))],
+            Stop::ToolUse,
+        ),
+        reply(vec![text("turn one done")], Stop::End),
+        reply(vec![text("the timer woke me")], Stop::End),
+    ];
+    let (mut h, sent) = engine_sent(script, None, None, None, dir.clone());
+    drive(&mut h, |e| matches!(e, Event::Idle)).await;
+    submit(&h, "set a timer");
+    drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+    // The timer fires while nothing runs: it parks and wakes a turn of its own.
+    let wake_turn = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+    let delivered: Vec<u64> = wake_turn
+        .iter()
+        .filter_map(|e| match &e.event {
+            Event::WakesDelivered { turn, wakes } => {
+                assert!(!wakes.is_empty(), "an empty WakesDelivered is a row for nothing");
+                Some(*turn)
+            }
+            _ => None,
+        })
+        .collect();
+    // A turn started *on* the wake carries it as its input instead (protocol.rs), so no
+    // event: what must not appear is a second, empty one from the boundary drain.
+    assert!(
+        delivered.is_empty(),
+        "a wake turn carries its wakes as input, so nothing is delivered: {delivered:?}"
+    );
+    let input = wake_turn
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::TurnStarted { input, .. } => Some(input.clone()),
+            _ => None,
+        })
+        .unwrap();
+    assert!(input.starts_with("<wakeup id=mon-1"), "{input}");
+    // Exactly one turn ran on the wake, and the boundary it reached mid-turn (its own first
+    // step) found the queue already empty — so it did not push the wake into the history a
+    // second time.
+    assert_eq!(
+        wake_turn
+            .iter()
+            .filter(|e| matches!(e.event, Event::TurnStarted { .. }))
+            .count(),
+        1,
+        "one turn for the one wake"
+    );
+    // The wake reached the model exactly once: one user block in the wake turn's request.
+    // (Counting occurrences in the raw requests would overcount — the Monitor tool's own
+    // result text mentions `<wakeup id=mon-1>` — and a second user block is exactly what a
+    // boundary drain that found the queue unemptied would add.)
+    let last = request_messages(&sent, 2);
+    let wakes: Vec<String> = user_texts(&last)
+        .into_iter()
+        .filter(|t| t.starts_with("<wakeup id=mon-1"))
+        .collect();
+    assert_eq!(wakes.len(), 1, "delivered once, not twice: {wakes:?}");
+    drive(&mut h, |e| matches!(e, Event::Idle)).await;
+    shutdown(h).await;
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 /// The sleep guard: a long bare wait (the specimen: `sleep 570; wc -l …; tail …`, a
 /// 9.5-minute blocking turn) runs as a background job. The tool returns at once with a note
 /// saying so, a Warn notice tells the user, and the turn's next step runs right away.
@@ -9040,10 +9301,11 @@ async fn a_second_long_sleep_while_one_waits_is_refused() {
 }
 
 /// Events never interrupt a turn: two timers that fire while a turn is busy (a 3s command)
-/// are parked, the turn completes normally, and they run as the next turn, in the order
-/// they fired, before the engine goes idle (no `Idle` between the two turns).
+/// join *that* turn at its next step, in the order they fired — as one batch, never as a
+/// turn of their own and never an `Idle` in between. (Before the boundary drain they parked
+/// through to the turn's end and ran as the next turn; that is the behaviour this replaces.)
 #[tokio::test]
-async fn wakes_mid_turn_queue_for_the_boundary_in_order() {
+async fn wakes_mid_turn_join_that_turn_in_order() {
     let dir = tmp_store();
     let script = vec![
         reply(
@@ -9055,9 +9317,8 @@ async fn wakes_mid_turn_queue_for_the_boundary_in_order() {
             Stop::ToolUse,
         ),
         reply(vec![text("turn one done")], Stop::End),
-        reply(vec![text("both timers seen")], Stop::End),
     ];
-    let mut h = engine_with(script, true, None, None, None, dir.clone());
+    let (mut h, sent) = engine_sent(script, None, None, None, dir.clone());
     drive(&mut h, |e| matches!(e, Event::Idle)).await;
     submit(&h, "set two timers and work");
     let first = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
@@ -9083,21 +9344,36 @@ async fn wakes_mid_turn_queue_for_the_boundary_in_order() {
         1,
         "nothing started mid-turn"
     );
-    let next = drive(&mut h, |e| matches!(e, Event::TurnStarted { .. })).await;
-    assert!(
-        !next.iter().any(|e| matches!(e.event, Event::Idle)),
-        "the wake runs before the engine goes idle"
-    );
-    let input = next
+    // One delivery, on the running turn, holding both in the order they fired.
+    let batches: Vec<Vec<String>> = first
         .iter()
-        .find_map(|e| match &e.event {
-            Event::TurnStarted { input, .. } => Some(input.clone()),
+        .filter_map(|e| match &e.event {
+            Event::WakesDelivered { turn: 1, wakes } => Some(wakes.clone()),
             _ => None,
         })
-        .unwrap();
-    let (a, b) = (input.find("first").unwrap(), input.find("second").unwrap());
-    assert!(input.starts_with("<wakeup id=mon-1") && a < b, "{input}");
-    drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        .collect();
+    assert_eq!(batches.len(), 1, "one boundary, one delivery: {batches:?}");
+    let (a, b) = (batches[0].join("\n"), batches[0][0].clone());
+    assert!(b.starts_with("<wakeup id=mon-1"), "{batches:?}");
+    assert_eq!(batches[0].len(), 2, "{batches:?}");
+    assert!(
+        batches[0][1].starts_with("<wakeup id=mon-2"),
+        "in the order they fired: {batches:?}"
+    );
+    // ...and the model's second call carried both, before the turn ended.
+    let texts = user_texts(&request_messages(&sent, 1));
+    let joined = texts.join("\n");
+    let (fi, si) = (
+        joined.find("first").expect("the first timer"),
+        joined.find("second").expect("the second timer"),
+    );
+    assert!(fi < si, "fired in order: {joined}");
+    // The turn ended on its own step: no turn of its own for the wakes, and no Idle first.
+    let after = drive(&mut h, |e| matches!(e, Event::Idle)).await;
+    assert!(
+        !after.iter().any(|e| matches!(e.event, Event::TurnStarted { .. })),
+        "the wakes did not start a turn of their own"
+    );
     shutdown(h).await;
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -9158,11 +9434,13 @@ async fn an_informational_message_is_read_without_a_turn() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// Everything waiting at a boundary goes as one batch: a wake that fired mid-turn and a
-/// session message that arrived mid-turn open one turn together (wake as its input, the
-/// message as `more`), and clients see the queue while it waits.
+/// The wake and the session message take different roads now, and neither is lost. The wake,
+/// which fired mid-turn, goes into the running turn at its boundary (`WakesDelivered` names
+/// that turn, and clients clear the queue they showed while it waited). The session message,
+/// which arrived too late for that boundary, still opens the next turn — as its input, with no
+/// wake row, because the wake already landed.
 #[tokio::test]
-async fn a_boundary_flushes_wakes_and_messages_as_one_batch() {
+async fn a_wake_joins_the_turn_and_a_late_message_opens_the_next() {
     let dir = tmp_store();
     let script = vec![
         reply(
@@ -9173,9 +9451,9 @@ async fn a_boundary_flushes_wakes_and_messages_as_one_batch() {
             Stop::ToolUse,
         ),
         reply(vec![text("turn one")], Stop::End),
-        reply(vec![text("saw both")], Stop::End),
+        reply(vec![text("got the message")], Stop::End),
     ];
-    let mut h = engine_with(script, true, None, None, None, dir.clone());
+    let (mut h, sent) = engine_sent(script, None, None, None, dir.clone());
     drive(&mut h, |e| matches!(e, Event::Idle)).await;
     submit(&h, "work");
     let parked = drive(
@@ -9187,7 +9465,7 @@ async fn a_boundary_flushes_wakes_and_messages_as_one_batch() {
         !parked
             .iter()
             .any(|e| matches!(e.event, Event::TurnEnded { .. })),
-        "parked mid-turn"
+        "the wake waited mid-turn"
     );
     h.ops
         .send(Op::Deliver {
@@ -9196,7 +9474,21 @@ async fn a_boundary_flushes_wakes_and_messages_as_one_batch() {
             message: "serving:true".into(),
         })
         .unwrap();
-    drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+    let first = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+    // The wake landed on turn 1, at the boundary, and the queue clients saw is empty now.
+    assert!(
+        first.iter().any(|e| matches!(&e.event,
+            Event::WakesDelivered { turn: 1, wakes } if wakes[0].contains("pod check"))),
+        "the wake joins the running turn"
+    );
+    assert!(
+        first
+            .iter()
+            .any(|e| matches!(&e.event, Event::QueuedEvents { items } if items.is_empty())),
+        "the flush empties the queue clients see"
+    );
+    // The session message opens the next turn alone: it is its input, and there is no `more`
+    // and no wake row — the wake is not delivered a second time.
     let next = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
     let (input, more) = next
         .iter()
@@ -9206,24 +9498,27 @@ async fn a_boundary_flushes_wakes_and_messages_as_one_batch() {
         })
         .unwrap();
     assert!(
-        input.starts_with("<wakeup id=mon-1") && input.contains("pod check"),
+        input.starts_with("<session-message from=\"s9\"") && input.contains("serving:true"),
         "{input}"
     );
-    assert_eq!(more.len(), 1, "{more:?}");
+    assert!(more.is_empty(), "{more:?}");
     assert!(
-        more[0].text.starts_with("<session-message from=\"s9\"")
-            && more[0].text.contains("serving:true")
-    );
-    assert!(
-        next.iter()
-            .any(|e| matches!(&e.event, Event::QueuedEvents { items } if items.is_empty())),
-        "the flush empties the queue clients see"
+        !next.iter().any(|e| matches!(e.event, Event::WakesDelivered { .. })),
+        "the wake was already delivered"
     );
     let turns = next
         .iter()
         .filter(|e| matches!(e.event, Event::TurnStarted { .. }))
         .count();
-    assert_eq!(turns, 1, "one batch, one turn");
+    assert_eq!(turns, 1, "one turn for the one message");
+    // The wake rode turn 1's second call, and the turn after carries it once in the history
+    // (it is still there to read) — not twice. A block count, not a substring: the Monitor
+    // tool's own result text mentions `<wakeup id=mon-1>` too.
+    let last = user_texts(&request_messages(&sent, 2))
+        .into_iter()
+        .filter(|t| t.starts_with("<wakeup id=mon-1"))
+        .count();
+    assert_eq!(last, 1, "delivered once, carried once");
     drive(&mut h, |e| matches!(e, Event::Idle)).await;
     shutdown(h).await;
     let _ = std::fs::remove_dir_all(dir);
@@ -9674,7 +9969,8 @@ async fn a_prompt_past_the_hard_limit_compacts_before_the_call() {
         reply(vec![text("Done.")], Stop::End),
     ];
     let (mut h, sent) = engine_sent(script, None, None, Some(8192), std::env::temp_dir());
-    let evs = run(&mut h, &"Do the long thing. ".repeat(1600)).await;
+    // Past the hard limit, but not so far past the window that it's summarized in parts.
+    let evs = run(&mut h, &"Do the long thing. ".repeat(1000)).await;
     assert_eq!(
         evs.iter()
             .filter(|e| matches!(e.event, Event::Compacted { .. }))
@@ -9802,11 +10098,12 @@ async fn a_context_overflow_twice_ends_the_turn_with_a_clear_error() {
         )
     };
     let client = scripted::Client::new(vec![reply(vec![text("Summary.")], Stop::End)]);
+    // The step, the summary request, then the summary in parts and in smaller parts.
     client
         .fails
         .lock()
         .unwrap()
-        .extend([overflow(), overflow()]);
+        .extend([overflow(), overflow(), overflow(), overflow()]);
     let opts = Options {
         cfg: Config {
             hermetic: true,
@@ -11011,6 +11308,83 @@ async fn a_denied_call_retried_in_the_same_turn_ends_it_blocked() {
     // It round-trips as a tagged reason.
     let v = serde_json::to_value(EndReason::BlockedOnApproval { denial: "x".into() }).unwrap();
     assert_eq!(v, json!({"type": "blocked_on_approval", "denial": "x"}));
+}
+
+/// The unsandboxed card's reason as the user would see it, with the engine told whether it
+/// runs in a Frog Cloud sandbox VM.
+async fn escape_reason(cloud: bool) -> String {
+    let cfg = Config {
+        hermetic: true,
+        sandbox_shell: false,
+        cloud_sandbox: cloud,
+        ..Config::default()
+    };
+    let script = vec![
+        reply(
+            vec![Block::ToolUse {
+                id: "b".into(),
+                name: "Bash".into(),
+                input: json!({ "command": "brew install jq", "unsandboxed": true }),
+            }],
+            Stop::ToolUse,
+        ),
+        reply(vec![text("ok")], Stop::End),
+    ];
+    let mut h = engine_perm_cfg(script, Mode::Default, cfg);
+    let evs = turn_answering(&mut h, |_| Some((Decision::Deny, None))).await;
+    shutdown(h).await;
+    evs.iter()
+        .find_map(|e| match &e.event {
+            Event::PermissionRequest { reason, .. } => reason.clone(),
+            _ => None,
+        })
+        .expect("leaving the sandbox cards with a reason")
+}
+
+/// On the user's own machine the card warns about credentials; that stays.
+#[tokio::test]
+async fn local_escape_card_warns_about_credentials() {
+    assert_eq!(
+        escape_reason(false).await,
+        "Runs outside the sandbox: it can change files anywhere and read your credentials."
+    );
+}
+
+/// In a Frog Cloud sandbox VM there are no credentials of the user's to read: the card says
+/// what's true there (Cam's launch review, 2026-11-14).
+#[tokio::test]
+async fn cloud_escape_card_says_cloud_machine_not_credentials() {
+    let reason = escape_reason(true).await;
+    assert!(!reason.contains("credentials"), "{reason}");
+    assert_eq!(
+        reason,
+        "Runs outside the command sandbox, inside your cloud machine: it can change anything on that machine and reach the network."
+    );
+}
+
+/// A denied command ends the turn with one plain sentence, not just the row's tag.
+#[tokio::test]
+async fn a_denied_command_leaves_a_sentence() {
+    let script = vec![
+        reply(
+            vec![Block::ToolUse {
+                id: "b".into(),
+                name: "Bash".into(),
+                input: json!({ "command": "brew install jq", "unsandboxed": true }),
+            }],
+            Stop::ToolUse,
+        ),
+        reply(vec![text("ok")], Stop::End),
+    ];
+    let mut h = engine_perm(script, Mode::Default, None);
+    let evs = turn_answering(&mut h, |_| Some((Decision::Deny, None))).await;
+    shutdown(h).await;
+    assert_eq!(ended(&evs), Some(EndReason::Denied));
+    let said: Vec<_> = notices(&evs)
+        .into_iter()
+        .filter(|n| n == DENIED_ENDING)
+        .collect();
+    assert_eq!(said.len(), 1, "{:?}", notices(&evs));
 }
 
 /// (5) An identical carded call denied twice in a session never asks again: the third
@@ -12322,3 +12696,327 @@ async fn prs_bind_from_gh_pr_create_and_by_hand() {
     let _ = std::fs::remove_dir_all(base);
 }
 
+
+
+/// The whole point of this change, end to end through a real engine: opening a session whose
+/// project configures a server that answers 401 must not open a browser, must report the
+/// server as `needs_auth`, and must leave that server's tools out of the model's list.
+///
+/// The assertion that matters is [`crate::mcp_oauth::opened`]: the old code was right by
+/// every return value — the connect returned, the turn ran, the session went on — while a
+/// system-modal window appeared. Only counting browser calls catches that.
+#[tokio::test]
+async fn a_session_with_a_server_that_wants_a_sign_in_opens_no_browser() {
+    let _turn = crate::mcp_oauth::browser_tests();
+    let _memory = crate::mcp_oauth::use_memory_store();
+    let (web, mock) = crate::mcp_oauth::tests::start_mock("tok-session");
+    let dir = tmp_store();
+    // The project's own server, at the mock's OAuth-protected `/mcp`.
+    let cfg = json!({"mcpServers": {"protected": {"type": "http", "url": web.url("/mcp")}}});
+    std::fs::write(dir.join(".mcp.json"), cfg.to_string()).unwrap();
+    let before = crate::mcp_oauth::opened().lock().unwrap().len();
+
+    let (mut h, sent) = engine_sent(
+        vec![reply(vec![text("done")], Stop::End)],
+        Some(dir.clone()),
+        None,
+        None,
+        dir.clone(),
+    );
+    // Wait for the connect to settle: the server's row arrives saying it wants a sign-in.
+    let mut events = Vec::new();
+    let report = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let env = h.events.recv().await.unwrap();
+            let found = match &env.event {
+                Event::McpServers { servers } => {
+                    servers.iter().find(|s| s.name == "protected").cloned()
+                }
+                _ => None,
+            };
+            events.push(env);
+            if let Some(s) = found.filter(|s| s.needs_auth || s.connected) {
+                break s;
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|e| {
+        // Check the browser first even on the way out: with `authorize` back on the connect
+        // path this is where the test lands (the connect sits in the 15-minute sign-in
+        // instead of reporting), and the browser is the thing worth naming.
+        let opened = crate::mcp_oauth::opened().lock().unwrap();
+        assert_eq!(
+            opened.len(),
+            before,
+            "opening a session opened a browser: {:?}",
+            &opened[before..]
+        );
+        panic!(
+            "no settled report for `protected`: {e:?}; events: {:#?}",
+            events
+                .iter()
+                .map(|e| format!("{:?}", e.event))
+                .collect::<Vec<_>>()
+        );
+    });
+
+    // 1. No browser. This is the assertion; every return value would have been right anyway.
+    // One snapshot: locking `opened()` again inside the message would deadlock on the guard
+    // this expression already holds.
+    let opened_now = crate::mcp_oauth::opened().lock().unwrap().clone();
+    assert_eq!(
+        opened_now.len(),
+        before,
+        "opening a session opened a browser: {:?}",
+        &opened_now[before..]
+    );
+
+    // 2. The state is its own thing, not a generic error, so a client can offer a button.
+    assert!(
+        report.needs_auth,
+        "401 with a challenge is needs_auth, not a bare error: {report:?}"
+    );
+    assert!(!report.connected);
+    assert!(report.tools.is_empty(), "signed out means no tools: {:?}", report.tools);
+
+    // 3. Its tools are absent from what the model is offered. (`run` waits for the startup
+    //    `Idle` first and the loop above already consumed it, so the turn is driven by hand.)
+    h.ops
+        .send(Op::Submit {
+            text: "hello".into(),
+            images: Vec::new(),
+            more: Vec::new(),
+        })
+        .unwrap();
+    loop {
+        if matches!(h.events.recv().await.unwrap().event, Event::Idle) {
+            break;
+        }
+    }
+    let sent = sent.lock().unwrap()[0].clone();
+    assert!(
+        !sent.contains("mcp__protected__echo"),
+        "a signed-out server's tools must not be offered: {sent}"
+    );
+    // Not silent either: the prompt says which server is configured and why it's missing.
+    assert!(
+        sent.contains("protected"),
+        "the model is told about the configured-but-signed-out server: {sent}"
+    );
+
+    shutdown(h).await;
+    drop(mock);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+
+/// Declining is remembered, so the next session doesn't raise it again: the row still says the
+/// server is signed out (never silent), but as "you declined" rather than a fresh ask.
+#[tokio::test]
+async fn a_declined_sign_in_is_remembered_by_the_next_session() {
+    let _memory = crate::mcp_oauth::use_memory_store();
+    let _turn = crate::mcp_oauth::browser_tests();
+    let _refusals = RefusalDir::new();
+    let (web, mock) = crate::mcp_oauth::tests::start_mock("tok-decline");
+    let dir = tmp_store();
+    let cfg = json!({"mcpServers": {"protected": {"type": "http", "url": web.url("/mcp")}}});
+    std::fs::write(dir.join(".mcp.json"), cfg.to_string()).unwrap();
+    let opened_before = crate::mcp_oauth::opened().lock().unwrap().len();
+
+    // Session 1: the server is signed out, and the person declines it.
+    let (mut h, _sent) = engine_sent(
+        vec![reply(vec![text("ok")], Stop::End)],
+        Some(dir.clone()),
+        None,
+        None,
+        dir.clone(),
+    );
+    let mut seen = Vec::new();
+    loop {
+        let env = h.events.recv().await.unwrap();
+        let declined = match &env.event {
+            Event::McpServers { servers } => servers
+                .iter()
+                .find(|s| s.name == "protected")
+                .is_some_and(|s| s.needs_auth),
+            _ => false,
+        };
+        seen.push(env);
+        if declined {
+            break;
+        }
+    }
+    h.ops
+        .send(Op::McpSignIn {
+            server: "protected".into(),
+            decline: true,
+        })
+        .unwrap();
+    // The answer: a fresh list with the refusal recorded.
+    let mut declined_row = None;
+    tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            let env = h.events.recv().await.unwrap();
+            if let Event::McpServers { servers } = &env.event
+                && let Some(s) = servers.iter().find(|s| s.name == "protected" && s.declined)
+            {
+                declined_row = Some(s.clone());
+                break;
+            }
+        }
+    })
+    .await
+    .expect("the refusal is reported");
+    shutdown(h).await;
+    assert!(
+        declined_row.unwrap().needs_auth,
+        "declining doesn't make it connected; it stays signed out"
+    );
+
+    // Session 2, same project: still signed out, still marked as declined, still no browser.
+    let (mut h2, _s2) = engine_sent(
+        vec![reply(vec![text("ok")], Stop::End)],
+        Some(dir.clone()),
+        None,
+        None,
+        dir.clone(),
+    );
+    let mut row = None;
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let env = h2.events.recv().await.unwrap();
+            if let Event::McpServers { servers } = &env.event
+                && let Some(s) = servers.iter().find(|s| s.name == "protected" && s.needs_auth)
+            {
+                row = Some(s.clone());
+                break;
+            }
+        }
+    })
+    .await
+    .expect("the next session still reports it");
+    let row = row.unwrap();
+    assert!(row.declined, "the refusal outlived the session that made it: {row:?}");
+    assert_eq!(
+        crate::mcp_oauth::opened().lock().unwrap().len(),
+        opened_before,
+        "neither session opened a browser"
+    );
+    shutdown(h2).await;
+    drop(mock);
+    // Leave the machine as we found it: the refusal is per configuration, and the next test
+    // (or a real session) shouldn't inherit this one's.
+    crate::mcp::forget_refusal(&crate::mcp::auth_key(
+        "protected",
+        &crate::mcp::ServerConfig {
+            url: Some(web.url("/mcp")),
+            ..Default::default()
+        },
+    ));
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Signing in from the card (or Settings) is what brings the tools back: the same session,
+/// the same live hub, no restart. The browser opens here — and only here.
+#[tokio::test]
+async fn signing_in_from_the_session_installs_the_tools() {
+    let _memory = crate::mcp_oauth::use_memory_store();
+    let _turn = crate::mcp_oauth::browser_tests();
+    let _refusals = RefusalDir::new();
+    let (web, mock) = crate::mcp_oauth::tests::start_mock("tok-signin");
+    let dir = tmp_store();
+    let cfg = json!({"mcpServers": {"protected": {"type": "http", "url": web.url("/mcp")}}});
+    std::fs::write(dir.join(".mcp.json"), cfg.to_string()).unwrap();
+
+    let (mut h, sent) = engine_sent(
+        vec![
+            reply(vec![text("first")], Stop::End),
+            reply(vec![text("second")], Stop::End),
+        ],
+        Some(dir.clone()),
+        None,
+        None,
+        dir.clone(),
+    );
+    // Wait until the server is reported signed out (the connect has settled).
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let env = h.events.recv().await.unwrap();
+            if let Event::McpServers { servers } = &env.event
+                && servers
+                    .iter()
+                    .any(|s| s.name == "protected" && s.needs_auth)
+            {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("the server is reported signed out");
+    let before = crate::mcp_oauth::opened().lock().unwrap().len();
+    // The engine's browser would launch `open`; here it plays the browser's part instead, so
+    // the flow can complete: the mock's authorization endpoint is the redirect frog's own
+    // listener expects.
+    let _browser = crate::mcp_oauth::test_browser(Arc::new(crate::mcp_oauth::tests::fake_browser));
+
+    // The person presses Sign in.
+    h.ops
+        .send(Op::McpSignIn {
+            server: "protected".into(),
+            decline: false,
+        })
+        .unwrap();
+    let mut signed_in = false;
+    let mut row_connected = false;
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let env = h.events.recv().await.unwrap();
+            match &env.event {
+                Event::McpSignedIn { server, tools } if server == "protected" => {
+                    signed_in = true;
+                    assert_eq!(tools, &["echo".to_string()], "the tools come back with it");
+                }
+                Event::McpServers { servers } => {
+                    row_connected |= servers.iter().any(|s| s.name == "protected" && s.connected);
+                }
+                _ => {}
+            }
+            if signed_in && row_connected {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("the sign-in completes and the server connects");
+
+    // The browser: opened by this explicit request, and not by anything else.
+    assert!(
+        crate::mcp_oauth::opened().lock().unwrap().len() > before,
+        "an explicit sign-in is the one thing that opens a browser"
+    );
+
+    // And the tools are now offered to the model.
+    h.ops
+        .send(Op::Submit {
+            text: "hello".into(),
+            images: Vec::new(),
+            more: Vec::new(),
+        })
+        .unwrap();
+    loop {
+        if matches!(h.events.recv().await.unwrap().event, Event::Idle) {
+            break;
+        }
+    }
+    let sent = sent.lock().unwrap();
+    let last = sent.last().cloned().unwrap_or_default();
+    assert!(
+        last.contains("mcp__protected__echo"),
+        "after signing in the server's tools are offered: {last}"
+    );
+    drop(sent);
+    shutdown(h).await;
+    drop(mock);
+    let _ = std::fs::remove_dir_all(dir);
+}

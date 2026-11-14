@@ -29,6 +29,14 @@ You help with software engineering tasks: fixing bugs, adding features, refactor
 - When the task is done, stop. Don't start unrequested work.
 - When a task finishes, only call Notify if the person needs to know and isn't watching: a long job done, something broken, a decision needed. Never for ordinary replies — they're already on screen.";
 
+/// Which product this is, and how it takes MCP servers. Asked to "install this MCP for this
+/// app", a model without it configured Claude Desktop instead. In the shared head: cached once.
+const IDENTITY: &str = "
+# This app
+- You run inside Frog (its Mac or web app, or the `frog` CLI), not Claude Desktop, Claude Code, Cursor or any other product. \"This app\" and \"here\" mean Frog: never configure another app in its place.
+- To add an MCP server to Frog: a `[mcp_servers.<name>]` table in ~/.config/frog/config.toml (`command`, `args`, `env`; or `url`, `headers`), or an `mcpServers` entry in the project's .mcp.json. It connects when the next session opens; one that needs OAuth shows a Sign in card (CLI: `frog --mcp-signin <name>`). `frog --mcp` lists servers and their tools; `frog --use-claude-mcp on` reuses Claude Code's servers.
+";
+
 /// The instruction files a session in `cwd` reads (FROG.md, CLAUDE.md, AGENTS.md), in order.
 pub fn instruction_files(cwd: &Path, cfg: &Config) -> Vec<PathBuf> {
     memory_files(cwd, cfg)
@@ -69,7 +77,10 @@ fn client_instructions(s: &mut String) {
     if let Ok(text) = std::env::var("FROG_INSTRUCTIONS")
         && !text.trim().is_empty()
     {
-        s.push_str(&format!("\n# Instructions from the client\n{}\n", text.trim()));
+        s.push_str(&format!(
+            "\n# Instructions from the client\n{}\n",
+            text.trim()
+        ));
     }
 }
 
@@ -85,6 +96,7 @@ pub fn system_prompt(cwd: &Path, cfg: &Config, model: &str) -> String {
 pub fn system_head(cwd: &Path, cfg: &Config) -> String {
     let mut s = BASE.to_string();
     s.push('\n');
+    s.push_str(IDENTITY);
     for f in memory_files(cwd, cfg) {
         if let Ok(text) = std::fs::read_to_string(&f) {
             s.push_str(&format!(
@@ -151,7 +163,7 @@ Once they approve, you can read and edit files there and run commands.
 /// instructions (`~/.config/frog/FROG.md`, and CLAUDE.md if enabled) still apply.
 pub fn chat_prompt(cfg: &Config, model: &str) -> String {
     let mut s = format!(
-        "{CHAT}\n\n# Environment\n- Date: {}\n- Model: {model}\n",
+        "{CHAT}\n{IDENTITY}\n# Environment\n- Date: {}\n- Model: {model}\n",
         chrono::Local::now().format("%Y-%m-%d"),
     );
     let mut files = Vec::new();
@@ -473,6 +485,32 @@ pub fn parse_action(text: &str) -> Option<(String, Action)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prompts_name_frog_and_how_it_takes_mcp_servers() {
+        let cfg = Config {
+            hermetic: true,
+            ..Default::default()
+        };
+        let dir = std::env::temp_dir();
+        for prompt in [
+            system_prompt(&dir, &cfg, "local/test"),
+            chat_prompt(&cfg, "local/test"),
+        ] {
+            assert!(prompt.starts_with("You are Frog"), "{prompt}");
+            assert!(prompt.contains("not Claude Desktop"), "{prompt}");
+            for needle in [
+                "[mcp_servers.<name>]",
+                "~/.config/frog/config.toml",
+                ".mcp.json",
+                "frog --mcp-signin",
+            ] {
+                assert!(prompt.contains(needle), "missing {needle}: {prompt}");
+            }
+            // Before the per-session environment, so the shared head still caches.
+            assert!(prompt.find("# This app").unwrap() < prompt.find("# Environment").unwrap());
+        }
+    }
 
     #[test]
     fn json_action_recovers_only_whole_fenced_reply() {
