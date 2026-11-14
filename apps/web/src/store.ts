@@ -136,7 +136,7 @@ export function peek(id: string, updated: number): Peek {
 /** Sign-out forgets every thread this browser kept, and what was read from them. */
 export function clearThreads() {
   peeks.clear()
-  try { Object.keys(localStorage).filter((k) => k.startsWith(THREADS)).forEach((k) => localStorage.removeItem(k)) } catch { /* nothing kept */ }
+  try { Object.keys(localStorage).filter((k) => k.startsWith(THREADS) || k.startsWith('frog.title.')).forEach((k) => localStorage.removeItem(k)) } catch { /* nothing kept */ }
 }
 
 type Pump = { cloud: CloudEngine; push: (id: string, env: Envelope | null, known: Thread | null) => void }

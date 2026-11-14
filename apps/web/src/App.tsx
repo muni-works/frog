@@ -4,6 +4,7 @@ import { finishSignIn, firstName, me, savedKey, signIn, signOut, subscribe, topU
 import { friendly, type ConnectionState } from './cloud/client'
 import type { SessionSummary } from './cloud/protocol'
 import type { Image, Mode } from './cloud/protocol'
+import { keepTitle, keptTitle } from './titles'
 import { defaultModel, idOf, spec, useModels } from './models'
 import { plainError } from './errors'
 import type { DecideOpts } from './ui/Transcript'
@@ -152,7 +153,7 @@ export default function App() {
   // The open session's own changes show in the list at once, not at the next poll.
   useEffect(() => { refreshSessions() }, [ct?.running, ct?.turns.length]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (current && compacting[current.id] && (ct?.marks ?? []).length >= compacting[current.id]) setCompacting(({ [current.id]: _, ...rest }) => rest) }, [current, ct?.marks, compacting]) // eslint-disable-line react-hooks/exhaustive-deps
-  const title = (s: SessionSummary) => thread(s.id).title ?? s.title
+  const title = (s: SessionSummary) => keptTitle(s.id, thread(s.id).title, s.title)
   // The turn ended: what was queued goes as the next turn, one Submit with the rest as `more`.
   const fresh = useRef(once<object>()).current
   useEffect(() => {
@@ -172,7 +173,7 @@ export default function App() {
   const signals = useMemo(() => sessions.map((s) => {
     const t = thread(s.id)
     const waiting = t.ask ? askLine(t.ask.name, t.ask.arg) : t.question ? t.question.question : t.elicitation ? `${t.elicitation.server} needs your input` : null
-    return { id: s.id, title: t.title ?? s.title, waiting, finished: !t.running && t.ended?.type === 'complete' }
+    return { id: s.id, title: keptTitle(s.id, t.title, s.title), waiting, finished: !t.running && t.ended?.type === 'complete' }
   }), [sessions, thread, threads])
   const signalKey = JSON.stringify(signals)
   useAlerts(useMemo(() => signals, [signalKey]), useCallback((id: string) => setView({ kind: 'session', id }), [])) // eslint-disable-line react-hooks/exhaustive-deps
@@ -282,6 +283,7 @@ export default function App() {
     const t = to.trim()
     setRenaming(null)
     if (!t || t === title(s)) return
+    keepTitle(s.id, t)
     cloud?.send(s.id, { op: 'set_title', title: t }) // the engine's titled event renames it everywhere
     setSessions((all) => all.map((x) => (x.id === s.id ? { ...x, title: t } : x)))
   }
