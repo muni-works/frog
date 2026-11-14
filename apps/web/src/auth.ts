@@ -155,8 +155,15 @@ export async function me(key: string): Promise<Account> {
   return (await call<{ account: Account }>('/v1/me', {}, key)).account
 }
 
-export function signOut() {
+/** Forgets the key here and, given it, revokes it on the gateway too (best effort: a dead
+ * network or an already-dead key still signs you out locally). */
+export function signOut(key?: string) {
   store.del(localStorage, KEY)
+  if (!key) return
+  listKeys(key)
+    .then((keys) => keys.find((k) => k.current && !k.revoked))
+    .then((k) => k && revokeKey(key, k.id))
+    .catch(() => { /* already signed out here */ })
 }
 
 /** What to call someone: their first name, else their GitHub login, else their email. */
