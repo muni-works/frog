@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from 'react'
+import { useEffect, useState } from 'react'
 import { API } from './auth'
 
 // Your machines: every node, This Mac included, running one model (docs/plans/
@@ -87,13 +87,3 @@ export function useMachines(key: string | null) {
   }, [key])
   return machines
 }
-
-// "Show cloud models in the picker" (Settings › Models), shared by every picker on the page.
-const SHOW_CLOUD = 'showCloudModels'
-const listeners = new Set<() => void>()
-export const showCloud = () => { try { return localStorage.getItem(SHOW_CLOUD) !== 'off' } catch { return true } }
-export function setShowCloud(on: boolean) {
-  try { localStorage.setItem(SHOW_CLOUD, on ? 'on' : 'off') } catch { /* private mode */ }
-  listeners.forEach((l) => l())
-}
-export const useShowCloud = () => useSyncExternalStore((l) => { listeners.add(l); return () => listeners.delete(l) }, showCloud, () => true)

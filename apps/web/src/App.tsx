@@ -4,6 +4,7 @@ import { finishSignIn, firstName, me, savedKey, signIn, signOut, subscribe, topU
 import { friendly, type ConnectionState } from './cloud/client'
 import type { SessionSummary } from './cloud/protocol'
 import type { Image, Mode } from './cloud/protocol'
+import { changeSig, keepTitle, keptTitle } from './titles'
 import { defaultModel, idOf, spec, useModels } from './models'
 import { plainError } from './errors'
 import type { DecideOpts } from './ui/Transcript'
@@ -152,7 +153,7 @@ export default function App() {
   // The open session's own changes show in the list at once, not at the next poll.
   useEffect(() => { refreshSessions() }, [ct?.running, ct?.turns.length]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (current && compacting[current.id] && (ct?.marks ?? []).length >= compacting[current.id]) setCompacting(({ [current.id]: _, ...rest }) => rest) }, [current, ct?.marks, compacting]) // eslint-disable-line react-hooks/exhaustive-deps
-  const title = (s: SessionSummary) => thread(s.id).title ?? s.title
+  const title = (s: SessionSummary) => keptTitle(s.id, thread(s.id).title, s.title)
   // The turn ended: what was queued goes as the next turn, one Submit with the rest as `more`.
   const fresh = useRef(once<object>()).current
   useEffect(() => {
@@ -172,7 +173,7 @@ export default function App() {
   const signals = useMemo(() => sessions.map((s) => {
     const t = thread(s.id)
     const waiting = t.ask ? askLine(t.ask.name, t.ask.arg) : t.question ? t.question.question : t.elicitation ? `${t.elicitation.server} needs your input` : null
-    return { id: s.id, title: t.title ?? s.title, waiting, finished: !t.running && t.ended?.type === 'complete' }
+    return { id: s.id, title: keptTitle(s.id, t.title, s.title), waiting, finished: !t.running && t.ended?.type === 'complete' }
   }), [sessions, thread, threads])
   const signalKey = JSON.stringify(signals)
   useAlerts(useMemo(() => signals, [signalKey]), useCallback((id: string) => setView({ kind: 'session', id }), [])) // eslint-disable-line react-hooks/exhaustive-deps
@@ -282,6 +283,7 @@ export default function App() {
     const t = to.trim()
     setRenaming(null)
     if (!t || t === title(s)) return
+    keepTitle(s.id, t)
     cloud?.send(s.id, { op: 'set_title', title: t }) // the engine's titled event renames it everywhere
     setSessions((all) => all.map((x) => (x.id === s.id ? { ...x, title: t } : x)))
   }
@@ -318,8 +320,13 @@ export default function App() {
   }
 
   // Commit and push are asks to the agent, so they show up in the conversation like any step.
-  const commit = (s: SessionSummary) => send(s.id, 'Commit the changes with a clear message.')
-  const push = (s: SessionSummary) => send(s.id, s.pr ? `Commit the changes and push to ${s.pr}.` : 'Commit the changes, push the branch and open a pull request.')
+  // A session without a repo has no remote to push to (and the gateway can't hand files back
+  // or make a repo yet), so its one git step is a local commit.
+  // The +N −N pill goes once a commit turn finishes, until the changes move again.
+  const [committed, setCommitted] = useState<Record<string, { turn: number; sig: string | null }>>({})
+  const commitAsk = (s: SessionSummary, text: string) => { setCommitted((c) => ({ ...c, [s.id]: { turn: thread(s.id).turns.length, sig: null } })); send(s.id, text) }
+  const commit = (s: SessionSummary) => commitAsk(s, 'Commit the changes with a clear message.')
+  const push = (s: SessionSummary) => !s.repo ? commit(s) : commitAsk(s, s.pr ? `Commit the changes and push to ${s.pr}.` : 'Commit the changes, push the branch and open a pull request.')
 
   const leave = (after: string | null, provider: Provider = 'github', connect?: string, pick = !!connect) => { setLeavingFor(provider); signIn(after ?? undefined, provider, connect, pick).catch(() => setLeavingFor(null)) }
 
@@ -363,6 +370,13 @@ export default function App() {
 
 
 
+  useEffect(() => {
+    if (!current || !ct || ct.running) return
+    const d = committed[current.id]
+    if (d && d.sig === null && ct.turns.length > d.turn && ct.ended?.type === 'complete')
+      setCommitted((c) => ({ ...c, [current.id]: { ...d, sig: changeSig(ct.changes) } }))
+  }, [current, ct, committed])
+
   // ---------- signed out ----------
   // Ticks follow the socket; a message leaves the outbox when its turn starts.
   useEffect(() => {
@@ -403,8 +417,12 @@ export default function App() {
         <div className="home-hero">
           <Pond />
           <Mark size={56} />
-          <span className="beta-pill"><i />Now in beta · $5 free to start</span>
+          <span className="beta-pill"><i />Now in beta</span>
           <h1>What should we work on?</h1>
+          <div className="home-sub">
+            <p>Frog is a coding agent for your repos: open models, on your machines or in Frog Cloud.</p>
+            <p><b>$5 free to start.</b></p>
+          </div>
           <HowItWorks />
           <Trust />
         </div>
@@ -413,14 +431,20 @@ export default function App() {
             model={chosenModel} models={models} machines={machines} onManage={() => openSettings('Models')} onModel={setNewModel} mode={newMode} onMode={setNewMode} />
           {leaving && <div className="det" style={{ textAlign: 'center' }}>Opening {leaving === 'google' ? 'Google' : 'GitHub'}… your message is saved.</div>}
         </div></div>
-        <footer className="muni-foot"><a href="https://muni.works" target="_blank" rel="noreferrer" aria-label="Municipal Robotics"><Muni /></a></footer>
+        <footer className="muni-foot">
+          <nav className="foot-links" aria-label="About Frog"><a href="/pricing">Pricing</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/mac">Get the Mac app</a></nav>
+          <a href="https://muni.works" target="_blank" rel="noreferrer" aria-label="Municipal Robotics"><Muni /></a>
+        </footer>
       </main>
     </div>
   )
 
   // ---------- signed in ----------
-  const adds = ct?.changes.reduce((n, c) => n + c.added, 0) ?? 0
-  const dels = ct?.changes.reduce((n, c) => n + c.removed, 0) ?? 0
+  const sig = changeSig(ct?.changes ?? [])
+  const done = current ? committed[current.id] : undefined
+  const clean = !!done && done.sig === sig
+  const adds = clean ? 0 : ct?.changes.reduce((n, c) => n + c.added, 0) ?? 0
+  const dels = clean ? 0 : ct?.changes.reduce((n, c) => n + c.removed, 0) ?? 0
   const paused = ct ? outOfCredits(ct) : false
   const cs = current ? conn[current.id] : undefined
 
@@ -503,7 +527,7 @@ export default function App() {
             {opening[current.id] && ct.turns.length === 0 && !outbox[current.id]?.length && current.state !== 'error' && (
               <div className="turn"><div className="me">{opening[current.id].text}</div></div>
             )}
-            <Transcript thread={ct} models={models} onDecide={(a, o) => decide(current.id, a, o)}
+            <Transcript thread={ct} models={models} credit={account ? creditLine(account).replace(/ credit$/, '') : undefined} onDecide={(a, o) => decide(current.id, a, o)}
               onAnswer={(choices, other) => ct.question && cloud?.send(current.id, { op: 'answer', id: ct.question.id, choices, ...(other ? { other } : {}) })}
               onElicit={(action, content) => ct.elicitation && cloud?.send(current.id, { op: 'elicit', id: ct.elicitation.id, action, ...(content ? { content } : {}) })}
               onRetry={() => send(current.id, 'Try that again.')}
@@ -547,7 +571,7 @@ export default function App() {
               </div>
             )}
             <Composer key={current.id} session autoFocus usage={account ? { sub: account.subscription ?? null, credit: creditLine(account).replace(/ credit$/, ''), onBilling: () => openSettings('Billing'), onOpen: refreshAccount } : undefined} context={ct.context} compacting={!!compacting[current.id]}
-              onCompact={(focus) => { setCompacting((c) => ({ ...c, [current.id]: (ct.marks ?? []).length + 1 })); cloud?.send(current.id, { op: 'compact', ...(focus ? { focus } : {}) }) }} chips={ct.next && !ct.running ? [{ text: ct.next.text, send: true, act: ct.next.act }] : undefined} state={ct.running || opening[current.id] ? 'working' : paused ? 'paused' : 'idle'} startedAt={ct.startedAt} waiting={!!(ct.ask || ct.question || ct.elicitation)}
+              onCompact={(focus) => { setCompacting((c) => ({ ...c, [current.id]: (ct.marks ?? []).length + 1 })); cloud?.send(current.id, { op: 'compact', ...(focus ? { focus } : {}) }) }} chips={ct.next && !ct.running ? [{ text: ct.next.text, send: true, act: ct.next.act }] : undefined} state={ct.running || opening[current.id] ? 'working' : paused ? 'paused' : 'idle'} startedAt={ct.startedAt} speed={ct.speed} waiting={!!(ct.ask || ct.question || ct.elicitation)}
               repo={current.repo} branch={current.branch} pr={current.pr} adds={adds} dels={dels}
               model={idOf(ct.model)} models={models} machines={machines} onManage={() => openSettings('Models')} onModel={(id) => cloud?.send(current.id, { op: 'set_model', spec: spec(id) })}
               mode={ct.mode ?? 'default'} onMode={(mode) => cloud?.send(current.id, { op: 'set_mode', mode })}
@@ -580,7 +604,7 @@ export default function App() {
       </main>
 
       {view.kind === 'session' && current && ct && inspector && (
-        <Inspector onClose={() => setInspector(false)} thread={ct} branch={current.branch} hasPr={!!current.pr} onCommit={() => commit(current)} onPr={() => push(current)} machines={machines} send={(op) => cloud?.send(current.id, op)} />
+        <Inspector onClose={() => setInspector(false)} thread={ct} branch={current.branch} hasPr={!!current.pr} onCommit={() => commit(current)} onPr={current.repo ? () => push(current) : undefined} machines={machines} send={(op) => cloud?.send(current.id, op)} />
       )}
 
       {palette && <Palette commands={commands} sessions={sessions} onOpen={(id) => setView({ kind: 'session', id })} onClose={() => setPalette(false)}
