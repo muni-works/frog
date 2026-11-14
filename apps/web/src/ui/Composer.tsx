@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { composing } from './guards'
 import type { Image, Mode } from '../cloud/protocol'
-import { modelName, modes, outputPrice, placeColor, placeOf, spec, type Model } from '../models'
-import { machineModels, places, tag, useShowCloud, type Machine } from '../machines'
-import { barTone, ringTone } from '../usage'
+import { inOutPrice, modelName, modes, placeColor, placeOf, spec, type Model } from '../models'
+import { machineModels, places, tag, type Machine } from '../machines'
+import { barTone, canCompact, ringLabel, ringTone } from '../usage'
 import { parseRepo } from '../store'
 import type { Provider } from '../auth'
 import { safeHref } from './href'
@@ -40,6 +40,8 @@ export interface ComposerProps {
   adds?: number
   dels?: number
   startedAt?: number
+  /** The model's speed while working, in tokens per second. */
+  speed?: number | null
   /** The running turn is blocked on a permission ask. */
   waiting?: boolean
   draft?: string
@@ -120,7 +122,8 @@ function useTimer(since?: number) {
 export function Composer(p: ComposerProps) {
   const [text, setText] = useState(p.draft ?? '')
   const [menu, setMenu] = useState<'plus' | 'model' | 'mode' | 'repo' | 'signin' | null>(p.pickRepo ? 'repo' : p.openModels ? 'model' : null)
-  const showCloudModels = useShowCloud()
+  // The web runs only in Frog Cloud, so its models always show (no Show cloud models switch here).
+  const showCloudModels = true
   // A machine's model runs from the Mac app; where there's an app to send them to, its rows give
   // way to one download hint, and on a phone (or once they have the app) they stay as they were.
   const machineChip = useDownloadChip(p.machines ?? [])
@@ -286,7 +289,7 @@ export function Composer(p: ComposerProps) {
           <div className="cz-menu-h">{machineChip ? 'Run it on your Mac' : 'Your machines'}</div>
           {machineChip
             ? <div className="cz-menu-note"><DownloadAppChip label="Runs from the Mac app" machines={p.machines} /></div>
-            : machineRows.length === 0 && <div className="det cz-menu-note">No models on your machines yet.</div>}
+            : machineRows.length === 0 && <div className="det cz-menu-note">No models on your machines yet. <a href="/mac">Get the Mac app</a></div>}
           {machineRows.map((m) => (
             <button key={m.spec} type="button" role="menuitemradio" aria-checked={false} disabled title="Runs from the Mac app">
               <span className="cz-dot" style={{ background: placeColor('local') }} aria-hidden="true" />
@@ -298,7 +301,7 @@ export function Composer(p: ComposerProps) {
           {showCloudModels && p.models?.map((m) => (
             <button key={m.id} type="button" role="menuitemradio" aria-checked={m.id === p.model} onClick={() => { p.onModel?.(m.id); setMenu(null) }}>
               <span className="cz-dot" style={{ background: placeColor('cloud') }} aria-hidden="true" />
-              <span className="cz-mname">{modelName(m.id)}</span><span className="det cz-mdetail">{outputPrice(m)}</span>
+              <span className="cz-mname">{modelName(m.id)}</span><span className="det cz-mdetail">{inOutPrice(m)}</span>
               <span className="cz-mtag" style={{ opacity: m.id === p.model ? 1 : 0 }}>✓</span>
             </button>
           ))}
@@ -508,7 +511,7 @@ export function Composer(p: ComposerProps) {
           {p.context?.window || p.usage?.sub ? <ContextRing used={p.context?.used ?? null} window={p.context?.window ?? 0} usage={p.usage} onCompact={p.onCompact && !working ? () => p.onCompact!() : undefined} compacting={p.compacting} /> : null}
           <span style={{ flex: 1 }} />
           <span style={{ fontSize: 12, color: paused ? 'var(--warn)' : p.waiting ? 'var(--notice)' : 'var(--muted)', whiteSpace: 'nowrap' }}>
-            {working && p.waiting ? '' : working ? `Working · ${timer}` : paused ? 'Out of credits' : ''}
+            {working && p.waiting ? '' : working ? `Working · ${timer}${p.speed && p.speed > 0 ? ` · ${Math.round(p.speed)} tok/s` : ''}` : paused ? 'Out of credits' : ''}
           </span>
           {p.onSignIn && !text.trim() && !images.length ? (
             <button type="button" className="cz-signin" aria-expanded={menu === 'signin'} onClick={() => setMenu(menu === 'signin' ? null : 'signin')}>
@@ -554,7 +557,7 @@ function ContextRing({ used, window, usage, onCompact, compacting }: { used: num
   const r = 6.5, c = 2 * Math.PI * r
   return (
     <span className="ctx" ref={root}>
-      <button type="button" ref={button} className="ctx-ring" aria-haspopup="dialog" aria-expanded={open} onClick={() => { if (!open) usage?.onOpen?.(); setOpen(!open) }} aria-label={`Usage and context, ${Math.round(f * 100)}%`}>
+      <button type="button" ref={button} className="ctx-ring" aria-haspopup="dialog" aria-expanded={open} onClick={() => { if (!open) usage?.onOpen?.(); setOpen(!open) }} aria-label={ringLabel(sub ? plan : null, window > 0 ? ctx : null)} title={ringLabel(sub ? plan : null, window > 0 ? ctx : null)}>
         <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
           <circle cx="9" cy="9" r={r} fill="none" stroke="var(--line-strong)" strokeWidth="2.5" />
           <circle cx="9" cy="9" r={r} fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round"
@@ -583,7 +586,7 @@ function ContextRing({ used, window, usage, onCompact, compacting }: { used: num
             {usage && <div className="ctx-sep" />}
             <div className="ctx-h"><span>Context</span><span className="det">{(used ?? 0).toLocaleString()} of {window.toLocaleString()} tokens · {Math.round(ctx * 100)}%</span></div>
             <div className="ctx-bar"><span style={{ width: `${ctx * 100}%`, background: barTone(ctx) }} /></div>
-            {(onCompact || compacting) && (
+            {(compacting || (onCompact && canCompact(used, window))) && (
               <button type="button" className="f-btn f-btn--bordered ctx-compact" disabled={compacting || !onCompact} onClick={() => { onCompact?.(); setOpen(false) }}>
                 {compacting ? 'Compacting…' : 'Compact now'}
               </button>

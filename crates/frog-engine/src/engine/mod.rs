@@ -33,6 +33,8 @@ mod dispatch;
 mod permit;
 mod project;
 #[cfg(test)]
+mod tests_compact;
+#[cfg(test)]
 mod tests_ingest;
 #[cfg(test)]
 mod tests_prompt;
@@ -2413,6 +2415,11 @@ impl Agent {
                 act: next.act,
             });
         }
+        // A denial ends the turn with only a "denied" tag on the row; say in words what
+        // happened, once, so Mac and web both show a sentence instead of a bare tag.
+        if reason == EndReason::Denied {
+            self.notice(Level::Info, DENIED_ENDING);
+        }
         self.emit(Event::TurnEnded {
             turn,
             reason: reason.clone(),
@@ -2878,3 +2885,7 @@ fn bash_allowed(cmd: &str, extra: &[String]) -> bool {
 
 #[cfg(test)]
 mod tests;
+
+/// The transcript's sentence after a denied command ends the turn.
+pub(crate) const DENIED_ENDING: &str =
+    "Stopped here because you denied that command. The work so far is kept; say how to go on.";
