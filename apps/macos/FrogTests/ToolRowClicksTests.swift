@@ -36,8 +36,11 @@ final class ToolRowClicksTests: XCTestCase {
     /// says the result. Before this, `VerbLine.of` gave `SendMessage` its verb and nothing else,
     /// so the sentence existed only behind two clicks.
     func testAShortResultIsOnTheLineItself() {
+        // After the merge with the gist work (#339), the row has no verb at all: the sentence
+        // is the line ("Sent to ops …"), not a verb beside it. "Used SendMessage" was the
+        // pre-merge shape, where the verb stayed and the result hung off as a detail.
         let line = VerbLine.of(tool("t1", "SendMessage", "ops", output: Self.sent))
-        XCTAssertEqual(line?.verb, "Used SendMessage")
+        XCTAssertEqual(line?.verb, "", "the verb slot is empty: the result says it, not a tool name")
         XCTAssertEqual(line?.arg, "ops")
         XCTAssertEqual(line?.detail, "Sent to ops (20261112-175150-6a2c); delivered (turn started)",
                        "the row's own line should carry the result, cut at its first sentence")
@@ -62,7 +65,9 @@ final class ToolRowClicksTests: XCTestCase {
             // /tmp/demo". `UseFolder` is the case that literally would — the result opens by
             // repeating the verb — so its line ends up bare (nothing new to add), which is
             // correct and still no click.
-            if let verb = line?.verb, let detail = line?.detail {
+            // An empty verb means the detail *is* the line (the merged rule, #339): there is
+            // no verb to repeat, so the prefix check only means something with one.
+            if let verb = line?.verb, !verb.isEmpty, let detail = line?.detail {
                 XCTAssertFalse(detail.lowercased().hasPrefix(verb.lowercased()),
                                "\(name): the line repeats its own verb — \"\(verb) · \(detail)\"")
             }
@@ -95,9 +100,14 @@ final class ToolRowClicksTests: XCTestCase {
     func testTheStepRowsTitleWouldOnlyRepeatTheLine() {
         let sent = tool("t1", "SendMessage", "ops", output: Self.sent)
         let line = VerbLine.of(sent)
+        // With no verb (the merged rule: the result is the line), there is nothing for the
+        // step row's title to repeat — the whole premise of this test is a verb it can echo.
+        guard let verb = line?.verb, !verb.isEmpty else {
+            return  // nothing to repeat: the line has no label of its own
+        }
         let rowTitle = ActivityWords.row(sent)
-        XCTAssertTrue(rowTitle.contains(line?.verb ?? "\u{0}"),
-                      "\"\(rowTitle)\" carries \"\(line?.verb ?? "")\" — the row would say the line again")
+        XCTAssertTrue(rowTitle.contains(verb),
+                      "\"\(rowTitle)\" carries \"\(verb)\" — the row would say the line again")
         // The fix is that a lone step never draws that row (see the test below), not that the
         // two strings are made to differ: the row's job is the payload, not another label.
     }
