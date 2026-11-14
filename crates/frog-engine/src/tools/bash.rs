@@ -21,8 +21,8 @@ will hang until the timeout.",
         "run_in_background": { "type": "boolean", "description": "Start the command as a background job and return its id at once, for servers, watchers and long builds. Its output goes to a file; you're told when it exits (exit code and the tail of its output). Read it with JobOutput, stop it with JobStop." }
     });
     if available() {
-        description.push_str(" Commands run in a sandbox: they can write only inside the project (and, in a git worktree, its git dirs so commit works), temp folders, toolchain caches and paths the user configured, and can't read credentials (~/.ssh, ~/.aws, ...). Network access works; swift builds get SwiftPM's inner sandbox disabled (frog's is the boundary), and read-only git commands can go over https to GitHub when configured. If a command fails because of the sandbox and genuinely needs more (installing globally, git push over ssh), run it again with unsandboxed: true; the user will be asked.");
-        props["unsandboxed"] = json!({ "type": "boolean", "description": "Run outside the sandbox. Asks the user first. Only after the sandbox actually blocked this command — never because you think it might: builds, tests and most git already work inside it, and an unneeded escape makes the user approve the very build that would have just run. If a confined run fails with `Operation not permitted` or a read-only error, rerun it unsandboxed." });
+        description.push_str(" Commands run in a sandbox: they can write only inside the project (and, in a git worktree, its git dirs so commit works), temp folders, toolchain caches and paths the user configured, and can't read credentials (~/.ssh, ~/.aws, ...). Network access works; swift builds get SwiftPM's inner sandbox disabled (frog's is the boundary), and read-only git commands can go over https to GitHub when configured. If a command fails because of the sandbox and genuinely needs more (installing globally, git push over ssh), run it again with unsandboxed: true (the user may be asked).");
+        props["unsandboxed"] = json!({ "type": "boolean", "description": "Run outside the sandbox (the user may be asked, depending on the permission mode). Only to rerun a command the sandbox just blocked (`Operation not permitted`, a read-only error) — never by habit or ahead of time: builds, tests, git, and cd into this project's worktrees all work inside it. A read-only command asked unsandboxed with no block before it runs sandboxed anyway." });
         props["allow_hosts"] = json!({ "type": "array", "items": { "type": "string" }, "description": "Hosts beyond the session's network allow-list this command needs. Asks the user first; only after a connection was blocked." });
     }
     ToolSpec {
@@ -154,6 +154,21 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         cwd_file.display()
     );
     let hint = read_hint(&cmd, &ctx.cwd);
+    // `unsandboxed` by habit: a read-only command, with no sandbox block before it, runs
+    // confined anyway (it can read everything but credentials there), and says so.
+    let downgraded = input["unsandboxed"].as_bool() == Some(true)
+        && ctx.shell_sandbox.is_some()
+        && !ctx.shell_blocked
+        && crate::shell::read_only(&cmd);
+    let confined;
+    let input = if downgraded {
+        let mut i = input.clone();
+        i["unsandboxed"] = json!(false);
+        confined = i;
+        &confined
+    } else {
+        input
+    };
     let (mut command, jail, egress) = shell_call(input, ctx)?;
     let mut child = command
         .arg(&script)
@@ -250,8 +265,12 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
             raw.push_str("\n(On Linux, frog can't enforce the network allow-list by host inside the sandbox, so sandboxed commands get no network at all. If the task needs the network, run the command again with unsandboxed: true; the user will be asked.)");
         }
     }
+    ctx.shell_blocked = jail.is_some() && blocked(&raw);
+    if downgraded {
+        raw.push_str("\n(Ran in the sandbox: a read-only command needs no `unsandboxed`. Use it only to rerun a command the sandbox blocked.)");
+    }
     if jail.is_some() && blocked(&raw) {
-        raw.push_str("\n(This ran in frog's sandbox, which allows writes only inside the project, temp folders and toolchain caches, and hides credentials. If the command genuinely needs more, run it again with unsandboxed: true; the user will be asked.)");
+        raw.push_str("\n(This ran in frog's sandbox, which allows writes only inside the project, temp folders and toolchain caches, and hides credentials. If the command genuinely needs more, run it again with unsandboxed: true (the user may be asked).)");
     }
     let plain = strip_ansi(&raw);
     let mut display = (plain != raw).then(|| finish(raw.clone()));
@@ -2226,6 +2245,54 @@ mod tests {
     }
 
     /// Output is bounded while it's read: the head and tail survive, the middle is counted.
+    #[tokio::test]
+    async fn habitual_unsandboxed_read_runs_sandboxed_until_a_block() {
+        if !available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("a.txt"), "hello\n").unwrap();
+        let mut ctx = Ctx::new(tmp.path().to_path_buf());
+        ctx.shell_sandbox = Some(std::fs::canonicalize(tmp.path()).unwrap());
+        let out = run(
+            &json!({ "command": "cat a.txt", "unsandboxed": true }),
+            &mut ctx,
+        )
+        .await
+        .unwrap();
+        assert!(out.content.starts_with("hello"), "{}", out.content);
+        assert!(
+            out.content.contains("Ran in the sandbox"),
+            "{}",
+            out.content
+        );
+        // A command that writes isn't read-only: it keeps the escape it asked for.
+        let out = run(
+            &json!({ "command": "touch b.txt", "unsandboxed": true }),
+            &mut ctx,
+        )
+        .await
+        .unwrap();
+        assert!(
+            !out.content.contains("Ran in the sandbox"),
+            "{}",
+            out.content
+        );
+        // After a real block, the next unsandboxed call is honoured even if read-only.
+        ctx.shell_blocked = true;
+        let out = run(
+            &json!({ "command": "cat a.txt", "unsandboxed": true }),
+            &mut ctx,
+        )
+        .await
+        .unwrap();
+        assert!(
+            !out.content.contains("Ran in the sandbox"),
+            "{}",
+            out.content
+        );
+    }
+
     #[test]
     fn read_hint_steers_file_reading_and_script_edits_to_the_file_tools() {
         let tmp = tempfile::tempdir().unwrap();

@@ -61,6 +61,8 @@ pub struct Ctx {
     pub web: std::sync::Arc<web::Web>,
     /// The model has read `VisualGuide` this session (or been told to).
     pub visual_guide: bool,
+    /// The last sandboxed Bash call was blocked by the sandbox: an `unsandboxed` rerun is real.
+    pub shell_blocked: bool,
 }
 
 impl Ctx {
@@ -83,6 +85,7 @@ impl Ctx {
             cancel: None,
             web: Default::default(),
             visual_guide: false,
+            shell_blocked: false,
         }
     }
 
