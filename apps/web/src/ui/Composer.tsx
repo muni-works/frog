@@ -3,7 +3,7 @@ import { composing } from './guards'
 import type { Image, Mode } from '../cloud/protocol'
 import { modelName, modes, outputPrice, placeColor, placeOf, spec, type Model } from '../models'
 import { machineModels, places, tag, useShowCloud, type Machine } from '../machines'
-import { barTone, ringTone } from '../usage'
+import { barTone, canCompact, ringLabel, ringTone } from '../usage'
 import { parseRepo } from '../store'
 import type { Provider } from '../auth'
 import { safeHref } from './href'
@@ -556,7 +556,7 @@ function ContextRing({ used, window, usage, onCompact, compacting }: { used: num
   const r = 6.5, c = 2 * Math.PI * r
   return (
     <span className="ctx" ref={root}>
-      <button type="button" ref={button} className="ctx-ring" aria-haspopup="dialog" aria-expanded={open} onClick={() => { if (!open) usage?.onOpen?.(); setOpen(!open) }} aria-label={`Usage and context, ${Math.round(f * 100)}%`}>
+      <button type="button" ref={button} className="ctx-ring" aria-haspopup="dialog" aria-expanded={open} onClick={() => { if (!open) usage?.onOpen?.(); setOpen(!open) }} aria-label={ringLabel(sub ? plan : null, window > 0 ? ctx : null)} title={ringLabel(sub ? plan : null, window > 0 ? ctx : null)}>
         <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
           <circle cx="9" cy="9" r={r} fill="none" stroke="var(--line-strong)" strokeWidth="2.5" />
           <circle cx="9" cy="9" r={r} fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round"
@@ -585,7 +585,7 @@ function ContextRing({ used, window, usage, onCompact, compacting }: { used: num
             {usage && <div className="ctx-sep" />}
             <div className="ctx-h"><span>Context</span><span className="det">{(used ?? 0).toLocaleString()} of {window.toLocaleString()} tokens · {Math.round(ctx * 100)}%</span></div>
             <div className="ctx-bar"><span style={{ width: `${ctx * 100}%`, background: barTone(ctx) }} /></div>
-            {(onCompact || compacting) && (
+            {(compacting || (onCompact && canCompact(used, window))) && (
               <button type="button" className="f-btn f-btn--bordered ctx-compact" disabled={compacting || !onCompact} onClick={() => { onCompact?.(); setOpen(false) }}>
                 {compacting ? 'Compacting…' : 'Compact now'}
               </button>

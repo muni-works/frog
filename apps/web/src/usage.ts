@@ -46,3 +46,15 @@ export function ringTone(plan: number, ctx: number, over: boolean) {
   const f = Math.max(plan, ctx)
   return over || f >= 1 ? 'var(--warn)' : f > 0.8 ? 'var(--notice)' : 'var(--muted)'
 }
+
+/** The usage ring's accessible name: which figure is which, so a full weekly plan isn't read as
+ *  a full context. */
+export function ringLabel(plan: number | null, ctx: number | null): string {
+  const parts = [plan != null && `Plan ${Math.round(plan * 100)}% used`, ctx != null && `context ${Math.round(ctx * 100)}% full`].filter(Boolean) as string[]
+  const s = parts.join(', ')
+  return s ? s[0].toUpperCase() + s.slice(1) : 'Usage and context'
+}
+
+/** Compacting is offered once the context is a real share of the window, not at 1%. */
+export const COMPACT_AT = 0.2
+export const canCompact = (used: number | null, window: number) => !!used && window > 0 && used / window >= COMPACT_AT

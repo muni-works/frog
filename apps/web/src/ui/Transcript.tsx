@@ -252,8 +252,10 @@ function AskCard({ ask, onDecide }: { ask: Ask; onDecide: Decide }) {
 
 const NO_MODELS: Model[] = []
 
-export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, models = NO_MODELS, outbox = [], onResend, onEdit, waiting, onContinue, onPrompt }: {
+export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, models = NO_MODELS, outbox = [], onResend, onEdit, waiting, onContinue, onPrompt, credit }: {
   thread: Thread
+  /** The account's credit left, for the turn-cost card. */
+  credit?: string
   onDecide: Decide
   onAnswer: (choices: string[], other?: string) => void
   onElicit: (action: 'accept' | 'decline' | 'cancel', content?: Record<string, string | number | boolean>) => void
@@ -292,7 +294,7 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
       {(thread.marks ?? []).filter((m) => m.after === 0).map((m, i) => <Mark key={`m0-${i}`} m={m} />)}
       {thread.turns.map((turn, ti) => (<Fragment key={`${ti}-${turn.turn}`}>
         <TurnView turn={turn} live={ti === lastIdx} ask={ti === lastIdx ? thread.ask : null} question={ti === lastIdx ? thread.question : null}
-          running={ti === lastIdx && thread.running} models={models} cb={cb} hasRetry={has.retry} hasEdit={has.edit} hasContinue={has.cont} />
+          running={ti === lastIdx && thread.running} models={models} credit={credit} cb={cb} hasRetry={has.retry} hasEdit={has.edit} hasContinue={has.cont} />
         {(thread.marks ?? []).filter((m) => m.after === ti + 1).map((m, k) => <Mark key={`m${ti}-${k}`} m={m} />)}
       </Fragment>))}
       {thread.question && !thread.turns[thread.turns.length - 1]?.entries.some((e) => e.id === thread.question?.item) && (
@@ -334,9 +336,9 @@ interface TurnCallbacks {
 /** One turn. Memoized: the reducer keeps untouched turns the same object, so while the last
  * turn streams the others don't redraw (or re-parse their markdown). Only the live turn gets
  * the session's ask, question and running state. */
-const TurnView = memo(function TurnView({ turn, live, ask, question, running, models, cb, hasRetry, hasEdit, hasContinue }: {
+const TurnView = memo(function TurnView({ turn, live, ask, question, running, models, credit, cb, hasRetry, hasEdit, hasContinue }: {
   turn: Turn; live: boolean; ask: Ask | null; question: Question | null; running: boolean; models: Model[]
-  cb: TurnCallbacks; hasRetry: boolean; hasEdit: boolean; hasContinue: boolean
+  credit?: string; cb: TurnCallbacks; hasRetry: boolean; hasEdit: boolean; hasContinue: boolean
 }) {
   return (
     <div className="turn">
@@ -378,7 +380,7 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
         return <ToolLine key={e.id} e={e} />
       })}
       {turn.usage && (turn.reason?.type === 'complete' || turn.reason?.type === 'denied') && (
-        <TurnFooter usage={turn.usage} models={models} pinned={false}
+        <TurnFooter usage={turn.usage} models={models} pinned={false} credit={credit}
           answer={[...turn.entries].reverse().find((e) => e.kind === 'message')?.text ?? ''}
           onRetry={live && !running && hasRetry ? cb.onRetry : undefined} />
       )}
