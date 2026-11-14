@@ -114,9 +114,13 @@ final class ToolRowRenderTests: XCTestCase {
             for (state, view) in [("collapsed", AnyView(ActivityLine(group: group, conversation: c))),
                                   ("open", AnyView(ActivityLine(group: group, conversation: c, expanded: true)))] {
                 let png = try render(view, size: size, to: "sendmessage-row-\(state)")
-                let lines = try XCTUnwrap(read(png), "tesseract gave no output")
-                let payload = lines.filter { $0.localizedCaseInsensitiveContains("delivered") }
-                XCTAssertFalse(payload.isEmpty, "[\(state)] the result must be visible; read back: \(lines)")
+                let read = try XCTUnwrap(read(png), "tesseract gave no output")
+                let said = read.filter { $0.localizedCaseInsensitiveContains("SendMessage") }
+                // A finished row drops its verb (#339), so the label may not show at all; where
+                // it does, it shows once.
+                XCTAssertLessThanOrEqual(said.count, 1, "[\(state)] the label must not repeat; read back: \(read)")
+                let payload = read.filter { $0.localizedCaseInsensitiveContains("delivered") }
+                XCTAssertFalse(payload.isEmpty, "[\(state)] the result must be visible; read back: \(read)")
             }
         }
     }
