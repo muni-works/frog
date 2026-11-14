@@ -92,6 +92,35 @@ fn kind(model: &str) -> &'static Kind {
     if model == APPLE { &APPLE_KIND } else { &TANG }
 }
 
+/// The bearer token `frog-apple` requires, from `<data dir>/frog-apple.token` (owner-only),
+/// made on first use. A file, not per-engine, because later engines reuse the running sidecar.
+pub fn apple_token() -> Option<String> {
+    use std::io::{Read, Write};
+    use std::os::unix::fs::OpenOptionsExt;
+    let path = data_dir().join("frog-apple.token");
+    if let Ok(t) = std::fs::read_to_string(&path)
+        && t.trim().len() >= 32
+    {
+        return Some(t.trim().to_string());
+    }
+    let mut bytes = [0u8; 32];
+    std::fs::File::open("/dev/urandom")
+        .ok()?
+        .read_exact(&mut bytes)
+        .ok()?;
+    let token: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    std::fs::create_dir_all(data_dir()).ok()?;
+    let _ = std::fs::remove_file(&path);
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&path)
+        .ok()?;
+    f.write_all(token.as_bytes()).ok()?;
+    Some(token)
+}
+
 pub fn base_url(model: &str) -> String {
     format!("http://127.0.0.1:{}/v1", kind(model).port)
 }
@@ -146,14 +175,13 @@ async fn serving(k: &Kind) -> Option<String> {
         .timeout(Duration::from_secs(2))
         .build()
         .ok()?;
-    let v: serde_json::Value = http
-        .get(format!("http://127.0.0.1:{}/v1/models", k.port))
-        .send()
-        .await
-        .ok()?
-        .json()
-        .await
-        .ok()?;
+    let mut req = http.get(format!("http://127.0.0.1:{}/v1/models", k.port));
+    if k.bin == APPLE_KIND.bin
+        && let Some(t) = apple_token()
+    {
+        req = req.bearer_auth(t);
+    }
+    let v: serde_json::Value = req.send().await.ok()?.json().await.ok()?;
     v["data"][0]["id"].as_str().map(String::from)
 }
 
@@ -202,6 +230,11 @@ pub async fn ensure(p: &Profile) -> Result<()> {
         if let Some(d) = &p.draft_model {
             cmd.env("TANG_DRAFT_MODEL", d);
         }
+    } else {
+        cmd.env(
+            "FROG_APPLE_TOKEN",
+            apple_token().context("making frog-apple's token")?,
+        );
     }
     cmd.args(["--port", &k.port.to_string()])
         .stdin(Stdio::null())

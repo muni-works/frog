@@ -338,7 +338,11 @@ impl Provider {
                     .clone()
                     .unwrap_or_else(|| "https://api.openai.com/v1".into()),
                 model: p.model.clone(),
-                key,
+                key: if p.sidecar.as_deref() == Some(crate::sidecar::APPLE) {
+                    crate::sidecar::apple_token()
+                } else {
+                    key
+                },
                 extra,
                 anthropic: anthropic::Settings::from_profile(p, true),
                 priority: None,

@@ -95,10 +95,25 @@ final class PageCapture: NSObject, WKNavigationDelegate {
 }
 
 func screenshot(_ body: [String: Any], _ response: HTTPServer.Response) async {
-    guard let raw = body["url"] as? String, let url = URL(string: raw),
+    guard let raw = body["url"] as? String, var url = URL(string: raw),
           ["http", "https", "file"].contains(url.scheme ?? ""),
           url.user == nil, url.password == nil else {
         response.json(400, ["error": ["message": "url must use http, https or file without credentials"]]); return
+    }
+    // A file capture must name the workspace it belongs to and stay inside it (symlinks resolved),
+    // so a capture can't render ~/.ssh or the like.
+    if url.isFileURL {
+        guard let root = body["root"] as? String, root.hasPrefix("/") else {
+            response.json(400, ["error": ["message": "file captures need an absolute `root`"]]); return
+        }
+        let base = URL(fileURLWithPath: root).resolvingSymlinksInPath().standardizedFileURL.path
+        let file = url.resolvingSymlinksInPath().standardizedFileURL
+        var dir: ObjCBool = false
+        guard base != "/", file.path.hasPrefix(base.hasSuffix("/") ? base : base + "/"),
+              FileManager.default.fileExists(atPath: file.path, isDirectory: &dir), !dir.boolValue else {
+            response.json(400, ["error": ["message": "file captures must be an existing file inside `root`"]]); return
+        }
+        url = file
     }
     let width = body["width"] as? Int ?? 1280
     let height = body["height"] as? Int ?? 720

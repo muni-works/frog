@@ -86,14 +86,17 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         .timeout(Duration::from_secs(40))
         .redirect(reqwest::redirect::Policy::none())
         .build()?;
-    let value = visual::response(
-        client
-            .post(endpoint)
-            .json(&json!({"url":url.as_str(),"width":width,"height":height,"settle_ms":settle}))
-            .send()
-            .await?,
-    )
-    .await?;
+    let mut request = client.post(endpoint).json(&json!({
+        "url": url.as_str(), "width": width, "height": height, "settle_ms": settle,
+        // frog-apple renders file:// only inside this root.
+        "root": ctx.root.canonicalize()?,
+    }));
+    if ctx.screenshot_endpoint.is_none()
+        && let Some(t) = crate::sidecar::apple_token()
+    {
+        request = request.bearer_auth(t);
+    }
+    let value = visual::response(request.send().await?).await?;
     if value["data"].as_array().is_none_or(|data| data.len() != 1) {
         bail!("screenshot endpoint must return exactly one image");
     }
