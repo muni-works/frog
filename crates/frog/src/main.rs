@@ -436,6 +436,7 @@ async fn run() -> Result<bool> {
     cfg.energy |= cli.energy;
     // The engine log is stderr, which only a client like the Mac app keeps.
     cfg.log_calls |= cli.serve;
+    cfg.cloud_sandbox = cli.serve_ws.is_some();
     if cli.no_shell_sandbox {
         cfg.sandbox_shell = false;
     }

@@ -933,7 +933,7 @@ final class Conversation {
             note(Self.egressNotice(host: host, tool: tool, command: command, enforced: enforced), warning: enforced)
         case .egressWidened(_, let tool, let command, let hosts, let sandboxLeft):
             // Yolo acted without asking: one quiet row where another mode would have carded.
-            note(Self.widenedNotice(tool: tool, command: command, hosts: hosts, sandboxLeft: sandboxLeft), warning: false)
+            note(Self.widenedNotice(tool: tool, command: command, hosts: hosts, sandboxLeft: sandboxLeft, cloud: cloudSession != nil), warning: false)
         case .permissionDecision:
             // Bookkeeping for the ask rate; nothing to show.
             break
@@ -1342,8 +1342,12 @@ final class Conversation {
 
     /// The transcript row for an `egress_widened` event: yolo ran what another mode would
     /// have carded. One quiet line, never a warning.
-    nonisolated static func widenedNotice(tool: String, command: String, hosts: [String], sandboxLeft: Bool) -> String {
+    /// `cloud`: the engine is a Frog Cloud sandbox VM, which holds none of the user's credentials.
+    nonisolated static func widenedNotice(tool: String, command: String, hosts: [String], sandboxLeft: Bool, cloud: Bool = false) -> String {
         let what = command.isEmpty ? tool : "`\(command)`"
+        if sandboxLeft && cloud {
+            return "Yolo: \(what) ran outside the command sandbox, inside your cloud machine; it can change anything on that machine and reach the network."
+        }
         if sandboxLeft {
             return "Yolo: \(what) ran outside the sandbox; it can change files anywhere and read your credentials."
         }

@@ -11224,6 +11224,83 @@ async fn a_denied_call_retried_in_the_same_turn_ends_it_blocked() {
     assert_eq!(v, json!({"type": "blocked_on_approval", "denial": "x"}));
 }
 
+/// The unsandboxed card's reason as the user would see it, with the engine told whether it
+/// runs in a Frog Cloud sandbox VM.
+async fn escape_reason(cloud: bool) -> String {
+    let cfg = Config {
+        hermetic: true,
+        sandbox_shell: false,
+        cloud_sandbox: cloud,
+        ..Config::default()
+    };
+    let script = vec![
+        reply(
+            vec![Block::ToolUse {
+                id: "b".into(),
+                name: "Bash".into(),
+                input: json!({ "command": "brew install jq", "unsandboxed": true }),
+            }],
+            Stop::ToolUse,
+        ),
+        reply(vec![text("ok")], Stop::End),
+    ];
+    let mut h = engine_perm_cfg(script, Mode::Default, cfg);
+    let evs = turn_answering(&mut h, |_| Some((Decision::Deny, None))).await;
+    shutdown(h).await;
+    evs.iter()
+        .find_map(|e| match &e.event {
+            Event::PermissionRequest { reason, .. } => reason.clone(),
+            _ => None,
+        })
+        .expect("leaving the sandbox cards with a reason")
+}
+
+/// On the user's own machine the card warns about credentials; that stays.
+#[tokio::test]
+async fn local_escape_card_warns_about_credentials() {
+    assert_eq!(
+        escape_reason(false).await,
+        "Runs outside the sandbox: it can change files anywhere and read your credentials."
+    );
+}
+
+/// In a Frog Cloud sandbox VM there are no credentials of the user's to read: the card says
+/// what's true there (Cam's launch review, 2026-11-14).
+#[tokio::test]
+async fn cloud_escape_card_says_cloud_machine_not_credentials() {
+    let reason = escape_reason(true).await;
+    assert!(!reason.contains("credentials"), "{reason}");
+    assert_eq!(
+        reason,
+        "Runs outside the command sandbox, inside your cloud machine: it can change anything on that machine and reach the network."
+    );
+}
+
+/// A denied command ends the turn with one plain sentence, not just the row's tag.
+#[tokio::test]
+async fn a_denied_command_leaves_a_sentence() {
+    let script = vec![
+        reply(
+            vec![Block::ToolUse {
+                id: "b".into(),
+                name: "Bash".into(),
+                input: json!({ "command": "brew install jq", "unsandboxed": true }),
+            }],
+            Stop::ToolUse,
+        ),
+        reply(vec![text("ok")], Stop::End),
+    ];
+    let mut h = engine_perm(script, Mode::Default, None);
+    let evs = turn_answering(&mut h, |_| Some((Decision::Deny, None))).await;
+    shutdown(h).await;
+    assert_eq!(ended(&evs), Some(EndReason::Denied));
+    let said: Vec<_> = notices(&evs)
+        .into_iter()
+        .filter(|n| n == DENIED_ENDING)
+        .collect();
+    assert_eq!(said.len(), 1, "{:?}", notices(&evs));
+}
+
 /// (5) An identical carded call denied twice in a session never asks again: the third
 /// attempt (a later turn) is denied at once with the notice, and the agent carries on.
 #[tokio::test]

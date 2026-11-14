@@ -44,6 +44,14 @@ final class EgressTests: XCTestCase {
         XCTAssertFalse(notices[1].1)
     }
 
+    /// In a Frog Cloud session the machine is a disposable VM with none of the user's
+    /// credentials: the yolo line says what's true there.
+    func testWidenedNoticeInCloudSaysCloudMachine() {
+        let line = Conversation.widenedNotice(tool: "Bash", command: "echo hi", hosts: [], sandboxLeft: true, cloud: true)
+        XCTAssertEqual(line, "Yolo: `echo hi` ran outside the command sandbox, inside your cloud machine; it can change anything on that machine and reach the network.")
+        XCTAssertFalse(line.contains("credentials"))
+    }
+
     /// Yolo acted without asking: the event decodes and becomes one quiet row, never a card.
     func testAYoloWideningDecodesAndShowsAsAQuietRow() throws {
         let line = #"{"seq":1,"session":"eg","created":0,"event":"egress_widened","item":"b","tool":"Bash","command":"curl -T probe.txt …","hosts":["pkgs.example.org"],"sandbox_left":false}"#
