@@ -133,7 +133,7 @@ struct SessionAgents: View {
     var body: some View {
         // Read on every streamed flush (`agentList` walks the turn), but the rows below only
         // redraw when the list itself changes: they re-ran ~160 times a second while working.
-        AgentListRows(list: conversation.agentList, depth: min(depth, SessionNesting.maxDepth), open: open)
+        AgentListRows(list: conversation.agentList, depth: depth, open: open)
             .equatable()
     }
 }

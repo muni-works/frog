@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy · Frog</title>
+<meta name="description" content="Frog has no telemetry. Everything that leaves your machine, and when.">
+<meta name="theme-color" content="#f6f5f1" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#141513" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon.png">
+<style>
+  /* Same tokens and footer as /mac (site/index.html). */
+  :root {
+    --bg: #f6f5f1; --fg: #1b1d1a; --muted: #6b6f68; --faint: #a3a69e; --line: #e2e0d8;
+    --card: #ffffff; --well: #f1f0eb; --accent: #2e9e4f; --pad: rgb(46 158 79 / .22);
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141513; --fg: #ecebe6; --muted: #9a9d95; --faint: #62655f; --line: #2a2c28;
+      --card: #1c1e1b; --well: #232522; --accent: #58cc6f; --pad: rgb(88 204 111 / .22);
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 17px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: var(--pad); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 8px; }
+  p, li { text-wrap: pretty; }
+  code { font-family: var(--mono); font-size: .88em; }
+  main { max-width: 720px; margin: 0 auto; padding: 64px 20px 40px; }
+  .back { font-size: 14px; color: var(--muted); text-decoration: none; }
+  .back:hover { color: var(--fg); }
+  h1 { font: 700 44px/1.05 -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif; letter-spacing: -0.03em; margin: 18px 0 10px; }
+  .lede { font-size: 19px; color: var(--muted); margin: 0 0 8px; text-wrap: balance; }
+  h2 { font-size: 17px; margin: 48px 0 6px; }
+  section > p, section > ul { color: var(--muted); font-size: 15px; }
+  section > p b, section > ul b { color: var(--fg); }
+  section > ul { padding-left: 20px; }
+  a { color: var(--accent); text-underline-offset: 3px; }
+  .note { font-size: 13px; color: var(--faint); }
+  .table { overflow-x: auto; background: var(--card); border: 1px solid var(--line); border-radius: 12px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: 0; }
+  th { font-size: 12px; font-weight: 600; color: var(--muted); }
+  td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td .det { display: block; font-size: 12px; color: var(--muted); }
+  .cards { list-style: none; margin: 0 0 12px; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .cards li { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+  .cards b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; }
+  .cards span { font-size: 12px; color: var(--muted); }
+  .sum { background: var(--well); border-radius: 12px; padding: 14px 16px; font-size: 14px; color: var(--muted); }
+  .sum .row { display: flex; justify-content: space-between; gap: 12px; font-variant-numeric: tabular-nums; }
+  .sum .total { color: var(--fg); font-weight: 600; border-top: 1px solid var(--line); margin-top: 6px; padding-top: 6px; }
+  footer {
+    margin-top: 72px; padding-top: 20px; border-top: 1px solid var(--line);
+    display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--muted);
+  }
+  footer svg { width: 20px; height: 20px; }
+  footer svg path { fill: var(--accent); }
+  footer a { color: inherit; text-decoration-color: var(--faint); }
+  footer a:hover { color: var(--fg); }
+  footer .end { margin-left: auto; font-family: var(--mono); font-size: 12px; color: var(--faint); }
+  footer nav { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+  @media (max-width: 560px) {
+    main { padding-top: 40px; }
+    h1 { font-size: 36px; }
+    .cards { grid-template-columns: 1fr; }
+    th, td { padding: 9px 10px; }
+    footer { flex-wrap: wrap; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <a class="back" href="/mac/">← Frog</a>
+  <h1>Privacy</h1>
+  <p class="lede">Frog has no telemetry. Here's everything that leaves your machine, and when.</p>
+
+  <section>
+    <h2>Never collected</h2>
+    <ul>
+      <li>Your prompts, the model's responses, or anything you type</li>
+      <li>Your code, file names, paths or contents</li>
+      <li>Repository names, branch names or git remotes</li>
+      <li>IP addresses (not stored, not logged by us, not used for counting)</li>
+      <li>Device names, hardware ids, or any id that tells one install from another</li>
+      <li>Cookies or fingerprints on frog.toys</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Your model provider</h2>
+    <p>Your prompts and code go to the model you pick, and nowhere else, to get an answer. A local model keeps them on your machine. A cloud model sends them to that provider (Frog Cloud, OpenRouter, OpenAI, …) under its own terms.</p>
+  </section>
+
+  <section>
+    <h2>Calls frog makes on its own</h2>
+    <div class="table">
+      <table>
+        <thead><tr><th>What</th><th>When</th><th>What's sent</th></tr></thead>
+        <tbody>
+          <tr><td><b>iPhone push relay</b><span class="det">frog.toys/api/push</span></td><td>Mac app, only after you pair an iPhone and set a push secret. When a session asks permission or a question, or sends a notification.</td><td>The phone's push token, the conversation title and folder name, and the question (a command's first 300 characters, an edit's file name and reason, a short diff preview). Forwarded to Apple's push service; the relay keeps nothing.</td></tr>
+          <tr><td><b>Model catalog</b><span class="det">models.dev</span></td><td>When a model list is built, at most every 6 hours, cached.</td><td>Nothing beyond an ordinary web request.</td></tr>
+          <tr><td><b>Provider model lists</b></td><td>Same, for each provider you've connected.</td><td>Your key for that provider, to that provider only.</td></tr>
+          <tr><td><b>Model downloads</b><span class="det">huggingface.co</span></td><td>When you download a local model.</td><td>The names of the files being downloaded.</td></tr>
+          <tr><td><b>Local servers</b><span class="det">ollama, LM Studio</span></td><td>When picking or listing models.</td><td>A request on your own machine.</td></tr>
+          <tr><td><b>Updates</b><span class="det">frog.toys/appcast.xml</span></td><td>Mac app, about once a day.</td><td>The app version.</td></tr>
+          <tr><td><b>Installer</b><span class="det">GitHub</span></td><td>When you run <code>install.sh</code> or <code>/node</code>.</td><td>An ordinary request for the latest release; GitHub's own logging applies.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>What we count</h2>
+    <p>Only from requests that already reach our servers, kept as anonymous totals:</p>
+    <ul>
+      <li><b>Installs</b>: each fetch of the installer or the Mac app download. Path, platform, country and time. Kept three months.</li>
+      <li><b>Active Macs</b>: each daily update check. App version, country and time. A count of checks, not of people.</li>
+      <li><b>Website visits</b>: Cloudflare Web Analytics, which uses no cookies, storage or fingerprinting. Page views, referrer, country, browser and load time, as totals.</li>
+    </ul>
+    <p>The full detail, field by field, is in <a href="https://github.com/muni-works/frog/blob/main/docs/privacy.md">docs/privacy.md</a>.</p>
+  </section>
+
+  <section>
+    <h2>Frog Cloud</h2>
+    <p>If you sign up, we keep your account (email, name, sign-in method), your purchases (through Stripe; we never see card details) and per-request usage (model, token counts, cost, timing) so we can bill you. Never the text of requests made with an API key. Sessions you run in Frog Cloud keep their transcript and working files until you delete them, or for 30 days without activity. We don't train models on your code or sell your data. The full account policy is at <a href="https://api.frog.toys/privacy">api.frog.toys/privacy</a>.</p>
+    <p>Our team gets anonymous notices: a new sign-up's country, credit bought, a plan started or cancelled, and daily totals. No names, emails or ids in any of them.</p>
+  </section>
+
+  <section>
+    <h2>Questions</h2>
+    <p>Email <a href="mailto:cam@muni.works">cam@muni.works</a>, or ask us to export or delete your Frog Cloud account.</p>
+  </section>
+
+  <footer>
+    <svg viewBox="0 0 100 100" aria-hidden="true"><path fill-rule="evenodd" d="M12 30a18 18 0 1 0 36 0a18 18 0 1 0 -36 0Z M23.5 27a6.5 6.5 0 1 0 13 0a6.5 6.5 0 1 0 -13 0Z"/><path fill-rule="evenodd" d="M52 30a18 18 0 1 0 36 0a18 18 0 1 0 -36 0Z M63.5 27a6.5 6.5 0 1 0 13 0a6.5 6.5 0 1 0 -13 0Z"/><path fill-rule="evenodd" d="M8 62a42 29 0 1 0 84 0a42 29 0 1 0 -84 0Z M31 66Q50 82 69 66Q50 75 31 66Z M41.5 53a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0 -5 0Z M53.5 53a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0 -5 0Z"/></svg>
+    <span>Made by <a href="https://campedersen.com">Cam Pedersen</a></span>
+    <nav aria-label="Site">
+      <a href="/pricing">Pricing</a>
+      <a href="https://api.frog.toys/docs">Docs</a>
+      <a href="/privacy">Privacy</a>
+      <a href="https://github.com/muni-works/frog/blob/main/docs/privacy.md">What we count</a>
+      <a href="/terms">Terms</a>
+      <a href="https://api.frog.toys/status">Status</a>
+    </nav>
+    <span class="end">toys.frog</span>
+  </footer>
+</main>
+</body>
+</html>

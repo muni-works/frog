@@ -62,6 +62,13 @@ enum SessionNesting {
             case .done(let parent, _, _, _, _): "done:" + parent
             }
         }
+
+        var depth: Int {
+            switch self {
+            case .row(_, let d, _, _): d
+            case .done(_, let d, _, _, _): d
+            }
+        }
     }
 
     /// A top-level row and everything listed under it, in order.
@@ -83,37 +90,79 @@ enum SessionNesting {
         return out
     }
 
-    /// Deepest indent; deeper descendants line up with it.
-    static let maxDepth = 4
+    /// How deep a row sits and what its guide draws: the rails left of it and whether its own
+    /// column ends in an elbow. One model for every list, so the tree's geometry can't drift
+    /// between the two-line and compact sidebars.
+    struct Guide: Equatable, Sendable {
+        var depth: Int
+        /// One per column left of the row's own, outermost first: `rails[c]` draws a vertical
+        /// through column `c` (an ancestor there has more siblings further down).
+        var rails: [Bool]
+        /// The last of its parent's children: its own column stops in an elbow (a file tree's └).
+        /// When false the column carries on to the next sibling.
+        var last: Bool
+        /// The row's children are listed right below it, so its own column runs on past the
+        /// elbow down to them. False for a leaf, and for a collapsed parent: the elbow ends it.
+        var continues: Bool
 
-    /// The ids of the entries (rows or "+N done") that are the last of their parent's children (nothing else at
-    /// their depth before the tree climbs back out), whose guide line ends in an elbow.
-    static func lastChildren(_ list: [Entry]) -> Set<String> {
-        func depth(_ e: Entry) -> Int {
-            switch e {
-            case .row(_, let d, _, _): d
-            case .done(_, let d, _, _, _): d
-            }
+        static let root = Guide(depth: 0, rails: [], last: true, continues: false)
+
+        init(depth: Int, rails: [Bool], last: Bool, continues: Bool = false) {
+            self.depth = depth
+            self.rails = rails
+            self.last = last
+            self.continues = continues
         }
-        var out: Set<String> = []
-        for (i, e) in list.enumerated() {
-            let d = depth(e)
-            guard d > 0 else { continue }
+
+        func rail(_ column: Int) -> Bool {
+            column >= 0 && column < rails.count && rails[column]
+        }
+    }
+
+    /// The guide for every row, by id, from the depths in tree order.
+    ///
+    /// Column `c` is the vertical between a depth-`c` row and what hangs under it; a row at
+    /// depth `d` owns column `d - 1` (its elbow), and the columns left of that (`0 ..< d - 1`)
+    /// are its ancestors'. An ancestor's column carries on past this row exactly when a later
+    /// row sits deeper still with nothing shallower in between — that is, when that ancestor
+    /// has more children to come.
+    static func guides(_ depths: [(id: String, depth: Int)]) -> [String: Guide] {
+        var out: [String: Guide] = [:]
+        for (i, row) in depths.enumerated() {
+            let d = row.depth
+            let below = depths[(i + 1)...]
+            // Its own column stops at its last sibling; a shallower row closes the subtree.
             var last = true
-            for next in list[(i + 1)...] {
-                let nd = depth(next)
-                if nd < d { break }
-                if nd == d { last = false; break }
+            for next in below {
+                if next.depth < d { break }
+                if next.depth == d { last = false; break }
             }
-            if last { out.insert(e.id) }
+            // Each ancestor's column carries on while something still hangs below it. In tree
+            // order the next row decides every column at once: if it sits deeper than the
+            // column, that subtree is still open; if not, it has closed.
+            let next = depths.indices.contains(i + 1) ? depths[i + 1].depth : 0
+            let rails = (0..<max(d - 1, 0)).map { next > $0 }
+            // Its children are listed right under it when the next row is one level deeper;
+            // a fold hides them, so it has nothing below and its elbow ends the column.
+            let continues = next > d
+            out[row.id] = Guide(depth: d, rails: rails, last: last, continues: continues)
         }
         return out
     }
 
+    /// The guide for each entry of a tree list.
+    static func guides(_ list: [Entry]) -> [String: Guide] {
+        guides(list.map { ($0.id, $0.depth) })
+    }
+
     /// A flat list in tree order, for lists that keep their own sections (the phone's):
     /// each id followed by the ones it started that are in the same list, indented one
-    /// deeper (up to `maxDepth`). Order otherwise kept; a child whose parent isn't in the
-    /// list stays where it was, as a root; a cycle can't lose a row.
+    /// deeper. Order otherwise kept; a child whose parent isn't in the list stays where it
+    /// was, as a root; a cycle can't lose a row.
+    ///
+    /// No depth cap: a fifth-level worker sits visibly deeper than a fourth (the sidebar
+    /// indents by real depth and stops only where the width runs out, `AttentionMetrics`).
+    /// A cap here would line two levels up on the same rail with no way to tell them apart.
     static func indented(_ ids: [String], parent: (String) -> String?) -> [(id: String, depth: Int)] {
         let present = Set(ids)
         var parentIn: [String: String] = [:]
@@ -125,7 +174,7 @@ enum SessionNesting {
         func walk(_ id: String, _ depth: Int) {
             guard placed.insert(id).inserted else { return }
             out.append((id, depth))
-            for c in ids where parentIn[c] == id { walk(c, min(depth + 1, maxDepth)) }
+            for c in ids where parentIn[c] == id { walk(c, depth + 1) }
         }
         for id in ids where parentIn[id] == nil { walk(id, 0) }
         for id in ids where !placed.contains(id) { walk(id, 0) }
@@ -210,7 +259,9 @@ enum SessionNesting {
             let folded = (collapsed.contains(s.id) || quiet) && !kids.isEmpty
             out.append(.row(s, depth: depth, counts: counts, collapsed: folded))
             if folded { kids.forEach(hide); return }
-            let next = min(depth + 1, maxDepth)
+            // Real depth, uncapped: the row's guide says how deep it sits, and the view
+            // decides how much width it can spend on that (see `AttentionMetrics`).
+            let next = depth + 1
             // Most urgent first; the list's order within a state. Settled children are rows
             // like any other: there's no second fold inside a session.
             kids.sorted { a, b in

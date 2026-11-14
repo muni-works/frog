@@ -744,7 +744,7 @@ mod tests {
     fn mcp_summary_becomes_a_count() {
         assert_eq!(
             super::shorten_notice(
-                "Some MCP servers aren't available: aws-mcp couldn't start; choji and runpod need a sign-in frog doesn't support yet; fusion isn't running."
+                "Some MCP servers aren't available: aws-mcp couldn't start; choji and runpod need a sign-in (Settings → MCP → Sign in); fusion isn't running."
             ),
             "4 MCP servers unavailable · frog --mcp for details"
         );
