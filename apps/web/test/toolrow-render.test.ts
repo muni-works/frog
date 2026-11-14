@@ -58,8 +58,10 @@ test("the label is not said twice", () => {
   const html = draw(sent({ arg: "ops", output: "Sent to ops; delivered." }))
   const said = /<span class="tool-said">([^<]*)<\/span>/.exec(html)?.[1] ?? ""
   assert.ok(said.length > 0, `the row must say something; html: ${html}`)
-  // "Used" is the verb span, and it appears once in the whole row.
-  assert.equal((html.match(/>Used</g) ?? []).length, 1, `the verb must appear once; html: ${html}`)
+  // A finished row drops its verb ("a gist row carries no verb beside it"); where a verb does
+  // show, it shows once.
+  assert.ok((html.match(/>Used</g) ?? []).length <= 1, `the verb must not repeat; html: ${html}`)
+  assert.ok(!said.startsWith("Used"), `the sentence must not open with the verb again; html: ${html}`)
 })
 
 test("a payload tool keeps its chevron and its body, and says nothing on the line", () => {
