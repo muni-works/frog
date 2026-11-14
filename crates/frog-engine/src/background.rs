@@ -703,6 +703,10 @@ pub fn start_job(reg: &Arc<Registry>, input: &Value, ctx: &Ctx, dir: &Path) -> R
     )))
 }
 
+/// How long a Monitor polls when no `timeout_s` is given. CI runs and builds take 10-20
+/// minutes; at 600s a quarter of the CI waits in the session logs timed out and were re-armed.
+const DEFAULT_TIMEOUT_S: u64 = 1_800;
+
 /// `Monitor` (already permitted when it runs a command).
 pub fn start_monitor(reg: &Arc<Registry>, input: &Value, ctx: &Ctx) -> Result<Output> {
     if let Some(target) = input["cancel"].as_str().map(str::trim).filter(|s| !s.is_empty()) {
@@ -757,7 +761,11 @@ pub fn start_monitor(reg: &Arc<Registry>, input: &Value, ctx: &Ctx) -> Result<Ou
         );
         return Ok(Output::text(armed(reg, &id, head, &subject, &replaced)));
     }
-    let regex = match input["until_regex"].as_str().filter(|s| !s.is_empty()) {
+    // `when_regex`, `regex` and `pattern` are what models write when they misremember the name.
+    let regex = match ["until_regex", "when_regex", "regex", "pattern"]
+        .iter()
+        .find_map(|k| input[*k].as_str().filter(|s| !s.is_empty()))
+    {
         Some(r) => Some(regex::Regex::new(r).map_err(|e| anyhow::anyhow!("bad until_regex: {e}"))?),
         None => None,
     };
@@ -767,12 +775,15 @@ pub fn start_monitor(reg: &Arc<Registry>, input: &Value, ctx: &Ctx) -> Result<Ou
             .as_i64()
             .or_else(|| v.as_str().and_then(|s| s.parse().ok())),
     };
-    if regex.is_none() && until_exit.is_none() {
-        bail!(
-            "give `until_regex` (a pattern to wait for in the output) or `until_exit` (an exit code to wait for)"
-        );
-    }
-    let timeout = Duration::from_secs(int_arg(input, "timeout_s").unwrap_or(600).clamp(1, 86_400));
+    // No stop condition (a third of the Monitor calls in the session logs, most of them CI
+    // waits like `gh pr checks 331 | grep -c pending`): watch for the output to change from
+    // the first poll, which is what such a command is for, rather than refuse.
+    let on_change = regex.is_none() && until_exit.is_none();
+    // `after_s` beside a command means "look again by then": it bounds the wait.
+    let timeout = int_arg(input, "timeout_s")
+        .or_else(|| int_arg(input, "after_s").filter(|_| on_change))
+        .unwrap_or(DEFAULT_TIMEOUT_S);
+    let timeout = Duration::from_secs(timeout.clamp(1, 86_400));
     let interval = Duration::from_secs(int_arg(input, "interval_s").unwrap_or(5).clamp(1, 3_600));
     // Check the command can be built (the sandbox exists) before saying it started.
     crate::tools::bash::shell(input, &shell_ctx(ctx))?;
@@ -796,6 +807,7 @@ pub fn start_monitor(reg: &Arc<Registry>, input: &Value, ctx: &Ctx) -> Result<Ou
     tokio::spawn(async move {
         let start = Instant::now();
         let mut polls = 0u32;
+        let mut first: Option<String> = None;
         loop {
             polls += 1;
             let left = timeout.saturating_sub(start.elapsed());
@@ -813,9 +825,15 @@ pub fn start_monitor(reg: &Arc<Registry>, input: &Value, ctx: &Ctx) -> Result<Ou
                 .as_ref()
                 .and_then(|r| r.find(&out).map(|m| m.as_str().to_string()));
             let exited = until_exit.is_some() && code == until_exit;
-            if matched.is_some() || exited {
+            let changed = on_change && first.as_ref().is_some_and(|f| *f != out);
+            if on_change && first.is_none() {
+                first = Some(out.clone());
+            }
+            let last = if last.trim().is_empty() { "(no output)".to_string() } else { last };
+            if matched.is_some() || exited || changed {
                 let why = match matched {
                     Some(m) => format!("matched {m:?}"),
+                    None if changed => "the output changed since the first poll".to_string(),
                     None => format!("exit={}", code.unwrap_or(-1)),
                 };
                 let others = trailer(&reg2, &id2);
@@ -828,7 +846,8 @@ pub fn start_monitor(reg: &Arc<Registry>, input: &Value, ctx: &Ctx) -> Result<Ou
             if start.elapsed() + interval > timeout {
                 let others = trailer(&reg2, &id2);
                 let notice = format!(
-                    "<monitor-done id={id2}{attr} status=timeout polls={polls}>\nno match after {}s. Last output:\n{last}{others}\n</monitor-done>",
+                    "<monitor-done id={id2}{attr} status=timeout polls={polls}>\n{} after {}s. Last output:\n{last}\nNext: act on that output. If it shows the thing is still in progress, start the Monitor again with a longer `timeout_s`; if it never could have matched, fix the command or the condition first.{others}\n</monitor-done>",
+                    if on_change { "no change" } else { "no match" },
                     timeout.as_secs()
                 );
                 reg2.finish(&id2, "timeout", String::new(), notice);
@@ -840,11 +859,14 @@ pub fn start_monitor(reg: &Arc<Registry>, input: &Value, ctx: &Ctx) -> Result<Ou
             }
         }
     });
-    let head = format!(
+    let mut head = format!(
         "Monitor {id} started: polling every {}s for up to {}s. You'll get a <monitor-done id={id}> message on a match or at the timeout. Monitor {{\"cancel\": \"{id}\"}} (or JobStop) stops it.",
         interval.as_secs(),
         timeout.as_secs()
     );
+    if on_change {
+        head.push_str(" No `until_regex` or `until_exit` was given, so it stops when the command's output changes from the first poll; give one of them to wait for something specific.");
+    }
     Ok(Output::text(armed(reg, &id, head, &subject, &replaced)))
 }
 
@@ -1004,12 +1026,12 @@ pub fn specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: MONITOR.into(),
-            description: "Watch for something in the background and get a message when it happens, instead of polling yourself. With `command`: run it every `interval_s` seconds until its output matches `until_regex` or it exits with code `until_exit` (true means 0), or `timeout_s` passes. The command runs like Bash (same sandbox and permissions). With only `after_s`: a timer that wakes you after that many seconds. Give each a `subject` (`b300-retry`, `sweep`): re-arming the same subject replaces the pending one instead of stacking another, and the wakeup names it. At most 5 timers can be pending. With `cancel`: stop pending timers/monitors by id, subject, or `all`, as soon as what they watch stops mattering.".into(),
+            description: "Watch for something in the background and get a message when it happens, instead of polling yourself (never `sleep N; check` in Bash). With `command`: run it every `interval_s` seconds until its output matches `until_regex` or it exits with code `until_exit` (true means 0), or `timeout_s` passes; with neither condition it stops when the output changes from the first poll. To wait for CI: {\"command\": \"gh pr checks 123\", \"until_exit\": true, \"interval_s\": 60} (`gh pr checks` exits 0 once every check passed), or print a marker when done and match it: {\"command\": \"gh pr checks 123 | grep -q pending || echo SETTLED\", \"until_regex\": \"SETTLED\"}. To wait for a build you started, run it with Bash run_in_background instead: you're told when it exits. The command runs like Bash (same sandbox and permissions). With only `after_s`: a timer that wakes you after that many seconds. Give each a `subject` (`b300-retry`, `sweep`): re-arming the same subject replaces the pending one instead of stacking another, and the wakeup names it. At most 5 timers can be pending. With `cancel`: stop pending timers/monitors by id, subject, or `all`, as soon as what they watch stops mattering.".into(),
             schema: json!({"type": "object", "properties": {
                 "command": {"type": "string", "description": "Shell command to poll"},
                 "until_regex": {"type": "string", "description": "Stop when the command's output matches this regex"},
                 "until_exit": {"type": ["integer", "boolean"], "description": "Stop when the command exits with this code (true: 0)"},
-                "timeout_s": {"type": "integer", "description": "Give up after this many seconds (default 600)"},
+                "timeout_s": {"type": "integer", "description": "Give up after this many seconds (default 1800)"},
                 "interval_s": {"type": "integer", "description": "Seconds between polls (default 5)"},
                 "after_s": {"type": "integer", "description": "Timer only: wake after this many seconds"},
                 "note": {"type": "string", "description": "Timer only: a reminder to include in the wakeup"},
@@ -1085,6 +1107,39 @@ mod tests {
         assert!(notice.contains("status=matched polls=2"), "{notice}");
     }
 
+    /// The shape models actually send for a CI wait: a command and an interval, no stop
+    /// condition. It used to be refused (16 times in a day's logs); now it waits for a change.
+    #[tokio::test]
+    async fn monitor_without_a_stop_condition_waits_for_the_output_to_change() {
+        let (reg, _) = registry();
+        let ctx = Ctx::new(tmp());
+        // 1 pending, 1 pending, then 0: the third poll differs from the first.
+        let input = json!({"command": "echo tick >> n; [ $(wc -l < n) -ge 3 ] && echo 0 || echo 1",
+            "interval_s": 1, "subject": "ci-331", "cancel": ""});
+        let out = start_monitor(&reg, &input, &ctx).unwrap();
+        assert!(out.content.contains("stops when the command's output changes"), "{}", out.content);
+        assert!(out.content.contains("for up to 1800s"), "{}", out.content);
+        let notice = wait_notice(&reg).await;
+        assert!(notice.contains("status=matched polls=3"), "{notice}");
+        assert!(notice.contains("the output changed"), "{notice}");
+    }
+
+    #[tokio::test]
+    async fn monitor_accepts_when_regex_and_bounds_a_bare_command_by_after_s() {
+        let (reg, _) = registry();
+        let ctx = Ctx::new(tmp());
+        let input = json!({"command": "echo READY", "when_regex": "READY", "interval_s": 1});
+        start_monitor(&reg, &input, &ctx).unwrap();
+        assert!(wait_notice(&reg).await.contains("status=matched polls=1"));
+        // `command` + `after_s` (logged twice): polls for a change, for at most after_s.
+        let input = json!({"command": "echo waiting", "after_s": 1, "interval_s": 1});
+        let out = start_monitor(&reg, &input, &ctx).unwrap();
+        assert!(out.content.contains("for up to 1s"), "{}", out.content);
+        let notice = wait_notice(&reg).await;
+        assert!(notice.contains("status=timeout"), "{notice}");
+        assert!(notice.contains("no change after 1s"), "{notice}");
+    }
+
     #[tokio::test]
     async fn monitor_times_out() {
         let (reg, seen) = registry();
@@ -1094,6 +1149,8 @@ mod tests {
         let notice = wait_notice(&reg).await;
         assert!(notice.contains("status=timeout"), "{notice}");
         assert!(notice.contains("nope"), "{notice}");
+        // It says what to do next, not only that it gave up.
+        assert!(notice.contains("longer `timeout_s`"), "{notice}");
         assert!(
             seen.lock()
                 .unwrap()

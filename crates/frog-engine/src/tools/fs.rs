@@ -12,7 +12,7 @@ pub fn read_spec() -> ToolSpec {
         name: "Read".into(),
         description: "Read a text file. Returns lines prefixed with 1-based line numbers (cat -n style). \
 Reads up to 2000 lines by default; use offset/limit for large files. On a directory, lists its entries \
-(like `ls`, capped at 200). You must Read a file before editing it.".into(),
+(like `ls`, capped at 200).".into(),
         schema: json!({
             "type": "object",
             "properties": {
@@ -46,7 +46,8 @@ pub fn edit_spec() -> ToolSpec {
         name: "Edit".into(),
         description: "Replace an exact string in a file. old_string must match the file exactly (including whitespace and \
 indentation, without the line-number prefix from Read) and be unique unless replace_all is true. \
-Include enough surrounding lines to make it unique. The file must be Read first.".into(),
+Include enough surrounding lines to make it unique. No Read is needed first when you already know the exact text \
+(from Grep or command output); if the file changed since you last Read it, Read it again.".into(),
         schema: json!({
             "type": "object",
             "properties": {
@@ -170,6 +171,11 @@ fn check_fresh(ctx: &Ctx, path: &Path) -> Result<()> {
     let Some(seen) = ctx.read_files.get(path) else {
         bail!("you must Read {} before modifying it", ctx.display(path));
     };
+    check_unchanged(ctx, path, seen)
+}
+
+/// A file that was read must not have changed on disk since.
+fn check_unchanged(ctx: &Ctx, path: &Path, seen: &Option<std::time::SystemTime>) -> Result<()> {
     let now = std::fs::metadata(path).and_then(|m| m.modified()).ok();
     if now != *seen {
         bail!(
@@ -231,8 +237,19 @@ pub async fn edit(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         .await;
     }
     ctx.check_writable(&path)?;
-    check_fresh(ctx, &path)?;
-    let text = tokio::fs::read_to_string(&path).await?;
+    // A file read this session must be unchanged since. One never read is read here: an
+    // exact, unique `old_string` is proof enough of what the model is replacing (it came from
+    // Grep or a command's output), and refusing only cost a Read and the same Edit again.
+    let unread = match ctx.read_files.get(&path) {
+        Some(seen) => {
+            check_unchanged(ctx, &path, seen)?;
+            false
+        }
+        None => true,
+    };
+    let text = tokio::fs::read_to_string(&path)
+        .await
+        .with_context(|| format!("cannot read {}", ctx.display(&path)))?;
     let n = text.matches(old_s).count();
     if n == 0 {
         let hint = if text.contains(old_s.trim()) {
@@ -240,14 +257,25 @@ pub async fn edit(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         } else {
             ""
         };
+        let next = if unread {
+            "You haven't Read this file: Read it, then copy old_string from what it shows."
+        } else {
+            "Read the file again if unsure."
+        };
         bail!(
-            "old_string not found in {}{hint}. It must match exactly. Read the file again if unsure.",
+            "old_string not found in {}{hint}. It must match exactly. {next}",
             ctx.display(&path)
         );
     }
     if n > 1 && !all {
         bail!(
             "old_string matches {n} places. Add surrounding context to make it unique, or set replace_all."
+        );
+    }
+    if n > 1 && unread {
+        bail!(
+            "old_string matches {n} places in {}, which you haven't Read. Read it first so replace_all doesn't change places you haven't seen.",
+            ctx.display(&path)
         );
     }
     let updated = if all {
@@ -381,6 +409,97 @@ mod tests {
 
     fn block_on<F: std::future::Future>(f: F) -> F::Output {
         tokio::runtime::Runtime::new().unwrap().block_on(f)
+    }
+
+    /// The logs' most common wasted call: Edit refused for want of a Read, then Read, then the
+    /// same Edit. An exact unique match applies without one.
+    #[test]
+    fn edit_applies_to_a_file_never_read_when_old_string_is_unique() {
+        let tmp = TempDir::new().unwrap();
+        let f = tmp.path().join("a.rs");
+        std::fs::write(&f, "fn a() {}\nfn b() {}\n").unwrap();
+        let mut ctx = Ctx::new(tmp.path().to_path_buf());
+        let input =
+            json!({ "file_path": "a.rs", "old_string": "fn b() {}", "new_string": "fn c() {}" });
+        let out = block_on(edit(&input, &mut ctx)).unwrap();
+        assert_eq!(out.content, "Edited a.rs");
+        assert_eq!(
+            std::fs::read_to_string(&f).unwrap(),
+            "fn a() {}\nfn c() {}\n"
+        );
+        // It counts as read now: a second edit goes through the staleness check and passes.
+        let again =
+            json!({ "file_path": "a.rs", "old_string": "fn a() {}", "new_string": "fn z() {}" });
+        block_on(edit(&again, &mut ctx)).unwrap();
+    }
+
+    #[test]
+    fn edit_on_an_unread_file_refuses_what_it_cannot_apply_safely() {
+        let tmp = TempDir::new().unwrap();
+        let f = tmp.path().join("a.rs");
+        std::fs::write(&f, "x = 1\nx = 1\n").unwrap();
+        let mut ctx = Ctx::new(tmp.path().to_path_buf());
+        let edit_with =
+            |v: Value, ctx: &mut Ctx| block_on(edit(&v, ctx)).err().unwrap().to_string();
+        let missing = edit_with(
+            json!({ "file_path": "a.rs", "old_string": "y = 2", "new_string": "y = 3" }),
+            &mut ctx,
+        );
+        assert!(missing.contains("haven't Read this file"), "{missing}");
+        let many = edit_with(
+            json!({ "file_path": "a.rs", "old_string": "x = 1", "new_string": "x = 2" }),
+            &mut ctx,
+        );
+        assert!(many.contains("matches 2 places"), "{many}");
+        let all = edit_with(
+            json!({ "file_path": "a.rs", "old_string": "x = 1", "new_string": "x = 2", "replace_all": true }),
+            &mut ctx,
+        );
+        assert!(all.contains("haven't Read"), "{all}");
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "x = 1\nx = 1\n");
+    }
+
+    /// The staleness check stays: a file read and then changed on disk is not edited blind.
+    #[test]
+    fn edit_still_refuses_a_file_changed_since_it_was_read() {
+        let tmp = TempDir::new().unwrap();
+        let f = tmp.path().join("a.rs");
+        std::fs::write(&f, "one\n").unwrap();
+        let mut ctx = Ctx::new(tmp.path().to_path_buf());
+        block_on(read(&json!({ "file_path": "a.rs" }), &mut ctx)).unwrap();
+        std::fs::write(&f, "one\ntwo\n").unwrap();
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
+        std::fs::File::options()
+            .write(true)
+            .open(&f)
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
+        let err = block_on(edit(
+            &json!({ "file_path": "a.rs", "old_string": "one", "new_string": "1" }),
+            &mut ctx,
+        ))
+        .err()
+        .unwrap()
+        .to_string();
+        assert!(err.contains("changed on disk"), "{err}");
+    }
+
+    /// Write still needs the Read: it replaces everything, with no old_string to prove
+    /// the model knows what's there.
+    #[test]
+    fn write_over_an_unread_file_still_needs_a_read() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("a.rs"), "keep\n").unwrap();
+        let mut ctx = Ctx::new(tmp.path().to_path_buf());
+        let err = block_on(write(
+            &json!({ "file_path": "a.rs", "content": "gone" }),
+            &mut ctx,
+        ))
+        .err()
+        .unwrap()
+        .to_string();
+        assert!(err.contains("must Read"), "{err}");
     }
 
     #[test]

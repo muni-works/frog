@@ -11,7 +11,10 @@ pub fn spec() -> ToolSpec {
     let mut description = String::from(
         "Run a shell command and return its combined stdout/stderr. The working directory persists \
 between calls (cd works). Use for builds, tests, git, and other terminal operations. Prefer Read/Edit/Glob/Grep \
-over cat/sed/find/grep. Avoid interactive commands; they will hang until the timeout.",
+over cat/sed/find/grep. Avoid interactive commands; they will hang until the timeout. \
+To wait for a build, CI or anything slow, don't `sleep N; <check>` (it holds the turn and hits the timeout): \
+start the slow command with run_in_background and you're told when it exits, or use Monitor to poll a check \
+until it shows what you're waiting for.",
     );
     let mut props = json!({
         "command": { "type": "string", "description": "The command to run" },
@@ -207,7 +210,7 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
     };
     let (stdout, stderr, status) = match tokio::time::timeout(timeout, collect).await {
         Ok(r) => r?,
-        Err(_) => bail!("command timed out after {}s", timeout.as_secs()),
+        Err(_) => bail!("{}", timed_out(timeout.as_secs())),
     };
     // Finished normally: leave any backgrounded processes alone.
     std::mem::forget(group);
@@ -254,6 +257,19 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         widget: None,
         ..Default::default()
     })
+}
+
+/// What a timeout says: the fix, not just the fact (models reran the same command, or slept
+/// and polled, for want of it).
+fn timed_out(secs: u64) -> String {
+    let longer = if secs < 600 {
+        "raise `timeout` (max 600000 ms), or "
+    } else {
+        ""
+    };
+    format!(
+        "command timed out after {secs}s and was killed. If it just needs longer, {longer}run it with run_in_background: true (you're told when it exits). To wait for something else to finish, use Monitor rather than sleep."
+    )
 }
 
 /// The user's shell, sandboxed exactly as a foreground call would be, in `ctx.cwd`, ready for
@@ -2057,6 +2073,7 @@ mod tests {
             started.elapsed()
         );
         assert!(err.to_string().contains("timed out"), "{err}");
+        assert!(err.to_string().contains("run_in_background"), "{err}");
         assert!(
             sleeper_gone(&ws).await,
             "the timed-out `sleep 30` is still running"
