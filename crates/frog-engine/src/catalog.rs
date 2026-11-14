@@ -125,13 +125,15 @@ pub fn cloud_models() -> Vec<Model> {
         .unwrap_or_default()
 }
 
-/// The frog cloud model to start on when nothing names one: `cloud/glm-5.3-flash` while
-/// frog cloud lists it (it always serves it), else the first model it lists. A gateway
-/// that still lists the old id (`tree`) counts.
+/// The Frog Cloud model to start on when nothing names one (new sessions, child sessions,
+/// the Mac's "frog's own default"): `cloud/deepseek-v4.1-flash` while Frog Cloud lists it,
+/// else the first model it lists. A gateway that still lists the old id (`bull`) counts.
+/// Measured 2026-11-14 on one five-part agent task: deepseek-v4.1-flash 89 s, glm-5.3-flash
+/// 179 s (81 s of it thinking).
 pub fn cloud_default(models: &[Model]) -> Option<String> {
     models
         .iter()
-        .find(|m| providers::cloud_model(&m.id) == "glm-5.3-flash")
+        .find(|m| providers::cloud_model(&m.id) == "deepseek-v4.1-flash")
         .or_else(|| models.first())
         .map(|m| m.spec.clone())
 }
@@ -583,7 +585,7 @@ mod tests {
     }
 
     #[test]
-    fn the_default_frog_cloud_model_is_glm_flash_else_the_first_listed() {
+    fn the_default_frog_cloud_model_is_deepseek_flash_else_the_first_listed() {
         let m = |id: &str| Model {
             spec: format!("{}/{id}", providers::CLOUD),
             id: id.into(),
@@ -591,17 +593,17 @@ mod tests {
         };
         let cloud = providers::CLOUD;
         assert_eq!(
-            cloud_default(&[m("deepseek-v4.1-flash"), m("qwen3-coder-next"), m("glm-5.3-flash")]),
-            Some(format!("{cloud}/glm-5.3-flash"))
+            cloud_default(&[m("glm-5.3-flash"), m("qwen3-coder-next"), m("deepseek-v4.1-flash")]),
+            Some(format!("{cloud}/deepseek-v4.1-flash"))
         );
         // An older gateway still listing the old id.
         assert_eq!(
-            cloud_default(&[m("bull"), m("tree")]),
-            Some(format!("{cloud}/tree"))
+            cloud_default(&[m("tree"), m("bull")]),
+            Some(format!("{cloud}/bull"))
         );
         assert_eq!(
-            cloud_default(&[m("deepseek-v4.1-flash"), m("qwen3-coder-next")]),
-            Some(format!("{cloud}/deepseek-v4.1-flash"))
+            cloud_default(&[m("glm-5.3-flash"), m("qwen3-coder-next")]),
+            Some(format!("{cloud}/glm-5.3-flash"))
         );
         assert_eq!(cloud_default(&[]), None);
     }
