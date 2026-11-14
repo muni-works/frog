@@ -4229,7 +4229,7 @@ async fn long_tool_turn_compacts_again_after_new_messages_fill_the_window() {
     let work = |id: &str| {
         reply(
             vec![
-                text(&"Long implementation analysis. ".repeat(1200)),
+                text(&"Long implementation analysis. ".repeat(650)),
                 Block::ToolUse {
                     id: id.into(),
                     name: "Read".into(),
@@ -9892,7 +9892,8 @@ async fn a_prompt_past_the_hard_limit_compacts_before_the_call() {
         reply(vec![text("Done.")], Stop::End),
     ];
     let (mut h, sent) = engine_sent(script, None, None, Some(8192), std::env::temp_dir());
-    let evs = run(&mut h, &"Do the long thing. ".repeat(1600)).await;
+    // Past the hard limit, but not so far past the window that it's summarized in parts.
+    let evs = run(&mut h, &"Do the long thing. ".repeat(1000)).await;
     assert_eq!(
         evs.iter()
             .filter(|e| matches!(e.event, Event::Compacted { .. }))
@@ -10020,11 +10021,12 @@ async fn a_context_overflow_twice_ends_the_turn_with_a_clear_error() {
         )
     };
     let client = scripted::Client::new(vec![reply(vec![text("Summary.")], Stop::End)]);
+    // The step, the summary request, then the summary in parts and in smaller parts.
     client
         .fails
         .lock()
         .unwrap()
-        .extend([overflow(), overflow()]);
+        .extend([overflow(), overflow(), overflow(), overflow()]);
     let opts = Options {
         cfg: Config {
             hermetic: true,

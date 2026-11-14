@@ -536,9 +536,7 @@ impl Agent {
                     // The request exceeded the model's context window (estimate missed, or a
                     // result landed that the window can never hold): compact and retry the step
                     // once, instead of ending the turn on a 400. The second failure is real.
-                    if e.downcast_ref::<HttpError>()
-                        .is_some_and(HttpError::context_overflow)
-                    {
+                    if super::compact::is_overflow(&e) {
                         if !overflowed {
                             overflowed = true;
                             self.notice(
@@ -553,9 +551,10 @@ impl Agent {
                                 self.emit(Event::CompactionFailed {
                                     detail: format!("{ce:#}"),
                                 });
-                                anyhow::bail!(
-                                    "compaction failed; the history can't fit the context window"
-                                );
+                                return Err(super::compact::compaction_error(
+                                    &self.profile_name,
+                                    &ce,
+                                ));
                             }
                             continue;
                         }
@@ -563,7 +562,10 @@ impl Agent {
                             detail: format!("{e:#}"),
                         });
                         anyhow::bail!(
-                            "the request still exceeds the model's context window after compaction"
+                            "the request still exceeds {}'s context window after compaction. \
+                             Nothing was lost: switch to a model with a bigger window and send \
+                             your message again, or start a new session from this one's summary.",
+                            self.profile_name
                         );
                     }
                     return Err(e);

@@ -33,6 +33,8 @@ mod dispatch;
 mod permit;
 mod project;
 #[cfg(test)]
+mod tests_compact;
+#[cfg(test)]
 mod tests_ingest;
 mod turn;
 mod window;
