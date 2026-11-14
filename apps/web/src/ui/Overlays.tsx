@@ -6,6 +6,7 @@ import { friendly } from '../cloud/client'
 import { modelName, placeColor, type Model } from '../models'
 import { canPull, displayName, memoryLine, runningLine, setShowCloud, useShowCloud, type Machine } from '../machines'
 import type { SessionSummary } from '../cloud/protocol'
+import { DownloadAppChip } from './DownloadChip'
 import { useLayer } from './layers'
 
 export interface Command { id: string; label: string; hint?: string; run: () => void }
@@ -281,7 +282,7 @@ function ModelsSettings({ account, machines, machine, onBilling }: { account: Ac
   const [open, setOpen] = useState<string | null>(machine ?? null)
   const cloud = useShowCloud()
   const d = machines.find((m) => m.id === open)
-  if (d) return <MachinePage machine={d} onBack={() => setOpen(null)} />
+  if (d) return <MachinePage machine={d} machines={machines} onBack={() => setOpen(null)} />
   return (<>
     <h2>Models</h2>
     <div className="set-h">Machines</div>
@@ -294,7 +295,7 @@ function ModelsSettings({ account, machines, machine, onBilling }: { account: Ac
           <span className="det">›</span>
         </button>
       ))}
-      <div className="set-row"><div style={{ flex: 1 }}><b>Pair a machine</b><div className="det wrap">Pair machines from the Mac app (Settings › Models). They show here once paired.</div></div></div>
+      <div className="set-row"><div style={{ flex: 1 }}><b>Pair a machine</b><div className="det wrap">Machines you pair show here, with their models.</div></div><DownloadAppChip label="Pair machines in the Mac app" machines={machines} /></div>
     </div>
     <div className="set-h">Frog Cloud</div>
     <div className="set-group">
@@ -305,8 +306,9 @@ function ModelsSettings({ account, machines, machine, onBilling }: { account: Ac
   </>)
 }
 
-/** A machine's page: status and memory, its models, and the node. Read-only on the web. */
-function MachinePage({ machine: d, onBack }: { machine: Machine; onBack: () => void }) {
+/** A machine's page: status and memory, its models, and the node. Read-only on the web: what the
+ *  Mac app does here (stop a model, rename or unpair the node) is a chip, not a dead button. */
+function MachinePage({ machine: d, machines, onBack }: { machine: Machine; machines: readonly Machine[]; onBack: () => void }) {
   const used = d.freeBytes == null || !d.totalBytes ? 0 : 1 - Math.min(d.freeBytes, d.totalBytes) / d.totalBytes
   return (<>
     <button type="button" className="f-btn f-btn--plain f-btn--small" onClick={onBack}>‹ Models</button>
@@ -327,7 +329,7 @@ function MachinePage({ machine: d, onBack }: { machine: Machine; onBack: () => v
           <span className="radio" aria-hidden="true" style={{ borderColor: m.loaded ? placeColor('local') : 'var(--line-strong)' }}>{m.loaded && <span style={{ background: placeColor('local') }} />}</span>
           <div style={{ flex: 1 }}>{displayName(m.name)}{m.quant && <span className="det" style={{ marginLeft: 6 }}>{m.quant}</span>}</div>
           {m.loaded && d.decode ? <span className="det">{Math.round(d.decode)} tok/s</span> : null}
-          {m.loaded && <button type="button" className="f-btn f-btn--bordered f-btn--small" disabled title="From the Mac app">Stop</button>}
+          {m.loaded && <DownloadAppChip label="Stop it in the Mac app" machines={machines} />}
           {!m.loaded && canPull() && <button type="button" className="f-btn f-btn--bordered f-btn--small" disabled>Delete</button>}
         </div>
       ))}
@@ -336,8 +338,8 @@ function MachinePage({ machine: d, onBack }: { machine: Machine; onBack: () => v
     <div className="set-h">Node</div>
     <div className="set-group">
       <label className="set-row"><div style={{ flex: 1 }}>Share with my other machines</div><input type="checkbox" role="switch" checked disabled /></label>
-      <div className="set-row"><div style={{ flex: 1 }}>Name</div><span>{d.name}</span><button type="button" className="f-btn f-btn--bordered f-btn--small" disabled title="From the Mac app">Rename…</button></div>
-      {!d.thisMac && <div className="set-row"><button type="button" className="f-btn f-btn--bordered f-btn--small" style={{ color: 'var(--warn)' }} disabled title="From the Mac app">Unpair {d.name}…</button></div>}
+      <div className="set-row"><div style={{ flex: 1 }}>Name</div><span>{d.name}</span><DownloadAppChip label="Rename it in the Mac app" machines={machines} /></div>
+      {!d.thisMac && <div className="set-row"><DownloadAppChip label={`Unpair ${d.name} in the Mac app`} machines={machines} /></div>}
     </div>
   </>)
 }
