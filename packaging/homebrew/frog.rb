@@ -7,7 +7,7 @@
 # HOMEBREW_TAP_TOKEN secret is set, committed to muni-works/homebrew-muni.
 
 class Frog < Formula
-  desc "Frog - a coding agent for local models"
+  desc "Free, open-source coding agent that runs on your machines"
   homepage "https://frog.toys"
   version "@VERSION@"
   license "MIT OR Apache-2.0"

@@ -19,7 +19,14 @@ cd your-repo
 frog
 ```
 
-With no model set, frog uses `local/qwen3-4b` (mlx-community/Qwen3-4B-4bit) on its own Metal engine. It runs on this machine and is free; the banner says so. Set `FROG_MODEL` or `default_model` in `~/.config/frog/config.toml` to change the default.
+Which model frog uses, first match wins:
+
+1. `-m provider/model`
+2. `FROG_MODEL`, then `default_model` in `~/.config/frog/config.toml`
+3. the last model you used (any session, any directory)
+4. the first that works here: `local/qwen3-4b` (mlx-community/Qwen3-4B-4bit) on frog's own Metal engine, a model running in ollama, LM Studio, Apple Intelligence (`apple/on-device`), Frog Cloud's default if you're signed in, a model you turned on with `--enable-model`, or Anthropic when `ANTHROPIC_API_KEY` is set
+
+`--resume` keeps the session's own model unless you pass `-m`. Local models are free; the banner says which model is in use and whether it's billed.
 
 Ask for a task in plain words:
 
@@ -29,7 +36,8 @@ Ask for a task in plain words:
 
 - `@path` attaches a file, `!cmd` runs a command and attaches its output.
 - ctrl+c interrupts a turn, alt+enter inserts a newline.
-- **shift+tab** cycles permissions: `default` asks before edits and commands, `accept-edits` lets edits through, `yolo` never asks. `--auto` lets a local classifier approve the steps that plainly serve your request.
+- New sessions start in `auto`: a local classifier approves the steps that plainly serve your request and asks about the rest. A flagless `--resume` runs in `default` unless the session saved a mode.
+- **shift+tab** cycles permissions: `default` asks before edits and commands, `accept-edits` lets edits through, `yolo` never asks, `auto` asks the classifier. `--mode`, `--auto`, `--accept-edits` and `--yolo` pick one at start.
 
 ## Switching models
 

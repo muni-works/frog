@@ -19,6 +19,40 @@ load_claude_md = true
 # Let WebFetch reach localhost and private networks (default: public addresses only).
 # web_allow_private = false
 
+# When reasoning models think: "auto" (default), "always" or "never". thinking_budget caps
+# reasoning tokens per call where the server takes it (frog's own engine); 0 is unlimited.
+# A profile's own thinking / thinking_budget override these.
+# thinking = "auto"
+# thinking_budget = 1024
+
+# Shell commands run sandboxed (writes only in the project, credentials hidden), so they run
+# without asking. false: every command asks instead.
+# sandbox_shell = true
+# Let the agent see and drive macOS apps (the bundled frog-desktop MCP server).
+# computer_use = false
+
+# Auto mode's classifier (a profile or provider/model). Default: Apple's on-device model where
+# it exists, else Frog Cloud's small model. The fallback is tried when it can't answer; unset,
+# the session's own model judges, then frog's built-in rules.
+# auto_classifier = "apple/on-device"
+# auto_classifier_fallback = "cloud/deepseek-v4.1-flash"
+# Seconds a permission prompt waits before frog denies the call and carries on. 0 waits forever.
+# approval_timeout_secs = 600
+
+# Helper models (a profile or provider/model). brief_model writes the pond's brief, gist_model
+# the one-line gists on tool rows, compare_model judges screenshots (default: the session model
+# when it has vision). subagent_model is what Task subagents use (default: the session's model).
+# brief_model = "apple/on-device"
+# gist_model = "apple/on-device"
+# compare_model = "sonnet"
+# subagent_model = "qwen"
+# Steps a subagent may take before it has to report.
+# subagent_max_steps = 100
+# Child sessions one engine may own at once when no client hosts sessions.
+# background_tasks = 4
+# Screenshot service for page captures (default: the bundled WebKit sidecar).
+# screenshot_endpoint = "http://localhost:3000/screenshot"
+
 [models.qwen]
 provider = "ollama"
 model = "qwen3-coder:30b"
@@ -81,3 +115,33 @@ max_tokens = 32000
 # ]
 # chief_timeout_secs = 300              # then the card falls back to you
 # rollup = true                         # one approvals roll-up notice per day, at most
+
+# Holes in the shell sandbox, for tools that need a credential. Nothing widens unless set.
+# [sandbox]
+# allow_read = ["~/.config/gh"]                   # credential paths commands may read
+# allow_write = ["~/Developer/.shared-target"]     # beyond the project, temp and caches
+# allow_keychain = false                           # macOS: read the login Keychain (gh)
+# network = "dev"                                  # macOS: only GitHub, crates.io, npm, Swift hosts
+# git_https = false                                # sandboxed git reads over https via gh
+
+# Hosts sandboxed commands may reach. Agent-started sessions enforce the list by default.
+# [egress]
+# allow = ["internal.example.com"]   # a domain covers its subdomains
+# defaults = true                    # keep the built-in host list
+# workers_deny_by_default = true     # agent sessions (--worker) enforce it
+# interactive = "off"                # your own sessions: "off", "flag" or "enforce"
+
+# MCP servers whose write tools may run without a card (each logged and shown as a notice).
+# [mcp_trust]
+# planetscale = "write"
+
+# Compiled memory, with a model server that offers it: "auto" (default), "on" or "off".
+# [memory]
+# compiled = "auto"
+
+# The IRC agent bus (docs/design/agent-bus-irc.md). Off by default; the token lives in the
+# keychain under `account` (or FROG_IRC_TOKEN), never here.
+# [irc]
+# enabled = false
+# channel = "#frog"
+# account = "my-mac"

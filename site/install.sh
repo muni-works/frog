@@ -1,6 +1,7 @@
 #!/bin/sh
 # frog installer: curl -fsSL https://frog.toys/install.sh | sh
-# env: FROG_VERSION (e.g. v0.1.0-rc1; default latest), FROG_INSTALL_DIR (default ~/.local/bin)
+# env: FROG_VERSION (e.g. v0.1.0-rc1; default latest), FROG_INSTALL_DIR (default ~/.local/bin),
+#      FROG_REQUIRE_SIGNATURE=1 (fail unless the minisign signature is present and verified)
 set -eu
 
 # Public GitHub repo. Change once the name is final.
@@ -81,15 +82,21 @@ fetch_optional() {
 }
 
 # The checksum comes from the same host as the tarball; the signature proves who built it.
-# A signature that's present but doesn't verify is fatal.
+# When a release publishes a .minisig, it must verify: a mismatch is fatal, and so is a missing
+# minisign when FROG_REQUIRE_SIGNATURE=1. Without minisign, the install goes ahead on the
+# checksum alone, with a loud warning.
 verify_signature() {
-  [ -n "$FROG_MINISIGN_PUBKEY" ] || return 0
+  [ -n "$FROG_MINISIGN_PUBKEY" ] || err "no minisign public key embedded in this installer"
   if ! fetch_optional "$2.minisig" "$1.minisig"; then
+    [ "${FROG_REQUIRE_SIGNATURE:-}" = 1 ] && err "no signature published for $(basename "$1") and FROG_REQUIRE_SIGNATURE=1"
     info "warning: no signature published for $(basename "$1"); checksum only"
     return 0
   fi
   if ! command -v minisign >/dev/null 2>&1; then
-    info "warning: minisign not installed; skipping signature check (checksum verified)"
+    [ "${FROG_REQUIRE_SIGNATURE:-}" = 1 ] && err "minisign not installed and FROG_REQUIRE_SIGNATURE=1"
+    printf '\nfrog-install: WARNING: %s is signed, but minisign is not installed, so the\n' "$(basename "$1")" >&2
+    printf 'frog-install: WARNING: signature was NOT checked (checksum only). Install minisign\n' >&2
+    printf 'frog-install: WARNING: (brew install minisign / apt install minisign) and rerun to verify.\n\n' >&2
     return 0
   fi
   minisign -Vqm "$1" -x "$1.minisig" -P "$FROG_MINISIGN_PUBKEY" \

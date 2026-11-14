@@ -82,7 +82,7 @@ Still to do:
 | | verdict |
 |---|---|
 | MCP client (2026-07-28 spec, rmcp 3.x; also accept 2025-11-25 servers) | done |
-| ACP adapter (`frog --acp`, v1) for Zed, JetBrains, and Neovim | done |
+| ACP adapter (`frog --acp`, v1) for Zed, JetBrains, and Neovim | done (no `loadSession` yet: an editor can't reopen an old session) |
 | Agent Skills (`SKILL.md`), loaded progressively | done |
 | AGENTS.md | done |
 | OpenTelemetry GenAI spans (behind a feature flag) | nice |
@@ -93,17 +93,17 @@ The MCP-vs-CLI study found that harnesses using only bash were 5–28x cheaper (
 ## 6. Security
 
 - **Enforce at dispatch, in deterministic code, not in the prompt.** Track where each value came from, and only let values from trusted sources flow into tools with side effects ([2503.18813](https://arxiv.org/abs/2503.18813), [2608.27496](https://arxiv.org/abs/2608.27496), [2607.24625](https://arxiv.org/abs/2607.24625)).
-- **Add an OS sandbox,** using seatbelt on macOS and bubblewrap on Linux (the codex-rs approach). Matching command strings is not a security boundary ([opencode#49948](https://github.com/anomalyco/opencode/issues/49948)). macOS is done: Bash is sandboxed by default. It can write only to the project, temp folders and toolchain caches, and credentials are unreadable. Sandboxed commands run without asking, and leaving the sandbox (`unsandboxed: true`) always asks. Linux uses bubblewrap the same way when `bwrap` works, and asks for every command when it doesn't.
+- **Add an OS sandbox** (done on macOS and Linux), using seatbelt on macOS and bubblewrap on Linux (the codex-rs approach). Matching command strings is not a security boundary ([opencode#49948](https://github.com/anomalyco/opencode/issues/49948)). macOS is done: Bash is sandboxed by default. It can write only to the project, temp folders and toolchain caches, and credentials are unreadable. Sandboxed commands run without asking, and leaving the sandbox (`unsandboxed: true`) always asks. Linux uses bubblewrap the same way when `bwrap` works, and asks for every command when it doesn't.
 - **Quarantine suspicious MCP tool descriptions** ([2606.20922](https://arxiv.org/abs/2606.20922)). Done: descriptions that look like injection, or that hide Unicode, are withheld unless the server has `trust = true`.
 
 ## 7. Sub-agents for context folding, not role-play
 
-First pass done: `Task` runs a read-only child engine and returns its report. It has a 30-step budget, keeps the loop guard, and interrupting the parent stops the child.
+First pass done: `Task` runs a read-only child engine and returns its report. It has a 100-step budget (`subagent_max_steps`), keeps the loop guard, and interrupting the parent stops the child.
 Next:
 - Work agents in git worktrees that return a diff for review.
 - Forking the tang KV cache so a child starts from the parent's context.
 - Routing each kind of subagent to a suitable model.
-- Running subagents in parallel.
+- Running subagents in parallel. Done as child sessions: an engine owns up to `background_tasks` (4) at once.
 
 A sub-agent works in its own branch and returns only a summary to the parent. Context-Folding got a 10x smaller context with equal or better results ([2510.11967](https://arxiv.org/abs/2510.11967)). Sub-agents need an `Op::Cancel{id}`, step and token budgets, and detection of repeated calls. opencode had a sub-agent make 364 identical grep calls ([opencode#45442](https://github.com/anomalyco/opencode/issues/45442)). Multi-agent teams by default are not supported by the evidence ([2503.13657](https://arxiv.org/abs/2503.13657), [2609.13890](https://arxiv.org/abs/2609.13890)).
 
@@ -213,7 +213,7 @@ Shipped on 2026-09-24 (tang `kiln-llm`, deployed to mew and bundled in the app):
 - Pairing: a 6-digit code in a time-limited window, SPAKE2, then pinned Ed25519 keys and mutual TLS (which also encrypts LAN traffic). Keys live in the Keychain. Each client can be revoked, and pairing is rate-limited.
 - frog side: a `node` provider kind, a scheduler in the engine using node telemetry, a Devices pane (status, VRAM, tok/s, download, load), and local fallback with a notice when a node drops.
 - Optional modules: SearXNG, later image generation.
-- Milestones: **N0** `tang-llm node` (serve, telemetry, pull/load, priority queue) · **N1** installer, service, GPU detection · **N2** discovery and the Devices pane · **N3** pairing · **N4** the scheduler (estimated-finish-time routing, KV affinity, spreading parallel work, failover, the additivity bench) · **N5** model management from the Mac · **N6** splitting a model across nodes, and the remote relay (Pro).
+- Milestones (N0–N4 shipped; `curl -fsSL https://frog.toys/node | sh` on Linux, Settings › Share with my other machines on a Mac): **N0** `tang-llm node` (serve, telemetry, pull/load, priority queue) · **N1** installer, service, GPU detection · **N2** discovery and the Devices pane · **N3** pairing · **N4** the scheduler (estimated-finish-time routing, KV affinity, spreading parallel work, failover, the additivity bench) · **N5** model management from the Mac · **N6** splitting a model across nodes, and the remote relay (Pro).
 
 Also:
 - **Pool latency experiment.** A shim in the provider path that fakes a pool's time to first token, tokens/s cap and node failures, run over 10–20 real tasks.
@@ -237,18 +237,19 @@ Also:
 See [local code review](research/local-code-review.md): `frog review` as a gate, not an oracle. Deterministic tools first, the model explains failures and checks intent, a per-hunk voting pass on 8B+, findings reported only after verification (a failing test in a worktree, or an opt-in cloud check), at most 3 findings by default, a `bench/review` set with clean diffs to count false positives. Also: bring reviewers' PR comments into the app inline on the diff with Reply / Resolve / Send to Frog, like Claude Code Desktop, so a review round-trip never leaves the conversation.
 
 ### Harness quality (from the bench and the logs)
+- Done: early tool calls (`early_tools`, on by default). Read-only calls start as soon as their arguments arrive, while the model is still writing, and a reply's leading reads run side by side.
 - Fix contract errors in the harness (editing before reading, `old_string` mismatches) and repeat loops. These, not malformed calls, are most tool failures.
 - Count text-mode tool calls that fail to parse; they're invisible in the logs today.
 - Investigate why tang had more tool errors than ollama in the bench (1.3 vs 0.4).
-- Earlier follow-ups: ACP `loadSession`, a Linux bubblewrap sandbox, worktree subagents that do work, KV fork, parallel subagents, faster Gemma decode in tang (34 tok/s) and fp16 vision encode.
+- Earlier follow-ups: ACP `loadSession`, worktree subagents that do work, KV fork, faster Gemma decode in tang (34 tok/s) and fp16 vision encode.
 
 ### Models and providers
-- More presets: Groq, Cerebras, Together, Fireworks, DeepSeek, Mistral, xAI, Cloudflare. Later Bedrock, Vertex, Azure.
+- More presets: Groq, Cerebras, Together, Fireworks, DeepSeek, Mistral, xAI (Cloudflare AI Gateway is done). Later Bedrock, Vertex, Azure.
 - Per-model overrides in Settings (context, tool mode, vision, extra params).
 - Show whether local providers (LM Studio, ollama) are actually running, not just "connected".
 
 ### Niceties
-- **Images.** SVG first, then Apple's Image Playground (`ImageCreator`) on device, FLUX on mew, and remote image models. One `Image` tool that shows results in the lightbox.
+- **Images.** SVG first, then Apple's Image Playground (`ImageCreator`) on device, FLUX on mew, and remote image models. One `Image` tool that shows results in the lightbox. The `Image` tool is done (`[image]` in config.toml: a remote OpenAI-compatible endpoint, frog's own engine, or Apple's on-device model); the rest is still to do.
 - **Dev-server preview pane** with console logs, which the agent can screenshot and inspect.
 - **Global quick-ask hotkey**, plus capture a region and ask.
 - **Menu bar extra** for running and waiting agents, with approve and deny.

@@ -170,7 +170,7 @@ searxng_url = "http://localhost:8888"   # SearXNG's JSON API (/search?format=jso
 
 ## Permissions
 
-`default` asks before edits and shell commands. `accept-edits` lets edits through without asking. `yolo` never asks. **shift+tab** cycles the mode. Read-only commands such as `ls`, `git status`, and `rg` run without asking, as long as they don't include pipes or redirects.
+New sessions start in `auto` (below). A `--resume` with no mode flag keeps the mode the session saved, or `default` if it saved none. `default` asks before edits and shell commands. `accept-edits` lets edits through without asking. `yolo` never asks. **shift+tab** cycles the mode; `--mode default|auto|accept-edits|yolo` (or `--auto`, `--accept-edits`, `--yolo`) picks one at start. Read-only commands such as `ls`, `git status`, and `rg` run without asking, as long as they don't include pipes or redirects.
 
 
 **Auto mode.** `--auto`, or `/mode auto` in the terminal. Every step that would otherwise ask goes to a local classifier first.
@@ -272,3 +272,54 @@ With a model server that keeps memory in the model itself (tang-llm serve `--mem
 - **Text memory.** `/remember` notes work as before and keep their index in the system prompt. The compiled store is never put in the prompt; while it's active the prompt gains one line pointing the model at `Memory`. Servers without the feature (every server but tang with `--memory-layer`) see one probe per session and nothing else changes.
 - **Config.** `[memory] compiled = "auto"` (default: use it when the server offers it), `"on"` (use it, and warn when the server doesn't), `"off"` (no probe, no tool).
 - **Commands.** `frog memory dump` prints every file in this project's blob as text (it loads the blob into a throwaway session on the model's server, since only that model can read it; `--model M` picks the profile). `frog memory forget <name>` deletes one file the same way. `frog memory clear` deletes the blob; no server needed.
+
+## Command line
+
+`frog --help` has the full list. The ones not covered above:
+
+**Subcommands** (the first argument):
+- `frog setup [MODEL]` installs frog's local engine and downloads a local model's weights (default `qwen3-4b`). Not the same as `frog --setup`, which only reports what frog found on this Mac for this folder (instruction files, skills, rules, keys in the environment, Claude Code's MCP servers) and exits.
+- `frog account [--json]`: which model a new session starts on, free or billed, and the Frog Cloud key. Local only.
+- `frog login [--google]` / `frog logout`: Frog Cloud's key in the Keychain.
+- `frog memory dump|forget <name>|clear [--model M]`: compiled memory (above).
+- `frog approvals [--since 24h] [--json]`: who approved what (the classifier, the second pass, the chief, or you) across every session's log in that span (`90m`, `7d`, `3600s`). Local only.
+- `frog git-credential get`: git's credential helper when frog runs with `--git-credential-gateway <URL>` (Frog Cloud's sandbox); credentials come from `GET <URL>/internal/git-credential`, never from disk.
+
+**Sessions**
+- `-c`/`--continue`, `-r`/`--resume <ID>`, `--fork <ID>[@TURN]`.
+- `--rewind <ID@TURN>` undoes that turn and everything after it: restores the files frog edited and branches the conversation from just before it. With `--json`, prints the result and exits.
+- `--wait-lock <SECS>` (with `--resume`): if another frog process holds the session, wait up to that long for it to exit, then fail instead of starting a new session.
+- `--chat`: a plain chat, not tied to a project; no file or shell tools.
+- `--sessions [--all] [--ids a,b] [--digest] [--json]`, `--rename <ID> <TITLE>`.
+- `--session-tree [--json]` draws this directory's sessions and their forks and exits.
+
+**Parallel attempts**
+- `--attempts N` creates N worktrees from the current working tree (uncommitted changes included) and prints `{"base", "dirs"}`.
+- `--apply-attempt <DIR> --base <COMMIT>` applies one attempt's changes to this tree and prints the files.
+- `--discard-attempt <DIR>` (repeatable) removes attempt worktrees.
+
+**Models and providers**
+- `-m`/`--model`, `--base-url`, `--config <FILE>`.
+- `--models`, `--providers`, `--catalog [--refresh]` list what's available (`--json` for JSON).
+- `--enable-model <SPEC>…` / `--disable-model <SPEC>…` show or hide models in the list.
+- `--set-key <PROVIDER>` stores a key read from stdin (empty removes it).
+- `--add-provider <ID> <URL> [--provider-kind openai|ollama] [--provider-name NAME]`, `--remove-provider <ID>`.
+- `--tool-mode auto|native|text|json`, `--text-tools`, `--probe`.
+- `--cloud-policy [allow|deny|ask]`: whether this folder's code may go to cloud models. `deny` keeps it on your devices, `ask` forgets the answer, no value prints it.
+
+**Permissions and sandbox**: `--mode`, `--auto`, `--accept-edits`, `--yolo`, `--sandbox` (confine writes to the working directory), `--no-shell-sandbox`, `--worker`, `--computer-use`.
+
+**Servers and protocols**
+- `--serve`: the engine protocol over stdio. `--serve-ws <ADDR>` speaks it over a websocket instead (one peer at a time, `GET /health` on the same port), with `--store <DIR>` as the session store and `--ask [ID]` to ask the peer for permission instead of denying.
+- `--listen <ADDR>`: one turn per HTTP request (needs `FROG_LISTEN_TOKEN`).
+- `--acp`: Agent Client Protocol on stdio, for editors. frog doesn't implement ACP's `loadSession`, so an editor can't reopen an old session.
+- `--replay <SESSION> [--speed X] [--replay-ask]`: play a recorded session over the serve protocol, for UI work.
+
+**Tools that print and exit**
+- `--mcp`: connect the configured MCP servers and list their tools.
+- `--skills`: the Agent Skills this folder sees.
+- `--mermaid`: read Mermaid from stdin, lay it out, print the diagram.
+- `--map [DIR]`: map the project's (or a subdirectory's) structure from its code.
+- `--use-claude-mcp on|off`: read Claude Code's MCP servers from `~/.claude.json`.
+
+**Measuring**: `--energy` reads each turn's energy from the Mac's power sensor and reports it with the turn.
