@@ -244,6 +244,16 @@ pub enum Op {
         #[serde(default)]
         arguments: serde_json::Value,
     },
+    /// A person asked to sign in to a configured MCP server (Settings → MCP → Sign in, or the
+    /// transcript's sign-in card). The only path that opens a browser for MCP: connecting
+    /// never does (it reports `needs_auth` instead). Answered with
+    /// [`Event::McpSignedIn`]; with `decline`, with [`Event::McpSignedOut`] — the refusal is
+    /// remembered, so no later session asks again.
+    McpSignIn {
+        server: String,
+        #[serde(default)]
+        decline: bool,
+    },
     /// Have the model server prefill this conversation now, so the next turn starts warm:
     /// when a client shows the conversation, and as the user types (`draft`, the composer's
     /// text so far, as the next message). Dropped mid-turn and on servers that can't prefill;
@@ -856,6 +866,26 @@ pub enum Event {
         level: Level,
         message: String,
     },
+    /// The configured MCP servers and how each is doing, the whole list, sent whenever one
+    /// connects, fails, or a sign-in changes its state. Durable, so a replayed session shows
+    /// the same "not signed in" rows: a tool the user configured must never vanish silently.
+    McpServers {
+        servers: Vec<McpServerReport>,
+    },
+    /// A person signed in to an MCP server from its card ([`Op::McpSignIn`]): the browser
+    /// finished, the tokens are stored and the server reconnected with its tools.
+    McpSignedIn {
+        server: String,
+        tools: Vec<String>,
+    },
+    /// A sign-in that didn't happen: the person declined, or the flow failed. `error` is the
+    /// one line to show. Either way the server stays `needs_auth`; a decline is remembered,
+    /// so no later session asks again.
+    McpSignedOut {
+        server: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
     /// The model asked for the person's attention (its `Notify` tool): a banner, a Dock bounce,
     /// a push to the phone — whatever the client does with a notification. The engine never
     /// sends one on its own (a finished reply is already on screen); this is only ever the
@@ -966,6 +996,9 @@ impl Event {
                 | Self::ChildSession { .. }
                 | Self::WakesDelivered { .. }
                 | Self::MessageRead { .. }
+                | Self::McpServers { .. }
+                | Self::McpSignedIn { .. }
+                | Self::McpSignedOut { .. }
         ) || matches!(
             // A subagent's steps are worth keeping: without them a reopened session shows
             // only the Task's report. Text deltas stay live-only, as in the main transcript.
@@ -1620,6 +1653,44 @@ pub enum DegradedKind {
     Classifier,
 }
 
+/// One configured MCP server, as [`Event::McpServers`] reports it: enough to draw a row with
+/// a working sign-in button, and to say why a server someone configured isn't offering tools.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct McpServerReport {
+    pub name: String,
+    pub connected: bool,
+    /// The server wants an OAuth sign-in: show "not signed in" and a button, never a failure.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub needs_auth: bool,
+    /// The person already declined this server's sign-in (remembered across sessions): the
+    /// row still says so, without asking again.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub declined: bool,
+    /// One line on how it's doing, when it isn't connected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// The tools it offers, by their `mcp__<server>__<tool>` names.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<String>,
+}
+
+impl From<&crate::mcp::ServerStatus> for McpServerReport {
+    fn from(st: &crate::mcp::ServerStatus) -> Self {
+        Self {
+            name: st.name.clone(),
+            connected: st.connected,
+            needs_auth: st.needs_auth,
+            declined: st.needs_auth && crate::mcp::sign_in_refused(&st.auth_key),
+            error: st.error.clone(),
+            tools: st
+                .tools
+                .iter()
+                .map(|t| crate::mcp::exposed_name(&st.name, t))
+                .collect(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1702,6 +1773,40 @@ mod tests {
         assert!(matches!(bare, Op::Warm { draft: None }));
         let typing: Op = serde_json::from_str(r#"{"op":"warm","draft":"fix the"}"#).unwrap();
         assert!(matches!(typing, Op::Warm { draft: Some(d) } if d == "fix the"));
+    }
+
+    #[test]
+    fn mcp_sign_in_takes_a_server_and_an_optional_decline() {
+        let ask: Op = serde_json::from_str(r#"{"op":"mcp_sign_in","server":"docs"}"#).unwrap();
+        assert!(matches!(&ask, Op::McpSignIn { server, decline } if server == "docs" && !*decline));
+        let no: Op =
+            serde_json::from_str(r#"{"op":"mcp_sign_in","server":"docs","decline":true}"#).unwrap();
+        assert!(matches!(no, Op::McpSignIn { decline: true, .. }));
+    }
+
+    /// The server list is durable and carries `needs_auth` separately from an error: a client
+    /// draws a sign-in button for one and a failure for the other.
+    #[test]
+    fn mcp_servers_reports_signed_out_separately_from_failure() {
+        let env = serde_json::json!({
+            "event": "mcp_servers",
+            "servers": [
+                {"name": "docs", "connected": false, "needs_auth": true, "declined": false,
+                 "error": "Signed out: this server needs you to sign in (Settings → MCP)."},
+                {"name": "fs", "connected": true, "tools": ["mcp__fs__read"]},
+                {"name": "down", "connected": false, "error": "isn't running"}
+            ]
+        });
+        let ev: Event = serde_json::from_value(env).unwrap();
+        let Event::McpServers { servers } = ev else {
+            panic!("not a server list")
+        };
+        assert!(servers[0].needs_auth && !servers[0].connected);
+        assert!(!servers[0].declined);
+        assert_eq!(servers[1].tools, ["mcp__fs__read"]);
+        assert!(!servers[2].needs_auth, "an ordinary failure stays an error");
+        // Durable, so a reopened session still says what's signed out.
+        assert!(Event::McpServers { servers }.is_durable());
     }
 
     #[test]
