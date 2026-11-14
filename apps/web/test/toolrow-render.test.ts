@@ -53,13 +53,16 @@ test("a line that already says it all offers no click, and no body", () => {
 
 test("the label is not said twice", () => {
   // The web is single-level (no boxed inner row), so the duplication it can show is the
-  // result repeating the row's own words. `VerbLine` strips that on the Mac; here the row's
-  // words are the verb and the argument, so the sentence must not open with both again.
+  // result repeating the row's own words. Since #339 a finished row has no verb at all —
+  // the result is the line — so the old assertion ("Used" appears once) was counting a
+  // span that no longer renders, and failed 0 !== 1 for exactly that (2026-11-14).
+  // What must hold now: the row says the sentence, and "Used" appears zero times —
+  // neither on the line nor doubled anywhere.
   const html = draw(sent({ arg: "ops", output: "Sent to ops; delivered." }))
   const said = /<span class="tool-said">([^<]*)<\/span>/.exec(html)?.[1] ?? ""
   assert.ok(said.length > 0, `the row must say something; html: ${html}`)
-  // "Used" is the verb span, and it appears once in the whole row.
-  assert.equal((html.match(/>Used</g) ?? []).length, 1, `the verb must appear once; html: ${html}`)
+  assert.equal((html.match(/>Used</g) ?? []).length, 0, `a finished row has no verb; html: ${html}`)
+  assert.doesNotMatch(html, /Used[^<]*Used/, `the label must not be said twice; html: ${html}`)
 })
 
 test("a payload tool keeps its chevron and its body, and says nothing on the line", () => {
