@@ -104,9 +104,9 @@ async fn fake_model(script: Vec<String>, models: Models) -> String {
                     return;
                 };
                 if !head.starts_with("POST") {
-                    // Frog Cloud's list: GLM-5.3 Flash is the default even when it isn't first.
+                    // Frog Cloud's list: DeepSeek V4.1 Flash is the default even when it isn't first.
                     let list = if head.starts_with("GET /v1/models") {
-                        r#"{"data":[{"id":"deepseek-v4.1-flash"},{"id":"glm-5.3-flash"}]}"#
+                        r#"{"data":[{"id":"glm-5.3-flash"},{"id":"deepseek-v4.1-flash"}]}"#
                     } else {
                         r#"{"data":[]}"#
                     };
@@ -609,7 +609,7 @@ async fn without_a_model_the_gateway_gets_frog_clouds() {
     let models = f.models.lock().unwrap().clone();
     assert!(!models.is_empty());
     assert!(
-        models.iter().all(|(m, _)| m == "glm-5.3-flash"),
+        models.iter().all(|(m, _)| m == "deepseek-v4.1-flash"),
         "{models:?}"
     );
 }
