@@ -580,7 +580,7 @@ export default function App() {
       </main>
 
       {view.kind === 'session' && current && ct && inspector && (
-        <Inspector onClose={() => setInspector(false)} thread={ct} branch={current.branch} hasPr={!!current.pr} onCommit={() => commit(current)} onPr={() => push(current)} send={(op) => cloud?.send(current.id, op)} />
+        <Inspector onClose={() => setInspector(false)} thread={ct} branch={current.branch} hasPr={!!current.pr} onCommit={() => commit(current)} onPr={() => push(current)} machines={machines} send={(op) => cloud?.send(current.id, op)} />
       )}
 
       {palette && <Palette commands={commands} sessions={sessions} onOpen={(id) => setView({ kind: 'session', id })} onClose={() => setPalette(false)}

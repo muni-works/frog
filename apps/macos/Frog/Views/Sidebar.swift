@@ -402,7 +402,7 @@ struct SessionList: View {
             if !archived.isEmpty {
                 treeLabel("In archive", count: archived.count)
                 ForEach(archived) { s in
-                    TreeRow(session: s, depth: 0, counts: .init(), collapsed: false, state: rowState(s),
+                    TreeRow(session: s, counts: .init(), collapsed: false, state: rowState(s),
                             selected: s.id == current, highlight: q, monogram: false) { open(s) } menu: { rowMenu(s) }
                 }
             }
@@ -464,12 +464,14 @@ struct SessionList: View {
 
     private func treeEntries(_ entries: [SessionNesting.Entry], folds: [String: SessionFolds.Fold],
                              git: GitTreeBadges, highlight: String = "") -> some View {
-        ForEach(entries) { entry in
+        let guides = SessionNesting.guides(entries)
+        return ForEach(entries) { entry in
             switch entry {
             case .row(let s, let depth, let counts, let collapsed):
                 TreeRow(
-                    session: s, depth: depth, counts: counts, collapsed: collapsed,
+                    session: s, counts: counts, collapsed: collapsed,
                     state: rowState(s), selected: s.id == current,
+                    guide: guides[entry.id] ?? SessionNesting.Guide(depth: depth, rails: [], last: true),
                     pinned: library.pinned.contains(s.id), pane: paneNumbers[s.id], highlight: highlight,
                     onToggle: { toggleNode(s.id, collapsed: collapsed, counts: counts) },
                     git: git.rows[s.id], line: library.rowLine(s)
@@ -479,7 +481,8 @@ struct SessionList: View {
                     SessionAgents(conversation: c, depth: depth + 1) { open(s) }
                 }
             case .done(let parent, let depth, let count, let failed, let open):
-                foldRow(parent: parent, depth: depth, count: count, failed: failed, open: open, git: git.folds[parent])
+                foldRow(parent: parent, depth: depth, count: count, failed: failed, open: open,
+                        guide: guides[entry.id], git: git.folds[parent])
             }
         }
     }
@@ -502,9 +505,10 @@ struct SessionList: View {
     /// by chief". The only fold that stands between sibling trees — nothing folds inside a
     /// session (`SessionNesting.rows` lists a parent's children directly).
     private func foldRow(parent: String, depth: Int, count: Int, failed: Int, open: Bool,
-                         git: GitRowBadge? = nil) -> some View {
+                         guide: SessionNesting.Guide? = nil, git: GitRowBadge? = nil) -> some View {
         let what = parent == AttentionTree.chiefFold ? "done by chief"
             : scope == .today && parent != AttentionTree.yoursFold ? "earlier" : "done"
+        let g = guide ?? SessionNesting.Guide(depth: depth, rails: [], last: true)
         return HStack(spacing: 0) {
             Button { toggleOpen(parent) } label: {
                 HStack(spacing: 0) {
@@ -530,6 +534,12 @@ struct SessionList: View {
             if let git {
                 GitBadgeView(display: git.display, muted: true, help: git.help, card: git.card)
                     .padding(.trailing, 26)
+            }
+        }
+        .overlay(alignment: .leading) {
+            if g.depth > 0 {
+                TreeRails(guide: g, elbowY: 11)
+                    .frame(width: AttentionMetrics.railWidth(g.depth))
             }
         }
     }
@@ -609,18 +619,19 @@ struct SessionList: View {
     }
 
     private func compactEntries(_ list: [SessionNesting.Entry], byId: [String: SessionFolds.Fold]) -> some View {
-        let last = SessionNesting.lastChildren(list)
+        let guides = SessionNesting.guides(list)
         return ForEach(list) { entry in
             switch entry {
             case .row(let s, let depth, let counts, let collapsed):
                 compactBranchRow(s, depth: depth, counts: counts, collapsed: collapsed, fold: byId[s.id],
-                                 lastChild: last.contains(entry.id))
+                                 guide: guides[entry.id], lastChild: guides[entry.id]?.last ?? true)
             case .done(let parent, let depth, let count, let failed, let open):
                 // On its siblings' guide line, lined up with their titles.
                 HStack(spacing: 0) {
-                    TreeGuide(last: last.contains(entry.id)).frame(width: 10).padding(.vertical, -1)
-                        .padding(.leading, CGFloat(max(depth - 1, 0)) * 8 + 4)
-                    doneRow(parent: parent, count: count, failed: failed, open: open).padding(.leading, 2)
+                    TreeRails(guide: guides[entry.id] ?? SessionNesting.Guide(depth: depth, rails: [], last: true),
+                              elbowY: 11)
+                        .frame(width: AttentionMetrics.railWidth(depth))
+                    doneRow(parent: parent, count: count, failed: failed, open: open).padding(.leading, 4)
                 }
             }
         }
@@ -650,14 +661,18 @@ struct SessionList: View {
     /// One fold's row (its newest session) plus, when disclosed, the older ones indented.
     @ViewBuilder
     private func compactBranchRow(_ session: SessionInfo, depth: Int, counts: SessionNesting.Counts,
-                                  collapsed: Bool, fold: SessionFolds.Fold?, lastChild: Bool = false) -> some View {
+                                  collapsed: Bool, fold: SessionFolds.Fold?, guide: SessionNesting.Guide? = nil,
+                                  lastChild: Bool = false) -> some View {
         let fold = fold ?? SessionFolds.Fold(session: session, older: [])
         let isOpen = openFolds.contains(session.id)
+        let g = guide ?? SessionNesting.Guide(depth: depth, rails: [], last: lastChild)
         compactRow(session, depth: depth, folded: fold.older.count, foldOpen: isOpen, counts: counts,
-                   collapsed: collapsed, lastChild: lastChild, onFold: fold.folded ? { toggleFoldBranch(session.id) } : nil)
+                   collapsed: collapsed, guide: g, onFold: fold.folded ? { toggleFoldBranch(session.id) } : nil)
         if fold.folded, isOpen {
             ForEach(fold.older) { older in
-                compactRow(older, depth: depth + 1)
+                // An older session on the same branch hangs under it, on its own rail.
+                compactRow(older, depth: depth + 1,
+                           guide: SessionNesting.Guide(depth: depth + 1, rails: [], last: true))
             }
         }
     }
@@ -670,10 +685,11 @@ struct SessionList: View {
 
     private func compactRow(_ session: SessionInfo, depth: Int, folded: Int = 0, foldOpen: Bool = false,
                             counts: SessionNesting.Counts = .init(), collapsed: Bool = false,
-                            lastChild: Bool = false, onFold: (() -> Void)? = nil) -> some View {
+                            guide: SessionNesting.Guide? = nil, onFold: (() -> Void)? = nil) -> some View {
         CompactSessionRow(
             session: session, selected: session.id == current,
-            live: library.live[session.id], depth: depth, lastChild: lastChild,
+            live: library.live[session.id], depth: depth,
+            guide: guide ?? SessionNesting.Guide(depth: depth, rails: [], last: true),
             git: GitTreeBadges.leaf(session, members: [session], settled: GitTreeBadges.settled(rowState(session))) { open($0) },
             folded: folded, foldOpen: foldOpen, counts: counts, collapsed: collapsed, onFold: onFold,
             onCollapse: counts.total > 0 ? { toggleChildren(session.id) } : nil
@@ -896,16 +912,12 @@ struct SessionList: View {
 
     /// The tree's entries as two-line rows, children on the same guide line as compact.
     private func twoLineEntries(_ list: [SessionNesting.Entry]) -> some View {
-        let last = SessionNesting.lastChildren(list)
+        let guides = SessionNesting.guides(list)
         return ForEach(list) { entry in
-            switch entry {
-            case .row(let s, let depth, let counts, let collapsed):
-                HStack(spacing: 0) {
-                    if depth > 0 {
-                        Color.clear.frame(width: CGFloat(min(depth, SessionNesting.maxDepth) - 1) * 14)
-                        TreeGuide(last: last.contains(entry.id)).frame(width: 14)
-                            .padding(.vertical, -8)
-                    }
+            let depth = entry.depth
+            TreeRailRow(guide: guides[entry.id] ?? SessionNesting.Guide(depth: depth, rails: [], last: true)) {
+                switch entry {
+                case .row(let s, _, let counts, let collapsed):
                     row(s, showPlace: depth == 0, nested: depth > 0, summary: collapsed ? counts.summary : nil)
                         .overlay(alignment: .topTrailing) {
                             if counts.total > 0 {
@@ -919,12 +931,9 @@ struct SessionList: View {
                                 .help(collapsed ? "Show the sessions it started" : "Fold the sessions it started")
                             }
                         }
-                }
-            case .done(let parent, let depth, let count, let failed, let open):
-                HStack(spacing: 0) {
-                    Color.clear.frame(width: CGFloat(min(depth, SessionNesting.maxDepth) - 1) * 14)
-                    TreeGuide(last: last.contains(entry.id)).frame(width: 14).padding(.vertical, -5)
-                    doneRow(parent: parent, count: count, failed: failed, open: open).padding(.leading, 4)
+                case .done(let parent, _, let count, let failed, let open):
+                    doneRow(parent: parent, count: count, failed: failed, open: open)
+                        .padding(.leading, AttentionMetrics.inset)
                 }
             }
         }
@@ -1309,8 +1318,8 @@ struct CompactSessionRow<Menu: View>: View {
     let selected: Bool
     let live: Library.Live?
     let depth: Int
-    /// The last of its parent's children: its guide line ends in an elbow.
-    var lastChild = false
+    /// Where it sits and what its guide draws. A root has no rails.
+    var guide = SessionNesting.Guide.root
     /// Its git badge (the attention tree's, from the same index).
     let git: GitRowBadge?
     /// How many older sessions of this branch are folded behind the row's disclosure.
@@ -1374,7 +1383,14 @@ struct CompactSessionRow<Menu: View>: View {
         .padding(.vertical, expandTitle ? 4 : 0)
         .frame(minHeight: 28)
         .padding(.trailing, 3)
-        .background(selected || hovered ? Tokens.hover : .clear, in: .rect(cornerRadius: 8))
+        .background { selectionFill }
+        // The same strip and columns as every other list: one tree, one geometry.
+        .overlay(alignment: .leading) {
+            if guide.depth > 0 {
+                TreeRails(guide: guide, elbowY: AttentionMetrics.elbow(firstLine: 7))
+                    .frame(width: AttentionMetrics.railWidth(guide.depth))
+            }
+        }
         .contentShape(.rect)
         .contextMenu { DeferredMenu(make: menu) }
         .paneDraggable(.session(session), title: session.displayTitle)
@@ -1391,18 +1407,24 @@ struct CompactSessionRow<Menu: View>: View {
         .task(id: session.id) { GitIndex.shared.wantStatus(session) }
     }
 
+    /// The row's own fill, starting past its guide's columns (the rails are drawn in those):
+    /// a selected nested row keeps the guide that says where it sits.
+    private var selectionFill: some View {
+        HStack(spacing: 0) {
+            Color.clear.frame(width: nested ? AttentionMetrics.railWidth(guide.depth) : 0)
+            Color.clear
+                .frame(maxWidth: .infinity)
+                .background(selected || hovering ? Tokens.hover : Color.clear, in: .rect(cornerRadius: 8))
+        }
+    }
+
     private func content(working: Bool) -> some View {
         // A working row keeps its title at full opacity, like the selected row.
         let running = working || live == .running
         return HStack(spacing: 0) {
-            if nested {
-                // Nested rows keep their width for the title: one guide line per parent,
-                // unbroken down its children, ending in an elbow at the last.
-                TreeGuide(last: lastChild).frame(width: 10).padding(.vertical, -1)
-                    .padding(.leading, CGFloat(depth - 1) * Self.indent + 4)
-            } else {
-                Color.clear.frame(width: 6)
-            }
+            // The rail strip, exactly as wide as the rails drawn over it (`TreeRails`), so a
+            // nested title starts where its guide's arm ends — and top-level rows keep 6 pt.
+            Color.clear.frame(width: nested ? AttentionMetrics.railWidth(guide.depth) : 6)
             if folded > 0 {
                 Button { onFold?() } label: {
                     Image(systemName: "chevron.right").font(.frog(size: 8, weight: .bold))
@@ -1452,9 +1474,6 @@ struct CompactSessionRow<Menu: View>: View {
             }
         }
     }
-
-    /// Indent per nesting level (computed: a generic type can't store statics).
-    static var indent: CGFloat { 8 }
 
     /// The title, with the worktree name (when there is one) underneath in the tooltip.
     private var helpText: String {
@@ -1713,28 +1732,3 @@ final class SidebarClock {
     }
 }
 
-
-/// The started-by tree's guide: a quiet vertical line through a child's row, ending in a
-/// rounded elbow into the last child (like a file tree's └).
-struct TreeGuide: View {
-    let last: Bool
-
-    var body: some View {
-        Canvas { ctx, size in
-            let x: CGFloat = 4.5
-            var p = Path()
-            p.move(to: CGPoint(x: x, y: -1))
-            if last {
-                let mid = size.height / 2
-                p.addLine(to: CGPoint(x: x, y: mid - 4))
-                p.addQuadCurve(to: CGPoint(x: x + 4, y: mid), control: CGPoint(x: x, y: mid))
-                p.addLine(to: CGPoint(x: size.width - 1, y: mid))
-            } else {
-                p.addLine(to: CGPoint(x: x, y: size.height + 1))
-            }
-            ctx.stroke(p, with: .style(.quaternary), lineWidth: 1)
-        }
-        .frame(maxHeight: .infinity)
-        .accessibilityHidden(true)
-    }
-}
