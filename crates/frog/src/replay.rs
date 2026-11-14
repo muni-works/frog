@@ -161,6 +161,9 @@ pub async fn run(spec: &str, speed: f64, ask: bool) -> Result<()> {
             ran_on: None,
             // A replay shows finished turns; nothing is in flight while it plays.
             waiting: None,
+            // A replay is a read of a finished session: it never offers or opens a PR.
+            open_pr_when_done: frog_engine::config::OpenPr::default().effective_word().into(),
+            read_only: false,
         },
         ops,
     };

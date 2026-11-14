@@ -69,6 +69,8 @@ impl Running {
             degraded: Vec::new(),
             ran_on: None,
             waiting: None,
+            open_pr_when_done: crate::config::OpenPr::default().effective_word().into(),
+            read_only: false,
         }
     }
 }
