@@ -721,8 +721,10 @@ impl Agent {
     }
 
     /// Yolo ran a call that widened the egress fence: grant the hosts it declared for the
-    /// session and put the fact in the transcript as one quiet line, never a card. Yolo is
-    /// "act without asking", not "act silently": the row is the whole point. `hosts` is
+    /// session and put the fact in the transcript, never a card. Yolo is "act without
+    /// asking", not "act silently": the row is the whole point — but the row is the call's
+    /// own (`Ran …`), tagged unsandboxed by the client from the durable [`Event::EgressWidened`]
+    /// emitted here, so no second line restates it (Cam, 2026-11-13). `hosts` is
     /// [`Self::egress_ask`]'s answer — the hosts it named, empty when it only left the
     /// sandbox (`leaves`, past which no list applies).
     fn yolo_widen_egress(
@@ -733,33 +735,35 @@ impl Agent {
         hosts: &[String],
         leaves: bool,
     ) {
-        if !hosts.is_empty() && let Some(egress) = &self.ctx.egress {
+        if !hosts.is_empty()
+            && let Some(egress) = &self.ctx.egress
+        {
             egress.grant(hosts);
         }
-        let head = crate::egress::head(command);
-        // Past the sandbox no list applies, so `hosts` is empty there: the sandbox line is the
-        // whole fact, and naming hosts "allowed" would be a lie (nothing fences them).
-        let line = match (leaves, hosts.is_empty()) {
-            (true, _) if self.cfg.cloud_sandbox => format!(
-                "yolo: `{head}` ran outside the command sandbox, inside your cloud machine; it can change anything on that machine and reach the network."
-            ),
-            (true, _) => format!(
-                "yolo: `{head}` ran outside the sandbox; it can change files anywhere and read your credentials."
-            ),
-            (false, _) => format!(
-                "yolo: `{head}` reaches {}, now allowed this session.",
+        if !leaves {
+            // Which hosts got granted is a fence state the user couldn't see otherwise (it
+            // outlives the turn), and it fires once per new host — still a notice.
+            let line = format!(
+                "yolo: `{}` reaches {}, now allowed this session.",
+                crate::egress::head(command),
                 hosts.join(", ")
-            ),
-        };
-        if self.cfg.log_calls {
-            eprintln!("{line}");
+            );
+            if self.cfg.log_calls {
+                eprintln!("{line}");
+            }
+            self.notice(Level::Info, line);
         }
-        self.notice(Level::Info, line);
-        self.decision(item, "yolo", "allow", "yolo: widened egress without asking", 0);
+        self.decision(
+            item,
+            "yolo",
+            "allow",
+            "yolo: widened egress without asking",
+            0,
+        );
         self.emit(Event::EgressWidened {
             item: item.to_string(),
             tool: name.to_string(),
-            command: head,
+            command: crate::egress::head(command),
             hosts: hosts.to_vec(),
             sandbox_left: leaves,
         });
@@ -960,9 +964,9 @@ impl Agent {
             }
             _ => (self.root.clone(), None),
         };
-        let asked = input["mode"].as_str().and_then(|m| {
-            serde_json::from_value::<Mode>(Value::String(m.to_string())).ok()
-        });
+        let asked = input["mode"]
+            .as_str()
+            .and_then(|m| serde_json::from_value::<Mode>(Value::String(m.to_string())).ok());
         // Never above the parent's own mode.
         let mode = match asked {
             Some(m) if (m as u8) <= (self.mode as u8) => m,
@@ -1011,10 +1015,7 @@ impl Agent {
                 self.shared.bg.clone(),
             )
             .await?;
-        let mut text = format!(
-            "Started session {title} ({id}) in {}",
-            cwd.display()
-        );
+        let mut text = format!("Started session {title} ({id}) in {}", cwd.display());
         if let Some(b) = &branch {
             text.push_str(&format!(" on branch {b}"));
         }

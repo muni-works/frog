@@ -6601,22 +6601,27 @@ mod egress_tests {
         // The declared hosts are granted: the later call, which declares nothing, reaches them.
         assert!(egress_hits(&evs).is_empty(), "nothing was blocked");
         assert!(!tool_output(&evs, "after").contains("frog blocked"));
-        // The quiet line is in the transcript as info, not a warning.
+        // Leaving the sandbox restates a property of the call itself, so it belongs on the
+        // call's row, not as a second row: the transcript shows one record per shape, the
+        // `EgressWidened` event (durable, replayed) plus the row the client draws from it.
+        // A notice here rendered twice on the Mac ("Ran …" then "ⓘ Yolo: …").
         assert!(
-            evs.iter().any(|e| matches!(
+            !evs.iter().any(|e| matches!(
                 &e.event,
-                Event::Notice { level: Level::Info, message }
-                    if message.contains("yolo: `echo hi` ran outside the sandbox")
+                Event::Notice { message, .. }
+                    if message.contains("ran outside the sandbox")
             )),
-            "the sandbox line is a quiet info row"
+            "one row per call: no second notice restating the tool row"
         );
+        // The hosts variant is a notice: which hosts got granted this session is a fence
+        // state the user couldn't see otherwise (it can persist past the turn).
         assert!(
             evs.iter().any(|e| matches!(
                 &e.event,
                 Event::Notice { level: Level::Info, message }
                     if message.contains("reaches pkgs.example.org, now allowed this session")
             )),
-            "the hosts line is a quiet info row"
+            "the hosts line stays a quiet info row"
         );
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -6691,13 +6696,15 @@ mod egress_tests {
             vec![("both".to_string(), Vec::new(), true)],
             "one row: it left the sandbox"
         );
+        // The fact is the durable event, not a second notice row: a row for the call and a
+        // row for what the call already says is the double render this module exists to keep
+        // off the transcript.
         assert!(
-            evs.iter().any(|e| matches!(
+            !evs.iter().any(|e| matches!(
                 &e.event,
-                Event::Notice { level: Level::Info, message }
-                    if message.contains("`echo hi` ran outside the sandbox")
+                Event::Notice { message, .. } if message.contains("ran outside the sandbox")
             )),
-            "the row says what actually happened"
+            "leaving the sandbox rides the call's row, never a second notice"
         );
         let _ = std::fs::remove_dir_all(dir);
     }

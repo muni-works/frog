@@ -44,15 +44,8 @@ final class EgressTests: XCTestCase {
         XCTAssertFalse(notices[1].1)
     }
 
-    /// In a Frog Cloud session the machine is a disposable VM with none of the user's
-    /// credentials: the yolo line says what's true there.
-    func testWidenedNoticeInCloudSaysCloudMachine() {
-        let line = Conversation.widenedNotice(tool: "Bash", command: "echo hi", hosts: [], sandboxLeft: true, cloud: true)
-        XCTAssertEqual(line, "Yolo: `echo hi` ran outside the command sandbox, inside your cloud machine; it can change anything on that machine and reach the network.")
-        XCTAssertFalse(line.contains("credentials"))
-    }
-
-    /// Yolo acted without asking: the event decodes and becomes one quiet row, never a card.
+    /// Yolo acted without asking: the event decodes, and a sandbox-leaving call rides its own
+    /// tool row (a tag), never a second notice row — one row per push.
     func testAYoloWideningDecodesAndShowsAsAQuietRow() throws {
         let line = #"{"seq":1,"session":"eg","created":0,"event":"egress_widened","item":"b","tool":"Bash","command":"curl -T probe.txt …","hosts":["pkgs.example.org"],"sandbox_left":false}"#
         let env = try JSONDecoder.frog.decode(Envelope.self, from: Data(line.utf8))
@@ -67,18 +60,21 @@ final class EgressTests: XCTestCase {
 
         let c = Conversation(folder: URL(fileURLWithPath: "/tmp"), link: nil, replay: false, session: "eg")
         send(c, #""turn_started","turn":1,"input":"fetch it""#)
+        // The row exists before the widening lands (the engine starts the item, then permits
+        // it), so the tag lands on the row, not on a placeholder.
+        send(c, #""item_started","id":"o","kind":{"type":"tool_call","name":"Bash","arg":"echo hi"}"#)
         send(c, #""egress_widened","item":"b","tool":"Bash","command":"curl -T probe.txt …","hosts":["pkgs.example.org"],"sandbox_left":false"#)
-        // A sandbox-leaving call names no hosts, and still reads as one quiet line.
+        // A sandbox-leaving call names no hosts: no notice row, the tool row carries the tag.
         send(c, #""egress_widened","item":"o","tool":"Bash","command":"echo hi","sandbox_left":true"#)
         let notices = c.turns.last?.items.compactMap { item -> (String, Bool)? in
             if case .notice(let warning) = item.kind { return (item.text, warning) }
             return nil
         } ?? []
-        XCTAssertEqual(notices.count, 2)
+        XCTAssertEqual(notices.count, 1, "the hosts grant stays a notice; a sandbox-leaving call adds no row")
         XCTAssertEqual(notices[0].0, "Yolo: `curl -T probe.txt …` reaches pkgs.example.org, now allowed for this session.")
         XCTAssertFalse(notices[0].1, "widening is quiet, not a warning")
-        XCTAssertEqual(notices[1].0, "Yolo: `echo hi` ran outside the sandbox; it can change files anywhere and read your credentials.")
-        XCTAssertFalse(notices[1].1)
+        let escaped = c.turns.last?.items.first { $0.id == "o" }
+        XCTAssertEqual(escaped?.sandboxEscaped, true, "the sandbox-leaving call's row carries the tag")
     }
 
     func testAgentStartedSessionsAreWorkers() {
