@@ -298,6 +298,50 @@ final class SidebarSnapshotTests: XCTestCase {
         }
     }
 
+    /// The started-by tree's rails, at every depth a session can sit at: a six-deep chain
+    /// (depths 0–5, so the cap shows) beside a sibling leaf, both list modes, both looks, and
+    /// with a nested row selected — tree-rails-*.png. The chain is the whole point: a row at
+    /// depth 5 must look deeper than one at depth 4, and its guide must survive selection.
+    func testRenderTreeRails() throws {
+        // root › depth1 › depth2 › depth3 › depth4 › depth5, plus a sibling at depth 1.
+        let chain = ["d1", "d2", "d3", "d4", "d5"]
+        var sessions: [SessionInfo] = [Self.s("root", "tree design pass", ago: 0.1)]
+        for (i, id) in chain.enumerated() {
+            sessions.append(Self.s(id, "level \(i + 1) worker", ago: 0.2 + Double(i) * 0.1))
+        }
+        sessions.append(Self.s("leaf", "sibling worker", ago: 1.5))
+        var parents: [String: String] = ["leaf": "root"]
+        parents["d1"] = "root"
+        for (i, id) in chain.enumerated().dropFirst() { parents[id] = chain[i - 1] }
+        let live: [String: Library.Live] = [
+            "root": .running, "d1": .running, "d2": .waiting, "d3": .running, "leaf": .running,
+        ]
+        func restage() {
+            Library.shared.stage(sessions: sessions, live: live, parents: parents, chief: nil, archived: [])
+        }
+        UserDefaults.standard.set(true, forKey: "calmSidebar")
+        UserDefaults.standard.set("date", forKey: "sidebarGroup")
+        UserDefaults.standard.set("activity", forKey: "sidebarSort")
+        let compactSaved = UserDefaults.standard.object(forKey: "compactSidebar")
+        defer { UserDefaults.standard.set(compactSaved, forKey: "compactSidebar") }
+
+        // The row on screen: a nested one, so its selection fill has a rail to either side.
+        let ws = Workspace(folder: URL(fileURLWithPath: "/Users/cam/Developer/frog/.frog/worktrees/d3"), resume: "d3")
+        for (dense, mode) in [(false, "two-line"), (true, "compact")] {
+            UserDefaults.standard.set(dense, forKey: "compactSidebar")
+            for (selected, pick) in [(nil, "plain"), ("d3", "selected")] {
+                for (look, name) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
+                    restage()  // the sidebar's onAppear refresh can replace a staged listing
+                    ws.opening = selected
+                    try render(SessionList(workspace: ws, maxHeight: 420).background(.background),
+                               size: CGSize(width: 300, height: 420), to: "tree-rails-\(mode)-\(pick)-\(name)",
+                               appearance: look)
+                }
+            }
+        }
+        ws.opening = nil
+    }
+
     /// The ask card: two answers and a ⋯, into ask-card-{light,dark}.png.
     func testRenderAskCard() throws {
         let c = Conversation(folder: URL(fileURLWithPath: "/tmp/demo"), link: nil, replay: false, session: "s")

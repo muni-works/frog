@@ -7,6 +7,7 @@ import { barTone, ringTone } from '../usage'
 import { parseRepo } from '../store'
 import type { Provider } from '../auth'
 import { safeHref } from './href'
+import { DownloadAppChip, useDownloadChip } from './DownloadChip'
 import { useFocusTrap, useLayer, useMenu } from './layers'
 import { derive, reduce, type ComposerError, type Effect, type Intent, type Pr, type State as Tray } from '../composer'
 
@@ -120,7 +121,10 @@ export function Composer(p: ComposerProps) {
   const [text, setText] = useState(p.draft ?? '')
   const [menu, setMenu] = useState<'plus' | 'model' | 'mode' | 'repo' | 'signin' | null>(p.pickRepo ? 'repo' : p.openModels ? 'model' : null)
   const showCloudModels = useShowCloud()
-  const machineRows = machineModels(p.machines ?? [])
+  // A machine's model runs from the Mac app; where there's an app to send them to, its rows give
+  // way to one download hint, and on a phone (or once they have the app) they stay as they were.
+  const machineChip = useDownloadChip(p.machines ?? [])
+  const machineRows = machineChip ? [] : machineModels(p.machines ?? [])
   const [q, setQ] = useState('')
   // Where the open menu's button sits, so the menu opens right above it.
   const [at, setAt] = useState(8)
@@ -276,10 +280,14 @@ export function Composer(p: ComposerProps) {
 
       {menu === 'model' && (
         <div className="f-card cz-menu cz-models" role="menu" aria-label="Model" style={{ left: at, width: 320 }} {...nav}>
-          <div className="cz-menu-h">Your machines</div>
-          {machineRows.length === 0 && <div className="det cz-menu-note">No models on your machines yet.</div>}
+          {/* The web runs sessions in Frog Cloud, so a machine's model can't be picked here: it
+           * runs from the Mac app. Where there's an app to send them to, one hint; on a phone, or
+           * once they have it, the rows stay as they were. */}
+          <div className="cz-menu-h">{machineChip ? 'Run it on your Mac' : 'Your machines'}</div>
+          {machineChip
+            ? <div className="cz-menu-note"><DownloadAppChip label="Runs from the Mac app" machines={p.machines} /></div>
+            : machineRows.length === 0 && <div className="det cz-menu-note">No models on your machines yet.</div>}
           {machineRows.map((m) => (
-            // The web runs sessions in Frog Cloud: a machine's model runs from the Mac app.
             <button key={m.spec} type="button" role="menuitemradio" aria-checked={false} disabled title="Runs from the Mac app">
               <span className="cz-dot" style={{ background: placeColor('local') }} aria-hidden="true" />
               <span className="cz-mname">{m.name}</span><span className="det cz-mdetail">{places(m)}</span>

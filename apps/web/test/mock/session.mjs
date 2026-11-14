@@ -3,7 +3,9 @@
 // session-log lines work too). Durable ones are stored; deltas are live only.
 import { readFileSync } from "node:fs";
 
-const DURABLE = new Set(["turn_started", "turn_ended", "item_started", "item_completed", "items_discarded", "permission_resolved", "question_resolved", "auto_approved", "permission_decision", "compacted", "compaction_failed", "context_pruned", "model_changed", "folder_changed", "shell_cwd", "mode_changed", "titled", "chapter_titled", "pane_opened", "pane_closed", "pane_checkpoint", "background_started", "background_done", "wakes_delivered", "message_read"]);
+// item_gisted is a frog engine event the vendored copy predates; without it a replayed
+// attach drops every gist.
+const DURABLE = new Set(["turn_started", "turn_ended", "item_started", "item_completed", "items_discarded", "permission_resolved", "question_resolved", "auto_approved", "permission_decision", "compacted", "compaction_failed", "context_pruned", "model_changed", "folder_changed", "shell_cwd", "mode_changed", "titled", "chapter_titled", "pane_opened", "pane_closed", "pane_checkpoint", "background_started", "background_done", "item_gisted", "wakes_delivered", "message_read"]);
 
 export const isDurable = (e) => DURABLE.has(e.event) || (e.event === "item_delta" && e.delta?.type === "image_preview");
 
