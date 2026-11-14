@@ -59,6 +59,18 @@ final class Conversation {
     let folder: URL
     private(set) var sessionID: String?
     private(set) var status: Status?
+    /// The configured MCP servers and their state, from the engine's `mcp_servers`. Kept even
+    /// when everything is fine so the composer can say when one a person configured needs a
+    /// sign-in — the case where its tools are silently missing from the model's list.
+    private(set) var mcpServers: [McpServerReport] = []
+
+    /// Servers someone configured that want a sign-in, so their tools are missing from the
+    /// model's list right now. Nil when there are none: the transcript card for them shows
+    /// only when there's something to say.
+    var signedOutServers: [McpServerReport]? {
+        let out = mcpServers.filter { !$0.connected && $0.needsAuth }
+        return out.isEmpty ? nil : out
+    }
     private(set) var turns: [TurnState] = [] {
         didSet {
             // Published apart from `turns` so views that only need "has anything been said"
@@ -989,6 +1001,13 @@ final class Conversation {
         case .status(let s):
             // Written only when it changed: every view of it rebuilds on a write.
             if status != s { status = s }
+        case .mcpServers(let report):
+            if mcpServers != report { mcpServers = report }
+        case .mcpSignedIn(let server, _):
+            note("Signed in to \(server).", warning: false)
+        case .mcpSignedOut(let server, let error):
+            // A decline is the person's own click, so it's quiet; a failed flow says why.
+            if let error { note("Couldn't sign in to \(server): \(error)", warning: true) }
         case .background(let running):
             backgroundRunning = running
         case .backgroundStarted(let id, let kind, let label, let log):
@@ -1010,8 +1029,10 @@ final class Conversation {
             // Live only: a replayed log has no queue.
             if !replaying { queuedEvents = items }
         case .wakesDelivered(let n, let wakes):
+            // Appended: a turn can get wakes twice — the batch it opened with, and any that
+            // ended while it ran (the engine appends those to its history mid-turn).
             if let i = turns.lastIndex(where: { $0.number == n }) {
-                turns[i].wakes = wakes
+                turns[i].wakes += wakes
             }
         case .synced:
             replaying = false
