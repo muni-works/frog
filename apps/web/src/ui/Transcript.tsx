@@ -62,11 +62,67 @@ const TOOL_LOOK: Record<string, { verb: [string, string]; icon: string }> = {
 }
 const OTHER = { verb: ['Using', 'Used'] as [string, string], icon: 'M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z' }
 
-function ToolLine({ e }: { e: Entry }) {
+/** Tools whose result is a sentence, not a payload: a `SendMessage` result is one line. These
+ * say it on their row with no click at all. The Mac's `ToolLook.inlineResults` is the same set,
+ * so the two transcripts keep one look. Everything else — a command's output, a file, a diff —
+ * is a payload and stays behind the row's chevron. */
+const INLINE_RESULTS = new Set([
+  'sendmessage', 'ask', 'todowrite', 'skill', 'usefolder',
+  'renamesession', 'movesession', 'archivesession', 'unarchivesession', 'listsessions',
+])
+
+/** How much of a short result the row's own line shows before the rest is worth a click. */
+export const LINE_CAP = 90
+
+/** The phrase a short result reads as on its row: the engine's display when it sent one
+ * ("chose: Send now"), else the result's first sentence ("Sent to ops; delivered"). */
+export function saidLine(display: string | null | undefined, output: string): string {
+  const full = (display || output).trim()
+  if (!full) return ''
+  const first = full.split('\n').map((l) => l.trim()).find(Boolean) ?? full
+  // A sentence often trails advice ("…delivered. It reads the message at its next boundary"):
+  // the first sentence is the meat, and the rest lives behind the row. Its full stop is
+  // dropped — the row sets it off with " · ".
+  if (first.length > 24) {
+    const m = /[.!?] /.exec(first)
+    if (m && m.index < LINE_CAP) return first.slice(0, m.index)
+  }
+  return first.length > LINE_CAP ? `${first.slice(0, LINE_CAP - 1)}…` : first
+}
+
+/** Whether the line says the whole of it: nothing is left behind the row, so it gets no chevron
+ * (a click that reveals nothing is the same wasted click). True when the row's own text is the
+ * whole result, not a first-sentence cut or a clip of it. */
+export function fits(display: string | null | undefined, output: string): boolean {
+  const full = (display || output).trim()
+  return !full || saidLine(display, output) === full
+}
+
+/** "12 sessions" from `ListSessions`' JSON array: the row's worth of a page of JSON. */
+export function sessionCount(name: string, output: string): string | null {
+  if (name !== 'listsessions') return null
+  try {
+    const rows = JSON.parse(output)
+    if (!Array.isArray(rows)) return null
+    return `${rows.length} session${rows.length === 1 ? '' : 's'}`
+  } catch {
+    return null
+  }
+}
+
+/** Exported for `test/toolrow-render.test.ts`, which draws this row and reads the DOM back:
+ * the only way a test can see what the browser is actually handed, since the helpers above can
+ * stay correct while the row stops using them. */
+export function ToolLine({ e }: { e: Entry }) {
   const [open, setOpen] = useState<boolean | null>(null)
   const name = (e.name ?? '').toLowerCase()
   const look = TOOL_LOOK[name] ?? OTHER
   const output = e.output.trim()
+  // A short result is said on the row itself: no click, no chevron, no body to open.
+  const said = e.done && e.outcome === 'ok' && INLINE_RESULTS.has(name) && !e.diff
+    ? sessionCount(name, output) ?? saidLine(e.display, output)
+    : ''
+  const whole = said ? fits(e.display, sessionCount(name, output) ?? output) : false
   const shown = open ?? (e.outcome === 'error' || (!e.done && !!output))
   const state = !e.done ? 'run' : e.outcome === 'error' ? 'err' : e.outcome === 'denied' ? 'denied' : 'ok'
   // What it touched ("Read src/retry.rs", as on the Mac), or the side-model's gist when one
@@ -76,19 +132,23 @@ function ToolLine({ e }: { e: Entry }) {
   const what = (e.done && e.gist) || e.arg || (e.done && e.display) || (TOOL_LOOK[name] ? '' : e.name)
   return (
     <div className={`tool-row ${state}`}>
-      <button type="button" className="tool" aria-expanded={shown} onClick={() => setOpen(!shown)}>
+      <button type="button" className="tool" aria-expanded={whole ? false : shown} onClick={() => { if (!whole) setOpen(!shown) }}>
         <span className="tool-ic" aria-hidden="true">
           {state === 'run'
             ? <span className="tool-spin" />
             : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={look.icon} /></svg>}
         </span>
-        <span className="tool-verb">{look.verb[e.done ? 1 : 0]}</span>
+        {/* The verb stays for a running call and a failure ("Ran cargo test — failed"). A
+            finished row drops it: a gist already says what it did, and a raw command reads
+            as itself ("a command is a command"), so "Ran" beside either says ran twice. */}
+        {(state === 'run' || state === 'err') && <span className="tool-verb">{look.verb[e.done ? 1 : 0]}</span>}
         {what && <span className={`tool-what${e.done && e.gist ? ' gist' : ''}`}>{what}</span>}
+        {said && <span className="tool-said">· {said}</span>}
         {state === 'err' && <span className="tool-tag err">failed</span>}
         {state === 'denied' && <span className="tool-tag">denied</span>}
-        <span className="tool-chev" aria-hidden="true">›</span>
+        {!whole && <span className="tool-chev" aria-hidden="true">›</span>}
       </button>
-      {shown && (
+      {shown && !whole && (
         <div className="tool-body">
           {/* The raw call stays readable when the row's line is something else: with a gist on
               the row, this is the argument it summarized. The engine's own display leads, as
@@ -99,7 +159,11 @@ function ToolLine({ e }: { e: Entry }) {
               <div className="tool-arg">{e.arg}</div>
             </>
           )}
-          {output ? <pre className="tool-out">{clip(output)}</pre> : <div className="det">{e.done ? 'No output.' : 'Running…'}</div>}
+          {/* An inline tool's body is its sentence, as text — never a terminal block: one line
+              in a <pre> reads as a payload it isn't. */}
+          {INLINE_RESULTS.has(name) && !e.diff
+            ? <div className="tool-said-body">{output ? clip(output) : 'No output.'}</div>
+            : output ? <pre className="tool-out">{clip(output)}</pre> : <div className="det">{e.done ? 'No output.' : 'Running…'}</div>}
         </div>
       )}
     </div>
