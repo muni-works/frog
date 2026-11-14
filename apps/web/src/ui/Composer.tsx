@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { composing } from './guards'
 import type { Image, Mode } from '../cloud/protocol'
-import { modelName, modes, outputPrice, placeColor, placeOf, spec, type Model } from '../models'
+import { inOutPrice, modelName, modes, placeColor, placeOf, spec, type Model } from '../models'
 import { machineModels, places, tag, useShowCloud, type Machine } from '../machines'
 import { barTone, canCompact, ringLabel, ringTone } from '../usage'
 import { parseRepo } from '../store'
@@ -300,7 +300,7 @@ export function Composer(p: ComposerProps) {
           {showCloudModels && p.models?.map((m) => (
             <button key={m.id} type="button" role="menuitemradio" aria-checked={m.id === p.model} onClick={() => { p.onModel?.(m.id); setMenu(null) }}>
               <span className="cz-dot" style={{ background: placeColor('cloud') }} aria-hidden="true" />
-              <span className="cz-mname">{modelName(m.id)}</span><span className="det cz-mdetail">{outputPrice(m)}</span>
+              <span className="cz-mname">{modelName(m.id)}</span><span className="det cz-mdetail">{inOutPrice(m)}</span>
               <span className="cz-mtag" style={{ opacity: m.id === p.model ? 1 : 0 }}>✓</span>
             </button>
           ))}
