@@ -441,6 +441,13 @@ impl Kids {
                 let id = self.find(input["id"].as_str().unwrap_or(""))?;
                 let mut kids = self.kids.lock().unwrap();
                 let k = kids.get_mut(&id).expect("found");
+                if k.archived {
+                    // Asked twice (a stale id, a retry): it's where the caller wants it.
+                    return Ok(format!(
+                        "{} ({id}) is already archived; nothing to do.",
+                        k.name
+                    ));
+                }
                 k.archived = true;
                 let _ = k.ops.send(Op::ClearInbox);
                 let _ = k.ops.send(Op::Interrupt);
@@ -582,6 +589,44 @@ mod tests {
         // Anything else is still the old miss, listing what there is.
         let err = kids.find("nobody").unwrap_err().to_string();
         assert!(err.contains("Known: self (child-0001)"), "{err}");
+    }
+
+    #[test]
+    fn archiving_an_archived_session_is_a_quiet_no_op() {
+        let kids = Kids::default();
+        let (ops, mut sent) = mpsc::unbounded_channel();
+        kids.kids.lock().unwrap().insert(
+            "child-0001".into(),
+            Kid {
+                name: "writer".into(),
+                cwd: PathBuf::from("/tmp/x"),
+                branch: None,
+                ops,
+                state: Arc::new(Mutex::new(State::default())),
+                archived: false,
+            },
+        );
+        let input = json!({"id": "writer"});
+        let first = kids
+            .answer(crate::tools::sessions::ARCHIVE, &input)
+            .unwrap();
+        assert!(first.starts_with("Archived writer"), "{first}");
+        let count = |rx: &mut mpsc::UnboundedReceiver<Op>| {
+            std::iter::from_fn(|| rx.try_recv().ok()).count()
+        };
+        assert_eq!(count(&mut sent), 3, "cleared, interrupted, shut down");
+        // Again (a stale id, a retry): a result, not an error, and nothing is sent twice.
+        let again = kids
+            .answer(crate::tools::sessions::ARCHIVE, &input)
+            .unwrap();
+        assert!(again.contains("already archived"), "{again}");
+        assert_eq!(count(&mut sent), 0);
+        // An id that never existed is still a miss that lists what there is.
+        let err = kids
+            .answer(crate::tools::sessions::ARCHIVE, &json!({"id": "nobody"}))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Known: writer (child-0001)"), "{err}");
     }
 
     #[test]

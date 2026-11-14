@@ -1090,6 +1090,29 @@ final class SessionBrokerTests: XCTestCase {
         XCTAssertNil(b.births[eng.id], "an archived session's first prompt is never replayed")
     }
 
+    /// ArchiveSession on a session that's already archived (a stale id, a retry) used to come
+    /// back as `No session "…"`. It's where the caller wants it: nothing is archived twice,
+    /// and an id that never existed is still a miss.
+    @MainActor
+    func testArchivingAnArchivedSessionIsANoOp() throws {
+        let b = broker([chief])
+        var calls = 0
+        b.archiver = { _, _ in calls += 1 }
+        b.directoryIncludingArchived = { [self.chief, self.eng] }
+        let link = QueueLink()
+        let caller = Conversation(folder: URL(fileURLWithPath: "/tmp/archive-twice"), link: link, replay: false, session: chief.id)
+        b.handle(SessionRequest(id: "r1", item: "t1", tool: "ArchiveSession",
+                                input: .object(["id": .string(eng.id)])), from: caller)
+        b.handle(SessionRequest(id: "r2", item: "t2", tool: "ArchiveSession",
+                                input: .object(["id": .string("nobody")])), from: caller)
+        XCTAssertEqual(calls, 0, "already archived: the archiver isn't run again")
+        let replies = link.sent.filter { $0["op"] as? String == "session_reply" }
+        XCTAssertEqual(replies.count, 2)
+        XCTAssertNil(replies.first?["error"] as? String, "a no-op, not an error")
+        XCTAssertTrue((replies.first?["result"] as? String ?? "").contains("already archived"), "\(replies)")
+        XCTAssertTrue((replies.last?["error"] as? String ?? "").hasPrefix("No session \"nobody\"."), "\(replies)")
+    }
+
     /// ListApprovals collects the pending permission cards across sessions (read-only,
     /// with age) and clears their age once they stop waiting.
     @MainActor
