@@ -613,7 +613,7 @@ Not saved: the next session starts on {from} again"
                 self.emit(Event::CompactionFailed {
                     detail: format!("{e:#}"),
                 });
-                anyhow::bail!("compaction failed; the history can't fit the context window");
+                return Err(super::compact::compaction_error(&self.profile_name, &e));
             }
             *compacted = Some(self.conv.messages.len());
         } else if pruned {

@@ -78,6 +78,10 @@ pub struct Client {
     /// interrupt mid-call deterministically. (A `Notify` permit set before the waiter
     /// registers would be lost, so the gate is flags the call polls until the test flips it.)
     pub hold: Option<Arc<(std::sync::atomic::AtomicBool, std::sync::atomic::AtomicBool)>>,
+    /// The model's context window, in bytes of the request as `sent` records it: a longer
+    /// request is refused with frog cloud's 413 `context_length_exceeded`, as a real server
+    /// refuses a prompt its window can't hold. Refused requests don't consume the script.
+    pub window: Option<usize>,
 }
 
 impl Client {
@@ -89,6 +93,7 @@ impl Client {
             fails: Default::default(),
             attempts: Default::default(),
             hold: None,
+            window: None,
         }
     }
 
@@ -103,11 +108,28 @@ impl Client {
             .map(|t| format!("<tool {}>", t.name))
             .collect();
         self.attempts.lock().unwrap().push(tokio::time::Instant::now());
-        self.sent.lock().unwrap().push(format!(
+        let request = format!(
             "{}{tools}{}",
             req.system,
             serde_json::to_string(req.messages)?
-        ));
+        );
+        let len = request.len();
+        self.sent.lock().unwrap().push(request);
+        if let Some(window) = self.window
+            && len > window
+        {
+            return Err(HttpError {
+                status: 413,
+                body: format!(
+                    "{{\"error\":{{\"message\":\"context_length_exceeded: this request is at least \
+                     {len} bytes and the model's context window is {window}; shorten or compact the \
+                     conversation\",\"type\":\"invalid_request_error\",\"code\":413}}}}"
+                ),
+                billing: None,
+                retry_after: None,
+            }
+            .into());
+        }
         // The request is in: the call is mid-flight now. Hold here if asked, until the test
         // releases it, so an op racing the turn (a Shutdown, an interrupt) lands mid-call.
         if let Some(gate) = &self.hold {
