@@ -146,9 +146,14 @@ struct Cli {
     #[arg(long)]
     session_tree: bool,
     /// Connect the configured MCP servers (config.toml and ./.mcp.json), list their tools, and
-    /// exit (JSON with --json).
+    /// exit (JSON with --json). A server that wants a sign-in is reported, never signed in:
+    /// connecting doesn't open a browser.
     #[arg(long)]
     mcp: bool,
+    /// Sign in to a configured MCP server in the browser, then exit. This is what the app's
+    /// "Sign in" button runs; it's the only frog command that opens a browser for MCP.
+    #[arg(long, value_name = "SERVER")]
+    mcp_signin: Option<String>,
     /// Read Mermaid from stdin, lay it out, and print the diagram (JSON with --json) and exit.
     #[arg(long)]
     mermaid: bool,
@@ -578,6 +583,30 @@ async fn run() -> Result<bool> {
         }
         return Ok(true);
     }
+    if let Some(server) = &cli.mcp_signin {
+        let mut configured = frog_engine::mcp::configured(&cfg, &cwd);
+        let cfg_of = configured
+            .remove(server)
+            .with_context(|| format!("`{server}` isn't a configured MCP server here"))?;
+        println!("signing in to `{server}` in your browser…");
+        let browser: frog_engine::mcp_oauth::Browser = std::sync::Arc::new(|url: String| {
+            let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+            let opened = std::process::Command::new(opener)
+                .arg(&url)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success());
+            if !opened {
+                eprintln!("open this to sign in:\n  {url}");
+            }
+        });
+        frog_engine::mcp::sign_in(server, &cfg_of, None, browser).await?;
+        // Signed in on purpose, so a remembered refusal no longer applies.
+        frog_engine::mcp::forget_refusal(&frog_engine::mcp::auth_key(server, &cfg_of));
+        println!("signed in to `{server}`");
+        return Ok(true);
+    }
     if cli.mcp {
         let servers = frog_engine::mcp::configured(&cfg, &cwd);
         let hub =
@@ -592,9 +621,15 @@ async fn run() -> Result<bool> {
         }
         if !cli.json {
             for st in &status {
-                match &st.error {
-                    Some(e) => println!("✗ {}  {e}", st.name),
-                    None => println!(
+                // A server wanting a sign-in also carries an error line (it is one), so it
+                // must be matched first or the actionable line never shows.
+                match (st.needs_auth, &st.error) {
+                    (true, _) => println!(
+                        "✗ {}  not signed in · sign in from Settings → MCP in the app",
+                        st.name
+                    ),
+                    (false, Some(e)) => println!("✗ {}  {e}", st.name),
+                    (false, None) => println!(
                         "✓ {}  {} tools: {}",
                         st.name,
                         st.tools.len(),

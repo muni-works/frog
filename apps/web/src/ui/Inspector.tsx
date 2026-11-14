@@ -1,12 +1,27 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { Op } from '../cloud/protocol'
 import type { Thread } from '../engine/thread'
+import type { Machine } from '../machines'
+import { DownloadAppChip } from './DownloadChip'
 import { FileRow } from './Diff'
 import { TerminalPane } from './TerminalPane'
 
 type Tab = 'changes' | 'terminal' | 'preview'
 
-export function Inspector({ thread, onCommit, onPr, hasPr, send, onClose }: { onClose: () => void; thread: Thread; branch?: string; hasPr: boolean; onCommit: () => void; onPr: () => void; send: (op: Op) => void }) {
+interface InspectorProps {
+  onClose: () => void
+  thread: Thread
+  branch?: string
+  hasPr: boolean
+  onCommit: () => void
+  onPr: () => void
+  send: (op: Op) => void
+  machines?: readonly Machine[]
+  /** Open on this tab (tests); default: the one remembered for this browser. */
+  pane?: Tab
+}
+
+export function Inspector({ thread, onCommit, onPr, hasPr, send, onClose, machines = [], pane: initialPane }: InspectorProps) {
   // Width, dragged from the left edge and kept per browser.
   const [width, setWidth] = useState(() => { try { return Number(localStorage.getItem('frog.inspectorWidth')) || 330 } catch { return 330 } })
   const [dragging, setDragging] = useState(false)
@@ -22,7 +37,10 @@ export function Inspector({ thread, onCommit, onPr, hasPr, send, onClose }: { on
     }
     addEventListener('pointermove', move); addEventListener('pointerup', up)
   }
-  const [pane, setPane] = useState<Tab>(() => { try { const t = localStorage.getItem('frog.inspectorTab'); return t === 'terminal' || t === 'preview' ? t : 'changes' } catch { return 'changes' } })
+  const [pane, setPane] = useState<Tab>(() => {
+    if (initialPane) return initialPane
+    try { const t = localStorage.getItem('frog.inspectorTab'); return t === 'terminal' || t === 'preview' ? t : 'changes' } catch { return 'changes' }
+  })
   // Which changed files are open to their hunks; the only one opens by itself.
   const [open, setOpen] = useState<Set<string>>(new Set())
   useEffect(() => { if (thread.changes.length === 1) setOpen(new Set([thread.changes[0].path])) }, [thread.changes.length === 1 ? thread.changes[0].path : '']) // eslint-disable-line react-hooks/exhaustive-deps
@@ -103,6 +121,7 @@ export function Inspector({ thread, onCommit, onPr, hasPr, send, onClose }: { on
             <svg aria-hidden="true" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M3 9h18M7 6.5h.01M10 6.5h.01" /></svg>
             <b>Preview isn't on the web yet</b>
             <span className="det wrap">Frog Cloud can't show a sandbox's dev server in the browser yet. Run it in Terminal for now, or open the session in the Mac app.</span>
+            <DownloadAppChip label="The Mac app has Preview" machines={machines} />
           </div>
         </div>
       )}
