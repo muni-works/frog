@@ -537,45 +537,34 @@ async fn git_credential_helper_asks_the_gateway() {
             }
         });
     }
-    let home = temp_dir("git");
-    // As git runs it, through the environment --git-credential-gateway sets up.
-    let out = tokio::process::Command::new("git")
-        .args(["credential", "fill"])
-        .env("HOME", &home)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env("FROG_GIT_CREDENTIAL_GATEWAY", &gateway)
-        .env("GIT_CONFIG_COUNT", "2")
-        .env("GIT_CONFIG_KEY_0", "credential.helper")
-        .env("GIT_CONFIG_VALUE_0", "")
-        .env("GIT_CONFIG_KEY_1", "credential.helper")
-        .env(
-            "GIT_CONFIG_VALUE_1",
-            format!("!'{}' git-credential", env!("CARGO_BIN_EXE_frog")),
-        )
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
-    let mut out = out;
-    out.stdin
-        .take()
-        .unwrap()
-        .write_all(b"protocol=https\nhost=github.com\npath=muni-works/frog.git\n\n")
-        .await
-        .unwrap();
-    let out = out.wait_with_output().await.unwrap();
-    let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(out.status.success(), "{stdout}");
-    assert!(stdout.contains("username=x-access-token\n"), "{stdout}");
-    assert!(stdout.contains("password=ghs_secret\n"), "{stdout}");
+    // As a turn's git runs it: through the helper and socket --git-credential-gateway sets up.
+    let bash = tool_reply(
+        "Bash",
+        json!({"command": "printf 'protocol=https\\nhost=github.com\\npath=muni-works/frog.git\\n\\n' | GIT_TERMINAL_PROMPT=0 git credential fill; ls ~/.git-credentials 2>/dev/null || echo no-store", "unsandboxed": true}),
+    );
+    let f = frog(
+        vec![bash, text_reply("done")],
+        &["--yolo", "--git-credential-gateway", &gateway],
+    )
+    .await;
+    let mut ws = connect(&f.addr).await;
+    hello(&mut ws, 0).await;
+    send(&mut ws, json!({"op": "submit", "text": "fetch"})).await;
+    let seen = until(&mut ws, "turn_ended").await;
+    let out = seen
+        .iter()
+        .find(|e| e["event"] == "item_completed" && e["item"]["type"] == "tool_call")
+        .expect("the tool ran");
+    let out = out["item"]["output"].as_str().unwrap();
+    assert!(out.contains("username=x-access-token"), "{out}");
+    assert!(out.contains("password=ghs_secret"), "{out}");
+    // Nothing landed on disk.
+    assert!(out.contains("no-store"), "{out}");
     let asked = asked.lock().unwrap().clone();
     assert_eq!(
         asked,
         ["GET /internal/git-credential?host=github.com HTTP/1.1"]
     );
-    // Nothing landed on disk.
-    assert!(!home.join(".git-credentials").exists());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -583,7 +572,7 @@ async fn git_credential_gateway_flag_installs_the_helper() {
     // A turn's shell sees git configured with frog as the only credential helper.
     let bash = tool_reply(
         "Bash",
-        json!({"command": "git config --get-all credential.helper; echo \"gw=$FROG_GIT_CREDENTIAL_GATEWAY\"", "unsandboxed": true}),
+        json!({"command": "git config --get-all credential.helper; echo \"gw=$FROG_GIT_CREDENTIAL_GATEWAY\"; echo \"sock=${FROG_GIT_CREDENTIAL_SOCKET:+set}\"", "unsandboxed": true}),
     );
     let f = frog(
         vec![bash, text_reply("done")],
@@ -604,7 +593,9 @@ async fn git_credential_gateway_flag_installs_the_helper() {
         .expect("the tool ran");
     let out = out["item"]["output"].as_str().unwrap();
     assert!(out.contains("git-credential"), "{out}");
-    assert!(out.contains("gw=http://gateway.internal"), "{out}");
+    // The gateway's URL stays in frog; the shell only gets the broker's socket.
+    assert!(out.contains("gw=\n"), "{out}");
+    assert!(out.contains("sock=set"), "{out}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

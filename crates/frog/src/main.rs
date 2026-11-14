@@ -34,8 +34,9 @@ struct Cli {
     /// Speak the engine protocol over stdio (Op JSON lines in, Event JSON lines out).
     #[arg(long, conflicts_with = "print")]
     serve: bool,
-    /// With --serve: speak it over a websocket on ADDR (e.g. 0.0.0.0:7070) instead of stdio,
+    /// With --serve: speak it over a websocket on ADDR (e.g. 127.0.0.1:7070) instead of stdio,
     /// one peer at a time, with `GET /health` on the same port. For Frog Cloud's gateway.
+    /// Beyond loopback it needs FROG_SERVE_WS_TOKEN, which every peer must present.
     #[arg(long, value_name = "ADDR", requires = "serve")]
     serve_ws: Option<String>,
     /// With --serve-ws: session store root (default: frog's data dir).
@@ -739,6 +740,9 @@ async fn run() -> Result<bool> {
     }
     if let Some(addr) = &cli.listen {
         let token = std::env::var("FROG_LISTEN_TOKEN").unwrap_or_default();
+        // Keep it from the agent's tools, which inherit this environment.
+        // SAFETY: before any engine or task that reads the environment starts.
+        unsafe { std::env::remove_var("FROG_LISTEN_TOKEN") };
         let (cfg, sandbox, chat, dir) = (cfg.clone(), cli.sandbox, cli.chat, store.clone());
         let make = move |resume, model: Option<String>| -> Result<Options> {
             let (profile_name, profile) = match model {
@@ -767,6 +771,15 @@ async fn run() -> Result<bool> {
         listen::run(addr, token, template).await?;
         return Ok(true);
     }
+    // Checked before the engine starts, so a refused bind costs nothing.
+    let ws_token = std::env::var(ws::TOKEN_ENV).ok().filter(|t| !t.is_empty());
+    // Keep it from the agent's tools, which inherit this environment.
+    // SAFETY: before the engine or any task that reads the environment starts.
+    unsafe { std::env::remove_var(ws::TOKEN_ENV) };
+    if let Some(addr) = &cli.serve_ws {
+        let insecure = std::env::var(ws::INSECURE_ENV).is_ok_and(|v| v == "1");
+        ws::check_bind(addr, ws_token.as_deref(), insecure)?;
+    }
     let handle = frog_engine::spawn_checked(Options {
         cfg: cfg.clone(),
         profile_name,
@@ -789,7 +802,7 @@ async fn run() -> Result<bool> {
 
     let mut prompt = cli.prompt.join(" ");
     if let Some(addr) = &cli.serve_ws {
-        ws::serve(handle, addr).await?;
+        ws::serve(handle, addr, ws_token).await?;
         return Ok(true);
     }
     if cli.serve {
