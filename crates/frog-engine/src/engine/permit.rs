@@ -360,15 +360,11 @@ impl Agent {
                 it would run the same confined; nothing needed the escape."
                     .replace('\n', " ")
             } else {
-                "Runs outside the sandbox: it can change files anywhere and read your credentials."
-                    .to_string()
+                self.escape_reason("Runs outside the sandbox")
             }
         });
         if terminal_run && self.ctx.shell_sandbox.is_some() {
-            reason = Some(
-                "Runs in a terminal pane, which isn't sandboxed: it can change files anywhere and read your credentials."
-                    .to_string(),
-            );
+            reason = Some(self.escape_reason("Runs in a terminal pane, which isn't sandboxed"));
         }
         match &egress_ask {
             Some(hosts) if !hosts.is_empty() => {
@@ -384,8 +380,13 @@ impl Agent {
                     needs the network or the wider writes; it would run the same confined."
                         .replace('\n', " ")
                 } else {
-                    "Runs outside the sandbox and past this session's network allow-list: it can reach any host, change files anywhere and read your credentials."
-                        .to_string()
+                    if self.cfg.cloud_sandbox {
+                        "Runs outside the command sandbox and past this session's network allow-list, inside your cloud machine: it can reach any host and change anything on that machine."
+                            .to_string()
+                    } else {
+                        "Runs outside the sandbox and past this session's network allow-list: it can reach any host, change files anywhere and read your credentials."
+                            .to_string()
+                    }
                 })
             }
             None => {}
@@ -702,6 +703,20 @@ impl Agent {
                 Decision::Allow
             }
             d => d,
+        }
+    }
+
+    /// The card's line for a command that runs unconfined. `what` is the opening clause;
+    /// the consequence depends on where the engine runs: on the user's own machine it can
+    /// reach their credentials, in a Frog Cloud sandbox VM there are none to reach.
+    fn escape_reason(&self, what: &str) -> String {
+        if self.cfg.cloud_sandbox {
+            let what = what.replace("outside the sandbox", "outside the command sandbox");
+            format!(
+                "{what}, inside your cloud machine: it can change anything on that machine and reach the network."
+            )
+        } else {
+            format!("{what}: it can change files anywhere and read your credentials.")
         }
     }
 
