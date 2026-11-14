@@ -113,7 +113,7 @@ impl Agent {
             format!("a {secs}s sleep moved to background job {id}; the turn goes on"),
         );
         Ok(tools::Output::text(format!(
-            "That wait is now a background job ({id}, {secs}s); continuing. Don't sleep to wait: do other work now or end your turn; the <job-done id={id}> wake, with the output of the commands after the sleep, starts your next turn.\n\n{}",
+            "That wait is now a background job ({id}, {secs}s); continuing. Don't sleep to wait: do other work now or end your turn; the <job-done id={id}> wake, with the output of the commands after the sleep, reaches you at your next step after it ends (or starts your next turn if this one has ended).\n\n{}",
             started.content
         )))
     }
@@ -126,20 +126,10 @@ impl Agent {
         input: &Value,
     ) -> Result<tools::Output> {
         // A working directory that was deleted out from under the session (a worktree cleaned
-        // up, a temp folder gone) would fail every command with "No such file or directory".
-        // Fall back to the session root and say so.
-        if !self.ctx.cwd.is_dir() {
-            let gone = std::mem::take(&mut self.ctx.cwd);
-            self.ctx.cwd = self.root.clone();
-            self.ctx.read_files.clear();
-            // The sandbox roots pointed into the deleted folder too; the session root confines
-            // what's left, if it still sandboxes at all.
-            if self.ctx.sandbox.as_ref().is_some_and(|p| !p.is_dir()) {
-                self.ctx.sandbox = Some(self.root.clone());
-            }
-            if self.ctx.shell_sandbox.as_ref().is_some_and(|p| !p.is_dir()) {
-                self.ctx.shell_sandbox = Some(self.root.clone());
-            }
+        // up by someone else, a temp folder gone) would fail every command with "No such file
+        // or directory". Fall back to the session root and say so. (When the session's own
+        // command deleted it, the check after that command already recovered, quietly.)
+        if let Some(gone) = self.recover_cwd() {
             self.notice(
                 Level::Warn,
                 format!(
@@ -304,6 +294,18 @@ root {}. Re-`cd` if you need the old location back.</system-note>",
                 ..Default::default()
             });
         }
+        // The command deleted the folder its own shell stood in (`git worktree remove` of the
+        // worktree it had `cd`-ed into): the session did that itself, so no warning row —
+        // back to the session root, and the model reads why in this call's own result.
+        if let Some(gone) = self.recover_cwd()
+            && let Ok(o) = &mut out
+        {
+            o.content.push_str(&format!(
+                "\n(This removed the shell's working directory {}; the shell is back in the session root {}.)",
+                gone.display(),
+                self.root.display()
+            ));
+        }
         // A `cd` that stuck: say where the shell works now, durably (SessionStatus on a dead
         // session reads it from the log).
         // (Compared canonically: the shell reports `pwd -P`, so `/var` comes back as
@@ -315,6 +317,25 @@ root {}. Re-`cd` if you need the old location back.</system-note>",
             });
         }
         out
+    }
+
+    /// The shell's working directory no longer exists: move it (and any sandbox roots that
+    /// pointed into it) back to the session root. Returns the folder that went away.
+    fn recover_cwd(&mut self) -> Option<PathBuf> {
+        if self.ctx.cwd.as_os_str().is_empty() || self.ctx.cwd.is_dir() {
+            return None;
+        }
+        let gone = std::mem::replace(&mut self.ctx.cwd, self.root.clone());
+        self.ctx.read_files.clear();
+        // The sandbox roots pointed into the deleted folder too; the session root confines
+        // what's left, if it still sandboxes at all.
+        if self.ctx.sandbox.as_ref().is_some_and(|p| !p.is_dir()) {
+            self.ctx.sandbox = Some(self.root.clone());
+        }
+        if self.ctx.shell_sandbox.as_ref().is_some_and(|p| !p.is_dir()) {
+            self.ctx.shell_sandbox = Some(self.root.clone());
+        }
+        Some(gone)
     }
 
     /// Run one batch of tool calls. Returns true if the user denied one.    /// Whether the model may call `name` now: it's in the tool list this step was offered, or

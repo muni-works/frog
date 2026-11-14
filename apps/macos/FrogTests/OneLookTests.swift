@@ -104,4 +104,27 @@ final class OneLookTests: XCTestCase {
     private func pr(_ n: Int, _ state: ComposerModel.PrState) -> ComposerModel.Pr {
         .init(repo: "muni-works/frog", number: n, title: "t", state: state, checks: .init(ok: 0, total: 0))
     }
+
+    /// "frog manager" (2026-11-14): forty rows read `cd /Users/cam/Developer/frog && …` with
+    /// the meaning truncated off the end. The command leads; a worktree shows by name; the
+    /// full command stays the row's help.
+    func testACdPrefixGivesWayToTheCommand() {
+        var root = ItemState(id: "c1", kind: .tool(name: "Bash", arg: "cd /Users/cam/Developer/frog && git log --oneline -2"))
+        root.done = true
+        let r = VerbLine.of(root)!
+        XCTAssertEqual(r.arg, "git log --oneline -2")
+        XCTAssertNil(r.detail, "the session root on every row is noise")
+        XCTAssertEqual(r.helpText, "cd /Users/cam/Developer/frog && git log --oneline -2")
+
+        var wt = ItemState(id: "c2", kind: .tool(name: "Bash", arg: "cd \"/Users/cam/Developer/frog/.frog/worktrees/audit334\" && timeout 600 cargo test -p frog-engine"))
+        wt.done = true
+        let w = VerbLine.of(wt)!
+        XCTAssertEqual(w.arg, "timeout 600 cargo test -p frog-engine")
+        XCTAssertEqual(w.detail, "in audit334")
+
+        // Not that shape: whole.
+        XCTAssertEqual(VerbLine.splitCd("cd foo").command, "cd foo")
+        XCTAssertEqual(VerbLine.splitCd("cd a || b").command, "cd a || b")
+        XCTAssertEqual(VerbLine.splitCd("git status").command, "git status")
+    }
 }

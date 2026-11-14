@@ -160,7 +160,7 @@ final class WakeEventTests: XCTestCase {
         XCTAssertEqual(one.chips.first?.summary, "mon-1 matched · pod past 2h cap")
         XCTAssertEqual(one.chips.first?.payload, "over", "expanding shows the full payload")
         XCTAssertNil(one.overflow)
-        XCTAssertEqual(one.caption(busy: true), "1 pending result · they arrive when this turn ends")
+        XCTAssertEqual(one.caption(busy: true), "1 pending result · they arrive at the next step")
         let many = PendingEvents(
             queued: (1...5).map { "<job-done id=job-\($0) exit=0>\nok\n</job-done>" },
             messages: [SessionMessage(from: "s9", name: "okc manager", body: "serving:true\nmore")])
