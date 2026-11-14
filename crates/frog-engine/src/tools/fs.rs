@@ -12,15 +12,28 @@ pub fn read_spec() -> ToolSpec {
         name: "Read".into(),
         description: "Read a text file. Returns lines prefixed with 1-based line numbers (cat -n style). \
 Reads up to 2000 lines by default; use offset/limit for large files. On a directory, lists its entries \
-(like `ls`, capped at 200). You must Read a file before editing it.".into(),
+(like `ls`, capped at 200). To read several files or ranges at once, pass `files` instead of file_path: \
+one call, one result per file. You must Read a file before editing it.".into(),
         schema: json!({
             "type": "object",
             "properties": {
                 "file_path": { "type": "string", "description": "Path to the file, absolute or relative to the working directory" },
                 "offset": { "type": "integer", "description": "1-based line number to start reading from" },
-                "limit": { "type": "integer", "description": "Maximum number of lines to read" }
-            },
-            "required": ["file_path"]
+                "limit": { "type": "integer", "description": "Maximum number of lines to read" },
+                "files": {
+                    "type": "array",
+                    "description": "Several files (or ranges) to read in one call, instead of file_path",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "file_path": { "type": "string" },
+                            "offset": { "type": "integer" },
+                            "limit": { "type": "integer" }
+                        },
+                        "required": ["file_path"]
+                    }
+                }
+            }
         }),
     }
 }
@@ -63,7 +76,53 @@ Include enough surrounding lines to make it unique. The file must be Read first.
 /// The most of a file Read scans. Lines past it aren't shown or counted; the result says so.
 const READ_SCAN_CAP: u64 = 64 << 20;
 
+/// The most files one Read takes in `files`.
+const READ_BATCH_MAX: usize = 20;
+
 pub async fn read(input: &Value, ctx: &mut Ctx) -> Result<Output> {
+    let Some(files) = input["files"].as_array().filter(|f| !f.is_empty()) else {
+        return read_one(input, ctx).await;
+    };
+    // A bare string is a whole file; an object can carry its own range.
+    let parts: Vec<Value> = files
+        .iter()
+        .take(READ_BATCH_MAX)
+        .map(|f| match f {
+            Value::String(p) => json!({ "file_path": p }),
+            other => other.clone(),
+        })
+        .collect();
+    let mut content = String::new();
+    let mut lines = 0usize;
+    for part in &parts {
+        let name = part["file_path"].as_str().unwrap_or("");
+        let _ = writeln!(content, "==> {name} <==");
+        match read_one(part, ctx).await {
+            Ok(out) => {
+                lines += out.content.lines().count();
+                content.push_str(out.content.trim_end());
+            }
+            Err(e) => {
+                let _ = write!(content, "error: {e:#}");
+            }
+        }
+        content.push_str("\n\n");
+    }
+    if files.len() > READ_BATCH_MAX {
+        let _ = writeln!(
+            content,
+            "… {} more files not read (at most {READ_BATCH_MAX} per call)",
+            files.len() - READ_BATCH_MAX
+        );
+    }
+    Ok(Output {
+        content: content.trim_end().to_string(),
+        display: Some(format!("Read {} files, {lines} lines", parts.len())),
+        ..Default::default()
+    })
+}
+
+async fn read_one(input: &Value, ctx: &mut Ctx) -> Result<Output> {
     let path = ctx.resolve(str_arg(input, "file_path")?);
     // Credentials stay out of the model's context (and so off the network): the same paths
     // the Bash sandbox hides. A user who wants one read can do it themselves.
@@ -476,6 +535,31 @@ mod tests {
         tokio::runtime::Runtime::new().unwrap().block_on(f)
     }
 
+    /// Several files in one call: each under its own header, ranges honoured, a missing one
+    /// an error line that doesn't sink the rest, and every file marked read so Edit takes it.
+    #[test]
+    fn read_takes_several_files_in_one_call() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("a.txt"), "a1\na2\na3\n").unwrap();
+        std::fs::write(tmp.path().join("b.txt"), "b1\nb2\nb3\nb4\n").unwrap();
+        let mut ctx = Ctx::new(tmp.path().to_path_buf());
+        let out = block_on(read(
+            &json!({ "files": ["a.txt", { "file_path": "b.txt", "offset": 3, "limit": 1 }, "nope.txt"] }),
+            &mut ctx,
+        ))
+        .unwrap();
+        let c = &out.content;
+        assert!(
+            c.starts_with("==> a.txt <==\n     1\ta1\n     2\ta2\n     3\ta3"),
+            "{c}"
+        );
+        assert!(c.contains("==> b.txt <==\n     3\tb3\n"), "{c}");
+        assert!(!c.contains("b1") && !c.contains("b4"), "{c}");
+        assert!(c.contains("==> nope.txt <==\nerror: cannot read"), "{c}");
+        assert!(ctx.read_files.contains_key(&tmp.path().join("a.txt")));
+        assert!(ctx.read_files.contains_key(&tmp.path().join("b.txt")));
+    }
+
     /// Read refuses credentials: ssh keys and gh tokens under $HOME, and key files by name
     /// anywhere (a key copied into the project), before touching the file.
     #[test]
@@ -496,7 +580,9 @@ mod tests {
             home.join(".config/frog/models.json"),
             tmp.path().join("id_rsa"),
         ] {
-            let err = block_on(read(&json!({ "file_path": p }), &mut ctx)).err().expect("should be refused");
+            let err = block_on(read(&json!({ "file_path": p }), &mut ctx))
+                .err()
+                .expect("should be refused");
             assert!(
                 err.to_string().contains("holds credentials"),
                 "{}: {err}",
@@ -512,7 +598,8 @@ mod tests {
                 &json!({ "file_path": tmp.path().join("innocent.txt") }),
                 &mut ctx,
             ))
-            .err().expect("should be refused");
+            .err()
+            .expect("should be refused");
             assert!(err.to_string().contains("holds credentials"), "{err}");
         }
         let ok = block_on(read(
@@ -544,9 +631,12 @@ mod tests {
                 .await
                 .expect("Read hung on a FIFO")
         })
-        .err().expect("should be refused");
+        .err()
+        .expect("should be refused");
         assert!(err.to_string().contains("regular file"), "{err}");
-        let err = block_on(read(&json!({ "file_path": "/dev/zero" }), &mut ctx)).err().expect("should be refused");
+        let err = block_on(read(&json!({ "file_path": "/dev/zero" }), &mut ctx))
+            .err()
+            .expect("should be refused");
         assert!(err.to_string().contains("regular file"), "{err}");
     }
 

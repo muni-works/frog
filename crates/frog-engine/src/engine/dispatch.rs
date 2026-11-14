@@ -355,6 +355,7 @@ root {}. Re-`cd` if you need the old location back.</system-note>",
             screenshot_endpoint: self.ctx.screenshot_endpoint.clone(),
             judge: self.ctx.judge.clone(),
             visual_guide: self.ctx.visual_guide,
+            shell_blocked: false,
         })
     }
 

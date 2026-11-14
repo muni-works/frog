@@ -9,9 +9,11 @@ use tokio::io::AsyncReadExt;
 
 pub fn spec() -> ToolSpec {
     let mut description = String::from(
-        "Run a shell command and return its combined stdout/stderr. The working directory persists \
-between calls (cd works). Use for builds, tests, git, and other terminal operations. Prefer Read/Edit/Glob/Grep \
-over cat/sed/find/grep. Avoid interactive commands; they will hang until the timeout.",
+        "Run a shell command and return its combined stdout/stderr. The shell starts in the working directory \
+and keeps its directory between calls, so don't prefix commands with `cd /abs/path &&`; cd once if you need to. \
+Use for builds, tests, git, and other terminal operations. To look at files use Grep and Read (several files per \
+call), not grep/sed/cat/ls; to change one use Edit, not a python or sed script. Avoid interactive commands; they \
+will hang until the timeout.",
     );
     let mut props = json!({
         "command": { "type": "string", "description": "The command to run" },
@@ -19,8 +21,8 @@ over cat/sed/find/grep. Avoid interactive commands; they will hang until the tim
         "run_in_background": { "type": "boolean", "description": "Start the command as a background job and return its id at once, for servers, watchers and long builds. Its output goes to a file; you're told when it exits (exit code and the tail of its output). Read it with JobOutput, stop it with JobStop." }
     });
     if available() {
-        description.push_str(" Commands run in a sandbox: they can write only inside the project (and, in a git worktree, its git dirs so commit works), temp folders, toolchain caches and paths the user configured, and can't read credentials (~/.ssh, ~/.aws, ...). Network access works; swift builds get SwiftPM's inner sandbox disabled (frog's is the boundary), and read-only git commands can go over https to GitHub when configured. If a command fails because of the sandbox and genuinely needs more (installing globally, git push over ssh), run it again with unsandboxed: true; the user will be asked.");
-        props["unsandboxed"] = json!({ "type": "boolean", "description": "Run outside the sandbox. Asks the user first. Only after the sandbox actually blocked this command — never because you think it might: builds, tests and most git already work inside it, and an unneeded escape makes the user approve the very build that would have just run. If a confined run fails with `Operation not permitted` or a read-only error, rerun it unsandboxed." });
+        description.push_str(" Commands run in a sandbox: they can write only inside the project (and, in a git worktree, its git dirs so commit works), temp folders, toolchain caches and paths the user configured, and can't read credentials (~/.ssh, ~/.aws, ...). Network access works; swift builds get SwiftPM's inner sandbox disabled (frog's is the boundary), and read-only git commands can go over https to GitHub when configured. If a command fails because of the sandbox and genuinely needs more (installing globally, git push over ssh), run it again with unsandboxed: true (the user may be asked).");
+        props["unsandboxed"] = json!({ "type": "boolean", "description": "Run outside the sandbox (the user may be asked, depending on the permission mode). Only to rerun a command the sandbox just blocked (`Operation not permitted`, a read-only error) — never by habit or ahead of time: builds, tests, git, and cd into this project's worktrees all work inside it. A read-only command asked unsandboxed with no block before it runs sandboxed anyway." });
         props["allow_hosts"] = json!({ "type": "array", "items": { "type": "string" }, "description": "Hosts beyond the session's network allow-list this command needs. Asks the user first; only after a connection was blocked." });
     }
     ToolSpec {
@@ -151,6 +153,22 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         "{{\n{cmd}\n}} 2>&1\n__frog_ec=$?\npwd -P > '{}'\nexit $__frog_ec",
         cwd_file.display()
     );
+    let hint = read_hint(&cmd, &ctx.cwd);
+    // `unsandboxed` by habit: a read-only command, with no sandbox block before it, runs
+    // confined anyway (it can read everything but credentials there), and says so.
+    let downgraded = input["unsandboxed"].as_bool() == Some(true)
+        && ctx.shell_sandbox.is_some()
+        && !ctx.shell_blocked
+        && crate::shell::read_only(&cmd);
+    let confined;
+    let input = if downgraded {
+        let mut i = input.clone();
+        i["unsandboxed"] = json!(false);
+        confined = i;
+        &confined
+    } else {
+        input
+    };
     let (mut command, jail, egress) = shell_call(input, ctx)?;
     let mut child = command
         .arg(&script)
@@ -247,13 +265,24 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
             raw.push_str("\n(On Linux, frog can't enforce the network allow-list by host inside the sandbox, so sandboxed commands get no network at all. If the task needs the network, run the command again with unsandboxed: true; the user will be asked.)");
         }
     }
+    ctx.shell_blocked = jail.is_some() && blocked(&raw);
+    if downgraded {
+        raw.push_str("\n(Ran in the sandbox: a read-only command needs no `unsandboxed`. Use it only to rerun a command the sandbox blocked.)");
+    }
     if jail.is_some() && blocked(&raw) {
-        raw.push_str("\n(This ran in frog's sandbox, which allows writes only inside the project, temp folders and toolchain caches, and hides credentials. If the command genuinely needs more, run it again with unsandboxed: true; the user will be asked.)");
+        raw.push_str("\n(This ran in frog's sandbox, which allows writes only inside the project, temp folders and toolchain caches, and hides credentials. If the command genuinely needs more, run it again with unsandboxed: true (the user may be asked).)");
     }
     let plain = strip_ansi(&raw);
-    let display = (plain != raw).then(|| finish(raw.clone()));
+    let mut display = (plain != raw).then(|| finish(raw.clone()));
+    let mut content = finish(plain);
+    // The steer is for the model; the transcript shows the command's own output.
+    if let Some(hint) = hint {
+        display.get_or_insert_with(|| content.clone());
+        content.push_str("\n\n");
+        content.push_str(hint);
+    }
     Ok(Output {
-        content: finish(plain),
+        content,
         display,
         diff: None,
         diagram: None,
@@ -261,6 +290,64 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         widget: None,
         ..Default::default()
     })
+}
+
+/// Programs that only look at files, which Grep and Read do without a shell.
+const FILE_READERS: &[&str] = &[
+    "grep", "rg", "cat", "head", "tail", "ls", "nl", "wc", "echo",
+];
+
+/// One line steering a command toward the tool that does its job in fewer calls, or `None`.
+/// Weaker models spend most of a turn on `cd /abs && grep …`, `sed -n 'a,bp' f` and python
+/// heredocs that rewrite a file, one model call each; the command still runs, and this rides
+/// along with its output. `cwd` is where the shell was when the call started.
+fn read_hint(cmd: &str, cwd: &std::path::Path) -> Option<&'static str> {
+    let cmd = cmd.trim();
+    if cmd.contains("<<")
+        && cmd.contains("python")
+        && ["write(", "write_text(", ".replace("]
+            .iter()
+            .any(|w| cmd.contains(w))
+    {
+        return Some(
+            "(To change a file, use Edit: it checks the match and shows the diff, with no script to write.)",
+        );
+    }
+    if cmd.contains('\n') || cmd.contains("<<") || cmd.contains('>') {
+        return None;
+    }
+    let parts = crate::shell::segments(cmd)?;
+    let mut parts = parts.iter().map(|p| p.trim()).peekable();
+    // A leading `cd` into where the shell already is does nothing.
+    let mut redundant_cd = false;
+    if let Some(dir) = parts.peek().and_then(|p| p.strip_prefix("cd ")) {
+        let dir = dir.trim().trim_matches(['"', '\'']);
+        let target = cwd.join(dir);
+        redundant_cd = std::fs::canonicalize(&target).ok() == std::fs::canonicalize(cwd).ok();
+        parts.next();
+    }
+    let rest: Vec<&str> = parts.collect();
+    let reads_files = !rest.is_empty()
+        && rest.iter().all(|p| {
+            let mut words = p.split_whitespace();
+            match words.next() {
+                Some("sed") => words.any(|w| w == "-n"),
+                Some(prog) => FILE_READERS.contains(&prog),
+                None => false,
+            }
+        })
+        && !rest
+            .iter()
+            .all(|p| p.starts_with("echo") || p.starts_with("wc"));
+    match (reads_files, redundant_cd) {
+        (true, _) => Some(
+            "(Grep and Read do this without a shell: Grep shows each match with context and line numbers, and Read takes several files or ranges in one call.)",
+        ),
+        (false, true) => Some(
+            "(The shell was already in that directory: it keeps its directory between calls, so the `cd` isn't needed.)",
+        ),
+        _ => None,
+    }
 }
 
 /// How much of a command's stdout frog keeps while reading (stderr gets a quarter). The model
@@ -2158,6 +2245,98 @@ mod tests {
     }
 
     /// Output is bounded while it's read: the head and tail survive, the middle is counted.
+    #[tokio::test]
+    async fn habitual_unsandboxed_read_runs_sandboxed_until_a_block() {
+        if !available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("a.txt"), "hello\n").unwrap();
+        let mut ctx = Ctx::new(tmp.path().to_path_buf());
+        ctx.shell_sandbox = Some(std::fs::canonicalize(tmp.path()).unwrap());
+        let out = run(
+            &json!({ "command": "cat a.txt", "unsandboxed": true }),
+            &mut ctx,
+        )
+        .await
+        .unwrap();
+        assert!(out.content.starts_with("hello"), "{}", out.content);
+        assert!(
+            out.content.contains("Ran in the sandbox"),
+            "{}",
+            out.content
+        );
+        // A command that writes isn't read-only: it keeps the escape it asked for.
+        let out = run(
+            &json!({ "command": "touch b.txt", "unsandboxed": true }),
+            &mut ctx,
+        )
+        .await
+        .unwrap();
+        assert!(
+            !out.content.contains("Ran in the sandbox"),
+            "{}",
+            out.content
+        );
+        // After a real block, the next unsandboxed call is honoured even if read-only.
+        ctx.shell_blocked = true;
+        let out = run(
+            &json!({ "command": "cat a.txt", "unsandboxed": true }),
+            &mut ctx,
+        )
+        .await
+        .unwrap();
+        assert!(
+            !out.content.contains("Ran in the sandbox"),
+            "{}",
+            out.content
+        );
+    }
+
+    #[test]
+    fn read_hint_steers_file_reading_and_script_edits_to_the_file_tools() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(tmp.path().join("sub")).unwrap();
+        let cwd = tmp.path();
+        let abs = cwd.display().to_string();
+        let grep = |c: &str| read_hint(c, cwd).is_some_and(|h| h.contains("Grep and Read"));
+        assert!(grep("grep -n foo src/a.rs"));
+        assert!(grep("sed -n '75,95p' src/ws.rs"));
+        assert!(grep(&format!(
+            "cd {abs} && grep -rn token crates | head -20"
+        )));
+        assert!(grep("cat a.txt; echo ---; head -30 b.txt"));
+        // Builds, tests, git and edits by sed are the shell's job.
+        for c in [
+            "cargo test",
+            "git status",
+            "sed -i s/a/b/ f",
+            "npm test 2>&1 | tail -30",
+            "grep x f > out",
+        ] {
+            assert_eq!(read_hint(c, cwd), None, "{c}");
+        }
+        // A cd to where the shell already is, before real work.
+        let cd = read_hint(&format!("cd {abs} && cargo test"), cwd).unwrap();
+        assert!(cd.contains("already in that directory"), "{cd}");
+        assert_eq!(read_hint("cd sub && cargo test", cwd), None);
+        let py = "python3 - <<'PY'\np='a.rs'\ns=open(p).read()\nopen(p,'w').write(s.replace('a','b'))\nPY";
+        assert!(read_hint(py, cwd).unwrap().contains("use Edit"));
+    }
+
+    #[tokio::test]
+    async fn a_file_reading_command_still_runs_and_its_hint_stays_out_of_the_transcript() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("a.txt"), "hello\n").unwrap();
+        let mut ctx = Ctx::new(tmp.path().to_path_buf());
+        let out = run(&json!({ "command": "cat a.txt" }), &mut ctx)
+            .await
+            .unwrap();
+        assert!(out.content.starts_with("hello"), "{}", out.content);
+        assert!(out.content.contains("Grep and Read"), "{}", out.content);
+        assert_eq!(out.display.as_deref(), Some("hello"));
+    }
+
     #[test]
     fn capped_output_keeps_head_and_tail_within_the_cap() {
         let mut c = Capped::new(100);
