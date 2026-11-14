@@ -637,3 +637,65 @@ fn plan(input: &Value) -> Plan {
         .collect();
     Plan::new(entries)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn blocks(v: Value) -> Vec<ContentBlock> {
+        serde_json::from_value(v).unwrap()
+    }
+
+    #[test]
+    fn prompt_text_mentions_files() {
+        let b = blocks(json!([
+            {"type": "text", "text": "look at"},
+            {"type": "resource_link", "name": "a", "uri": "file:///src/a.rs"},
+            {"type": "resource_link", "name": "w", "uri": "https://x.dev"},
+            {"type": "resource", "resource": {"uri": "file:///b.rs", "text": "fn b() {}"}},
+            {"type": "image", "mimeType": "image/png", "data": "AAAA"},
+        ]));
+        assert_eq!(
+            prompt_text(&b),
+            "look at\n@/src/a.rs\nhttps://x.dev\n<file path=\"/b.rs\">\nfn b() {}\n</file>"
+        );
+        let imgs = prompt_images(&b);
+        assert_eq!(imgs.len(), 1);
+        assert_eq!(imgs[0].mime, "image/png");
+    }
+
+    #[test]
+    fn tool_titles_and_kinds() {
+        assert_eq!(title("mcp__github__list_prs", "x"), "github › list_prs x");
+        assert_eq!(title("Read", ""), "Read");
+        assert!(matches!(kind("Bash"), ToolKind::Execute));
+        assert!(matches!(kind("Mystery"), ToolKind::Other));
+        assert_eq!(capitalize("hello"), "Hello");
+        assert_eq!(capitalize(""), "");
+        let cwd = Path::new("/w");
+        assert_eq!(
+            file_arg("Edit", "a.rs", cwd),
+            Some(PathBuf::from("/w/a.rs"))
+        );
+        assert_eq!(file_arg("Edit", "", cwd), None);
+        assert_eq!(file_arg("Bash", "ls", cwd), None);
+    }
+
+    #[test]
+    fn plan_reads_todos_as_string_or_array() {
+        let todos = json!([
+            {"content": "a", "status": "completed"},
+            {"content": "b", "status": "in_progress"},
+            {"content": "c"},
+        ]);
+        for input in [json!({"todos": todos}), json!({"todos": todos.to_string()})] {
+            let p = plan(&input);
+            assert_eq!(p.entries.len(), 3);
+            assert!(matches!(p.entries[0].status, PlanEntryStatus::Completed));
+            assert!(matches!(p.entries[1].status, PlanEntryStatus::InProgress));
+            assert!(matches!(p.entries[2].status, PlanEntryStatus::Pending));
+        }
+        assert!(plan(&json!({})).entries.is_empty());
+    }
+}

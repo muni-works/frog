@@ -61,21 +61,37 @@ Include enough surrounding lines to make it unique. No Read is needed first when
     }
 }
 
+/// The most of a file Read scans. Lines past it aren't shown or counted; the result says so.
+const READ_SCAN_CAP: u64 = 64 << 20;
+
 pub async fn read(input: &Value, ctx: &mut Ctx) -> Result<Output> {
     let path = ctx.resolve(str_arg(input, "file_path")?);
+    refuse_secret(ctx, &path)?;
     let meta = tokio::fs::metadata(&path)
         .await
         .with_context(|| format!("cannot read {}", path.display()))?;
     if meta.is_dir() {
         return list_dir(&path, ctx);
     }
-    let bytes = tokio::fs::read(&path).await?;
-    if bytes[..bytes.len().min(8192)].contains(&0) {
-        bail!("{} looks like a binary file", path.display());
+    // A FIFO would block forever, /dev/zero would never end.
+    if !meta.is_file() {
+        bail!("{} isn't a regular file", path.display());
     }
+    let start = int_arg(input, "offset").unwrap_or(1).max(1) as usize - 1;
+    let limit = int_arg(input, "limit").unwrap_or(2000).max(1) as usize;
+    let file = path.clone();
+    let scan = tokio::task::spawn_blocking(move || scan_lines(&file, start, limit))
+        .await
+        .context("Read panicked")??;
+    let Some(Scan {
+        window,
+        total,
+        capped,
+    }) = scan
+    else {
+        bail!("{} looks like a binary file", path.display());
+    };
     ctx.mark_read(&path);
-    let text = String::from_utf8_lossy(&bytes);
-    let total = text.lines().count();
     if total == 0 {
         return Ok(Output {
             content: "(empty file)".into(),
@@ -87,17 +103,14 @@ pub async fn read(input: &Value, ctx: &mut Ctx) -> Result<Output> {
             ..Default::default()
         });
     }
-    let start = int_arg(input, "offset").unwrap_or(1).max(1) as usize - 1;
-    let limit = int_arg(input, "limit").unwrap_or(2000).max(1) as usize;
     let mut out = String::new();
-    let mut shown = 0;
-    for (i, line) in text.lines().enumerate().skip(start).take(limit) {
+    let shown = window.len();
+    for (i, line) in window.iter().enumerate() {
         let line = match line.char_indices().nth(2000) {
             Some((cut, _)) => format!("{}… [line truncated]", &line[..cut]),
             None => line.to_string(),
         };
-        let _ = writeln!(out, "{:>6}\t{line}", i + 1);
-        shown += 1;
+        let _ = writeln!(out, "{:>6}\t{line}", start + i + 1);
     }
     if start + shown < total {
         let _ = writeln!(
@@ -105,6 +118,13 @@ pub async fn read(input: &Value, ctx: &mut Ctx) -> Result<Output> {
             "… {} more lines (use offset={} to continue)",
             total - start - shown,
             start + shown + 1
+        );
+    }
+    if capped {
+        let _ = writeln!(
+            out,
+            "… the file is over {} MiB; Read stopped there (use Bash for the rest)",
+            READ_SCAN_CAP >> 20
         );
     }
     if shown == 0 {
@@ -122,6 +142,53 @@ pub async fn read(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         widget: None,
         ..Default::default()
     })
+}
+
+struct Scan {
+    /// Lines `start..start + limit`, without their endings.
+    window: Vec<String>,
+    /// Lines scanned in all.
+    total: usize,
+    /// The scan stopped at `READ_SCAN_CAP`.
+    capped: bool,
+}
+
+/// Streams a file line by line, keeping only the requested window, so memory follows the
+/// window, not the file. `None`: a NUL in the first 8 KiB, so binary.
+fn scan_lines(path: &Path, start: usize, limit: usize) -> Result<Option<Scan>> {
+    use std::io::{BufRead, Read};
+    let f = std::fs::File::open(path).with_context(|| format!("cannot read {}", path.display()))?;
+    let mut r = std::io::BufReader::with_capacity(64 << 10, f.take(READ_SCAN_CAP + 1));
+    if r.fill_buf()?.iter().take(8192).any(|b| *b == 0) {
+        return Ok(None);
+    }
+    let (mut window, mut total, mut read) = (Vec::new(), 0usize, 0u64);
+    let mut line = Vec::new();
+    let mut capped = false;
+    loop {
+        line.clear();
+        let n = r.read_until(b'\n', &mut line)?;
+        if n == 0 {
+            break;
+        }
+        read += n as u64;
+        if read > READ_SCAN_CAP {
+            capped = true;
+            break;
+        }
+        if total >= start && total < start + limit {
+            let mut l: &[u8] = &line;
+            l = l.strip_suffix(b"\n").unwrap_or(l);
+            l = l.strip_suffix(b"\r").unwrap_or(l);
+            window.push(String::from_utf8_lossy(l).into_owned());
+        }
+        total += 1;
+    }
+    Ok(Some(Scan {
+        window,
+        total,
+        capped,
+    }))
 }
 
 /// List a directory's entries (like `ls`), capped at 200.
@@ -166,6 +233,18 @@ fn list_dir(path: &Path, ctx: &Ctx) -> Result<Output> {
     })
 }
 
+/// Credentials stay out of the model's context (and so off the network): the same paths
+/// the Bash sandbox hides. A user who wants one read can do it themselves.
+fn refuse_secret(ctx: &Ctx, path: &Path) -> Result<()> {
+    if crate::credentials::is_secret_path(path, &dirs::home_dir().unwrap_or_default()) {
+        bail!(
+            "{} holds credentials, which frog doesn't read. If the task genuinely needs it, ask the user to share what's needed.",
+            ctx.display(path)
+        );
+    }
+    Ok(())
+}
+
 /// Edits must be based on what the model actually saw.
 fn check_fresh(ctx: &Ctx, path: &Path) -> Result<()> {
     let Some(seen) = ctx.read_files.get(path) else {
@@ -190,9 +269,18 @@ pub async fn write(input: &Value, ctx: &mut Ctx) -> Result<Output> {
     let path = ctx.resolve(str_arg(input, "file_path")?);
     let content = str_arg(input, "content")?;
     ctx.check_writable(&path)?;
+    let mut binary_old = None;
     let old = if path.exists() {
         check_fresh(ctx, &path)?;
-        Some(tokio::fs::read_to_string(&path).await.unwrap_or_default())
+        match tokio::fs::read(&path).await.map(String::from_utf8) {
+            Ok(Ok(text)) => Some(text),
+            // Not text: say it was overwritten rather than diffing against nothing.
+            Ok(Err(e)) => {
+                binary_old = Some(e.as_bytes().len());
+                None
+            }
+            Err(_) => Some(String::new()),
+        }
     } else {
         None
     };
@@ -202,13 +290,23 @@ pub async fn write(input: &Value, ctx: &mut Ctx) -> Result<Output> {
     tokio::fs::write(&path, content).await?;
     ctx.mark_read(&path);
     let lines = content.lines().count();
-    let display = match &old {
-        Some(old) => diff(old, content),
-        None => format!("Created {} ({lines} lines)", ctx.display(&path)),
+    let display = match (&old, binary_old) {
+        (Some(old), _) => diff(old, content),
+        (None, Some(bytes)) => format!(
+            "Overwrote binary file {} ({bytes} bytes) with {lines} lines",
+            ctx.display(&path)
+        ),
+        (None, None) => format!("Created {} ({lines} lines)", ctx.display(&path)),
     };
     let structured = file_diff(&ctx.display(&path), old.as_deref(), content);
     Ok(Output {
-        content: format!("Wrote {lines} lines to {}", ctx.display(&path)),
+        content: match binary_old {
+            Some(bytes) => format!(
+                "Overwrote binary file {} ({bytes} bytes) with {lines} lines of text",
+                ctx.display(&path)
+            ),
+            None => format!("Wrote {lines} lines to {}", ctx.display(&path)),
+        },
         display: Some(display),
         diff: Some(structured),
         diagram: None,
@@ -245,7 +343,16 @@ pub async fn edit(input: &Value, ctx: &mut Ctx) -> Result<Output> {
             check_unchanged(ctx, &path, seen)?;
             false
         }
-        None => true,
+        None => {
+            // Reading it here gets the guards a Read would have applied.
+            refuse_secret(ctx, &path)?;
+            let meta = std::fs::metadata(&path)
+                .with_context(|| format!("cannot read {}", ctx.display(&path)))?;
+            if !meta.is_file() {
+                bail!("{} isn't a regular file", ctx.display(&path));
+            }
+            true
+        }
     };
     let text = tokio::fs::read_to_string(&path)
         .await
@@ -459,6 +566,23 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&f).unwrap(), "x = 1\nx = 1\n");
     }
 
+    /// An unread Edit reads the file itself, so it refuses what Read refuses.
+    #[test]
+    fn edit_on_an_unread_file_keeps_reads_guards() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("id_rsa"), "KEY\n").unwrap();
+        let mut ctx = Ctx::new(tmp.path().to_path_buf());
+        let err = block_on(edit(
+            &json!({ "file_path": "id_rsa", "old_string": "KEY", "new_string": "X" }),
+            &mut ctx,
+        ))
+        .err()
+        .unwrap()
+        .to_string();
+        assert!(err.contains("holds credentials"), "{err}");
+        assert_eq!(std::fs::read_to_string(tmp.path().join("id_rsa")).unwrap(), "KEY\n");
+    }
+
     /// The staleness check stays: a file read and then changed on disk is not edited blind.
     #[test]
     fn edit_still_refuses_a_file_changed_since_it_was_read() {
@@ -500,6 +624,126 @@ mod tests {
         .unwrap()
         .to_string();
         assert!(err.contains("must Read"), "{err}");
+    }
+
+    /// Read refuses credentials: ssh keys and gh tokens under $HOME, and key files by name
+    /// anywhere (a key copied into the project), before touching the file.
+    #[test]
+    fn read_refuses_credential_paths() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("id_rsa"),
+            "-----BEGIN OPENSSH PRIVATE KEY-----",
+        )
+        .unwrap();
+        std::fs::write(tmp.path().join("notes.txt"), "fine").unwrap();
+        let mut ctx = Ctx::new(tmp.path().to_path_buf());
+        let home = dirs::home_dir().unwrap();
+        for p in [
+            home.join(".ssh/id_ed25519"),
+            home.join(".aws/credentials"),
+            home.join(".config/gh/hosts.yml"),
+            home.join(".config/frog/models.json"),
+            tmp.path().join("id_rsa"),
+        ] {
+            let err = block_on(read(&json!({ "file_path": p }), &mut ctx)).err().expect("should be refused");
+            assert!(
+                err.to_string().contains("holds credentials"),
+                "{}: {err}",
+                p.display()
+            );
+        }
+        // A symlink in the project pointing at a key is refused too.
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(tmp.path().join("id_rsa"), tmp.path().join("innocent.txt"))
+                .unwrap();
+            let err = block_on(read(
+                &json!({ "file_path": tmp.path().join("innocent.txt") }),
+                &mut ctx,
+            ))
+            .err().expect("should be refused");
+            assert!(err.to_string().contains("holds credentials"), "{err}");
+        }
+        let ok = block_on(read(
+            &json!({ "file_path": tmp.path().join("notes.txt") }),
+            &mut ctx,
+        ))
+        .unwrap();
+        assert!(ok.content.contains("fine"));
+    }
+
+    /// A FIFO (or a device) isn't read: it would hang or never end.
+    #[cfg(unix)]
+    #[test]
+    fn read_refuses_non_regular_files() {
+        let tmp = TempDir::new().unwrap();
+        let fifo = tmp.path().join("pipe");
+        assert!(
+            std::process::Command::new("mkfifo")
+                .arg(&fifo)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let mut ctx = Ctx::new(tmp.path().to_path_buf());
+        let input = json!({ "file_path": fifo });
+        let read_fifo = read(&input, &mut ctx);
+        let err = block_on(async {
+            tokio::time::timeout(std::time::Duration::from_secs(5), read_fifo)
+                .await
+                .expect("Read hung on a FIFO")
+        })
+        .err().expect("should be refused");
+        assert!(err.to_string().contains("regular file"), "{err}");
+        let err = block_on(read(&json!({ "file_path": "/dev/zero" }), &mut ctx)).err().expect("should be refused");
+        assert!(err.to_string().contains("regular file"), "{err}");
+    }
+
+    /// Streaming keeps numbering, the window and the remaining count right.
+    #[test]
+    fn read_streams_a_window_of_a_large_file() {
+        let tmp = TempDir::new().unwrap();
+        let f = tmp.path().join("big.log");
+        let text: String = (1..=50_000).map(|i| format!("line {i}\r\n")).collect();
+        std::fs::write(&f, text).unwrap();
+        let mut ctx = Ctx::new(tmp.path().to_path_buf());
+        let out = block_on(read(
+            &json!({ "file_path": f, "offset": 49_999, "limit": 5 }),
+            &mut ctx,
+        ))
+        .unwrap();
+        assert_eq!(out.content, " 49999\tline 49999\n 50000\tline 50000\n");
+        let out = block_on(read(
+            &json!({ "file_path": f, "offset": 10, "limit": 1 }),
+            &mut ctx,
+        ))
+        .unwrap();
+        assert_eq!(
+            out.content,
+            "    10\tline 10\n… 49990 more lines (use offset=11 to continue)\n"
+        );
+    }
+
+    /// Writing over a non-UTF-8 file says it overwrote a binary file, not "created".
+    #[test]
+    fn write_over_binary_reports_overwrite() {
+        let tmp = TempDir::new().unwrap();
+        let f = tmp.path().join("blob.bin");
+        std::fs::write(&f, [0xffu8, 0xfe, 0x00, 0x01]).unwrap();
+        let mut ctx = Ctx::new(tmp.path().to_path_buf());
+        ctx.mark_read(&f);
+        let out = block_on(write(
+            &json!({ "file_path": f, "content": "text\n" }),
+            &mut ctx,
+        ))
+        .unwrap();
+        assert!(
+            out.content.contains("Overwrote binary file"),
+            "{}",
+            out.content
+        );
+        assert!(out.display.unwrap().contains("4 bytes"));
     }
 
     #[test]
