@@ -3,6 +3,48 @@
 use super::*;
 
 impl Agent {
+    /// The composer's queue, drained at a tool-call boundary (see the boundary in `turn`):
+    /// every parked follow-up joins the conversation now, in order, each its own user block
+    /// (text, then its images), exactly as `more` lays them out at a turn's start — so the
+    /// model reads them as part of the running turn instead of after it. Emits
+    /// [`Event::FollowUpsIngested`] so the transcript shows where each landed. Never
+    /// reorders: the queue is FIFO and the drain is one take.
+    fn ingest_submitted(&mut self) {
+        let parts = take_submitted(&self.shared);
+        if parts.is_empty() {
+            return;
+        }
+        let texts: Vec<String> = parts.iter().map(|p| p.text.clone()).collect();
+        for part in parts {
+            let (text, named) = crate::image_paths::attach(&part.text);
+            let mut text = self.expand_mentions(&text);
+            let (extra, files) = self.attach_named(&part.text);
+            text.push_str(&extra);
+            let pointed: Vec<std::path::PathBuf> = part
+                .text
+                .split_whitespace()
+                .filter_map(|t| t.strip_prefix('@'))
+                .map(|t| {
+                    self.ctx
+                        .resolve(t.trim_end_matches([',', ')', ':', ';', '?', '!', '.']))
+                })
+                .chain(files.iter().cloned())
+                .collect();
+            for p in &pointed {
+                text.push_str(&self.rules_for(p));
+            }
+            let mut images = part.images;
+            images.extend(named);
+            self.conv.inputs.push(text.clone());
+            self.push_user(text);
+            self.attach_images(images);
+        }
+        // The user's messages are on disk before the model sees them (one fsync per accepted
+        // message, as at a turn's start).
+        self.sync_log();
+        self.emit(Event::FollowUpsIngested { texts });
+    }
+
     /// Append user text, merging into a trailing user message so roles always alternate.
     pub(super) fn push_user(&mut self, text: String) {
         match self.conv.messages.last() {
@@ -405,6 +447,30 @@ impl Agent {
             if !reports.is_empty() {
                 self.push_user(reports.join("\n"));
             }
+            // Background work that ended while the last step ran (`<job-done>`,
+            // `<monitor-done>`, `<wakeup>`, a task's report): the same notices turn start
+            // delivers, at the same place as the two drains above, so a job that finishes
+            // during a long turn is in the model's next look at the world instead of the turn
+            // after this one. A turn start already took the ones parked before it
+            // (`turn_with`), so nothing arrives twice; and a `Wake` with nothing parked is
+            // dropped by the work loop, so emptying the queue here starts no turn of its own
+            // (and `wake` finds them gone and falls through to `deliver`).
+            let wakes = self.shared.bg.take_notices();
+            if !wakes.is_empty() {
+                // Two halves, because they answer two different questions. `push_user` is how
+                // the model gets them: the same channel the drains above use, appended below
+                // the tool results already in the history, so the cached prefix holds.
+                // `WakesDelivered` is how the *transcript* shows them: the wake rows a turn
+                // that opened on them gets, with no user bubble (`TurnLead` reads a wake input
+                // as rows and never as someone typing). Emitting nothing would leave the user
+                // watching the model react to a `<job-done>` that never reached the screen.
+                // Durable, so a reopened session replays the row where it landed.
+                self.emit(Event::WakesDelivered {
+                    turn: self.conv.turn,
+                    wakes: wakes.clone(),
+                });
+                self.push_user(wakes.join("\n\n"));
+            }
             // What's queued behind this turn (session messages): the queue is drained only
             // at the boundary, so a long turn would otherwise never know it has mail. One
             // line as a user message — the system prompt is static and cached, so it can't
@@ -470,9 +536,7 @@ impl Agent {
                     // The request exceeded the model's context window (estimate missed, or a
                     // result landed that the window can never hold): compact and retry the step
                     // once, instead of ending the turn on a 400. The second failure is real.
-                    if e.downcast_ref::<HttpError>()
-                        .is_some_and(HttpError::context_overflow)
-                    {
+                    if super::compact::is_overflow(&e) {
                         if !overflowed {
                             overflowed = true;
                             self.notice(
@@ -487,9 +551,10 @@ impl Agent {
                                 self.emit(Event::CompactionFailed {
                                     detail: format!("{ce:#}"),
                                 });
-                                anyhow::bail!(
-                                    "compaction failed; the history can't fit the context window"
-                                );
+                                return Err(super::compact::compaction_error(
+                                    &self.profile_name,
+                                    &ce,
+                                ));
                             }
                             continue;
                         }
@@ -497,19 +562,13 @@ impl Agent {
                             detail: format!("{e:#}"),
                         });
                         anyhow::bail!(
-                            "the request still exceeds the model's context window after compaction"
+                            "the request still exceeds {}'s context window after compaction. \
+                             Nothing was lost: switch to a model with a bigger window and send \
+                             your message again, or start a new session from this one's summary.",
+                            self.profile_name
                         );
                     }
-                    let Some(local) = self.cloud_fallback(&e) else {
-                        return Err(e);
-                    };
-                    self.notice(
-                        Level::Warn,
-                        format!("frog api unavailable ({e:#}) — continuing on {local}"),
-                    );
-                    self.set_model(&local).await?;
-                    self.model_flip_why = Some("frog api was unavailable, so it fell back".into());
-                    continue;
+                    return Err(e);
                 }
             };
             self.model_ready = true;
@@ -696,6 +755,13 @@ impl Agent {
             // races this future against the token; whichever wins, the turn ends cancelled.
             if self.shared.cancel.lock().unwrap().is_cancelled() {
                 return Err(Interrupted.into());
+            }
+            // The composer's queue: follow-ups the user sent while this turn ran go in at the
+            // tool-call boundary, as user messages before the model's next step (claude's
+            // between-tool-calls ingest). The whole parked batch goes, in order, each its own
+            // text block after the results; a boundary with nothing parked costs nothing.
+            if submitted_pending(&self.shared).await {
+                self.ingest_submitted();
             }
         };
         // A suspended turn ends exactly here, before any warm-up (there's no next turn to

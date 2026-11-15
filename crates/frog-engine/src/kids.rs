@@ -56,6 +56,35 @@ pub struct Kids {
     relay: Mutex<Option<Arc<crate::background::Registry>>>,
 }
 
+/// Each live child's way back to its parent, by child session id: the parent's inbox (weak,
+/// so a gone parent drops the message) and the child's name as the parent knows it. Every
+/// engine of a tree runs in this process, so a child asking `SendMessage(to: "parent")`
+/// finds its parent here without a client in between.
+static PARENTS: std::sync::LazyLock<
+    Mutex<std::collections::HashMap<String, (mpsc::WeakUnboundedSender<Op>, String)>>,
+> = std::sync::LazyLock::new(Default::default);
+
+/// A child's message to its parent: queued in the parent's inbox like any session message,
+/// so it wakes an idle (waiting) parent with the question.
+pub fn send_to_parent(child: &str, message: String) -> Result<()> {
+    if message.trim().is_empty() {
+        bail!("`message` is required");
+    }
+    let (tx, name) = PARENTS
+        .lock()
+        .unwrap()
+        .get(child)
+        .map(|(tx, name)| (tx.upgrade(), name.clone()))
+        .ok_or_else(|| anyhow!("no parent session to reach from here"))?;
+    let tx = tx.ok_or_else(|| anyhow!("your parent session has exited"))?;
+    tx.send(Op::Deliver {
+        from: child.into(),
+        from_name: name,
+        message,
+    })
+    .map_err(|_| anyhow!("your parent session has exited"))
+}
+
 /// The tools the engine answers itself when no client hosts sessions.
 pub fn handles(name: &str) -> bool {
     use crate::tools::sessions::*;
@@ -273,6 +302,17 @@ impl Kids {
             images: Vec::new(),
             more: Vec::new(),
         })?;
+        // Named by the parent: its brief opens with the head start, which is no title. Sent
+        // after the first input so the log is open and the title lands in it.
+        handle.ops.send(Op::SetTitle {
+            title: name.clone(),
+        })?;
+        if let Some(inbox) = self.inbox.lock().unwrap().clone() {
+            PARENTS
+                .lock()
+                .unwrap()
+                .insert(id.clone(), (inbox, name.clone()));
+        }
         let (kids, id2) = (self.clone(), id.clone());
         kids.announce(&id, &relay);
         tokio::spawn(async move {
@@ -441,6 +481,13 @@ impl Kids {
                 let id = self.find(input["id"].as_str().unwrap_or(""))?;
                 let mut kids = self.kids.lock().unwrap();
                 let k = kids.get_mut(&id).expect("found");
+                if k.archived {
+                    // Asked twice (a stale id, a retry): it's where the caller wants it.
+                    return Ok(format!(
+                        "{} ({id}) is already archived; nothing to do.",
+                        k.name
+                    ));
+                }
                 k.archived = true;
                 let _ = k.ops.send(Op::ClearInbox);
                 let _ = k.ops.send(Op::Interrupt);
@@ -582,6 +629,44 @@ mod tests {
         // Anything else is still the old miss, listing what there is.
         let err = kids.find("nobody").unwrap_err().to_string();
         assert!(err.contains("Known: self (child-0001)"), "{err}");
+    }
+
+    #[test]
+    fn archiving_an_archived_session_is_a_quiet_no_op() {
+        let kids = Kids::default();
+        let (ops, mut sent) = mpsc::unbounded_channel();
+        kids.kids.lock().unwrap().insert(
+            "child-0001".into(),
+            Kid {
+                name: "writer".into(),
+                cwd: PathBuf::from("/tmp/x"),
+                branch: None,
+                ops,
+                state: Arc::new(Mutex::new(State::default())),
+                archived: false,
+            },
+        );
+        let input = json!({"id": "writer"});
+        let first = kids
+            .answer(crate::tools::sessions::ARCHIVE, &input)
+            .unwrap();
+        assert!(first.starts_with("Archived writer"), "{first}");
+        let count = |rx: &mut mpsc::UnboundedReceiver<Op>| {
+            std::iter::from_fn(|| rx.try_recv().ok()).count()
+        };
+        assert_eq!(count(&mut sent), 3, "cleared, interrupted, shut down");
+        // Again (a stale id, a retry): a result, not an error, and nothing is sent twice.
+        let again = kids
+            .answer(crate::tools::sessions::ARCHIVE, &input)
+            .unwrap();
+        assert!(again.contains("already archived"), "{again}");
+        assert_eq!(count(&mut sent), 0);
+        // An id that never existed is still a miss that lists what there is.
+        let err = kids
+            .answer(crate::tools::sessions::ARCHIVE, &json!({"id": "nobody"}))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Known: writer (child-0001)"), "{err}");
     }
 
     #[test]

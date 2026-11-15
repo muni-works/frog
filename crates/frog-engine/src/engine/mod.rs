@@ -32,6 +32,12 @@ mod compact;
 mod dispatch;
 mod permit;
 mod project;
+#[cfg(test)]
+mod tests_compact;
+#[cfg(test)]
+mod tests_ingest;
+#[cfg(test)]
+mod tests_prompt;
 mod turn;
 mod window;
 
@@ -210,8 +216,18 @@ returns the same slice. Use offset={} (with a limit) to read the next part, or G
         ),
         _ => {
             let _ = input;
-            format!("{lead} Change the arguments or try a different approach.")
+            format!("{lead} {}", repeat_fix(name))
         }
+    }
+}
+
+/// The one-line way out of a repeated call, by tool: what to do instead of calling again.
+fn repeat_fix(name: &str) -> &'static str {
+    match name {
+        "JobOutput" => "Asking again doesn't make the job finish: you get a <job-done> message when it exits. Do other work or end your turn; to wait for a line in its output, use Monitor.",
+        "Read" => "The file hasn't changed: use the result you have, pass a different offset/limit, or Grep for the part you need.",
+        "Monitor" => "It was refused or is already armed: fix the arguments the error named, or end your turn and wait for its <monitor-done> message.",
+        _ => "Change the arguments or try a different approach.",
     }
 }
 /// Model calls per top-level turn: uncapped unless `FROG_MAX_STEPS` sets one. Runaway loops are
@@ -415,6 +431,13 @@ struct Shared {
     /// with the queue by `Op::ClearInbox` — the voided ones never run, so they stop
     /// counting. Saturating down: a clear that races a pop must not go negative.
     inbox_waiting: AtomicUsize,
+    /// `Op::Submit`s that arrived while a turn was running, parked here in order: the turn
+    /// loop drains them at the next tool-call boundary (as user messages of the running
+    /// turn, in order, each exactly once) instead of letting each start its own turn after
+    /// this one. Empty between turns — the router forwards straight through then, and any
+    /// leftovers here would be lost, so the work loop takes the queue at every boundary
+    /// including the last one before `Idle`.
+    submitted: Mutex<Vec<crate::protocol::Part>>,
     /// The mode the client asked for ([`Op::SetMode`]), as a [`Mode`] discriminant. The router
     /// stores it immediately (a safety setting, not conversation state), the permit path picks
     /// it up per decision, and the agent's `handle` reconciles its own copy and logs
@@ -656,6 +679,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         inbox_sent: Default::default(),
         inbox_void: Default::default(),
         inbox_waiting: Default::default(),
+        submitted: Default::default(),
         mode: AtomicU8::new(opts.mode as u8),
         wake_hold: Default::default(),
         journal,
@@ -743,6 +767,20 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                 Op::SetMode { mode } => {
                     router.mode.store(mode as u8, Ordering::SeqCst);
                     let _ = work_tx.send(Op::SetMode { mode });
+                }
+                // The parent's answer to a child (engine-owned children, see `kids`) joins
+                // the child's running turn at its next tool-call boundary, like a follow-up,
+                // so a child that asked a question and kept working gets the answer now
+                // rather than after it finishes. Leftovers run as the next turn.
+                Op::Deliver {
+                    from,
+                    from_name,
+                    message,
+                } if from == "parent" && router.working.load(Ordering::Relaxed) => {
+                    router.submitted.lock().unwrap().push(crate::protocol::Part {
+                        text: crate::tools::sessions::wrap(&from, &from_name, &message),
+                        images: Vec::new(),
+                    });
                 }
                 op @ Op::Deliver { .. } => {
                     router.inbox_sent.fetch_add(1, Ordering::SeqCst);
@@ -875,6 +913,30 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                         hub.host().emit(Event::AppResult { id, result, error });
                     });
                 }
+                // It changes which tools exist and starts a browser, so it goes through the
+                // work loop: the reconnect's delta installs at a turn boundary like any late
+                // server's, instead of racing the agent from here.
+                Op::McpSignIn { server, decline } => {
+                    if work_tx.send(Op::McpSignIn { server, decline }).is_err() {
+                        break;
+                    }
+                }
+                Op::Submit { text, images, more } => {
+                    // Mid-turn the turn loop owns this queue: the parts park in order, and
+                    // its next tool-call boundary delivers them as user messages of the
+                    // running turn (see `turn`). Nothing is running: straight through, a
+                    // turn of its own, as before.
+                    if router.working.load(Ordering::Relaxed) {
+                        let mut all = vec![crate::protocol::Part { text, images }];
+                        all.extend(more);
+                        router.submitted.lock().unwrap().extend(all);
+                    } else if work_tx
+                        .send(Op::Submit { text, images, more })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
                 op => {
                     if work_tx.send(op).is_err() {
                         break;
@@ -901,8 +963,11 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         agent.connect_mcp();
         // Restore MCP tools that were loaded in a previous session
         if !agent.loaded_tools.is_empty() {
-            agent.mcp.restore_loaded(&agent.loaded_tools);
-            agent.loaded_tools.clear();
+            let (builtin, mcp): (Vec<String>, Vec<String>) = std::mem::take(&mut agent.loaded_tools)
+                .into_iter()
+                .partition(|n| tools::deferred::is_deferred(n));
+            agent.loaded_builtin = builtin;
+            agent.mcp.restore_loaded(&mcp);
         }
         agent.resolve_window().await;
         agent.note_text_mode_from_probe();
@@ -931,9 +996,24 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                     op = work_rx.recv() => op,
                     result = agent.mcp_ready() => {
                         if let Some((_name, delta)) = result {
-                            agent.mcp_ready_queue.push((_name, delta));
+                            // A server's outcome changes which tools exist and what the
+                            // server list says. Idle (nobody's op is running) it installs now,
+                            // not at the next op: a session nobody is typing in would
+                            // otherwise show "connecting…" forever, and the whole point is
+                            // that a server someone configured is never silently missing.
+                            //
+                            // Mid-turn it waits for the step boundary instead (see `turn`):
+                            // tools change the harness and the prompt's cached prefix, and
+                            // re-applying both between the tool call and the model call would
+                            // desync the specs from what the harness measured.
+                            if agent.shared.working.load(Ordering::Relaxed) {
+                                agent.mcp_ready_queue.push((_name, delta));
+                            } else {
+                                agent.merge_mcp(delta);
+                            }
                         } else {
                             agent.mcp_pending = None;
+                            agent.mcp_tx = None;
                         }
                         agent.emit_status();
                         continue;
@@ -1115,7 +1195,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                     }
                 } else {
                     EndReason::Error {
-                        error: classify(&e),
+                        error: classify(&agent.profile_name, &e),
                     }
                 };
                 match (agent.active_turn.take(), reason) {
@@ -1126,6 +1206,21 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             }
             shared.working.store(false, Ordering::Relaxed);
             agent.emit_status();
+            // Follow-ups the user sent while the turn ran, parked for its boundaries: any the
+            // turn never delivered (it had no tool call to stop at) go now, as the next turn,
+            // before the engine goes idle — the first is its input, the rest as `more`, in
+            // order, each with its images. Never lost.
+            let parked = take_submitted(&shared);
+            if !parked.is_empty() {
+                let mut parts = parked.into_iter();
+                let first = parts.next().expect("checked non-empty");
+                held = Some(Op::Submit {
+                    text: first.text,
+                    images: first.images,
+                    more: parts.collect(),
+                });
+                continue;
+            }
             // Background work that finished during the turn was parked (never injected into
             // it): it runs now, as the next turn, before the engine goes idle, so nobody sees
             // an idle session that is about to wake. A stop holds it instead.
@@ -1203,6 +1298,21 @@ fn draining(shared: &Shared) -> bool {
         .is_some_and(|s| !s.acked)
 }
 
+    /// Take everything the user submitted while the current turn has been running, in order.
+    /// The turn loop drains this at a tool-call boundary and delivers the entries as user
+    /// messages of the running turn, so the model reads them before its next step (they no
+    /// longer wait for the whole turn to end). Exactly once: drained is drained.
+    fn take_submitted(shared: &Shared) -> Vec<crate::protocol::Part> {
+        std::mem::take(&mut shared.submitted.lock().unwrap())
+    }
+
+/// Like [`drain_pending`], but for the composer's queue: yields first so the router task
+/// (which may hold a just-sent `Op::Submit` it hasn't recorded yet) gets to run.
+async fn submitted_pending(shared: &Shared) -> bool {
+    tokio::task::yield_now().await;
+    !shared.submitted.lock().unwrap().is_empty()
+}
+
 /// Like [`draining`], but yields first so the router task (which may be holding a freshly
 /// delivered `Op::Drain` it hasn't recorded yet) gets to run — the safe points sit right
 /// after awaits that can resolve without yielding (an instant tool, a cached reply), and
@@ -1245,7 +1355,22 @@ fn kept(s: crate::summary::Summary) -> crate::protocol::KeptSummary {
     }
 }
 
-fn classify(e: &anyhow::Error) -> EngineError {
+/// The kind of passing trouble a retryable error was, for the words the transcript uses.
+fn trouble_of(e: &anyhow::Error) -> crate::model_policy::Trouble {
+    use crate::model_policy::Trouble;
+    if let Some(h) = e.downcast_ref::<HttpError>() {
+        return crate::model_policy::trouble(h.status, &h.body).unwrap_or(Trouble::Upstream);
+    }
+    if e.is::<StreamError>() {
+        return Trouble::Upstream;
+    }
+    Trouble::Dropped
+}
+
+/// The error a turn on `spec` ends with. Passing trouble (a busy or broken provider that
+/// outlasted the retries) carries plain words — what happened, that the work is kept, what to
+/// do — never the provider's body, which stays in the engine log.
+fn classify(spec: &str, e: &anyhow::Error) -> EngineError {
     // A billing refusal the billing arm didn't take (an op outside a turn, say): the
     // provider's clean message, never its raw JSON dump.
     if let Some(b) = e.downcast_ref::<crate::engine::call::BillingRefused>() {
@@ -1266,16 +1391,19 @@ fn classify(e: &anyhow::Error) -> EngineError {
         }
         return EngineError::Provider {
             status: h.status,
-            message: h.body.clone(),
+            message: match crate::model_policy::trouble(h.status, &h.body) {
+                Some(t) => crate::model_policy::gave_up_line(spec, t),
+                None => h.body.clone(),
+            },
         };
     }
     if e.is::<IncompleteStream>() {
         return EngineError::IncompleteStream;
     }
-    if let Some(s) = e.downcast_ref::<StreamError>() {
+    if e.is::<StreamError>() {
         return EngineError::Provider {
             status: 502,
-            message: s.message.clone(),
+            message: crate::model_policy::gave_up_line(spec, trouble_of(e)),
         };
     }
     // The node pool's one line: nowhere to place the call, or the last node with the model
@@ -1290,8 +1418,7 @@ fn classify(e: &anyhow::Error) -> EngineError {
             message: c.0.clone(),
         };
     }
-    // The same transport classes retryable() accepts, plus a plain connect failure (which the
-    // retry arm handles through cloud_fallback): all of them are the network, not frog.
+    // The same transport classes retryable() accepts, plus a plain connect failure: all of them are the network, not frog.
     let network = e
         .chain()
         .filter_map(|c| c.downcast_ref::<reqwest::Error>())
@@ -1329,15 +1456,6 @@ fn retryable(e: &anyhow::Error) -> bool {
     e.chain()
         .filter_map(|c| c.downcast_ref::<reqwest::Error>())
         .any(|r| r.is_timeout() || r.is_body() || r.is_decode() || (r.is_request() && !r.is_connect()))
-}
-
-/// frog's local model server answers (it listens on 127.0.0.1:8911 when running).
-fn local_server_up() -> bool {
-    std::net::TcpStream::connect_timeout(
-        &std::net::SocketAddr::from(([127, 0, 0, 1], 8911)),
-        Duration::from_millis(200),
-    )
-    .is_ok()
 }
 
 pub(crate) fn now_ms() -> i64 {
@@ -1476,6 +1594,15 @@ struct Agent {
     /// each question stands, shared with its tree (see `questions`). `None` without a store.
     ledger: Option<crate::questions::File>,
     last_call: Duration,
+    /// The model call in flight, if any: when this attempt started, which attempt it is, and
+    /// the provider's `retry-after` when a busy answer gave one. `Status.waiting` reads it, so
+    /// a session waiting on a slow or dead model says so instead of looking merely busy. A
+    /// `Mutex` because the call path holds `&self`.
+    call_started: Mutex<Option<(Instant, u32, Option<u64>)>>,
+    /// Another Frog Cloud model answering for the session's own, which stayed busy through a
+    /// whole retry budget: since when, its spec and its client. Calls go there until it's
+    /// stale (`model_policy::DETOUR_TTL`) or it fails; the session's model never changes.
+    detour: Mutex<Option<(Instant, String, Arc<Provider>)>>,
     active_turn: Option<u64>,
     /// The context window actually in effect (config, bounded by what the server reports).
     window: u64,
@@ -1510,10 +1637,21 @@ struct Agent {
     mcp: crate::mcp::Hub,
     /// Per-server completion events from concurrent MCP connection attempts.
     mcp_pending: Option<tokio::sync::mpsc::UnboundedReceiver<(String, crate::mcp::Hub)>>,
+    /// The sender that feeds `mcp_pending`, kept so a later connect (a sign-in's reconnect)
+    /// joins the same queue instead of being dropped for want of a channel.
+    mcp_tx: Option<tokio::sync::mpsc::UnboundedSender<(String, crate::mcp::Hub)>>,
+    /// The servers a connect is still working on: configured, with no outcome yet. They get a
+    /// row saying so, instead of silently missing from the list.
+    mcp_connecting: std::collections::BTreeSet<String>,
     /// Completed MCP deltas queued until the next turn boundary.
     mcp_ready_queue: Vec<(String, crate::mcp::Hub)>,
     /// MCP tools that were loaded via `McpTools` in a previous session, to be restored on resume.
     loaded_tools: Vec<String>,
+    /// The deferred built-ins this session has (`tools::deferred`): out of the tool list until
+    /// called or loaded. Recomputed with the specs.
+    deferrable: Vec<ToolSpec>,
+    /// Deferred built-ins loaded so far, in load order: they go at the end of the tool list.
+    loaded_builtin: Vec<String>,
     /// Agent Skills found for this project, and the ones already loaded this session.
     skills: std::collections::BTreeMap<String, crate::skills::Skill>,
     /// The user's memory notes (none for subagents or in-memory engines), loaded when the
@@ -1806,6 +1944,8 @@ impl Agent {
             store: o.store,
             ledger: None,
             last_call: Duration::ZERO,
+            call_started: Mutex::new(None),
+            detour: Mutex::new(None),
             active_turn: None,
             window,
             est: Estimator::default(),
@@ -1824,8 +1964,12 @@ impl Agent {
             specs: tools::specs(),
             mcp: crate::mcp::Hub::empty(),
             mcp_pending: None,
+            mcp_tx: None,
+            mcp_connecting: std::collections::BTreeSet::new(),
             mcp_ready_queue: Vec::new(),
             loaded_tools,
+            deferrable: Vec::new(),
+            loaded_builtin: Vec::new(),
             skills,
             memory,
             compiled: None,
@@ -2103,7 +2247,20 @@ impl Agent {
             vision: self.vision,
             degraded: self.degraded(),
             ran_on: self.provider.ran_on(),
+            waiting: self.waiting(),
         }));
+    }
+
+    /// The model call in flight, if one is: how long this attempt has run, which attempt it
+    /// is, and any `retry-after` the provider gave. `None` between calls.
+    fn waiting(&self) -> Option<crate::protocol::Waiting> {
+        let held = self.call_started.lock().unwrap();
+        let (started, attempt, retry_after_secs) = (*held)?;
+        Some(crate::protocol::Waiting {
+            seconds: started.elapsed().as_secs(),
+            attempt,
+            retry_after_secs,
+        })
     }
 
     /// What this session runs degraded on now, each with why: text tool calls it didn't ask
@@ -2315,6 +2472,11 @@ impl Agent {
                 act: next.act,
             });
         }
+        // A denial ends the turn with only a "denied" tag on the row; say in words what
+        // happened, once, so Mac and web both show a sentence instead of a bare tag.
+        if reason == EndReason::Denied {
+            self.notice(Level::Info, DENIED_ENDING);
+        }
         self.emit(Event::TurnEnded {
             turn,
             reason: reason.clone(),
@@ -2467,6 +2629,9 @@ impl Agent {
                 self.emit(Event::ApprovalDigest { summary });
             }
             Op::Wake => self.wake(Vec::new()).await?,
+            // The only path that opens a browser for MCP, and only because a person asked
+            // (Settings → MCP → Sign in, or the transcript's card).
+            Op::McpSignIn { server, decline } => self.sign_in_mcp(server, decline),
             Op::SetMode { mode } => {
                 // The router already applied it (see `Shared::mode`), so the permit path has
                 // been running in it since the call; this reconciles the agent's copy. Kept
@@ -2777,3 +2942,7 @@ fn bash_allowed(cmd: &str, extra: &[String]) -> bool {
 
 #[cfg(test)]
 mod tests;
+
+/// The transcript's sentence after a denied command ends the turn.
+pub(crate) const DENIED_ENDING: &str =
+    "Stopped here because you denied that command. The work so far is kept; say how to go on.";

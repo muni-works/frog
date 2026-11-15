@@ -53,7 +53,9 @@ struct PendingEvents: Equatable {
     func caption(busy: Bool) -> String {
         let n = chips.count
         let head = "\(n) pending result\(n == 1 ? "" : "s")"
-        return busy ? "\(head) · they arrive when this turn ends" : "\(head) · they go with your next message"
+        // Busy: the engine hands parked wakes to the running turn at its next step (the tool
+        // boundary), so they wait only on the step in flight, not the whole turn.
+        return busy ? "\(head) · they arrive at the next step" : "\(head) · they go with your next message"
     }
 }
 

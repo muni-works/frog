@@ -49,7 +49,7 @@ struct WindowBar: View {
 }
 
 enum CloudFormat {
-    static func dollars(_ cents: Double) -> String { String(format: "$%.2f", cents / 100) }
+    static func dollars(_ cents: Double) -> String { Dollars.format(cents / 100) }
 
     static func reset(_ d: Date, weekly: Bool) -> String {
         weekly ? d.formatted(.dateTime.weekday(.abbreviated)) : d.formatted(date: .omitted, time: .shortened)

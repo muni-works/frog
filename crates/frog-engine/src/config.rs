@@ -108,6 +108,11 @@ pub struct Profile {
     /// Anthropic's API (5m through a gateway), the conversation 5m.
     #[serde(default)]
     pub cache_ttl: Option<String>,
+    /// How long one model request may run before it's abandoned, in seconds. Covers the whole
+    /// request, not just the connect: a socket that goes quiet mid-stream otherwise hangs
+    /// forever. Unset: [`crate::provider::DEFAULT_REQUEST_TIMEOUT_SECS`].
+    #[serde(default)]
+    pub request_timeout_secs: Option<u64>,
 }
 
 impl Profile {
@@ -132,6 +137,7 @@ impl Profile {
             thinking_display: None,
             effort: None,
             cache_ttl: None,
+            request_timeout_secs: None,
         }
     }
 
@@ -239,6 +245,11 @@ pub struct Config {
     /// done or failed. `--serve` turns it on; the TUI draws on the terminal and leaves it off.
     #[serde(skip)]
     pub log_calls: bool,
+    /// The engine runs inside a Frog Cloud sandbox VM (`--serve-ws`, started by the gateway):
+    /// the whole machine is disposable and holds none of the user's own credentials, so the
+    /// approval copy says what's true there instead of "read your credentials".
+    #[serde(skip)]
+    pub cloud_sandbox: bool,
     /// Run shell commands in a sandbox (writes only in the project, credentials hidden), so
     /// they run without asking. Set false to have every command ask instead.
     #[serde(default = "default_true")]
@@ -266,6 +277,11 @@ pub struct Config {
     /// are the same as without it; only the waiting overlaps.
     #[serde(default = "default_true")]
     pub early_tools: bool,
+    /// When the session's Frog Cloud model stays busy through every retry, let another Frog
+    /// Cloud model answer that call (with a line in the transcript) instead of ending the
+    /// turn. Off: the turn ends and the model is never swapped (docs/design/model-policy.md).
+    #[serde(default = "default_true")]
+    pub cloud_fallback: bool,
     /// The model auto mode's classifier uses (a profile or provider/model). Default:
     /// Apple's on-device model where it exists, else frog cloud's small model
     /// (`cloud/deepseek-v4.1-flash`, or `cloud/qwen3-coder-next` when the gateway lists it); the
@@ -494,7 +510,8 @@ pub struct SandboxConfig {
     #[serde(default)]
     pub allow_keychain: bool,
     /// Outbound network policy. Unset (default): open. `"dev"`: only GitHub, crates.io, npm
-    /// and Swift package hosts (via a local proxy). macOS only; Linux stays open.
+    /// and Swift package hosts (via a local proxy) on macOS; on Linux, where bwrap can't
+    /// filter by host, no network at all. `"none"`: no network (loopback only).
     #[serde(default)]
     pub network: Option<String>,
     /// Let sandboxed git reads reach GitHub over https instead of ssh: a per-command config

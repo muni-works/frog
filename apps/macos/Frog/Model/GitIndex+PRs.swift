@@ -7,7 +7,9 @@ import Foundation
 extension GitIndex {
     nonisolated static let prFields = "number,title,state,isDraft,reviewDecision,statusCheckRollup,mergeable"
 
-    /// What the composer shows for `prs`: the last state seen, else the engine's cached one.
+    /// What the composer and the sidebar show for `prs`: the last state seen, else the state in
+    /// the binding itself (what the engine wrote down, either when it bound or when a client saw
+    /// it). Only "checks" when neither knows — nothing to say yet, not a verdict.
     func prs(_ bound: [PrBinding]) -> [ComposerModel.Pr] {
         bound.map { b in
             prSeen["\(b.repo)#\(b.number)"] ?? ComposerModel.Pr(
@@ -20,8 +22,13 @@ extension GitIndex {
         }
     }
 
-    /// Ask gh about each bound PR now (after an action, or on the poll).
-    func refreshPrs(_ bound: [PrBinding], in dir: String) {
+    /// Ask gh about each bound PR now (after an action, or on the poll), and write back what it
+    /// says. The write-back is what keeps the sidebar (which reads the listing) and the composer
+    /// (which polls) agreeing after the session closes: without it the log keeps whatever state
+    /// the PR was in when it was bound, forever.
+    ///
+    /// `writeBack` gets only what changed, so a poll that agrees with the log writes nothing.
+    func refreshPrs(_ bound: [PrBinding], in dir: String, writeBack: ((PrBinding) -> Void)? = nil) {
         guard !bound.isEmpty else { return }
         Task {
             let seen = await Task.detached(priority: .utility) { () -> [String: ComposerModel.Pr] in
@@ -34,13 +41,29 @@ extension GitIndex {
                 return out
             }.value
             prSeen.merge(seen) { $1 }
+            guard let writeBack else { return }
+            for b in bound {
+                guard let p = seen["\(b.repo)#\(b.number)"] else { continue }
+                if let changed = Self.binding(b, seeing: p) { writeBack(changed) }
+            }
         }
     }
 
+    /// The binding to write back for `b` after seeing `p`, or nil when the log already says it
+    /// (or gh had no access, which is not news about the PR). Pure, so a test can pin it.
+    nonisolated static func binding(_ b: PrBinding, seeing p: ComposerModel.Pr) -> PrBinding? {
+        guard p.access != false else { return nil }
+        let checks = [p.checks.ok, p.checks.total]
+        let same = p.state.rawValue == b.state && b.checks == checks && p.title == b.title
+        guard !same else { return nil }
+        return PrBinding(repo: b.repo, number: b.number, title: p.title, state: p.state.rawValue,
+                         checks: checks, auto: b.auto)
+    }
+
     /// Poll while `bound` is on screen: now, then every 60 s while Frog is the active app.
-    func watchPrs(_ bound: [PrBinding], in dir: String) async {
+    func watchPrs(_ bound: [PrBinding], in dir: String, writeBack: ((PrBinding) -> Void)? = nil) async {
         while !Task.isCancelled {
-            if NSApplication.shared.isActive { refreshPrs(bound, in: dir) }
+            if NSApplication.shared.isActive { refreshPrs(bound, in: dir, writeBack: writeBack) }
             try? await Task.sleep(for: .seconds(60))
         }
     }

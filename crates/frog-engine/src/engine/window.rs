@@ -21,6 +21,12 @@ impl Agent {
         } else if !self.subagent && !self.chat {
             self.system.push_str(crate::tools::sessions::LOCAL_PROMPT);
         }
+        if !self.subagent && !self.chat {
+            self.system.push_str(crate::tools::sessions::DELEGATE_PROMPT);
+            if self.cfg.parent_session.is_some() {
+                self.system.push_str(crate::tools::sessions::CHILD_PROMPT);
+            }
+        }
         if !self.subagent && self.irc().is_some() {
             self.system.push_str(crate::irc::PROMPT);
             self.system.push_str(crate::irc::APPROVAL_PROMPT);
@@ -28,6 +34,8 @@ impl Agent {
         if !self.chat && !self.subagent {
             self.system
                 .push_str(prompt::panes_prompt(self.shared.panes.client()));
+            self.system
+                .push_str(&tools::deferred::catalog(&self.deferrable));
         }
         if !self.plain_chat() {
             self.system.push_str(&self.mcp.prompt());
@@ -613,7 +621,7 @@ Not saved: the next session starts on {from} again"
                 self.emit(Event::CompactionFailed {
                     detail: format!("{e:#}"),
                 });
-                anyhow::bail!("compaction failed; the history can't fit the context window");
+                return Err(super::compact::compaction_error(&self.profile_name, &e));
             }
             *compacted = Some(self.conv.messages.len());
         } else if pruned {

@@ -244,6 +244,16 @@ pub enum Op {
         #[serde(default)]
         arguments: serde_json::Value,
     },
+    /// A person asked to sign in to a configured MCP server (Settings → MCP → Sign in, or the
+    /// transcript's sign-in card). The only path that opens a browser for MCP: connecting
+    /// never does (it reports `needs_auth` instead). Answered with
+    /// [`Event::McpSignedIn`]; with `decline`, with [`Event::McpSignedOut`] — the refusal is
+    /// remembered, so no later session asks again.
+    McpSignIn {
+        server: String,
+        #[serde(default)]
+        decline: bool,
+    },
     /// Have the model server prefill this conversation now, so the next turn starts warm:
     /// when a client shows the conversation, and as the user types (`draft`, the composer's
     /// text so far, as the next message). Dropped mid-turn and on servers that can't prefill;
@@ -467,6 +477,14 @@ pub enum Event {
         turn: u64,
         reason: EndReason,
         usage: TurnUsage,
+    },
+    /// Follow-ups the user sent while this turn ran, ingested at a tool-call boundary
+    /// (`Agent::ingest_submitted`): each is now a user message of the running turn, in the
+    /// order sent. The transcript shows them in the turn at this step; a replay draws the
+    /// same rows from the log.
+    FollowUpsIngested {
+        /// The ingested messages' texts, in order.
+        texts: Vec<String>,
     },
     ItemStarted {
         id: String,
@@ -794,9 +812,12 @@ pub enum Event {
     QueuedEvents {
         items: Vec<String>,
     },
-    /// The wakes turn `turn` opened with, in order: delivered as one batch with its input
-    /// (a message, a session message), ahead of it. A turn started on wakes alone carries
-    /// them as its input instead.
+    /// Background wakes delivered with turn `turn`, in order. Two deliveries: the ones it
+    /// opened with, as one batch ahead of its input (a message, a session message; a turn
+    /// started on wakes alone carries them as its input instead); and any that ended while the
+    /// turn ran, which the engine appends to the running history so the model's next call sees
+    /// them (`turn` → the same turn, a later event). Clients append both to the turn's rows, in
+    /// arrival order, rather than replacing them.
     WakesDelivered {
         turn: u64,
         wakes: Vec<String>,
@@ -844,6 +865,26 @@ pub enum Event {
     Notice {
         level: Level,
         message: String,
+    },
+    /// The configured MCP servers and how each is doing, the whole list, sent whenever one
+    /// connects, fails, or a sign-in changes its state. Durable, so a replayed session shows
+    /// the same "not signed in" rows: a tool the user configured must never vanish silently.
+    McpServers {
+        servers: Vec<McpServerReport>,
+    },
+    /// A person signed in to an MCP server from its card ([`Op::McpSignIn`]): the browser
+    /// finished, the tokens are stored and the server reconnected with its tools.
+    McpSignedIn {
+        server: String,
+        tools: Vec<String>,
+    },
+    /// A sign-in that didn't happen: the person declined, or the flow failed. `error` is the
+    /// one line to show. Either way the server stays `needs_auth`; a decline is remembered,
+    /// so no later session asks again.
+    McpSignedOut {
+        server: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
     },
     /// The model asked for the person's attention (its `Notify` tool): a banner, a Dock bounce,
     /// a push to the phone — whatever the client does with a notification. The engine never
@@ -955,6 +996,9 @@ impl Event {
                 | Self::ChildSession { .. }
                 | Self::WakesDelivered { .. }
                 | Self::MessageRead { .. }
+                | Self::McpServers { .. }
+                | Self::McpSignedIn { .. }
+                | Self::McpSignedOut { .. }
         ) || matches!(
             // A subagent's steps are worth keeping: without them a reopened session shows
             // only the Task's report. Text deltas stay live-only, as in the main transcript.
@@ -1226,6 +1270,13 @@ pub enum EngineError {
 impl std::fmt::Display for EngineError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
+            // The engine's own plain line for a busy or broken provider stands alone; a
+            // provider's body keeps its status in front.
+            Self::Provider { message, .. }
+                if message.contains("Your work so far is kept") =>
+            {
+                write!(f, "{message}")
+            }
             Self::Provider { status, message } => write!(f, "provider error ({status}): {message}"),
             Self::Billing { status, message } => write!(f, "billing refused ({status}): {message}"),
             Self::Connection { message } => write!(f, "connection failed: {message}"),
@@ -1323,6 +1374,11 @@ pub struct RanOn {
 }
 
 /// Who runs a frog cloud model: `frog` (its own GPUs) or a third party (`workers-ai`).
+///
+/// The data is truthful on purpose (Cam, 2026-11-12: presentation becomes opaque, data stays
+/// truthful). `id`, `name` and `third_party` say who really answered, because a cache miss or a
+/// cost spike is debugged from them. What a user *reads* comes from [`Self::display_name`],
+/// which never names an upstream.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 pub struct ServedBy {
     pub id: String,
@@ -1332,6 +1388,14 @@ pub struct ServedBy {
 }
 
 impl ServedBy {
+    /// The only name a user sees. A Frog Cloud turn reads as Frog Cloud whoever proxied it
+    /// (Cam, 2026-11-12, superseding the gateway plan's decisions 1 and 8 as far as upstream
+    /// naming goes). Views render this, never `name`; the apps carry the same helper
+    /// (`ServedBy.displayName` in Swift, `servedByName` on web).
+    pub fn display_name(&self) -> &'static str {
+        "Frog Cloud"
+    }
+
     /// From an id alone (the `x-frog-upstream` header), naming the ones frog cloud uses.
     pub fn from_id(id: &str) -> Self {
         let name = match id {
@@ -1346,7 +1410,9 @@ impl ServedBy {
         }
     }
 
-    /// A `/v1/models` entry's `served_by` object.
+    /// A `/v1/models` entry's `served_by` object. Its `name` is kept verbatim: it's the real
+    /// upstream, for the log. Display goes through [`Self::display_name`], so this path can't
+    /// leak it either.
     pub fn parse(v: &serde_json::Value) -> Option<Self> {
         let id = v["id"].as_str().filter(|s| !s.is_empty())?;
         let known = Self::from_id(id);
@@ -1553,6 +1619,24 @@ pub struct Status {
     /// Where the last model call ran, for a pooled model (`node/…`): the composer chip.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ran_on: Option<RanOn>,
+    /// A model call in flight right now, and how long it has been waiting. `None` between
+    /// calls. This is what tells "waiting on the model" from "hung": a session sitting here
+    /// longer than the request timeout is about to fail, not working.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waiting: Option<Waiting>,
+}
+
+/// A model call the engine is waiting on: which attempt, how long so far, and the provider's
+/// own `retry-after` when a busy answer gave one.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct Waiting {
+    /// Seconds since this attempt started.
+    pub seconds: u64,
+    /// 1 for the first try, 2 for the first retry, and so on.
+    pub attempt: u32,
+    /// The provider asked us to wait this long (its `retry-after`), when it said.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_after_secs: Option<u64>,
 }
 
 /// One way a session runs degraded, for the header badge and SessionStatus.
@@ -1574,6 +1658,44 @@ pub enum DegradedKind {
     Model,
     /// Auto mode's classifier is down; a fallback model or the built-in rules decide.
     Classifier,
+}
+
+/// One configured MCP server, as [`Event::McpServers`] reports it: enough to draw a row with
+/// a working sign-in button, and to say why a server someone configured isn't offering tools.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct McpServerReport {
+    pub name: String,
+    pub connected: bool,
+    /// The server wants an OAuth sign-in: show "not signed in" and a button, never a failure.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub needs_auth: bool,
+    /// The person already declined this server's sign-in (remembered across sessions): the
+    /// row still says so, without asking again.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub declined: bool,
+    /// One line on how it's doing, when it isn't connected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// The tools it offers, by their `mcp__<server>__<tool>` names.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<String>,
+}
+
+impl From<&crate::mcp::ServerStatus> for McpServerReport {
+    fn from(st: &crate::mcp::ServerStatus) -> Self {
+        Self {
+            name: st.name.clone(),
+            connected: st.connected,
+            needs_auth: st.needs_auth,
+            declined: st.needs_auth && crate::mcp::sign_in_refused(&st.auth_key),
+            error: st.error.clone(),
+            tools: st
+                .tools
+                .iter()
+                .map(|t| crate::mcp::exposed_name(&st.name, t))
+                .collect(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1614,12 +1736,84 @@ mod tests {
         assert_eq!(serde_json::to_string(&u).unwrap(), old);
     }
 
+    /// Cam, 2026-11-12: a Frog Cloud turn reads as "Frog Cloud" whoever proxied it, and the
+    /// data behind the label stays true (the log and cost accounting need the real upstream).
+    #[test]
+    fn an_upstream_never_reaches_the_display_name() {
+        // From `x-frog-upstream` alone.
+        let s = ServedBy::from_id("workers-ai");
+        assert_eq!(s.display_name(), "Frog Cloud");
+        assert_eq!((s.id.as_str(), s.name.as_str(), s.third_party), ("workers-ai", "Cloudflare Workers AI", true));
+        // An unknown third party is opaque too, and still names itself in the data.
+        let s = ServedBy::from_id("some-new-upstream");
+        assert_eq!(s.display_name(), "Frog Cloud");
+        assert_eq!((s.name.as_str(), s.third_party), ("some-new-upstream", true));
+        // Frog Cloud's own GPUs are the one case where the data already agrees.
+        let s = ServedBy::from_id("frog");
+        assert_eq!(s.display_name(), "Frog Cloud");
+        assert!(!s.third_party);
+    }
+
+    /// The leak the brief missed: `/v1/models` may carry an explicit `served_by.name`, which
+    /// `parse` keeps verbatim. Display must not use it.
+    #[test]
+    fn a_listed_served_by_name_never_reaches_the_display_name() {
+        let listed = serde_json::json!({
+            "id": "workers-ai",
+            "name": "Cloudflare Workers AI",
+            "third_party": true
+        });
+        let s = ServedBy::parse(&listed).unwrap();
+        assert_eq!(s.display_name(), "Frog Cloud");
+        assert_eq!((s.id.as_str(), s.name.as_str(), s.third_party), ("workers-ai", "Cloudflare Workers AI", true));
+        // Even an upstream frog has never heard of, named however the gateway likes.
+        let listed = serde_json::json!({"id": "acme", "name": "Acme Inference Ltd."});
+        let s = ServedBy::parse(&listed).unwrap();
+        assert_eq!(s.display_name(), "Frog Cloud");
+        assert_eq!(s.name, "Acme Inference Ltd.");
+        assert!(s.third_party);
+    }
+
     #[test]
     fn warm_takes_an_optional_draft() {
         let bare: Op = serde_json::from_str(r#"{"op":"warm"}"#).unwrap();
         assert!(matches!(bare, Op::Warm { draft: None }));
         let typing: Op = serde_json::from_str(r#"{"op":"warm","draft":"fix the"}"#).unwrap();
         assert!(matches!(typing, Op::Warm { draft: Some(d) } if d == "fix the"));
+    }
+
+    #[test]
+    fn mcp_sign_in_takes_a_server_and_an_optional_decline() {
+        let ask: Op = serde_json::from_str(r#"{"op":"mcp_sign_in","server":"docs"}"#).unwrap();
+        assert!(matches!(&ask, Op::McpSignIn { server, decline } if server == "docs" && !*decline));
+        let no: Op =
+            serde_json::from_str(r#"{"op":"mcp_sign_in","server":"docs","decline":true}"#).unwrap();
+        assert!(matches!(no, Op::McpSignIn { decline: true, .. }));
+    }
+
+    /// The server list is durable and carries `needs_auth` separately from an error: a client
+    /// draws a sign-in button for one and a failure for the other.
+    #[test]
+    fn mcp_servers_reports_signed_out_separately_from_failure() {
+        let env = serde_json::json!({
+            "event": "mcp_servers",
+            "servers": [
+                {"name": "docs", "connected": false, "needs_auth": true, "declined": false,
+                 "error": "Signed out: this server needs you to sign in (Settings → MCP)."},
+                {"name": "fs", "connected": true, "tools": ["mcp__fs__read"]},
+                {"name": "down", "connected": false, "error": "isn't running"}
+            ]
+        });
+        let ev: Event = serde_json::from_value(env).unwrap();
+        let Event::McpServers { servers } = ev else {
+            panic!("not a server list")
+        };
+        assert!(servers[0].needs_auth && !servers[0].connected);
+        assert!(!servers[0].declined);
+        assert_eq!(servers[1].tools, ["mcp__fs__read"]);
+        assert!(!servers[2].needs_auth, "an ordinary failure stays an error");
+        // Durable, so a reopened session still says what's signed out.
+        assert!(Event::McpServers { servers }.is_durable());
     }
 
     #[test]

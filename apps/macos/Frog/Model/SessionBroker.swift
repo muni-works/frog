@@ -400,6 +400,12 @@ final class SessionBroker {
                 c.replySession(r.id, result: .string(
                     "\(on ? "Archived" : "Unarchived") \(e.name) (\(e.id)).\(on ? " Its log is kept; UnarchiveSession brings it back.\(cancelled)" : " It's back in the sidebar.")"))
             case .failure(let e):
+                // Archiving what's already archived (a stale id, a retry) leaves it where the
+                // caller wants it: say so as a result, not as "No session".
+                if on, case .success(let gone) = resolve(key, caller: sender, includeArchived: true) {
+                    return c.replySession(r.id, result: .string(
+                        "\(gone.name) (\(gone.id)) is already archived; nothing to do."))
+                }
                 c.replySession(r.id, error: e.message)
             }
         case "SessionStatus":
@@ -577,12 +583,19 @@ final class SessionBroker {
                 switch mover(e.id, parent?.id) {
                 case .failure(let err):
                     c.replySession(r.id, error: err.message)
+                case .success(let recorded?):
+                    // The recorded parent, not the one asked for: a parent archived (or gone)
+                    // since it was named files the session under its nearest live ancestor, and
+                    // the reply has to say where it actually went.
+                    let name = { [directoryIncludingArchived] (id: String) in
+                        directoryIncludingArchived().first { $0.id == id }.map { "\($0.name) (\($0.id))" } ?? id
+                    }
+                    let elsewhere = parent?.id == recorded ? ""
+                        : " (asked for \(parent.map { name($0.id) } ?? recorded), which the sidebar can't show)"
+                    c.replySession(r.id, result: .string("Moved \(e.name) (\(e.id)) under \(name(recorded))\(elsewhere); the sidebar regroups."))
                 case .success(nil):
-                    c.replySession(r.id, result: .string("Unparented \(e.name) (\(e.id)): it's a top-level row again."))
-                case .success:
-                    // The resolved entry, not the recorded id, so the model sees a name.
-                    let who = parent.map { "\($0.name) (\($0.id))" } ?? "its new parent"
-                    c.replySession(r.id, result: .string("Moved \(e.name) (\(e.id)) under \(who); the sidebar regroups."))
+                    let why = parent.map { " No live parent was left to file it under: \($0.name) is archived or gone." } ?? ""
+                    c.replySession(r.id, result: .string("Unparented \(e.name) (\(e.id)): it's a top-level row again.\(why)"))
                 }
             case .failure(let e):
                 c.replySession(r.id, error: e.message)

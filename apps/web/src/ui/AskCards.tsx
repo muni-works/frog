@@ -1,23 +1,41 @@
 import { useState } from 'react'
 import { composing } from './guards'
+import { clickOption, wide } from './ask'
 import type { Elicitation, Question } from '../engine/thread'
 import { safeHref } from './href'
 
 // Ports of FrogKit's QuestionCard (AskViews.swift) and ElicitationCard (McpViews.swift).
 
-/** The Ask tool: pick one (or several), or type your own. Skip answers with nothing. */
+/**
+ * The Ask tool: pick one (or several), or type your own. Skip answers with nothing.
+ * `multi` is the model's guess at the arity, not a verdict on it: the person decides as they
+ * answer. A plain click on a single-choice card still answers at once (faster than a confirm,
+ * and nothing is ambiguous); typing or picking a second one turns the card into pick-and-
+ * confirm, so the free-form box and the options are one answer instead of a race.
+ */
 export function QuestionCard({ q, onAnswer }: { q: Question; onAnswer: (choices: string[], other?: string) => void }) {
   const [picked, setPicked] = useState<string[]>([])
+  const [picking, setPicking] = useState(false)
   const [other, setOther] = useState('')
   const toggle = (label: string) => setPicked(picked.includes(label) ? picked.filter((x) => x !== label) : [...picked, label])
+  const several = wide(q.multi, picking)
   const ready = picked.length > 0 || other.trim() !== ''
+  const click = (label: string) => {
+    const c = clickOption({ multi: q.multi, picking, drafting: other.trim() !== '' }, label)
+    if (c.kind === 'answer') onAnswer(c.choices)
+    else {
+      setPicking(c.picking)
+      toggle(label)
+    }
+  }
+  const picks = q.options.map((o) => o.label).filter((l) => picked.includes(l))
   return (
     <section className="cardx ask-card" aria-label="Frog has a question">
       <b>{q.question}</b>
       <div className="ask-options">
         {q.options.map((o, i) => (
           <button key={o.label} type="button" className={`ask-option ${picked.includes(o.label) ? 'on' : ''}`}
-            onClick={() => (q.multi ? toggle(o.label) : onAnswer([o.label]))} aria-pressed={q.multi ? picked.includes(o.label) : undefined}>
+            onClick={() => click(o.label)} aria-pressed={several ? picked.includes(o.label) : undefined}>
             <span className="ask-n">{i + 1}</span>
             <span style={{ flex: 1, minWidth: 0 }}>{o.label}{o.detail && <span className="det wrap" style={{ display: 'block' }}>{o.detail}</span>}</span>
           </button>
@@ -26,12 +44,17 @@ export function QuestionCard({ q, onAnswer }: { q: Question; onAnswer: (choices:
       {q.allowOther && (
         <input className="f-field" value={other} placeholder="Or type your own answer" aria-label="Your own answer"
           onChange={(e) => setOther(e.target.value)}
-          onKeyDown={(e) => { if (composing(e)) return; if (e.key === 'Enter' && other.trim()) onAnswer(picked, other.trim()) }} />
+          onKeyDown={(e) => { if (composing(e)) return; if (e.key === 'Enter' && other.trim()) onAnswer(picks, other.trim()) }} />
       )}
       <div className="ask-acts">
         <button type="button" className="f-btn f-btn--plain" onClick={() => onAnswer([])}>Skip</button>
-        {(q.multi || q.allowOther) && (
-          <button type="button" className="f-btn f-btn--prominent" disabled={!ready} onClick={() => onAnswer(picked, other.trim() || undefined)}>Answer</button>
+        {!q.multi && (
+          <button type="button" className="f-btn f-btn--plain" onClick={() => setPicking(!picking)}>
+            {picking ? 'Pick one' : 'Pick several'}
+          </button>
+        )}
+        {(several || q.allowOther) && (
+          <button type="button" className="f-btn f-btn--prominent" disabled={!ready} onClick={() => onAnswer(picks, other.trim() || undefined)}>Answer</button>
         )}
       </div>
     </section>

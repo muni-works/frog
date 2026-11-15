@@ -62,44 +62,126 @@ const TOOL_LOOK: Record<string, { verb: [string, string]; icon: string }> = {
 }
 const OTHER = { verb: ['Using', 'Used'] as [string, string], icon: 'M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z' }
 
-function ToolLine({ e }: { e: Entry }) {
+/** Tools whose result is a sentence, not a payload: a `SendMessage` result is one line. These
+ * say it on their row with no click at all. The Mac's `ToolLook.inlineResults` is the same set,
+ * so the two transcripts keep one look. Everything else — a command's output, a file, a diff —
+ * is a payload and stays behind the row's chevron. */
+const INLINE_RESULTS = new Set([
+  'sendmessage', 'ask', 'todowrite', 'skill', 'usefolder',
+  'renamesession', 'movesession', 'archivesession', 'unarchivesession', 'listsessions',
+])
+
+/** How much of a short result the row's own line shows before the rest is worth a click. */
+export const LINE_CAP = 90
+
+/** The phrase a short result reads as on its row: the engine's display when it sent one
+ * ("chose: Send now"), else the result's first sentence ("Sent to ops; delivered"). */
+export function saidLine(display: string | null | undefined, output: string): string {
+  const full = (display || output).trim()
+  if (!full) return ''
+  const first = full.split('\n').map((l) => l.trim()).find(Boolean) ?? full
+  // A sentence often trails advice ("…delivered. It reads the message at its next boundary"):
+  // the first sentence is the meat, and the rest lives behind the row. Its full stop is
+  // dropped — the row sets it off with " · ".
+  if (first.length > 24) {
+    const m = /[.!?] /.exec(first)
+    if (m && m.index < LINE_CAP) return first.slice(0, m.index)
+  }
+  return first.length > LINE_CAP ? `${first.slice(0, LINE_CAP - 1)}…` : first
+}
+
+/** Whether the line says the whole of it: nothing is left behind the row, so it gets no chevron
+ * (a click that reveals nothing is the same wasted click). True when the row's own text is the
+ * whole result, not a first-sentence cut or a clip of it. */
+export function fits(display: string | null | undefined, output: string): boolean {
+  const full = (display || output).trim()
+  return !full || saidLine(display, output) === full
+}
+
+/** "12 sessions" from `ListSessions`' JSON array: the row's worth of a page of JSON. */
+export function sessionCount(name: string, output: string): string | null {
+  if (name !== 'listsessions') return null
+  try {
+    const rows = JSON.parse(output)
+    if (!Array.isArray(rows)) return null
+    return `${rows.length} session${rows.length === 1 ? '' : 's'}`
+  } catch {
+    return null
+  }
+}
+
+/** Exported for `test/toolrow-render.test.ts`, which draws this row and reads the DOM back:
+ * the only way a test can see what the browser is actually handed, since the helpers above can
+ * stay correct while the row stops using them. */
+/** A command that opens with `cd <dir> &&` (or `;`): the rest, and a worktree's name for the
+ * place (`…/worktrees/audit334` → "audit334"; anywhere else, the session root most of all,
+ * is noise and gets none). Null when the command isn't that shape. */
+export function splitCd(command: string): { command: string; place: string } | null {
+  const m = /^\s*cd\s+(?:"([^"]+)"|'([^']+)'|([^\s;&]+))\s*(?:&&|;)\s*([\s\S]+)$/.exec(command)
+  if (!m) return null
+  const dir = m[1] ?? m[2] ?? m[3] ?? ''
+  const parts = dir.split('/')
+  const i = parts.indexOf('worktrees')
+  return { command: m[4], place: i >= 0 && parts[i + 1] ? parts[i + 1] : '' }
+}
+
+export function ToolLine({ e }: { e: Entry }) {
   const [open, setOpen] = useState<boolean | null>(null)
   const name = (e.name ?? '').toLowerCase()
   const look = TOOL_LOOK[name] ?? OTHER
   const output = e.output.trim()
+  // A short result is said on the row itself: no click, no chevron, no body to open.
+  const said = e.done && e.outcome === 'ok' && INLINE_RESULTS.has(name) && !e.diff
+    ? sessionCount(name, output) ?? saidLine(e.display, output)
+    : ''
+  const whole = said ? fits(e.display, sessionCount(name, output) ?? output) : false
   const shown = open ?? (e.outcome === 'error' || (!e.done && !!output))
   const state = !e.done ? 'run' : e.outcome === 'error' ? 'err' : e.outcome === 'denied' ? 'denied' : 'ok'
   // What it touched ("Read src/retry.rs", as on the Mac), or the side-model's gist when one
   // arrived: a raw shell command or MCP arguments read as nothing, and the gist says what the
   // call did. The engine's own one-line display ("Read 54 lines") goes in the opened detail,
   // so the verb isn't said twice.
-  const what = (e.done && e.gist) || e.arg || (e.done && e.display) || (TOOL_LOOK[name] ? '' : e.name)
+  // A shell command that opens with `cd <dir> &&` leads with the command instead, and names
+  // the place only when it's a worktree: forty `cd /Users/…/frog && …` rows read identical,
+  // with the meaning cut off the end. The full command stays on hover and in the opened body.
+  const cd = (name === 'bash' || name === '!') && e.arg ? splitCd(e.arg) : null
+  const what = (e.done && e.gist) || cd?.command || e.arg || (e.done && e.display) || (TOOL_LOOK[name] ? '' : e.name)
+  const place = !(e.done && e.gist) && cd?.place ? cd.place : ''
   return (
     <div className={`tool-row ${state}`}>
-      <button type="button" className="tool" aria-expanded={shown} onClick={() => setOpen(!shown)}>
+      <button type="button" className="tool" aria-expanded={whole ? false : shown} onClick={() => { if (!whole) setOpen(!shown) }}>
         <span className="tool-ic" aria-hidden="true">
           {state === 'run'
             ? <span className="tool-spin" />
             : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={look.icon} /></svg>}
         </span>
-        <span className="tool-verb">{look.verb[e.done ? 1 : 0]}</span>
-        {what && <span className={`tool-what${e.done && e.gist ? ' gist' : ''}`}>{what}</span>}
+        {/* The verb stays for a running call and a failure ("Ran cargo test — failed"). A
+            finished row drops it: a gist already says what it did, and a raw command reads
+            as itself ("a command is a command"), so "Ran" beside either says ran twice. */}
+        {(state === 'run' || state === 'err') && <span className="tool-verb">{look.verb[e.done ? 1 : 0]}</span>}
+        {what && <span className={`tool-what${e.done && e.gist ? ' gist' : ''}`} title={cd ? e.arg : undefined}>{what}</span>}
+        {place && <span className="tool-said">· in {place}</span>}
+        {said && <span className="tool-said">· {said}</span>}
         {state === 'err' && <span className="tool-tag err">failed</span>}
         {state === 'denied' && <span className="tool-tag">denied</span>}
-        <span className="tool-chev" aria-hidden="true">›</span>
+        {!whole && <span className="tool-chev" aria-hidden="true">›</span>}
       </button>
-      {shown && (
+      {shown && !whole && (
         <div className="tool-body">
           {/* The raw call stays readable when the row's line is something else: with a gist on
               the row, this is the argument it summarized. The engine's own display leads, as
               upstream had it ("Read 54 lines"), with the argument under it. */}
-          {e.arg && (e.gist || e.display) && (
+          {e.arg && (e.gist || e.display || cd) && (
             <>
               {e.display && <div className="tool-arg">{e.display}</div>}
               <div className="tool-arg">{e.arg}</div>
             </>
           )}
-          {output ? <pre className="tool-out">{clip(output)}</pre> : <div className="det">{e.done ? 'No output.' : 'Running…'}</div>}
+          {/* An inline tool's body is its sentence, as text — never a terminal block: one line
+              in a <pre> reads as a payload it isn't. */}
+          {INLINE_RESULTS.has(name) && !e.diff
+            ? <div className="tool-said-body">{output ? clip(output) : 'No output.'}</div>
+            : output ? <pre className="tool-out">{clip(output)}</pre> : <div className="det">{e.done ? 'No output.' : 'Running…'}</div>}
         </div>
       )}
     </div>
@@ -188,8 +270,10 @@ function AskCard({ ask, onDecide }: { ask: Ask; onDecide: Decide }) {
 
 const NO_MODELS: Model[] = []
 
-export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, models = NO_MODELS, outbox = [], onResend, onEdit, waiting, onContinue, onPrompt }: {
+export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, models = NO_MODELS, outbox = [], onResend, onEdit, waiting, onContinue, onPrompt, credit }: {
   thread: Thread
+  /** The account's credit left, for the turn-cost card. */
+  credit?: string
   onDecide: Decide
   onAnswer: (choices: string[], other?: string) => void
   onElicit: (action: 'accept' | 'decline' | 'cancel', content?: Record<string, string | number | boolean>) => void
@@ -228,7 +312,7 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
       {(thread.marks ?? []).filter((m) => m.after === 0).map((m, i) => <Mark key={`m0-${i}`} m={m} />)}
       {thread.turns.map((turn, ti) => (<Fragment key={`${ti}-${turn.turn}`}>
         <TurnView turn={turn} live={ti === lastIdx} ask={ti === lastIdx ? thread.ask : null} question={ti === lastIdx ? thread.question : null}
-          running={ti === lastIdx && thread.running} models={models} cb={cb} hasRetry={has.retry} hasEdit={has.edit} hasContinue={has.cont} />
+          running={ti === lastIdx && thread.running} models={models} credit={credit} cb={cb} hasRetry={has.retry} hasEdit={has.edit} hasContinue={has.cont} />
         {(thread.marks ?? []).filter((m) => m.after === ti + 1).map((m, k) => <Mark key={`m${ti}-${k}`} m={m} />)}
       </Fragment>))}
       {thread.question && !thread.turns[thread.turns.length - 1]?.entries.some((e) => e.id === thread.question?.item) && (
@@ -270,9 +354,9 @@ interface TurnCallbacks {
 /** One turn. Memoized: the reducer keeps untouched turns the same object, so while the last
  * turn streams the others don't redraw (or re-parse their markdown). Only the live turn gets
  * the session's ask, question and running state. */
-const TurnView = memo(function TurnView({ turn, live, ask, question, running, models, cb, hasRetry, hasEdit, hasContinue }: {
+const TurnView = memo(function TurnView({ turn, live, ask, question, running, models, credit, cb, hasRetry, hasEdit, hasContinue }: {
   turn: Turn; live: boolean; ask: Ask | null; question: Question | null; running: boolean; models: Model[]
-  cb: TurnCallbacks; hasRetry: boolean; hasEdit: boolean; hasContinue: boolean
+  credit?: string; cb: TurnCallbacks; hasRetry: boolean; hasEdit: boolean; hasContinue: boolean
 }) {
   return (
     <div className="turn">
@@ -314,13 +398,15 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
         return <ToolLine key={e.id} e={e} />
       })}
       {turn.usage && (turn.reason?.type === 'complete' || turn.reason?.type === 'denied') && (
-        <TurnFooter usage={turn.usage} models={models} pinned={false}
+        <TurnFooter usage={turn.usage} models={models} pinned={false} credit={credit}
           answer={[...turn.entries].reverse().find((e) => e.kind === 'message')?.text ?? ''}
           onRetry={live && !running && hasRetry ? cb.onRetry : undefined} />
       )}
       </div>
       {/* How the turn ended stays with the turn: stopping a later one doesn't clear it. */}
       {turn.reason?.type === 'cancelled' && <div className="tool">Stopped</div>}
+      {/* A denied step ends the turn: say so in words (the engine's own sentence when it sends one). */}
+      {endNote(turn.reason) && <div className="det wrap turn-note">{endNote(turn.reason)}</div>}
       {/* Any other ending that isn't a finished answer says so, never silence. */}
       {turn.reason && !['complete', 'cancelled', 'error', 'denied'].includes(turn.reason.type) && (
         <div role="status" className="banner warn">
@@ -397,6 +483,15 @@ function Elapsed({ since }: { since: number }) {
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t) }, [])
   const s = Math.max(0, Math.floor((now - since) / 1000))
   return <>{s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`}</>
+}
+
+/** A plain line under a turn that ended on a denial, or with a sentence from the engine
+ *  (`message` on the end reason, for any ending other than an error, which has its banner). */
+export function endNote(reason: unknown): string | null {
+  const r = reason as { type?: string; message?: unknown } | null | undefined
+  if (!r || r.type === 'error') return null
+  if (typeof r.message === 'string' && r.message.trim()) return r.message.trim()
+  return r.type === 'denied' ? 'Frog stopped here because you denied a step. Say how to go on, or send a new task.' : null
 }
 
 /** Why a turn stopped without finishing, in a line. */

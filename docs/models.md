@@ -95,6 +95,21 @@ A model's name, its place tag and the "where it runs" chip are colored by where 
 - Status colors are not place colors: a device's online dot, a running spinner and the send button's ready state keep their own meaning.
 - Both colors come from `design/tokens.json`. The blue sits at the green's lightness so neither shouts: 4.3:1 on white and 8.3:1 on black, against the green's 3.4:1 and 10:1.
 
+### Opacity: Frog Cloud serves, whoever proxied it
+
+Cam, 2026-11-12: "everything remote will go through frog cloud, let's not worry about the providers in the app. it should be opaque — frog cloud serves, and may proxy, but we don't need to tell the user that." This supersedes decisions 1 and 8 of the gateway plan, and decision 6 as far as upstream naming goes.
+
+**Presentation is opaque. Data stays truthful.**
+
+- A Frog Cloud turn reads **"Frog Cloud"** in the footer, whichever upstream answered.
+- `served_by.id`, `served_by.name` and `served_by.third_party` keep saying who really answered. A cache miss or a cost spike is debugged from them, so they stay in the session log and the data model untouched. `/v1/models`'s explicit `served_by.name` is kept verbatim for the same reason.
+- **Cost is not opacity.** A turn that ran cold on an overflow upstream costs several times a warm one; the price stays real and visible. `TurnCosts`/`turnCost` never consult the display helper.
+- **Routing is not touched.** "May proxy" means the gateway keeps its upstream list, failover and sticky sessions.
+- One helper per surface, so the label is reversible in one place: `ServedBy::display_name` (engine), `ServedBy.displayName` (FrogKit), `servedByName` (`apps/web/src/models.ts`). Views render those, never `.name`. Pinned by `protocol::tests::*display_name*`, `apps/web/test/opacity.test.ts` and `OpacityTests` (Mac).
+
+The picker follows the same decision: **This Mac and Frog Cloud only**. Bring-your-own providers are hidden, not deleted — `ModelSections.providersHidden` gates the "Add a Provider…" and "Add Server…" entry points, and the presets, Keychain keys and `ProviderStore` all stay in the code.
+
+
 VoiceOver reads every size as one element: "Qwen3 8B, on this Mac, free" or "Claude Sonnet 5, cloud, Anthropic, about 4 cents a turn".
 
 ## States

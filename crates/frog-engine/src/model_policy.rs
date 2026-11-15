@@ -14,8 +14,21 @@ use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
-/// Retries one call may spend on a busy provider: waits of 1 s, 2 s and 4 s.
-pub const MAX_RETRIES: u32 = 3;
+/// Retries one call may spend on a busy provider: waits of about 1, 2, 4, 8 and 16 s.
+pub const MAX_RETRIES: u32 = 5;
+
+/// Retries a stand-in Frog Cloud model gets once the session's own model used its budget.
+pub const FALLBACK_RETRIES: u32 = 1;
+
+/// The longest a provider's `retry-after` is honored for: past this the wait is ours.
+pub const MAX_RETRY_AFTER: Duration = Duration::from_secs(60);
+
+/// How long calls keep going to the stand-in after the session's Frog Cloud model stayed
+/// busy through a whole retry budget, before the session's model is tried again.
+pub const DETOUR_TTL: Duration = Duration::from_secs(120);
+
+/// Room a stand-in model's window must have beyond the prompt, for its reply.
+const FALLBACK_REPLY_ROOM: u64 = 8_192;
 
 /// How long a gateway's `/v1/models` list is trusted for a spawn check.
 pub const LIST_TTL: Duration = Duration::from_secs(60);
@@ -89,9 +102,132 @@ pub fn class(status: u16) -> Failure {
     }
 }
 
-/// How long to wait before attempt `attempt + 1` (1 s, 2 s, 4 s).
+/// The backoff before attempt `attempt + 1`, before jitter (1 s, 2 s, 4 s, 8 s, 16 s).
 pub fn retry_wait(attempt: u32) -> Duration {
-    Duration::from_secs(1 << attempt.saturating_sub(1).min(2))
+    Duration::from_secs(1 << attempt.saturating_sub(1).min(4))
+}
+
+/// How long to actually wait before attempt `attempt + 1`. `jitter` is a draw in `0..=1`
+/// (0.5 is neutral): without a `retry-after` the backoff is spread ±25 % so sessions that
+/// failed together don't come back together; with one, the wait is never shorter than the
+/// provider asked (capped at [`MAX_RETRY_AFTER`]) and the spread only adds to it.
+pub fn retry_delay(attempt: u32, asked: Option<Duration>, jitter: f64) -> Duration {
+    let base = retry_wait(attempt);
+    let jitter = jitter.clamp(0.0, 1.0);
+    match asked {
+        Some(asked) => asked.min(MAX_RETRY_AFTER).max(base) + base.mul_f64((jitter - 0.5).abs()),
+        None => base.mul_f64(0.75 + 0.5 * jitter),
+    }
+}
+
+/// A jitter draw for [`retry_delay`]. Tests get the neutral 0.5, so their clocks are exact.
+pub fn jitter() -> f64 {
+    if cfg!(test) {
+        return 0.5;
+    }
+    use std::hash::{BuildHasher, Hasher};
+    let draw = std::collections::hash_map::RandomState::new().build_hasher().finish();
+    (draw % 10_001) as f64 / 10_000.0
+}
+
+/// What kind of passing trouble a failed call was, for the words the transcript uses.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Trouble {
+    /// 429, or an "overloaded" body: too many requests for the model right now.
+    Busy,
+    /// 503/529: nothing free to serve the model.
+    NoCapacity,
+    /// Any other 5xx, or an error event inside the stream: the gateway's own upstream broke.
+    /// Frog Cloud's `502 "<model> answered 402, retry"` is this — its upstream's bill, not
+    /// the user's.
+    Upstream,
+    /// The connection dropped, timed out or ended early.
+    Dropped,
+}
+
+/// The trouble a provider status means, or `None` when it isn't a passing one.
+pub fn trouble(status: u16, body: &str) -> Option<Trouble> {
+    match status {
+        429 => Some(Trouble::Busy),
+        503 | 529 => Some(Trouble::NoCapacity),
+        500..=599 => Some(Trouble::Upstream),
+        _ if body.contains("overloaded") => Some(Trouble::Busy),
+        _ => None,
+    }
+}
+
+/// Who `spec` is served by, as a person knows it: "Frog Cloud", "Vercel AI Gateway".
+pub fn served_by(spec: &str) -> String {
+    match provider_of(spec) {
+        Some(CLOUD) => "Frog Cloud".into(),
+        Some(id) => name(id).to_string(),
+        None => "the model provider".into(),
+    }
+}
+
+/// The model's own name in `spec` (`cloud/glm-5.3-flash` → `glm-5.3-flash`).
+pub fn model_name(spec: &str) -> &str {
+    spec.split_once('/').map_or(spec, |(_, m)| m)
+}
+
+/// The quiet line for the first retry of a call: what's wrong, and that frog is on it.
+pub fn retrying_line(spec: &str, trouble: Trouble) -> String {
+    let who = served_by(spec);
+    match trouble {
+        Trouble::Busy => format!("{who} is busy — retrying"),
+        Trouble::NoCapacity => format!("{who} has nothing free right now — retrying"),
+        Trouble::Upstream => format!("{who} had a problem upstream — retrying"),
+        Trouble::Dropped => format!("The connection to {who} dropped — retrying"),
+    }
+}
+
+/// What a turn that ended on passing trouble says: what happened, that the work is kept, and
+/// what to do. Plain words, never the provider's body.
+pub fn gave_up_line(spec: &str, trouble: Trouble) -> String {
+    let (who, model) = (served_by(spec), model_name(spec));
+    let what = match trouble {
+        Trouble::Busy => format!("{who} was too busy to answer ({model}), even after retrying."),
+        Trouble::NoCapacity => {
+            format!("{who} had nothing free to run {model}, even after retrying.")
+        }
+        Trouble::Upstream => format!(
+            "{who} had a problem upstream ({model}), even after retrying. It isn't your account or your billing."
+        ),
+        Trouble::Dropped => {
+            format!("The connection to {who} kept dropping. Check your network.")
+        }
+    };
+    format!(
+        "{what} Your work so far is kept: send a message in a minute to carry on from here, or pick another model."
+    )
+}
+
+/// The Frog Cloud models that can stand in for `spec` on one call, best first: any other
+/// model the platform lists that takes tools, has room for `need_tokens` of prompt plus a
+/// reply, sees images when the session does, and wasn't already tried. The platform's
+/// default model goes first, then the largest window. Empty for a spec that isn't
+/// `cloud/*`: nothing ever hops between tiers (docs/design/model-policy.md).
+pub fn cloud_fallbacks(
+    spec: &str,
+    models: &[crate::catalog::Model],
+    need_tokens: u64,
+    need_vision: bool,
+    tried: &[String],
+) -> Vec<String> {
+    if provider_of(spec) != Some(CLOUD) {
+        return Vec::new();
+    }
+    let own = providers::normalize(spec);
+    let first = crate::catalog::cloud_default(models);
+    let mut fit: Vec<&crate::catalog::Model> = models
+        .iter()
+        .filter(|m| m.provider == CLOUD && providers::normalize(&m.spec) != own)
+        .filter(|m| !tried.contains(&m.spec))
+        .filter(|m| m.tools && (!need_vision || m.vision()))
+        .filter(|m| m.context.is_some_and(|c| c >= need_tokens + FALLBACK_REPLY_ROOM))
+        .collect();
+    fit.sort_by_key(|m| (Some(&m.spec) != first.as_ref(), std::cmp::Reverse(m.context)));
+    fit.into_iter().map(|m| m.spec.clone()).collect()
 }
 
 /// The provider's name as a person knows it (`vercel` → "Vercel AI Gateway").
@@ -265,6 +401,111 @@ pub async fn check_spawn_spec(cfg: &crate::config::Config, spec: &str) -> Result
     check_spawn(&name, &profile).await
 }
 
+/// Whether a session started on `profile` would get past its first model call: the provider's
+/// credential resolves, and any local engine it needs is here. Reads only what frog already
+/// reads (`Profile::api_key`, `providers::key_source`) — the same code a call would run — so
+/// "yes" means the key exists where the request would find it. It doesn't call the provider:
+/// a revoked key, an empty wallet and a wrong URL are for the first call to report.
+pub fn credential_check(profile: &Profile) -> Result<()> {
+    // The same resolution a provider client would do (`Provider::new` reads `p.api_key()`);
+    // failing here, before a session row exists, is the point.
+    //
+    // Only a hosted preset frog can name is checked. A profile pointing at a URL frog doesn't
+    // recognize is the user's own gateway: whether it wants a key is that gateway's business
+    // (many local ones take none), and auth may ride in a header `extra` sends, which
+    // `api_key()` cannot see. Refusing those refused working setups.
+    let recognized = profile
+        .base_url
+        .as_deref()
+        .filter(|u| !u.is_empty())
+        .is_none_or(|url| {
+            crate::providers::PRESETS.iter().any(|p| {
+                !p.local
+                    && ((p.kind == profile.provider && url.is_empty())
+                        || (!p.base_url.is_empty()
+                            && url.starts_with(p.base_url.trim_end_matches('/'))))
+            })
+        });
+    let need_key = profile.sidecar.is_none()
+        && !matches!(profile.provider, ProviderKind::Ollama | ProviderKind::Codex)
+        && profile.provider != ProviderKind::Node
+        && crate::policy::is_cloud(profile)
+        && recognized;
+    if need_key && profile.api_key().is_none() {
+        // The spec may be a profile name, so the subject is the provider (kind or gateway),
+        // and the fix names its usual variable or key page when frog knows them.
+        let env = crate::policy::is_cloud(profile)
+            .then(|| {
+                let url = profile.base_url.as_deref().unwrap_or("");
+                // Hosted presets only (`local` ones take no key), by the provider kind
+                // first — an Anthropic profile is Anthropic's however it's configured —
+                // then by base URL for the OpenAI-compatible gateways. A preset with no
+                // static base URL (cloudflare, built per-request from the account id)
+                // can't be recognized here, so it just isn't matched.
+                crate::providers::PRESETS
+                    .iter()
+                    .filter(|p| !p.local)
+                    .find(|p| {
+                        (p.kind == profile.provider && url.is_empty())
+                            || (!p.base_url.is_empty()
+                                && url.starts_with(p.base_url.trim_end_matches('/')))
+                    })
+                    .map(|p| (p.id, p.key_env.first(), p.key_url))
+            })
+            .flatten();
+        bail!(
+            "{}",
+            match env {
+                Some((id, Some(e), page)) => format!(
+                    "{id} has no key frog could send: set {e} or reconnect it in Settings ({page})"
+                ),
+                Some((id, None, _)) => format!("{id} has no key frog could send"),
+                None => format!(
+                    "{} has no key frog could send",
+                    profile.model.rsplit('/').next().unwrap_or(&profile.model)
+                ),
+            }
+        );
+    }
+    // This Mac's own engines: startable, or not (a missing binary is a setup step, not a key).
+    if let Some(sidecar) = &profile.sidecar {
+        if !crate::sidecar::available(sidecar) {
+            bail!(
+                "{} isn't available on this machine; run `frog setup`",
+                if sidecar == crate::sidecar::APPLE { "the Apple Intelligence sidecar" } else { "frog's engine (tang-llm)" }
+            );
+        }
+        // A tang model must be downloaded (`ensure` would refuse at start; same words).
+        if sidecar != crate::sidecar::APPLE && !crate::setup::model_present(&profile.model) {
+            bail!(
+                "{} isn't downloaded; run `frog setup` (or `frog setup {}`)",
+                profile.model,
+                profile.model
+            );
+        }
+    }
+    Ok(())
+}
+
+/// [`credential_check`] for a spec a client named, in one place with [`check_spawn_spec`] so
+/// both run before any session row exists (the real bug that asked for this: a session was
+/// created, then its first call died on `ANTHROPIC_API_KEY not set`).
+pub async fn check_credential_spec(cfg: &crate::config::Config, spec: &str) -> Result<()> {
+    let (_, profile) = cfg.resolve(Some(spec))?;
+    if let Err(e) = credential_check(&profile) {
+        // The refusal carries what IS usable, so the next attempt names a model that works
+        // instead of repeating the failure (a session row was never created).
+        let err = match crate::models::usable_summary(cfg).await {
+            Some(list) => anyhow::anyhow!("{e}.\nUsable right now: {list}"),
+            None => anyhow::anyhow!(
+                "{e}.\nNothing is usable right now: no local model is installed and no provider key is set (see `frog --models` and `frog account`)."
+            ),
+        };
+        return Err(err);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -320,9 +561,88 @@ mod tests {
         assert_eq!(class(500), Failure::Transient);
         assert_eq!(class(529), Failure::Transient);
         assert_eq!(class(400), Failure::Other);
-        // 1 s, 2 s, 4 s, and never longer.
-        let waits: Vec<u64> = (1..=5).map(|a| retry_wait(a).as_secs()).collect();
-        assert_eq!(waits, [1, 2, 4, 4, 4]);
+        // 1 s doubling to 16 s, and never longer.
+        let waits: Vec<u64> = (1..=7).map(|a| retry_wait(a).as_secs()).collect();
+        assert_eq!(waits, [1, 2, 4, 8, 16, 16, 16]);
+    }
+
+    /// The wait is the backoff spread ±25 %, and a `retry-after` is a floor (capped at a
+    /// minute) that jitter only adds to.
+    #[test]
+    fn the_wait_is_jittered_and_never_shorter_than_asked() {
+        let ms = |a, asked: Option<u64>, j| {
+            retry_delay(a, asked.map(Duration::from_secs), j).as_millis() as u64
+        };
+        assert_eq!([ms(3, None, 0.0), ms(3, None, 0.5), ms(3, None, 1.0)], [3000, 4000, 5000]);
+        assert_eq!(ms(1, Some(7), 0.5), 7000);
+        assert!(ms(1, Some(7), 0.0) >= 7000 && ms(1, Some(7), 1.0) >= 7000);
+        assert_eq!(ms(5, Some(2), 0.5), 16_000, "our own backoff when it is longer");
+        assert_eq!(ms(1, Some(3600), 0.5), 60_000, "an hour's retry-after is capped");
+        let j = jitter();
+        assert!((0.0..=1.0).contains(&j));
+    }
+
+    /// The words for passing trouble: plain, they name Frog Cloud, and the gateway's
+    /// "answered 402" is its upstream's problem, never the user's billing.
+    #[test]
+    fn passing_trouble_reads_plainly() {
+        let spec = "cloud/deepseek-v4.1-flash";
+        assert_eq!(trouble(429, ""), Some(Trouble::Busy));
+        assert_eq!(trouble(503, ""), Some(Trouble::NoCapacity));
+        assert_eq!(
+            trouble(502, r#"{"error":{"message":"glm-5.3-flash answered 402, retry"}}"#),
+            Some(Trouble::Upstream)
+        );
+        assert_eq!(trouble(400, ""), None);
+        assert_eq!(retrying_line(spec, Trouble::Busy), "Frog Cloud is busy — retrying");
+        let end = gave_up_line(spec, Trouble::Upstream);
+        assert!(end.starts_with("Frog Cloud had a problem upstream (deepseek-v4.1-flash)"), "{end}");
+        assert!(end.contains("isn't your account or your billing"), "{end}");
+        assert!(end.contains("Your work so far is kept"), "{end}");
+        assert!(!end.contains('{') && !end.contains("402"), "{end}");
+        assert!(gave_up_line("vercel/openai/gpt-5", Trouble::Busy).starts_with("Vercel AI Gateway was too busy"));
+    }
+
+    /// A stand-in is another Frog Cloud model that fits the call; never one from another
+    /// tier, never one too small for the thread.
+    #[test]
+    fn a_stand_in_is_a_frog_cloud_model_that_fits() {
+        let m = |id: &str, ctx: u64, tools: bool| crate::catalog::Model {
+            spec: format!("cloud/{id}"),
+            provider: CLOUD.into(),
+            id: id.into(),
+            context: Some(ctx),
+            tools,
+            ..Default::default()
+        };
+        let mut other = m("gpt-5", 400_000, true);
+        other.provider = "vercel".into();
+        other.spec = "vercel/gpt-5".into();
+        let models = [
+            m("deepseek-v4.1-flash", 128_000, true),
+            m("small", 32_000, true),
+            m("big", 256_000, true),
+            m("glm-5.3-flash", 200_000, true),
+            m("no-tools", 300_000, false),
+            other,
+        ];
+        let pick = |spec, need, tried: &[String]| cloud_fallbacks(spec, &models, need, false, tried);
+        // The platform default first, then the largest window; never itself, a model
+        // without tools or another provider's.
+        assert_eq!(
+            pick("cloud/deepseek-v4.1-flash", 10_000, &[]),
+            ["cloud/glm-5.3-flash", "cloud/big", "cloud/small"]
+        );
+        // A thread too big for a model's window skips it.
+        assert_eq!(pick("cloud/deepseek-v4.1-flash", 195_000, &[]), ["cloud/big"]);
+        assert_eq!(
+            pick("cloud/deepseek-v4.1-flash", 10_000, &["cloud/glm-5.3-flash".into()]),
+            ["cloud/big", "cloud/small"]
+        );
+        // BYOK never falls back: nothing hops between tiers.
+        assert!(pick("vercel/gpt-5", 10_000, &[]).is_empty());
+        // A session with images only gets a model that sees them.
+        assert!(cloud_fallbacks("cloud/big", &models, 10_000, true, &[]).is_empty());
     }
 
     #[test]
@@ -349,10 +669,11 @@ mod tests {
             status: 402,
             body: json!({"error": {"message": "insufficient credits"}}).to_string(),
             billing: None,
+            retry_after: None,
         }
         .into();
         assert!(fix_for("vercel/openai/gpt-5", &e).unwrap().contains("credits are out"));
-        let ok: anyhow::Error = HttpError { status: 429, body: String::new(), billing: None }.into();
+        let ok: anyhow::Error = HttpError { status: 429, body: String::new(), billing: None, retry_after: None }.into();
         assert!(fix_for("vercel/openai/gpt-5", &ok).is_none());
     }
 
@@ -415,5 +736,56 @@ mod tests {
         let unknown = check_spawn_spec(&cfg, "no-such-provider/x").await.unwrap_err();
         assert!(format!("{unknown}").contains("unknown provider"), "{unknown}");
         TEST_LISTS.with(|l| *l.borrow_mut() = None);
+    }
+
+    /// The credential check says what IS usable, not only what failed (the real bug: a session
+    /// was created and then died on `ANTHROPIC_API_KEY not set`).
+    #[tokio::test]
+    async fn spawn_credential_refusal_names_what_is_usable() {
+        // A cloud profile with no key anywhere: refused, and the refusal says something is
+        // usable anyway (a test config's own model: frog's engine or the env key).
+        let cfg = crate::config::Config::default();
+        let e = check_credential_spec(&cfg, "anthropic/claude-opus-5-5")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("no key frog could send"), "{e}");
+        assert!(e.contains("Usable right now") || e.contains("Nothing is usable"), "{e}");
+        // One with a key: starts.
+        let mut cfg = crate::config::Config::default();
+        let mut p = Profile::new(ProviderKind::Anthropic, "claude-sonnet-5");
+        p.api_key = Some("k".into());
+        cfg.models.insert("mine".into(), p);
+        assert!(check_credential_spec(&cfg, "mine").await.is_ok());
+        // The refusal names the right provider: Anthropic (ANTHROPIC_API_KEY, its key page),
+        // not whichever gateway is first in the preset list.
+        let mut cfg = crate::config::Config::default();
+        let p = Profile::new(ProviderKind::Anthropic, "claude-sonnet-5");
+        cfg.models.insert("anth".into(), p);
+        let e = check_credential_spec(&cfg, "anth").await.unwrap_err().to_string();
+        assert!(e.contains("anthropic has no key"), "{e}");
+        assert!(e.contains("ANTHROPIC_API_KEY"), "{e}");
+        assert!(e.contains("console.anthropic.com"), "{e}");
+        // A gateway profile names that gateway's variable.
+        let mut p = Profile::new(ProviderKind::Openai, "openai/gpt-5");
+        p.base_url = Some("https://openrouter.ai/api/v1".into());
+        cfg.models.insert("orn".into(), p);
+        let e = check_credential_spec(&cfg, "orn").await.unwrap_err().to_string();
+        assert!(e.contains("openrouter has no key") && e.contains("OPENROUTER_API_KEY"), "{e}");
+    }
+
+    /// A local model is never asked for a key; a sidecar model needs its binary and weights.
+    #[tokio::test]
+    async fn local_models_need_no_key_and_a_sidecar_needs_its_setup() {
+        let mut sidecar = Profile::new(ProviderKind::Openai, "mlx-community/Qwen3-4B-4bit");
+        sidecar.sidecar = Some("mlx-community/Qwen3-4B-4bit".into());
+        if crate::sidecar::available("tang") && crate::setup::model_present("mlx-community/Qwen3-4B-4bit") {
+            assert!(credential_check(&sidecar).is_ok());
+        } else {
+            assert!(credential_check(&sidecar).is_err(), "missing setup says so");
+        }
+        // ollama is keyless by design.
+        let ollama = profile(ProviderKind::Ollama, Some("http://localhost:11434"));
+        assert!(credential_check(&ollama).is_ok());
     }
 }

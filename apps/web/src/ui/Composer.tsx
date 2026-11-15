@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { composing } from './guards'
 import type { Image, Mode } from '../cloud/protocol'
-import { modelName, modes, outputPrice, placeColor, placeOf, spec, type Model } from '../models'
-import { machineModels, places, tag, useShowCloud, type Machine } from '../machines'
-import { barTone, ringTone } from '../usage'
+import { inOutPrice, modelName, modes, placeColor, placeOf, spec, type Model } from '../models'
+import { machineModels, places, tag, type Machine } from '../machines'
+import { barTone, canCompact, ringLabel, ringTone } from '../usage'
 import { parseRepo } from '../store'
 import type { Provider } from '../auth'
 import { safeHref } from './href'
+import { DownloadAppChip, useDownloadChip } from './DownloadChip'
 import { useFocusTrap, useLayer, useMenu } from './layers'
 import { derive, reduce, type ComposerError, type Effect, type Intent, type Pr, type State as Tray } from '../composer'
 
@@ -39,6 +40,8 @@ export interface ComposerProps {
   adds?: number
   dels?: number
   startedAt?: number
+  /** The model's speed while working, in tokens per second. */
+  speed?: number | null
   /** The running turn is blocked on a permission ask. */
   waiting?: boolean
   draft?: string
@@ -119,8 +122,12 @@ function useTimer(since?: number) {
 export function Composer(p: ComposerProps) {
   const [text, setText] = useState(p.draft ?? '')
   const [menu, setMenu] = useState<'plus' | 'model' | 'mode' | 'repo' | 'signin' | null>(p.pickRepo ? 'repo' : p.openModels ? 'model' : null)
-  const showCloudModels = useShowCloud()
-  const machineRows = machineModels(p.machines ?? [])
+  // The web runs only in Frog Cloud, so its models always show (no Show cloud models switch here).
+  const showCloudModels = true
+  // A machine's model runs from the Mac app; where there's an app to send them to, its rows give
+  // way to one download hint, and on a phone (or once they have the app) they stay as they were.
+  const machineChip = useDownloadChip(p.machines ?? [])
+  const machineRows = machineChip ? [] : machineModels(p.machines ?? [])
   const [q, setQ] = useState('')
   // Where the open menu's button sits, so the menu opens right above it.
   const [at, setAt] = useState(8)
@@ -192,6 +199,14 @@ export function Composer(p: ComposerProps) {
     setText('')
     setImages([])
   }
+  /** The queued effect: the entry (text and images) goes onto the queue prop — the app
+   * routes a send while working there — and the field clears, the way send clears it. */
+  const queueDraft = (e: Effect) => {
+    const files = (e.attachments as unknown[] | undefined)?.length === images.length ? images : []
+    p.onSend?.(String(e.text ?? ''), files)
+    setText('')
+    setImages([])
+  }
   const placeholder = working ? 'Working… Esc interrupts · Return queues a follow-up'
     : paused ? 'Paused · out of credits'
     : p.session ? 'Reply to Frog, @ a file, ! a command'
@@ -222,10 +237,11 @@ export function Composer(p: ComposerProps) {
   const d = derive(tray)
   const run = (e: Effect, next: Tray) => {
     switch (e.type) {
-      case 'submit': case 'queue': case 'start_session':
+      case 'submit': case 'start_session':
         if (next.pending === 'aside') p.onSend(String(e.text ?? ''), [])
         else send()
         break
+      case 'queued': queueDraft(e); break
       case 'interrupt': p.onStop?.(); break
       case 'set_mode': p.onMode?.(fromTray(e.mode as Tray['mode'])); break
       case 'open_login': setMenu('signin'); break
@@ -267,10 +283,14 @@ export function Composer(p: ComposerProps) {
 
       {menu === 'model' && (
         <div className="f-card cz-menu cz-models" role="menu" aria-label="Model" style={{ left: at, width: 320 }} {...nav}>
-          <div className="cz-menu-h">Your machines</div>
-          {machineRows.length === 0 && <div className="det cz-menu-note">No models on your machines yet.</div>}
+          {/* The web runs sessions in Frog Cloud, so a machine's model can't be picked here: it
+           * runs from the Mac app. Where there's an app to send them to, one hint; on a phone, or
+           * once they have it, the rows stay as they were. */}
+          <div className="cz-menu-h">{machineChip ? 'Run it on your Mac' : 'Your machines'}</div>
+          {machineChip
+            ? <div className="cz-menu-note"><DownloadAppChip label="Runs from the Mac app" machines={p.machines} /></div>
+            : machineRows.length === 0 && <div className="det cz-menu-note">No models on your machines yet. <a href="/mac">Get the Mac app</a></div>}
           {machineRows.map((m) => (
-            // The web runs sessions in Frog Cloud: a machine's model runs from the Mac app.
             <button key={m.spec} type="button" role="menuitemradio" aria-checked={false} disabled title="Runs from the Mac app">
               <span className="cz-dot" style={{ background: placeColor('local') }} aria-hidden="true" />
               <span className="cz-mname">{m.name}</span><span className="det cz-mdetail">{places(m)}</span>
@@ -281,7 +301,7 @@ export function Composer(p: ComposerProps) {
           {showCloudModels && p.models?.map((m) => (
             <button key={m.id} type="button" role="menuitemradio" aria-checked={m.id === p.model} onClick={() => { p.onModel?.(m.id); setMenu(null) }}>
               <span className="cz-dot" style={{ background: placeColor('cloud') }} aria-hidden="true" />
-              <span className="cz-mname">{modelName(m.id)}</span><span className="det cz-mdetail">{outputPrice(m)}</span>
+              <span className="cz-mname">{modelName(m.id)}</span><span className="det cz-mdetail">{inOutPrice(m)}</span>
               <span className="cz-mtag" style={{ opacity: m.id === p.model ? 1 : 0 }}>✓</span>
             </button>
           ))}
@@ -349,10 +369,20 @@ export function Composer(p: ComposerProps) {
 
       {!!p.queued?.length && (
         <div className="cz-queue" aria-label="Queued messages">
+          <div className="cz-qhead">
+            <span className="cz-qtitle">Queued · {p.queued.length}</span>
+            <span className="cz-qwhen">{working ? 'goes in at the next tool step' : 'sends when the turn ends'}</span>
+          </div>
           {p.queued.map((q, i) => (
             <div key={i} className="cz-queued">
-              <span className="det">Queued</span><span className="ellip" style={{ flex: 1 }}>{q.text || `${q.images.length} image${q.images.length === 1 ? '' : 's'}`}</span>
-              <button type="button" className="f-btn f-btn--plain" aria-label="Take back" title="Take back to edit" onClick={() => p.onUnqueue?.(i)}>✕</button>
+              <svg className="cz-qclip" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M21 12.8l-8.5 8.4a5 5 0 0 1-7-7l8.4-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.4a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/></svg>
+              <span className="ellip">{q.text || `${q.images.length} image${q.images.length === 1 ? '' : 's'}`}</span>
+              {!!q.images.length && (
+                <span className="cz-qimgs">{q.images.map((im, j) => (
+                  <img key={j} className="cz-qimg" src={`data:${im.mime};base64,${im.data}`} alt="" />
+                ))}</span>
+              )}
+              <button type="button" className="cz-qx" aria-label="Take back to the field" title="Take back to edit" onClick={() => p.onUnqueue?.(i)}>✕</button>
             </div>
           ))}
         </div>
@@ -481,7 +511,7 @@ export function Composer(p: ComposerProps) {
           {p.context?.window || p.usage?.sub ? <ContextRing used={p.context?.used ?? null} window={p.context?.window ?? 0} usage={p.usage} onCompact={p.onCompact && !working ? () => p.onCompact!() : undefined} compacting={p.compacting} /> : null}
           <span style={{ flex: 1 }} />
           <span style={{ fontSize: 12, color: paused ? 'var(--warn)' : p.waiting ? 'var(--notice)' : 'var(--muted)', whiteSpace: 'nowrap' }}>
-            {working && p.waiting ? '' : working ? `Working · ${timer}` : paused ? 'Out of credits' : ''}
+            {working && p.waiting ? '' : working ? `Working · ${timer}${p.speed && p.speed > 0 ? ` · ${Math.round(p.speed)} tok/s` : ''}` : paused ? 'Out of credits' : ''}
           </span>
           {p.onSignIn && !text.trim() && !images.length ? (
             <button type="button" className="cz-signin" aria-expanded={menu === 'signin'} onClick={() => setMenu(menu === 'signin' ? null : 'signin')}>
@@ -527,7 +557,7 @@ function ContextRing({ used, window, usage, onCompact, compacting }: { used: num
   const r = 6.5, c = 2 * Math.PI * r
   return (
     <span className="ctx" ref={root}>
-      <button type="button" ref={button} className="ctx-ring" aria-haspopup="dialog" aria-expanded={open} onClick={() => { if (!open) usage?.onOpen?.(); setOpen(!open) }} aria-label={`Usage and context, ${Math.round(f * 100)}%`}>
+      <button type="button" ref={button} className="ctx-ring" aria-haspopup="dialog" aria-expanded={open} onClick={() => { if (!open) usage?.onOpen?.(); setOpen(!open) }} aria-label={ringLabel(sub ? plan : null, window > 0 ? ctx : null)} title={ringLabel(sub ? plan : null, window > 0 ? ctx : null)}>
         <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
           <circle cx="9" cy="9" r={r} fill="none" stroke="var(--line-strong)" strokeWidth="2.5" />
           <circle cx="9" cy="9" r={r} fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round"
@@ -556,7 +586,7 @@ function ContextRing({ used, window, usage, onCompact, compacting }: { used: num
             {usage && <div className="ctx-sep" />}
             <div className="ctx-h"><span>Context</span><span className="det">{(used ?? 0).toLocaleString()} of {window.toLocaleString()} tokens · {Math.round(ctx * 100)}%</span></div>
             <div className="ctx-bar"><span style={{ width: `${ctx * 100}%`, background: barTone(ctx) }} /></div>
-            {(onCompact || compacting) && (
+            {(compacting || (onCompact && canCompact(used, window))) && (
               <button type="button" className="f-btn f-btn--bordered ctx-compact" disabled={compacting || !onCompact} onClick={() => { onCompact?.(); setOpen(false) }}>
                 {compacting ? 'Compacting…' : 'Compact now'}
               </button>

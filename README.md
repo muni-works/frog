@@ -26,13 +26,13 @@ cd your-repo
 frog
 ```
 
-The default model is `local/qwen3-4b` (Qwen3 4B, 4-bit). It runs on this machine and costs nothing; the banner at the top of every session says which model is in use and whether it's free or billed. (The Mac app starts on Apple Intelligence where the Mac has it.) Ask for something:
+With nothing configured, frog picks the first of these that works: `local/qwen3-4b` (Qwen3 4B, 4-bit) on frog's own engine, a model running in ollama, then LM Studio, then Apple Intelligence, then Frog Cloud's default if you're signed in. Local models run on this machine and cost nothing. `-m`, `FROG_MODEL` or `default_model` in `config.toml` override that, and otherwise the last model you used wins. The banner at the top of every session says which model is in use and whether it's free or billed. Ask for something:
 
 ```
 > why does `cargo test` fail? fix it.
 ```
 
-frog reads the code, runs commands and edits files. Edits and unsandboxed commands ask first; **shift+tab** cycles the permission mode.
+frog reads the code, runs commands and edits files. New sessions start in **auto** mode: a local classifier approves the steps that plainly serve your request and asks about the rest. `frog --resume` with no mode flag runs in **default** (edits and unsandboxed commands ask first) unless the session saved a mode. **shift+tab** cycles the mode.
 
 Switch models with `-m` (or `/model` inside a session):
 
@@ -56,7 +56,7 @@ One-shot, for scripts: `frog -p "why does the build fail?"` (add `--json` for ev
 ## Features
 
 - **Local first.** Your code and prompts stay on your machine unless you pick a cloud model, and a project can deny cloud models outright.
-- **Your machines as one pool.** On a Linux box, `curl -fsSL https://frog.toys/node | sh`; on a Mac, Settings › Lend. Type the node's 6-digit code once. A scheduler sends each call to the machine that will finish it first, and the picker can load a model onto a paired node.
+- **Your machines as one pool.** On a Linux box, `curl -fsSL https://frog.toys/node | sh`; on a Mac, Settings › Share with my other machines. Type the node's 6-digit code once. A scheduler sends each call to the machine that will finish it first, and the picker can load a model onto a paired node.
 - **Sessions you can branch.** Every session is an append-only log that survives crashes: `frog -c` continues, `frog --sessions` lists, `frog --fork <id>@3` branches after turn 3. Parallel work runs as child sessions, which `frog --sessions` draws as a tree.
 - **Sandboxed shell.** Commands run under seatbelt (macOS) or bubblewrap (Linux): they can write only inside the project and caches, and can't read `~/.ssh`, `~/.aws` and other credentials.
 - **Built for small models.** frog probes each local model once and picks how to call tools (native, text or grammar-constrained JSON), budgets thinking, and guards against loops.

@@ -242,6 +242,115 @@ final class SidebarSnapshotTests: XCTestCase {
         }
     }
 
+    /// The sidebar's rows and the composer's pill, one above the other, from one list of bound
+    /// PRs: sidebar-prs-{light,dark}.png. What the bug was: "3 PRs, all merged" in the composer
+    /// and "#312" in the row, with the other two invisible.
+    func testRenderPRsAgreeing() throws {
+        let sessions: [SessionInfo] = [
+            Self.s("three", "three PRs bound", ago: 1).withPrs([
+                .init(repo: "muni-works/frog", number: 300, title: "tray", state: "merged"),
+                .init(repo: "muni-works/frog", number: 301, title: "hover", state: "merged"),
+                .init(repo: "muni-works/frog", number: 312, title: "chip hover", state: "merged"),
+            ]),
+            Self.s("one", "one PR bound", ago: 2).withPrs([
+                .init(repo: "muni-works/frog", number: 312, title: "chip hover", state: "merged"),
+            ]),
+            Self.s("worst", "two merged, one failing", ago: 3).withPrs([
+                .init(repo: "muni-works/frog", number: 300, title: "tray", state: "merged"),
+                .init(repo: "muni-works/frog", number: 301, title: "hover", state: "failing"),
+            ]),
+        ]
+
+        /// The composer's own view of a session: the same bindings, through the one summary.
+        func tray(_ s: SessionInfo) -> ComposerModel.State {
+            var state = ComposerModel.State(
+                model: .init(id: "local/qwen3-4b", name: "Qwen3 4B · On this Mac", place: .local, node: nil),
+                where: .session(.init(repo: "muni-works/frog", branch: "frog/pr-chip-hover",
+                                      worktree: true, worktreePath: s.cwd,
+                                      diff: .init(add: 12, del: 3, files: 2), dirty: false, ahead: 0,
+                                      prs: GitIndex.shared.prs(s.prs))))
+            state.draft = .init(text: "", attachments: [], caret: 0)
+            return state
+        }
+        for (look, name) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
+            Library.shared.stage(sessions: sessions)
+            try render(VStack(alignment: .leading, spacing: 12) {
+                ForEach(sessions) { s in
+                    VStack(alignment: .leading, spacing: 5) {
+                        // The row, as the sidebar draws it…
+                        HStack(spacing: 0) {
+                            Text(s.displayTitle).font(.frog(size: 13)).lineLimit(1)
+                            Spacer(minLength: 6)
+                            if let status = RowStatus.of(.done, prs: Library.shared.rowLine(s).prs) {
+                                RowStatusView(status: status).fixedSize()
+                            }
+                        }
+                        .padding(.horizontal, 10)
+                        // …and the same thread's composer, from the same bound list.
+                        TrayPreview(state: tray(s))
+                    }
+                }
+            }
+            .padding(16)
+            .frame(maxHeight: .infinity, alignment: .top)
+            .background(.background), size: CGSize(width: 620, height: 360), to: "sidebar-prs-\(name)", appearance: look)
+            Library.shared.unstage()
+        }
+    }
+
+    /// The started-by tree's rails, at every depth a session can sit at: a six-deep chain
+    /// (depths 0–5) beside a sibling leaf, in every grouping and both looks, with a nested row
+    /// selected — tree-rails-*.png. The chain is the whole point: a row at depth 5 must look
+    /// deeper than one at depth 4, and its guide must survive selection.
+    ///
+    /// Both groupings matter. The date list always drew a guide (`TreeGuide`); the **org** tree
+    /// (`TreeRow`) drew none, so "the rail is faint" was really "the org tree has no rail".
+    /// Rendered as `tree-rails-<group>-<mode>-<pick>-<look>`.
+    func testRenderTreeRails() throws {
+        // root › depth1 › depth2 › depth3 › depth4 › depth5, plus a sibling at depth 1.
+        let chain = ["d1", "d2", "d3", "d4", "d5"]
+        var sessions: [SessionInfo] = [Self.s("root", "tree design pass", ago: 0.1)]
+        for (i, id) in chain.enumerated() {
+            sessions.append(Self.s(id, "level \(i + 1) worker", ago: 0.2 + Double(i) * 0.1))
+        }
+        sessions.append(Self.s("leaf", "sibling worker", ago: 1.5))
+        var parents: [String: String] = ["leaf": "root"]
+        parents["d1"] = "root"
+        for (i, id) in chain.enumerated().dropFirst() { parents[id] = chain[i - 1] }
+        let live: [String: Library.Live] = [
+            "root": .running, "d1": .running, "d2": .waiting, "d3": .running, "leaf": .running,
+        ]
+        func restage() {
+            Library.shared.stage(sessions: sessions, live: live, parents: parents, chief: nil, archived: [])
+        }
+        UserDefaults.standard.set(true, forKey: "calmSidebar")
+        UserDefaults.standard.set("activity", forKey: "sidebarSort")
+        let compactSaved = UserDefaults.standard.object(forKey: "compactSidebar")
+        defer { UserDefaults.standard.set(compactSaved, forKey: "compactSidebar") }
+
+        // The row on screen: a nested one, so its selection fill has a rail to either side.
+        let ws = Workspace(folder: URL(fileURLWithPath: "/Users/cam/Developer/frog/.frog/worktrees/d3"), resume: "d3")
+        // The org tree is the one the brief's screenshot came from; the date list is the one
+        // that always had a guide. Both are renders now, to prove they agree.
+        for group in ["org", "date"] {
+            UserDefaults.standard.set(group, forKey: "sidebarGroup")
+            for (dense, mode) in [(false, "two-line"), (true, "compact")] {
+                UserDefaults.standard.set(dense, forKey: "compactSidebar")
+                for (selected, pick) in [(nil, "plain"), ("d3", "selected")] {
+                    for (look, name) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
+                        restage()  // the sidebar's onAppear refresh can replace a staged listing
+                        ws.opening = selected
+                        try render(SessionList(workspace: ws, maxHeight: 460).background(Tokens.sidebar),
+                                   size: CGSize(width: 300, height: 460),
+                                   to: "tree-rails-\(group)-\(mode)-\(pick)-\(name)",
+                                   appearance: look)
+                    }
+                }
+            }
+        }
+        ws.opening = nil
+    }
+
     /// The ask card: two answers and a ⋯, into ask-card-{light,dark}.png.
     func testRenderAskCard() throws {
         let c = Conversation(folder: URL(fileURLWithPath: "/tmp/demo"), link: nil, replay: false, session: "s")
@@ -252,5 +361,14 @@ final class SidebarSnapshotTests: XCTestCase {
             try render(PermissionCard(request: request, conversation: c).padding(16).background(.background),
                        size: CGSize(width: 560, height: 200), to: "ask-card-\(name)", appearance: look)
         }
+    }
+}
+
+private extension SessionInfo {
+    /// The same session with bound PRs, as the listing carries them.
+    func withPrs(_ prs: [PrBinding]) -> SessionInfo {
+        var s = self
+        s.prs = prs
+        return s
     }
 }

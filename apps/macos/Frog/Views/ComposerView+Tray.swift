@@ -53,16 +53,40 @@ extension ComposerView {
         switchFolder?(folder)
     }
 
+    /// The queued images: the effect names them (`Attachment`s), and the count matches the
+    /// draft's own ones — the view passes those along (it holds the bytes; the reducer
+    /// carries metadata only, like the web).
+    static func images(_ json: JSON?, from attachments: [ToolImage]) -> [ToolImage] {
+        guard case .array(let files) = json, files.count == attachments.count else { return [] }
+        return attachments
+    }
+
     func run(_ e: ComposerModel.Effect, _ s: ComposerModel.State) {
         let dir = workspace.folder
         switch e.type {
         case "submit", "queue":
-            if case .string(let t) = e.fields["text"], t != s.draft.text.trimmingCharacters(in: .whitespacesAndNewlines) || s.pending == .aside {
+            // A git action's own turn carries text the field doesn't hold: the draft stays.
+            // The draft itself goes through sendDraft, which clears it (on ack for a submit).
+            if case .string(let t) = e.fields["text"], t != s.draft.text.trimmingCharacters(in: .whitespacesAndNewlines) {
                 conversation.submit(t)  // a git action's own turn: the draft stays
             } else {
                 sendDraft()
             }
             if e.type == "submit" { dispatch(.ack) }
+        case "queued":
+            // The reducer cleared the draft state already; the view's own field follows it.
+            // The images go with the text: Conversation.submit queues them behind the turn.
+            if case .string(let t) = e.fields["text"] {
+                conversation.submit(t, images: Self.images(e.fields["attachments"], from: attachments))
+                FrogSounds.shared.play(.plip)
+                text = ""
+                attachments = []
+                mention = nil
+                suggestions = []
+                draftSave?.cancel()
+                draftSave = nil
+                drafts.clear(id: conversation.sessionID, folder: workspace.folder)
+            }
         case "start_session":
             if case .folder(_, _, true, true, _) = s.where {
                 makeWorktreeAndSend()
@@ -91,7 +115,10 @@ extension ComposerView {
                 gitTask { await GitActions.reopen(repo, Int(n), in: dir) }
             }
         case "archive":
-            if let id = conversation.sessionID { SessionBroker.shared.archive(id, true) }
+            // The git line's Archive (a merged PR): it archives the conversation in this pane,
+            // so the pane follows to a new session. The shared decision, not the broker's
+            // `archive`, which the ArchiveSession tool also uses and must never navigate with.
+            if let id = conversation.sessionID { ArchiveNav.archive(id, from: workspace) }
         case "gh_auth_login": GitActions.ghAuthLogin()
         case "open_url": if case .string(let u) = e.fields["url"], let url = URL(string: u) { NSWorkspace.shared.open(url) }
         case "copy":
@@ -117,8 +144,14 @@ extension ComposerView {
     func gitTask(_ work: @escaping () async -> GitActions.Failure?) {
         Task {
             if let f = await work() { dispatch(.failed(code: f.code, detail: f.detail)) }
-            gitIndex.refreshPrs(conversation.prs, in: workspace.folder.path)
+            gitIndex.refreshPrs(conversation.prs, in: workspace.folder.path, writeBack: gitIndexWriteBack)
         }
+    }
+
+    /// What gh saw, back to the engine. The sidebar reads the session listing, so unless the log
+    /// holds the latest state the two disagree the moment this conversation closes.
+    var gitIndexWriteBack: (PrBinding) -> Void {
+        { pr in conversation.send(.bindPr(pr)) }
     }
 
     /// `#12`, `owner/name#12` or a PR URL.

@@ -1150,6 +1150,42 @@
           "type": "object"
         },
         {
+          "description": "Follow-ups the user sent while this turn ran, ingested at a tool-call boundary\n(`Agent::ingest_submitted`): each is now a user message of the running turn, in the\norder sent. The transcript shows them in the turn at this step; a replay draws the\nsame rows from the log.",
+          "properties": {
+            "created": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "event": {
+              "const": "follow_ups_ingested",
+              "type": "string"
+            },
+            "seq": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session": {
+              "type": "string"
+            },
+            "texts": {
+              "description": "The ingested messages' texts, in order.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "event",
+            "texts",
+            "seq",
+            "session",
+            "created"
+          ],
+          "type": "object"
+        },
+        {
           "properties": {
             "created": {
               "format": "int64",
@@ -2769,7 +2805,7 @@
           "type": "object"
         },
         {
-          "description": "The wakes turn `turn` opened with, in order: delivered as one batch with its input\n(a message, a session message), ahead of it. A turn started on wakes alone carries\nthem as its input instead.",
+          "description": "Background wakes delivered with turn `turn`, in order. Two deliveries: the ones it\nopened with, as one batch ahead of its input (a message, a session message; a turn\nstarted on wakes alone carries them as its input instead); and any that ended while the\nturn ran, which the engine appends to the running history so the model's next call sees\nthem (`turn` → the same turn, a later event). Clients append both to the turn's rows, in\narrival order, rather than replacing them.",
           "properties": {
             "created": {
               "format": "int64",
@@ -3051,6 +3087,118 @@
             "event",
             "level",
             "message",
+            "seq",
+            "session",
+            "created"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The configured MCP servers and how each is doing, the whole list, sent whenever one\nconnects, fails, or a sign-in changes its state. Durable, so a replayed session shows\nthe same \"not signed in\" rows: a tool the user configured must never vanish silently.",
+          "properties": {
+            "created": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "event": {
+              "const": "mcp_servers",
+              "type": "string"
+            },
+            "seq": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "servers": {
+              "items": {
+                "$ref": "#/$defs/McpServerReport"
+              },
+              "type": "array"
+            },
+            "session": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "servers",
+            "seq",
+            "session",
+            "created"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A person signed in to an MCP server from its card ([`Op::McpSignIn`]): the browser\nfinished, the tokens are stored and the server reconnected with its tools.",
+          "properties": {
+            "created": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "event": {
+              "const": "mcp_signed_in",
+              "type": "string"
+            },
+            "seq": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "server": {
+              "type": "string"
+            },
+            "session": {
+              "type": "string"
+            },
+            "tools": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "event",
+            "server",
+            "tools",
+            "seq",
+            "session",
+            "created"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A sign-in that didn't happen: the person declined, or the flow failed. `error` is the\none line to show. Either way the server stays `needs_auth`; a decline is remembered,\nso no later session asks again.",
+          "properties": {
+            "created": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "event": {
+              "const": "mcp_signed_out",
+              "type": "string"
+            },
+            "seq": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "server": {
+              "type": "string"
+            },
+            "session": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "server",
             "seq",
             "session",
             "created"
@@ -3517,6 +3665,27 @@
             "turn",
             "reason",
             "usage"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Follow-ups the user sent while this turn ran, ingested at a tool-call boundary\n(`Agent::ingest_submitted`): each is now a user message of the running turn, in the\norder sent. The transcript shows them in the turn at this step; a replay draws the\nsame rows from the log.",
+          "properties": {
+            "event": {
+              "const": "follow_ups_ingested",
+              "type": "string"
+            },
+            "texts": {
+              "description": "The ingested messages' texts, in order.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "event",
+            "texts"
           ],
           "type": "object"
         },
@@ -4570,7 +4739,7 @@
           "type": "object"
         },
         {
-          "description": "The wakes turn `turn` opened with, in order: delivered as one batch with its input\n(a message, a session message), ahead of it. A turn started on wakes alone carries\nthem as its input instead.",
+          "description": "Background wakes delivered with turn `turn`, in order. Two deliveries: the ones it\nopened with, as one batch ahead of its input (a message, a session message; a turn\nstarted on wakes alone carries them as its input instead); and any that ended while the\nturn ran, which the engine appends to the running history so the model's next call sees\nthem (`turn` → the same turn, a later event). Clients append both to the turn's rows, in\narrival order, rather than replacing them.",
           "properties": {
             "event": {
               "const": "wakes_delivered",
@@ -4750,6 +4919,73 @@
             "event",
             "level",
             "message"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The configured MCP servers and how each is doing, the whole list, sent whenever one\nconnects, fails, or a sign-in changes its state. Durable, so a replayed session shows\nthe same \"not signed in\" rows: a tool the user configured must never vanish silently.",
+          "properties": {
+            "event": {
+              "const": "mcp_servers",
+              "type": "string"
+            },
+            "servers": {
+              "items": {
+                "$ref": "#/$defs/McpServerReport"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "event",
+            "servers"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A person signed in to an MCP server from its card ([`Op::McpSignIn`]): the browser\nfinished, the tokens are stored and the server reconnected with its tools.",
+          "properties": {
+            "event": {
+              "const": "mcp_signed_in",
+              "type": "string"
+            },
+            "server": {
+              "type": "string"
+            },
+            "tools": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "event",
+            "server",
+            "tools"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A sign-in that didn't happen: the person declined, or the flow failed. `error` is the\none line to show. Either way the server stays `needs_auth`; a decline is remembered,\nso no later session asks again.",
+          "properties": {
+            "error": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "event": {
+              "const": "mcp_signed_out",
+              "type": "string"
+            },
+            "server": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "server"
           ],
           "type": "object"
         },
@@ -5473,6 +5709,44 @@
       ],
       "type": "string"
     },
+    "McpServerReport": {
+      "description": "One configured MCP server, as [`Event::McpServers`] reports it: enough to draw a row with\na working sign-in button, and to say why a server someone configured isn't offering tools.",
+      "properties": {
+        "connected": {
+          "type": "boolean"
+        },
+        "declined": {
+          "description": "The person already declined this server's sign-in (remembered across sessions): the\nrow still says so, without asking again.",
+          "type": "boolean"
+        },
+        "error": {
+          "description": "One line on how it's doing, when it isn't connected.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "needs_auth": {
+          "description": "The server wants an OAuth sign-in: show \"not signed in\" and a button, never a failure.",
+          "type": "boolean"
+        },
+        "tools": {
+          "description": "The tools it offers, by their `mcp__<server>__<tool>` names.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "connected"
+      ],
+      "type": "object"
+    },
     "Mode": {
       "oneOf": [
         {
@@ -6036,6 +6310,27 @@
             "id",
             "server",
             "tool"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A person asked to sign in to a configured MCP server (Settings → MCP → Sign in, or the\ntranscript's sign-in card). The only path that opens a browser for MCP: connecting\nnever does (it reports `needs_auth` instead). Answered with\n[`Event::McpSignedIn`]; with `decline`, with [`Event::McpSignedOut`] — the refusal is\nremembered, so no later session asks again.",
+          "properties": {
+            "decline": {
+              "default": false,
+              "type": "boolean"
+            },
+            "op": {
+              "const": "mcp_sign_in",
+              "type": "string"
+            },
+            "server": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "server"
           ],
           "type": "object"
         },
@@ -6612,7 +6907,7 @@
       "type": "object"
     },
     "ServedBy": {
-      "description": "Who runs a frog cloud model: `frog` (its own GPUs) or a third party (`workers-ai`).",
+      "description": "Who runs a frog cloud model: `frog` (its own GPUs) or a third party (`workers-ai`).\n\nThe data is truthful on purpose (Cam, 2026-11-12: presentation becomes opaque, data stays\ntruthful). `id`, `name` and `third_party` say who really answered, because a cache miss or a\ncost spike is debugged from them. What a user *reads* comes from [`Self::display_name`],\nwhich never names an upstream.",
       "properties": {
         "id": {
           "type": "string"
@@ -6771,6 +7066,17 @@
           "default": false,
           "description": "The model can see images.",
           "type": "boolean"
+        },
+        "waiting": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Waiting"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "A model call in flight right now, and how long it has been waiting. `None` between\ncalls. This is what tells \"waiting on the model\" from \"hung\": a session sitting here\nlonger than the request timeout is about to fail, not working."
         }
       },
       "required": [
@@ -7157,6 +7463,37 @@
         "input_tokens",
         "output_tokens",
         "model_calls"
+      ],
+      "type": "object"
+    },
+    "Waiting": {
+      "description": "A model call the engine is waiting on: which attempt, how long so far, and the provider's\nown `retry-after` when a busy answer gave one.",
+      "properties": {
+        "attempt": {
+          "description": "1 for the first try, 2 for the first retry, and so on.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "retry_after_secs": {
+          "description": "The provider asked us to wait this long (its `retry-after`), when it said.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "seconds": {
+          "description": "Seconds since this attempt started.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "seconds",
+        "attempt"
       ],
       "type": "object"
     },

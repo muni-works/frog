@@ -477,6 +477,9 @@ async fn text_turn_lifecycle() {
         [
             "turn_started",
             "progress",
+            // The call is in flight: a status naming the wait, so a client can say
+            // "waiting on the model" instead of showing an unexplained gap.
+            "status",
             "item_started",
             "item_delta",
             "item_completed",
@@ -487,8 +490,25 @@ async fn text_turn_lifecycle() {
             "idle"
         ]
     );
+    // The one mid-turn status is the wait, and it carries the attempt.
+    assert!(matches!(&evs[2].event, Event::Status(s) if s.waiting.as_ref().is_some_and(|w| w.attempt == 1)));
+    // The end-of-turn status says nothing is waiting any more. Found by position rather than
+    // by index: it's the status after `turn_ended`, and pinning an index here makes every
+    // added event a failure that says nothing about the wait.
+    let ended = evs
+        .iter()
+        .position(|e| matches!(e.event, Event::TurnEnded { .. }))
+        .expect("a turn ends");
+    let after = evs[ended..]
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::Status(s) => Some(s),
+            _ => None,
+        })
+        .expect("the turn's end is followed by a status");
+    assert!(after.waiting.is_none(), "still waiting after the turn: {after:?}");
     assert!(matches!(
-        &evs[5].event,
+        &evs[6].event,
         Event::Titled { title } if title == "hi"
     ));
     let seqs: Vec<u64> = evs.iter().map(|e| e.seq).collect();
@@ -496,20 +516,34 @@ async fn text_turn_lifecycle() {
         seqs.windows(2).all(|w| w[1] == w[0] + 1),
         "seq must be contiguous: {seqs:?}"
     );
+    // The reply's own item, wherever it sits: started, streamed, completed.
+    let reply_evs: Vec<&Event> = evs
+        .iter()
+        .map(|e| &e.event)
+        .filter(|e| {
+            matches!(
+                e,
+                Event::ItemStarted { .. } | Event::ItemDelta { .. } | Event::ItemCompleted { .. }
+            )
+        })
+        .collect();
+    assert_eq!(reply_evs.len(), 3, "{reply_evs:?}");
     assert!(
-        matches!(&evs[4].event, Event::ItemCompleted { item: Item::Message { text }, .. } if text == "hello")
+        matches!(reply_evs[2], Event::ItemCompleted { item: Item::Message { text }, .. } if text == "hello")
     );
     assert!(matches!(
-        &evs[6].event,
-        Event::TurnEnded {
+        evs.iter()
+            .find(|e| matches!(e.event, Event::TurnEnded { .. }))
+            .map(|e| &e.event),
+        Some(Event::TurnEnded {
             reason: EndReason::Complete,
             ..
-        }
+        })
     ));
     // The delta and the completion refer to the same item.
-    let ids: Vec<&str> = evs[2..5]
+    let ids: Vec<&str> = reply_evs
         .iter()
-        .map(|e| match &e.event {
+        .map(|e| match e {
             Event::ItemStarted { id, .. }
             | Event::ItemDelta { id, .. }
             | Event::ItemCompleted { id, .. } => id.as_str(),
@@ -905,12 +939,12 @@ async fn headless_denial_is_reported_and_turn_continues() {
 async fn incomplete_stream_is_retried_before_failing() {
     // A stream that ended before the terminal chunk is retried with backoff; when every
     // attempt dies the same way, the typed error ends the turn.
-    let script = (0..4)
+    let script = (0..6)
         .map(|_| reply(vec![text("partial")], Stop::Incomplete))
         .collect();
     let mut h = engine(script, true);
     let evs = run(&mut h, "hi").await;
-    // Three retries, and ONE notice for the whole storm (docs/design/model-policy.md).
+    // Five retries, and ONE notice for the whole storm (docs/design/model-policy.md).
     let notices: Vec<&str> = evs
         .iter()
         .filter_map(|e| match &e.event {
@@ -919,7 +953,7 @@ async fn incomplete_stream_is_retried_before_failing() {
         })
         .collect();
     assert_eq!(notices.len(), 1, "{notices:?}");
-    assert!(notices[0].contains("retrying (up to 3 times)"), "{notices:?}");
+    assert!(notices[0].contains("— retrying"), "{notices:?}");
     assert!(evs.iter().any(|e| matches!(
         &e.event,
         Event::TurnEnded {
@@ -945,7 +979,7 @@ async fn a_gateway_error_before_any_output_is_retried() {
     // (docs/design/model-policy.md) — and the turn completed with the good reply.
     let notices = notices(&evs);
     assert_eq!(notices.len(), 1, "{notices:?}");
-    assert!(notices[0].contains("retrying (up to 3 times)"), "{notices:?}");
+    assert!(notices[0].contains("— retrying"), "{notices:?}");
     assert!(evs.iter().any(|e| matches!(
         e.event,
         Event::TurnEnded {
@@ -1181,27 +1215,27 @@ async fn a_second_billing_refusal_ends_the_turn_typed() {
     )));
 }
 
-/// A busy provider retries 1 s, 2 s, 4 s and no further: four attempts, one notice for the
-/// whole storm (docs/design/model-policy.md).
+/// A busy provider retries after 1, 2, 4, 8 and 16 s and no further: six attempts, one notice
+/// for the whole storm (docs/design/model-policy.md).
 #[tokio::test(start_paused = true)]
-async fn a_rate_limited_provider_backs_off_one_two_four_and_stops() {
+async fn a_rate_limited_provider_backs_off_and_stops() {
     let mut p = Profile::new(ProviderKind::Ollama, "test");
     p.tool_mode = ToolMode::Native;
-    let fails = (0..6)
+    let fails = (0..8)
         .map(|_| scripted::Fail::http(429, "{\"error\":{\"message\":\"deepseek-v4.1-flash is busy\"}}"))
         .collect();
     let (mut h, _, attempts) = engine_profile_timed(fails, vec![], p);
     let evs = run(&mut h, "hi").await;
     let starts = attempts.lock().unwrap().clone();
-    assert_eq!(starts.len(), 4, "three retries after the first attempt");
+    assert_eq!(starts.len(), 6, "five retries after the first attempt");
     let gaps: Vec<u64> = starts
         .windows(2)
         .map(|w| (w[1] - w[0]).as_secs())
         .collect();
-    assert_eq!(gaps, [1, 2, 4], "{gaps:?}");
+    assert_eq!(gaps, [1, 2, 4, 8, 16], "{gaps:?}");
     let notices = notices(&evs);
     assert_eq!(notices.len(), 1, "one notice for the storm: {notices:?}");
-    assert!(notices[0].contains("retrying (up to 3 times)"), "{notices:?}");
+    assert!(notices[0].contains("— retrying"), "{notices:?}");
     assert!(evs.iter().any(|e| matches!(
         &e.event,
         Event::TurnEnded {
@@ -1213,11 +1247,316 @@ async fn a_rate_limited_provider_backs_off_one_two_four_and_stops() {
     )));
 }
 
+/// frog cloud's busy answer, as its gateway sends it.
+const CLOUD_BUSY: &str = "{\"error\":{\"message\":\"deepseek-v4.1-flash is busy right now\",\"type\":\"rate_limit_error\",\"code\":429}}";
+/// The gateway's upstream billing error: a 502 whose words say 402.
+const CLOUD_UPSTREAM_402: &str = "{\"error\":{\"message\":\"deepseek-v4.1-flash answered 402, retry\",\"type\":\"api_error\",\"code\":502}}";
+
+/// A session on `spec` (a Frog Cloud profile) whose provider fails `fails` first. Frog Cloud
+/// lists `glm-5.3-flash` beside the session's model for this test's thread, and `stand_in`
+/// is what that model answers with if the engine falls back to it.
+struct CloudRig {
+    h: Handle,
+    /// Each attempt on the session's own model.
+    attempts: Arc<Mutex<Vec<tokio::time::Instant>>>,
+    /// Each attempt on the stand-in.
+    alt_attempts: Arc<Mutex<Vec<tokio::time::Instant>>>,
+}
+
+fn cloud_rig(
+    spec: &str,
+    fails: Vec<scripted::Fail>,
+    script: Vec<Response>,
+    stand_in: Option<(Vec<scripted::Fail>, Vec<Response>)>,
+    cloud_fallback: bool,
+) -> CloudRig {
+    let listed = |id: &str| crate::catalog::Model {
+        spec: format!("cloud/{id}"),
+        provider: "cloud".into(),
+        id: id.into(),
+        name: id.into(),
+        context: Some(200_000),
+        tools: true,
+        ..Default::default()
+    };
+    crate::catalog::TEST_CLOUD.with(|c| {
+        *c.borrow_mut() = Some(vec![listed("deepseek-v4.1-flash"), listed("glm-5.3-flash")])
+    });
+    let mut profile = Profile::new(ProviderKind::Openai, "deepseek-v4.1-flash");
+    profile.base_url = Some("https://api.frog.toys/v1".into());
+    profile.tool_mode = ToolMode::Native;
+    let opts = Options {
+        cfg: Config {
+            hermetic: true,
+            cloud_fallback,
+            ..Config::default()
+        },
+        profile_name: spec.into(),
+        profile,
+        cwd: std::env::temp_dir(),
+        mode: Mode::Default,
+        can_ask: true,
+        resume: None,
+        store: None,
+        sandbox: false,
+        rich: false,
+        subagent: false,
+        chat: false,
+    };
+    let client = scripted::Client::new(script);
+    *client.fails.lock().unwrap() = fails.into();
+    let attempts = client.attempts.clone();
+    let alt = scripted::Client::new(stand_in.as_ref().map_or_else(Vec::new, |s| s.1.clone()));
+    let alt_attempts = alt.attempts.clone();
+    if let Some((alt_fails, _)) = stand_in {
+        *alt.fails.lock().unwrap() = alt_fails.into();
+        *client.fallback.lock().unwrap() = Some(Box::new(alt));
+    }
+    CloudRig {
+        h: start(opts, Provider::Scripted(client)).unwrap(),
+        attempts,
+        alt_attempts,
+    }
+}
+
+fn completed_messages(evs: &[Envelope]) -> Vec<String> {
+    evs.iter()
+        .filter_map(|e| match &e.event {
+            Event::ItemCompleted {
+                item: Item::Message { text },
+                ..
+            } => Some(text.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn end_reason(evs: &[Envelope]) -> EndReason {
+    evs.iter()
+        .find_map(|e| match &e.event {
+            Event::TurnEnded { reason, .. } => Some(reason.clone()),
+            _ => None,
+        })
+        .expect("the turn ended")
+}
+
+/// Frog Cloud says "busy" twice and then answers: the turn completes, and what the person
+/// saw meanwhile is one plain line and a "retrying" working state — never the JSON
+/// (17 of 320 turns ended on this 429 on 2026-11-13).
+#[tokio::test(start_paused = true)]
+async fn a_busy_frog_cloud_is_retried_quietly_and_the_turn_completes() {
+    let mut rig = cloud_rig(
+        "cloud/deepseek-v4.1-flash",
+        vec![scripted::Fail::http(429, CLOUD_BUSY), scripted::Fail::http(429, CLOUD_BUSY)],
+        vec![reply(vec![text("all good")], Stop::End)],
+        None,
+        true,
+    );
+    let evs = run(&mut rig.h, "hi").await;
+    assert_eq!(end_reason(&evs), EndReason::Complete);
+    assert_eq!(completed_messages(&evs), ["all good"]);
+    assert_eq!(rig.attempts.lock().unwrap().len(), 3);
+    assert_eq!(notices(&evs), ["Frog Cloud is busy — retrying"]);
+    assert!(evs.iter().any(|e| matches!(
+        &e.event,
+        Event::Progress { label, .. } if label == "busy, retrying…"
+    )));
+    let waited: Vec<u32> = evs
+        .iter()
+        .filter_map(|e| match &e.event {
+            Event::Status(s) => s.waiting.as_ref().map(|w| w.attempt),
+            _ => None,
+        })
+        .collect();
+    assert!(waited.contains(&2) && waited.contains(&3), "{waited:?}");
+}
+
+/// A busy answer's `retry-after` is the wait: 7 s where our own backoff would be 1 s, and an
+/// hour is capped at a minute.
+#[tokio::test(start_paused = true)]
+async fn a_retry_after_is_honored_and_capped() {
+    let busy = |retry_after| scripted::Fail::Busy {
+        status: 429,
+        body: CLOUD_BUSY.into(),
+        retry_after,
+    };
+    let mut rig = cloud_rig(
+        "cloud/deepseek-v4.1-flash",
+        vec![busy(7), busy(3600)],
+        vec![reply(vec![text("all good")], Stop::End)],
+        None,
+        true,
+    );
+    let evs = run(&mut rig.h, "hi").await;
+    assert_eq!(end_reason(&evs), EndReason::Complete);
+    let starts = rig.attempts.lock().unwrap().clone();
+    let gaps: Vec<u64> = starts.windows(2).map(|w| (w[1] - w[0]).as_secs()).collect();
+    assert_eq!(gaps, [7, 60]);
+    assert!(evs.iter().any(|e| matches!(
+        &e.event,
+        Event::Status(s) if s.waiting.as_ref().is_some_and(|w| w.retry_after_secs == Some(7))
+    )));
+}
+
+/// The gateway's `502 "<model> answered 402, retry"` is its upstream's bill, not the
+/// user's: retried like any 5xx, with no billing line and no "out of credit" ending.
+#[tokio::test(start_paused = true)]
+async fn the_gateways_upstream_402_is_retried_and_is_not_the_users_billing() {
+    let mut rig = cloud_rig(
+        "cloud/deepseek-v4.1-flash",
+        vec![scripted::Fail::http(502, CLOUD_UPSTREAM_402)],
+        vec![reply(vec![text("all good")], Stop::End)],
+        None,
+        true,
+    );
+    let evs = run(&mut rig.h, "hi").await;
+    assert_eq!(end_reason(&evs), EndReason::Complete);
+    assert_eq!(notices(&evs), ["Frog Cloud had a problem upstream — retrying"]);
+    assert!(!evs.iter().any(|e| matches!(e.event, Event::BillingLimit { .. })));
+}
+
+/// The session's Frog Cloud model stays busy through every retry: another Frog Cloud model
+/// answers that call, the transcript says so, and the turn completes. The next call goes
+/// straight to the stand-in instead of spending the whole budget on the busy model again.
+#[tokio::test(start_paused = true)]
+async fn a_frog_cloud_model_busy_past_every_retry_hands_the_call_to_another() {
+    let mut rig = cloud_rig(
+        "cloud/deepseek-v4.1-flash",
+        (0..6).map(|_| scripted::Fail::http(429, CLOUD_BUSY)).collect(),
+        vec![],
+        Some((
+            vec![],
+            vec![
+                reply(vec![text("from the stand-in")], Stop::End),
+                reply(vec![text("again from the stand-in")], Stop::End),
+            ],
+        )),
+        true,
+    );
+    let evs = run(&mut rig.h, "hi").await;
+    assert_eq!(end_reason(&evs), EndReason::Complete);
+    assert_eq!(completed_messages(&evs), ["from the stand-in"]);
+    assert_eq!(rig.attempts.lock().unwrap().len(), 6, "the whole budget first");
+    assert_eq!(rig.alt_attempts.lock().unwrap().len(), 1);
+    assert_eq!(
+        notices(&evs),
+        [
+            "Frog Cloud is busy — retrying",
+            "Frog Cloud: deepseek-v4.1-flash is still busy, so glm-5.3-flash is answering for now. The session's model hasn't changed.",
+        ]
+    );
+    // The session's model is what it was: nothing switched it.
+    assert!(!evs.iter().any(|e| matches!(e.event, Event::ModelChanged { .. })));
+    let evs = turn_again(&mut rig.h, "and again").await;
+    assert_eq!(end_reason(&evs), EndReason::Complete);
+    assert_eq!(completed_messages(&evs), ["again from the stand-in"]);
+    assert_eq!(rig.attempts.lock().unwrap().len(), 6, "the busy model isn't asked again yet");
+    assert_eq!(rig.alt_attempts.lock().unwrap().len(), 2);
+    assert!(notices(&evs).is_empty(), "said once: {:?}", notices(&evs));
+}
+
+/// The policy says no: with `cloud_fallback` off the model is never swapped, and a BYOK
+/// session never hops to Frog Cloud whatever is listed. The turn ends instead.
+#[tokio::test(start_paused = true)]
+async fn nothing_falls_back_when_the_policy_does_not_allow_it() {
+    for (spec, allowed) in [("cloud/deepseek-v4.1-flash", false), ("vercel/openai/gpt-5", true)] {
+        let mut rig = cloud_rig(
+            spec,
+            (0..6).map(|_| scripted::Fail::http(429, CLOUD_BUSY)).collect(),
+            vec![],
+            Some((vec![], vec![reply(vec![text("from the stand-in")], Stop::End)])),
+            allowed,
+        );
+        let evs = run(&mut rig.h, "hi").await;
+        assert!(
+            matches!(
+                end_reason(&evs),
+                EndReason::Error { error: EngineError::Provider { status: 429, .. } }
+            ),
+            "{spec}"
+        );
+        assert_eq!(rig.alt_attempts.lock().unwrap().len(), 0, "{spec}");
+        assert_eq!(notices(&evs).len(), 1, "{spec}: only the retry line");
+    }
+}
+
+/// The stand-in is busy too (one retry of its own): the turn ends, on the session model's
+/// own trouble, in plain words.
+#[tokio::test(start_paused = true)]
+async fn a_stand_in_that_fails_too_ends_the_turn_on_the_sessions_own_error() {
+    let unavailable = "{\"error\":{\"message\":\"no inference capacity right now, retry shortly\",\"type\":\"service_unavailable\",\"code\":503}}";
+    let mut rig = cloud_rig(
+        "cloud/deepseek-v4.1-flash",
+        (0..6).map(|_| scripted::Fail::http(429, CLOUD_BUSY)).collect(),
+        vec![reply(vec![text("never reached")], Stop::End)],
+        Some((
+            (0..4).map(|_| scripted::Fail::http(503, unavailable)).collect(),
+            vec![],
+        )),
+        true,
+    );
+    let evs = run(&mut rig.h, "hi").await;
+    assert_eq!(rig.attempts.lock().unwrap().len(), 6);
+    assert_eq!(rig.alt_attempts.lock().unwrap().len(), 2, "one retry on the stand-in");
+    let EndReason::Error { error: EngineError::Provider { status, message } } = end_reason(&evs)
+    else {
+        panic!("{:?}", end_reason(&evs));
+    };
+    assert_eq!(status, 429);
+    assert!(message.starts_with("Frog Cloud was too busy to answer (deepseek-v4.1-flash)"), "{message}");
+    // The next turn starts on the session's own model again: the detour is over.
+    let evs = turn_again(&mut rig.h, "again").await;
+    assert_eq!(completed_messages(&evs), ["never reached"]);
+    assert_eq!(rig.attempts.lock().unwrap().len(), 7);
+}
+
+/// When a turn does end on a busy or broken Frog Cloud, the error says what happened, that
+/// the work is kept and what to do — never the gateway's JSON, and an upstream 402 is never
+/// called the user's billing (15 turns ended on that 502 on 2026-11-13).
+#[tokio::test(start_paused = true)]
+async fn a_turn_that_ends_on_frog_cloud_trouble_says_so_plainly() {
+    for (status, body, opening) in [
+        (429, CLOUD_BUSY, "Frog Cloud was too busy to answer (deepseek-v4.1-flash), even after retrying."),
+        (
+            502,
+            CLOUD_UPSTREAM_402,
+            "Frog Cloud had a problem upstream (deepseek-v4.1-flash), even after retrying. It isn't your account or your billing.",
+        ),
+    ] {
+        let mut rig = cloud_rig(
+            "cloud/deepseek-v4.1-flash",
+            (0..6).map(|_| scripted::Fail::http(status, body)).collect(),
+            vec![],
+            None,
+            true,
+        );
+        let evs = run(&mut rig.h, "hi").await;
+        let EndReason::Error { error } = end_reason(&evs) else {
+            panic!("{status}: {:?}", end_reason(&evs));
+        };
+        let EngineError::Provider { status: got, message } = &error else {
+            panic!("{status}: {error:?}");
+        };
+        assert_eq!(*got, status);
+        assert!(message.starts_with(opening), "{message}");
+        assert!(
+            message.ends_with("Your work so far is kept: send a message in a minute to carry on from here, or pick another model."),
+            "{message}"
+        );
+        assert!(!message.contains('{') && !message.contains("402"), "{message}");
+        // What a client that prints the error shows (the CLI): the line alone.
+        assert_eq!(error.to_string(), *message);
+        for n in notices(&evs) {
+            assert!(!n.contains('{'), "{n}");
+        }
+    }
+}
+
 #[tokio::test(start_paused = true)]
 async fn a_mid_stream_error_retries_only_up_to_budget() {
-    // The gateway keeps failing: 3 retries with backoff, then the turn ends with the
+    // The gateway keeps failing: 5 retries with backoff, then the turn ends with the
     // typed error.
-    let fails = (0..=3)
+    let fails = (0..=5)
             .map(|_| {
                 scripted::Fail::partial(
                     "partial",
@@ -1227,13 +1566,13 @@ async fn a_mid_stream_error_retries_only_up_to_budget() {
             .collect();
     let mut h = engine_fail(fails, vec![]);
     let evs = run(&mut h, "hi").await;
-    // Three retries, ONE notice for the whole storm (docs/design/model-policy.md).
+    // Five retries, ONE notice for the whole storm (docs/design/model-policy.md).
     let retries = evs
         .iter()
         .filter(|e| {
             matches!(
                 e.event,
-                Event::Notice { message: ref m, .. } if m.contains("retrying (up to 3 times)")
+                Event::Notice { message: ref m, .. } if m.contains("— retrying")
             )
         })
         .count();
@@ -1243,7 +1582,7 @@ async fn a_mid_stream_error_retries_only_up_to_budget() {
         evs.iter()
             .filter(|e| matches!(e.event, Event::ItemsDiscarded { .. }))
             .count(),
-        4
+        6
     );
     assert!(evs.iter().any(|e| matches!(
         &e.event,
@@ -1301,12 +1640,12 @@ async fn a_connection_reset_mid_body_is_retried() {
     )));
 }
 
-/// The reset keeps killing the body: 3 retries with backoff inside the one retry budget, one
+/// The reset keeps killing the body: 5 retries with backoff inside the one retry budget, one
 /// notice for the storm, every partial discarded, then the existing failure path — the typed
 /// Provider error (classified from the stream error, status 502), not a new one.
 #[tokio::test(start_paused = true)]
 async fn a_connection_reset_exhausting_the_budget_ends_with_the_existing_failure_path() {
-    let fails = (0..=3)
+    let fails = (0..=5)
         .map(|_| scripted::Fail::partial("partial", "connection reset by peer"))
         .collect();
     let mut h = engine_fail(fails, vec![]);
@@ -1319,12 +1658,12 @@ async fn a_connection_reset_exhausting_the_budget_ends_with_the_existing_failure
         })
         .collect();
     assert_eq!(notices.len(), 1, "{notices:?}");
-    assert!(notices[0].contains("retrying (up to 3 times)"), "{notices:?}");
+    assert!(notices[0].contains("— retrying"), "{notices:?}");
     assert_eq!(
         evs.iter()
             .filter(|e| matches!(e.event, Event::ItemsDiscarded { .. }))
             .count(),
-        4,
+        6,
         "every failed attempt discarded its partial"
     );
     assert!(evs.iter().any(|e| matches!(
@@ -1459,7 +1798,13 @@ async fn a_real_reset_mid_body_is_retried_to_a_clean_reply() {
 /// directly: a decode-kind error over a body read (headers arrived, the body stream broke) is
 /// retryable and classifies as a Connection error; a connect failure (nothing answered) is
 /// neither.
-#[tokio::test(start_paused = true)]
+///
+/// **Not `start_paused`.** This test speaks to a real loopback socket, and under a paused clock
+/// tokio auto-advances time whenever no task is ready — so the client's `connect_timeout` can
+/// fire before the spawned accept task has had its turn, and the test fails with a spurious
+/// `ConnectError(TimedOut)`: 4 runs in 6, measured on clean main. It has no timer of its own to
+/// fake; the only clock it touches is the socket's.
+#[tokio::test]
 async fn a_broken_body_stream_is_retryable_and_a_connect_failure_is_not() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     // The real reset, captured at the sse layer's own shape: read the body from a server that
@@ -1518,7 +1863,7 @@ async fn a_broken_body_stream_is_retryable_and_a_connect_failure_is_not() {
     // Both are the network, not frog: a connect failure classifies as Connection, with the
     // provider's own message underneath (the decode error was asserted retryable above).
     assert!(matches!(
-        classify(&refused),
+        classify("test", &refused),
         EngineError::Connection { .. }
     ));
 }
@@ -1931,6 +2276,27 @@ async fn titled_sessions_are_not_renamed_by_the_fallback() {
             .count(),
         1
     );
+}
+
+/// The refusal state's override is process-wide, so the tests that use it take turns.
+static REFUSALS: Mutex<()> = Mutex::new(());
+
+/// A scratch dir for MCP refusal state, held for the test's life: the lock keeps the tests
+/// that use it from racing, and dropping it restores the real data dir.
+struct RefusalDir(#[allow(dead_code)] std::sync::MutexGuard<'static, ()>);
+
+impl RefusalDir {
+    fn new() -> Self {
+        let guard = REFUSALS.lock().unwrap_or_else(|e| e.into_inner());
+        crate::mcp::refusals_in(Some(tmp_store().join("refusals")));
+        Self(guard)
+    }
+}
+
+impl Drop for RefusalDir {
+    fn drop(&mut self) {
+        crate::mcp::refusals_in(None);
+    }
 }
 
 fn tmp_store() -> PathBuf {
@@ -2534,6 +2900,72 @@ async fn shutdown(mut h: Handle) {
     while h.events.recv().await.is_some() {}
 }
 
+/// The session's own command removed the folder its shell stood in (an agent cleaning up the
+/// worktree it had `cd`-ed into — "frog manager", 2026-11-14). That's not news to anyone: no
+/// warning row, the shell is back at the session root at once, and the model reads why in
+/// that call's own result. The next command runs from the root without a notice.
+#[tokio::test]
+async fn removing_its_own_cwd_falls_back_quietly() {
+    let base = std::env::temp_dir().join(format!("frog-cwd-self-{}", session::new_id()));
+    let project = base.join("project");
+    std::fs::create_dir_all(project.join("wt")).unwrap();
+    let call = |id: &str, cmd: &str| Block::ToolUse {
+        id: id.into(),
+        name: "Bash".into(),
+        input: json!({ "command": cmd }),
+    };
+    let script = vec![
+        reply(vec![call("c", "cd wt")], Stop::ToolUse),
+        reply(vec![call("r", "rm -rf \"$PWD\"")], Stop::ToolUse),
+        reply(vec![call("e", "echo still-here")], Stop::ToolUse),
+        reply(vec![text("done")], Stop::End),
+    ];
+    let mut profile = Profile::new(ProviderKind::Ollama, "test");
+    profile.tool_mode = ToolMode::Native;
+    let opts = Options {
+        cfg: Config {
+            hermetic: true,
+            ..Config::default()
+        },
+        profile_name: "test".into(),
+        profile,
+        cwd: project.clone(),
+        mode: Mode::Yolo,
+        can_ask: true,
+        resume: None,
+        store: None,
+        sandbox: false,
+        rich: false,
+        subagent: false,
+        chat: false,
+    };
+    let mut h = start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap();
+    let evs = run(&mut h, "clean up").await;
+    assert!(!project.join("wt").exists());
+    let notices = notices(&evs);
+    assert!(
+        !notices.iter().any(|n| n.contains("is gone")),
+        "a warning row for the session's own cleanup: {notices:?}"
+    );
+    let outputs: Vec<&str> = evs
+        .iter()
+        .filter_map(|e| match &e.event {
+            Event::ItemCompleted {
+                item: Item::ToolCall { name, output, .. },
+                ..
+            } if name == "Bash" => Some(output.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        outputs.iter().any(|o| o.contains("back in the session root")),
+        "{outputs:?}"
+    );
+    assert!(outputs.iter().any(|o| o.contains("still-here")), "{outputs:?}");
+    shutdown(h).await;
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 /// A working directory deleted out from under the session (a worktree cleaned up) would
 /// fail every Bash call with "No such file or directory", even `echo`. The tool falls back
 /// to the session root and says so — to the user as a notice, and to the model in its next
@@ -2902,6 +3334,104 @@ async fn continue_after_a_crash_runs_a_new_turn_with_the_note() {
 /// turn 1, the log keeps its `TurnStarted` input and the user's message, so the prompt can be
 /// replayed — here proven by a fresh engine on the same store, whose next turn carries the
 /// prompt (a `Continue` on the repaired history runs it).
+/// A session waiting on the model says so: `Status.waiting` names the attempt and how long,
+/// so a slow or dead call reads as "waiting on the model", not as an unexplained stall.
+#[tokio::test]
+async fn a_call_in_flight_reports_as_waiting_on_the_model() {
+    use crate::protocol::Waiting;
+    let dir = tmp_store();
+    let mut profile = Profile::new(ProviderKind::Ollama, "test");
+    profile.tool_mode = ToolMode::Native;
+    let mut client = scripted::Client::new(vec![reply(vec![text("done")], Stop::End)]);
+    let hold = Arc::new((
+        std::sync::atomic::AtomicBool::new(true),
+        std::sync::atomic::AtomicBool::new(false),
+    ));
+    client.hold = Some(hold.clone());
+    let sent = client.sent.clone();
+    let opts = Options {
+        cfg: Config {
+            hermetic: true,
+            ..Config::default()
+        },
+        profile_name: "test".into(),
+        profile,
+        cwd: dir.clone(),
+        mode: Mode::AcceptEdits,
+        can_ask: true,
+        resume: None,
+        store: Some(dir.clone()),
+        sandbox: false,
+        rich: false,
+        subagent: false,
+        chat: false,
+    };
+    let mut h = start(opts, Provider::Scripted(client)).unwrap();
+    while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+    h.ops
+        .send(Op::Submit {
+            text: "hi".into(),
+            images: Vec::new(),
+            more: Vec::new(),
+        })
+        .unwrap();
+    // The request is in: the call is mid-flight, and the status the engine published says so.
+    while sent.lock().unwrap().is_empty() {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let mut mid = None;
+    while let Ok(env) = h.events.try_recv() {
+        if let Event::Status(s) = &env.event
+            && s.waiting.is_some()
+        {
+            mid = s.waiting.clone();
+        }
+    }
+    let w = mid.expect("a call in flight publishes a waiting status");
+    assert_eq!(w.attempt, 1, "the first try");
+    assert!(
+        w.retry_after_secs.is_none(),
+        "this provider gave no retry-after"
+    );
+    // Release the call; the turn runs to completion and the wait clears.
+    hold.1.store(true, std::sync::atomic::Ordering::SeqCst);
+    let mut after = None;
+    let mut ended = false;
+    while let Some(env) = h.events.recv().await {
+        if let Event::Status(s) = &env.event {
+            after = Some(s.waiting.clone());
+        }
+        if matches!(env.event, Event::TurnEnded { .. }) {
+            ended = true;
+        }
+        if ended && after.is_some() {
+            break;
+        }
+        if matches!(env.event, Event::Idle) {
+            break;
+        }
+    }
+    assert_eq!(
+        after,
+        Some(None),
+        "the turn's closing status must not still say waiting"
+    );
+    shutdown(h).await;
+
+    // The wire shape: absent retry-after is omitted, not sent as null.
+    let bare = Waiting {
+        seconds: 1,
+        attempt: 1,
+        retry_after_secs: None,
+    };
+    assert!(
+        serde_json::to_value(&bare)
+            .unwrap()
+            .get("retry_after_secs")
+            .is_none()
+    );
+}
+
 #[tokio::test]
 async fn a_birth_death_keeps_turn_ones_prompt_in_the_log_for_replay() {
     let dir = tmp_store();
@@ -3534,6 +4064,13 @@ async fn stale_reads_are_pruned_when_the_turn_ends_and_logged() {
         .into_iter()
         .filter(|s| crate::kids::handles(&s.name))
         .collect();
+    // Rarely used tools are deferred: the catalog names them, ToolSearch loads them.
+    let (deferred, mut specs): (Vec<_>, Vec<_>) =
+        [tools::specs(), vec![crate::present::spec(false)], local_sessions]
+            .concat()
+            .into_iter()
+            .partition(|s| tools::deferred::is_deferred(&s.name));
+    specs.push(crate::mcp::search_spec());
     let fixed = fixed_chars(
         &(prompt::system_prompt(
             &dir,
@@ -3542,8 +4079,9 @@ async fn stale_reads_are_pruned_when_the_turn_ends_and_logged() {
                 ..Config::default()
             },
             "test",
-        ) + tools::sessions::LOCAL_PROMPT),
-        &[tools::specs(), vec![crate::present::spec(false)], local_sessions].concat(),
+        ) + tools::sessions::LOCAL_PROMPT
+            + &tools::deferred::catalog(&deferred)),
+        &specs,
     );
     let read_chars: usize = big.lines().map(|l| 6 + 1 + l.len() + 1).sum();
     let window = context::Estimator::default()
@@ -4070,7 +4608,7 @@ async fn long_tool_turn_compacts_again_after_new_messages_fill_the_window() {
     let work = |id: &str| {
         reply(
             vec![
-                text(&"Long implementation analysis. ".repeat(1200)),
+                text(&"Long implementation analysis. ".repeat(650)),
                 Block::ToolUse {
                     id: id.into(),
                     name: "Read".into(),
@@ -4456,8 +4994,8 @@ async fn loaded_mcp_tools_survive_an_engine_respawn() {
     let evs = run_now(&mut h, "and again").await;
     let tools = offered_tools(&sent.lock().unwrap());
     assert!(
-        tools.contains(&"McpTools".to_string()),
-        "McpTools wasn't offered after the respawn: {tools:?}"
+        tools.contains(&"ToolSearch".to_string()),
+        "ToolSearch wasn't offered after the respawn: {tools:?}"
     );
     assert!(
         tools.contains(&"mcp__slow__tool7".to_string()),
@@ -4484,8 +5022,8 @@ async fn mcp_tools_is_offered_before_any_server_connects() {
     run(&mut h, "first").await;
     let tools = offered_tools(&sent.lock().unwrap());
     assert!(
-        tools.contains(&"McpTools".to_string()),
-        "McpTools wasn't offered before the server connected: {tools:?}"
+        tools.contains(&"ToolSearch".to_string()),
+        "ToolSearch wasn't offered before the server connected: {tools:?}"
     );
     shutdown(h).await;
 }
@@ -4622,6 +5160,33 @@ async fn a_resume_drops_timers_the_dead_engine_had_with_one_line() {
     assert!(out.starts_with("Timer mon-2 set"), "ids continue: {out}");
     assert!(!out.contains("Also pending"), "nothing re-armed: {out}");
     shutdown(h).await;
+}
+
+#[tokio::test]
+async fn a_json_mode_call_stops_waiting_when_the_answer_lands() {
+    // The json-mode arm of the call returns early; if it doesn't clear the in-flight marker,
+    // the turn ends still claiming to wait on the model — a session that looks stuck forever.
+    let script = vec![reply(
+        vec![text(r#"{"thought":"","action":{"answer":"done"}}"#)],
+        Stop::End,
+    )];
+    let mut h = engine_mode(script, ToolMode::Json);
+    let evs = run(&mut h, "hi").await;
+    let ended = evs
+        .iter()
+        .position(|e| matches!(e.event, Event::TurnEnded { .. }))
+        .expect("a turn ends");
+    let after = evs[ended..]
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::Status(s) => Some(s),
+            _ => None,
+        })
+        .expect("the turn's end is followed by a status");
+    assert!(
+        after.waiting.is_none(),
+        "a json-mode call finished but the status still says it waits: {after:?}"
+    );
 }
 
 #[tokio::test]
@@ -5986,6 +6551,49 @@ async fn sessions_capability_offers_the_tools_and_frames_messages() {
     assert!(req.contains("no user authority"));
 }
 
+/// `Models`: one read-only call answering "what can I run right now?", offered in a project,
+/// running without a card, and saying per model whether its credential is live.
+#[tokio::test]
+async fn models_tool_lists_credentials_without_asking() {
+    let script = vec![
+        reply(
+            vec![Block::ToolUse {
+                id: "m".into(),
+                name: "Models".into(),
+                input: json!({}),
+            }],
+            Stop::ToolUse,
+        ),
+        reply(vec![text("ok")], Stop::End),
+    ];
+    let mut h = engine(script, true);
+    while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+    submit(&h, "what can I run?");
+    let mut saw_permission = None;
+    loop {
+        match h.events.recv().await.unwrap().event {
+            Event::PermissionRequest { id, name, .. } => {
+                saw_permission = Some(name);
+                h.ops
+                    .send(Op::Permission { id, decision: Decision::Deny, note: None })
+                    .unwrap();
+            }
+            Event::ItemCompleted {
+                item: Item::ToolCall { name, output, outcome, .. },
+                ..
+            } if name == "Models" => {
+                assert_eq!(outcome, ToolOutcome::Ok);
+                assert!(output.contains("credential:"), "{output}");
+                break;
+            }
+            Event::TurnEnded { .. } => panic!("the Models call never completed (saw card for {saw_permission:?})"),
+            _ => {}
+        }
+    }
+    shutdown(h).await;
+    assert!(saw_permission.is_none(), "a read-only tool never cards");
+}
+
 #[tokio::test]
 async fn archive_session_round_trips_through_the_client() {
     // ArchiveSession/UnarchiveSession are client-carried like the rest: the engine hands
@@ -6469,9 +7077,14 @@ mod egress_tests {
         let _ = std::fs::remove_dir_all(dir);
 
         // Leaving the sandbox past an enforced list asks in auto too; headless, it's denied.
+        // The command must not be a routine local step: where a shell sandbox exists
+        // (macOS), `echo hi` + `unsandboxed` is a needless escape and gets that wording.
         let (mut h, dir) = egress_engine(
             vec![
-                bash_call("out", json!({ "command": "echo hi", "unsandboxed": true })),
+                bash_call(
+                    "out",
+                    json!({ "command": "curl -sS https://pkgs.example.org/x", "unsandboxed": true }),
+                ),
                 reply(vec![text("ok")], Stop::End),
             ],
             true,
@@ -6555,22 +7168,27 @@ mod egress_tests {
         // The declared hosts are granted: the later call, which declares nothing, reaches them.
         assert!(egress_hits(&evs).is_empty(), "nothing was blocked");
         assert!(!tool_output(&evs, "after").contains("frog blocked"));
-        // The quiet line is in the transcript as info, not a warning.
+        // Leaving the sandbox restates a property of the call itself, so it belongs on the
+        // call's row, not as a second row: the transcript shows one record per shape, the
+        // `EgressWidened` event (durable, replayed) plus the row the client draws from it.
+        // A notice here rendered twice on the Mac ("Ran …" then "ⓘ Yolo: …").
         assert!(
-            evs.iter().any(|e| matches!(
+            !evs.iter().any(|e| matches!(
                 &e.event,
-                Event::Notice { level: Level::Info, message }
-                    if message.contains("yolo: `echo hi` ran outside the sandbox")
+                Event::Notice { message, .. }
+                    if message.contains("ran outside the sandbox")
             )),
-            "the sandbox line is a quiet info row"
+            "one row per call: no second notice restating the tool row"
         );
+        // The hosts variant is a notice: which hosts got granted this session is a fence
+        // state the user couldn't see otherwise (it can persist past the turn).
         assert!(
             evs.iter().any(|e| matches!(
                 &e.event,
                 Event::Notice { level: Level::Info, message }
                     if message.contains("reaches pkgs.example.org, now allowed this session")
             )),
-            "the hosts line is a quiet info row"
+            "the hosts line stays a quiet info row"
         );
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -6645,13 +7263,15 @@ mod egress_tests {
             vec![("both".to_string(), Vec::new(), true)],
             "one row: it left the sandbox"
         );
+        // The fact is the durable event, not a second notice row: a row for the call and a
+        // row for what the call already says is the double render this module exists to keep
+        // off the transcript.
         assert!(
-            evs.iter().any(|e| matches!(
+            !evs.iter().any(|e| matches!(
                 &e.event,
-                Event::Notice { level: Level::Info, message }
-                    if message.contains("`echo hi` ran outside the sandbox")
+                Event::Notice { message, .. } if message.contains("ran outside the sandbox")
             )),
-            "the row says what actually happened"
+            "leaving the sandbox rides the call's row, never a second notice"
         );
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -7987,16 +8607,27 @@ async fn edits_and_commands_never_start_early_nor_anything_after_them() {
     assert!(r2.contains("fn z()"), "{r2}");
 }
 
+/// A repeated JobOutput or Read is told what to do instead, in one line (the generic "change
+/// the arguments" sent models round again: ~20 repeats in a day's logs).
+#[test]
+fn a_repeated_call_names_the_fix_for_its_tool() {
+    let job = super::repeat_nudge("JobOutput", &json!({"id": "job-1"}), "job-1 (running)", 2);
+    assert!(job.contains("<job-done>") && job.contains("Monitor"), "{job}");
+    assert!(super::repeat_fix("Read").contains("offset/limit"));
+    assert!(super::repeat_fix("Grep").contains("Change the arguments"));
+}
+
 #[tokio::test(start_paused = true)]
 async fn a_broken_stream_discards_what_started_early() {
     let dir = tmp_store();
     std::fs::write(dir.join("a.rs"), "fn a() {}\n").unwrap();
+    // A Write, which needs the Read (an Edit with an exact old_string no longer does).
     let edit = Block::ToolUse {
         id: "e1".into(),
-        name: "Edit".into(),
-        input: json!({ "file_path": "a.rs", "old_string": "fn a()", "new_string": "fn z()" }),
+        name: "Write".into(),
+        input: json!({ "file_path": "a.rs", "content": "fn z() {}\n" }),
     };
-    let script = (0..4)
+    let script = (0..6)
         .map(|_| {
             // The read streams, then the stream ends without the server saying it's done;
             // every retry breaks the same way.
@@ -8031,7 +8662,7 @@ async fn a_broken_stream_discards_what_started_early() {
         )
     };
     assert!(!evs.iter().any(tool_item));
-    // The early read never counted: the edit still needs a read first.
+    // The early read never counted: the write still needs a read first.
     h.ops
         .send(Op::Submit {
             text: "edit it".into(),
@@ -8566,7 +9197,7 @@ async fn a_headless_childs_prompts_relay_through_the_parent_and_it_archives() {
     let start = call(
         "s",
         "StartSession",
-        json!({"title": "writer", "prompt": "create child.txt", "cwd": ".", "worktree": false}),
+        json!({"title": "writer", "prompt": "create child.txt", "cwd": ".", "worktree": false, "head_start": {"check": "test -f child.txt"}}),
     );
     let archive = call("a", "ArchiveSession", json!({"id": "writer"}));
     let script = vec![
@@ -8606,6 +9237,141 @@ async fn a_headless_childs_prompts_relay_through_the_parent_and_it_archives() {
         &e.event,
         Event::ChildSession { id, state, .. } if *id == child && state == "archived"
     )));
+    shutdown(h).await;
+}
+
+/// Ask back: a child unsure of its brief asks `SendMessage(to: "parent")` and keeps going.
+/// The question wakes the idle parent; the parent's answer reaches the child inside the
+/// same turn (at its next tool-call boundary), not as a turn after it finished.
+#[tokio::test]
+async fn a_child_asks_its_parent_and_gets_the_answer_mid_turn() {
+    let dir = tmp_store();
+    let store = dir.join(".store");
+    let ask = call(
+        "q",
+        "SendMessage",
+        json!({"to": "parent", "message": "tabs or spaces in child.txt?"}),
+    );
+    let write = call(
+        "w",
+        "Write",
+        json!({"file_path": "child.txt", "content": "hi\n"}),
+    );
+    script_child(
+        &dir,
+        vec![
+            reply(vec![ask], Stop::ToolUse),
+            reply(vec![write], Stop::ToolUse),
+            reply(vec![text("wrote child.txt with tabs")], Stop::End),
+        ],
+    );
+    let start = call(
+        "s",
+        "StartSession",
+        json!({"title": "asker", "prompt": "create child.txt", "cwd": ".", "worktree": false,
+               "head_start": {"files": ["child.txt: new"], "check": "test -f child.txt"}}),
+    );
+    let answer = call("a", "SendMessage", json!({"to": "asker", "message": "use tabs"}));
+    let script = vec![
+        reply(vec![start], Stop::ToolUse),
+        reply(vec![text("started")], Stop::End),
+        reply(vec![answer], Stop::ToolUse),
+        reply(vec![text("answered")], Stop::End),
+        reply(vec![text("thanks")], Stop::End),
+    ];
+    let mut h = engine_with(script, true, Some(store.clone()), None, None, dir.clone());
+    drive(&mut h, |e| matches!(e, Event::Idle)).await;
+    submit(&h, "have a session write it");
+    // The child's Write waits on a card relayed here; hold it until the parent has answered,
+    // so the answer lands while the child's turn is still running.
+    let mut held: Option<String> = None;
+    let mut answered = false;
+    let mut evs = Vec::new();
+    loop {
+        let env = tokio::time::timeout(Duration::from_secs(30), h.events.recv())
+            .await
+            .expect("timed out")
+            .unwrap();
+        match &env.event {
+            Event::PermissionRequest { id, .. } => held = Some(id.clone()),
+            Event::ItemCompleted { item: Item::ToolCall { name, output, .. }, .. }
+                if name == "SendMessage" && output.starts_with("Queued for asker") =>
+            {
+                answered = true
+            }
+            _ => {}
+        }
+        if answered && let Some(id) = held.take() {
+            h.ops
+                .send(Op::Permission { id, decision: Decision::Allow, note: None })
+                .unwrap();
+        }
+        let done = matches!(&env.event, Event::TurnStarted { input, .. } if input.contains("wrote child.txt"));
+        evs.push(env);
+        if done {
+            break;
+        }
+    }
+    drive(&mut h, |e| matches!(e, Event::Idle)).await;
+    let woke = evs.iter().find_map(|e| match &e.event {
+        Event::TurnStarted { input, .. } if input.contains("tabs or spaces") => Some(input.clone()),
+        _ => None,
+    });
+    assert!(woke.is_some_and(|w| w.contains("name=\"asker\"")), "the question woke the parent");
+    let child = evs
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::ChildSession { id, .. } => Some(id.clone()),
+            _ => None,
+        })
+        .unwrap();
+    let log = std::fs::read_dir(&store)
+        .unwrap()
+        .flatten()
+        .find(|f| f.file_name().to_string_lossy().contains(&child))
+        .map(|f| std::fs::read_to_string(f.path()).unwrap())
+        .expect("the child's log");
+    // Mid-turn: ingested as a follow-up of the running turn, and the child ran one turn.
+    let answer_at = log.find("use tabs").expect("the answer reached the child");
+    let first_end = log.find("\"turn_ended\",\"turn\":1").expect("turn 1 ended");
+    assert!(answer_at < first_end, "answer arrived after the turn, not mid-turn:\n{log}");
+    assert!(!log.contains("\"turn\":2"), "the answer started a second turn:\n{log}");
+    // Titled by the parent, not by the head start that opens its brief.
+    assert!(log.contains("\"title\":\"asker\""), "{log}");
+    // The child's first turn starts with the parent's head start.
+    assert!(log.contains("Head start from your parent"), "{log}");
+    shutdown(h).await;
+}
+
+/// A write-capable child with a one-line brief and no head start is refused before it
+/// exists: that brief is what left a child guessing for minutes.
+#[tokio::test]
+async fn a_bare_one_line_brief_is_refused() {
+    let dir = tmp_store();
+    let start = call(
+        "s",
+        "StartSession",
+        json!({"title": "vague", "prompt": "fix the auth thing", "cwd": ".", "worktree": false}),
+    );
+    let script = vec![
+        reply(vec![start], Stop::ToolUse),
+        reply(vec![text("ok")], Stop::End),
+    ];
+    let mut h = engine_with(script, true, None, None, None, dir.clone());
+    drive(&mut h, |e| matches!(e, Event::Idle)).await;
+    submit(&h, "split it");
+    let evs = drive(&mut h, |e| matches!(e, Event::Idle)).await;
+    let (outcome, output) = evs
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::ItemCompleted { item: Item::ToolCall { name, outcome, output, .. }, .. }
+                if name == "StartSession" => Some((*outcome, output.clone())),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(outcome, ToolOutcome::Error);
+    assert!(output.contains("head_start"), "{output}");
+    assert!(!evs.iter().any(|e| matches!(e.event, Event::ChildSession { .. })));
     shutdown(h).await;
 }
 
@@ -8917,6 +9683,162 @@ async fn a_finished_bash_job_reports_its_exit_and_output() {
     );
 }
 
+/// A background job that ends while the turn is still running is in the *next model call of
+/// that turn*, not the turn after it: `take_notices` drains at the same tool boundary that
+/// already flushes session messages and pane reports. Before that it parked until the turn
+/// ended, so a model working through a long turn reasoned about a stale world.
+#[tokio::test]
+async fn a_wake_landing_mid_turn_reaches_the_next_call_of_that_turn() {
+    let dir = tmp_store();
+    // A monitor that fires 1s in, while the 3s Bash call is still running: the notice is
+    // parked before the turn's second step starts, and drops here.
+    let script = vec![
+        reply(
+            vec![
+                call("m", "Monitor", json!({"after_s": 1, "note": "pod check"})),
+                call("b", "Bash", json!({"command": "sleep 3; echo slept"})),
+            ],
+            Stop::ToolUse,
+        ),
+        reply(vec![text("turn one done")], Stop::End),
+    ];
+    // A store of its own: the replay below needs a log on disk, and `store: None` leaves the
+    // journal with nowhere to write (so `events_after` finds no file). The session id is the
+    // engine's own either way — `tmp_store` only names the directory.
+    let store = tmp_store();
+    let (mut h, sent) = engine_sent(script, Some(store.clone()), None, None, dir.clone());
+    drive(&mut h, |e| matches!(e, Event::Idle)).await;
+    submit(&h, "set a timer and work");
+    let evs = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+    // The timer fired mid-turn...
+    assert!(
+        evs.iter()
+            .any(|e| matches!(&e.event, Event::BackgroundDone { id, status, .. }
+                if id == "mon-1" && status == "done")),
+        "the timer fired during the turn"
+    );
+    // ...and the turn's own second call carries it, before the turn ends.
+    assert_eq!(
+        sent.lock().unwrap().len(),
+        2,
+        "two calls: the tool batch, then the step that ends the turn"
+    );
+    let second = request_messages(&sent, 1);
+    let texts = user_texts(&second);
+    assert!(
+        texts.iter().any(|t| t.contains("<wakeup id=mon-1")
+            && t.contains("pod check")),
+        "the model's next look at the world carries the wake: {texts:?}"
+    );
+    // The turn ended on its own step, not because a wake forced a new one.
+    assert_eq!(
+        evs.iter()
+            .filter(|e| matches!(e.event, Event::TurnStarted { .. }))
+            .count(),
+        1,
+        "the wake did not start a turn of its own"
+    );
+    // ...and the transcript shows it: the row that marked the turn has the wake, so the user
+    // watches the model react to something on screen. Durable, and it names this turn.
+    let delivered = evs
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::WakesDelivered { turn, wakes } => Some((*turn, wakes.clone())),
+            _ => None,
+        })
+        .expect("the wake is delivered as an event, not only as a prompt");
+    assert_eq!(delivered.0, 1, "it belongs to the turn that was running");
+    assert!(
+        delivered.1.len() == 1 && delivered.1[0].starts_with("<wakeup id=mon-1"),
+        "{delivered:?}"
+    );
+    let sid = evs[0].session.clone();
+    shutdown(h).await;
+    let logged = session::events_after(&store, &sid, 0).unwrap();
+    assert!(
+        logged
+            .iter()
+            .any(|e| matches!(&e.event, Event::WakesDelivered { turn: 1, .. })),
+        "a reopened session replays the row where it landed"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+    let _ = std::fs::remove_dir_all(store);
+}
+
+/// The other half of that: draining at the boundary must not break the turn-start path. A wake
+/// parked before a turn starts still rides in as that turn's input (as it always did), and the
+/// boundary drain of the *same* notices never happens — one delivery, not two, and never an
+/// empty `WakesDelivered` (an activity row for nothing).
+#[tokio::test]
+async fn a_wake_taken_at_turn_start_is_not_delivered_twice_mid_turn() {
+    let dir = tmp_store();
+    // Turn one sets a timer and ends at once; the timer fires with nothing running, so it wakes
+    // a turn of its own — that turn's *first step* is the boundary under test. It has to make a
+    // call for the boundary to run at all, which it does (the scripted reply).
+    let script = vec![
+        reply(
+            vec![call("m", "Monitor", json!({"after_s": 1, "note": "check"}))],
+            Stop::ToolUse,
+        ),
+        reply(vec![text("turn one done")], Stop::End),
+        reply(vec![text("the timer woke me")], Stop::End),
+    ];
+    let (mut h, sent) = engine_sent(script, None, None, None, dir.clone());
+    drive(&mut h, |e| matches!(e, Event::Idle)).await;
+    submit(&h, "set a timer");
+    drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+    // The timer fires while nothing runs: it parks and wakes a turn of its own.
+    let wake_turn = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+    let delivered: Vec<u64> = wake_turn
+        .iter()
+        .filter_map(|e| match &e.event {
+            Event::WakesDelivered { turn, wakes } => {
+                assert!(!wakes.is_empty(), "an empty WakesDelivered is a row for nothing");
+                Some(*turn)
+            }
+            _ => None,
+        })
+        .collect();
+    // A turn started *on* the wake carries it as its input instead (protocol.rs), so no
+    // event: what must not appear is a second, empty one from the boundary drain.
+    assert!(
+        delivered.is_empty(),
+        "a wake turn carries its wakes as input, so nothing is delivered: {delivered:?}"
+    );
+    let input = wake_turn
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::TurnStarted { input, .. } => Some(input.clone()),
+            _ => None,
+        })
+        .unwrap();
+    assert!(input.starts_with("<wakeup id=mon-1"), "{input}");
+    // Exactly one turn ran on the wake, and the boundary it reached mid-turn (its own first
+    // step) found the queue already empty — so it did not push the wake into the history a
+    // second time.
+    assert_eq!(
+        wake_turn
+            .iter()
+            .filter(|e| matches!(e.event, Event::TurnStarted { .. }))
+            .count(),
+        1,
+        "one turn for the one wake"
+    );
+    // The wake reached the model exactly once: one user block in the wake turn's request.
+    // (Counting occurrences in the raw requests would overcount — the Monitor tool's own
+    // result text mentions `<wakeup id=mon-1>` — and a second user block is exactly what a
+    // boundary drain that found the queue unemptied would add.)
+    let last = request_messages(&sent, 2);
+    let wakes: Vec<String> = user_texts(&last)
+        .into_iter()
+        .filter(|t| t.starts_with("<wakeup id=mon-1"))
+        .collect();
+    assert_eq!(wakes.len(), 1, "delivered once, not twice: {wakes:?}");
+    drive(&mut h, |e| matches!(e, Event::Idle)).await;
+    shutdown(h).await;
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 /// The sleep guard: a long bare wait (the specimen: `sleep 570; wc -l …; tail …`, a
 /// 9.5-minute blocking turn) runs as a background job. The tool returns at once with a note
 /// saying so, a Warn notice tells the user, and the turn's next step runs right away.
@@ -9015,10 +9937,11 @@ async fn a_second_long_sleep_while_one_waits_is_refused() {
 }
 
 /// Events never interrupt a turn: two timers that fire while a turn is busy (a 3s command)
-/// are parked, the turn completes normally, and they run as the next turn, in the order
-/// they fired, before the engine goes idle (no `Idle` between the two turns).
+/// join *that* turn at its next step, in the order they fired — as one batch, never as a
+/// turn of their own and never an `Idle` in between. (Before the boundary drain they parked
+/// through to the turn's end and ran as the next turn; that is the behaviour this replaces.)
 #[tokio::test]
-async fn wakes_mid_turn_queue_for_the_boundary_in_order() {
+async fn wakes_mid_turn_join_that_turn_in_order() {
     let dir = tmp_store();
     let script = vec![
         reply(
@@ -9030,9 +9953,8 @@ async fn wakes_mid_turn_queue_for_the_boundary_in_order() {
             Stop::ToolUse,
         ),
         reply(vec![text("turn one done")], Stop::End),
-        reply(vec![text("both timers seen")], Stop::End),
     ];
-    let mut h = engine_with(script, true, None, None, None, dir.clone());
+    let (mut h, sent) = engine_sent(script, None, None, None, dir.clone());
     drive(&mut h, |e| matches!(e, Event::Idle)).await;
     submit(&h, "set two timers and work");
     let first = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
@@ -9058,21 +9980,36 @@ async fn wakes_mid_turn_queue_for_the_boundary_in_order() {
         1,
         "nothing started mid-turn"
     );
-    let next = drive(&mut h, |e| matches!(e, Event::TurnStarted { .. })).await;
-    assert!(
-        !next.iter().any(|e| matches!(e.event, Event::Idle)),
-        "the wake runs before the engine goes idle"
-    );
-    let input = next
+    // One delivery, on the running turn, holding both in the order they fired.
+    let batches: Vec<Vec<String>> = first
         .iter()
-        .find_map(|e| match &e.event {
-            Event::TurnStarted { input, .. } => Some(input.clone()),
+        .filter_map(|e| match &e.event {
+            Event::WakesDelivered { turn: 1, wakes } => Some(wakes.clone()),
             _ => None,
         })
-        .unwrap();
-    let (a, b) = (input.find("first").unwrap(), input.find("second").unwrap());
-    assert!(input.starts_with("<wakeup id=mon-1") && a < b, "{input}");
-    drive(&mut h, |e| matches!(e, Event::Idle)).await;
+        .collect();
+    assert_eq!(batches.len(), 1, "one boundary, one delivery: {batches:?}");
+    let (a, b) = (batches[0].join("\n"), batches[0][0].clone());
+    assert!(b.starts_with("<wakeup id=mon-1"), "{batches:?}");
+    assert_eq!(batches[0].len(), 2, "{batches:?}");
+    assert!(
+        batches[0][1].starts_with("<wakeup id=mon-2"),
+        "in the order they fired: {batches:?}"
+    );
+    // ...and the model's second call carried both, before the turn ended.
+    let texts = user_texts(&request_messages(&sent, 1));
+    let joined = texts.join("\n");
+    let (fi, si) = (
+        joined.find("first").expect("the first timer"),
+        joined.find("second").expect("the second timer"),
+    );
+    assert!(fi < si, "fired in order: {joined}");
+    // The turn ended on its own step: no turn of its own for the wakes, and no Idle first.
+    let after = drive(&mut h, |e| matches!(e, Event::Idle)).await;
+    assert!(
+        !after.iter().any(|e| matches!(e.event, Event::TurnStarted { .. })),
+        "the wakes did not start a turn of their own"
+    );
     shutdown(h).await;
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -9133,11 +10070,13 @@ async fn an_informational_message_is_read_without_a_turn() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// Everything waiting at a boundary goes as one batch: a wake that fired mid-turn and a
-/// session message that arrived mid-turn open one turn together (wake as its input, the
-/// message as `more`), and clients see the queue while it waits.
+/// The wake and the session message take different roads now, and neither is lost. The wake,
+/// which fired mid-turn, goes into the running turn at its boundary (`WakesDelivered` names
+/// that turn, and clients clear the queue they showed while it waited). The session message,
+/// which arrived too late for that boundary, still opens the next turn — as its input, with no
+/// wake row, because the wake already landed.
 #[tokio::test]
-async fn a_boundary_flushes_wakes_and_messages_as_one_batch() {
+async fn a_wake_joins_the_turn_and_a_late_message_opens_the_next() {
     let dir = tmp_store();
     let script = vec![
         reply(
@@ -9148,9 +10087,9 @@ async fn a_boundary_flushes_wakes_and_messages_as_one_batch() {
             Stop::ToolUse,
         ),
         reply(vec![text("turn one")], Stop::End),
-        reply(vec![text("saw both")], Stop::End),
+        reply(vec![text("got the message")], Stop::End),
     ];
-    let mut h = engine_with(script, true, None, None, None, dir.clone());
+    let (mut h, sent) = engine_sent(script, None, None, None, dir.clone());
     drive(&mut h, |e| matches!(e, Event::Idle)).await;
     submit(&h, "work");
     let parked = drive(
@@ -9162,7 +10101,7 @@ async fn a_boundary_flushes_wakes_and_messages_as_one_batch() {
         !parked
             .iter()
             .any(|e| matches!(e.event, Event::TurnEnded { .. })),
-        "parked mid-turn"
+        "the wake waited mid-turn"
     );
     h.ops
         .send(Op::Deliver {
@@ -9171,7 +10110,21 @@ async fn a_boundary_flushes_wakes_and_messages_as_one_batch() {
             message: "serving:true".into(),
         })
         .unwrap();
-    drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+    let first = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+    // The wake landed on turn 1, at the boundary, and the queue clients saw is empty now.
+    assert!(
+        first.iter().any(|e| matches!(&e.event,
+            Event::WakesDelivered { turn: 1, wakes } if wakes[0].contains("pod check"))),
+        "the wake joins the running turn"
+    );
+    assert!(
+        first
+            .iter()
+            .any(|e| matches!(&e.event, Event::QueuedEvents { items } if items.is_empty())),
+        "the flush empties the queue clients see"
+    );
+    // The session message opens the next turn alone: it is its input, and there is no `more`
+    // and no wake row — the wake is not delivered a second time.
     let next = drive(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
     let (input, more) = next
         .iter()
@@ -9181,24 +10134,27 @@ async fn a_boundary_flushes_wakes_and_messages_as_one_batch() {
         })
         .unwrap();
     assert!(
-        input.starts_with("<wakeup id=mon-1") && input.contains("pod check"),
+        input.starts_with("<session-message from=\"s9\"") && input.contains("serving:true"),
         "{input}"
     );
-    assert_eq!(more.len(), 1, "{more:?}");
+    assert!(more.is_empty(), "{more:?}");
     assert!(
-        more[0].text.starts_with("<session-message from=\"s9\"")
-            && more[0].text.contains("serving:true")
-    );
-    assert!(
-        next.iter()
-            .any(|e| matches!(&e.event, Event::QueuedEvents { items } if items.is_empty())),
-        "the flush empties the queue clients see"
+        !next.iter().any(|e| matches!(e.event, Event::WakesDelivered { .. })),
+        "the wake was already delivered"
     );
     let turns = next
         .iter()
         .filter(|e| matches!(e.event, Event::TurnStarted { .. }))
         .count();
-    assert_eq!(turns, 1, "one batch, one turn");
+    assert_eq!(turns, 1, "one turn for the one message");
+    // The wake rode turn 1's second call, and the turn after carries it once in the history
+    // (it is still there to read) — not twice. A block count, not a substring: the Monitor
+    // tool's own result text mentions `<wakeup id=mon-1>` too.
+    let last = user_texts(&request_messages(&sent, 2))
+        .into_iter()
+        .filter(|t| t.starts_with("<wakeup id=mon-1"))
+        .count();
+    assert_eq!(last, 1, "delivered once, carried once");
     drive(&mut h, |e| matches!(e, Event::Idle)).await;
     shutdown(h).await;
     let _ = std::fs::remove_dir_all(dir);
@@ -9649,7 +10605,8 @@ async fn a_prompt_past_the_hard_limit_compacts_before_the_call() {
         reply(vec![text("Done.")], Stop::End),
     ];
     let (mut h, sent) = engine_sent(script, None, None, Some(8192), std::env::temp_dir());
-    let evs = run(&mut h, &"Do the long thing. ".repeat(1600)).await;
+    // Past the hard limit, but not so far past the window that it's summarized in parts.
+    let evs = run(&mut h, &"Do the long thing. ".repeat(1000)).await;
     assert_eq!(
         evs.iter()
             .filter(|e| matches!(e.event, Event::Compacted { .. }))
@@ -9777,11 +10734,12 @@ async fn a_context_overflow_twice_ends_the_turn_with_a_clear_error() {
         )
     };
     let client = scripted::Client::new(vec![reply(vec![text("Summary.")], Stop::End)]);
+    // The step, the summary request, then the summary in parts and in smaller parts.
     client
         .fails
         .lock()
         .unwrap()
-        .extend([overflow(), overflow()]);
+        .extend([overflow(), overflow(), overflow(), overflow()]);
     let opts = Options {
         cfg: Config {
             hermetic: true,
@@ -10988,6 +11946,83 @@ async fn a_denied_call_retried_in_the_same_turn_ends_it_blocked() {
     assert_eq!(v, json!({"type": "blocked_on_approval", "denial": "x"}));
 }
 
+/// The unsandboxed card's reason as the user would see it, with the engine told whether it
+/// runs in a Frog Cloud sandbox VM.
+async fn escape_reason(cloud: bool) -> String {
+    let cfg = Config {
+        hermetic: true,
+        sandbox_shell: false,
+        cloud_sandbox: cloud,
+        ..Config::default()
+    };
+    let script = vec![
+        reply(
+            vec![Block::ToolUse {
+                id: "b".into(),
+                name: "Bash".into(),
+                input: json!({ "command": "brew install jq", "unsandboxed": true }),
+            }],
+            Stop::ToolUse,
+        ),
+        reply(vec![text("ok")], Stop::End),
+    ];
+    let mut h = engine_perm_cfg(script, Mode::Default, cfg);
+    let evs = turn_answering(&mut h, |_| Some((Decision::Deny, None))).await;
+    shutdown(h).await;
+    evs.iter()
+        .find_map(|e| match &e.event {
+            Event::PermissionRequest { reason, .. } => reason.clone(),
+            _ => None,
+        })
+        .expect("leaving the sandbox cards with a reason")
+}
+
+/// On the user's own machine the card warns about credentials; that stays.
+#[tokio::test]
+async fn local_escape_card_warns_about_credentials() {
+    assert_eq!(
+        escape_reason(false).await,
+        "Runs outside the sandbox: it can change files anywhere and read your credentials."
+    );
+}
+
+/// In a Frog Cloud sandbox VM there are no credentials of the user's to read: the card says
+/// what's true there (Cam's launch review, 2026-11-14).
+#[tokio::test]
+async fn cloud_escape_card_says_cloud_machine_not_credentials() {
+    let reason = escape_reason(true).await;
+    assert!(!reason.contains("credentials"), "{reason}");
+    assert_eq!(
+        reason,
+        "Runs outside the command sandbox, inside your cloud machine: it can change anything on that machine and reach the network."
+    );
+}
+
+/// A denied command ends the turn with one plain sentence, not just the row's tag.
+#[tokio::test]
+async fn a_denied_command_leaves_a_sentence() {
+    let script = vec![
+        reply(
+            vec![Block::ToolUse {
+                id: "b".into(),
+                name: "Bash".into(),
+                input: json!({ "command": "brew install jq", "unsandboxed": true }),
+            }],
+            Stop::ToolUse,
+        ),
+        reply(vec![text("ok")], Stop::End),
+    ];
+    let mut h = engine_perm(script, Mode::Default, None);
+    let evs = turn_answering(&mut h, |_| Some((Decision::Deny, None))).await;
+    shutdown(h).await;
+    assert_eq!(ended(&evs), Some(EndReason::Denied));
+    let said: Vec<_> = notices(&evs)
+        .into_iter()
+        .filter(|n| n == DENIED_ENDING)
+        .collect();
+    assert_eq!(said.len(), 1, "{:?}", notices(&evs));
+}
+
 /// (5) An identical carded call denied twice in a session never asks again: the third
 /// attempt (a later turn) is denied at once with the notice, and the agent carries on.
 #[tokio::test]
@@ -11587,7 +12622,7 @@ async fn start_session_refuses_a_model_its_gateway_does_not_list() {
             vec![Block::ToolUse {
                 id: id.into(),
                 name: "StartSession".into(),
-                input: json!({ "title": "a worker", "prompt": "do it", "model": model }),
+                input: json!({ "title": "a worker", "prompt": "do it", "model": model, "head_start": { "check": "cargo test" } }),
             }],
             Stop::ToolUse,
         )
@@ -12295,4 +13330,329 @@ async fn prs_bind_from_gh_pr_create_and_by_hand() {
         ]
     );
     let _ = std::fs::remove_dir_all(base);
+}
+
+
+
+/// The whole point of this change, end to end through a real engine: opening a session whose
+/// project configures a server that answers 401 must not open a browser, must report the
+/// server as `needs_auth`, and must leave that server's tools out of the model's list.
+///
+/// The assertion that matters is [`crate::mcp_oauth::opened`]: the old code was right by
+/// every return value — the connect returned, the turn ran, the session went on — while a
+/// system-modal window appeared. Only counting browser calls catches that.
+#[tokio::test]
+async fn a_session_with_a_server_that_wants_a_sign_in_opens_no_browser() {
+    let _turn = crate::mcp_oauth::browser_tests();
+    let _memory = crate::mcp_oauth::use_memory_store();
+    let (web, mock) = crate::mcp_oauth::tests::start_mock("tok-session");
+    let dir = tmp_store();
+    // The project's own server, at the mock's OAuth-protected `/mcp`.
+    let cfg = json!({"mcpServers": {"protected": {"type": "http", "url": web.url("/mcp")}}});
+    std::fs::write(dir.join(".mcp.json"), cfg.to_string()).unwrap();
+    let before = crate::mcp_oauth::opened().lock().unwrap().len();
+
+    let (mut h, sent) = engine_sent(
+        vec![reply(vec![text("done")], Stop::End)],
+        Some(dir.clone()),
+        None,
+        None,
+        dir.clone(),
+    );
+    // Wait for the connect to settle: the server's row arrives saying it wants a sign-in.
+    let mut events = Vec::new();
+    let report = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let env = h.events.recv().await.unwrap();
+            let found = match &env.event {
+                Event::McpServers { servers } => {
+                    servers.iter().find(|s| s.name == "protected").cloned()
+                }
+                _ => None,
+            };
+            events.push(env);
+            if let Some(s) = found.filter(|s| s.needs_auth || s.connected) {
+                break s;
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|e| {
+        // Check the browser first even on the way out: with `authorize` back on the connect
+        // path this is where the test lands (the connect sits in the 15-minute sign-in
+        // instead of reporting), and the browser is the thing worth naming.
+        let opened = crate::mcp_oauth::opened().lock().unwrap();
+        assert_eq!(
+            opened.len(),
+            before,
+            "opening a session opened a browser: {:?}",
+            &opened[before..]
+        );
+        panic!(
+            "no settled report for `protected`: {e:?}; events: {:#?}",
+            events
+                .iter()
+                .map(|e| format!("{:?}", e.event))
+                .collect::<Vec<_>>()
+        );
+    });
+
+    // 1. No browser. This is the assertion; every return value would have been right anyway.
+    // One snapshot: locking `opened()` again inside the message would deadlock on the guard
+    // this expression already holds.
+    let opened_now = crate::mcp_oauth::opened().lock().unwrap().clone();
+    assert_eq!(
+        opened_now.len(),
+        before,
+        "opening a session opened a browser: {:?}",
+        &opened_now[before..]
+    );
+
+    // 2. The state is its own thing, not a generic error, so a client can offer a button.
+    assert!(
+        report.needs_auth,
+        "401 with a challenge is needs_auth, not a bare error: {report:?}"
+    );
+    assert!(!report.connected);
+    assert!(report.tools.is_empty(), "signed out means no tools: {:?}", report.tools);
+
+    // 3. Its tools are absent from what the model is offered. (`run` waits for the startup
+    //    `Idle` first and the loop above already consumed it, so the turn is driven by hand.)
+    h.ops
+        .send(Op::Submit {
+            text: "hello".into(),
+            images: Vec::new(),
+            more: Vec::new(),
+        })
+        .unwrap();
+    loop {
+        if matches!(h.events.recv().await.unwrap().event, Event::Idle) {
+            break;
+        }
+    }
+    let sent = sent.lock().unwrap()[0].clone();
+    assert!(
+        !sent.contains("mcp__protected__echo"),
+        "a signed-out server's tools must not be offered: {sent}"
+    );
+    // Not silent either: the prompt says which server is configured and why it's missing.
+    assert!(
+        sent.contains("protected"),
+        "the model is told about the configured-but-signed-out server: {sent}"
+    );
+
+    shutdown(h).await;
+    drop(mock);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+
+/// Declining is remembered, so the next session doesn't raise it again: the row still says the
+/// server is signed out (never silent), but as "you declined" rather than a fresh ask.
+#[tokio::test]
+async fn a_declined_sign_in_is_remembered_by_the_next_session() {
+    let _memory = crate::mcp_oauth::use_memory_store();
+    let _turn = crate::mcp_oauth::browser_tests();
+    let _refusals = RefusalDir::new();
+    let (web, mock) = crate::mcp_oauth::tests::start_mock("tok-decline");
+    let dir = tmp_store();
+    let cfg = json!({"mcpServers": {"protected": {"type": "http", "url": web.url("/mcp")}}});
+    std::fs::write(dir.join(".mcp.json"), cfg.to_string()).unwrap();
+    let opened_before = crate::mcp_oauth::opened().lock().unwrap().len();
+
+    // Session 1: the server is signed out, and the person declines it.
+    let (mut h, _sent) = engine_sent(
+        vec![reply(vec![text("ok")], Stop::End)],
+        Some(dir.clone()),
+        None,
+        None,
+        dir.clone(),
+    );
+    let mut seen = Vec::new();
+    loop {
+        let env = h.events.recv().await.unwrap();
+        let declined = match &env.event {
+            Event::McpServers { servers } => servers
+                .iter()
+                .find(|s| s.name == "protected")
+                .is_some_and(|s| s.needs_auth),
+            _ => false,
+        };
+        seen.push(env);
+        if declined {
+            break;
+        }
+    }
+    h.ops
+        .send(Op::McpSignIn {
+            server: "protected".into(),
+            decline: true,
+        })
+        .unwrap();
+    // The answer: a fresh list with the refusal recorded.
+    let mut declined_row = None;
+    tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            let env = h.events.recv().await.unwrap();
+            if let Event::McpServers { servers } = &env.event
+                && let Some(s) = servers.iter().find(|s| s.name == "protected" && s.declined)
+            {
+                declined_row = Some(s.clone());
+                break;
+            }
+        }
+    })
+    .await
+    .expect("the refusal is reported");
+    shutdown(h).await;
+    assert!(
+        declined_row.unwrap().needs_auth,
+        "declining doesn't make it connected; it stays signed out"
+    );
+
+    // Session 2, same project: still signed out, still marked as declined, still no browser.
+    let (mut h2, _s2) = engine_sent(
+        vec![reply(vec![text("ok")], Stop::End)],
+        Some(dir.clone()),
+        None,
+        None,
+        dir.clone(),
+    );
+    let mut row = None;
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let env = h2.events.recv().await.unwrap();
+            if let Event::McpServers { servers } = &env.event
+                && let Some(s) = servers.iter().find(|s| s.name == "protected" && s.needs_auth)
+            {
+                row = Some(s.clone());
+                break;
+            }
+        }
+    })
+    .await
+    .expect("the next session still reports it");
+    let row = row.unwrap();
+    assert!(row.declined, "the refusal outlived the session that made it: {row:?}");
+    assert_eq!(
+        crate::mcp_oauth::opened().lock().unwrap().len(),
+        opened_before,
+        "neither session opened a browser"
+    );
+    shutdown(h2).await;
+    drop(mock);
+    // Leave the machine as we found it: the refusal is per configuration, and the next test
+    // (or a real session) shouldn't inherit this one's.
+    crate::mcp::forget_refusal(&crate::mcp::auth_key(
+        "protected",
+        &crate::mcp::ServerConfig {
+            url: Some(web.url("/mcp")),
+            ..Default::default()
+        },
+    ));
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Signing in from the card (or Settings) is what brings the tools back: the same session,
+/// the same live hub, no restart. The browser opens here — and only here.
+#[tokio::test]
+async fn signing_in_from_the_session_installs_the_tools() {
+    let _memory = crate::mcp_oauth::use_memory_store();
+    let _turn = crate::mcp_oauth::browser_tests();
+    let _refusals = RefusalDir::new();
+    let (web, mock) = crate::mcp_oauth::tests::start_mock("tok-signin");
+    let dir = tmp_store();
+    let cfg = json!({"mcpServers": {"protected": {"type": "http", "url": web.url("/mcp")}}});
+    std::fs::write(dir.join(".mcp.json"), cfg.to_string()).unwrap();
+
+    let (mut h, sent) = engine_sent(
+        vec![
+            reply(vec![text("first")], Stop::End),
+            reply(vec![text("second")], Stop::End),
+        ],
+        Some(dir.clone()),
+        None,
+        None,
+        dir.clone(),
+    );
+    // Wait until the server is reported signed out (the connect has settled).
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let env = h.events.recv().await.unwrap();
+            if let Event::McpServers { servers } = &env.event
+                && servers
+                    .iter()
+                    .any(|s| s.name == "protected" && s.needs_auth)
+            {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("the server is reported signed out");
+    let before = crate::mcp_oauth::opened().lock().unwrap().len();
+    // The engine's browser would launch `open`; here it plays the browser's part instead, so
+    // the flow can complete: the mock's authorization endpoint is the redirect frog's own
+    // listener expects.
+    let _browser = crate::mcp_oauth::test_browser(Arc::new(crate::mcp_oauth::tests::fake_browser));
+
+    // The person presses Sign in.
+    h.ops
+        .send(Op::McpSignIn {
+            server: "protected".into(),
+            decline: false,
+        })
+        .unwrap();
+    let mut signed_in = false;
+    let mut row_connected = false;
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let env = h.events.recv().await.unwrap();
+            match &env.event {
+                Event::McpSignedIn { server, tools } if server == "protected" => {
+                    signed_in = true;
+                    assert_eq!(tools, &["echo".to_string()], "the tools come back with it");
+                }
+                Event::McpServers { servers } => {
+                    row_connected |= servers.iter().any(|s| s.name == "protected" && s.connected);
+                }
+                _ => {}
+            }
+            if signed_in && row_connected {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("the sign-in completes and the server connects");
+
+    // The browser: opened by this explicit request, and not by anything else.
+    assert!(
+        crate::mcp_oauth::opened().lock().unwrap().len() > before,
+        "an explicit sign-in is the one thing that opens a browser"
+    );
+
+    // And the tools are now offered to the model.
+    h.ops
+        .send(Op::Submit {
+            text: "hello".into(),
+            images: Vec::new(),
+            more: Vec::new(),
+        })
+        .unwrap();
+    loop {
+        if matches!(h.events.recv().await.unwrap().event, Event::Idle) {
+            break;
+        }
+    }
+    let sent = sent.lock().unwrap();
+    let last = sent.last().cloned().unwrap_or_default();
+    assert!(
+        last.contains("mcp__protected__echo"),
+        "after signing in the server's tools are offered: {last}"
+    );
+    drop(sent);
+    shutdown(h).await;
+    drop(mock);
+    let _ = std::fs::remove_dir_all(dir);
 }

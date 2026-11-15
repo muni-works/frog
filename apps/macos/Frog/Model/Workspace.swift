@@ -23,6 +23,10 @@ final class Workspace {
     /// The conversation's title, mirrored like `currentSession` (the engine's `titled` sets
     /// both): the window title without the root body reading the streaming conversation.
     private(set) var currentTitle: String?
+    /// The session this workspace is showing: the one opening here (the pane already shows it
+    /// while its log loads), else the conversation on screen. The one answer to "what's on
+    /// screen", for views that act on that session — archiving it, selecting its row.
+    var showing: String? { opening ?? currentSession }
     var selection: String?
     var preferredModel: String?
     /// A choice made in this workspace's picker. Unlike the startup default, this must win

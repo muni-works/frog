@@ -1,7 +1,8 @@
 import XCTest
 @testable import Frog
 
-/// The started-by tree: finished children fold under "+N done" so live work stands out.
+/// The started-by tree, one level deep: expanding a session lists the children it started,
+/// finished ones included. There is no second "+N done" fold inside a session.
 final class SessionNestingTests: XCTestCase {
     private func session(_ id: String, modified: Int64) -> SessionInfo {
         SessionInfo(id: id, modified: modified, created: modified, model: "m",
@@ -12,12 +13,12 @@ final class SessionNestingTests: XCTestCase {
 
     /// A manager with workers in every state, newest-first by `modified`.
     private func rows(_ states: [String: State], parents: [String: String],
-                      openDone: Set<String> = [], keep: Set<String> = [],
+                      opened: Set<String> = [], keep: Set<String> = [],
                       collapsed: Set<String> = [], order: [String]) -> [SessionNesting.Entry] {
         let items = order.enumerated().map { i, id in session(id, modified: Int64(1000 - i)) }
         return SessionNesting.rows(
             items, parent: { parents[$0] }, state: { states[$0.id] ?? .done },
-            before: { $0.modified > $1.modified }, openDone: openDone, keep: keep, collapsed: collapsed)
+            before: { $0.modified > $1.modified }, opened: opened, keep: keep, collapsed: collapsed)
     }
 
     private func ids(_ entries: [SessionNesting.Entry]) -> [String] {
@@ -31,18 +32,26 @@ final class SessionNestingTests: XCTestCase {
         }
     }
 
-    func testFinishedChildrenCollapseUnderADoneRow() {
+    /// Expanding a session shows every child it started: live and finished alike, on one
+    /// level, with nothing folded in between (Cam: "only one level of accordions, not an extra
+    /// for done/failed").
+    func testFinishedChildrenAreRowsNotAFold() {
         let parents = ["a": "mgr", "b": "mgr", "c": "mgr", "d": "mgr"]
         let states: [String: State] = ["mgr": .done, "a": .done, "b": .running, "c": .failed, "d": .done]
         let out = rows(states, parents: parents, order: ["mgr", "a", "b", "c", "d"])
-        XCTAssertEqual(ids(out), ["mgr", ">b", ">+3 done 1x"])
+        XCTAssertEqual(ids(out), ["mgr", ">b", ">c", ">a", ">d"],
+                       "most urgent first, then the finished ones by list order — no done row")
     }
 
-    func testOpeningTheDoneRowListsThemBeneathIt() {
-        let parents = ["a": "mgr", "b": "mgr"]
-        let states: [String: State] = ["a": .done, "b": .running]
-        let out = rows(states, parents: parents, openDone: ["mgr"], order: ["mgr", "a", "b"])
-        XCTAssertEqual(ids(out), ["mgr", ">b", ">+1 done", ">a"])
+    /// The old shape, kept as the test's reason for existing: no entry is a `.done` row for a
+    /// parent, at any depth.
+    func testNoParentGrowsADoneRow() {
+        let parents = ["a": "mgr", "b": "mgr", "c": "a"]
+        let states: [String: State] = ["mgr": .done, "a": .done, "b": .running, "c": .done]
+        let out = rows(states, parents: parents, order: ["mgr", "a", "b", "c"])
+        let done = out.filter { if case .done = $0 { return true } else { return false } }
+        XCTAssertTrue(done.isEmpty, "one level: nothing folds inside a session")
+        XCTAssertEqual(ids(out), ["mgr", ">b", ">a", ">>c"])
     }
 
     func testAQuietManagerWithLiveWorkersStaysUp() {
@@ -50,13 +59,13 @@ final class SessionNestingTests: XCTestCase {
         let parents = ["mgr": "chief", "w": "mgr", "old": "chief"]
         let states: [String: State] = ["chief": .done, "mgr": .done, "w": .running, "old": .done]
         let out = rows(states, parents: parents, order: ["chief", "mgr", "w", "old"])
-        XCTAssertEqual(ids(out), ["chief", ">mgr", ">>w", ">+1 done"])
+        XCTAssertEqual(ids(out), ["chief", ">mgr", ">>w", ">old"])
     }
 
     func testTheSessionOnScreenIsNeverTuckedAway() {
         let parents = ["a": "mgr", "b": "mgr"]
         let out = rows(["a": .done, "b": .done], parents: parents, keep: ["a"], order: ["mgr", "a", "b"])
-        XCTAssertEqual(ids(out), ["mgr", ">a", ">+1 done"])
+        XCTAssertEqual(ids(out), ["mgr", ">a", ">b"])
     }
 
     func testRootsNeverCollapse() {
@@ -73,8 +82,9 @@ final class SessionNestingTests: XCTestCase {
         // Newest first by the list's order: idle, running, waiting, unread, running2, failed.
         let parents = ["i": "m", "r": "m", "w": "m", "u": "m", "r2": "m", "f": "m"]
         let states: [String: State] = ["i": .done, "r": .running, "w": .waiting, "u": .unread, "r2": .running, "f": .failed]
-        let out = rows(states, parents: parents, openDone: ["m"], order: ["m", "i", "r", "w", "u", "r2", "f"])
-        XCTAssertEqual(ids(out), ["m", ">w", ">r", ">r2", ">u", ">+2 done 1x", ">f", ">i"])
+        let out = rows(states, parents: parents, order: ["m", "i", "r", "w", "u", "r2", "f"])
+        XCTAssertEqual(ids(out), ["m", ">w", ">r", ">r2", ">u", ">f", ">i"],
+                       "waiting, running, then the rest by list order; no done fold")
     }
 
     func testAManagerSortsByItsWorkersUrgency() {
@@ -111,6 +121,40 @@ final class SessionNestingTests: XCTestCase {
         XCTAssertEqual(counts.total, 2)
     }
 
+    /// A quiet manager (settled, nothing live under it) is one line until you open it — the one
+    /// fold left, and it's the row's own disclosure, not a second row inside it.
+    func testAQuietParentFoldsToOneLineUnlessOpened() {
+        let parents = ["a": "m", "b": "m"]
+        let states: [String: State] = ["m": .done, "a": .done, "b": .done]
+        let items = [session("m", modified: 3), session("a", modified: 2), session("b", modified: 1)]
+        let tree = { (opened: Set<String>) in
+            SessionNesting.rows(items, parent: { parents[$0] }, state: { states[$0.id] ?? .done },
+                                before: { $0.modified > $1.modified }, opened: opened, foldQuiet: true)
+        }
+        XCTAssertEqual(ids(tree([])), ["m [-]"], "nothing live under it: one line")
+        XCTAssertEqual(ids(tree(["m"])), ["m", ">a", ">b"], "opened: its children, directly")
+    }
+
+    /// Archiving the session you're reading (#316) clears the view, so `keep` goes empty. The
+    /// tree must still list every row: nothing vanishes because the kept id did.
+    func testArchivingTheCurrentSessionLeavesTheTreeIntact() {
+        let parents = ["a": "m", "b": "m"]
+        let states: [String: State] = ["m": .done, "a": .done, "b": .done]
+        let items = [session("m", modified: 3), session("a", modified: 2), session("b", modified: 1)]
+        let withCurrent = SessionNesting.rows(
+            items, parent: { parents[$0] }, state: { states[$0.id] ?? .done },
+            before: { $0.modified > $1.modified }, keep: ["b"], foldQuiet: true)
+        XCTAssertEqual(ids(withCurrent), ["m", ">a", ">b"], "the row on screen holds its parent open")
+
+        // The view cleared: same tree, `keep` empty. Every session is still reachable — the
+        // quiet parent folds to one line rather than the rows disappearing.
+        let archived = SessionNesting.rows(
+            items, parent: { parents[$0] }, state: { states[$0.id] ?? .done },
+            before: { $0.modified > $1.modified }, keep: [], foldQuiet: true)
+        XCTAssertEqual(ids(archived), ["m [-]"], "still one row, now folded")
+        XCTAssertEqual(SessionNesting.blocks(archived).count, 1, "no block lost")
+    }
+
     func testCollapsingAChildlessRowDoesNothing() {
         let out = rows(["x": .running], parents: [:], collapsed: ["x"], order: ["x"])
         XCTAssertEqual(ids(out), ["x"])
@@ -123,7 +167,7 @@ final class SessionNestingTests: XCTestCase {
                        order: ["mgr", "w", "d", "solo"])
         let blocks = SessionNesting.blocks(out)
         XCTAssertEqual(blocks.map(\.root.id), ["mgr", "solo"])
-        XCTAssertEqual(ids(blocks[0].entries), ["mgr", ">w", ">+1 done"])
+        XCTAssertEqual(ids(blocks[0].entries), ["mgr", ">w", ">d"])
         XCTAssertEqual(ids(blocks[1].entries), ["solo"])
     }
 
@@ -145,7 +189,8 @@ final class SessionNestingTests: XCTestCase {
         XCTAssertEqual(out.map(\.depth), [0, 1, 2, 1, 0, 0, 1])
     }
 
-    /// The guide line's elbow goes on the last child at each depth.
+    /// The guide line's elbow goes on the last child at each depth (through `guides`, which
+    /// is what the sidebar draws from).
     func testLastChildrenEndTheGuide() {
         func info(_ id: String) -> SessionInfo {
             SessionInfo(id: id, modified: 0, created: 0, model: "m", firstInput: nil, title: id, forkedFrom: nil, cwd: nil)
@@ -155,9 +200,74 @@ final class SessionNestingTests: XCTestCase {
             .row(info("b"), depth: 1, counts: .init(), collapsed: false),
             .row(info("c"), depth: 2, counts: .init(), collapsed: false),
             .row(info("d"), depth: 1, counts: .init(), collapsed: false),
-            .done(parent: "a", depth: 1, count: 2, failed: 0, open: false),
             .row(info("e"), depth: 0, counts: .init(), collapsed: false),
         ]
-        XCTAssertEqual(SessionNesting.lastChildren(e), ["c", "done:a"], "the done row closes a's children")
+        let g = SessionNesting.guides(e)
+        XCTAssertEqual(g.filter { $0.value.last && $0.value.depth > 0 }.keys.sorted(), ["c", "d"],
+                       "the last child at each depth closes the guide")
+    }
+
+    /// Depth is real, not capped: a fifth-level worker sits deeper than a fourth, so the
+    /// sidebar can say how deep it is. (It used to clamp at 4 and line them up.)
+    func testDepthIsNotCapped() {
+        let parents = ["b": "a", "c": "b", "d": "c", "e": "d", "f": "e"]
+        let out = SessionNesting.indented(["a", "b", "c", "d", "e", "f"]) { parents[$0] }
+        XCTAssertEqual(out.map(\.depth), [0, 1, 2, 3, 4, 5])
+
+        let entries = rows([:], parents: parents, order: ["a", "b", "c", "d", "e", "f"])
+        XCTAssertEqual(entries.map(\.depth), [0, 1, 2, 3, 4, 5], "rows carry the real depth too")
+    }
+
+    /// The rails: a column carries on while an ancestor below still has a sibling to come,
+    /// and the last child of a parent ends in an elbow.
+    func testGuidesDrawAncestorsAndElbows() {
+        // a › b, c; b › d, e  — d and e are last-siblings inside b, c closes a.
+        let list = [("a", 0), ("b", 1), ("d", 2), ("e", 2), ("c", 1)]
+        let g = SessionNesting.guides(list)
+        // `rails` is one entry per column LEFT of the row's own; its own column is the elbow.
+        XCTAssertEqual(g["a"], SessionNesting.Guide(depth: 0, rails: [], last: true, continues: true),
+                       "a's children hang right below it")
+        XCTAssertEqual(g["b"], SessionNesting.Guide(depth: 1, rails: [], last: false, continues: true),
+                       "b's own column carries on: c is still to come, and d/e hang under it")
+        XCTAssertEqual(g["d"], SessionNesting.Guide(depth: 2, rails: [true], last: false),
+                       "a's column runs on past b's subtree")
+        XCTAssertEqual(g["e"], SessionNesting.Guide(depth: 2, rails: [true], last: true),
+                       "e is b's last child: elbow, and a's column still runs to c")
+        XCTAssertEqual(g["c"], SessionNesting.Guide(depth: 1, rails: [], last: true),
+                       "c is a's last child: elbow")
+    }
+
+    /// Two subtrees side by side: the first's rail closes, so the second's column isn't
+    /// carried by the first subtree's rows.
+    func testGuidesDoNotCarryAClosedSubtree() {
+        let list = [("a", 0), ("a1", 1), ("b", 0), ("b1", 1), ("b2", 1)]
+        let g = SessionNesting.guides(list)
+        XCTAssertEqual(g["a1"]?.last, true)
+        XCTAssertEqual(g["b1"]?.last, false)
+        XCTAssertEqual(g["b2"]?.last, true)
+        XCTAssertEqual(g["b"]?.rails, [], "a root has no columns left of it")
+    }
+
+    /// A single six-deep chain with one sibling at the bottom (the snapshot fixture): every
+    /// column that runs down the tree does so through every row in its span, with no hole.
+    /// Column `c` is drawn on a row at depth > c; it must not vanish mid-subtree.
+    func testAColumnRunsUnbrokenThroughItsSubtree() {
+        let list = [("root", 0), ("l1", 1), ("l2", 2), ("l3", 3), ("l4", 4), ("l5", 5), ("sibling", 1)]
+        let g = SessionNesting.guides(list)
+
+        // Column 1 hangs under l1: drawn by l2…l5 and by sibling (which shares the column),
+        // not by l1 itself (it owns the column) and not by root.
+        XCTAssertNil(g["root"]?.rails.first, "a root has no columns left of it")
+        XCTAssertEqual(g["l1"]?.rails, [], "l1 owns column 1; it has no columns left of it")
+        for id in ["l2", "l3", "l4", "l5"] {
+            XCTAssertEqual(g[id]?.rail(0), true, "\(id) sits under l1, so column 1 runs on")
+        }
+        // Column 2 hangs under l2: l3…l5 only — l5 is where it closes (the sibling is a child
+        // of l1, at depth 1), so l5 draws columns 1 but not 2.
+        XCTAssertEqual(g["l5"]?.rails, [true, false, false, false],
+                       "l2's subtree closed at l5: only l1's column runs past it")
+        XCTAssertEqual(g["l5"]?.continues, false, "a leaf: its elbow ends the column")
+        XCTAssertEqual(g["l2"]?.continues, true, "its child l3 is listed right under it")
+        XCTAssertEqual(g["l4"]?.rails, [true, true, true], "l3's column still runs to l4")
     }
 }
