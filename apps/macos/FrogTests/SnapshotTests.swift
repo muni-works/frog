@@ -589,5 +589,65 @@ extension SnapshotTests {
             }
         }
     }
+
+    /// Tool rows at the new rhythm: a run of six calls, a row with no gist yet, a failed row,
+    /// and a gist row with a diff — light and dark. The point of the height check beside the
+    /// shots: the gist row and the no-gist row must be the same height, or the transcript
+    /// jumps as gists land. `tool-rows-dark` / `tool-rows-light`.
+    func testRenderToolRows() throws {
+        func tool(_ id: String, _ name: String, _ arg: String, gist: String? = nil,
+                  outcome: ToolOutcome = .ok, diff: FileDiff? = nil) -> ItemState {
+            var item = ItemState(id: id, kind: .tool(name: name, arg: arg))
+            item.done = true
+            item.gist = gist
+            item.result = Item.ToolResult(
+                name: name, arg: arg, input: nil, outcome: outcome, output: "",
+                display: nil, diff: diff, diagram: nil, present: nil, images: nil, app: nil, widget: nil)
+            return item
+        }
+        let edit = FileDiff(
+            path: "apps/FrogKit/UI/Transcript/ActivityLine.swift", created: false, added: 24, removed: 7, hunks: [])
+        let steps = [
+            tool("b1", "Bash", "git log --oneline -5", gist: "git log of the sleep-events worktree"),
+            tool("b2", "Bash", "cargo test -p frog-engine --lib"),
+            tool("g1", "Grep", "fn worth"),
+            tool("r1", "Read", "crates/frog-engine/src/gist.rs"),
+            tool("e1", "Edit", "apps/FrogKit/UI/Transcript/ActivityLine.swift",
+                 gist: "moved the row's verb to the gist", diff: edit),
+            tool("f1", "Bash", "cargo test -- --nocapture", outcome: .error),
+            tool("m1", "mcp__github__list_issues", #"{"repo":"muni-works/frog"}"#),
+        ]
+        let lines = VerbLine.lines(steps)
+        // The proof that matters: a gist row and a no-gist row are the same height.
+        let gisted = try XCTUnwrap(lines.first { $0.arg == nil && !$0.quiet })
+        let raw = try XCTUnwrap(lines.first { $0.arg != nil && $0.verb.isEmpty })
+        XCTAssertEqual(try renderedHeight(VerbLineView(line: gisted), width: 560),
+                       try renderedHeight(VerbLineView(line: raw), width: 560), accuracy: 0.5)
+        for dark in [true, false] {
+            let view = VStack(alignment: .leading, spacing: 6) {
+                ForEach(Array(lines.enumerated()), id: \.offset) { _, v in
+                    VerbLineView(line: v)
+                }
+            }
+            .padding(20)
+            .background(Color(nsColor: .windowBackgroundColor))
+            .environment(\.colorScheme, dark ? .dark : .light)
+            try render(view, size: CGSize(width: 620, height: 240), to: "tool-rows" + (dark ? "" : "-light"),
+                       appearance: dark ? .darkAqua : .aqua)
+        }
+        print("snapshots: \(outDir.path)")
+    }
+
+    /// A row's rendered height, the BillingTests way.
+    @MainActor
+    private func renderedHeight<V: View>(_ view: V, width: CGFloat) throws -> CGFloat {
+        let host = NSHostingView(rootView: view.frame(width: width))
+        host.layoutSubtreeIfNeeded()
+        let window = NSWindow(contentRect: host.bounds, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = host
+        host.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.15))
+        return host.fittingSize.height
+    }
 }
 

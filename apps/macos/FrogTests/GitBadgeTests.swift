@@ -77,12 +77,18 @@ final class GitBadgeTests: XCTestCase {
             .row(SessionInfo(id: id, modified: 0, created: 0, model: "", firstInput: nil, title: id, end: nil,
                              forkedFrom: nil, cwd: nil), depth: depth, counts: .init(), collapsed: false)
         }
-        // w1 is live (drawn before the fold); w2 and w3 are folded.
-        let closed: [SessionNesting.Entry] = [row("m", 0), row("w1", 1), .done(parent: "m", depth: 1, count: 2, failed: 0, open: false)]
-        XCTAssertEqual(GitRollup.foldMembers(closed, children: children)["m"], ["w2", "w3"])
-        // Open: its members come after it and still count.
-        let open = closed.dropLast() + [.done(parent: "m", depth: 1, count: 2, failed: 0, open: true), row("w2", 1), row("w3", 1)]
-        XCTAssertEqual(GitRollup.foldMembers(Array(open), children: children)["m"], ["w2", "w3"])
+        // A fold holds `children(parent)` the rows didn't already draw. Since the sidebar went
+        // to one level, the folds are the root ones ("N done by chief", "yours:") — nothing
+        // folds inside a session — so here the chief's fold takes its undrawn children.
+        let chiefKids = ["m": ["w1", "w2", "w3"]]
+        let chiefChildren: (String) -> [String] = { $0 == AttentionTree.chiefFold ? ["m"] : chiefKids[$0] ?? [] }
+        let closed: [SessionNesting.Entry] = [
+            .done(parent: AttentionTree.chiefFold, depth: 0, count: 1, failed: 0, open: false),
+        ]
+        XCTAssertEqual(GitRollup.foldMembers(closed, children: chiefChildren)[AttentionTree.chiefFold], ["m"])
+        // Open, its members are drawn after it — and still count, since they aren't "before".
+        let open = closed + [row("m", 0)]
+        XCTAssertEqual(GitRollup.foldMembers(open, children: chiefChildren)[AttentionTree.chiefFold], ["m"])
     }
 
     // MARK: Parsing

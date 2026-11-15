@@ -41,7 +41,18 @@ const NAMES: Record<string, string> = {
   'glm-5.3-flash': 'GLM-5.3 Flash',
   'qwen3-coder-next': 'Qwen3 Coder Next',
 }
-export const modelName = (id: string) => NAMES[currentId(id)] ?? id
+/** Word by word for an id the list doesn't name: "qwen3-vl-8b" reads "Qwen3 VL 8B". */
+const WORDS: Record<string, string> = { glm: 'GLM', vl: 'VL', deepseek: 'DeepSeek', moe: 'MoE' }
+export function humanize(id: string): string {
+  const base = id.includes('/') ? id.slice(id.lastIndexOf('/') + 1) : id
+  return base.split(/[-_]/).filter(Boolean).map((w) => {
+    const k = w.toLowerCase()
+    if (WORDS[k]) return WORDS[k]
+    if (/^\d+(\.\d+)?[bkm]$/i.test(w) || /^v\d/i.test(w)) return w.toUpperCase()
+    return w[0].toUpperCase() + w.slice(1)
+  }).join(' ')
+}
+export const modelName = (id: string) => NAMES[currentId(id)] ?? humanize(id)
 
 /** USD per million tokens, e.g. "$0.20 / $0.80 per M". */
 export function price(m: Model) {
@@ -53,9 +64,14 @@ export function price(m: Model) {
 /** "$0.80/M out": a cloud model's price per million output tokens, as the picker shows it. */
 export const outputPrice = (m: Model) => (m.output == null ? '' : `$${(m.output * 1e6).toFixed(2)}/M out`)
 
-/** The model a new session starts on: GLM-5.3 Flash while Frog Cloud lists it (it always
- *  serves it), else the first it lists. Nothing is built in: no list, no default. */
-export const defaultModel = (models: Model[]) => (models.find((m) => currentId(m.id) === 'glm-5.3-flash') ?? models[0])?.id
+/** "$0.20 in · $0.80 out /M": both per-million prices, as the picker shows them. */
+export const inOutPrice = (m: Model) =>
+  m.input == null || m.output == null ? outputPrice(m) : `$${(m.input * 1e6).toFixed(2)} in · $${(m.output * 1e6).toFixed(2)} out /M`
+
+/** The model a new session starts on: DeepSeek V4.1 Flash while Frog Cloud lists it, else the
+ *  first it lists. Nothing is built in: no list, no default. Same pick as the engine's
+ *  `catalog::cloud_default` (2026-11-14: 89 s vs GLM-5.3 Flash's 179 s on one agent task). */
+export const defaultModel = (models: Model[]) => (models.find((m) => currentId(m.id) === 'deepseek-v4.1-flash') ?? models[0])?.id
 
 /** The smallest context window worth offering for agent sessions. */
 const MIN_AGENT_CONTEXT = 64_000

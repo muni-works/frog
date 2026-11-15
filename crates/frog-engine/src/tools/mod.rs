@@ -1,5 +1,6 @@
 pub mod bash;
 pub mod compare;
+pub mod deferred;
 pub mod diagram;
 pub mod visualize;
 pub mod docs;
@@ -304,7 +305,7 @@ pub fn kind(name: &str) -> Kind {
         "WebFetch" | "WebSearch" => Kind::Net,
         // MCP tools can do anything their server does: ask, like Bash.
         n if n.starts_with("mcp__") => Kind::Exec,
-        crate::mcp::SEARCH_TOOL => Kind::Read,
+        crate::mcp::SEARCH_TOOL | crate::mcp::LEGACY_SEARCH_TOOL => Kind::Read,
         // A subagent can only read.
         crate::subagent::TOOL => Kind::Read,
         crate::skills::TOOL => Kind::Read,
@@ -314,7 +315,20 @@ pub fn kind(name: &str) -> Kind {
         crate::compiled_memory::TOOL => Kind::Edit,
         // Moving into a folder hands over its files and shell: always asks.
         crate::folder::TOOL => Kind::Exec,
-        _ => Kind::Read,
+        // frog's own tools that only read, or only touch frog's state (todos, titles, other
+        // sessions through their own approvals): they never ask.
+        "Read" | "Glob" | "Grep" | "TodoWrite" | "CodeMap" | "Docs" | "Diagram" => Kind::Read,
+        visualize::TOOL | visualize::GUIDE | models::TOOL => Kind::Read,
+        crate::present::TOOL | crate::ask::TOOL | crate::irc::TOOL | crate::next::TOOL => {
+            Kind::Read
+        }
+        crate::recall::TOOL | crate::title::TOOL => Kind::Read,
+        crate::background::JOB_OUTPUT | crate::background::JOB_STOP => Kind::Read,
+        "TaskOutput" | "TaskStop" => Kind::Read,
+        n if sessions::is_tool(n) => Kind::Read,
+        // Anything else (a tool added without a line here, a name a model made up) asks: a
+        // missing entry must not quietly become a read.
+        _ => Kind::Exec,
     }
 }
 
@@ -539,6 +553,25 @@ mod tests {
 
     /// A plain (non-worktree) session keeps behaving as before: relative writes inside,
     /// home and friends outside.
+    #[test]
+    fn unknown_tools_ask_and_frog_reads_dont() {
+        for n in ["SomeNewTool", "Exfiltrate", ""] {
+            assert!(kind(n) == Kind::Exec, "{n:?} should ask");
+        }
+        for n in [
+            "Read",
+            "Glob",
+            "Grep",
+            "TodoWrite",
+            "Ask",
+            "ListSessions",
+            "JobOutput",
+            "Task",
+        ] {
+            assert!(kind(n) == Kind::Read, "{n} should not ask");
+        }
+    }
+
     #[test]
     fn check_writable_holds_without_a_sandbox() {
         let ws = std::env::temp_dir().join(format!("frog-plain-{}", crate::session::new_id()));

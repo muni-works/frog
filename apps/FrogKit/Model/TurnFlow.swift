@@ -291,7 +291,7 @@ enum ActivityWords {
         case "UseFolder":
             guard let to = calls.last(where: { $0.result?.outcome == .ok })?.arg else { return [.text("asked to use a folder")] }
             return [.text("moved to \((to as NSString).lastPathComponent)")]
-        case "McpTools": return [.text("looked up tools")]
+        case "McpTools", "ToolSearch": return [.text("looked up tools")]
         case let k where k.hasPrefix("mcp:"):
             let server = String(k.dropFirst(4))
             return [.text(calls.count == 1 ? "used \(server)" : "used \(server) \(calls.count) times")]

@@ -279,12 +279,33 @@ pub fn long_wait(cmd: &str) -> Option<u64> {
                 }
                 wait = Some(secs);
             }
-            None if crate::shell::read_only(seg) => {}
+            None if crate::shell::read_only(seg) || status_query(seg) => {}
             None => return None,
         }
     }
     let secs = wait.filter(|s| *s >= LONG_WAIT_S)?;
     Some(secs.round() as u64)
+}
+
+/// A `gh` call that only reports state (`gh pr checks 324 2>&1`, `gh run view 9 --json status`):
+/// what a CI wait checks after its sleep. Anything that could change something, open a browser
+/// or write a file is not one.
+fn status_query(seg: &str) -> bool {
+    if seg.contains(['$', '`', '<', '(']) {
+        return false;
+    }
+    let words: Vec<&str> = seg
+        .split_whitespace()
+        .filter(|w| !matches!(*w, "2>&1" | "2>/dev/null"))
+        .collect();
+    if words.iter().any(|w| w.contains('>') || matches!(*w, "--web" | "-w" | "--watch")) {
+        return false;
+    }
+    matches!(
+        words.as_slice(),
+        ["gh", "pr", "checks" | "view" | "list" | "status", ..]
+            | ["gh", "run", "view" | "list", ..]
+    )
 }
 
 /// `sleep` with durations (`570`, `9m`, `1.5h`, `30s`; several add up, as GNU sleep does).
@@ -904,6 +925,23 @@ mod tests {
         assert_eq!(long_wait("while true; do sleep 600; done"), None);
         assert_eq!(long_wait("sleep $(cat n)"), None);
         assert_eq!(long_wait("sleep forever"), None);
+        // CI waits from the session logs: `gh` status queries are checks, not work.
+        assert_eq!(
+            long_wait("cd /w/frog && sleep 300; gh pr checks 324 2>&1 | head -14"),
+            Some(300)
+        );
+        assert_eq!(
+            long_wait(
+                "cd /w/frog && sleep 480; gh pr checks 324 2>&1 | head -12; echo '--- state ---'; gh pr view 324 --json mergeable,mergeStateStatus --jq '.'"
+            ),
+            Some(480)
+        );
+        assert_eq!(long_wait("sleep 120; gh run list --limit 3"), Some(120));
+        // `gh` that changes something, or writes a file, is work.
+        assert_eq!(long_wait("sleep 300; gh pr merge 324"), None);
+        assert_eq!(long_wait("sleep 300; gh pr checks 324 > /tmp/x"), None);
+        assert_eq!(long_wait("sleep 300; gh pr view 324 --web"), None);
+        assert_eq!(long_wait("sleep 300; gh pr checks $(cat n)"), None);
         // Short waits stay inline.
         assert_eq!(long_wait("sleep 59"), None);
         assert_eq!(long_wait("sleep 5; tail -1 log"), None);

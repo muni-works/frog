@@ -176,6 +176,62 @@ struct ElicitationCard: View {
     }
 }
 
+// MARK: - Signed out
+
+/// Servers someone configured that need a sign-in, so their tools are missing from the
+/// model's list *right now*. This is the half that keeps the fix honest: connecting never
+/// opens a browser, so without this the tools would just quietly not be there, and "a tool I
+/// set up isn't offered" would be unexplainable. The button is the only thing that signs in.
+struct SignedOutCard: View {
+    let servers: [McpServerReport]
+    let conversation: Conversation
+    @State private var signingIn: Set<String> = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(
+                servers.count == 1
+                    ? "\(servers[0].name) is signed out"
+                    : "\(servers.count) MCP servers are signed out",
+                systemImage: "key.slash")
+                .fontWeight(.semibold)
+            Text("Their tools aren't offered to the model until you sign in. Nothing was opened for you: frog only starts a browser when you ask.")
+                .font(.frog(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(servers) { s in
+                HStack(spacing: 8) {
+                    Text(s.name).font(.frog(size: 12, weight: .medium))
+                    if s.declined { Text("you declined").foregroundStyle(.secondary) }
+                    Spacer()
+                    if signingIn.contains(s.name) {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Button("Sign in") { signIn(s.name) }
+                            .buttonStyle(.glass)
+                            .controlSize(.small)
+                    }
+                }
+            }
+        }
+        .padding(TurnSpace.Card.padding)
+        .glassEffect(.regular.tint(.orange.opacity(0.10)), in: .rect(cornerRadius: TurnSpace.Card.radius))
+    }
+
+    private func signIn(_ name: String) {
+        guard !signingIn.contains(name) else { return }
+        signingIn.insert(name)
+        conversation.send(.mcpSignIn(server: name))
+        // The engine answers with `mcp_signed_in` / `mcp_signed_out` and a fresh server list,
+        // which clears the card. Tidy the spinner either way after a while so a browser the
+        // user never finished doesn't leave it spinning forever.
+        Task {
+            try? await Task.sleep(for: .seconds(300))
+            signingIn.remove(name)
+        }
+    }
+}
+
 // MARK: - Images
 
 /// Images a tool returned (renders, plots, screenshots). Click one to see it large.

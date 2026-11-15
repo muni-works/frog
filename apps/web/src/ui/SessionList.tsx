@@ -150,7 +150,10 @@ export function SessionList(p: {
   const { groups, failed, total } = useMemo(() => {
     // A sandbox that never got a turn in, and isn't open, is clutter: it folds.
     const neverStarted = (s: SessionSummary) => s.state === 'error' && s.id !== p.current && !p.thread(s.id).turns.length
-    // Show: the active list, or what's been archived (the open session stays either way).
+    // Show: the active list, or what's been archived. The open session is not kept in either
+    // one: archiving it clears the view to a new session (App's `archive`), so it can't be
+    // archived and still on screen. The one row that stays is a session whose archive hasn't
+    // come back from the gateway yet — the poll's next list drops it.
     const pool = p.sessions.filter((s) => !!s.archived === view.archived || s.id === p.current)
     const failed = view.archived ? [] : pool.filter(neverStarted)
     const when = (s: SessionSummary) => (view.sort === 'created' ? s.created ?? s.updated : s.updated)
@@ -187,6 +190,7 @@ export function SessionList(p: {
     const status = glyph === 'run' ? (s.state === 'starting' ? 'Starting' : 'Running') : glyph === 'ask' ? 'Needs you' : glyph === 'fail' ? 'Failed' : glyph === 'paused' ? 'Paused' : null
     return (
       <button key={s.id} type="button" className={`srow${s.id === p.current ? ' on' : ''}${(detail && s.id === p.current) || !view.compact ? ' two' : ''}`} onClick={() => p.onOpen(s.id)}
+        aria-label={rowName(p.title(s), status ?? (glyph === 'unread' ? 'New' : null), repo, !!s.pr && s.pr)} aria-current={s.id === p.current ? 'page' : undefined}
         style={depth ? { paddingLeft: 10 + depth * 16 } : undefined}
         onContextMenu={(e) => { e.preventDefault(); setCtx({ s, x: e.clientX, y: e.clientY }) }}
         title={s.state === 'error' ? (s.error ? plainError(s.error) : "The sandbox couldn't start") : undefined}>
@@ -288,4 +292,9 @@ export function SessionList(p: {
       </>}
     </div>
   )
+}
+
+/** A session row's accessible name: its title, then state, repo and PR, in a phrase. */
+export function rowName(title: string, status: string | null, repo: string | null, pr: string | false): string {
+  return [title, status, repo && `in ${repo}`, pr && `pull request ${pr}`].filter(Boolean).join(', ')
 }

@@ -360,15 +360,11 @@ impl Agent {
                 it would run the same confined; nothing needed the escape."
                     .replace('\n', " ")
             } else {
-                "Runs outside the sandbox: it can change files anywhere and read your credentials."
-                    .to_string()
+                self.escape_reason("Runs outside the sandbox")
             }
         });
         if terminal_run && self.ctx.shell_sandbox.is_some() {
-            reason = Some(
-                "Runs in a terminal pane, which isn't sandboxed: it can change files anywhere and read your credentials."
-                    .to_string(),
-            );
+            reason = Some(self.escape_reason("Runs in a terminal pane, which isn't sandboxed"));
         }
         match &egress_ask {
             Some(hosts) if !hosts.is_empty() => {
@@ -384,8 +380,13 @@ impl Agent {
                     needs the network or the wider writes; it would run the same confined."
                         .replace('\n', " ")
                 } else {
-                    "Runs outside the sandbox and past this session's network allow-list: it can reach any host, change files anywhere and read your credentials."
-                        .to_string()
+                    if self.cfg.cloud_sandbox {
+                        "Runs outside the command sandbox and past this session's network allow-list, inside your cloud machine: it can reach any host and change anything on that machine."
+                            .to_string()
+                    } else {
+                        "Runs outside the sandbox and past this session's network allow-list: it can reach any host, change files anywhere and read your credentials."
+                            .to_string()
+                    }
                 })
             }
             None => {}
@@ -736,9 +737,25 @@ impl Agent {
         }
     }
 
+    /// The card's line for a command that runs unconfined. `what` is the opening clause;
+    /// the consequence depends on where the engine runs: on the user's own machine it can
+    /// reach their credentials, in a Frog Cloud sandbox VM there are none to reach.
+    fn escape_reason(&self, what: &str) -> String {
+        if self.cfg.cloud_sandbox {
+            let what = what.replace("outside the sandbox", "outside the command sandbox");
+            format!(
+                "{what}, inside your cloud machine: it can change anything on that machine and reach the network."
+            )
+        } else {
+            format!("{what}: it can change files anywhere and read your credentials.")
+        }
+    }
+
     /// Yolo ran a call that widened the egress fence: grant the hosts it declared for the
-    /// session and put the fact in the transcript as one quiet line, never a card. Yolo is
-    /// "act without asking", not "act silently": the row is the whole point. `hosts` is
+    /// session and put the fact in the transcript, never a card. Yolo is "act without
+    /// asking", not "act silently": the row is the whole point — but the row is the call's
+    /// own (`Ran …`), tagged unsandboxed by the client from the durable [`Event::EgressWidened`]
+    /// emitted here, so no second line restates it (Cam, 2026-11-13). `hosts` is
     /// [`Self::egress_ask`]'s answer — the hosts it named, empty when it only left the
     /// sandbox (`leaves`, past which no list applies).
     fn yolo_widen_egress(
@@ -749,30 +766,35 @@ impl Agent {
         hosts: &[String],
         leaves: bool,
     ) {
-        if !hosts.is_empty() && let Some(egress) = &self.ctx.egress {
+        if !hosts.is_empty()
+            && let Some(egress) = &self.ctx.egress
+        {
             egress.grant(hosts);
         }
-        let head = crate::egress::head(command);
-        // Past the sandbox no list applies, so `hosts` is empty there: the sandbox line is the
-        // whole fact, and naming hosts "allowed" would be a lie (nothing fences them).
-        let line = match (leaves, hosts.is_empty()) {
-            (true, _) => format!(
-                "yolo: `{head}` ran outside the sandbox; it can change files anywhere and read your credentials."
-            ),
-            (false, _) => format!(
-                "yolo: `{head}` reaches {}, now allowed this session.",
+        if !leaves {
+            // Which hosts got granted is a fence state the user couldn't see otherwise (it
+            // outlives the turn), and it fires once per new host — still a notice.
+            let line = format!(
+                "yolo: `{}` reaches {}, now allowed this session.",
+                crate::egress::head(command),
                 hosts.join(", ")
-            ),
-        };
-        if self.cfg.log_calls {
-            eprintln!("{line}");
+            );
+            if self.cfg.log_calls {
+                eprintln!("{line}");
+            }
+            self.notice(Level::Info, line);
         }
-        self.notice(Level::Info, line);
-        self.decision(item, "yolo", "allow", "yolo: widened egress without asking", 0);
+        self.decision(
+            item,
+            "yolo",
+            "allow",
+            "yolo: widened egress without asking",
+            0,
+        );
         self.emit(Event::EgressWidened {
             item: item.to_string(),
             tool: name.to_string(),
-            command: head,
+            command: crate::egress::head(command),
             hosts: hosts.to_vec(),
             sandbox_left: leaves,
         });
@@ -942,11 +964,33 @@ impl Agent {
                 .await
                 .map_err(|e| anyhow::anyhow!("{e:#}"))?;
         }
+        let mut input = input.clone();
+        // The child's first turn carries the parent's head start; a bare one-liner is refused.
+        if name == sessions::START {
+            input["prompt"] = Value::String(sessions::brief(&input)?);
+        }
+        // A child asking its parent: "parent" names it wherever the child runs.
+        if name == sessions::SEND
+            && let Some(parent) = self.cfg.parent_session.clone()
+            && sessions::names_parent(input["to"].as_str().unwrap_or(""), &parent)
+        {
+            if !self.shared.sessions.enabled() {
+                let me = self.conv.session_id.clone();
+                let text = input["message"].as_str().unwrap_or("").to_string();
+                crate::kids::send_to_parent(&me, text)?;
+                return Ok(tools::Output {
+                    content: "Sent to your parent. Keep working on what is clear; its answer \
+arrives as a <session-message from=\"parent\"> in this turn."
+                        .into(),
+                    ..Default::default()
+                });
+            }
+            input["to"] = Value::String(parent);
+        }
         if !self.shared.sessions.enabled() {
-            return self.local_session_tool(name, input).await;
+            return self.local_session_tool(name, &input).await;
         }
         // A write-capable child gets its own worktree unless the call says otherwise.
-        let mut input = input.clone();
         if name == sessions::START && input.get("worktree").is_none() {
             input["worktree"] = Value::Bool(crate::kids::wants_worktree(&input));
         }
@@ -1004,9 +1048,9 @@ impl Agent {
             }
             _ => (self.root.clone(), None),
         };
-        let asked = input["mode"].as_str().and_then(|m| {
-            serde_json::from_value::<Mode>(Value::String(m.to_string())).ok()
-        });
+        let asked = input["mode"]
+            .as_str()
+            .and_then(|m| serde_json::from_value::<Mode>(Value::String(m.to_string())).ok());
         // Never above the parent's own mode.
         let mode = match asked {
             Some(m) if (m as u8) <= (self.mode as u8) => m,
@@ -1055,10 +1099,7 @@ impl Agent {
                 self.shared.bg.clone(),
             )
             .await?;
-        let mut text = format!(
-            "Started session {title} ({id}) in {}",
-            cwd.display()
-        );
+        let mut text = format!("Started session {title} ({id}) in {}", cwd.display());
         if let Some(b) = &branch {
             text.push_str(&format!(" on branch {b}"));
         }

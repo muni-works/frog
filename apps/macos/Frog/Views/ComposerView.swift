@@ -96,8 +96,16 @@ struct ComposerView: View {
         return .session(.init(
             repo: slug, branch: git.branch, worktree: inTree, worktreePath: inTree ? path : nil,
             diff: .init(add: git.added, del: git.removed, files: git.changed), dirty: git.changed > 0,
-            ahead: ahead, prs: gitIndex.prs(conversation.prs)
+            ahead: ahead, prs: gitIndex.prs(boundPrs)
         ))
+    }
+
+    /// The PRs bound to this session, from the listing the sidebar's rows read too: the engine
+    /// keeps them in the log, so both surfaces derive from one list (an open conversation's copy
+    /// is fresher by one event, so it wins when it has one).
+    var boundPrs: [PrBinding] {
+        if !conversation.prs.isEmpty { return conversation.prs }
+        return Library.shared.sessions.first { $0.id == conversation.sessionID }?.prs ?? []
     }
 
     var trayModel: ComposerModel.Model {
@@ -182,7 +190,9 @@ struct ComposerView: View {
         }
         .task(id: workspace.folder) { await readRepo() }
         .onChange(of: workspace.git) { Task { await readRepo() } }
-        .task(id: conversation.prs) { await gitIndex.watchPrs(conversation.prs, in: workspace.folder.path) }
+        .task(id: conversation.prs) {
+            await gitIndex.watchPrs(conversation.prs, in: workspace.folder.path, writeBack: gitIndexWriteBack)
+        }
         .task { await loadCloudRepos() }
         .onChange(of: dictation.problem) { _, p in
             guard p != nil else { return }

@@ -113,33 +113,99 @@ impl Agent {
             format!("a {secs}s sleep moved to background job {id}; the turn goes on"),
         );
         Ok(tools::Output::text(format!(
-            "That wait is now a background job ({id}, {secs}s); continuing. Don't sleep to wait: do other work now or end your turn; the <job-done id={id}> wake, with the output of the commands after the sleep, starts your next turn.\n\n{}",
+            "That wait is now a background job ({id}, {secs}s); continuing. Don't sleep to wait: do other work now or end your turn; the <job-done id={id}> wake, with the output of the commands after the sleep, reaches you at your next step after it ends (or starts your next turn if this one has ended).\n\n{}",
             started.content
         )))
     }
 
-    /// Run a tool, streaming its live output as ephemeral `Output` deltas on item `id`.
+    /// Run a tool, streaming its live output as ephemeral `Output` deltas on item `id`. A
+    /// deferred built-in called by name loads for the rest of the session; if this first call
+    /// fails, the error carries its schema so the retry gets it right.
     pub(super) async fn run_tool(
         &mut self,
         id: &str,
         name: &str,
         input: &Value,
     ) -> Result<tools::Output> {
+        let schema = self.load_builtin(name);
+        let out = Box::pin(self.run_tool_inner(id, name, input)).await;
+        match (out, schema) {
+            (Err(e), Some(schema)) => Err(anyhow::anyhow!(
+                "{e:#}\n`{name}` is in your tool list now. Its full definition: {schema}"
+            )),
+            (out, _) => out,
+        }
+    }
+
+    /// Load the deferred built-in `name` if it isn't yet. Returns its definition when it was
+    /// loaded just now.
+    pub(super) fn load_builtin(&mut self, name: &str) -> Option<String> {
+        let spec = self.deferrable.iter().find(|s| s.name == name)?;
+        if self.loaded_builtin.iter().any(|n| n == name) {
+            return None;
+        }
+        let def = format!("{} {}", spec.description, spec.schema);
+        self.loaded_builtin.push(name.to_string());
+        self.record_loaded();
+        Some(def)
+    }
+
+    /// Every loaded tool (built-in and MCP), for the resume to restore.
+    fn record_loaded(&mut self) {
+        let mut tools = self.loaded_builtin.clone();
+        tools.extend(self.mcp.loaded());
+        self.record(crate::session::Record::LoadedTools { tools });
+    }
+
+    /// `ToolSearch`: load deferred built-ins, then (with many) MCP tools.
+    async fn tool_search(&mut self, id: &str, name: &str, input: &Value) -> Result<tools::Output> {
+        let query = input["query"].as_str().unwrap_or("");
+        let picked = tools::deferred::pick(&self.deferrable, query);
+        let mut text = String::new();
+        if !picked.is_empty() {
+            text.push_str("Loaded these tools; call them directly from your next step:\n");
+            for n in &picked {
+                if !self.loaded_builtin.contains(n) {
+                    self.loaded_builtin.push(n.clone());
+                }
+                let line = tools::deferred::DEFERRED
+                    .iter()
+                    .find(|(d, _)| d == n)
+                    .map_or(n.as_str(), |(_, l)| l);
+                text.push_str(&format!("- {line}\n"));
+            }
+        }
+        if self.mcp.deferred() {
+            let hub = self.mcp.clone();
+            match hub.call(id, name, input).await {
+                Ok(out) if picked.is_empty() => {
+                    self.record_loaded();
+                    return Ok(out);
+                }
+                Ok(out) if out.content.starts_with("Loaded") => text.push_str(&out.content),
+                Ok(_) => {}
+                Err(e) if picked.is_empty() => return Err(e),
+                Err(_) => {}
+            }
+        }
+        if picked.is_empty() {
+            anyhow::bail!("no tools match `{query}`; give a few keywords, or `select:name,name`");
+        }
+        self.record_loaded();
+        Ok(tools::Output::text(text))
+    }
+
+    async fn run_tool_inner(
+        &mut self,
+        id: &str,
+        name: &str,
+        input: &Value,
+    ) -> Result<tools::Output> {
         // A working directory that was deleted out from under the session (a worktree cleaned
-        // up, a temp folder gone) would fail every command with "No such file or directory".
-        // Fall back to the session root and say so.
-        if !self.ctx.cwd.is_dir() {
-            let gone = std::mem::take(&mut self.ctx.cwd);
-            self.ctx.cwd = self.root.clone();
-            self.ctx.read_files.clear();
-            // The sandbox roots pointed into the deleted folder too; the session root confines
-            // what's left, if it still sandboxes at all.
-            if self.ctx.sandbox.as_ref().is_some_and(|p| !p.is_dir()) {
-                self.ctx.sandbox = Some(self.root.clone());
-            }
-            if self.ctx.shell_sandbox.as_ref().is_some_and(|p| !p.is_dir()) {
-                self.ctx.shell_sandbox = Some(self.root.clone());
-            }
+        // up by someone else, a temp folder gone) would fail every command with "No such file
+        // or directory". Fall back to the session root and say so. (When the session's own
+        // command deleted it, the check after that command already recovered, quietly.)
+        if let Some(gone) = self.recover_cwd() {
             self.notice(
                 Level::Warn,
                 format!(
@@ -185,10 +251,19 @@ root {}. Re-`cd` if you need the old location back.</system-note>",
         // behind it) for minutes, so it runs as a background job and the turn goes on.
         if name == "Bash"
             && !self.subagent
-            && !tools::bool_arg(input, "run_in_background")
             && let Some(secs) = crate::auto::long_wait(input["command"].as_str().unwrap_or(""))
         {
-            return self.background_wait(input, secs);
+            // Waiting on a job that already exited shows the same log every time
+            // (yolo-one-row: 116 sleeps over hours on an empty, finished job's log).
+            if let Some(why) = crate::background::waits_on_finished(
+                &self.shared.bg,
+                input["command"].as_str().unwrap_or(""),
+            ) {
+                anyhow::bail!(why);
+            }
+            if !tools::bool_arg(input, "run_in_background") {
+                return self.background_wait(input, secs);
+            }
         }
         if crate::background::handles(name)
             || (name == "Bash" && tools::bool_arg(input, "run_in_background"))
@@ -241,19 +316,12 @@ root {}. Re-`cd` if you need the old location back.</system-note>",
         if name == crate::panes::PREVIEW {
             return self.shared.panes.preview(input, self.subagent).await;
         }
+        if name == crate::mcp::SEARCH_TOOL || name == crate::mcp::LEGACY_SEARCH_TOOL {
+            return self.tool_search(id, name, input).await;
+        }
         if self.mcp.handles(name) {
             let hub = self.mcp.clone();
-            let out = hub.call(id, name, input).await;
-            // Record loaded tools if McpTools was called
-            if name == crate::mcp::SEARCH_TOOL {
-                if out.is_ok() {
-                    let loaded = hub.loaded();
-                    if !loaded.is_empty() {
-                        self.record(crate::session::Record::LoadedTools { tools: loaded });
-                    }
-                }
-            }
-            return out;
+            return hub.call(id, name, input).await;
         }
         let (tx, mut rx) = mpsc::unbounded_channel::<String>();
         self.ctx.progress = Some(tx);
@@ -304,6 +372,18 @@ root {}. Re-`cd` if you need the old location back.</system-note>",
                 ..Default::default()
             });
         }
+        // The command deleted the folder its own shell stood in (`git worktree remove` of the
+        // worktree it had `cd`-ed into): the session did that itself, so no warning row —
+        // back to the session root, and the model reads why in this call's own result.
+        if let Some(gone) = self.recover_cwd()
+            && let Ok(o) = &mut out
+        {
+            o.content.push_str(&format!(
+                "\n(This removed the shell's working directory {}; the shell is back in the session root {}.)",
+                gone.display(),
+                self.root.display()
+            ));
+        }
         // A `cd` that stuck: say where the shell works now, durably (SessionStatus on a dead
         // session reads it from the log).
         // (Compared canonically: the shell reports `pwd -P`, so `/var` comes back as
@@ -317,12 +397,35 @@ root {}. Re-`cd` if you need the old location back.</system-note>",
         out
     }
 
+    /// The shell's working directory no longer exists: move it (and any sandbox roots that
+    /// pointed into it) back to the session root. Returns the folder that went away.
+    fn recover_cwd(&mut self) -> Option<PathBuf> {
+        if self.ctx.cwd.as_os_str().is_empty() || self.ctx.cwd.is_dir() {
+            return None;
+        }
+        let gone = std::mem::replace(&mut self.ctx.cwd, self.root.clone());
+        self.ctx.read_files.clear();
+        // The sandbox roots pointed into the deleted folder too; the session root confines
+        // what's left, if it still sandboxes at all.
+        if self.ctx.sandbox.as_ref().is_some_and(|p| !p.is_dir()) {
+            self.ctx.sandbox = Some(self.root.clone());
+        }
+        if self.ctx.shell_sandbox.as_ref().is_some_and(|p| !p.is_dir()) {
+            self.ctx.shell_sandbox = Some(self.root.clone());
+        }
+        Some(gone)
+    }
+
     /// Run one batch of tool calls. Returns true if the user denied one.    /// Whether the model may call `name` now: it's in the tool list this step was offered, or
     /// it's a connected MCP server's tool (with many, only some are listed up front and the
     /// rest load on demand; that saves context, it isn't a permission).
     pub(super) fn offers(&self, name: &str) -> bool {
         self.specs.iter().any(|s| s.name == name)
             || (name.starts_with("mcp__") && self.mcp.handles(name))
+            // A deferred built-in: calling it loads it (see `run_tool`).
+            || self.deferrable.iter().any(|s| s.name == name)
+            || (name == crate::mcp::LEGACY_SEARCH_TOOL
+                && self.specs.iter().any(|s| s.name == crate::mcp::SEARCH_TOOL))
     }
 
     /// A context to run `name` in on the side (while its reply is still streaming, or beside
@@ -476,8 +579,9 @@ root {}. Re-`cd` if you need the old location back.</system-note>",
             } else if seen >= LOOP_REPLAN {
                 let msg = format!(
                     "Not run: this exact call already ran {} times this turn with the same result. \
-Don't repeat it. Change the arguments or try a different approach.",
-                    seen - 1
+Don't repeat it. {}",
+                    seen - 1,
+                    super::repeat_fix(&name)
                 );
                 text(
                     ToolOutcome::Error,

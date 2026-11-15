@@ -246,8 +246,12 @@ struct PairedStore {
     private func setKey(_ key: String, for nodeID: String) throws {
         // The key is base64url with a prefix; it never needs quoting beyond this. It goes over
         // stdin to `security -i`, never on a command line where `ps` would show it.
-        guard key.allSatisfy({ $0.isLetter || $0.isNumber || "_-".contains($0) }) else {
+        guard key.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || "_-".contains($0)) }) else {
             throw NSError(domain: "frog.node", code: 1, userInfo: [NSLocalizedDescriptionKey: "The node sent a malformed key."])
+        }
+        // The id comes from the remote node too and lands inside a quoted `security -i` line.
+        guard !nodeID.isEmpty, nodeID.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || "_-".contains($0)) }) else {
+            throw NSError(domain: "frog.node", code: 1, userInfo: [NSLocalizedDescriptionKey: "The node sent a malformed id."])
         }
         // `security` run by the app is credited to the app, so name both explicitly: the app,
         // and `security` itself (which the engine reads keys with).

@@ -13,6 +13,15 @@ final class SessionGlyphTests: XCTestCase {
         XCTAssertEqual(SessionEndGlyph.derive(live: nil, end: .open, stale: true), .idle)
     }
 
+    func testACoalescedRefreshKeepsTheIdsOfTheOneItReplaced() {
+        // Two sessions change inside one listing interval: the second call cancels the first,
+        // and the first's ids (its turn just ended) must still be re-listed.
+        let owed = RefreshScope.merged(RefreshScope.merged(nil, .ids(["a"])), .ids(["b"]))
+        XCTAssertEqual(owed, .ids(["a", "b"]))
+        XCTAssertEqual(RefreshScope.merged(owed, .full), .full)
+        XCTAssertEqual(RefreshScope.merged(.full, .ids(["c"])), .full)
+    }
+
     func testFailedTurnMeansFailed() {
         XCTAssertEqual(SessionEndGlyph.derive(live: nil, end: .failed), .failed)
     }

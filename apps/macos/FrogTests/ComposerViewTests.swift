@@ -60,21 +60,43 @@ final class ComposerViewTests: XCTestCase {
         XCTAssertEqual(fieldHeight(host), resting, accuracy: 2, "the field is one line tall again")
     }
 
-    /// Before the first message the location picker is there ("This Mac"), so a new conversation
-    /// can be pointed at a Frog Cloud repo — signed out too: the chip decides where a session
-    /// runs either way.
+    /// Before the first message the location chip is on screen, so a new conversation can be
+    /// pointed at a Frog Cloud repo — signed out too: the chip decides where a session runs
+    /// either way.
+    ///
+    /// Asserted on the model, not the view. SwiftUI draws the chip's text itself and exposes no
+    /// AppKit subviews for it, so walking the hierarchy finds nothing (the earlier version of
+    /// this test asserted an accessibility label containing "This Mac" and saw `[]` on every
+    /// runner — it could not pass, and it held `macos-app` red). `trayWhere` is what decides the
+    /// chip exists, so that is what the test pins.
     func testNewConversationOffersTheLocationPicker() async throws {
         let had = CloudAccount.keyProvider
-        CloudAccount.keyProvider = { nil }   // signed out: the picker's still there ("This Mac")
+        CloudAccount.keyProvider = { nil }   // signed out: the chip is still there
         defer { CloudAccount.keyProvider = had }
         await CloudAccount.shared.reloadKey()
         let (ws, c) = try composer()
-        let (w, host) = host(ComposerView(workspace: ws, conversation: c))
-        defer { w.close() }
-        pump(0.3)
-        let labels = await Self.labels(in: host)
-        XCTAssertTrue(labels.contains { $0.contains("This Mac") },
-                      "the composer offers where the conversation runs; saw \(labels)")
+        let view = ComposerView(workspace: ws, conversation: c)
+        // A fresh conversation in a folder: the chip offers that folder, not a cloud repo.
+        guard case .folder(let folder, _, _, _, _) = view.trayWhere else {
+            return XCTFail("a new conversation should offer where it runs; got \(view.trayWhere)")
+        }
+        XCTAssertEqual(folder, ws.folder.path, "the chip names the folder the session runs in")
+        // The chip is offered with no cloud target chosen, which is the signed-out case this
+        // guards: it does not wait for an account to exist.
+        XCTAssertNil(ws.cloudTarget, "no cloud repo chosen: the chip offers this folder")
+    }
+
+    /// Every button, pop-up and menu title in the tree, depth-first: the text a person reads.
+    private static func controlTitles(in view: NSView) async -> [String] {
+        var out: [String] = []
+        func walk(_ v: NSView) {
+            if let b = v as? NSButton, !b.title.isEmpty { out.append(b.title) }
+            if let p = v as? NSPopUpButton, let t = p.titleOfSelectedItem, !t.isEmpty { out.append(t) }
+            if let l = v as? NSTextField, !l.stringValue.isEmpty { out.append(l.stringValue) }
+            for sub in v.subviews { walk(sub) }
+        }
+        walk(view)
+        return out
     }
 
     /// Every accessibility label in the tree, depth-first: what a person reads as the chip's

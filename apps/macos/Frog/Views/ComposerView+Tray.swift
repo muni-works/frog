@@ -115,7 +115,10 @@ extension ComposerView {
                 gitTask { await GitActions.reopen(repo, Int(n), in: dir) }
             }
         case "archive":
-            if let id = conversation.sessionID { SessionBroker.shared.archive(id, true) }
+            // The git line's Archive (a merged PR): it archives the conversation in this pane,
+            // so the pane follows to a new session. The shared decision, not the broker's
+            // `archive`, which the ArchiveSession tool also uses and must never navigate with.
+            if let id = conversation.sessionID { ArchiveNav.archive(id, from: workspace) }
         case "gh_auth_login": GitActions.ghAuthLogin()
         case "open_url": if case .string(let u) = e.fields["url"], let url = URL(string: u) { NSWorkspace.shared.open(url) }
         case "copy":
@@ -141,8 +144,14 @@ extension ComposerView {
     func gitTask(_ work: @escaping () async -> GitActions.Failure?) {
         Task {
             if let f = await work() { dispatch(.failed(code: f.code, detail: f.detail)) }
-            gitIndex.refreshPrs(conversation.prs, in: workspace.folder.path)
+            gitIndex.refreshPrs(conversation.prs, in: workspace.folder.path, writeBack: gitIndexWriteBack)
         }
+    }
+
+    /// What gh saw, back to the engine. The sidebar reads the session listing, so unless the log
+    /// holds the latest state the two disagree the moment this conversation closes.
+    var gitIndexWriteBack: (PrBinding) -> Void {
+        { pr in conversation.send(.bindPr(pr)) }
     }
 
     /// `#12`, `owner/name#12` or a PR URL.
