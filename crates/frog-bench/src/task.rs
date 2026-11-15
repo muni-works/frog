@@ -40,6 +40,11 @@ pub struct Turn {
     pub prompt: String,
     #[serde(default)]
     pub conversation: Conversation,
+    /// The user types this prompt for this many seconds before sending it: the engine gets
+    /// it as a draft to warm first (`Op::Warm`, as the app's composer sends it), so the turn's
+    /// first call measures zero-prefill turns. Unset: sent at once, nothing warmed.
+    #[serde(default)]
+    pub typed_secs: Option<f64>,
 }
 
 #[derive(Debug, Clone)]
@@ -58,6 +63,7 @@ fn parse(name: String, text: &str, repo: PathBuf) -> Result<Task> {
     let mut turns = vec![Turn {
         prompt: spec.prompt.clone(),
         conversation: Conversation::Same,
+        typed_secs: None,
     }];
     turns.extend(spec.then);
     Ok(Task {
@@ -171,5 +177,25 @@ conversation = "new"
         // A misspelled key is an error, not a silently single-turn task.
         let typo = "prompt = \"p\"\ncheck = \"c\"\n[[than]]\nprompt = \"q\"";
         assert!(parse("x".into(), typo, PathBuf::new()).is_err());
+    }
+
+    #[test]
+    fn a_follow_up_can_be_typed_ahead() {
+        let t = parse(
+            "t".into(),
+            r#"
+prompt = "one"
+check = "true"
+[[then]]
+prompt = "two"
+typed_secs = 4.5
+[[then]]
+prompt = "three"
+"#,
+            PathBuf::new(),
+        )
+        .unwrap();
+        let typed: Vec<_> = t.turns.iter().map(|t| t.typed_secs).collect();
+        assert_eq!(typed, [None, Some(4.5), None]);
     }
 }
