@@ -47,6 +47,11 @@ impl Backend {
     }
 
     pub fn from_config(cfg: &crate::config::Config) -> Option<Self> {
+        // Hermetic (the bench, tests): only a backend the config names, never this machine's
+        // environment or Keychain, so a run gets the same tools wherever it runs.
+        if cfg.hermetic && cfg.web_search.is_none() {
+            return select(Some("searxng"), cfg.searxng_url.as_deref(), &|_| None, "");
+        }
         select(
             cfg.web_search.as_deref(),
             cfg.searxng_url.as_deref(),
@@ -318,6 +323,26 @@ mod tests {
     }
 
     const B: &str = "https://api.frog.toys/v1";
+
+    /// A hermetic run (the bench, tests) searches only through a backend its config names:
+    /// never a key in this machine's environment or Keychain (which, on a Mac signed in to Frog
+    /// Cloud, used to give the bench WebSearch there and not elsewhere).
+    #[test]
+    fn a_hermetic_config_ignores_the_machines_search_keys() {
+        let hermetic = crate::config::Config {
+            hermetic: true,
+            ..Default::default()
+        };
+        assert!(Backend::from_config(&hermetic).is_none());
+        let searxng = crate::config::Config {
+            searxng_url: Some("http://127.0.0.1:9".into()),
+            ..hermetic
+        };
+        assert!(matches!(
+            Backend::from_config(&searxng),
+            Some(Backend::Searxng(_))
+        ));
+    }
 
     #[test]
     fn frog_cloud_search_is_chosen_or_the_last_fallback() {
