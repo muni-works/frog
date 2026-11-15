@@ -881,6 +881,11 @@ impl Agent {
     ) -> Result<tools::Output> {
         use crate::tools::sessions;
         sessions::validate(name, input)?;
+        // The ledgers are the engine's, so it answers ListQuestions in every host; the client
+        // only supplies the tree.
+        if name == sessions::QUESTIONS {
+            return self.list_questions(input).await;
+        }
         // A session starts on a model its gateway lists right now, or not at all
         // (docs/design/model-policy.md): the check is here, once, so a model that dropped out
         // of the gateway's list never becomes a session that dies on its first call.
@@ -1046,9 +1051,40 @@ arrives as a <session-message from=\"parent\"> in this turn."
     }
 
     /// `Ask`: show the question and wait for the answer.
+    ///
+    /// Two things happen before a card opens. The question is checked against the tree's ledger
+    /// (see `questions`): if a session this one started, or one that started it, already has it
+    /// open, no second card opens and the model is told where it waits; if the tree already
+    /// answered it, the model gets the answer. Only an answer with real content is recorded —
+    /// a dismissal is written as a dismissal, so a question the user never answered stays
+    /// visibly unanswered for the whole tree.
     pub(super) async fn ask_user(&mut self, item: &str, input: &Value) -> Result<tools::Output> {
         let q = crate::ask::parse(input)?;
+        // The tree, as the client that owns parentage sees it, or the session logs' headers
+        // without one (headless, the web app). Without a store it is just this session.
+        let (tree, names) = self.tree().await;
+        if let Some(dir) = self.store.clone() {
+            let rows = crate::questions::named(crate::questions::in_tree(&dir, &tree), &names);
+            match crate::questions::before(&rows, &crate::questions::key(&q.question), &tree) {
+                crate::questions::Before::Ask => {}
+                already => {
+                    // No card: the tree already has this. `display` says so in the transcript,
+                    // and `content` is what the model must act on.
+                    let text = already.words();
+                    return Ok(tools::Output {
+                        display: Some(text.trim_start_matches("This question ").to_string()),
+                        content: text,
+                        ..Default::default()
+                    });
+                }
+            }
+        }
         let id = new_id();
+        if let Some(l) = &self.ledger {
+            // No name here: titles are the client's (`Titled`), and the broker fills them in
+            // when it lists. The ledger stores what the engine knows.
+            l.ask(&q, &id, None, crate::engine::now_ms());
+        }
         let (tx, rx) = oneshot::channel();
         self.shared.questions.lock().unwrap().insert(id.clone(), tx);
         self.emit(Event::Question {
@@ -1063,6 +1099,13 @@ arrives as a <session-message from=\"parent\"> in this turn."
         let asked = Instant::now();
         let answer = rx.await.unwrap_or_default();
         self.timing.user_ms += ms(asked.elapsed());
+        // The ledger's copy, decided here and only here: a real pick or real words is an
+        // answer; anything else leaves the question unanswered.
+        if let Some(l) = &self.ledger {
+            if l.answer(&id, &answer, crate::engine::now_ms()).is_none() {
+                l.dismiss(&id, crate::engine::now_ms());
+            }
+        }
         self.emit(Event::QuestionResolved {
             id,
             answer: answer.clone(),
@@ -1071,6 +1114,61 @@ arrives as a <session-message from=\"parent\"> in this turn."
         Ok(tools::Output {
             display: Some(text.trim_start_matches("The user ").to_string()),
             content: text,
+            ..Default::default()
+        })
+    }
+
+    /// The sessions in this one's tree — itself, its ancestors, its descendants — with their
+    /// titles where known. The client that owns parentage answers `SessionTree` (the Mac: it
+    /// alone sees a `MoveSession` re-file). Without one, or when it can't answer (an older
+    /// app), the session logs' headers are the tree; without a store, it is just this session.
+    async fn tree(&mut self) -> (Vec<String>, HashMap<String, String>) {
+        let me = self.conv.session_id.clone();
+        if self.shared.sessions.enabled() {
+            let (id, rx) = self.shared.sessions.open();
+            self.emit(Event::SessionRequest {
+                id,
+                item: String::new(),
+                tool: crate::tools::sessions::TREE.into(),
+                input: serde_json::Value::Null,
+            });
+            let reply = rx.await.unwrap_or_else(|_| Err("the app didn't answer".into()));
+            if let Ok(v) = reply {
+                let ids: Vec<String> = v["sessions"]
+                    .as_array()
+                    .map(|a| a.iter().filter_map(|s| s.as_str().map(String::from)).collect())
+                    .unwrap_or_default();
+                if !ids.is_empty() {
+                    let names = v["names"]
+                        .as_object()
+                        .map(|m| {
+                            m.iter()
+                                .filter_map(|(k, n)| n.as_str().map(|n| (k.clone(), n.to_string())))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    let ids = if ids.contains(&me) { ids } else { [vec![me], ids].concat() };
+                    return (ids, names);
+                }
+            }
+        }
+        match &self.store {
+            Some(dir) => crate::questions::from_headers(dir, &me),
+            None => (vec![me], HashMap::new()),
+        }
+    }
+
+    /// `ListQuestions`: the engine answers it itself, in every host, from the tree's ledgers.
+    async fn list_questions(&mut self, input: &Value) -> Result<tools::Output> {
+        let all = input["all"].as_bool().unwrap_or(true);
+        let (tree, names) = self.tree().await;
+        let rows = match &self.store {
+            Some(dir) => crate::questions::in_tree(dir, &tree),
+            None => Vec::new(),
+        };
+        let v = crate::questions::listing(&rows, all, &names, crate::engine::now_ms());
+        Ok(tools::Output {
+            content: serde_json::to_string_pretty(&v)?,
             ..Default::default()
         })
     }

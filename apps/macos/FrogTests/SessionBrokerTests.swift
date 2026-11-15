@@ -1139,6 +1139,32 @@ final class SessionBrokerTests: XCTestCase {
         XCTAssertNil(b.waitingSinceForTesting[eng.id])
     }
 
+    /// SessionTree answers the caller's tree from the app's parentage — itself, its
+    /// ancestors, its descendants, never a sibling — with titles, so the engine's `Ask`
+    /// dedupes across the tree instead of only within the session.
+    @MainActor
+    func testSessionTreeAnswersAncestorsAndDescendantsWithNames() throws {
+        let kid = SessionBroker.Entry(id: "kid-0004", name: "Worker", state: "idle")
+        let b = broker([chief, eng, ops, kid])
+        b.directoryIncludingArchived = { [self.chief, self.eng, self.ops, kid] }
+        // chief → eng → kid, and ops is eng's sibling under chief.
+        let parents = [eng.id: chief.id, kid.id: eng.id, ops.id: chief.id]
+        b.parentOf = { parents[$0] }
+        let link = QueueLink()
+        let caller = Conversation(folder: URL(fileURLWithPath: "/tmp/tree"), link: link, replay: false, session: eng.id)
+        b.track(caller, as: eng.id)
+        b.handle(SessionRequest(id: "t1", item: "", tool: "SessionTree", input: .null), from: caller)
+        let reply = try XCTUnwrap(link.sent.last { $0["op"] as? String == "session_reply" })
+        XCTAssertNil(reply["error"], "\(reply)")
+        let result = try XCTUnwrap(reply["result"] as? [String: Any])
+        XCTAssertEqual(result["sessions"] as? [String], [eng.id, chief.id, kid.id])
+        let names = try XCTUnwrap(result["names"] as? [String: String])
+        XCTAssertEqual(names[kid.id], "Worker")
+        XCTAssertNil(names[ops.id], "a sibling isn't in the tree")
+        // A recorded cycle terminates.
+        XCTAssertEqual(SessionBroker.tree(of: "a", parentOf: { ["a": "b", "b": "a"][$0] }, known: ["a", "b"]), ["a", "b"])
+    }
+
     /// RenameSession renames an open conversation through its engine (the sidebar's own
     /// path: Op.setTitle, then the sidebar refreshes).
     @MainActor
