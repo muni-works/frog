@@ -44,11 +44,12 @@ struct PreviewPane: View {
     var body: some View {
         VStack(spacing: 0) {
             toolbar
-            if checkpoint != nil { thenNow }
+            if hub.comparing != nil { thenNow }
             content
                 .padding([.horizontal, .bottom], 10)
         }
         .onAppear {
+            showThen = hub.comparing != nil
             address = host.currentURL ?? pane.url ?? ""
             if let html { host.load(html: html) } else if let url = pane.url, host.currentURL == nil { host.load(url) }
         }
@@ -61,7 +62,7 @@ struct PreviewPane: View {
         .onChange(of: host.currentURL) { _, url in if let url { address = url } }
         .onChange(of: hub.inspecting) { _, on in host.setInspecting(on) }
         .onChange(of: hub.comparing) { showThen = hub.comparing != nil }
-        .animation(Motion.quick(reduced: reduceMotion), value: checkpoint != nil)
+        .animation(Motion.quick(reduced: reduceMotion), value: hub.comparing != nil)
     }
 
     // MARK: Toolbar
@@ -70,17 +71,26 @@ struct PreviewPane: View {
         PreviewToolbar(host: host, hub: hub, popOut: true, device: $device)
     }
 
-    /// Before (the turn's checkpoint) or after (the live page).
+    /// Before (the turn's checkpoint) or after (the live page), which turn is "then", and a
+    /// plain line when there's no screenshot to show.
     private var thenNow: some View {
         HStack(spacing: 8) {
-            Picker("", selection: $showThen) {
-                Text("Then").tag(true)
-                Text("Now").tag(false)
-            }
-            .pickerStyle(.segmented)
-            .fixedSize()
-            if let turn = hub.comparing {
-                Text("Turn \(turn)").font(.frog(size: 10)).foregroundStyle(.secondary)
+            if checkpoint != nil {
+                Picker("", selection: $showThen) {
+                    Text("Then").tag(true)
+                    Text("Now").tag(false)
+                }
+                .pickerStyle(.segmented)
+                .fixedSize()
+                thenTurn
+            } else {
+                Text(hub.checkpoints.isEmpty
+                     ? "No screenshots yet. Frog takes one as each turn starts."
+                     : "No screenshot for turn \(hub.comparing ?? 0)")
+                    .font(.frog(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                if !hub.checkpoints.isEmpty { thenTurn }
             }
             Spacer()
             Button { hub.comparing = nil } label: { Image(systemName: "xmark") }
@@ -90,6 +100,27 @@ struct PreviewPane: View {
         }
         .padding(.horizontal, 12)
         .padding(.bottom, 6)
+    }
+
+    /// The turn being compared against: a menu when more than one has a screenshot.
+    @ViewBuilder
+    private var thenTurn: some View {
+        let turns = hub.checkpointTurns
+        let label = checkpoint.map { "Before turn \($0.turn)" } ?? "Pick a turn"
+        if turns.count > 1 || checkpoint == nil {
+            Menu {
+                ForEach(turns.reversed(), id: \.self) { t in
+                    Button("Before turn \(t)") { hub.comparing = t }
+                }
+            } label: {
+                Text(label).font(.frog(size: 10))
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("Which turn to compare with")
+        } else {
+            Text(label).font(.frog(size: 10)).foregroundStyle(.secondary)
+        }
     }
 
     // MARK: Content
@@ -208,6 +239,15 @@ struct PreviewToolbar: View {
             .labelsHidden()
             .fixedSize()
             .help("Device width")
+            if popOut {
+                Button {
+                    if hub.comparing == nil { hub.compare() } else { hub.comparing = nil }
+                } label: {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .foregroundStyle(hub.comparing != nil ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                }
+                .help(hub.comparing == nil ? "Compare with an earlier turn" : "Stop comparing")
+            }
             Button {
                 hub.inspecting.toggle()
             } label: {

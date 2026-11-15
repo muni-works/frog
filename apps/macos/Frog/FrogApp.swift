@@ -48,7 +48,9 @@ struct FrogApp: App {
             await Diagram.fromMermaid(source, cwd: cwd ?? FileManager.default.homeDirectoryForCurrentUser)
         }
         _ = Updates.shared
-        RemoteBridge.shared.startIfEnabled()
+        // Nor its keychain: a test host's fresh signature turns the token read into a prompt
+        // that holds launch, and the runner gives up waiting.
+        if !SingleInstance.isTesting { RemoteBridge.shared.startIfEnabled() }
         // `open Frog.app --args --test-notification`: fire one notification of every category,
         // so delivery can be proven rather than assumed (a dev build's notifications fail
         // silently when the system never authorized it). Logs what the system said.

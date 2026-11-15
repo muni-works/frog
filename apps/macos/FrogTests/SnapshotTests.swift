@@ -528,6 +528,64 @@ extension SnapshotTests {
         print("snapshots: \(outDir.path)")
     }
 
+    /// The preview's then/now: closed (the toolbar's compare button), open on a turn's screenshot
+    /// with more than one to pick from, and the plain lines for no screenshot at all and none
+    /// for the turn asked about.
+    func testRenderPreviewCompare() throws {
+        let c = Conversation(preview: URL(fileURLWithPath: "/tmp/demo"))
+        let opened = #"{"seq":1,"session":"s","created":0,"event":"pane_opened","id":"p1","kind":"preview","title":"Preview","url":null}"#
+        try c.ingest(JSONDecoder.frog.decode(Envelope.self, from: Data(opened.utf8)))
+        let hub = c.panes
+        let preview = try XCTUnwrap(hub.pane("p1"))
+        let html = """
+        <html><body style="font-family:-apple-system;padding:24px;background:#fff">
+        <h1>Sign in</h1><p>Now with a password field.</p>
+        <form><label>Email <input value="cam@example.com"></label><br><br>
+        <label>Password <input type="password" value="secret"></label><br><br>
+        <button>Sign in</button></form></body></html>
+        """
+        let view = { PreviewPane(pane: preview, hub: hub, html: html).background(Color(nsColor: .windowBackgroundColor)) }
+        let size = CGSize(width: 480, height: 420)
+
+        // No screenshots at all, comparing anyway (the toolbar button on a fresh session).
+        hub.currentTurn = 2
+        hub.compare()
+        XCTAssertEqual(hub.comparing, 2)
+        try render(view(), size: size, to: "preview-compare-empty")
+
+        // Two screenshots: the newest up to the current turn is "then".
+        hub.checkpoint(Self.thenImage("Sign in", tint: .systemTeal), turn: 1)
+        hub.checkpoint(Self.thenImage("Sign in (no password yet)", tint: .systemOrange), turn: 2)
+        hub.compare()
+        XCTAssertEqual(hub.comparing, 2)
+        try render(view(), size: size, to: "preview-compare-open")
+
+        // A turn without one.
+        hub.comparing = 3
+        try render(view(), size: size, to: "preview-compare-missing")
+
+        hub.comparing = nil
+        try render(view(), size: size, to: "preview-compare-closed")
+        print("snapshots: \(outDir.path)")
+    }
+
+    /// A stand-in for a saved checkpoint: a page drawn in AppKit, so it reads as "then".
+    private static func thenImage(_ title: String, tint: NSColor) -> NSImage {
+        NSImage(size: CGSize(width: 460, height: 340), flipped: true) { rect in
+            NSColor.white.setFill()
+            rect.fill()
+            tint.withAlphaComponent(0.25).setFill()
+            CGRect(x: 0, y: 0, width: rect.width, height: 56).fill()
+            (title as NSString).draw(at: CGPoint(x: 24, y: 18), withAttributes: [
+                .font: NSFont.systemFont(ofSize: 22, weight: .bold), .foregroundColor: NSColor.black,
+            ])
+            ("Email  cam@example.com" as NSString).draw(at: CGPoint(x: 24, y: 88), withAttributes: [
+                .font: NSFont.systemFont(ofSize: 14), .foregroundColor: NSColor.darkGray,
+            ])
+            return true
+        }
+    }
+
     /// Diagram cards, in dark and light: the model's diagrams from recent sessions (when
     /// present) and one laid out from Mermaid by the engine.
     func testRenderDiagrams() async throws {
