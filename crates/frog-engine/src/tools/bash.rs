@@ -1192,6 +1192,32 @@ fn denies_network(extra: &SandboxConfig) -> bool {
         .is_some_and(|n| !n.is_empty() && n != "open")
 }
 
+/// Test-only: this process already runs inside a seatbelt sandbox (frog's own `-s` mode, say),
+/// where macOS refuses to apply another (`sandbox_apply: Operation not permitted`, exit 71).
+/// Tests that run a sandboxed shell skip there, with one line saying why, instead of failing
+/// (#93): nothing they check can be observed from inside a sandbox. Probed once per process.
+#[cfg(test)]
+pub(crate) fn nested_sandbox() -> bool {
+    static NESTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *NESTED.get_or_init(|| {
+        if !cfg!(target_os = "macos") {
+            return false;
+        }
+        let applies = std::process::Command::new("/usr/bin/sandbox-exec")
+            .args(["-p", "(version 1)(allow default)", "/usr/bin/true"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success());
+        if !applies {
+            eprintln!(
+                "already inside a sandbox: tests that run a sandboxed shell are skipped (#93)"
+            );
+        }
+        !applies
+    })
+}
+
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 mod tests {
     use super::*;
@@ -1251,6 +1277,9 @@ mod tests {
     /// reach sandboxed commands; ordinary ones do.
     #[tokio::test]
     async fn sandbox_strips_secrets_from_the_environment() {
+        if crate::tools::bash::nested_sandbox() {
+            return;
+        }
         if !available() {
             eprintln!("no OS sandbox here; skipping");
             return;
@@ -1289,6 +1318,9 @@ mod tests {
     /// the same repo unsandboxed, so either would plant a command that escapes the sandbox.
     #[tokio::test]
     async fn sandbox_keeps_git_config_and_hooks_read_only() {
+        if crate::tools::bash::nested_sandbox() {
+            return;
+        }
         if !available() {
             eprintln!("no OS sandbox here; skipping");
             return;
@@ -1331,6 +1363,9 @@ mod tests {
     /// worktree); a write elsewhere in the main checkout still fails.
     #[tokio::test]
     async fn sandbox_lets_git_commit_in_a_linked_worktree() {
+        if crate::tools::bash::nested_sandbox() {
+            return;
+        }
         if !available() {
             eprintln!("no OS sandbox here; skipping");
             return;
@@ -1394,6 +1429,9 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn dev_network_profile_is_valid_and_blocks_other_hosts() {
+        if crate::tools::bash::nested_sandbox() {
+            return;
+        }
         let ws = std::env::temp_dir().join(format!("frog-net-{}", crate::session::new_id()));
         std::fs::create_dir_all(&ws).unwrap();
         let mut ctx = Ctx::new(ws.clone());
@@ -1442,6 +1480,9 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn egress_passes_listed_hosts_and_names_proxy_dodgers() {
+        if crate::tools::bash::nested_sandbox() {
+            return;
+        }
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let ws = std::env::temp_dir().join(format!("frog-eg-{}", crate::session::new_id()));
         std::fs::create_dir_all(&ws).unwrap();
@@ -1534,6 +1575,9 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn egress_flag_mode_records_without_blocking() {
+        if crate::tools::bash::nested_sandbox() {
+            return;
+        }
         let ws = std::env::temp_dir().join(format!("frog-egf-{}", crate::session::new_id()));
         std::fs::create_dir_all(&ws).unwrap();
         let mut ctx = egress_ctx(&ws, crate::egress::Mode::Flag, &[]);
@@ -1553,6 +1597,9 @@ mod tests {
 
     #[tokio::test]
     async fn sandbox_confines_shell_writes_to_the_workspace() {
+        if crate::tools::bash::nested_sandbox() {
+            return;
+        }
         if !available() {
             eprintln!("no OS sandbox here; skipping");
             return;
@@ -2211,6 +2258,9 @@ mod tests {
     /// group, so the kill reaches the real shell).
     #[tokio::test]
     async fn interrupt_kills_a_sandboxed_command() {
+        if crate::tools::bash::nested_sandbox() {
+            return;
+        }
         if !available() {
             eprintln!("no OS sandbox here; skipping");
             return;
@@ -2274,6 +2324,9 @@ mod tests {
     /// Output is bounded while it's read: the head and tail survive, the middle is counted.
     #[tokio::test]
     async fn habitual_unsandboxed_read_runs_sandboxed_until_a_block() {
+        if crate::tools::bash::nested_sandbox() {
+            return;
+        }
         if !available() {
             return;
         }
