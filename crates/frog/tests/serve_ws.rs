@@ -429,7 +429,8 @@ async fn ask_waits_for_the_peers_permission() {
         "Bash",
         json!({"command": "echo hi > made.txt && cat made.txt", "unsandboxed": true}),
     );
-    let f = frog(vec![bash, text_reply("done")], &["--ask"]).await;
+    // Default mode: these test the card over the wire, and auto mode never cards (it denies).
+    let f = frog(vec![bash, text_reply("done")], &["--ask", "--mode", "default"]).await;
     let mut ws = connect(&f.addr).await;
     hello(&mut ws, 0).await;
     send(&mut ws, json!({"op": "submit", "text": "run it"})).await;
@@ -463,7 +464,8 @@ async fn a_peer_that_attaches_mid_ask_gets_the_ask() {
         "Bash",
         json!({"command": "echo hi > made.txt && cat made.txt", "unsandboxed": true}),
     );
-    let f = frog(vec![bash, text_reply("done")], &["--ask"]).await;
+    // Default mode: these test the card over the wire, and auto mode never cards (it denies).
+    let f = frog(vec![bash, text_reply("done")], &["--ask", "--mode", "default"]).await;
     let mut a = connect(&f.addr).await;
     hello(&mut a, 0).await;
     send(&mut a, json!({"op": "submit", "text": "run it"})).await;
