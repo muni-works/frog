@@ -79,6 +79,7 @@ pub const DEFERRED: &[(&str, &str)] = &[
     ("SetSessionMode", "SetSessionMode(id, mode)"),
     ("SetSessionModel", "SetSessionModel(id, model)"),
     ("ListApprovals", "ListApprovals()"),
+    ("ListQuestions", "ListQuestions(all?): Ask questions open or settled in your session tree"),
     (
         "ResolveDelegated",
         "ResolveDelegated(approval_id, decision, note?)",
