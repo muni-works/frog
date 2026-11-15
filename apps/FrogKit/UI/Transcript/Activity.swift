@@ -93,7 +93,7 @@ struct ActivityLabel: View {
             let verb = ["Bash": "Running", "Read": "Reading", "Edit": "Editing", "Write": "Writing",
                         "Grep": "Searching", "Glob": "Finding", "Diagram": "Drawing", "Visualize": "Making a visual", "VisualGuide": "Reading the visual guide", "CodeMap": "Mapping",
                         "Present": "Laying out", "Ask": "Asking",
-                        "Task": "Delegating", "McpTools": "Finding tools", "Skill": "Loading skill",
+                        "Task": "Delegating", "McpTools": "Finding tools", "ToolSearch": "Finding tools", "Skill": "Loading skill",
                         "WebFetch": "Fetching", "WebSearch": "Searching the web", "Docs": "Reading docs", "Models": "Listing models"][name]
                 ?? ToolIcon.title(name)
             return arg.isEmpty ? verb : "\(verb) \(arg)"

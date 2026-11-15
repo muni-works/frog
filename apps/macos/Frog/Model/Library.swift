@@ -69,6 +69,9 @@ final class Library {
     @ObservationIgnored private var windows: [ObjectIdentifier: WeakWindow] = [:]
     @ObservationIgnored private var conversations: [String: WeakConversation] = [:]
     @ObservationIgnored private var refreshing: Task<Void, Never>?
+    /// What the coalesced refresh still owes: every call's scope, merged, until a listing
+    /// answers it. A call cancels the one waiting, so its ids must carry over.
+    @ObservationIgnored private var owed: RefreshScope?
     /// When the last `frog --sessions --all` started. A listing costs about a second of CPU
     /// with a thousand sessions, and a streaming session asks for one every second.
     @ObservationIgnored private var lastListed = ContinuousClock.now - .seconds(60)
@@ -99,6 +102,7 @@ final class Library {
         dispatchPrecondition(condition: .onQueue(.main))  // see Conversation.apply
         if staged { return }
         #endif
+        owed = RefreshScope.merged(owed, ids.isEmpty ? .full : .ids(ids))
         refreshing?.cancel()
         refreshing = Task {
             let due = lastListed + Self.listInterval - .now
@@ -106,26 +110,35 @@ final class Library {
             guard !Task.isCancelled else { return }
             lastListed = .now
             let home = FileManager.default.homeDirectoryForCurrentUser
+            // Everything asked for since the last listing that ran, not only this call's ids:
+            // a burst of sessions (twenty headless runs) each cancelled the one before, and a
+            // session whose last change was its turn ending kept its spinner for hours.
             // A partial refresh with no cached listing has nothing to merge into: full then.
+            guard let scope = owed else { return }
+            owed = nil
+            let ids = scope.ids
             let known = !ids.isEmpty && !listed.isEmpty
             let args = known ? ["--sessions", "--ids", ids.sorted().joined(separator: ","), "--all", "--json"]
                              : ["--sessions", "--all", "--json"]
-            if let rows = try? await Frog.json([SessionInfo].self, args: args, cwd: home) {
-                #if DEBUG
-                if staged { return }  // a listing already in flight when a snapshot staged its own
-                #endif
-                // Unchanged ids stay as the full listing read them: a partial refresh's rows
-                // replace only their own. Race attempts live in their own worktrees and are
-                // shown in the race card, not here; worker worktrees are shown under their repo
-                // (see `Sidebar.home`).
-                if known {
-                    var merged = listed
-                    for id in ids { merged.removeValue(forKey: id) }  // keep only refreshed rows
-                    for row in rows { merged[row.id] = row }
-                    apply(merged.values.filter { present($0) })
-                } else {
-                    apply(rows.filter { present($0) })
-                }
+            guard let rows = try? await Frog.json([SessionInfo].self, args: args, cwd: home) else {
+                // The listing failed or was cancelled mid-run: still owed, to the next one.
+                owed = RefreshScope.merged(owed, scope)
+                return
+            }
+            #if DEBUG
+            if staged { return }  // a listing already in flight when a snapshot staged its own
+            #endif
+            // Unchanged ids stay as the full listing read them: a partial refresh's rows
+            // replace only their own. Race attempts live in their own worktrees and are
+            // shown in the race card, not here; worker worktrees are shown under their repo
+            // (see `Sidebar.home`).
+            if known {
+                var merged = listed
+                for id in ids { merged.removeValue(forKey: id) }  // keep only refreshed rows
+                for row in rows { merged[row.id] = row }
+                apply(merged.values.filter { present($0) })
+            } else {
+                apply(rows.filter { present($0) })
             }
         }
     }
@@ -341,6 +354,30 @@ final class Library {
             at = parents[current]
         }
         return false
+    }
+
+    // MARK: The started-by tree
+
+    /// How deep `id` sits in the started-by tree: 0 at the top, 1 for a session a session
+    /// started, and so on. Bounded by the recorded parents, so a cycle can't hang it.
+    func depth(of id: String) -> Int {
+        Self.depth(of: id, in: parents)
+    }
+
+    static func depth(of id: String, in parents: [String: String]) -> Int {
+        var seen: Set<String> = [id]
+        var d = 0
+        var at = parents[id]
+        while let current = at, seen.insert(current).inserted {
+            d += 1
+            at = parents[current]
+        }
+        return d
+    }
+
+    /// Whether any session was started by `id`: it is a manager.
+    func hasChildren(_ id: String) -> Bool {
+        parents.values.contains(id)
     }
 
     // MARK: Stored model and mode

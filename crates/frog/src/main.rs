@@ -3,6 +3,8 @@ mod complete;
 mod git_credential;
 mod headless;
 mod listen;
+#[cfg(unix)]
+mod muon;
 mod render;
 mod replay;
 mod tui;
@@ -34,6 +36,10 @@ struct Cli {
     /// Speak the engine protocol over stdio (Op JSON lines in, Event JSON lines out).
     #[arg(long, conflicts_with = "print")]
     serve: bool,
+    /// Serve a muon node's launcher intents: agent:frog on muon-agentd's bus and MCP server
+    /// (muon docs/ecosystem.md, "launcher intent"). Runs until the bus closes.
+    #[arg(long, conflicts_with_all = ["print", "serve", "acp", "listen"])]
+    muon: bool,
     /// With --serve: speak it over a websocket on ADDR (e.g. 127.0.0.1:7070) instead of stdio,
     /// one peer at a time, with `GET /health` on the same port. For Frog Cloud's gateway.
     /// Beyond loopback it needs FROG_SERVE_WS_TOKEN, which every peer must present.
@@ -444,6 +450,10 @@ async fn run() -> Result<bool> {
     cfg.worker |= cli.worker;
     if cli.models {
         return list_models(&cfg, cli.json).await;
+    }
+    #[cfg(unix)]
+    if cli.muon {
+        return muon::run(cfg, cli.model.clone()).await;
     }
     if let Some(done) = manage_providers(&cli).await? {
         return Ok(done);

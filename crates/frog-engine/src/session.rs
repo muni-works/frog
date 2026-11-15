@@ -292,6 +292,14 @@ impl Loaded {
     }
 }
 
+/// An event line this build can't name: a newer frog wrote it (a session run by a newer CLI
+/// and opened in an older app, or after a downgrade). Events are the transcript's record, not
+/// the model's history, so the session still loads without it; calling the whole log corrupt
+/// over one unknown event locked the 0.3.0 app out of sessions a newer engine had run.
+fn from_a_newer_frog(line: &[u8], e: &serde_json::Error) -> bool {
+    line.starts_with(br#"{"type":"event""#) && e.to_string().starts_with("unknown variant")
+}
+
 fn read_records(dir: &Path, id: &str) -> Result<Vec<Record>> {
     let file = File::open(path(dir, id)).with_context(|| format!("no session {id}"))?;
     let mut lines = BufReader::new(file).lines().peekable();
@@ -302,6 +310,7 @@ fn read_records(dir: &Path, id: &str) -> Result<Vec<Record>> {
             Ok(r) => out.push(r),
             // A torn last line from a crash; everything before it is intact.
             Err(_) if lines.peek().is_none() => break,
+            Err(e) if from_a_newer_frog(line.as_bytes(), &e) => {}
             Err(e) => bail!("session {id} is corrupt: {e}"),
         }
     }
@@ -402,6 +411,7 @@ pub fn events_after(dir: &Path, id: &str, after: u64) -> Result<Vec<Envelope>> {
             Ok(Record::Event { env }) if env.seq > after => out.push(env),
             Ok(_) => {}
             Err(_) if lines.peek().is_none() => break,
+            Err(e) if from_a_newer_frog(&line, &e) => {}
             Err(e) => bail!("session {id} is corrupt: {e}"),
         }
     }
@@ -924,6 +934,25 @@ mod tests {
             .unwrap();
         assert_eq!(model_of(&dir, "a").unwrap(), "o");
         drop(log);
+    }
+
+    #[test]
+    fn an_event_from_a_newer_frog_is_skipped_not_corrupt() {
+        let dir = std::env::temp_dir().join(format!("frog-newer-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let id = "s1";
+        let header = r#"{"type":"header","version":1,"id":"s1","cwd":"/tmp","model":"m","created":0}"#;
+        let known = r#"{"type":"event","env":{"seq":1,"session":"s1","created":1,"event":"idle"}}"#;
+        let newer = r#"{"type":"event","env":{"seq":2,"session":"s1","created":2,"event":"from_the_future","x":1}}"#;
+        let last = r#"{"type":"event","env":{"seq":3,"session":"s1","created":3,"event":"idle"}}"#;
+        std::fs::write(path(&dir, id), format!("{header}\n{known}\n{newer}\n{last}\n")).unwrap();
+        let seqs: Vec<u64> = events_after(&dir, id, 0).unwrap().iter().map(|e| e.seq).collect();
+        assert_eq!(seqs, [1, 3]);
+        assert_eq!(read_records(&dir, id).unwrap().len(), 3);
+        // A line that is broken, not merely unknown, is still corrupt.
+        std::fs::write(path(&dir, id), format!("{header}\n{{\"type\":\"event\",\"env\":7}}\n{last}\n")).unwrap();
+        assert!(events_after(&dir, id, 0).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

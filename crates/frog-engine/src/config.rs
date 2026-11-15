@@ -67,6 +67,10 @@ pub struct Profile {
     pub base_url: Option<String>,
     pub api_key: Option<String>,
     pub api_key_env: Option<String>,
+    /// A file holding the key (first line; `~/` is the home folder), e.g. a tang server's
+    /// `--api-key-file`. Checked after `api_key` and `api_key_env`.
+    #[serde(default)]
+    pub api_key_file: Option<String>,
     pub context_window: Option<u64>,
     pub max_tokens: Option<u32>,
     #[serde(default)]
@@ -123,6 +127,7 @@ impl Profile {
             base_url: None,
             api_key: None,
             api_key_env: None,
+            api_key_file: None,
             context_window: None,
             max_tokens: None,
             tool_mode: ToolMode::Auto,
@@ -158,8 +163,18 @@ impl Profile {
         if let Some(k) = &self.api_key {
             return Some(k.clone());
         }
-        if let Some(var) = &self.api_key_env {
-            return std::env::var(var).ok();
+        if let Some(k) = self.api_key_env.as_ref().and_then(|v| std::env::var(v).ok()) {
+            return Some(k);
+        }
+        if let Some(f) = &self.api_key_file {
+            let path = match f.strip_prefix("~/") {
+                Some(rest) => dirs::home_dir().unwrap_or_default().join(rest),
+                None => PathBuf::from(f),
+            };
+            return std::fs::read_to_string(path)
+                .ok()
+                .and_then(|t| t.lines().next().map(|l| l.trim().to_string()))
+                .filter(|k| !k.is_empty());
         }
         match self.provider {
             ProviderKind::Anthropic => std::env::var("ANTHROPIC_API_KEY").ok(),
@@ -277,6 +292,11 @@ pub struct Config {
     /// are the same as without it; only the waiting overlaps.
     #[serde(default = "default_true")]
     pub early_tools: bool,
+    /// When the session's Frog Cloud model stays busy through every retry, let another Frog
+    /// Cloud model answer that call (with a line in the transcript) instead of ending the
+    /// turn. Off: the turn ends and the model is never swapped (docs/design/model-policy.md).
+    #[serde(default = "default_true")]
+    pub cloud_fallback: bool,
     /// The model auto mode's classifier uses (a profile or provider/model). Default:
     /// Apple's on-device model where it exists, else frog cloud's small model
     /// (`cloud/deepseek-v4.1-flash`, or `cloud/qwen3-coder-next` when the gateway lists it); the
@@ -353,6 +373,67 @@ pub struct Config {
     /// `[memory]`: `compiled = "auto" | "on" | "off"` (see `compiled_memory`).
     #[serde(default)]
     pub memory: crate::compiled_memory::Settings,
+    /// `[git]`: what the composer does about a pull request once a session's work is done.
+    #[serde(default)]
+    pub git: GitConfig,
+}
+
+/// `[git]`: what happens to a branch when the work on it is done.
+#[derive(Clone, Debug, Deserialize)]
+pub struct GitConfig {
+    /// `open_pr_when_done`: "off", "ask" (the default) or "auto".
+    ///
+    /// - `off`: nothing is offered; the branch is yours to push.
+    /// - `ask`: the composer's git line offers **Open PR** when the work is done — a session
+    ///   that started in its own worktree, has commits ahead of its base, and has no PR yet.
+    ///   `shouldOpenPR` (FrogKit) is that predicate; managers and read-only sessions are
+    ///   excluded there, not here, because only the client knows the session tree.
+    /// - `auto`: **parsed and documented, deliberately not wired.** It behaves exactly like
+    ///   `ask` today. Opening a PR without being asked is the part worth getting right, and
+    ///   it stays unbuilt until `ask` has been used enough to say what it should do.
+    #[serde(default)]
+    pub open_pr_when_done: OpenPr,
+}
+
+impl Default for GitConfig {
+    fn default() -> Self {
+        Self { open_pr_when_done: OpenPr::Ask }
+    }
+}
+
+/// `[git] open_pr_when_done`: off, ask (the default), or auto (deferred).
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum OpenPr {
+    /// Nothing is offered.
+    Off,
+    /// The composer offers Open PR once the work is done. The default.
+    #[default]
+    Ask,
+    /// Open it without asking. Not implemented: reads as `Ask` (see [`GitConfig`]).
+    Auto,
+}
+
+impl OpenPr {
+    /// What this setting does *now*. `Auto` is deliberately not implemented, so it does what
+    /// `Ask` does; the client reads this rather than the raw value, so a stray `auto` can never
+    /// grow teeth by accident.
+    pub fn effective(self) -> OpenPr {
+        match self {
+            // The auto path is deliberately not wired until `ask` has been used. This is the
+            // one line to change when it is.
+            OpenPr::Auto => OpenPr::Ask,
+            other => other,
+        }
+    }
+
+    /// The word the client gets: "off" or "ask" (never "auto", which isn't implemented).
+    pub fn effective_word(self) -> &'static str {
+        match self.effective() {
+            OpenPr::Off => "off",
+            _ => "ask",
+        }
+    }
 }
 
 /// `[delegation]`: who a still-flagged call is offered to before the user.
@@ -528,6 +609,14 @@ pub fn config_dir() -> PathBuf {
     dirs::home_dir().unwrap_or_default().join(".config/frog")
 }
 
+/// The machine's config, used when the user has none (an OS image ships one, e.g. muon's
+/// pointing at the fleet's tang). `FROG_SYSTEM_CONFIG` overrides the path.
+pub fn system_config() -> PathBuf {
+    std::env::var_os("FROG_SYSTEM_CONFIG")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/etc/frog/config.toml"))
+}
+
 pub fn data_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_default()
@@ -539,7 +628,10 @@ pub const LOCAL_DEFAULT: &str = "local/qwen3-4b";
 
 impl Config {
     pub fn load() -> Result<Self> {
-        let path = config_dir().join("config.toml");
+        let mut path = config_dir().join("config.toml");
+        if !path.exists() && system_config().exists() {
+            path = system_config();
+        }
         let mut cfg: Self = if path.exists() {
             let text = std::fs::read_to_string(&path)?;
             toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?
@@ -696,6 +788,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn api_key_file_reads_the_first_line_after_key_and_env() {
+        let dir = std::env::temp_dir().join(format!("frog-keyfile-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("tang.key");
+        std::fs::write(&file, "  sekrit \nignored\n").unwrap();
+        let mut p = Profile::new(ProviderKind::Openai, "m");
+        p.base_url = Some("http://mew:8420/v1".into());
+        p.api_key_file = Some(file.display().to_string());
+        assert_eq!(p.api_key().as_deref(), Some("sekrit"));
+        p.api_key_env = Some("FROG_TEST_UNSET_KEY_VAR".into());
+        assert_eq!(p.api_key().as_deref(), Some("sekrit"));
+        p.api_key = Some("inline".into());
+        assert_eq!(p.api_key().as_deref(), Some("inline"));
+        p.api_key = None;
+        p.api_key_file = Some(dir.join("missing").display().to_string());
+        assert_eq!(p.api_key(), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn profile_parses_api_key_file() {
+        let c: Config = toml::from_str(
+            "[models.tang]\nprovider = \"openai\"\nmodel = \"m\"\napi_key_file = \"~/.config/frog/tang.key\"\n",
+        )
+        .unwrap();
+        assert_eq!(c.models["tang"].api_key_file.as_deref(), Some("~/.config/frog/tang.key"));
+    }
+
+    #[test]
     fn the_irc_bus_is_off_until_config_turns_it_on() {
         let cfg = Config::default();
         assert!(!cfg.irc.enabled, "off by default until the DO deploys");
@@ -712,6 +833,33 @@ mod tests {
         assert_eq!(cfg.irc.channel.as_deref(), Some("#frog"));
         assert_eq!(cfg.irc.account.as_deref(), Some("cam-mac"));
         assert_eq!(cfg.irc.url, "wss://example.invalid/bus");
+    }
+
+    #[test]
+    fn open_pr_when_done_defaults_to_ask_and_auto_is_not_wired() {
+        // The default is `ask`, in code and only in code: nobody's config.toml is touched.
+        assert_eq!(Config::default().git.open_pr_when_done, OpenPr::Ask);
+        assert_eq!(OpenPr::default(), OpenPr::Ask);
+        // A config that says nothing about it gets `ask`.
+        let cfg: Config = toml::from_str("").unwrap();
+        assert_eq!(cfg.git.open_pr_when_done, OpenPr::Ask);
+
+        for (word, parsed, effective) in [
+            ("off", OpenPr::Off, "off"),
+            ("ask", OpenPr::Ask, "ask"),
+            // Parsed, accepted, and deliberately inert: `auto` behaves as `ask` today.
+            ("auto", OpenPr::Auto, "ask"),
+        ] {
+            let cfg: Config = toml::from_str(&format!("[git]\nopen_pr_when_done = \"{word}\"")).unwrap();
+            assert_eq!(cfg.git.open_pr_when_done, parsed, "[git] open_pr_when_done = {word}");
+            assert_eq!(cfg.git.open_pr_when_done.effective_word(), effective);
+        }
+        // `auto` offers exactly what `ask` offers; it never offers more.
+        assert_eq!(OpenPr::Auto.effective(), OpenPr::Ask);
+        assert_eq!(OpenPr::Off.effective(), OpenPr::Off);
+        // Anything else is a typo, and a typo must not silently pick a behaviour.
+        let bad: Result<Config, _> = toml::from_str("[git]\nopen_pr_when_done = \"always\"");
+        assert!(bad.is_err(), "an unknown value is an error, not a guess");
     }
 
     #[test]

@@ -303,7 +303,9 @@ struct PaneView: View {
             }
             let now = workspace.allowing(workspace.identity(r.spec))
             switch now.state {
-            case .ready where now.place.isCloud && workspace.mustAskForCloud, .notAllowed:
+            // Picking a cloud model is the answer (Cam, 2026-11-13); only a folder that said
+            // "keep it on your devices" asks again.
+            case .notAllowed:
                 r.done(.askCloud(project: workspace.policyName, provider: provider))
             case .ready, .wontFit, .unreachable:
                 workspace.use(r.spec)

@@ -11,6 +11,9 @@ load_claude_md = true
 # Start Read, Grep and Glob calls as soon as their arguments arrive, while the model is still
 # writing the rest of its reply. Same results; less waiting.
 # early_tools = true
+# When your Frog Cloud model stays busy through every retry, let another Frog Cloud model answer
+# that step (the transcript says so) instead of ending the turn. false: never swap the model.
+# cloud_fallback = true
 
 # WebSearch backend: "searxng", "brave", "exa" or "tavily". Keys: `frog --set-key brave` (stdin),
 # or BRAVE_SEARCH_API_KEY / EXA_API_KEY / TAVILY_API_KEY. Unconfigured, WebSearch isn't offered.
@@ -86,6 +89,14 @@ model = "mlx-community/Qwen3-32B-4bit"
 sidecar = "mlx-community/Qwen3-32B-4bit"
 # draft_model = "mlx-community/Qwen3-0.6B-4bit"
 
+# A tang server on another machine (tang-llm serve --host 0.0.0.0 --port 8420):
+[models.tang-remote]
+provider = "openai"
+base_url = "http://mew:8420/v1"
+model = "mlx-community/Qwen3-8B-4bit"
+api_key_file = "~/.config/frog/tang.key"   # the server's --api-key-file; first line
+context_window = 32768
+
 [models.sonnet]
 provider = "anthropic"
 model = "claude-sonnet-5"
@@ -115,6 +126,17 @@ max_tokens = 32000
 # ]
 # chief_timeout_secs = 300              # then the card falls back to you
 # rollup = true                         # one approvals roll-up notice per day, at most
+
+# What the composer does about a pull request when a session's work is done
+# (docs/plans/2026-11-13-open-pr-when-done.md).
+#   "off"  — nothing is offered; the branch is yours to push.
+#   "ask"  — the git line's Open PR chip, when the work is done. The default.
+#   "auto" — NOT IMPLEMENTED YET: parsed, documented, and behaves as "ask".
+# The offer only ever appears for a session with its own worktree, commits ahead of
+# its base, no PR yet, that isn't a manager (a top-level session with children) or
+# read-only, and didn't put `open-pr: off` in its first prompt.
+# [git]
+# open_pr_when_done = "ask"
 
 # Holes in the shell sandbox, for tools that need a credential. Nothing widens unless set.
 # [sandbox]

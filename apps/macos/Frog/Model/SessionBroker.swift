@@ -600,9 +600,51 @@ final class SessionBroker {
             case .failure(let e):
                 c.replySession(r.id, error: e.message)
             }
+        case "SessionTree":
+            // Not a model tool: the engine asking for the caller's tree (itself, its
+            // ancestors, its descendants) before an `Ask`, so one question is the whole tree's
+            // (the engine's `questions` ledger; it answers ListQuestions itself). Parentage is
+            // ours — the sidebar's nesting, mutable with MoveSession — so the answer comes from
+            // here, with titles, since the ledger stores none.
+            let everyone = directoryIncludingArchived()
+            let ids = Self.tree(of: sender, parentOf: parentOf, known: everyone.map(\.id))
+            var names: [String: JSONValue] = [:]
+            for e in everyone where ids.contains(e.id) { names[e.id] = .string(e.name) }
+            c.replySession(r.id, result: .object([
+                "sessions": .array(ids.map { .string($0) }),
+                "names": .object(names),
+            ]))
         default:
             c.replySession(r.id, error: "unknown session tool \(r.tool)")
         }
+    }
+
+    /// Session `id`'s tree: itself, then its ancestors, then every known session below it.
+    /// The engine's `questions::members` rule, mirrored: siblings and cousins are not in it.
+    /// Walks stop at a repeat, so a recorded cycle can't hang.
+    static func tree(of id: String, parentOf: (String) -> String?, known: [String]) -> [String] {
+        var out = [id]
+        var seen: Set<String> = [id]
+        var cur = parentOf(id)
+        while let c = cur, seen.insert(c).inserted {
+            out.append(c)
+            cur = parentOf(c)
+        }
+        func below(_ at: String) -> Bool {
+            var walked: Set<String> = []
+            var cur: String? = at
+            while let c = cur {
+                if c == id { return true }
+                guard walked.insert(c).inserted else { return false }
+                cur = parentOf(c)
+            }
+            return false
+        }
+        for other in known where !seen.contains(other) && below(other) {
+            seen.insert(other)
+            out.append(other)
+        }
+        return out
     }
 
     // MARK: Delegated approvals (docs/design/delegation.md)

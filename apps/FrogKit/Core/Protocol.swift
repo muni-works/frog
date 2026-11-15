@@ -354,6 +354,11 @@ struct Status: Decodable, Sendable, Equatable {
     var degraded: [Degraded]?
     /// Where the last call on a pooled (`node/…`) model ran. Absent for other providers.
     var ranOn: RanOn?
+    /// `[git] open_pr_when_done` as the engine resolved it: "off" or "ask". Never "auto",
+    /// which is parsed but deliberately not wired. Absent from older engines (read as "ask").
+    var openPrWhenDone: String?
+    /// This session only reads: it never opens a PR.
+    var readOnly: Bool?
 }
 
 /// The engine's `ran_on`: the paired node (or this Mac's tang) a pooled call ran on.

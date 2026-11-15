@@ -1270,6 +1270,13 @@ pub enum EngineError {
 impl std::fmt::Display for EngineError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
+            // The engine's own plain line for a busy or broken provider stands alone; a
+            // provider's body keeps its status in front.
+            Self::Provider { message, .. }
+                if message.contains("Your work so far is kept") =>
+            {
+                write!(f, "{message}")
+            }
             Self::Provider { status, message } => write!(f, "provider error ({status}): {message}"),
             Self::Billing { status, message } => write!(f, "billing refused ({status}): {message}"),
             Self::Connection { message } => write!(f, "connection failed: {message}"),
@@ -1617,6 +1624,18 @@ pub struct Status {
     /// longer than the request timeout is about to fail, not working.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub waiting: Option<Waiting>,
+    /// `[git] open_pr_when_done` as it applies here: "off" or "ask". Never "auto", which is
+    /// parsed but deliberately not wired (see `config::GitConfig`). The composer offers Open PR
+    /// when this is "ask" and its own `shouldOpenPR` holds.
+    #[serde(default = "default_open_pr")]
+    pub open_pr_when_done: String,
+    /// This session only reads (a read-only child): it never opens a PR.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub read_only: bool,
+}
+
+fn default_open_pr() -> String {
+    "ask".into()
 }
 
 /// A model call the engine is waiting on: which attempt, how long so far, and the provider's

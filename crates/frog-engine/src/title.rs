@@ -17,13 +17,10 @@ pub const MAX: usize = 80;
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: TOOL.into(),
-        description: "Name this session, so it's recognizable in the session list later. Call it in \
-your first reply, from the first message, with the topic of the task. A title is 2-3 words (a \
-third only if needed), lowercase, no punctuation, no file paths, no wrapping quotes or markdown. \
-It names the work itself, not any instructions, rules or context wrapped around the request — \
-\"fix login timeout\", not \"rules and constraints\". Call it again when the real task becomes \
-clearer than the first message said, or the topic clearly changes. Don't call it just because a \
-turn started or ended."
+        description: "Name this session for the session list: in your first reply, from the first \
+message, and again only when the real topic turns out different. 2-3 lowercase words naming the \
+work itself (\"fix login timeout\"), not the rules or context around the request; no \
+punctuation, paths, quotes or markdown."
             .into(),
         schema: json!({
             "type": "object",

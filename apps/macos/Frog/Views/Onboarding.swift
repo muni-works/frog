@@ -346,10 +346,11 @@ struct BiggerModelLine: View {
         }
     }
 
-    /// Like picking it in the picker: a download switches over when it's done, a cloud model
-    /// asks the project first.
+    /// Like picking it in the picker: a download switches over when it's done, and a cloud
+    /// model just goes — picking it is the answer (Cam, 2026-11-13). Only a folder that said
+    /// "keep it on your devices" asks, because that is a no to overrule.
     private func pick(_ m: ModelIdentity) {
-        if m.place.isCloud && workspace.mustAskForCloud { asking = m; return }
+        if case .notAllowed = workspace.allowing(m).state { asking = m; return }
         if m.state.isReady { workspace.use(m.spec) } else { workspace.useWhenReady(m) }
     }
 }
