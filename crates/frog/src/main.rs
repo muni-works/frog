@@ -1181,6 +1181,11 @@ fn started_by_tree(rows: &[(String, Option<String>, String)]) -> Vec<String> {
     out
 }
 
+// A hung test ends the run (see the file).
+#[cfg(test)]
+#[path = "../../frog-engine/src/test_watchdog.rs"]
+mod test_watchdog;
+
 #[cfg(test)]
 mod started_by_tree_tests {
     use super::started_by_tree;

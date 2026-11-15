@@ -3,6 +3,9 @@
 //! OpenAI-compatible server standing in for Frog Cloud (FROG_BASE_URL), with a placeholder
 //! FROG_API_KEY, as in Frog Cloud's sandbox.
 
+#[path = "../../frog-engine/src/test_watchdog.rs"]
+mod test_watchdog;
+
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use std::collections::VecDeque;
