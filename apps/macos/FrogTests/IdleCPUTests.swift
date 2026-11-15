@@ -17,9 +17,9 @@ final class IdleCPUTests: XCTestCase {
     /// The idle share of a core, or nil when the runner never went quiet (which is not the
     /// view's fault and must not be reported as one).
     private func idle(table: Bool) -> Double? {
-        TranscriptContainer.table = table
         let was = TranscriptContainer.table
-            defer { TranscriptContainer.table = was }
+        defer { TranscriptContainer.table = was }
+        TranscriptContainer.table = table
         UserDefaults.standard.set(true, forKey: "playfulFrog")
         let c = Conversation(folder: URL(fileURLWithPath: "/tmp/demo"), link: nil, replay: false, session: "idle")
         let host = NSHostingView(rootView: TranscriptView(conversation: c, actions: TurnActions(fork: { _ in }, rewind: { _ in })))
