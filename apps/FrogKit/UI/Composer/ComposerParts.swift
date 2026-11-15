@@ -17,7 +17,7 @@ struct SendButton: View {
             Button { conversation.interrupt() } label: {
                 #if os(macOS)
                 Image(systemName: "stop.circle.fill")
-                    .font(.system(size: 17))
+                    .font(.frog(size: 17))
                     .foregroundStyle(.secondary)
                     .frame(width: 22, height: 22)
                     .hoverPlate(h: 3, v: 3)
@@ -36,11 +36,12 @@ struct SendButton: View {
         } else {
             Button(action: send) {
                 #if os(macOS)
-                Image(systemName: "return")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(canSend ? AnyShapeStyle(.tint) : AnyShapeStyle(.tertiary))
-                    .frame(width: 22, height: 22)
-                    .hoverPlate(h: 3, v: 3)
+                // A green circle with an up arrow, as on the web.
+                Image(systemName: "arrow.up")
+                    .font(.frog(size: 12, weight: .bold))
+                    .foregroundStyle(canSend ? AnyShapeStyle(.white) : AnyShapeStyle(Tokens.textTertiary))
+                    .frame(width: 26, height: 26)
+                    .background(canSend ? AnyShapeStyle(Tokens.accent) : AnyShapeStyle(Tokens.hover), in: .circle)
                 #else
                 Image(systemName: conversation.busy ? "text.append" : "arrow.up")
                     .font(.body.weight(.bold))
@@ -62,25 +63,70 @@ struct SendButton: View {
     }
 }
 
+/// What's queued to send: one small-caps QUEUED · n label, then one quiet raised row per
+/// message — the text on a line with an ✕ that takes it back to edit, and its images as small
+/// chips (a queued image must be visible, not just counted). `streaming`: the row says when
+/// they go in — at the next tool step of the running turn — instead of "when the turn ends".
 struct QueuedMessages: View {
     let conversation: Conversation
+    var streaming = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ForEach(Array(conversation.queue.map(\.text).enumerated()), id: \.offset) { i, text in
-                HStack(spacing: 6) {
-                    Image(systemName: "clock").foregroundStyle(.secondary)
-                    Text(text).lineLimit(1)
-                    Spacer()
-                    Button("Remove", systemImage: "xmark.circle.fill") { conversation.unqueue(at: i) }
+        VStack(alignment: .leading, spacing: TurnSpace.Inset.tight) {
+            HStack(alignment: .firstTextBaseline, spacing: TurnSpace.Inset.row) {
+                Text("QUEUED · \(conversation.queue.count)")
+                    .font(.frog(size: Tokens.Size.label, weight: .semibold))
+                    .tracking(0.6)
+                    .foregroundStyle(Tokens.textSecondary)
+                if streaming {
+                    Circle().fill(Tokens.accent).frame(width: 6, height: 6)
+                        .help("The turn is working; the queued messages go in at its next tool step")
+                    Text("goes in at the next tool step")
+                        .font(.frog(size: Tokens.Size.label))
+                        .foregroundStyle(Tokens.textTertiary)
+                } else {
+                    Text("sends when the turn ends")
+                        .font(.frog(size: Tokens.Size.label))
+                        .foregroundStyle(Tokens.textTertiary)
+                }
+            }
+            ForEach(Array(conversation.queue.enumerated()), id: \.offset) { i, queued in
+                HStack(alignment: .center, spacing: TurnSpace.Inset.snug) {
+                    Image(systemName: "paperclip")
+                        .font(.frog(size: 10, weight: .semibold))
+                        .foregroundStyle(Tokens.textSecondary)
+                        .help("Queued message")
+                    Text(queued.text.isEmpty ? "\(queued.images.count) image\(queued.images.count == 1 ? "" : "s")" : queued.text)
+                        .font(.frog(size: Tokens.Size.secondary))
+                        .foregroundStyle(Tokens.text)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    if !queued.images.isEmpty {
+                        HStack(spacing: 4) {
+                            ForEach(Array(queued.images.prefix(3).enumerated()), id: \.offset) { _, img in
+                                if let image = img.image {
+                                    Image(platformImage: image)
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fill)
+                                        .frame(width: 22, height: 22)
+                                        .clipShape(.rect(cornerRadius: 6, style: .continuous))
+                                }
+                            }
+                        }
+                    }
+                    Spacer(minLength: TurnSpace.Inset.row)
+                    Button("Back to the Field", systemImage: "xmark") { conversation.unqueue(at: i) }
+                        .help("Take it out of the queue and back into the field to edit")
                         .labelStyle(.iconOnly)
                         .buttonStyle(.borderless)
-                        .foregroundStyle(.secondary)
+                        .font(.frog(size: Tokens.Size.label, weight: .semibold))
+                        .foregroundStyle(Tokens.textTertiary)
                 }
-                .font(.callout)
+                .padding(.horizontal, 11)
+                .padding(.vertical, 7)
+                .background(Tokens.raised, in: .rect(cornerRadius: 8, style: .continuous))
             }
         }
-        .padding(.horizontal, 4)
     }
 }
 
@@ -100,7 +146,7 @@ struct ModePicker: View {
         } label: {
             HStack(spacing: 4) {
                 Text(mode.label)
-                Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
+                Image(systemName: "chevron.down").font(.frog(size: 9, weight: .semibold))
             }
             .foregroundStyle(mode == .yolo ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
             .hoverPlate()

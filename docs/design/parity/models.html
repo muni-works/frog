@@ -1,0 +1,9 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Models parity</title>
+<style>body{font:14px system-ui;background:#888;margin:24px}h2{margin:28px 0 8px}.row{display:flex;gap:16px;align-items:flex-start}.row img{max-width:48%;border-radius:8px;background:#000}</style>
+<h1>Model picker and Settings › Models: Mac vs web</h1>
+<p>Same fixture on both: This Mac idle with Qwen3-8B on disk; mew running Qwen3-4B at 58 tok/s, Qwen3-8B on disk too. Mac: <code>ModelsParityTests</code> (run with <code>TEST_RUNNER_FROG_PARITY_OUT=docs/design/parity</code>). Web: <code>apps/web/parity/models.html</code> under vite dev, shot with <code>web-shot.mjs</code>.</p>
+<script>
+for (const look of ['dark','light']) for (const v of ['picker','settings','machine']) document.write(`<h2>${v} · ${look}</h2><div class=row><img src="models-${v}-mac-${look}.png"><img src="models-${v}-web-${look}.png"></div>`)
+</script>

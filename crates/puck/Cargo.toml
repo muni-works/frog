@@ -3,6 +3,7 @@ name = "puck"
 description = "The frog puck: UI, eyes and sounds for the round ESP32 display, plus a desktop simulator"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 publish = false
 
 [[bin]]

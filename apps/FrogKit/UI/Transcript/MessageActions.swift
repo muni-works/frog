@@ -16,7 +16,7 @@ struct MessageAction: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 12, weight: .medium))
+                .font(.frog(size: 12, weight: .medium))
                 .frame(width: 24, height: 22)
                 .foregroundStyle(hovering ? .primary : .tertiary)
                 .background(.quaternary.opacity(hovering ? 0.6 : 0), in: .rect(cornerRadius: 6))
@@ -52,7 +52,7 @@ struct ActionTooltip: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(.regularMaterial, in: .rect(cornerRadius: 6))
-            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(.separator, lineWidth: 0.5))
+            
             .shadow(color: .black.opacity(0.25), radius: 6, y: 2)
             .allowsHitTesting(false)
     }
@@ -71,14 +71,13 @@ struct PromptActions: View {
     var body: some View {
         HStack(spacing: 2) {
             if let at = turn.startedAt {
-                // Refreshes each minute, like "10 minutes ago" should.
-                TimelineView(.periodic(from: .now, by: 60)) { context in
-                    Text(Self.ago(at, now: context.date))
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                        .help(at.formatted(date: .abbreviated, time: .shortened))
-                        .padding(.trailing, 6)
-                }
+                // Refreshes each minute, like "10 minutes ago" should: from the one shared clock,
+                // not a timeline per message (each re-checked on every animation frame).
+                Text(Self.ago(at, now: MinuteClock.shared.now))
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .help(at.formatted(date: .abbreviated, time: .shortened))
+                    .padding(.trailing, 6)
             }
             MessageAction(title: "Copy message", symbol: "doc.on.doc", action: copy)
             if turn.number != nil, turn.finished {
@@ -102,5 +101,22 @@ struct PromptActions: View {
 
     static func ago(_ date: Date, now: Date = .now) -> String {
         now.timeIntervalSince(date) < 60 ? "Just now" : relative.localizedString(for: date, relativeTo: now)
+    }
+}
+
+/// One clock for every "N minutes ago" label. A `TimelineView` per message footer was
+/// re-checked on every frame anything animated (hundreds of footers, 30 a second while a
+/// session worked); labels reading this redraw once a minute.
+@MainActor
+@Observable
+final class MinuteClock {
+    static let shared = MinuteClock()
+    private(set) var now = Date()
+    @ObservationIgnored private var timer: Timer?
+
+    private init() {
+        timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { _ in
+            MainActor.assumeIsolated { MinuteClock.shared.now = Date() }
+        }
     }
 }

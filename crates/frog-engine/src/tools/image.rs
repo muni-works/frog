@@ -187,6 +187,10 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
                     bail!("image API key environment variable {env} is empty");
                 }
                 http = http.bearer_auth(token);
+            } else if backend == "apple"
+                && let Some(token) = crate::sidecar::apple_token()
+            {
+                http = http.bearer_auth(token);
             }
             let response = http
                 .send()

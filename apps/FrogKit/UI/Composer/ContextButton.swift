@@ -49,6 +49,7 @@ struct ContextButton: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                PlanUsage()
             }
             .padding(16)
             .frame(width: 260)

@@ -783,7 +783,7 @@ If it should be, fetch or install it first; otherwise try WebSearch/WebFetch."
 }
 
 pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
-    let env = Env::for_project(&ctx.cwd);
+    let env = Env::for_project(&ctx.root);
     let package = input["package"].as_str().map(String::from);
     let query = input["query"].as_str().map(String::from);
     let (content, summary) =

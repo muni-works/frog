@@ -11,10 +11,49 @@ struct ItemState: Identifiable {
 
     let id: String
     var kind: Kind
-    var text = ""
+    /// The item's text. For an answer that's streaming, the newest text lives in `live` and this
+    /// reads it without registering an observation: the transcript's structure (rows, flows,
+    /// equality) reads `text`, and a streamed delta must not re-run all of that (see `LiveText`).
+    /// A view that shows the words as they arrive reads `streamedText` instead.
+    var text: String {
+        get { live?.raw ?? stored }
+        set { live = nil; stored = newValue }
+    }
+    private var stored = ""
+    /// The streaming answer's text, while it streams (see `LiveText`). Shared by every copy of
+    /// this item, so a row holding an older copy still shows the newest words.
+    private(set) var live: LiveText?
+    /// The text, observed: for the one view that draws the answer as it streams.
+    var streamedText: String { live?.text ?? stored }
+
+    /// Append streamed text. Returns true when that's a change the transcript's structure can
+    /// see (the first words, or the first time the item streams), which the caller writes
+    /// through the conversation's `turns` as before; otherwise only `live` changed, and only
+    /// views reading `streamedText` update.
+    mutating func appendStreamed(_ t: String) -> Bool {
+        if let live {
+            let wasBlank = live.blank
+            live.append(t)
+            return wasBlank != live.blank
+        }
+        let box = LiveText(stored)
+        box.append(t)
+        live = box
+        return true
+    }
+
+    /// Done streaming: the text goes back to plain storage.
+    mutating func settleStreamed() {
+        guard let live else { return }
+        stored = live.raw
+        self.live = nil
+    }
     /// Live output from a running tool.
     var output = ""
     var result: Item.ToolResult?
+    /// A one-line gist of what the call did, from the engine's side-model ("searched the
+    /// engine for where gists flush"). Arrives after the row; the argument stays the fallback.
+    var gist: String?
     var imagePreview: ToolImage?
     var displayImages: [ToolImage] { result?.images ?? (imagePreview.map { [$0] } ?? []) }
     var done = false
@@ -25,9 +64,49 @@ struct ItemState: Identifiable {
     var subagent: SubagentRun?
     /// Why auto mode let this call run without asking.
     var autoReason: String?
+    /// Yolo ran this call outside the shell sandbox (its `EgressWidened` said
+    /// `sandbox_left`): the row carries a quiet tag instead of a second notice row.
+    var sandboxEscaped = false
     /// When the engine started and finished it, for "Thought for 2s" and the live line.
     var startedAt: Date?
     var endedAt: Date?
+
+    init(id: String, kind: Kind, text: String = "", output: String = "", result: Item.ToolResult? = nil,
+         imagePreview: ToolImage? = nil, done: Bool = false, needsPermission: Bool = false,
+         progress: ToolProgress? = nil, subagent: SubagentRun? = nil, autoReason: String? = nil,
+         startedAt: Date? = nil, endedAt: Date? = nil) {
+        self.id = id; self.kind = kind; stored = text; self.output = output; self.result = result
+        self.imagePreview = imagePreview; self.done = done; self.needsPermission = needsPermission
+        self.progress = progress; self.subagent = subagent; self.autoReason = autoReason
+        self.startedAt = startedAt; self.endedAt = endedAt
+    }
+}
+
+/// An answer's text while it streams, outside `Conversation.turns`: appending to it doesn't
+/// mutate the turns array, so only the answer's own row (which reads `text`, observed) updates
+/// on a delta, rather than the transcript's body and every row's equality check (measured: most
+/// of streaming's CPU on a 300-turn session).
+@Observable
+final class LiveText {
+    /// Observed: the answer's view reads this.
+    private(set) var text: String
+    /// The same text, unobserved: what the rest of the app reads.
+    @ObservationIgnored private(set) var raw: String
+    /// No visible characters yet (a message that hasn't said anything doesn't break its group).
+    @ObservationIgnored private(set) var blank: Bool
+
+    init(_ text: String) {
+        self.text = text
+        raw = text
+        blank = text.allSatisfy(\.isWhitespace)
+    }
+
+    func append(_ t: String) {
+        guard !t.isEmpty else { return }
+        raw += t
+        if blank, !t.allSatisfy(\.isWhitespace) { blank = false }
+        text = raw
+    }
 }
 
 /// A subagent's run as it streams in: its items (thinking, tool calls, the report being
@@ -84,6 +163,8 @@ struct SubagentRun {
                 case .toolCall(let r): state.kind = .tool(name: r.name, arg: r.arg); state.result = r
                 }
             }
+        case .itemsDiscarded(let ids):
+            items.removeAll { ids.contains($0.id) }
         case .turnEnded:
             for index in items.indices { items[index].imagePreview = nil }
         case .status(let s):
@@ -112,6 +193,10 @@ struct TurnState: Identifiable {
     var input: String
     /// Images attached to the message.
     var images: [ToolImage] = []
+    /// Messages sent along with `input` as the same turn (queued follow-ups), in order.
+    var more: [MessagePart] = []
+    /// Background wakes delivered with this turn, ahead of its input (`wakes_delivered`).
+    var wakes: [String] = []
     var items: [ItemState] = []
     var end: EndReason?
     var usage: TurnUsage?
@@ -120,6 +205,13 @@ struct TurnState: Identifiable {
     /// When you sent it from this window: its bubble animates in, like a sent iMessage.
     /// Nil for turns that arrive from a log (history, replay, another window).
     var sentAt: Date?
+    /// The model's title for the chapter starting at this turn (`chapter_titled`), when one
+    /// arrived; it wins over the rail's heuristic title.
+    var chapterTitle: String?
 
     var finished: Bool { end != nil }
+
+    /// Bumped whenever any turn's `chapterTitle` lands, so a memo of chapter titles knows to
+    /// redo them (a title arrives on an earlier turn, which a key on the last turn misses).
+    @MainActor static var chapterTitles = 0
 }

@@ -37,7 +37,7 @@ extension ModelIdentity {
         )
         repo = suggested.repo
         downloadGB = suggested.approxGB
-        state = Self.state(place: .mac, provider: "tang", repo: suggested.repo, gb: suggested.approxGB,
+        state = Self.state(place: .mac, provider: ProviderID.local, repo: suggested.repo, gb: suggested.approxGB,
                            installed: ModelDownloads.isInstalled(suggested.repo))
     }
 }

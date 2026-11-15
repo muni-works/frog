@@ -20,7 +20,6 @@ struct ModelLabel: View {
     var detail: String? = nil
     /// Whether `.row` names the place. Lists grouped by place leave it to the section.
     var showsPlace = true
-
     var body: some View {
         content
             .accessibilityElement(children: .ignore)
@@ -131,8 +130,8 @@ struct PlaceIcon: View {
 
 extension ModelIdentity.Place {
     /// Blue for your own devices (this Mac, your servers), green for the cloud: the model's
-    /// name and icon say where your code goes at a glance.
-    var color: Color { .place(cloud: isCloud) }
+    /// name and icon say where your code goes at a glance. See `Color.place(_:)`.
+    var color: Color { .place(self) }
 }
 
 /// What a model can do beyond text: uses tools, sees images, reasons.
@@ -172,6 +171,7 @@ extension ModelIdentity {
         case .downloading(let f):
             downloadGB.map { "\(Self.gb($0 * f)) of \(Self.gb($0))" } ?? "Downloading, \(Int(f * 100))%"
         case .downloadFailed: "Download failed"
+        case .needsKey(ProviderID.cloudName): "Sign in or add a key to use it"
         case .needsKey(let p): "Add \(p.first.map { "AEIOU".contains($0) } == true ? "an" : "a") \(p) key to use it"
         case .wontFit(let needs, let has): "Needs \(needs) GB, this Mac has \(has)"
         case .notAllowed(let project): "\(project) keeps code on your devices"

@@ -1,5 +1,6 @@
 mod acp;
 mod complete;
+mod git_credential;
 mod headless;
 mod listen;
 #[cfg(unix)]
@@ -7,10 +8,12 @@ mod muon;
 mod render;
 mod replay;
 mod tui;
+mod ws;
 
 use anyhow::{Context, Result};
 use clap::Parser;
 use frog_engine::config::{Config, ToolMode};
+use frog_engine::protocol::Event;
 use frog_engine::session;
 use frog_engine::{Mode, Options};
 use std::io::Read;
@@ -37,14 +40,25 @@ struct Cli {
     /// (muon docs/ecosystem.md, "launcher intent"). Runs until the bus closes.
     #[arg(long, conflicts_with_all = ["print", "serve", "acp", "listen"])]
     muon: bool,
-    /// Answer one turn per HTTP request on ADDR (e.g. a Tailscale IP:8915), for the iOS app and
-    /// Siri. Needs FROG_LISTEN_TOKEN (the bearer token). See docs/ios-siri.md.
+    /// With --serve: speak it over a websocket on ADDR (e.g. 127.0.0.1:7070) instead of stdio,
+    /// one peer at a time, with `GET /health` on the same port. For Frog Cloud's gateway.
+    /// Beyond loopback it needs FROG_SERVE_WS_TOKEN, which every peer must present.
+    #[arg(long, value_name = "ADDR", requires = "serve")]
+    serve_ws: Option<String>,
+    /// With --serve-ws: session store root (default: frog's data dir).
+    #[arg(long, value_name = "DIR")]
+    store: Option<std::path::PathBuf>,
+    /// Git's credentials come from GET <URL>/internal/git-credential, never from disk.
+    #[arg(long, value_name = "URL")]
+    git_credential_gateway: Option<String>,
+    /// Answer one turn per HTTP request on ADDR (e.g. a Tailscale IP:8915): POST /v1/turn,
+    /// GET /v1/session/<id>/answer, GET /v1/health. Needs FROG_LISTEN_TOKEN (the bearer token).
     #[arg(long, value_name = "ADDR", conflicts_with_all = ["print", "serve", "acp"])]
     listen: Option<String>,
     /// With --serve: the client can answer MCP elicitations and host MCP Apps.
     #[arg(long, requires = "serve", hide = true)]
     rich: bool,
-    /// Profile name from config.toml, or provider/model (e.g. ollama/qwen3, lmstudio/qwen3-coder, anthropic/claude-sonnet-5)
+    /// Profile name from config.toml, or provider/model (e.g. local/qwen3-4b, cloud/glm-5.3-flash, ollama/qwen3, anthropic/claude-sonnet-5)
     #[arg(short, long)]
     model: Option<String>,
     /// Load an alternate config file (useful for isolated setups and testing).
@@ -59,6 +73,10 @@ struct Cli {
     /// Resume a session by id.
     #[arg(short, long, conflicts_with = "cont")]
     resume: Option<String>,
+    /// With `--resume`: if another frog process holds the session, wait up to this many
+    /// seconds for it to exit, then fail rather than start a new session.
+    #[arg(long, value_name = "SECS", requires = "resume")]
+    wait_lock: Option<u64>,
     /// Fork a session into a new one and continue there: `<id>`, or `<id>@<turn>` to cut right after that turn.
     #[arg(long, conflicts_with_all = ["cont", "resume"])]
     fork: Option<String>,
@@ -71,6 +89,10 @@ struct Cli {
     /// Don't sandbox shell commands; every command asks instead (unless allowed or --yolo).
     #[arg(long)]
     no_shell_sandbox: bool,
+    /// This session is an agent's (the app passes it for `StartSession`): its shell commands
+    /// reach only the `[egress]` allow-list unless `workers_deny_by_default = false`.
+    #[arg(long)]
+    worker: bool,
     /// Measure each turn's energy from the Mac's power sensor, and report it with the turn.
     #[arg(long)]
     energy: bool,
@@ -118,13 +140,26 @@ struct Cli {
     /// List sessions started in this directory and exit.
     #[arg(long)]
     sessions: bool,
+    /// With --sessions: only these session ids (comma-separated). Refreshes just those logs
+    /// instead of walking the store.
+    #[arg(long, requires = "sessions", value_delimiter = ',')]
+    ids: Vec<String>,
+    /// Today's delegation roll-up (docs/design/delegation.md) across this directory's
+    /// (or --all) sessions, from their logs, and exit.
+    #[arg(long, requires = "sessions")]
+    digest: bool,
     /// Draw this directory's sessions and their forks as a diagram (JSON with --json) and exit.
     #[arg(long)]
     session_tree: bool,
     /// Connect the configured MCP servers (config.toml and ./.mcp.json), list their tools, and
-    /// exit (JSON with --json).
+    /// exit (JSON with --json). A server that wants a sign-in is reported, never signed in:
+    /// connecting doesn't open a browser.
     #[arg(long)]
     mcp: bool,
+    /// Sign in to a configured MCP server in the browser, then exit. This is what the app's
+    /// "Sign in" button runs; it's the only frog command that opens a browser for MCP.
+    #[arg(long, value_name = "SERVER")]
+    mcp_signin: Option<String>,
     /// Read Mermaid from stdin, lay it out, and print the diagram (JSON with --json) and exit.
     #[arg(long)]
     mermaid: bool,
@@ -154,7 +189,7 @@ struct Cli {
     /// search keys go here too: brave, exa, tavily.
     #[arg(long, value_name = "PROVIDER")]
     set_key: Option<String>,
-    /// Add a server as a provider: --add-provider <ID> <URL> (e.g. gpu-box http://box:11434).
+    /// Add a server as a provider: --add-provider <ID> <URL> (e.g. gpu http://box:11434).
     #[arg(long, num_args = 2, value_names = ["ID", "URL"])]
     add_provider: Option<Vec<String>>,
     /// With --add-provider: "ollama" or "openai" (any OpenAI-compatible server; the default).
@@ -177,34 +212,9 @@ struct Cli {
     /// devices), or ask (forget the answer). Without a value, print the answer; then exit.
     #[arg(long, value_name = "ANSWER", num_args = 0..=1, default_missing_value = "")]
     cloud_policy: Option<String>,
-    /// Look around (GitHub for now), write the brief of what needs you, print it and exit.
-    /// Reads only: nothing is sent or changed on your behalf.
-    #[arg(long)]
-    brief: bool,
-    /// With --brief: print the last brief without looking again.
-    #[arg(long, requires = "brief")]
-    cached: bool,
-    /// Keep the brief fresh: look again every N minutes (default 15), until stopped.
-    #[arg(long, value_name = "MINUTES", num_args = 0..=1, default_missing_value = "15")]
-    watch: Option<u64>,
-    /// Keep the brief fresh while frog is closed, from login on (a LaunchAgent running --watch):
-    /// on or off. Without a value, say whether it's on.
-    #[arg(long, value_name = "ON|OFF", num_args = 0..=1, default_missing_value = "")]
-    background: Option<String>,
-    /// Print a prompt for a conversation about an item in the brief, with what GitHub says
-    /// about it (JSON with --json: {"prompt", "repo"}).
-    #[arg(long, value_name = "ID")]
+    /// With --serve-ws: ask the peer for permission (Op::Permission) instead of denying.
+    #[arg(long, value_name = "ID", num_args = 0..=1, default_missing_value = "")]
     ask: Option<String>,
-    /// You looked at the brief: what's in it is no longer new.
-    #[arg(long)]
-    seen: bool,
-    /// The morning notice, when one is due (after 7, once a day, only for something new):
-    /// print it (JSON with --json, `null` when none) and count today as notified.
-    #[arg(long)]
-    morning: bool,
-    /// Take an item out of the brief: it isn't worth your time. It comes back if it changes.
-    #[arg(long, value_name = "ID")]
-    dismiss: Option<String>,
     /// Never ask for permission.
     #[arg(long)]
     yolo: bool,
@@ -214,6 +224,10 @@ struct Cli {
     /// Auto mode: a local classifier approves steps that plainly serve your request.
     #[arg(long, conflicts_with_all = ["yolo", "accept_edits"])]
     auto: bool,
+    /// Permission mode: default (ask), accept-edits, auto (the default for new sessions) or yolo.
+    #[arg(long, value_name = "MODE", value_parser = ["default", "accept-edits", "auto", "yolo"],
+          conflicts_with_all = ["yolo", "accept_edits", "auto"])]
+    mode: Option<String>,
     /// Describe tools in the prompt instead of using native tool calling.
     #[arg(long, conflicts_with = "tool_mode")]
     text_tools: bool,
@@ -223,6 +237,124 @@ struct Cli {
     /// Profile the model's tool-calling abilities, print them, cache them, and exit.
     #[arg(long)]
     probe: bool,
+}
+
+/// `frog approvals`: who decided what since `--since` (default 24h): the classifier,
+/// the second pass, the chief, or the user.
+fn approvals(args: &[String]) -> Result<bool> {
+    let mut since = "24h".to_string();
+    let mut json = false;
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--json" => json = true,
+            "--since" => since = it.next().cloned().unwrap_or_default(),
+            s if s.starts_with("--since=") => since = s["--since=".len()..].to_string(),
+            other => anyhow::bail!("frog approvals [--since 24h] [--json]: unexpected `{other}`"),
+        }
+    }
+    let secs = parse_span(&since).ok_or_else(|| {
+        anyhow::anyhow!("--since takes a span like 24h, 90m, 7d or 3600s, not `{since}`")
+    })?;
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    let counts = frog_engine::digest::rollup(
+        &frog_engine::session::default_dir(),
+        now_ms - (secs as i64) * 1000,
+    );
+    if json {
+        println!("{}", serde_json::to_string(&counts)?);
+    } else {
+        println!("{}", counts.render(&format!("in the last {since}")));
+    }
+    Ok(true)
+}
+
+/// `24h`, `90m`, `7d`, `3600s` or bare seconds, as seconds.
+fn parse_span(s: &str) -> Option<u64> {
+    let s = s.trim();
+    let (n, unit) = match s.char_indices().find(|(_, c)| !c.is_ascii_digit()) {
+        Some((i, _)) => (&s[..i], &s[i..]),
+        None => (s, "s"),
+    };
+    let n: u64 = n.parse().ok()?;
+    let mult = match unit {
+        "s" => 1,
+        "m" => 60,
+        "h" => 3600,
+        "d" => 86_400,
+        _ => return None,
+    };
+    Some(n * mult)
+}
+
+/// `frog login [--google]`: sign in to Frog Cloud in the browser and save this machine's key.
+async fn login(args: &[String]) -> Result<bool> {
+    use frog_engine::{cloud_login, providers};
+    let provider = if args.iter().any(|a| a == "--google") {
+        "google"
+    } else {
+        "github"
+    };
+    let origin = providers::CLOUD_ORIGIN;
+    let browser: frog_engine::mcp_oauth::Browser = std::sync::Arc::new(|url: String| {
+        let opener = if cfg!(target_os = "macos") {
+            "open"
+        } else {
+            "xdg-open"
+        };
+        let opened = std::process::Command::new(opener)
+            .arg(&url)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success());
+        if !opened {
+            eprintln!("open this to sign in:\n  {url}");
+        }
+    });
+    eprintln!("signing in to Frog Cloud with {provider} in your browser…");
+    let http = reqwest::Client::new();
+    let device = cloud_login::device_name();
+    let key = cloud_login::sign_in(
+        &http,
+        origin,
+        provider,
+        &device,
+        browser,
+        cloud_login::TIMEOUT,
+    )
+    .await?;
+    if let Err(e) = providers::set_key(providers::CLOUD, &key) {
+        // No Keychain here (Linux): the key is still yours, it just lives in the environment.
+        eprintln!("{e:#}\nsigned in; set this in your shell instead:\n  export FROG_API_KEY={key}");
+        return Ok(true);
+    }
+    println!("signed in to Frog Cloud as \"{device}\"; the key is in the Keychain");
+    if std::env::var("FROG_API_KEY").is_ok() {
+        println!("  FROG_API_KEY is set in this shell and wins over the saved key");
+    }
+    println!("  use it: frog -m cloud/qwen3-coder-next (billed per token; local models stay free)");
+    Ok(true)
+}
+
+/// `frog logout`: remove the saved Frog Cloud key.
+fn logout() -> Result<bool> {
+    use frog_engine::cloud_login::{self, Logout};
+    use frog_engine::providers;
+    let done = cloud_login::logout(&providers::cloud_key_saved, &|| {
+        providers::set_key(providers::CLOUD, "")
+    })?;
+    match done {
+        Logout::Removed => println!("signed out: the Frog Cloud key is gone from the Keychain"),
+        Logout::NothingSaved => println!("no Frog Cloud key saved here"),
+    }
+    if std::env::var("FROG_API_KEY").is_ok() {
+        println!("  FROG_API_KEY is still set in this shell; unset it to stop using Frog Cloud");
+    }
+    Ok(true)
 }
 
 #[tokio::main]
@@ -238,8 +370,64 @@ async fn main() {
 }
 
 async fn run() -> Result<bool> {
-    frog_engine::config::migrate_from_kiln();
+    // `frog setup [MODEL]`: install tang-llm and download the default model's weights.
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("setup") {
+        let model = args.get(2).map(|m| {
+            let m = m.strip_prefix("local/").unwrap_or(m);
+            frog_engine::providers::local_repo(m)
+        });
+        frog_engine::setup::run(model).await?;
+        return Ok(true);
+    }
+    // `frog account [--json]`: frog cloud's key and where it goes. Local only, no network.
+    if args.get(1).map(String::as_str) == Some("account") {
+        let a = frog_engine::providers::Account::read();
+        // The model a new session starts on, and whether it's free or billed.
+        let cfg = Config::load()?;
+        let (model, runs) = match cfg.resolve(None) {
+            Ok((spec, p)) => {
+                let runs = frog_engine::model_policy::where_it_runs(&spec, &p);
+                (spec, runs)
+            }
+            Err(e) => (format!("{e:#}"), "unknown"),
+        };
+        if args.iter().skip(2).any(|x| x == "--json") {
+            let mut v = serde_json::to_value(&a)?;
+            v["model"] = model.into();
+            v["model_runs"] = runs.into();
+            println!("{v}");
+        } else {
+            println!("model: {model} ({runs})");
+            print!("{}", a.render());
+        }
+        return Ok(true);
+    }
+    // `frog login [--google]` / `frog logout`: Frog Cloud's key in the Keychain, as the app saves it.
+    if args.get(1).map(String::as_str) == Some("login") {
+        return login(&args[2..]).await;
+    }
+    if args.get(1).map(String::as_str) == Some("logout") {
+        return logout();
+    }
+    // `frog memory dump|forget <name>|clear [--model M]`: this project's compiled memory.
+    if args.get(1).map(String::as_str) == Some("memory") {
+        return memory_command(&args[2..]).await;
+    }
+    // `frog git-credential get`: git's credential helper under --git-credential-gateway.
+    if args.get(1).map(String::as_str) == Some("git-credential") {
+        git_credential::helper(args.get(2).map(String::as_str)).await?;
+        return Ok(true);
+    }
+    // `frog approvals [--since 24h] [--json]`: the approvals roll-up across every
+    // session's log (docs/design/delegation.md). Local only.
+    if args.get(1).map(String::as_str) == Some("approvals") {
+        return approvals(&args[2..]);
+    }
     let cli = Cli::parse();
+    if let Some(url) = &cli.git_credential_gateway {
+        git_credential::install(url)?;
+    }
     if cli.attempts.is_some() || cli.apply_attempt.is_some() || !cli.discard_attempt.is_empty() {
         return attempts(&cli);
     }
@@ -255,9 +443,11 @@ async fn run() -> Result<bool> {
     cfg.energy |= cli.energy;
     // The engine log is stderr, which only a client like the Mac app keeps.
     cfg.log_calls |= cli.serve;
+    cfg.cloud_sandbox = cli.serve_ws.is_some();
     if cli.no_shell_sandbox {
         cfg.sandbox_shell = false;
     }
+    cfg.worker |= cli.worker;
     if cli.models {
         return list_models(&cfg, cli.json).await;
     }
@@ -306,25 +496,21 @@ async fn run() -> Result<bool> {
         }
         return Ok(true);
     }
-    if let Some(done) = pond(&cli, &cfg).await? {
-        return Ok(done);
-    }
-    // Listing and naming sessions needs no model.
-    let cwd = std::env::current_dir()?;
-    let store = session::default_dir();
-    if let Some(r) = &cli.rename {
-        session::retitle(&store, &r[0], &r[1])?;
-        return Ok(true);
-    }
-    if cli.sessions {
-        list_sessions(&store, &cwd, cli.all, cli.json)?;
-        return Ok(true);
-    }
     let chosen = match &cli.model {
         Some(m) => Some(m.clone()),
         None if std::env::var_os("FROG_MODEL").is_some() || cfg.default_model.is_some() => None,
         None => match frog_engine::models::last_used() {
             Some(m) => Some(m),
+            // Frog Cloud connected through the environment (as in its sandbox): its default,
+            // from the list it serves now (tree while listed, else its first).
+            None if frog_engine::providers::key_source(frog_engine::providers::CLOUD)
+                == Some("env")
+                && let Some(m) = frog_engine::catalog::cloud_default(
+                    &frog_engine::catalog::cloud_models_fresh().await,
+                ) =>
+            {
+                Some(m)
+            }
             None => match frog_engine::models::pick_default().await {
                 Some((m, _)) => Some(m),
                 None => {
@@ -336,6 +522,15 @@ async fn run() -> Result<bool> {
     };
     let (profile_name, mut profile) = cfg.resolve(chosen.as_deref())?;
     if let Some(b) = cli.base_url {
+        // A saved frog cloud or OpenAI key goes only to its own service: a --base-url
+        // elsewhere gets an env key or none.
+        let prov = profile_name.split_once('/').map(|(p, _)| p);
+        if let Some(prov @ ("cloud" | "openai")) = prov {
+            let own = prov == "cloud" && frog_engine::providers::on_cloud_origin(&b);
+            if !own && frog_engine::providers::key_source(prov) != Some("env") {
+                profile.api_key = None;
+            }
+        }
         profile.base_url = Some(b);
     }
     if cli.text_tools {
@@ -346,6 +541,21 @@ async fn run() -> Result<bool> {
     }
     if cli.probe {
         return probe(&profile_name, &profile).await;
+    }
+    let cwd = std::env::current_dir()?;
+    let store = cli.store.clone().unwrap_or_else(session::default_dir);
+    if let Some(r) = &cli.rename {
+        session::retitle(&store, &r[0], &r[1])?;
+        return Ok(true);
+    }
+    if cli.sessions && cli.digest {
+        digest(&store, &cwd, cli.all)?;
+        return Ok(true);
+    }
+    if cli.sessions {
+        let ids = (!cli.ids.is_empty()).then_some(cli.ids.as_slice());
+        list_sessions(&store, &cwd, cli.all, ids, cli.json)?;
+        return Ok(true);
     }
     if cli.session_tree {
         print_diagram(session_tree(&store, &cwd)?, &cwd, cli.json)?;
@@ -384,6 +594,30 @@ async fn run() -> Result<bool> {
         }
         return Ok(true);
     }
+    if let Some(server) = &cli.mcp_signin {
+        let mut configured = frog_engine::mcp::configured(&cfg, &cwd);
+        let cfg_of = configured
+            .remove(server)
+            .with_context(|| format!("`{server}` isn't a configured MCP server here"))?;
+        println!("signing in to `{server}` in your browser…");
+        let browser: frog_engine::mcp_oauth::Browser = std::sync::Arc::new(|url: String| {
+            let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+            let opened = std::process::Command::new(opener)
+                .arg(&url)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success());
+            if !opened {
+                eprintln!("open this to sign in:\n  {url}");
+            }
+        });
+        frog_engine::mcp::sign_in(server, &cfg_of, None, browser).await?;
+        // Signed in on purpose, so a remembered refusal no longer applies.
+        frog_engine::mcp::forget_refusal(&frog_engine::mcp::auth_key(server, &cfg_of));
+        println!("signed in to `{server}`");
+        return Ok(true);
+    }
     if cli.mcp {
         let servers = frog_engine::mcp::configured(&cfg, &cwd);
         let hub =
@@ -398,9 +632,15 @@ async fn run() -> Result<bool> {
         }
         if !cli.json {
             for st in &status {
-                match &st.error {
-                    Some(e) => println!("✗ {}  {e}", st.name),
-                    None => println!(
+                // A server wanting a sign-in also carries an error line (it is one), so it
+                // must be matched first or the actionable line never shows.
+                match (st.needs_auth, &st.error) {
+                    (true, _) => println!(
+                        "✗ {}  not signed in · sign in from Settings → MCP in the app",
+                        st.name
+                    ),
+                    (false, Some(e)) => println!("✗ {}  {e}", st.name),
+                    (false, None) => println!(
                         "✓ {}  {} tools: {}",
                         st.name,
                         st.tools.len(),
@@ -463,20 +703,47 @@ async fn run() -> Result<bool> {
     } else {
         cli.resume.clone()
     };
-    // A client (another window, say) that asks for a session already open elsewhere gets a
-    // fresh one rather than an engine that exits.
-    let resume = match resume {
-        Some(id) if cli.serve && session::Log::in_use(&store, &id) => {
-            eprintln!("session {id} is open in another frog process; starting a new one");
-            None
+    let resume = match (resume, cli.wait_lock) {
+        // Resuming after a relaunch: the old engine may still be on its way out. Wait for it,
+        // and never quietly fork the conversation into a new session.
+        (Some(id), Some(secs)) => {
+            if !session::Log::wait_free(&store, &id, std::time::Duration::from_secs(secs)) {
+                anyhow::bail!("session {id} is still open in another frog process after {secs}s");
+            }
+            Some(id)
         }
-        r => r,
+        (r, _) => r,
     };
-    let mode = match (cli.yolo, cli.accept_edits, cli.auto) {
-        (true, _, _) => Mode::Yolo,
-        (_, true, _) => Mode::AcceptEdits,
-        (_, _, true) => Mode::Auto,
-        _ => Mode::Default,
+    // A client (the app, say) that opens a session another frog process is running follows it
+    // live instead of getting a blank new one.
+    if let Some(id) = resume
+        .as_ref()
+        .filter(|id| cli.wait_lock.is_none() && cli.serve && session::Log::in_use(&store, id))
+    {
+        eprintln!("session {id} is open in another frog process; following it");
+        headless::serve(frog_engine::follow(store.clone(), id.clone())).await?;
+        return Ok(true);
+    }
+    let mode = match (cli.mode.as_deref(), (cli.yolo, cli.accept_edits, cli.auto)) {
+        (Some("yolo"), _) | (None, (true, _, _)) => Mode::Yolo,
+        (Some("accept-edits"), _) | (None, (_, true, _)) => Mode::AcceptEdits,
+        (Some("auto"), _) | (None, (_, _, true)) => Mode::Auto,
+        (Some("default"), _) => Mode::Default,
+        // A flagless resume: the engine keeps the mode the log has, and a log with none ran
+        // in Default, the default before Auto.
+        _ if resume.is_some() => Mode::Default,
+        // New sessions start in Auto (docs/plans/2026-11-12-composer-tray.md).
+        _ => Mode::Auto,
+    };
+    // A resume runs on the session's own model, unless -m says otherwise: `config.toml`'s
+    // default (or the last model used anywhere) may name one this session never ran on, or
+    // one whose key is gone — every turn then fails with the provider's 401.
+    let (profile_name, profile) = match &resume {
+        Some(id) if cli.model.is_none() => match session::model_of(&store, id) {
+            Ok(spec) => cfg.resolve(Some(&spec))?,
+            Err(_) => (profile_name, profile),
+        },
+        _ => (profile_name, profile),
     };
     if cli.acp {
         acp::serve(cfg.clone(), profile_name, profile, store, cli.sandbox).await?;
@@ -484,6 +751,9 @@ async fn run() -> Result<bool> {
     }
     if let Some(addr) = &cli.listen {
         let token = std::env::var("FROG_LISTEN_TOKEN").unwrap_or_default();
+        // Keep it from the agent's tools, which inherit this environment.
+        // SAFETY: before any engine or task that reads the environment starts.
+        unsafe { std::env::remove_var("FROG_LISTEN_TOKEN") };
         let (cfg, sandbox, chat, dir) = (cfg.clone(), cli.sandbox, cli.chat, store.clone());
         let make = move |resume, model: Option<String>| -> Result<Options> {
             let (profile_name, profile) = match model {
@@ -512,22 +782,40 @@ async fn run() -> Result<bool> {
         listen::run(addr, token, template).await?;
         return Ok(true);
     }
-    let handle = frog_engine::spawn(Options {
+    // Checked before the engine starts, so a refused bind costs nothing.
+    let ws_token = std::env::var(ws::TOKEN_ENV).ok().filter(|t| !t.is_empty());
+    // Keep it from the agent's tools, which inherit this environment.
+    // SAFETY: before the engine or any task that reads the environment starts.
+    unsafe { std::env::remove_var(ws::TOKEN_ENV) };
+    if let Some(addr) = &cli.serve_ws {
+        let insecure = std::env::var(ws::INSECURE_ENV).is_ok_and(|v| v == "1");
+        ws::check_bind(addr, ws_token.as_deref(), insecure)?;
+    }
+    let handle = frog_engine::spawn_checked(Options {
         cfg: cfg.clone(),
         profile_name,
         profile,
         cwd,
         mode,
-        can_ask: !cli.print,
+        // Over a websocket, only with --ask: otherwise headless and denying, as with -p.
+        can_ask: match cli.serve_ws {
+            Some(_) => cli.ask.as_deref() == Some(""),
+            None => !cli.print,
+        },
         resume,
         store: Some(store),
         sandbox: cli.sandbox,
         rich: cli.rich,
         subagent: false,
         chat: cli.chat,
-    })?;
+    })
+    .await?;
 
     let mut prompt = cli.prompt.join(" ");
+    if let Some(addr) = &cli.serve_ws {
+        ws::serve(handle, addr, ws_token).await?;
+        return Ok(true);
+    }
     if cli.serve {
         headless::serve(handle).await?;
         return Ok(true);
@@ -569,6 +857,7 @@ async fn manage_providers(cli: &Cli) -> Result<Option<bool>> {
         return Ok(Some(true));
     }
     if let Some(id) = &cli.remove_provider {
+        providers::removable(id)?;
         let mut state = State::load();
         state.custom.remove(id);
         state.enabled.retain(|s| !s.starts_with(&format!("{id}/")));
@@ -591,7 +880,11 @@ async fn manage_providers(cli: &Cli) -> Result<Option<bool>> {
             println!("{}", serde_json::to_string(&list)?);
         } else {
             for p in list {
-                let status = if p.connected { "connected" } else { "no key" };
+                let status = match (p.connected, p.local) {
+                    (true, _) => "connected",
+                    (false, true) => "not installed",
+                    (false, false) => "no key",
+                };
                 println!("{:<12} {:<20} {:<10} {}", p.id, p.name, status, p.base_url);
             }
         }
@@ -640,8 +933,10 @@ async fn manage_providers(cli: &Cli) -> Result<Option<bool>> {
 const NO_MODEL: &str = "\
 frog didn't find a model to talk to. Any one of these works:
 
+  frog setup                       install frog's own engine and Qwen3 4B (Apple silicon)
   ollama pull qwen3-coder:30b      then run frog again
   LM Studio                        load a model and start its server
+  export FROG_API_KEY=…            use Frog Cloud (key at https://api.frog.toys/beta)
   export ANTHROPIC_API_KEY=…       use Claude
   frog -m provider/model           anything else (frog --models lists what's here)";
 
@@ -658,7 +953,15 @@ async fn list_models(cfg: &Config, json: bool) -> Result<bool> {
         } else {
             " (not profiled)"
         };
-        println!("{:<32} {:<8} {:?} tier{profiled}", m.spec, mode, m.tier);
+        let label = if m.provider == frog_engine::config::ProviderKind::Codex {
+            "Codex (ChatGPT plan)"
+        } else {
+            ""
+        };
+        println!(
+            "{:<32} {:<8} {:?} tier{profiled} {label}",
+            m.spec, mode, m.tier
+        );
     }
     Ok(true)
 }
@@ -683,7 +986,7 @@ fn session_tree(
     cwd: &std::path::Path,
 ) -> Result<frog_engine::diagram::Diagram> {
     use frog_engine::diagram::{Diagram, Edge, Node, Shape};
-    let mut sessions = session::list(store, Some(cwd))?;
+    let mut sessions = session::list(store, Some(cwd), None)?;
     sessions.sort_by_key(|s| s.header.created);
     let ids: std::collections::HashSet<&str> = sessions.iter().map(|s| s.id.as_str()).collect();
     let mut d = Diagram {
@@ -721,150 +1024,59 @@ fn session_tree(
     Ok(d)
 }
 
-/// `--brief`, `--watch` and `--dismiss`: the pond.
-async fn pond(cli: &Cli, cfg: &Config) -> Result<Option<bool>> {
-    use frog_engine::pond;
-    if let Some(v) = &cli.background {
-        use frog_engine::pond::background;
-        match v.as_str() {
-            "on" => background::on(&std::env::current_exe()?.canonicalize()?)?,
-            "off" => background::off()?,
-            "" => {}
-            other => anyhow::bail!("--background takes on or off, not `{other}`"),
-        }
-        let bin = background::status();
-        if cli.json {
-            println!("{}", serde_json::json!({ "on": bin.is_some(), "binary": bin }));
-        } else {
-            match bin {
-                Some(b) => println!("on: {} looks every 15 minutes", b.display()),
-                None => println!("off"),
+/// Today's delegation roll-up from session logs: count this day's
+/// `permission_decision` events by layer, across sessions. The engine's own
+/// `Op::Digest` counts in memory; this reads the record, so it covers every
+/// session that ran today, including closed ones.
+fn digest(store: &std::path::Path, cwd: &std::path::Path, all: bool) -> Result<()> {
+    let sessions = session::list(store, (!all).then_some(cwd), None)?;
+    let today = chrono::Utc::now().date_naive();
+    let mut auto_allowed = 0u32;
+    let mut second_pass = 0u32;
+    let mut delegated = 0u32;
+    let mut blocked = 0u32;
+    let mut cards = 0u32;
+    for s in &sessions {
+        let Ok(records) = session::events_after(store, &s.id, 0) else {
+            continue;
+        };
+        for env in records {
+            // Only today's decisions.
+            let day = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(env.created)
+                .map(|t| t.date_naive());
+            if day != Some(today) {
+                continue;
             }
-        }
-        return Ok(Some(true));
-    }
-    if cli.seen {
-        pond::seen()?;
-        return Ok(Some(true));
-    }
-    if cli.morning {
-        let notice = pond::morning::check(cfg).await?;
-        if cli.json {
-            println!("{}", serde_json::to_string(&notice)?);
-        } else if let Some(n) = notice {
-            println!("{}\n{}", n.title, n.body);
-        }
-        return Ok(Some(true));
-    }
-    if let Some(id) = &cli.ask {
-        let (prompt, repo) = pond::ask::prompt(id).await?;
-        if cli.json {
-            println!("{}", serde_json::json!({ "prompt": prompt, "repo": repo }));
-        } else {
-            println!("{prompt}");
-        }
-        return Ok(Some(true));
-    }
-    if let Some(id) = &cli.dismiss {
-        if !pond::dismiss(id)? {
-            anyhow::bail!("nothing open in the pond is called `{id}`");
-        }
-        return Ok(Some(true));
-    }
-    if let Some(minutes) = cli.watch {
-        let every = std::time::Duration::from_secs(minutes.max(1) * 60);
-        loop {
-            match pond::pass(cfg).await {
-                Ok(b) => {
-                    eprintln!("{} brief: {}", b.at.with_timezone(&chrono::Local).format("%H:%M"), b.headline);
-                    if let Err(e) = pond::morning::wake_app(&b) {
-                        eprintln!("couldn't wake Frog for the morning notice: {e:#}");
-                    }
+            let Event::PermissionDecision { layer, outcome, .. } = &env.event else {
+                continue;
+            };
+            match (layer.as_str(), outcome.as_str()) {
+                ("classifier", "allow") => auto_allowed += 1,
+                ("second-pass", "allow") => second_pass += 1,
+                ("delegated", "allow") => delegated += 1,
+                ("delegated", "ask") => blocked += 1,
+                ("never-delegable", "ask") | ("breaker", "deny") | ("repeat", "deny") => {
+                    blocked += 1
                 }
-                Err(e) => eprintln!("pond pass failed: {e:#}"),
+                (_, "ask") | (_, "deny") => cards += 1,
+                _ => {}
             }
-            tokio::time::sleep(every).await;
         }
     }
-    if !cli.brief {
-        return Ok(None);
-    }
-    let b = if cli.cached {
-        pond::latest().context("no brief yet: run frog --brief")?
-    } else {
-        pond::pass(cfg).await?
-    };
-    if cli.json {
-        println!("{}", serde_json::to_string(&b)?);
-    } else {
-        print_brief(&b);
-    }
-    Ok(Some(true))
-}
-
-fn print_brief(b: &frog_engine::pond::brief::Brief) {
-    use frog_engine::pond::Place;
-    println!("\n  {}\n", b.headline);
-    if !b.today.is_empty() {
-        use frog_engine::pond::calendar::clock;
-        let day: Vec<String> = b
-            .today
-            .iter()
-            .map(|e| if e.all_day { e.title.clone() } else { format!("{} {}", clock(e.start), e.title) })
-            .collect();
-        println!("  \x1b[2mtoday\x1b[0m  {}\n", day.join(" · "));
-    }
-    for l in &b.items {
-        let dot = if l.new { "●" } else { "○" };
-        println!("  {dot} {}  \x1b[2m{}\x1b[0m", l.title, l.place);
-        println!("    {}", l.note);
-        println!("    \x1b[2m{}\x1b[0m", l.url);
-    }
-    if !b.also.is_empty() {
-        println!("\n  \x1b[2malso: {} quieter thing{}\x1b[0m", b.also.len(), if b.also.len() == 1 { "" } else { "s" });
-    }
-    for t in &b.trouble {
-        println!("\n  \x1b[33m! {t}\x1b[0m");
-    }
-    let r = &b.receipt;
-    let read: Vec<String> = r.read.iter().map(|x| format!("{} ({})", x.source, x.what)).collect();
-    let model = match &r.model {
-        Some(m) => format!(
-            "{} {}",
-            m.name,
-            match m.place {
-                Place::Mac => "on this Mac",
-                Place::Server => "on your server",
-                Place::Cloud => "in the cloud",
-            }
-        ),
-        None => "templates, no model".into(),
-    };
-    let private = r.private_bytes();
-    let left = if private == 0 {
-        "none of your data left this Mac".to_string()
-    } else {
-        format!("{} of your data left this Mac", bytes(private))
-    };
-    let wh = r.wh.filter(|w| *w >= 0.005).map(|w| format!(" · {w:.2} Wh")).unwrap_or_default();
-    println!("\n  \x1b[2mread {} · wrote with {model} · {left}{wh}\x1b[0m\n", read.join(", "));
-}
-
-fn bytes(n: u64) -> String {
-    match n {
-        0..1_000 => format!("{n} B"),
-        1_000..1_000_000 => format!("{:.1} KB", n as f64 / 1e3),
-        _ => format!("{:.1} MB", n as f64 / 1e6),
-    }
+    println!(
+        "delegation today: {auto_allowed} auto-allowed, {second_pass} second-pass upgrades, {delegated} chief-approved, {blocked} blocked, {cards} other asks (target: <=5 cards/day)"
+    );
+    Ok(())
 }
 
 fn list_sessions(
     store: &std::path::Path,
     cwd: &std::path::Path,
     all: bool,
+    ids: Option<&[String]>,
     json: bool,
 ) -> Result<()> {
-    let sessions = session::list(store, (!all).then_some(cwd))?;
+    let sessions = session::list(store, (!all).then_some(cwd), ids)?;
     if json {
         let rows: Vec<serde_json::Value> = sessions
             .iter()
@@ -876,8 +1088,18 @@ fn list_sessions(
                     "model": s.header.model,
                     "first_input": s.first_input,
                     "title": s.title,
+                    "end": s.end.map(|e| serde_json::json!(match e {
+                        frog_engine::session::EndState::Open => "open",
+                        frog_engine::session::EndState::Complete => "complete",
+                        frog_engine::session::EndState::Stopped => "stopped",
+                        frog_engine::session::EndState::Failed => "failed",
+                    })),
                     "forked_from": s.header.forked_from,
+                    "parent": s.header.parent,
                     "cwd": s.header.cwd,
+                    // The bound PRs, so the sidebar's row and the composer's git line read
+                    // one list (the composer used to be the only place that had them).
+                    "prs": s.prs,
                 })
             })
             .collect();
@@ -887,22 +1109,97 @@ fn list_sessions(
     if sessions.is_empty() {
         println!("no sessions in {}", cwd.display());
     }
-    for s in sessions {
-        let when = chrono::DateTime::<chrono::Local>::from(s.modified).format("%b %d %H:%M");
-        let first = s
-            .title
-            .or(s.first_input)
-            .unwrap_or_default()
-            .replace('\n', " ");
-        let first: String = first.chars().take(60).collect();
-        let fork = s
-            .header
-            .forked_from
-            .map(|f| format!(" (fork of {}@{})", f.session, f.seq))
-            .unwrap_or_default();
-        println!("{}  {when}  {first}{fork}", s.id);
+    // The started-by tree: a child under its parent (when the parent is listed too).
+    let lines: Vec<(String, Option<String>, String)> = sessions
+        .into_iter()
+        .map(|s| {
+            let when = chrono::DateTime::<chrono::Local>::from(s.modified).format("%b %d %H:%M");
+            let first = s
+                .title
+                .or(s.first_input)
+                .unwrap_or_default()
+                .replace('\n', " ");
+            let first: String = first.chars().take(60).collect();
+            let fork = s
+                .header
+                .forked_from
+                .map(|f| format!(" (fork of {}@{})", f.session, f.seq))
+                .unwrap_or_default();
+            let line = format!("{}  {when}  {first}{fork}", s.id);
+            (s.id, s.header.parent, line)
+        })
+        .collect();
+    for line in started_by_tree(&lines) {
+        println!("{line}");
     }
     Ok(())
+}
+
+/// `(id, parent, line)` rows as a tree: roots in order, each child indented under its parent.
+/// A row whose parent isn't listed is a root.
+fn started_by_tree(rows: &[(String, Option<String>, String)]) -> Vec<String> {
+    let ids: std::collections::HashSet<&str> = rows.iter().map(|r| r.0.as_str()).collect();
+    let parent_of = |r: &(String, Option<String>, String)| {
+        r.1.as_deref()
+            .filter(|p| *p != r.0 && ids.contains(p))
+            .map(String::from)
+    };
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    fn walk<'a>(
+        rows: &'a [(String, Option<String>, String)],
+        id: &'a str,
+        depth: usize,
+        parent_of: &dyn Fn(&(String, Option<String>, String)) -> Option<String>,
+        seen: &mut std::collections::HashSet<&'a str>,
+        out: &mut Vec<String>,
+    ) {
+        if !seen.insert(id) {
+            return;
+        }
+        if let Some(r) = rows.iter().find(|r| r.0 == id) {
+            let pad = if depth == 0 {
+                String::new()
+            } else {
+                format!("{}└ ", "  ".repeat(depth - 1))
+            };
+            out.push(format!("{pad}{}", r.2));
+        }
+        for c in rows.iter().filter(|c| parent_of(c).as_deref() == Some(id)) {
+            walk(rows, &c.0, depth + 1, parent_of, seen, out);
+        }
+    }
+    for r in rows.iter().filter(|r| parent_of(r).is_none()) {
+        walk(rows, &r.0, 0, &parent_of, &mut seen, &mut out);
+    }
+    // A parent cycle leaves rows no root reaches: list them flat rather than lose them.
+    for r in rows {
+        if !seen.contains(r.0.as_str()) {
+            out.push(r.2.clone());
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod started_by_tree_tests {
+    use super::started_by_tree;
+
+    #[test]
+    fn children_nest_under_their_parent() {
+        let row = |id: &str, p: Option<&str>| (id.to_string(), p.map(String::from), id.to_string());
+        let rows = vec![
+            row("a", None),
+            row("b", Some("a")),
+            row("c", Some("b")),
+            row("d", Some("gone")),
+            row("e", Some("a")),
+        ];
+        assert_eq!(
+            started_by_tree(&rows),
+            vec!["a", "└ b", "  └ c", "└ e", "d"]
+        );
+    }
 }
 
 async fn probe(name: &str, profile: &frog_engine::config::Profile) -> Result<bool> {
@@ -910,9 +1207,14 @@ async fn probe(name: &str, profile: &frog_engine::config::Profile) -> Result<boo
     frog_engine::sidecar::ensure(profile).await?;
     let provider = frog_engine::provider::Provider::new(profile)?;
     eprintln!("probing {name}…");
-    let caps = harness::probe(&provider, &frog_engine::tools::specs(), |label, completed, total| {
-        eprintln!("{label} ({completed}/{total})");
-    }).await?;
+    let caps = harness::probe(
+        &provider,
+        &frog_engine::tools::specs(),
+        |label, completed, total| {
+            eprintln!("{label} ({completed}/{total})");
+        },
+    )
+    .await?;
     harness::save(profile, &caps);
     let tier = harness::tier(profile, Some(&caps));
     let mut auto = profile.clone();
@@ -955,6 +1257,75 @@ fn attempts(cli: &Cli) -> Result<bool> {
     }
     if !cli.discard_attempt.is_empty() {
         checkpoint::remove_attempts(&root, &cli.discard_attempt);
+    }
+    Ok(true)
+}
+
+#[cfg(test)]
+mod approvals_tests {
+    #[test]
+    fn spans_parse_to_seconds() {
+        assert_eq!(super::parse_span("24h"), Some(86_400));
+        assert_eq!(super::parse_span("90m"), Some(5_400));
+        assert_eq!(super::parse_span("7d"), Some(604_800));
+        assert_eq!(super::parse_span("3600"), Some(3_600));
+        assert_eq!(super::parse_span("1w"), None);
+        assert_eq!(super::parse_span(""), None);
+    }
+}
+
+/// `frog memory …`: read or edit this project's compiled-memory blob. Reading or deleting one
+/// file needs the model server that wrote it (only it can read its store); `clear` doesn't.
+async fn memory_command(args: &[String]) -> Result<bool> {
+    use frog_engine::compiled_memory as cm;
+    let cwd = std::env::current_dir()?;
+    let store = frog_engine::memory::Store::new(&frog_engine::memory::default_root(), Some(&cwd));
+    let path = cm::blob_path(&store);
+    let model = args
+        .iter()
+        .position(|a| a == "--model" || a == "-m")
+        .and_then(|i| args.get(i + 1))
+        .cloned();
+    let remote = || -> Result<cm::Remote> {
+        let cfg = Config::load()?;
+        let (name, profile) = cfg.resolve(model.as_deref())?;
+        let provider = frog_engine::provider::Provider::new(&profile)?;
+        provider.memory_remote().with_context(|| {
+            format!("{name} has no compiled memory (it needs tang-llm serve --memory-layer N)")
+        })
+    };
+    match args.first().map(String::as_str) {
+        Some("clear") => {
+            if cm::clear(&path)? {
+                println!("Cleared {}", path.display());
+            } else {
+                println!("No compiled memory for this project.");
+            }
+        }
+        Some("dump") => {
+            let Some(blob) = cm::read_blob(&path)? else {
+                println!("No compiled memory for this project.");
+                return Ok(true);
+            };
+            let files = cm::dump(&remote()?, &blob).await?;
+            if files.is_empty() {
+                println!("Compiled memory is empty ({}).", path.display());
+            }
+            for (name, text) in files {
+                println!("== {name} ==\n{text}\n");
+            }
+        }
+        Some("forget") => {
+            let name = args.get(1).filter(|n| !n.starts_with('-'));
+            let name = name.context("usage: frog memory forget <name>")?;
+            if cm::forget(&remote()?, &path, name).await? {
+                println!("Forgot {name}.");
+            } else {
+                println!("No file named {name}.");
+                return Ok(false);
+            }
+        }
+        _ => anyhow::bail!("usage: frog memory dump | forget <name> | clear  [--model M]"),
     }
     Ok(true)
 }

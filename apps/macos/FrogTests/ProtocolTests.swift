@@ -14,6 +14,23 @@ final class ProtocolTests: XCTestCase {
         XCTAssertEqual(step, 3); XCTAssertEqual(of, 8); XCTAssertEqual(index, 0)
     }
 
+    func testNextSuggestedDecodesWithActDefaultingOff() throws {
+        let ghost = try decode(#"{"seq":1,"session":"s","created":0,"event":"next_suggested","turn":2,"text":"commit this"}"#)
+        guard case .nextSuggested(2, "commit this", false) = ghost.event else { return XCTFail() }
+        let act = try decode(#"{"seq":2,"session":"s","created":0,"event":"next_suggested","turn":3,"text":"push it","act":true}"#)
+        guard case .nextSuggested(3, "push it", true) = act.event else { return XCTFail() }
+    }
+
+    func testNotifyDecodesWithItsUrgencyAndForgivingDefaults() throws {
+        let loud = try decode(#"{"seq":1,"session":"s","created":0,"event":"notify","title":"build","body":"The build finished.","urgency":"attention"}"#)
+        guard case .notify("build", "The build finished.", .attention) = loud.event else { return XCTFail() }
+        let silent = try decode(#"{"seq":2,"session":"s","created":0,"event":"notify","body":"All green.","urgency":"silent"}"#)
+        guard case .notify(nil, "All green.", .silent) = silent.event else { return XCTFail() }
+        // An older engine (or a hand-written line) without the urgency is the quiet default.
+        let bare = try decode(#"{"seq":3,"session":"s","created":0,"event":"notify","body":"tests pass"}"#)
+        guard case .notify(nil, "tests pass", .done) = bare.event else { return XCTFail() }
+    }
+
     func testFixturesAllDecode() throws {
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "events", withExtension: "jsonl"))
         let lines = try String(contentsOf: url, encoding: .utf8).split(separator: "\n")
@@ -49,6 +66,33 @@ final class ProtocolTests: XCTestCase {
         let synced = try decode(#"{"seq":7,"session":"s","created":0,"event":"synced","upto":6}"#)
         guard case .synced(let upto) = synced.event else { return XCTFail() }
         XCTAssertEqual(upto, 6)
+    }
+
+    /// The billing transition decodes both ways it arrives: the informational event (the
+    /// turn goes on) and the typed end reason (out of credit). Old logs replay either way.
+    func testBillingLimitDecodes() throws {
+        let live = try decode(#"{"seq":12,"session":"s","created":0,"event":"billing_limit","window":"5h","reason":"5-hour plan limit reached; add credit to keep going at usage prices","balance_micro":4200000}"#)
+        guard case .billingLimit(let b) = live.event else { return XCTFail() }
+        XCTAssertEqual(b.window, "5h")
+        XCTAssertEqual(b.balanceMicros, 4_200_000)
+        XCTAssertEqual(b.line, "5-hour allowance used · billing credit at usage prices · $4.20 left")
+
+        // The end reason carries the same shape.
+        let ended = try decode(#"{"seq":13,"session":"s","created":0,"event":"turn_ended","turn":2,"reason":{"type":"billing_limit","window":"credit","reason":"Insufficient credits"},"usage":{"context_tokens":null,"input_tokens":0,"output_tokens":0,"model_calls":0,"tokens_per_sec":null}}"#)
+        guard case .turnEnded(_, .billingLimit(let hard), _) = ended.event else { return XCTFail() }
+        XCTAssertEqual(hard.window, "credit")
+        XCTAssertNil(hard.balanceMicros)
+        XCTAssertTrue(hard.isHardStop)
+
+        // Old logs (or a bare window) still decode; the engine never sent balance.
+        let old = try decode(#"{"seq":14,"session":"s","created":0,"event":"billing_limit","window":"weekly"}"#)
+        guard case .billingLimit(let w) = old.event else { return XCTFail() }
+        XCTAssertEqual(w.line, "Weekly allowance used · billing credit at usage prices")
+        XCTAssertNil(w.reason)
+
+        // No billing body ever renders as a provider dump.
+        let engine = EngineError(type: "billing", status: 402, message: "insufficient_quota")
+        XCTAssertEqual(engine.description, "Out of credit. Add credit to keep going.")
     }
 
     func testTurnEnergy() throws {

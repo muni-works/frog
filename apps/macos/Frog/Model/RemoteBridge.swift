@@ -1,5 +1,6 @@
 import Foundation
 import Network
+import Security
 
 /// Lets frog on your iPhone watch this Mac's conversations and answer them: a WebSocket that
 /// speaks the engine protocol. Loopback only for now (the iOS simulator reaches it); a LAN and
@@ -7,7 +8,7 @@ import Network
 ///
 /// Client → Mac: `hello{token}`, `list`, `attach{session, after}`, `detach{session}`,
 /// `op{session, op}` where `op` is an engine `Op` (`submit`, `permission`, `interrupt`, `set_mode`).
-/// Mac → client: `welcome{host}`, `sessions{sessions}`, `event{env}` (engine envelopes,
+/// Mac → client: `welcome{host, bridge}`, `sessions{sessions}`, `event{env}` (engine envelopes,
 /// verbatim), `synced{session, upto}`, `error{message}`.
 ///
 /// History comes from the session's log, so attaching never disturbs the engine; live events are
@@ -22,19 +23,49 @@ final class RemoteBridge {
         set { UserDefaults.standard.set(newValue, forKey: "remoteEnabled") }
     }
 
-    /// What a client must present. Made once, kept in defaults.
+    /// What a client must present. Made once, kept in the Keychain.
     /// A new code: every paired phone has to pair again.
     static func newToken() {
-        UserDefaults.standard.removeObject(forKey: "remoteToken")
+        TokenStore.write("")
         _ = token
     }
 
     static var token: String {
-        if let t = UserDefaults.standard.string(forKey: "remoteToken"), !t.isEmpty { return t }
+        // Codes kept in defaults by earlier builds move to the Keychain.
+        if let old = UserDefaults.standard.string(forKey: "remoteToken") {
+            if !old.isEmpty { TokenStore.write(old) }
+            UserDefaults.standard.removeObject(forKey: "remoteToken")
+        }
+        if let t = TokenStore.read(), !t.isEmpty { return t }
         let alphabet = Array("abcdefghjkmnpqrstuvwxyz23456789")
         let t = String((0..<20).map { _ in alphabet.randomElement()! })
-        UserDefaults.standard.set(t, forKey: "remoteToken")
+        TokenStore.write(t)
         return t
+    }
+
+    /// The bridge code as one generic password (mirrors the phone's `PairingCode`).
+    private enum TokenStore {
+        static var query: [String: Any] { [kSecClass as String: kSecClassGenericPassword,
+                                           kSecAttrService as String: "toys.frog.remote",
+                                           kSecAttrAccount as String: "bridge-token"] }
+
+        static func read() -> String? {
+            var q = query
+            q[kSecReturnData as String] = true
+            q[kSecMatchLimit as String] = kSecMatchLimitOne
+            var out: AnyObject?
+            guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let data = out as? Data else { return nil }
+            return String(data: data, encoding: .utf8)
+        }
+
+        static func write(_ code: String) {
+            SecItemDelete(query as CFDictionary)
+            guard !code.isEmpty else { return }
+            var q = query
+            q[kSecValueData as String] = Data(code.utf8)
+            q[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+            SecItemAdd(q as CFDictionary, nil)
+        }
     }
 
     private var listener: NWListener?
@@ -51,6 +82,8 @@ final class RemoteBridge {
         var busy = false
         /// The step in hand, in words, for lists and the watch.
         var activity: String?
+        /// When the turn began, for a running timer on the wrist.
+        var started: Date?
     }
 
     // MARK: Lifecycle
@@ -143,10 +176,15 @@ final class RemoteBridge {
 
     /// Tell every phone what changed in the list, soon: they no longer ask every few seconds.
     func listChanged() {
+        // Nothing attached (no phone, no watch): the rows would go nowhere, so don't build
+        // them. The build is 60–80 ms of main thread on a full sidebar and ran every 300 ms
+        // while anything flipped a session's live state (see the perf-structural notes).
+        guard !clients.isEmpty else { return }
         guard listener != nil, listDue == nil else { return }
         listDue = Task {
             try? await Task.sleep(for: .milliseconds(300))
             listDue = nil
+            guard !clients.isEmpty else { return }
             let rows = sessionList()
             for c in clients.values where c.authed { c.send(["type": "sessions", "sessions": rows]) }
         }
@@ -158,8 +196,8 @@ final class RemoteBridge {
         case "status": s.status = line
         case "permission_request": s.permission = line
         case "permission_resolved", "turn_ended": s.permission = nil
-        case "turn_started": s.busy = true; s.activity = "Thinking…"
-        case "idle": s.busy = false; s.permission = nil; s.activity = nil
+        case "turn_started": s.busy = true; s.activity = "Thinking…"; s.started = .now
+        case "idle": s.busy = false; s.permission = nil; s.activity = nil; s.started = nil
         case "item_started":
             if let obj = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
                let kind = obj["kind"] as? [String: Any] {
@@ -228,7 +266,10 @@ final class RemoteBridge {
                 return client.conn.cancel()
             }
             client.authed = true
-            client.send(["type": "welcome", "host": Host.current().localizedName ?? "Mac"])
+            // The client may name its bridge version (older phones don't); welcome says ours,
+            // so either side can tell how far apart they are.
+            client.bridge = (msg["bridge"] as? NSNumber)?.intValue
+            client.send(["type": "welcome", "host": Host.current().localizedName ?? "Mac", "bridge": 1])
             sendContext(to: client)
             sendStats(to: [client])
         case "list":
@@ -395,7 +436,8 @@ final class RemoteBridge {
         return zip(x, y).reduce(0) { $0 | ($1.0 ^ $1.1) } == 0
     }
 
-    private func sessionList() -> [[String: Any]] {
+    /// One row per session, for `sessions` and `list`. Internal so tests can read it.
+    func sessionList() -> [[String: Any]] {
         let lib = Library.shared
         // The sidebar's, then its archive (the phone shows that on its own page).
         let active = lib.sessions.filter { !lib.archived.contains($0.id) }.prefix(200)
@@ -411,6 +453,8 @@ final class RemoteBridge {
                 row["folder"] = (cwd as NSString).lastPathComponent
                 row["cwd"] = cwd
             }
+            // The started-by tree (Library.parents), so a phone can render the org.
+            if let parent = lib.parents[s.id] { row["parent"] = parent }
             // The session as the Mac knows it, so the phone's rows are the sidebar's.
             if let data = try? JSONEncoder().encode(s), let info = try? JSONSerialization.jsonObject(with: data) {
                 row["info"] = info
@@ -423,10 +467,19 @@ final class RemoteBridge {
             }
             if let state = live[s.id] {
                 if let a = state.activity { row["activity"] = a }
-                // The open question, so a list or a watch can answer it without the thread.
+                if state.busy, let t = state.started { row["since"] = t.timeIntervalSince1970 * 1000 }
+                // The open question, so a list or a watch can answer it without the thread:
+                // what it would do, why it asks, and what "always" would cover.
                 if let line = state.permission,
                    let q = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] {
-                    row["question"] = ["id": q["id"] ?? "", "name": q["name"] ?? "", "arg": String((q["arg"] as? String ?? "").prefix(200))]
+                    var question: [String: Any] = ["id": q["id"] ?? "", "name": q["name"] ?? "", "arg": String((q["arg"] as? String ?? "").prefix(200))]
+                    if let r = q["reason"] as? String, !r.isEmpty { question["reason"] = r }
+                    if let a = q["always"] as? String, !a.isEmpty { question["always"] = a }
+                    if let p = q["preview"] as? [String: Any], let path = p["path"] as? String {
+                        question["change"] = ["file": (path as NSString).lastPathComponent,
+                                              "added": p["added"] ?? 0, "removed": p["removed"] ?? 0]
+                    }
+                    row["question"] = question
                 }
             }
             // The open Ask, so a watch can pick an option (or say its own) without the thread.
@@ -550,7 +603,7 @@ final class RemoteBridge {
 /// A phone choosing a model for a conversation. The pane showing the session claims it.
 @MainActor
 final class ModelRequest {
-    static let name = Notification.Name("eco.frog.remote.model")
+    static let name = Notification.Name("toys.frog.remote.model")
     /// The phone's answer to "Use cloud models in <project>?".
     enum Cloud: String { case once, always }
     enum Outcome {
@@ -582,7 +635,7 @@ final class ModelRequest {
 /// A phone asking to fork or rewind a turn. The pane showing the session claims it.
 @MainActor
 final class TurnRequest {
-    static let name = Notification.Name("eco.frog.remote.turn")
+    static let name = Notification.Name("toys.frog.remote.turn")
     enum Action: String { case fork, rewind }
 
     let session: String
@@ -607,7 +660,7 @@ final class TurnRequest {
 /// `folder`, or a chat) that starts with `text`. The first window to claim it opens it.
 @MainActor
 final class OpenRequest {
-    static let name = Notification.Name("eco.frog.remote.open")
+    static let name = Notification.Name("toys.frog.remote.open")
 
     let session: SessionInfo?
     let folder: URL?
@@ -651,6 +704,9 @@ private final class Client {
 
     let conn: NWConnection
     var authed = false
+    /// The bridge protocol version the phone said in `hello`, if it said one (older phones
+    /// didn't); nil means "unknown, assume the oldest".
+    var bridge: Int?
     /// The phone's push address, once it has registered.
     var address: String?
     var attached: [String: Attachment] = [:]

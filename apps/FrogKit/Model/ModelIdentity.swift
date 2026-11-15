@@ -15,14 +15,18 @@ struct ModelIdentity: Hashable, Sendable {
         /// A cloud provider, by its name.
         case cloud(String)
 
-        /// "On this Mac", "On mew (RTX 3090)", "Cloud · Anthropic".
+        /// "This Mac", "On mew (RTX 3090)", "Frog Cloud", "Cloud · Anthropic".
         var label: String {
             switch self {
-            case .mac, .apple: "On this Mac"
+            case .mac, .apple: ProviderID.localName
             case .server(let name): "On \(name)"
-            case .cloud(let name): "Cloud · \(name)"
+            case .cloud(let name): name == ProviderID.cloudName ? name : "Cloud · \(name)"
             }
         }
+
+        /// frog cloud: frog's own hosted models.
+        static let frogCloud = Place.cloud(ProviderID.cloudName)
+        var isFrogCloud: Bool { self == .frogCloud }
 
         var symbol: String {
             switch self {
@@ -71,18 +75,18 @@ struct ModelIdentity: Hashable, Sendable {
     /// Order among models on this Mac: Apple's, then frog's own engine (tang, built in), then
     /// the servers you'd install (Ollama, LM Studio), then anything else.
     var runtimeRank: Int {
-        switch spec.split(separator: "/").first {
+        switch ProviderID.of(spec: spec) {
         case "apple": 0
-        case "tang": 1
+        case ProviderID.local: 1
         case "ollama": 2
         case "lmstudio": 3
         default: 4
         }
     }
     /// "Qwen3 8B", "Claude Sonnet 5", "Apple Intelligence".
-    let name: String
+    var name: String
     /// "4-bit", when the model id says so. Shown only in details.
-    let variant: String?
+    var variant: String?
     let place: Place
     let abilities: Abilities
     /// Billions of parameters, when known.
@@ -118,7 +122,8 @@ extension ModelIdentity {
         let provider = String(entry.spec.split(separator: "/", maxSplits: 1).first ?? "")
         let place: Place = switch entry.source {
         case "apple": .apple
-        case "tang", "ollama": .mac
+        case "tang", ProviderID.local, "ollama": .mac
+        case _ where ProviderID.canonical(provider) == ProviderID.cloud: .frogCloud
         case "server": .server(ModelContext.name(of: provider))
         case "remote": .cloud(ModelContext.name(of: provider))
         // config.toml profiles can point anywhere: trust the provider's own flag, and call
@@ -135,18 +140,18 @@ extension ModelIdentity {
         let cleaned = Self.cleanName(entry.model)
         self.init(
             spec: entry.spec,
-            name: entry.source == "apple" ? "Apple Intelligence" : (entry.info?.name ?? cleaned.name),
+            name: entry.spec == "codex/default" ? "Codex (ChatGPT)" : (entry.spec.hasPrefix("codex/") ? entry.model : (entry.source == "apple" ? "Apple Intelligence" : (entry.info?.name ?? cleaned.name))),
             variant: cleaned.variant,
             place: place,
             abilities: abilities,
             paramsB: entry.caps?.paramsB,
-            context: entry.info?.context,
+            context: entry.info?.context ?? (entry.provider == "codex" ? 272_000 : nil),
             price: entry.info?.price
         )
         costIn = entry.info?.costIn
         costOut = entry.info?.costOut
-        if entry.source == "tang" {
-            repo = String(entry.spec.dropFirst("tang/".count))
+        if entry.source == "tang" || entry.source == ProviderID.local {
+            repo = entry.spec.split(separator: "/", maxSplits: 1).last.map(String.init)
             downloadGB = repo.flatMap(ModelContext.suggestedGB) ?? entry.caps?.paramsB.map { $0 * 0.56 }
         }
         state = Self.state(place: place, provider: providerID, repo: repo, gb: downloadGB, installed: true)
@@ -187,23 +192,35 @@ extension ModelIdentity {
 
     /// The identity for a spec, from the listed models if it's there, else from the spec alone
     /// (a session's model that's no longer listed).
+    /// Frog Cloud's models by their plain names, for when its list hasn't arrived.
+    static let frogCloudNames = [
+        "deepseek-v4.1-flash": "DeepSeek V4.1 Flash",
+        "glm-5.3-flash": "GLM-5.3 Flash",
+        "qwen3-coder-next": "Qwen3 Coder Next",
+    ]
+
     @MainActor
     static func of(_ spec: String, in models: [ModelEntry]) -> ModelIdentity {
         if let m = models.first(where: { $0.spec == spec }) { return ModelIdentity(m) }
+        // An old Frog Cloud id ("cloud/tree", from an old session log) reads as today's.
+        let spec = ProviderID.canonicalSpec(spec)
+        if let m = models.first(where: { ProviderID.canonicalSpec($0.spec) == spec }) { return ModelIdentity(m) }
         let parts = spec.split(separator: "/", maxSplits: 1).map(String.init)
         let provider = parts.count == 2 ? parts[0] : ""
         let model = parts.last ?? spec
         let place: Place = switch provider {
         case "apple": .apple
-        case "tang", "ollama", "lmstudio": .mac
+        case "tang", ProviderID.local, "ollama", "lmstudio": .mac
+        case _ where ProviderID.canonical(provider) == ProviderID.cloud: .frogCloud
         default: ModelContext.provider(provider).map { p in
             p.custom ? .server(p.name) : p.local ? .mac : .cloud(p.name)
         } ?? .cloud(provider.isEmpty ? "unknown" : ModelContext.name(of: provider))
         }
         let cleaned = cleanName(model)
+        let cloudName = place == .frogCloud ? frogCloudNames[model] : nil
         var m = ModelIdentity(
             spec: spec,
-            name: provider == "apple" ? "Apple Intelligence" : cleaned.name,
+            name: provider == "apple" ? "Apple Intelligence" : cloudName ?? cleaned.name,
             variant: cleaned.variant,
             place: place,
             abilities: [],
@@ -216,6 +233,10 @@ extension ModelIdentity {
     }
 
     // MARK: Names
+
+    /// A session's model as its row names it. The Mac points this at the picker's naming
+    /// (listed models, and a pooled `node/<hash>` by its node, never the hash).
+    @MainActor static var rowName: (String) -> String = { cleanName($0).name }
 
     /// A readable name from a model id: "mlx-community/Qwen3-8B-4bit" → "Qwen3 8B" (4-bit),
     /// "qwen3:4b" → "Qwen3 4B", "gemma-3-4b-it-4bit" → "Gemma 3 4B".

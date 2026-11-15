@@ -59,7 +59,8 @@ struct RootView: View {
                 }
             } else {
                 NavigationStack(path: $path) {
-                    if connected { SessionListView(remote: remote) } else { ConnectView(remote: remote) }
+                    // Signed in to Frog Cloud, the list works without a Mac: its sessions are the cloud's.
+                    if connected || CloudPhone.shared.key != nil { SessionListView(remote: remote) } else { ConnectView(remote: remote) }
                 }
                 .environment(\.startNewChat) { if size != .regular { go(NewChat(), animated: true) } }
             }
@@ -166,6 +167,14 @@ struct ConnectView: View {
                 }
             }
             Section {
+                Button(CloudPhone.shared.signingIn ? "Signing In…" : "Sign In with GitHub", systemImage: "cloud") { CloudPhone.shared.signIn(provider: "github") }
+                    .disabled(CloudPhone.shared.signingIn)
+                Button("Sign In with Google", systemImage: "person.crop.circle") { CloudPhone.shared.signIn(provider: "google") }
+                    .disabled(CloudPhone.shared.signingIn)
+            } footer: {
+                Text("No Mac needed: sessions run in their own cloud sandbox, on a repo you pick.")
+            }
+            Section {
                 if finder.names.isEmpty {
                     HStack(spacing: 10) {
                         ProgressView()
@@ -215,15 +224,6 @@ struct ConnectView: View {
                         .foregroundStyle(.orange)
                         .font(.footnote)
                 }
-            }
-            Section {
-                NavigationLink {
-                    HouseView()
-                } label: {
-                    Label("Ask the House Instead", systemImage: "house")
-                }
-            } footer: {
-                Text("No Mac? frog on a home server answers Siri without one.")
             }
         }
         .navigationTitle("Connect")

@@ -97,7 +97,6 @@ final class FixturePlayer: ConversationLink {
                 try? await Task.sleep(for: .milliseconds(300))
                 emit(env)
                 emit(["event": "idle"])
-                share(nil, running: false)
             default:
                 emit(env)
             }
@@ -125,30 +124,15 @@ final class FixturePlayer: ConversationLink {
         ]
         if let diff = item["diff"] { req["preview"] = diff }
         emit(req)
-        share(["id": "p-\(id)", "name": name, "arg": item["arg"] ?? ""], running: true)
         await withCheckedContinuation { answered = $0 }
         emit(["event": "permission_resolved", "id": "p-\(id)", "decision": "allow"])
-        share(nil, running: true)
-    }
-
-    /// The recording as a list row, for the watch and widgets, as they'd see it from a Mac.
-    private func share(_ question: [String: Any]?, running: Bool) {
-        var row: [String: Any] = ["id": session.id, "title": session.title, "model": session.model, "open": true]
-        if running {
-            row["live"] = question == nil ? "running" : "waiting"
-            row["activity"] = conversation.activityState.activity
-        }
-        if let question { row["question"] = question }
-        let rows = RemoteSession(row).map { [$0] } ?? []
-        WatchLink.shared.share(running ? rows : [])
-        Glance.share(running ? rows : [], host: "Recording")
     }
 
     // MARK: ConversationLink
 
     func send(_ op: Op) {
         switch op {
-        case .permission(_, let decision):
+        case .permission(_, let decision, _):
             if decision == .deny { stopped = true; finish(.denied) }
             answered?.resume()
             answered = nil
@@ -157,7 +141,7 @@ final class FixturePlayer: ConversationLink {
             answered?.resume()
             answered = nil
             finish(.cancelled)
-        case .submit(let text, _):
+        case .submit(let text, _, _):
             // A recording can't answer something new; frog says so, kindly.
             let n = (conversation.turns.compactMap(\.number).max() ?? 1) + 1
             let reply = "This is a recorded session, so I can't act on that here. Connect to frog on your Mac and I'll get right on it."
@@ -190,7 +174,6 @@ final class FixturePlayer: ConversationLink {
         emit(["event": "turn_ended", "turn": n, "reason": ["type": stop.rawValue],
               "usage": ["input_tokens": 0, "output_tokens": 0, "model_calls": 0]])
         emit(["event": "idle"])
-        share(nil, running: false)
     }
 
     private func emit(_ event: [String: Any]) {

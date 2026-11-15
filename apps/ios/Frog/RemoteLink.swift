@@ -87,7 +87,7 @@ extension Event {
     var isDurable: Bool {
         switch self {
         case .turnStarted, .turnEnded, .itemStarted, .itemCompleted, .permissionResolved, .autoApproved,
-             .compacted, .contextPruned, .modelChanged, .folderChanged, .modeChanged, .titled:
+             .egressBlocked, .egressWidened, .compacted, .compactionFailed, .contextPruned, .modelChanged, .folderChanged, .modeChanged, .titled:
             true
         default:
             false
@@ -141,7 +141,8 @@ final class PhoneEffects: ConversationEffects {
     func turnEnded(_ c: Conversation, turn: TurnState) {}
     func asked(_ c: Conversation, _ request: PermissionRequest) {}
     func answered(_ c: Conversation, permission id: String) {}
-    func live(_ c: Conversation, running: Bool, waiting: Bool) {
-        LiveActivities.shared.follow(c)
-    }
+    /// The model's `Notify` reaches the phone as a push (the Mac sends it); with the app open
+    /// the transcript's row is the whole story, so nothing fires here.
+    func notified(_ c: Conversation, _ note: NotifyNote) {}
+    func live(_ c: Conversation, running: Bool, waiting: Bool) {}
 }

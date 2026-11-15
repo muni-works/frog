@@ -41,7 +41,7 @@ replay. General backend autodiscovery remains later work. See the README for lim
 
 ## Native tang dependency status
 
-[Tang PR #32](https://github.com/ecto/tang/pull/32) adds penultimate Qwen conditioning,
+[Tang PR #32](https://github.com/muni-works/tang/pull/32) adds penultimate Qwen conditioning,
 the Z-Image DiT, tiled VAE decode, static-shift Euler scheduling and a lazy resident
 image worker. CPU and Metal reference checks cover every selected boundary, production
 128-wide attention heads and 256×256 VAE output; maximum errors are below 1.1e-5 for

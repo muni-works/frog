@@ -1,0 +1,4 @@
+# swarm runs: keep the reports, not the worktrees, seeded repos or session logs
+*/repos/
+*/baseline/
+*/pooled/

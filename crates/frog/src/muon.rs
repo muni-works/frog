@@ -342,6 +342,7 @@ impl Frog {
                 think: Some(false),
                 think_budget: None,
                 cache_key: None,
+                background: false,
             };
             let mut cb = |e: StreamEvent| {
                 if let StreamEvent::Text(t) = e {

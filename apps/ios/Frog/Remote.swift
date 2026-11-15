@@ -201,8 +201,6 @@ final class Remote {
             archived = rows.filter(\.archived)
             listWaiters.forEach { $0.resume(returning: sessions) }
             listWaiters = []
-            WatchLink.shared.share(sessions)
-            Glance.share(sessions, host: { if case .connected(let h) = state { h } else { nil } }())
             if let openLink { openLink.isOpenOnMac = sessions.first { $0.id == openLink.session }?.open ?? false }
         case "event":
             guard let env = msg["env"],
@@ -396,8 +394,10 @@ final class Remote {
         }
     }
 
-    /// Tell the Mac how to reach this phone when the app is asleep.
-    private func registerForPushes() {
+    /// Tell the Mac how to reach this phone when the app is asleep. Called on connect, and again
+    /// when APNs hands over the token (the first time, that's after the permission prompt).
+    func registerForPushes() {
+        guard isConnected else { return }
         #if targetEnvironment(simulator)
         if let udid = ProcessInfo.processInfo.environment["SIMULATOR_UDID"] {
             send(["type": "register", "transport": "simctl", "address": udid, "bundle": Bundle.main.bundleIdentifier ?? ""])
@@ -408,11 +408,6 @@ final class Remote {
                   "env": Notifications.apnsEnvironment])
         }
         #endif
-    }
-
-    /// Where a Live Activity for `session` takes its updates.
-    func registerActivity(session: String, token: String?) {
-        send(["type": "activity", "session": session, "token": token ?? NSNull()])
     }
 
     private func send(_ obj: [String: Any]) {
@@ -438,11 +433,15 @@ struct RemoteSession: Identifiable, Hashable {
     let pinned: Bool
     /// In the Mac's archive.
     let archived: Bool
+    /// The session that started it (the Mac's started-by tree).
+    let parent: String?
     let live: Live?
     /// The session as the Mac's sidebar knows it.
     let info: SessionInfo
     /// The step in hand, while it runs.
     let activity: String?
+    /// When the running turn began.
+    let since: Date?
     /// What frog is asking, while it waits.
     let question: Question?
     /// frog's own question (the `Ask` tool), while it waits on one.
@@ -457,6 +456,10 @@ struct RemoteSession: Identifiable, Hashable {
         let id: String
         let name: String
         let arg: String
+        var reason: String? = nil
+        var always: String? = nil
+        /// "fetch.ts +12 −3" for an edit.
+        var change: String? = nil
 
         /// What frog is asking, as the Mac's card says it.
         var text: String { PermissionRequest.question(name: name, arg: arg) }
@@ -474,8 +477,10 @@ struct RemoteSession: Identifiable, Hashable {
         open = row["open"] as? Bool ?? false
         pinned = row["pinned"] as? Bool ?? false
         archived = row["archived"] as? Bool ?? false
+        parent = row["parent"] as? String
         live = (row["live"] as? String).flatMap(Live.init)
         activity = row["activity"] as? String
+        since = (row["since"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue / 1000) }
         let wrist = Snapshot.Row(bridge: row)
         stats = wrist?.stats
         actions = wrist?.actions
@@ -487,7 +492,11 @@ struct RemoteSession: Identifiable, Hashable {
         ask = Snapshot.Ask(row["ask"])
         last = row["last"] as? String
         question = (row["question"] as? [String: Any]).flatMap { q in
-            (q["id"] as? String).map { Question(id: $0, name: q["name"] as? String ?? "", arg: q["arg"] as? String ?? "") }
+            (q["id"] as? String).map {
+                Question(id: $0, name: q["name"] as? String ?? "", arg: q["arg"] as? String ?? "",
+                         reason: q["reason"] as? String, always: q["always"] as? String,
+                         change: Snapshot.Row.change(q["change"]))
+            }
         }
     }
 

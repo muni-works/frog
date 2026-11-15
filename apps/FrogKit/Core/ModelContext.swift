@@ -17,6 +17,8 @@ enum ModelContext {
     static var download: (String) -> Download? = { _ in nil }
     static var suggestedGB: (String) -> Double? = { _ in nil }
 
-    static func provider(_ id: String) -> ProviderInfo? { providers().first { $0.id == id } }
-    static func name(of provider: String) -> String { self.provider(provider)?.name ?? provider }
+    static func provider(_ id: String) -> ProviderInfo? { providers().first { ProviderID.same($0.id, id) } }
+    static func name(of provider: String) -> String {
+        ProviderID.displayName(provider) ?? self.provider(provider)?.name ?? provider
+    }
 }

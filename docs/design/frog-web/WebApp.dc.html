@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Frog on the web</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/frog/tokens.css">
+<link rel="stylesheet" href="ds/frog/components/bundle.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>body{margin:0}</style>
+</helmet>
+<div data-theme="{{theme}}" class="f-root" style="width: 1440px; height: 900px; overflow: hidden; display: flex; flex-direction: column; background: var(--canvas);">
+  <div aria-hidden="true" style="height: 36px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 14px; background: var(--well); border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted);">
+    <span style="display: flex; gap: 7px;"><span style="width: 11px; height: 11px; border-radius: 50%; background: #ff5f57;"></span><span style="width: 11px; height: 11px; border-radius: 50%; background: #febc2e;"></span><span style="width: 11px; height: 11px; border-radius: 50%; background: #28c840;"></span></span>
+    <span style="flex: 1; display: flex; justify-content: center;"><span style="min-width: 360px; text-align: center; padding: 4px 12px; border-radius: 7px; background: var(--card); border: 1px solid var(--line);">frog.toys/app</span></span>
+  </div>
+  <dc-import name="Workspace" platform="web" height="864" theme="{{theme}}" hint-size="1440px,864px"></dc-import>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"dark"},"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() { return { theme: this.props.theme ?? 'dark' }; }
+}
+</script>
+</body>
+</html>

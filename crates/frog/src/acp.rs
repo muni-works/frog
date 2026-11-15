@@ -154,7 +154,7 @@ pub async fn serve(
                         subagent: false,
                         chat: false,
                     };
-                    match frog_engine::spawn(opts) {
+                    match frog_engine::spawn_checked(opts).await {
                         Ok(handle) => {
                             let session_id = frog_engine::session::new_id();
                             let turn = Arc::new(Mutex::new(None));
@@ -202,6 +202,7 @@ pub async fn serve(
                 let _ = s.ops.send(frog_engine::protocol::Op::Submit {
                     text,
                     images: prompt_images(&req.prompt),
+                    more: Vec::new(),
                 });
                 let conn = conn.clone();
                 tokio::spawn(async move {
@@ -351,7 +352,14 @@ async fn pump(
             let _ = tx.send(reason);
         }
     };
+    // The session's `provider/model`, so an error can name the service to fix.
+    let mut model: Option<String> = None;
     while let Some(env) = handle.events.recv().await {
+        match &env.event {
+            Event::Status(s) => model = Some(s.model.clone()),
+            Event::ModelChanged { model: m } => model = Some(m.clone()),
+            _ => {}
+        }
         match env.event {
             // A memory command's whole answer is one notice.
             Event::Notice { message, .. } if command.lock().unwrap().is_some() => {
@@ -477,19 +485,43 @@ async fn pump(
                         },
                         _ => Decision::Deny,
                     };
-                    let _ = ops.send(frog_engine::protocol::Op::Permission { id, decision });
+                    let _ = ops.send(frog_engine::protocol::Op::Permission {
+                        id,
+                        decision,
+                        note: None,
+                    });
                 });
             }
             Event::TurnEnded { reason, .. } => finish(match reason {
-                EndReason::Complete | EndReason::Denied => StopReason::EndTurn,
+                EndReason::Complete | EndReason::Denied | EndReason::BlockedOnApproval { .. } => {
+                    StopReason::EndTurn
+                }
+                // Out of credit: the turn stopped for the user (money), like a denial.
+                EndReason::BillingLimit { window, .. } => {
+                    conn.update(
+                        &session,
+                        SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::Text(
+                            TextContent::new(format!(
+                                "\n\nfrog stopped: out of credit ({window}); add credit to keep going"
+                            )),
+                        ))),
+                    );
+                    StopReason::EndTurn
+                }
+                // An app update suspended the turn; it carries on when the host resumes
+                // this session, so from the outside it looks like it just stopped.
+                EndReason::Suspended => StopReason::Cancelled,
                 EndReason::Cancelled => StopReason::Cancelled,
-                EndReason::MaxTokens => StopReason::MaxTokens,
+                EndReason::MaxTokens { .. } => StopReason::MaxTokens,
                 EndReason::Looping | EndReason::StepLimit => StopReason::MaxTurnRequests,
                 EndReason::Error { error } => {
                     conn.update(
                         &session,
                         SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::Text(
-                            TextContent::new(format!("\n\nfrog stopped with an error: {error:?}")),
+                            TextContent::new(format!(
+                                "\n\nfrog stopped: {}",
+                                crate::render::describe_error(&error, model.as_deref())
+                            )),
                         ))),
                     );
                     StopReason::EndTurn
@@ -499,7 +531,10 @@ async fn pump(
                 conn.update(
                     &session,
                     SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::Text(
-                        TextContent::new(format!("frog error: {error:?}")),
+                        TextContent::new(format!(
+                            "frog error: {}",
+                            crate::render::describe_error(&error, model.as_deref())
+                        )),
                     ))),
                 );
                 finish(StopReason::EndTurn);
@@ -524,7 +559,7 @@ fn kind(name: &str) -> ToolKind {
     match name {
         "Read" => ToolKind::Read,
         "Edit" | "Write" => ToolKind::Edit,
-        "Grep" | "Glob" | "CodeMap" | "McpTools" | "WebSearch" | "Docs" => ToolKind::Search,
+        "Grep" | "Glob" | "CodeMap" | "McpTools" | "ToolSearch" | "WebSearch" | "Docs" => ToolKind::Search,
         "WebFetch" => ToolKind::Fetch,
         "Bash" => ToolKind::Execute,
         "Task" | "TodoWrite" | "Skill" => ToolKind::Think,
@@ -601,4 +636,66 @@ fn plan(input: &Value) -> Plan {
         })
         .collect();
     Plan::new(entries)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn blocks(v: Value) -> Vec<ContentBlock> {
+        serde_json::from_value(v).unwrap()
+    }
+
+    #[test]
+    fn prompt_text_mentions_files() {
+        let b = blocks(json!([
+            {"type": "text", "text": "look at"},
+            {"type": "resource_link", "name": "a", "uri": "file:///src/a.rs"},
+            {"type": "resource_link", "name": "w", "uri": "https://x.dev"},
+            {"type": "resource", "resource": {"uri": "file:///b.rs", "text": "fn b() {}"}},
+            {"type": "image", "mimeType": "image/png", "data": "AAAA"},
+        ]));
+        assert_eq!(
+            prompt_text(&b),
+            "look at\n@/src/a.rs\nhttps://x.dev\n<file path=\"/b.rs\">\nfn b() {}\n</file>"
+        );
+        let imgs = prompt_images(&b);
+        assert_eq!(imgs.len(), 1);
+        assert_eq!(imgs[0].mime, "image/png");
+    }
+
+    #[test]
+    fn tool_titles_and_kinds() {
+        assert_eq!(title("mcp__github__list_prs", "x"), "github › list_prs x");
+        assert_eq!(title("Read", ""), "Read");
+        assert!(matches!(kind("Bash"), ToolKind::Execute));
+        assert!(matches!(kind("Mystery"), ToolKind::Other));
+        assert_eq!(capitalize("hello"), "Hello");
+        assert_eq!(capitalize(""), "");
+        let cwd = Path::new("/w");
+        assert_eq!(
+            file_arg("Edit", "a.rs", cwd),
+            Some(PathBuf::from("/w/a.rs"))
+        );
+        assert_eq!(file_arg("Edit", "", cwd), None);
+        assert_eq!(file_arg("Bash", "ls", cwd), None);
+    }
+
+    #[test]
+    fn plan_reads_todos_as_string_or_array() {
+        let todos = json!([
+            {"content": "a", "status": "completed"},
+            {"content": "b", "status": "in_progress"},
+            {"content": "c"},
+        ]);
+        for input in [json!({"todos": todos}), json!({"todos": todos.to_string()})] {
+            let p = plan(&input);
+            assert_eq!(p.entries.len(), 3);
+            assert!(matches!(p.entries[0].status, PlanEntryStatus::Completed));
+            assert!(matches!(p.entries[1].status, PlanEntryStatus::InProgress));
+            assert!(matches!(p.entries[2].status, PlanEntryStatus::Pending));
+        }
+        assert!(plan(&json!({})).entries.is_empty());
+    }
 }

@@ -1,6 +1,6 @@
 //! Models a client can offer: configured profiles plus whatever the local ollama has installed.
 
-use crate::config::{Config, Profile, ProviderKind, ToolMode};
+use crate::config::{Config, Profile, ProviderKind, ToolMode, LOCAL_DEFAULT};
 use crate::harness::{self, Caps, Tier};
 use serde::Serialize;
 use std::path::Path;
@@ -12,7 +12,7 @@ pub struct ModelEntry {
     pub spec: String,
     pub provider: ProviderKind,
     pub model: String,
-    /// "config", "ollama", "tang", "apple", "server" (yours) or "remote" (turned on from a
+    /// "config", "ollama", "tang", "apple", "server" (yours), "node" (your paired nodes) or "remote" (turned on from a
     /// provider's catalog).
     pub source: &'static str,
     pub caps: Option<Caps>,
@@ -104,6 +104,17 @@ pub async fn list(cfg: &Config) -> Vec<ModelEntry> {
         .iter()
         .map(|(name, p)| entry(name.clone(), "config", p))
         .collect();
+    if crate::provider::codex::available().await
+        && let Ok((spec, p)) = cfg.resolve(Some("codex/default"))
+    {
+        out.push(entry(spec, "codex", &p));
+        for (model, context) in crate::provider::codex::models() {
+            if let Ok((spec, mut p)) = cfg.resolve(Some(&format!("codex/{model}"))) {
+                p.context_window = Some(*context);
+                out.push(entry(spec, "codex", &p));
+            }
+        }
+    }
     for tag in ollama_tags(&local_ollama()).await {
         let spec = format!("ollama/{tag}");
         if out
@@ -137,6 +148,38 @@ pub async fn list(cfg: &Config) -> Vec<ModelEntry> {
             out.push(entry(spec, "server", &p));
         }
     }
+    // Your paired nodes (docs/node-protocol.md §7): each model once, by its weights.
+    let pool = crate::nodes::Pool::global();
+    pool.ensure_fresh().await;
+    for m in pool.pooled() {
+        let spec = format!("node/{}", m.short());
+        if let Ok((_, p)) = cfg.resolve(Some(&spec)) {
+            let mut e = entry(spec.clone(), "node", &p);
+            e.info = Some(crate::catalog::Model {
+                spec,
+                provider: "node".into(),
+                id: m.id.clone(),
+                name: m.display().into(),
+                context: m.context_window,
+                tools: true,
+                ..Default::default()
+            });
+            out.push(e);
+        }
+    }
+    // frog cloud: every model it lists now, the same list the web app shows, so a model frog
+    // cloud adds (or stops serving) shows up everywhere without turning it on. Signed out, its
+    // public list, so the apps can offer sign-in on what it actually serves.
+    for m in crate::catalog::cloud_models_fresh().await {
+        if out.iter().any(|e| e.spec == m.spec) {
+            continue;
+        }
+        if let Ok((_, p)) = cfg.resolve(Some(&m.spec)) {
+            let mut e = entry(m.spec.clone(), "remote", &p);
+            e.info = Some(m);
+            out.push(e);
+        }
+    }
     // Models you turned on from connected providers, described by their catalogs.
     for spec in &state.enabled {
         if out.iter().any(|e| &e.spec == spec) {
@@ -150,7 +193,7 @@ pub async fn list(cfg: &Config) -> Vec<ModelEntry> {
     }
     let sidecars = local_checkpoints()
         .into_iter()
-        .map(|repo| format!("tang/{repo}"))
+        .map(|repo| crate::providers::normalize(&format!("local/{repo}")))
         .filter(|_| crate::sidecar::available("tang"))
         .chain(
             crate::sidecar::available(crate::sidecar::APPLE).then(|| "apple/on-device".to_string()),
@@ -202,9 +245,7 @@ fn local_checkpoints() -> Vec<String> {
 /// Face download can have the first two, but tang cannot start without the tokenizer.
 fn runnable_snapshot(dir: &Path) -> bool {
     let has_weights = std::fs::read_dir(dir).is_ok_and(|mut d| {
-        d.any(|f| {
-            f.is_ok_and(|f| f.path().extension().is_some_and(|x| x == "safetensors"))
-        })
+        d.any(|f| f.is_ok_and(|f| f.path().extension().is_some_and(|x| x == "safetensors")))
     });
     let cfg: Option<serde_json::Value> = std::fs::read(dir.join("config.json"))
         .ok()
@@ -215,15 +256,63 @@ fn runnable_snapshot(dir: &Path) -> bool {
         && cfg.is_some_and(|c| c["model_type"] == "qwen3")
 }
 
+/// The one line naming what would answer right now, for a spawn refusal that has to say what
+/// IS usable, not only what isn't. Cheap: keychains, files and one list the CLI already keeps;
+/// no network beyond a 3 s ollama ping, and the provider keys' sources are all frog reads
+/// anyway. `None`: nothing here can answer.
+pub async fn usable_summary(cfg: &Config) -> Option<String> {
+    if crate::sidecar::available("tang") && crate::setup::model_present(local_repo_of_default()) {
+        return Some(format!("`{}` on frog's own engine, this Mac", LOCAL_DEFAULT));
+    }
+    if let Some(tag) = best_local(&ollama_tags(&local_ollama()).await) {
+        return Some(format!("`ollama/{tag}`, running in ollama"));
+    }
+    if let Some(id) = best_local(&server_models("http://localhost:1234/v1", None).await) {
+        return Some(format!("`lmstudio/{id}`, running in LM Studio"));
+    }
+    if crate::sidecar::available(crate::sidecar::APPLE) {
+        return Some("`apple/on-device`, Apple Intelligence on this Mac".into());
+    }
+    if let Some((spec, why)) = pick_remote(
+        crate::providers::key_source(crate::providers::CLOUD)
+            .and_then(|_| crate::catalog::cloud_default(&crate::catalog::cloud_models())),
+        cfg.models.keys().next().filter(|n| key_lives(cfg, n)).cloned(),
+        std::env::var_os("ANTHROPIC_API_KEY").is_some(),
+    ) {
+        return Some(format!("`{spec}`, {why}"));
+    }
+    None
+}
+
+/// The local default's checkpoint repo (`qwen3-4b` → its Hugging Face repo).
+fn local_repo_of_default() -> &'static str {
+    let model = LOCAL_DEFAULT.split_once('/').map_or(LOCAL_DEFAULT, |(_, m)| m);
+    crate::providers::LOCAL_MODELS
+        .iter()
+        .find(|(short, _)| *short == model)
+        .map_or("mlx-community/Qwen3-4B-4bit", |(_, repo)| *repo)
+}
+
+/// A named profile's spec, when its provider's credential resolves (no network).
+fn key_lives(cfg: &Config, name: &str) -> bool {
+    cfg.models
+        .get(name)
+        .is_some_and(|p| p.api_key().is_some() || p.sidecar.is_some())
+}
+
 /// The model a bare `frog` starts on when nothing names one (no `-m`, `FROG_MODEL`,
 /// `default_model` or last pick): the first that would answer right now, and why it was
-/// chosen. Order: frog's own tang engine, a running ollama or LM Studio (whatever you pulled is
-/// likely bigger than anything frog would pick), Apple's on-device model, then a cloud model you
-/// turned on, then Anthropic with a key in the environment. None when nothing here can answer.
+/// chosen. Order: this Mac first (frog's own engine, a running ollama or LM Studio, whose
+/// pulled models are likely bigger than anything frog would pick, then Apple's on-device
+/// model), then frog cloud when connected (tree while it lists it, else its first model), then
+/// a cloud model you turned on, then Anthropic with a key in the environment. None when
+/// nothing here can answer.
 pub async fn pick_default() -> Option<(String, String)> {
-    const TANG: &str = "tang/mlx-community/Qwen3-4B-4bit";
     if crate::sidecar::available("tang") {
-        return Some((TANG.into(), "frog's own engine".into()));
+        return Some((
+            crate::config::LOCAL_DEFAULT.into(),
+            "frog's own engine".into(),
+        ));
     }
     let base = local_ollama();
     let (ollama, lmstudio) = tokio::join!(
@@ -239,17 +328,37 @@ pub async fn pick_default() -> Option<(String, String)> {
     if crate::sidecar::available(crate::sidecar::APPLE) {
         return Some(("apple/on-device".into(), "Apple Intelligence".into()));
     }
-    // Cloud models you turned on (`--enable-model`), whose keys frog already has.
-    if let Some(spec) = crate::providers::State::load().enabled.into_iter().next() {
+    let cloud = match crate::providers::key_source(crate::providers::CLOUD) {
+        Some(_) => crate::catalog::cloud_default(&crate::catalog::cloud_models_fresh().await),
+        None => None,
+    };
+    pick_remote(
+        cloud,
+        crate::providers::State::load().enabled.into_iter().next(),
+        std::env::var_os("ANTHROPIC_API_KEY").is_some(),
+    )
+}
+
+/// After this Mac: a connected frog cloud's default (`cloud`: tree while it lists it, else the
+/// first model it lists), then a cloud model you turned on (`--enable-model`), then Anthropic
+/// with a key in the environment.
+fn pick_remote(
+    cloud: Option<String>,
+    enabled: Option<String>,
+    anthropic_env: bool,
+) -> Option<(String, String)> {
+    if let Some(spec) = cloud {
+        return Some((spec, "frog cloud is connected".into()));
+    }
+    if let Some(spec) = enabled {
         return Some((spec, "a cloud model you turned on".into()));
     }
-    if std::env::var_os("ANTHROPIC_API_KEY").is_some() {
-        return Some((
+    anthropic_env.then(|| {
+        (
             "anthropic/claude-sonnet-5".into(),
             "ANTHROPIC_API_KEY is set".into(),
-        ));
-    }
-    None
+        )
+    })
 }
 
 /// A coding model if one is installed, else the first chat model.
@@ -263,7 +372,16 @@ fn best_local(names: &[String]) -> Option<&String> {
 /// The model last picked with `/model`, which a bare `frog` starts on.
 pub fn last_used() -> Option<String> {
     let s = std::fs::read_to_string(crate::config::data_dir().join("last-model")).ok()?;
-    Some(s.trim().to_string()).filter(|s| !s.is_empty())
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    // One-time migration: a pick saved under an old provider id gets today's name.
+    let new = crate::providers::normalize(s);
+    if new != s {
+        remember_last_used(&new);
+    }
+    Some(new)
 }
 
 pub fn remember_last_used(spec: &str) {
@@ -282,15 +400,32 @@ mod pick_tests {
             best_local(&n(&["llama3", "qwen3-coder:30b"])).map(String::as_str),
             Some("qwen3-coder:30b")
         );
-        assert_eq!(best_local(&n(&["llama3"])).map(String::as_str), Some("llama3"));
+        assert_eq!(
+            best_local(&n(&["llama3"])).map(String::as_str),
+            Some("llama3")
+        );
         assert_eq!(best_local(&[]), None);
+    }
+
+    #[test]
+    fn default_prefers_cloud_over_enabled_anthropic() {
+        let enabled = Some("anthropic/claude-sonnet-5".to_string());
+        let glm = Some("cloud/glm-5.3-flash".to_string());
+        let (spec, _) = pick_remote(glm, enabled.clone(), true).unwrap();
+        assert_eq!(spec, "cloud/glm-5.3-flash");
+        let (spec, _) = pick_remote(None, enabled, true).unwrap();
+        assert_eq!(spec, "anthropic/claude-sonnet-5");
+        assert_eq!(pick_remote(None, None, false), None);
     }
 
     #[test]
     fn checkpoint_requires_tokenizer_artifacts() {
         let dir = std::env::temp_dir().join(format!(
             "frog-models-{}",
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         ));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("config.json"), r#"{"model_type":"qwen3"}"#).unwrap();

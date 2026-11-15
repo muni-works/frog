@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Frog on iPad and iPhone Duo</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/frog/tokens.css">
+<link rel="stylesheet" href="ds/frog/components/bundle.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.cap{font:600 15px var(--font-sans);margin:0 0 6px}
+.sub{font-size:13px;color:var(--muted);margin:0 0 14px;max-width:560px}
+.dev{border:12px solid #111;border-radius:40px;overflow:hidden;background:var(--canvas);display:flex;position:relative;flex:none;box-sizing:content-box}
+.st{position:absolute;top:0;left:0;right:0;height:28px;display:flex;justify-content:space-between;align-items:center;padding:0 26px;font:600 13px var(--font-sans);z-index:2}
+.side{flex:none;display:flex;flex-direction:column;gap:2px;padding:36px 10px 12px}
+.row{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:10px;font-size:14px}
+.h{font-size:12px;color:var(--muted);padding:14px 10px 4px}
+.dot{width:8px;height:8px;border-radius:50%;flex:none}
+.me{align-self:flex-end;max-width:80%;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:9px 13px}
+.tool{font:12px/18px var(--font-mono);color:var(--muted)}
+.cardx{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.seg{display:flex;padding:2px;border-radius:9px;background:rgba(127,127,127,.16)}
+.seg span{flex:1;text-align:center;padding:5px 0;border-radius:7px;font-size:12px}
+.seg span.on{background:var(--card);box-shadow:0 1px 3px rgba(0,0,0,.12);font-weight:600}
+</style>
+</helmet>
+<div data-theme="{{theme}}" class="f-root" style="width: 2600px; height: 1120px; box-sizing: border-box; padding: 48px 56px; background: var(--bg); display: flex; flex-direction: column; gap: 28px; font-size: 14px; line-height: 1.45;">
+  <div>
+    <h1 style="margin: 0; font-family: var(--font-display); font-size: 40px; letter-spacing: -0.03em;">Frog on iPad and iPhone Duo</h1>
+    <p style="margin: 6px 0 0; font-size: 17px; color: var(--muted);">The same app as iPhone. With room, it opens up into the Mac layout: sessions, the conversation and a side pane. Folded, the Duo is just an iPhone.</p>
+  </div>
+
+  <div style="display: flex; gap: 48px; align-items: flex-start;">
+
+    <!-- iPad -->
+    <div>
+      <p class="cap">iPad · landscape</p><p class="sub">The Mac layout, made for touch: a sidebar of sessions, the conversation in the middle, and Changes, Terminal or Preview on the right. Works with a keyboard and trackpad, shortcuts included.</p>
+      <div class="dev" style="width: 1194px; height: 834px;">
+        <div class="st"><span>9:41 Tue Oct 28</span><span>●●● 100%</span></div>
+        <aside class="side f-glass" style="width: 260px; border-radius: 0; box-shadow: none; border-right: 1px solid var(--line);">
+          <div style="display: flex; align-items: center; gap: 8px; padding: 4px 10px 8px;"><b style="font-size: 26px; letter-spacing: -0.02em; flex: 1;">Frog</b><span style="color: var(--frog); font-size: 20px;">✎</span></div>
+          <div style="margin: 0 6px 6px; height: 34px; border-radius: 10px; background: rgba(127,127,127,.14); display: flex; align-items: center; padding: 0 10px; color: var(--muted);">Search</div>
+          <div class="h">Needs you</div>
+          <div class="row" style="background: var(--frog); color: var(--on-frog);"><span class="dot" style="background: #fff;"></span><span style="flex: 1;">Fix the failing tests</span><span style="font-size: 12px; opacity: .8;">now</span></div>
+          <div class="h">ledger</div>
+          <div class="row"><span class="dot" style="background: var(--frog); box-shadow: 0 0 0 3px var(--frog-pad);"></span><span style="flex: 1;">Move dates to Temporal</span><span style="font-size: 12px; color: var(--place-cloud);">☁</span></div>
+          <div class="row"><span class="dot" style="background: var(--place-local);"></span><span style="flex: 1;">Bump vitest</span><span style="font-size: 12px; color: var(--muted);">2h</span></div>
+          <div class="h">garden</div>
+          <div class="row" style="color: var(--muted);"><span class="dot" style="background: var(--faint);"></span><span style="flex: 1;">Add soil sensor</span></div>
+          <span style="flex: 1;"></span>
+          <div class="row"><img src="/_blob/a7cbfb1c65a16387b5addf3f6c09ad4c" alt="" style="width: 28px; height: 28px;"><span style="flex: 1;"><b>Pip</b><br><span style="font-size: 12px; color: var(--muted);">samr · $3.20 credits</span></span></div>
+        </aside>
+        <main style="flex: 1; min-width: 0; display: flex; flex-direction: column; padding-top: 34px;">
+          <div style="display: flex; align-items: center; gap: 8px; padding: 0 16px 8px;"><span class="f-glass f-glass--capsule" style="padding: 6px 12px; font-weight: 600; font-size: 13px;">Fix the failing tests <span style="font-weight: 400; color: var(--muted);">ledger</span></span></div>
+          <div style="flex: 1; overflow: hidden; padding: 6px 22px; display: flex; flex-direction: column; gap: 12px;">
+            <div class="me">Fix the failing tests in auth/</div>
+            <div class="tool">✓ ran the tests · 2 failing in auth/<br>✓ read auth/session.ts, auth/refresh.ts</div>
+            <div>The refresh token is read before the cookie is parsed, so a fresh login looks expired. I'll parse first.</div>
+            <div class="cardx">
+              <div style="display: flex; justify-content: space-between; padding: 10px 14px 6px; font-size: 13px;"><b>Edit auth/session.ts</b><span style="color: var(--muted);">+2 −1</span></div>
+              <div style="padding: 8px 14px; background: rgba(127,127,127,.08); font: 12px/18px var(--font-mono); white-space: pre;"><div style="color: var(--warn);">- const t = readRefresh(req)</div><div style="color: var(--frog);">+ const jar = parseCookies(req)</div><div style="color: var(--frog);">+ const t = readRefresh(jar)</div></div>
+              <div style="display: flex; gap: 8px; justify-content: flex-end; padding: 10px 14px;"><span class="f-btn f-btn--bordered">Deny</span><span class="f-btn f-btn--prominent">Allow</span></div>
+            </div>
+          </div>
+          <div style="padding: 0 14px 14px;"><dc-import name="Composer" platform="ipad" runner="cloud" model="cloud" state="working" repo="ledger" branch="frog/fix-auth" changes="+38 −12" timer="0:42" theme="{{theme}}" hint-size="100%,150px"></dc-import></div>
+        </main>
+        <section style="width: 320px; flex: none; border-left: 1px solid var(--line); background: var(--card); display: flex; flex-direction: column; padding-top: 34px;">
+          <div class="seg" style="margin: 0 12px 10px;"><span class="on">Changes</span><span>Terminal</span><span>Preview</span></div>
+          <div style="padding: 0 14px; font: 12px/24px var(--font-mono);">
+            <div style="display: flex;"><span style="flex: 1;">auth/session.ts</span><span style="color: var(--frog);">+2</span>&nbsp;<span style="color: var(--warn);">−1</span></div>
+            <div style="display: flex;"><span style="flex: 1;">auth/session.test.ts</span><span style="color: var(--frog);">+34</span>&nbsp;<span style="color: var(--warn);">−9</span></div>
+            <div style="display: flex;"><span style="flex: 1;">auth/refresh.ts</span><span style="color: var(--frog);">+2</span>&nbsp;<span style="color: var(--warn);">−2</span></div>
+          </div>
+          <span style="flex: 1;"></span>
+          <div style="display: flex; gap: 8px; padding: 12px 14px;"><span class="f-btn f-btn--bordered" style="flex: 1; justify-content: center;">Commit</span><span class="f-btn f-btn--prominent" style="flex: 1; justify-content: center;">Open PR</span></div>
+        </section>
+      </div>
+    </div>
+
+    <!-- Duo open -->
+    <div>
+      <p class="cap">iPhone Duo · open</p><p class="sub">Unfolded, it's a small iPad: sessions on the left half, the conversation on the right. The hinge is the divider. Proportions are assumed until Apple publishes them.</p>
+      <div class="dev" style="width: 760px; height: 680px; border-radius: 36px;">
+        <div class="st"><span>9:41</span><span>●●●</span></div>
+        <div aria-hidden="true" style="position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; background: rgba(0,0,0,.08); z-index: 3;"></div>
+        <aside class="side" style="width: 380px; box-sizing: border-box; background: var(--well);">
+          <div style="display: flex; align-items: center; padding: 4px 10px 8px;"><b style="font-size: 28px; letter-spacing: -0.02em; flex: 1;">Frog</b><span style="color: var(--frog); font-size: 20px;">✎</span></div>
+          <div class="h">Needs you</div>
+          <div style="margin: 0 4px; padding: 12px; border-radius: 14px; background: var(--card); display: flex; flex-direction: column; gap: 8px;">
+            <div style="display: flex; gap: 10px;"><img src="/_blob/a7cbfb1c65a16387b5addf3f6c09ad4c" alt="" style="width: 32px; height: 32px;"><div style="flex: 1;"><b>Can I edit auth/session.ts?</b><div style="font-size: 13px; color: var(--muted);">Fix the failing tests · ledger</div></div></div>
+            <div style="display: flex; gap: 6px;"><span style="flex: 1; text-align: center; padding: 6px; border-radius: 999px; background: rgba(127,127,127,.14); font-weight: 600;">Deny</span><span style="flex: 1; text-align: center; padding: 6px; border-radius: 999px; background: var(--frog); color: var(--on-frog); font-weight: 600;">Allow</span></div>
+          </div>
+          <div class="h">ledger</div>
+          <div class="row" style="background: var(--card);"><span class="dot" style="background: var(--frog); box-shadow: 0 0 0 3px var(--frog-pad);"></span><span style="flex: 1;">Move dates to Temporal</span><span style="font-size: 12px; color: var(--place-cloud);">☁ 2m</span></div>
+          <div class="row"><span class="dot" style="background: var(--place-local);"></span><span style="flex: 1;">Bump vitest</span><span style="font-size: 12px; color: var(--muted);">2h</span></div>
+          <div class="row" style="color: var(--muted);"><span class="dot" style="background: var(--faint);"></span><span style="flex: 1;">Fix login redirect</span><span style="font-size: 12px;">Mon</span></div>
+        </aside>
+        <main style="flex: 1; min-width: 0; display: flex; flex-direction: column; padding-top: 34px;">
+          <div style="text-align: center; padding: 0 12px 8px;"><b style="font-size: 15px;">Move dates to Temporal</b><div style="font-size: 12px; color: var(--place-cloud);">☁ Frog Cloud · dart · step 4 of 6</div></div>
+          <div style="flex: 1; overflow: hidden; padding: 4px 16px; display: flex; flex-direction: column; gap: 10px;">
+            <div class="me">Move every date to Temporal and keep the tests green</div>
+            <div class="tool">✓ rewrote 31 files · +612 −540<br>✓ ran the tests · 214 pass · 3 fail<br>… rewriting reports/ · 0:48</div>
+            <div>Two time-zone cases left in reports/. Working on them now.</div>
+          </div>
+          <div style="padding: 0 4px 10px;"><dc-import name="Composer" platform="phone" runner="cloud" state="working" timer="0:48" theme="{{theme}}" hint-size="100%,96px"></dc-import></div>
+        </main>
+      </div>
+    </div>
+
+    <!-- Duo closed -->
+    <div>
+      <p class="cap">iPhone Duo · folded</p><p class="sub">Closed, it's an iPhone, with the same screens as the iPhone board. Fold mid-session and you keep your place.</p>
+      <div class="dev" style="width: 390px; height: 680px; border-radius: 44px;">
+        <div class="st"><span>9:41</span><span>●●●</span></div>
+        <main style="flex: 1; display: flex; flex-direction: column; padding-top: 34px;">
+          <div style="display: flex; align-items: center; gap: 8px; padding: 0 12px 6px;"><span style="color: var(--frog); font-size: 22px;">‹</span><div style="flex: 1; text-align: center;"><b style="font-size: 15px;">Move dates to Temporal</b><div style="font-size: 11px; color: var(--place-cloud);">☁ Frog Cloud · dart</div></div><span style="width: 18px;"></span></div>
+          <div style="flex: 1; overflow: hidden; padding: 4px 12px; display: flex; flex-direction: column; gap: 10px;">
+            <div class="me" style="font-size: 13px;">Move every date to Temporal and keep the tests green</div>
+            <div class="tool" style="font-size: 11px;">✓ rewrote 31 files<br>✓ 214 pass · 3 fail<br>… rewriting reports/ · 0:48</div>
+            <div style="font-size: 13px;">Two time-zone cases left in reports/. Working on them now.</div>
+          </div>
+          <div style="padding: 0 0 18px;"><dc-import name="Composer" platform="phone" runner="cloud" state="working" timer="0:48" theme="{{theme}}" hint-size="100%,96px"></dc-import></div>
+        </main>
+      </div>
+    </div>
+
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"dark"},"$preview":{"width":2600,"height":1120}}'>
+class Component extends DCLogic {
+  renderVals() { return { theme: this.props.theme ?? 'dark' }; }
+}
+</script>
+</body>
+</html>

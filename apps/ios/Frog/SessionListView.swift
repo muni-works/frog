@@ -29,6 +29,7 @@ struct SessionListView: View {
                     .font(.footnote)
                     .foregroundStyle(.orange)
             }
+            CloudSection(query: query)
             section("Needs you", shown.filter { $0.live == .waiting })
             section("Running", shown.filter { $0.live == .running })
             section("Pinned", shown.filter { $0.pinned && !isLive($0) })
@@ -59,6 +60,7 @@ struct SessionListView: View {
             Button("Cancel", role: .cancel) { renaming = nil }
         }
         .navigationDestination(for: NewChat.self) { _ in NewChatView(remote: remote) }
+        .navigationDestination(for: CloudGateway.Session.self) { s in CloudChat(session: s) }
         .navigationDestination(for: RemoteSession.self) { s in
             let c = remote.conversation(s)
             ChatView(conversation: c, link: remote.openLink, title: s.title) { remote.close(c) }
@@ -94,7 +96,11 @@ struct SessionListView: View {
     private func section(_ name: String, _ rows: [RemoteSession]) -> some View {
         if !rows.isEmpty {
             Section(name) {
-                ForEach(rows) { s in
+                // The Mac's started-by tree: a child under its parent when both are here.
+                let byId = Dictionary(rows.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+                let tree = SessionNesting.indented(rows.map(\.id)) { byId[$0]?.parent }
+                ForEach(tree, id: \.id) { node in
+                    let s = byId[node.id]!
                     Group {
                         if selection != nil {
                             SessionRow(session: s).tag(s.id)
@@ -104,6 +110,7 @@ struct SessionListView: View {
                             }
                         }
                     }
+                    .padding(.leading, CGFloat(node.depth) * 18)
                     .swipeActions(edge: .trailing) {
                         if let q = s.question {
                             Button("Allow", systemImage: "checkmark") { remote.answer(q, in: s.id, allow: true) }
@@ -230,6 +237,104 @@ struct FixtureListView: View {
         }
         .onAppear {
             if let name = UserDefaults.standard.string(forKey: "fixture"), path.isEmpty { path = [name] }
+        }
+    }
+}
+
+/// Frog Cloud's sessions, above the Mac's: title, then repo and age, as on the web.
+struct CloudSection: View {
+    let query: String
+    @State private var cloud = CloudPhone.shared
+    @State private var renaming: CloudGateway.Session?
+    @State private var deleting: CloudGateway.Session?
+    @State private var newTitle = ""
+
+    private var rows: [CloudGateway.Session] {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        return cloud.live.filter { q.isEmpty || $0.title.lowercased().contains(q) || $0.repo.lowercased().contains(q) }
+    }
+
+    var body: some View {
+        if cloud.key != nil {
+            Section {
+                ForEach(rows) { s in
+                    NavigationLink(value: s) {
+                        HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(s.title.isEmpty ? "New session" : s.title).lineLimit(1)
+                            Text([s.repo.isEmpty ? "No repo" : s.repo, SessionAge.short(Date(timeIntervalSince1970: (s.last_turn ?? s.updated) / 1000))].joined(separator: " · "))
+                                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                        Spacer(minLength: 4)
+                        // As on the web: a sandbox starting, or the open session's turn, runs.
+                        if s.state == "starting" || cloud.running.contains(s.id) {
+                            ProgressView().controlSize(.small)
+                        }
+                        }
+                    }
+                    .swipeActions {
+                        Button("Delete", role: .destructive) { deleting = s }
+                        Button("Archive") { Task { await cloud.archive(s.id) } }.tint(.indigo)
+                    }
+                    .contextMenu {
+                        Button("Rename", systemImage: "pencil") { newTitle = s.title; renaming = s }
+                        Button("Archive", systemImage: "archivebox") { Task { await cloud.archive(s.id) } }
+                        Button("Delete", systemImage: "trash", role: .destructive) { deleting = s }
+                    }
+                }
+            } header: {
+                Label("Frog Cloud", systemImage: "cloud")
+            }
+            .task { cloud.start() }
+            .alert("Rename", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
+                TextField("Title", text: $newTitle)
+                Button("Rename") {
+                    if let s = renaming, let gateway = cloud.gateway {
+                        CloudLink.rename(s.id, to: newTitle, gateway: gateway)
+                        Task { try? await Task.sleep(for: .seconds(9)); await cloud.refresh() }
+                    }
+                    renaming = nil
+                }
+                Button("Cancel", role: .cancel) { renaming = nil }
+            }
+            .confirmationDialog("Delete this session?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), titleVisibility: .visible) {
+                Button("Delete", role: .destructive) {
+                    if let s = deleting { Task { await cloud.remove(s.id) } }
+                    deleting = nil
+                }
+            } message: {
+                Text("Its sandbox, changes and conversation are gone for good.")
+            }
+        }
+    }
+}
+
+/// One cloud session, in the same chat view as the Mac's.
+struct CloudChat: View {
+    let session: CloudGateway.Session
+    /// Sent once it's open: the first message from the new-chat screen.
+    var first: String? = nil
+    @State private var conversation: Conversation?
+
+    var body: some View {
+        Group {
+            if let conversation {
+                ChatView(conversation: conversation, link: nil, title: session.title.isEmpty ? "New session" : session.title)
+            } else {
+                ProgressView()
+            }
+        }
+        .task {
+            guard conversation == nil else { return }
+            conversation = CloudPhone.shared.conversation(session)
+            if let first { conversation?.submit(first) }
+        }
+        .onChange(of: conversation?.busy) { _, busy in
+            if busy == true { CloudPhone.shared.running.insert(session.id) } else { CloudPhone.shared.running.remove(session.id) }
+        }
+        .onDisappear {
+            conversation?.stop()
+            CloudPhone.shared.running.remove(session.id)
         }
     }
 }

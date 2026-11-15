@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Web app flows</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/frog/tokens.css">
+<link rel="stylesheet" href="ds/frog/components/bundle.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+a{color:var(--frog)}a:hover{color:var(--fg)}
+.fr{width:900px;height:640px;flex:none;border-radius:16px;overflow:hidden;border:1px solid var(--line-strong);background:var(--canvas);display:flex;gap:8px;padding:8px;box-sizing:border-box;font-size:14px;line-height:1.45}
+.sb{width:200px;flex:none;padding:12px 10px;display:flex;flex-direction:column;gap:2px}
+.sbr{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:var(--radius-plate);font-size:13px}
+.col{flex:1;min-width:0;display:flex;flex-direction:column}
+.inner{flex:1;display:flex;justify-content:center;padding:16px 16px 0;overflow:hidden}
+.w{width:100%;max-width:560px;display:flex;flex-direction:column;gap:12px}
+.me{align-self:flex-end;max-width:80%;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:9px 13px}
+.tool{font:12px/18px var(--font-mono);color:var(--muted)}
+.comp{margin:10px 16px 6px;align-self:center;width:calc(100% - 32px);max-width:560px;border-radius:22px;padding:11px 16px;color:var(--faint);font-size:14px}
+.cap{font:600 15px var(--font-sans);margin:0 0 4px}
+.sub{font-size:13px;color:var(--muted);margin:0 0 12px;max-width:900px}
+.rp{display:flex;align-items:center;gap:10px;padding:9px 12px;border-top:1px solid var(--line);font-size:14px}
+.opt{display:flex;gap:12px;align-items:center;padding:12px 14px;border:1px solid var(--line);border-radius:var(--radius-card);background:var(--card)}
+</style>
+</helmet>
+<div data-theme="{{theme}}" class="f-root" style="width: 2900px; height: 860px; box-sizing: border-box; padding: 48px 56px; background: var(--bg); display: flex; flex-direction: column; gap: 24px;">
+  <div>
+    <h1 style="margin: 0; font-family: var(--font-display); font-size: 40px; letter-spacing: -0.03em;">The web app's first ten minutes</h1>
+    <p style="margin: 6px 0 0; font-size: 17px; color: var(--muted);">Connect a repo, come back from sign-in already working, and what happens when the credits run out.</p>
+  </div>
+
+  <div style="display: flex; gap: 40px;">
+
+    <!-- 1 connect a repo -->
+    <div>
+      <p class="cap">1 · Connect a repo</p><p class="sub">The repo pill opens a picker in the column, not a new page. GitHub access is per repo.</p>
+      <div class="fr" style="padding: 0; display: block;"><dc-import name="Workspace" platform="web" scene="pickRepo" height="640" theme="{{theme}}" hint-size="900px,640px"></dc-import></div>
+    </div>
+
+    <!-- 2 back from sign-in -->
+    <div>
+      <p class="cap">2 · Back from sign-in</p><p class="sub">You land in the session you started, and the request is already running. No second send.</p>
+      <div class="fr" style="padding: 0; display: block;"><dc-import name="Workspace" platform="web" scene="resumed" height="640" theme="{{theme}}" hint-size="900px,640px"></dc-import></div>
+    </div>
+
+    <!-- 3 out of credits -->
+    <div>
+      <p class="cap">3 · Out of credits</p><p class="sub">The web has no local model to fall back to, so Frog finishes the step it's on, saves everything, and offers ways to go on.</p>
+      <div class="fr" style="padding: 0; display: block;"><dc-import name="Workspace" platform="web" scene="credits" height="640" theme="{{theme}}" hint-size="900px,640px"></dc-import></div>
+    </div>
+
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"dark"},"$preview":{"width":2900,"height":840}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const repos = [
+      { name: 'ecto/ledger', meta: 'TypeScript · private', when: 'pushed 2h ago', bg: 'var(--hover)' },
+      { name: 'ecto/garden', meta: 'Rust · private', when: 'yesterday', bg: 'transparent' },
+      { name: 'ecto/frog', meta: 'Rust · private', when: 'yesterday', bg: 'transparent' },
+      { name: 'ecto/dotfiles', meta: 'Shell · public', when: 'last week', bg: 'transparent' },
+    ];
+    const prom = 'f-btn f-btn--prominent', bord = 'f-btn f-btn--bordered';
+    const outs = [
+      { title: 'Finish on your Mac', body: "Sam's MacBook Pro is online. It picks up this session with qwen3-4b, free.", cta: 'Move to my Mac', btn: prom, edge: 'var(--frog)' },
+      { title: 'Add credit', body: 'Pay as you go. No subscription, no card until now.', cta: 'Add $10', btn: bord, edge: 'var(--line)' },
+      { title: 'Go Pro', body: 'Cloud usage included every month, plus routines while you sleep.', cta: 'See plans', btn: bord, edge: 'var(--line)' },
+    ];
+    return { theme: this.props.theme ?? 'dark', repos, outs };
+  }
+}
+</script>
+</body>
+</html>
