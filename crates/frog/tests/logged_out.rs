@@ -2,6 +2,9 @@
 //! cloud's public `/v1/models` serves, asked without a key: FROG_BASE_URL points at a listener
 //! that records every request and answers with a list.
 
+#[path = "../../frog-engine/src/test_watchdog.rs"]
+mod test_watchdog;
+
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::process::Command;
