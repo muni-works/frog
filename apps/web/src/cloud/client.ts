@@ -107,6 +107,12 @@ export class Gateway {
     return this.req("PATCH", `/v1/sessions/${encodeURIComponent(id)}`, { archived });
   }
 
+  /** A browser URL for a dev server on `port` in the session's sandbox (zest sandbox/src/preview.ts):
+   * its own origin, good for hours. Minting doesn't wake the sandbox. */
+  preview(id: string, port: number): Promise<{ url: string; port: number; expires: number }> {
+    return this.req("POST", `/v1/sessions/${encodeURIComponent(id)}/preview`, { port });
+  }
+
   /** Opens the session's websocket; it reconnects with `resume_after` until closed. */
   connect(id: string, handlers: ConnectionHandlers, resumeAfter = 0): Connection {
     return new Connection(this, id, handlers, resumeAfter);

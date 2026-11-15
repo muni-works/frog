@@ -9,17 +9,20 @@
 // - `resume_after` replays stored durable envelopes. `{"op":"submit"}` plays the recording
 //   live, deltas included, pausing at its permission_request until an Op::Permission arrives.
 //   First answer wins; PermissionResolved goes to every attached client.
+// - Live previews (mock/preview.mjs): POST /v1/sessions/:id/preview {port} returns a
+//   <label>.localhost URL proxied to 127.0.0.1:<port>; `--preview-script f.js` is the capture script.
 import { createServer } from "node:http";
 import { randomBytes } from "node:crypto";
 import { accept } from "./ws.mjs";
 import { loadFixture, Recorded } from "./session.mjs";
+import { okPort, previewTarget, previewURL, servePreview, upgradePreview } from "./preview.mjs";
 
 const arg = (name, fallback) => {
   const i = process.argv.indexOf(`--${name}`);
   return i > 0 ? process.argv[i + 1] : fallback;
 };
 
-export function startMock({ port = 8788, fixture = new URL("./demo.jsonl", import.meta.url).pathname, delayMs = 15 } = {}) {
+export function startMock({ port = 8788, fixture = new URL("./demo.jsonl", import.meta.url).pathname, delayMs = 15, previewScript } = {}) {
   const events = loadFixture(fixture);
   const sessions = new Map(); // id → { info, rec }
 
@@ -37,6 +40,9 @@ export function startMock({ port = 8788, fixture = new URL("./demo.jsonl", impor
   };
 
   const server = createServer(async (req, res) => {
+    // A preview host is a dev server, never the API.
+    const target = previewTarget(req.headers.host);
+    if (target) return servePreview(req, res, target, { script: previewScript, exists: (id) => sessions.has(id) });
     const url = new URL(req.url, "http://mock");
     const path = url.pathname.replace(/\/+$/, "");
     if (path === "/health") return json(res, 200, { ok: true });
@@ -69,12 +75,25 @@ export function startMock({ port = 8788, fixture = new URL("./demo.jsonl", impor
       const origin = `ws://${req.headers.host}`;
       return json(res, 201, { ...summary({ info }), ws: `${origin}/v1/sessions/${id}/ws` });
     }
-    const m = path.match(/^\/v1\/sessions\/([^/]+)(\/handoff)?$/);
+    const m = path.match(/^\/v1\/sessions\/([^/]+)(\/handoff|\/preview)?$/);
     const s = m && own(req, m[1]);
     if (!s) return json(res, 404, { error: "no such session" });
     if (m[2] === "/handoff" && req.method === "POST") {
       for await (const _ of req);
       return json(res, 200, summary(s));
+    }
+    if (m[2] === "/preview") {
+      if (req.method !== "POST") return json(res, 405, { error: "method not allowed" });
+      let body = "";
+      for await (const c of req) body += c;
+      let port;
+      try {
+        port = JSON.parse(body || "{}").port;
+      } catch {
+        return json(res, 400, { error: "expected JSON" });
+      }
+      if (!okPort(port)) return json(res, 400, { error: "port must be 1024–65535, not the engine's" });
+      return json(res, 200, { url: previewURL(req.headers.host, s.info.id, port), port, expires: Date.now() + 8 * 3600_000 });
     }
     if (req.method === "GET") return json(res, 200, summary(s));
     if (req.method === "DELETE") {
@@ -85,7 +104,9 @@ export function startMock({ port = 8788, fixture = new URL("./demo.jsonl", impor
     json(res, 405, { error: "method not allowed" });
   });
 
-  server.on("upgrade", (req, socket) => {
+  server.on("upgrade", (req, socket, head) => {
+    const target = previewTarget(req.headers.host);
+    if (target) return sessions.has(target.session) ? upgradePreview(req, socket, head, target) : socket.end("HTTP/1.1 404 Not Found\r\n\r\n");
     const m = new URL(req.url, "http://mock").pathname.match(/^\/v1\/sessions\/([^/]+)\/ws$/);
     const s = m && own(req, m[1]);
     if (!s) return socket.end("HTTP/1.1 404 Not Found\r\n\r\n");
@@ -115,6 +136,8 @@ export function startMock({ port = 8788, fixture = new URL("./demo.jsonl", impor
       s.info.updated = Date.now();
       if (v.op === "submit") void s.rec.play(typeof v.text === "string" ? v.text : "", delayMs);
       else if (v.op === "permission" && typeof v.id === "string") s.rec.permission(v);
+      // A preview pane the client asked for: the engine opens it and the client loads its URL.
+      else if (v.op === "pane_open" && v.kind === "preview") s.rec.emit({ event: "pane_opened", id: `p${(s.panes = (s.panes ?? 0) + 1)}`, kind: "preview", title: v.url ?? "preview", ...(v.url ? { url: v.url } : {}) });
     };
     conn.onclose = () => s.rec.peers.delete(conn);
   });
@@ -123,6 +146,6 @@ export function startMock({ port = 8788, fixture = new URL("./demo.jsonl", impor
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const { port } = await startMock({ port: Number(arg("port", 8788)), ...(arg("fixture") ? { fixture: arg("fixture") } : {}) });
+  const { port } = await startMock({ port: Number(arg("port", 8788)), ...(arg("fixture") ? { fixture: arg("fixture") } : {}), previewScript: arg("preview-script") ?? new URL("../../public/preview.js", import.meta.url).pathname });
   console.log(`mock gateway on http://127.0.0.1:${port} (any bearer key is an account)`);
 }

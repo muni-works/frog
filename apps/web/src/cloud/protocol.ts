@@ -16,8 +16,18 @@ export type Op =
   | { op: "pane_input"; id: string; data: string }
   | { op: "pane_resize"; id: string; cols: number; rows: number }
   | { op: "pane_close"; id: string }
+  /** Something the preview saw: a console line, a failed request, an error, a navigation. */
+  | { op: "pane_report"; id: string; kind: ReportKind; level?: ReportLevel; message: string; url?: string; status?: number }
+  /** The answer to a `pane_request`. */
+  | { op: "pane_reply"; call: string; result: unknown; error?: string }
+  /** The user picked an element in inspect mode and mentioned it in the composer. */
+  | { op: "pane_mention"; id: string; mention: string; context?: string }
   | { op: "set_model"; spec: string }
   | { op: "set_mode"; mode: Mode };
+
+/** protocol.rs `ReportKind` / `ReportLevel`: what a preview pane reports. */
+export type ReportKind = "console" | "network" | "error" | "navigated" | "title";
+export type ReportLevel = "info" | "warn" | "error";
 
 /** protocol.rs `Mode` (kebab-case): when the engine asks before acting. */
 export type Mode = "default" | "accept-edits" | "auto" | "yolo";
@@ -128,6 +138,10 @@ export type Event =
   | { event: "elicitation_done"; id: string }
   | { event: "pane_opened"; id: string; kind: "terminal" | "preview"; title: string; cwd?: string; url?: string }
   | { event: "pane_closed"; id: string; exit?: number }
+  /** The engine asking a preview pane to do something; answered with `pane_reply` within 20s. Live. */
+  | { event: "pane_request"; call: string; id: string; action: string; args?: Record<string, unknown> }
+  /** A preview error the engine queued for the model. Live. */
+  | { event: "pane_notice"; id: string; level: ReportLevel; message: string }
   | { event: "pane_screen"; id: string; cols: number; rows: number; lines: string[]; cursor: [number, number]; screen_seq: number }
   | { event: "progress"; label: string; completed?: number; total?: number }
   | { event: "notice"; level: "info" | "warn"; message: string }
