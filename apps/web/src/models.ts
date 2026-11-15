@@ -68,9 +68,10 @@ export const outputPrice = (m: Model) => (m.output == null ? '' : `$${(m.output 
 export const inOutPrice = (m: Model) =>
   m.input == null || m.output == null ? outputPrice(m) : `$${(m.input * 1e6).toFixed(2)} in · $${(m.output * 1e6).toFixed(2)} out /M`
 
-/** The model a new session starts on: GLM-5.3 Flash while Frog Cloud lists it (it always
- *  serves it), else the first it lists. Nothing is built in: no list, no default. */
-export const defaultModel = (models: Model[]) => (models.find((m) => currentId(m.id) === 'glm-5.3-flash') ?? models[0])?.id
+/** The model a new session starts on: DeepSeek V4.1 Flash while Frog Cloud lists it, else the
+ *  first it lists. Nothing is built in: no list, no default. Same pick as the engine's
+ *  `catalog::cloud_default` (2026-11-14: 89 s vs GLM-5.3 Flash's 179 s on one agent task). */
+export const defaultModel = (models: Model[]) => (models.find((m) => currentId(m.id) === 'deepseek-v4.1-flash') ?? models[0])?.id
 
 /** The smallest context window worth offering for agent sessions. */
 const MIN_AGENT_CONTEXT = 64_000
