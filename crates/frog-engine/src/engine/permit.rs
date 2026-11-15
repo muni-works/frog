@@ -485,6 +485,9 @@ impl Agent {
             ) {
                 Some(why) => {
                     let why = format!("it {why} (never delegated)");
+                    // The class that decided it goes on the record, as the classifier
+                    // path's layer does; `denied_unasked` then adds auto mode's deny.
+                    self.decision(item, "never-delegable", "deny", &why, 0);
                     self.digest.count(crate::digest::Which::NeverDelegable);
                     why
                 }

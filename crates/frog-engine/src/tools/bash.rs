@@ -1004,7 +1004,7 @@ fn seatbelt(
         _ => String::new(),
     };
     let profile = format!(
-        r##"(version 1)
+        r#"(version 1)
 (allow default)
 (deny file-write*)
 (allow file-write*
@@ -1015,9 +1015,9 @@ fn seatbelt(
   (literal "/dev/null")
   (literal "/dev/tty")
   (literal "/dev/ptmx")
-  (regex #"^/dev/ttys[0-9]+"#)
+  (regex #"^/dev/ttys[0-9]+")
   (regex #"^/dev/fd/"){caches}{git}{writes}){protected}
-(deny file-read* file-write*{secrets}){reads}{network}"##,
+(deny file-read* file-write*{secrets}){reads}{network}"#,
         quote(root),
         quote(&tmp)
     );
@@ -1711,7 +1711,7 @@ mod tests {
         // the "Pseudo Terminal Setup Error" that made every agent escape to unsandboxed.
         assert!(
             profile.contains("(literal \"/dev/ptmx\")")
-                && profile.contains(r##"(regex #"^/dev/ttys[0-9]+"#)"##),
+                && profile.contains(r##"(regex #"^/dev/ttys[0-9]+")"##),
             "pty write hole missing:\n{profile}"
         );
     }

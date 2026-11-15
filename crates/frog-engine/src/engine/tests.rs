@@ -6807,10 +6807,11 @@ mod egress_tests {
         }
     }
 
-    /// `allow_hosts` asks under an enforced list in auto (and default, accept-edits), and the
+    /// `allow_hosts` asks under an enforced list in default mode (and accept-edits), and the
     /// answer is the grant: Allow covers that one run, "always" the rest of the session.
-    /// Leaving the sandbox asks too, and headless both are denied. Yolo never asks: see
-    /// `yolo_never_cards_on_egress`.
+    /// Leaving the sandbox asks too, and headless both are denied. Auto mode never asks (see
+    /// `an_egress_ask_is_denied_without_the_grant`); yolo never asks either (see
+    /// `yolo_never_cards_on_egress`).
     #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn an_explicit_grant_unblocks_one_call_or_adds_the_host() {
@@ -6830,7 +6831,7 @@ mod egress_tests {
                 reply(vec![text("ok")], Stop::End),
             ],
             true,
-            Mode::Auto,
+            Mode::Default,
         );
         submit(&mut h, "fetch").await;
         let mut evs = Vec::new();
@@ -6888,7 +6889,7 @@ mod egress_tests {
         assert!(!tool_output(&evs, "after_always").contains("frog blocked"));
         let _ = std::fs::remove_dir_all(dir);
 
-        // Leaving the sandbox past an enforced list asks in auto too; headless, it's denied.
+        // Leaving the sandbox past an enforced list asks too; headless, it's denied.
         // The command must not be a routine local step: where a shell sandbox exists
         // (macOS), `echo hi` + `unsandboxed` is a needless escape and gets that wording.
         let (mut h, dir) = egress_engine(
@@ -6900,7 +6901,7 @@ mod egress_tests {
                 reply(vec![text("ok")], Stop::End),
             ],
             true,
-            Mode::Auto,
+            Mode::Default,
         );
         submit(&mut h, "go").await;
         loop {
@@ -7243,11 +7244,11 @@ mod egress_tests {
         );
     }
 
-    /// Without the grant (no chief, or a chief that doesn't hold `egress-widen`) the
-    /// egress card reaches the user exactly as before.
+    /// Without the grant (no chief, or a chief that doesn't hold `egress-widen`) auto mode
+    /// denies the egress ask: no chief, no card, and the model is told why.
     #[cfg(target_os = "macos")]
     #[tokio::test]
-    async fn an_egress_ask_cards_the_user_without_the_grant() {
+    async fn an_egress_ask_is_denied_without_the_grant() {
         for classes in [Vec::new(), vec!["scratch-deletes".to_string()]] {
             let (mut h, dir) = egress_engine_with(
                 vec![
@@ -7269,21 +7270,23 @@ mod egress_tests {
             let (evs, asked_chief, carded) = run_turn(&mut h, None, Decision::Deny).await;
             shutdown(h).await;
             let _ = std::fs::remove_dir_all(dir);
-            assert_eq!((asked_chief, carded), (0, 1), "{classes:?}");
+            assert_eq!((asked_chief, carded), (0, 0), "{classes:?}");
+            assert_eq!(outcome_of(&evs, "hosts"), Some(ToolOutcome::Denied), "{classes:?}");
             assert_eq!(
                 layers(&evs, "hosts").first(),
-                Some(&("ask".to_string(), "ask".to_string())),
+                Some(&("auto-mode".to_string(), "deny".to_string())),
                 "{classes:?}"
             );
+            assert!(tool_output(&evs, "hosts").contains("auto mode denied"), "{classes:?}");
         }
     }
 
     /// A call that both widens egress and is never-delegable (`rm -rf` outside the
-    /// session's scratch) cards the user even with `egress-widen` granted: the hard class
-    /// wins, and the chief is never asked.
+    /// session's scratch) is denied even with `egress-widen` granted: the hard class wins,
+    /// the chief is never asked, and auto mode has no card to fall back to.
     #[cfg(target_os = "macos")]
     #[tokio::test]
-    async fn a_never_delegable_egress_ask_still_cards_the_user() {
+    async fn a_never_delegable_egress_ask_is_denied_without_the_chief() {
         let theirs = format!("/var/tmp/deleg-egress-{}", new_id());
         let (mut h, dir) = egress_engine_with(
             vec![
@@ -7310,11 +7313,11 @@ mod egress_tests {
         shutdown(h).await;
         let _ = std::fs::remove_dir_all(dir);
         assert_eq!(asked_chief, 0, "the chief was asked about a never-delegable call");
-        assert_eq!(carded, 1);
+        assert_eq!(carded, 0, "auto mode never cards");
         assert_eq!(outcome_of(&evs, "rm"), Some(ToolOutcome::Denied));
         assert_eq!(
             layers(&evs, "rm").first(),
-            Some(&("never-delegable".to_string(), "ask".to_string())),
+            Some(&("never-delegable".to_string(), "deny".to_string())),
             "{:?}",
             layers(&evs, "rm")
         );
@@ -12467,8 +12470,8 @@ async fn digest_counts_each_path() {
     assert_eq!(daily, 1);
 }
 
-/// A never-delegable call cards the user even when the chief's grants cover
-/// its soft shape (a force push is also a push to a remote).
+/// A never-delegable call never reaches the chief, even when its grants cover the call's
+/// soft shape (a force push is also a push to a remote); in auto mode it is denied.
 #[tokio::test]
 async fn a_chief_grant_never_routes_a_never_delegable_call() {
     let branch = format!("deleg-{}", new_id());
@@ -12485,8 +12488,9 @@ async fn a_chief_grant_never_routes_a_never_delegable_call() {
     let evs = loop_collect(&mut h, |_, tool| asked_chief |= tool == "DelegateApproval").await;
     shutdown(h).await;
     assert!(!asked_chief, "the chief was asked about a force push");
-    assert_eq!(asked(&evs), 1);
-    assert_eq!(layers(&evs, "push").first(), Some(&("never-delegable".to_string(), "ask".to_string())));
+    assert_eq!(asked(&evs), 0, "auto mode never cards: {:?}", names(&evs));
+    assert_eq!(outcome_of(&evs, "push"), Some(ToolOutcome::Denied));
+    assert_eq!(layers(&evs, "push").first(), Some(&("never-delegable".to_string(), "deny".to_string())));
 }
 
 #[tokio::test]
@@ -13248,6 +13252,7 @@ async fn prs_bind_from_gh_pr_create_and_by_hand() {
         .send(Op::Submit { text: "open a pr".into(), images: Vec::new(), more: Vec::new() })
         .unwrap();
     let mut sid = String::new();
+    let mut evs = Vec::new();
     loop {
         let env = h.events.recv().await.unwrap();
         sid = env.session.clone();
@@ -13256,17 +13261,31 @@ async fn prs_bind_from_gh_pr_create_and_by_hand() {
                 .send(Op::Permission { id: id.clone(), decision: Decision::Allow, note: None })
                 .unwrap();
         }
-        if matches!(env.event, Event::Idle) {
+        let idle = matches!(env.event, Event::Idle);
+        evs.push(env);
+        if idle {
             break;
         }
     }
+    // The bind below only happens when the `gh pr create` call ran; say so, don't hang.
+    assert_eq!(
+        outcome_of(&evs, "a"),
+        Some(ToolOutcome::Ok),
+        "{:?} {:?}",
+        tool_output(&evs, "a"),
+        names(&evs)
+    );
     h.ops
         .send(Op::BindPr { pr: crate::prs::PrBinding::new("o/other", 4) })
         .unwrap();
     h.ops.send(Op::UnbindPr { repo: "o/r".into(), number: 9 }).unwrap();
     let mut seen = 0;
     while seen < 2 {
-        if let Event::Prs { .. } = h.events.recv().await.unwrap().event {
+        let env = tokio::time::timeout(std::time::Duration::from_secs(30), h.events.recv())
+            .await
+            .expect("both PR list changes arrive")
+            .unwrap();
+        if let Event::Prs { .. } = env.event {
             seen += 1;
         }
     }
