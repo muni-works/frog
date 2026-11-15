@@ -90,6 +90,36 @@ pub struct Client {
     /// request is refused with frog cloud's 413 `context_length_exceeded`, as a real server
     /// refuses a prompt its window can't hold. Refused requests don't consume the script.
     pub window: Option<usize>,
+    /// When set, the server prefills (tang-llm's `/v1/prefill`) and takes a conversation key:
+    /// each warm-up lands here, as `sent` records calls, once it reaches the server.
+    pub prefills: Option<Arc<Mutex<Vec<Prefilled>>>>,
+    /// While set and false, a warm-up pends before it reaches the server (`prefills`), as a
+    /// long prefill still running would; flipping it to true lets every held one through.
+    pub prefill_gate: Option<Arc<std::sync::atomic::AtomicBool>>,
+}
+
+/// One warm-up as the server saw it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Prefilled {
+    /// The conversation key (`prompt_cache_key`) it warms.
+    pub key: Option<String>,
+    /// The request, rendered as [`Client::sent`] renders calls.
+    pub request: String,
+}
+
+/// A request as the server would see it: the system prompt, the tools' names, then the
+/// messages as JSON.
+fn render(req: &Request<'_>) -> Result<String> {
+    let tools: String = req
+        .tools
+        .iter()
+        .map(|t| format!("<tool {}>", t.name))
+        .collect();
+    Ok(format!(
+        "{}{tools}{}",
+        req.system,
+        serde_json::to_string(req.messages)?
+    ))
 }
 
 impl Client {
@@ -104,6 +134,39 @@ impl Client {
             hold: None,
             fallback: Default::default(),
             window: None,
+            prefills: None,
+            prefill_gate: None,
+        }
+    }
+
+    /// A server that prefills: warm-ups are recorded in the returned list.
+    pub fn with_prefill(mut self) -> (Self, Arc<Mutex<Vec<Prefilled>>>) {
+        let prefills = Arc::new(Mutex::new(Vec::new()));
+        self.prefills = Some(prefills.clone());
+        (self, prefills)
+    }
+
+    /// Prefill `req` (only on a client [`with_prefill`](Self::with_prefill)): recorded when it
+    /// reaches the server, after the gate if one is set.
+    pub fn prefill(
+        &self,
+        req: &Request<'_>,
+    ) -> impl std::future::Future<Output = Result<()>> + Send + 'static {
+        let rendered = render(req);
+        let key = req.cache_key.map(String::from);
+        let prefills = self.prefills.clone();
+        let gate = self.prefill_gate.clone();
+        async move {
+            if let Some(gate) = gate {
+                while !gate.load(std::sync::atomic::Ordering::SeqCst) {
+                    tokio::time::sleep(Duration::from_millis(2)).await;
+                }
+            }
+            let request = rendered?;
+            if let Some(p) = prefills {
+                p.lock().unwrap().push(Prefilled { key, request });
+            }
+            Ok(())
         }
     }
 
@@ -112,11 +175,6 @@ impl Client {
         req: &Request<'_>,
         on: &mut (dyn FnMut(StreamEvent) + Send),
     ) -> Result<Response> {
-        let tools: String = req
-            .tools
-            .iter()
-            .map(|t| format!("<tool {}>", t.name))
-            .collect();
         self.attempts.lock().unwrap().push(tokio::time::Instant::now());
         self.fixed.lock().unwrap().push((
             req.system.to_string(),
@@ -131,11 +189,7 @@ impl Client {
                 })
                 .collect(),
         ));
-        let request = format!(
-            "{}{tools}{}",
-            req.system,
-            serde_json::to_string(req.messages)?
-        );
+        let request = render(req)?;
         let len = request.len();
         self.sent.lock().unwrap().push(request);
         if let Some(window) = self.window

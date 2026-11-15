@@ -192,6 +192,13 @@ pub async fn run(r: Run<'_>) -> Result<RunResult> {
             engine = Some(spawn(resume)?);
         }
         let h = engine.as_mut().expect("spawned above");
+        // Typed ahead: the draft warms while the "user" types, then goes.
+        if let Some(secs) = turn.typed_secs {
+            h.ops.send(Op::Warm {
+                draft: Some(turn.prompt.clone()),
+            })?;
+            tokio::time::sleep(Duration::from_secs_f64(secs)).await;
+        }
         h.ops.send(Op::Submit {
             text: turn.prompt.clone(),
             images: Vec::new(),
@@ -200,6 +207,7 @@ pub async fn run(r: Run<'_>) -> Result<RunResult> {
         let mut at = Place {
             turn: i as u32,
             reopened: i > 0 && turn.conversation != Conversation::Same,
+            typed: turn.typed_secs.is_some(),
         };
         if !drive(h, deadline, &mut out, &mut at).await {
             timed_out = true;
@@ -242,6 +250,9 @@ struct Place {
     /// The turn opened its conversation (a resume or a new one), so its first call is that
     /// conversation's first; cleared once that call is recorded.
     reopened: bool,
+    /// The turn was typed ahead (warmed before it was sent); cleared once its first call is
+    /// recorded.
+    typed: bool,
 }
 
 /// Read events until the submitted turn has ended and the engine is idle again. False if the
@@ -350,8 +361,9 @@ fn record(env: Envelope, out: &mut RunResult, at: &mut Place) {
                     .unwrap_or_default() as u32;
                 for c in &t.calls {
                     let reopened = std::mem::take(&mut at.reopened);
-                    out.calls
-                        .push(Call::new(conversation, at.turn, reopened, c));
+                    let mut call = Call::new(conversation, at.turn, reopened, c);
+                    call.typed = std::mem::take(&mut at.typed);
+                    out.calls.push(call);
                 }
             }
         }

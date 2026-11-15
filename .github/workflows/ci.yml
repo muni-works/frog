@@ -2,7 +2,13 @@ name: ci
 
 on:
   push:
+    # The merge queue's temporary branches are tested through merge_group, below.
+    branches-ignore: ["gh-readonly-queue/**"]
   pull_request:
+  # A merge queue tests each PR on top of main and the PRs queued ahead of it, then merges the
+  # commit it tested. The required checks must report on that commit, so every required job
+  # runs here too.
+  merge_group:
 
 env:
   CARGO_TERM_COLOR: always
@@ -14,6 +20,9 @@ jobs:
       matrix:
         os: [macos-26, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    # A green run takes about 5 minutes, a cold cache about 20. Without this a stuck job holds
+    # its runner for GitHub's 6-hour default.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -24,16 +33,21 @@ jobs:
       - run: cargo build -p frog -p frog-engine
       # No -D warnings yet: frog-engine has outstanding clippy warnings.
       - run: cargo clippy -p frog -p frog-engine
+      # A hung test ends its binary after FROG_TEST_TIMEOUT seconds (crates/frog-engine/src/
+      # test_watchdog.rs; default 300), and libtest names it ("has been running for over 60
+      # seconds") above the watchdog's message. The step timeout is the backstop.
       - run: cargo test -p frog-engine -p frog
+        timeout-minutes: 20
       # schema.rs's artifact_matches_types rewrites schema/frog-engine-1.json from the
       # protocol types; a diff here means the committed artifact is stale.
       - name: protocol schema is regenerated and committed
         run: git diff --exit-code -- crates/frog-engine/schema/frog-engine-1.json
 
   # cargo passing doesn't mean the app builds: compile the Swift app and run its unit tests.
-  # PRs and main only (not every branch push), since macOS minutes are the expensive ones.
+  # PRs, the merge queue and main only (not every branch push), since macOS minutes are the
+  # expensive ones. It must run for merge_group: a skipped required job counts as passing.
   macos-app:
-    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.ref == 'refs/heads/main'
     # The app targets macOS 26 (SwiftPM tools 6.2), so it needs the macOS 26 image's Xcode.
     runs-on: macos-26
     timeout-minutes: 60
@@ -77,11 +91,15 @@ jobs:
         # xcodebuild passes TEST_RUNNER_* to the test process without the prefix: the tests see
         # CI and give wall-clock budgets runner room (FrogTests TestRunner). A failing test gets
         # up to 2 more tries (the window benchmarks share a VM's frames); it must pass once.
+        # A test past 5 minutes fails as "exceeded execution time allowance", by name; the
+        # whole step takes about 7.
         env:
           TEST_RUNNER_CI: "true"
+        timeout-minutes: 30
         run: |
           cd apps/macos
           xcodebuild test -quiet -retry-tests-on-failure -test-iterations 3 \
+            -test-timeouts-enabled YES -default-test-execution-time-allowance 300 \
             -project Frog.xcodeproj -scheme Frog -configuration Debug \
             -derivedDataPath build/ci -destination 'platform=macOS,arch=arm64' \
             CODE_SIGN_IDENTITY="-" DEVELOPMENT_TEAM="" CODE_SIGN_STYLE="Manual"

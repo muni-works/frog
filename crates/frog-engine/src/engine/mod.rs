@@ -405,8 +405,13 @@ struct Shared {
     journal: Arc<Journal>,
     /// Terminal and preview panes, driven by the router so they work mid-turn.
     panes: Arc<crate::panes::Panes>,
-    /// The agent is handling an op (a turn, mostly); the router drops `Warm` meanwhile.
+    /// The agent is handling an op (a turn, mostly); the router holds `Warm` meanwhile.
     working: AtomicBool,
+    /// The latest `Warm` that came in mid-turn (its draft, if any): the turn keeps the
+    /// server busy and its slot warm, so it isn't sent then, but the composer won't send
+    /// the same draft again, so it goes once the turn is over and the engine is about to
+    /// idle. A message sent meanwhile makes it stale.
+    late_warm: Mutex<Option<Option<String>>>,
     /// Background tasks, jobs and monitors (see `background`).
     bg: Arc<crate::background::Registry>,
     /// The IRC agent bus, when the engine posts to one (`SetClientCaps { irc }`). The engine
@@ -436,8 +441,10 @@ struct Shared {
     /// turn, in order, each exactly once) instead of letting each start its own turn after
     /// this one. Empty between turns — the router forwards straight through then, and any
     /// leftovers here would be lost, so the work loop takes the queue at every boundary
-    /// including the last one before `Idle`.
-    submitted: Mutex<Vec<crate::protocol::Part>>,
+    /// including the last one before `Idle`. The flag marks a parent's message to an
+    /// engine-owned child (parked the same way): `Op::ClearInbox` voids those, like the
+    /// session messages in the work queue, and keeps the user's own follow-ups.
+    submitted: Mutex<Vec<(crate::protocol::Part, bool)>>,
     /// The mode the client asked for ([`Op::SetMode`]), as a [`Mode`] discriminant. The router
     /// stores it immediately (a safety setting, not conversation state), the permit path picks
     /// it up per decision, and the agent's `handle` reconciles its own copy and logs
@@ -671,6 +678,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         kids: Default::default(),
         ready: Default::default(),
         working: Default::default(),
+        late_warm: Default::default(),
         bg: {
             let j = journal.clone();
             crate::background::Registry::new(move |e| j.emit(e))
@@ -688,6 +696,8 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
     });
     shared.bg.set_wake(&work_tx);
     shared.kids.set_inbox(&op_tx);
+    // A resumed session serves from the folder its log says it belongs to, or not at all (#107).
+    let moved = serving_folder(&opts).map_err(|e| ConfigError(format!("{e:#}")))?;
     // One engine per linked worktree (see `worktree`): taken before the session opens, so a
     // refused engine leaves nothing behind. Subagents share their parent's engine's tree.
     let worktree_lock = if opts.subagent || opts.store.is_none() {
@@ -758,6 +768,13 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                     // The queued deliveries are voided now: they never run, so they stop
                     // counting (and anything sent after the clear counts from zero).
                     router.inbox_waiting.store(0, Ordering::Relaxed);
+                    // A parent's message parked mid-turn is a session message too: a stop
+                    // that clears the queue must not have it restart the session (#117).
+                    router
+                        .submitted
+                        .lock()
+                        .unwrap()
+                        .retain(|(_, session)| !session);
                 }
                 Op::DismissWakes => router.bg.dismiss(),
                 // A permission mode is a safety setting, not conversation state: it applies at
@@ -777,10 +794,13 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                     from_name,
                     message,
                 } if from == "parent" && router.working.load(Ordering::Relaxed) => {
-                    router.submitted.lock().unwrap().push(crate::protocol::Part {
-                        text: crate::tools::sessions::wrap(&from, &from_name, &message),
-                        images: Vec::new(),
-                    });
+                    router.submitted.lock().unwrap().push((
+                        crate::protocol::Part {
+                            text: crate::tools::sessions::wrap(&from, &from_name, &message),
+                            images: Vec::new(),
+                        },
+                        true,
+                    ));
                 }
                 op @ Op::Deliver { .. } => {
                     router.inbox_sent.fetch_add(1, Ordering::SeqCst);
@@ -834,8 +854,11 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                 Op::DrainAbort => {
                     *router.draining.lock().unwrap() = None;
                 }
-                // Mid-turn the server is busy with the turn itself, which leaves it warm.
-                Op::Warm { .. } if router.working.load(Ordering::Relaxed) => {}
+                // Mid-turn the server is busy with the turn itself, which leaves it warm; the
+                // draft waits for the turn to end (`late_warm`).
+                Op::Warm { draft } if router.working.load(Ordering::Relaxed) => {
+                    *router.late_warm.lock().unwrap() = Some(draft);
+                }
                 // Stopping mid-turn ends the turn first (cancelled, and logged as such), rather
                 // than waiting behind it: a client that stops an engine gives it about a second
                 // before killing it, and a turn cut off there would stay open in the log.
@@ -929,7 +952,11 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                     if router.working.load(Ordering::Relaxed) {
                         let mut all = vec![crate::protocol::Part { text, images }];
                         all.extend(more);
-                        router.submitted.lock().unwrap().extend(all);
+                        router
+                            .submitted
+                            .lock()
+                            .unwrap()
+                            .extend(all.into_iter().map(|p| (p, false)));
                     } else if work_tx
                         .send(Op::Submit { text, images, more })
                         .is_err()
@@ -959,6 +986,9 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                 Level::Warn,
                 format!("[delegation] chief_classes: ignoring unknown class(es) {unknown}"),
             );
+        }
+        if let Some(line) = moved {
+            agent.notice(Level::Warn, line);
         }
         agent.connect_mcp();
         // Restore MCP tools that were loaded in a previous session
@@ -1128,6 +1158,8 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                 continue;
             }
             shared.working.store(true, Ordering::Relaxed);
+            // One held from before this op is stale now.
+            shared.late_warm.lock().unwrap().take();
             agent.meter_busy(true);
             let token = CancellationToken::new();
             *shared.cancel.lock().unwrap() = token.clone();
@@ -1211,6 +1243,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             // before the engine goes idle — the first is its input, the rest as `more`, in
             // order, each with its images. Never lost.
             let parked = take_submitted(&shared);
+            let late = shared.late_warm.lock().unwrap().take();
             if !parked.is_empty() {
                 let mut parts = parked.into_iter();
                 let first = parts.next().expect("checked non-empty");
@@ -1234,6 +1267,11 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             if std::mem::take(&mut agent.pr_due) {
                 agent.auto_open_pr().await;
             }
+            // The draft typed while the turn ran, warmed on top of the conversation as the
+            // turn left it.
+            if let Some(draft) = late {
+                agent.warm(draft.as_deref());
+            }
             agent.emit(Event::Idle);
             agent.meter_busy(false);
         }
@@ -1255,6 +1293,47 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         events: ev_rx,
         bus,
     })
+}
+
+/// A resumed engine must serve from the folder its session belongs to: the log header's `cwd`
+/// (kept current by `UseFolder`). Restarts are where this goes wrong (#107): an engine
+/// relaunched in the main checkout while its session's worktree still exists would run the
+/// session's shell, edits and git there, in someone else's tree. So when the recorded folder
+/// still exists and isn't this engine's, it refuses to start, naming both. When the recorded
+/// folder is gone (a cleaned-up worktree, a moved repo) there is no right tree to protect and
+/// refusing would strand the session's history, so it serves where it was started and says so
+/// once, with both paths (`Some(line)`). Fresh sessions, forks and subagents aren't checked.
+fn serving_folder(opts: &Options) -> anyhow::Result<Option<String>> {
+    let (Some(id), Some(dir)) = (&opts.resume, &opts.store) else {
+        return Ok(None);
+    };
+    if opts.subagent {
+        return Ok(None);
+    }
+    // No readable header: `Agent::new` reports the broken log in its own words.
+    let Ok(header) = session::header(dir, id) else {
+        return Ok(None);
+    };
+    let real = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    let (recorded, serving) = (real(&header.cwd), real(&opts.cwd));
+    if recorded == serving {
+        return Ok(None);
+    }
+    if recorded.is_dir() {
+        anyhow::bail!(
+            "session {id} belongs to {}, but this engine was started in {}. \
+Refusing to serve it from here, so its commands and edits can't land in another tree: \
+resume it from {} instead.",
+            recorded.display(),
+            serving.display(),
+            recorded.display()
+        );
+    }
+    Ok(Some(format!(
+        "session {id} was working in {}, which no longer exists: serving it from {} instead",
+        header.cwd.display(),
+        serving.display()
+    )))
 }
 
 /// Waits until `Op::Drain`'s deadline has passed — the step in flight is then killed (the
@@ -1308,7 +1387,10 @@ fn draining(shared: &Shared) -> bool {
     /// messages of the running turn, so the model reads them before its next step (they no
     /// longer wait for the whole turn to end). Exactly once: drained is drained.
     fn take_submitted(shared: &Shared) -> Vec<crate::protocol::Part> {
-        std::mem::take(&mut shared.submitted.lock().unwrap())
+        std::mem::take(&mut *shared.submitted.lock().unwrap())
+            .into_iter()
+            .map(|(part, _)| part)
+            .collect()
     }
 
 /// Like [`drain_pending`], but for the composer's queue: yields first so the router task

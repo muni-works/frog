@@ -53,6 +53,12 @@ fn session(script: Vec<Response>, app: bool) -> (Handle, Fixed, PathBuf) {
     let opts = Options {
         cfg: Config {
             hermetic: true,
+            // WebSearch on everywhere, as a Frog Cloud user has it. Unset, it depends on the
+            // machine: a search key in the environment or a Frog Cloud key in the login Keychain
+            // (which `hermetic` doesn't hide) adds the tool, so a signed-in Mac measured 377
+            // chars more than CI. A named SearXNG needs no key and makes no request here.
+            web_search: Some("searxng".into()),
+            searxng_url: Some("http://127.0.0.1:9".into()),
             ..Config::default()
         },
         profile_name: "test".into(),
@@ -110,13 +116,27 @@ fn size(f: &(String, Vec<(String, String, String)>)) -> usize {
             .sum::<usize>()
 }
 
-/// One plain turn's first request.
+/// One plain turn's first request, with the machine's facts in the environment section (the
+/// temp dir's path: `/tmp/…` on Linux, `/var/folders/…/T/…` on a Mac; the platform) replaced by
+/// fixed ones, so its size is the same on every machine.
 async fn first_call(app: bool) -> (String, Vec<(String, String, String)>) {
-    let (mut h, fixed, _dir) = session(vec![reply(vec![text("ok")], Stop::End)], app);
+    let (mut h, fixed, dir) = session(vec![reply(vec![text("ok")], Stop::End)], app);
     turn(&mut h, "hi").await;
     idle(&mut h).await;
-    let f = fixed.lock().unwrap();
-    f[0].clone()
+    let (system, tools) = fixed.lock().unwrap()[0].clone();
+    (normalize(&system, &dir), tools)
+}
+
+fn normalize(system: &str, dir: &std::path::Path) -> String {
+    let platform = format!(
+        "- Platform: {} ({})\n",
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    );
+    assert!(system.contains(&platform), "no platform line in the prompt");
+    system
+        .replace(&dir.display().to_string(), "/work/project")
+        .replace(&platform, "- Platform: linux (x86_64)\n")
 }
 
 /// The system prompt split at its headings, each with its size, for the breakdown table.

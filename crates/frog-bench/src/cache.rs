@@ -36,6 +36,10 @@ pub struct Call {
     /// The first call of a conversation opened after the run's first (a resume or a new one).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub reopened: bool,
+    /// The first call of a turn that was typed ahead (`typed_secs`): its prompt was warmed
+    /// before it was sent, so its time to first token is what zero-prefill turns promise.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub typed: bool,
     /// A compaction summary rather than a step.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub compact: bool,
@@ -62,6 +66,7 @@ impl Call {
             extends: t.extends,
             reusable: t.reusable,
             reopened,
+            typed: false,
             compact: t.compact,
             cold: false,
             output_tokens: t.output_tokens,
@@ -103,6 +108,9 @@ pub struct Summary {
     pub reopened: u64,
     pub reopened_prompt: u64,
     pub reopened_cached: u64,
+    /// First calls of typed-ahead turns, and their time to first token.
+    pub typed: u64,
+    pub typed_ms: u64,
 }
 
 impl Summary {
@@ -120,6 +128,10 @@ impl Summary {
                 s.reopened_prompt += c.prompt_tokens;
                 s.reopened_cached += c.cached_tokens;
             }
+            if c.typed {
+                s.typed += 1;
+                s.typed_ms += c.prefill_ms;
+            }
         }
         s
     }
@@ -134,6 +146,11 @@ impl Summary {
 
     pub fn prefill_s_per_call(&self) -> Option<f64> {
         (self.calls > 0).then(|| self.prefill_ms as f64 / 1000.0 / self.calls as f64)
+    }
+
+    /// Time to first token of a typed-ahead turn's first call, in seconds.
+    pub fn typed_ttft_s(&self) -> Option<f64> {
+        (self.typed > 0).then(|| self.typed_ms as f64 / 1000.0 / self.typed as f64)
     }
 
     pub fn reopened_hit_rate(&self) -> Option<f64> {
@@ -192,5 +209,20 @@ mod tests {
         assert_eq!(s.prefilled_per_call(), Some(7_900.0 / 4.0));
         assert_eq!(s.reopened_hit_rate(), Some(3800.0 / 4200.0));
         assert_eq!(Summary::of(&[]).hit_rate(), None);
+        assert_eq!(s.typed_ttft_s(), None);
+    }
+
+    #[test]
+    fn typed_ahead_turns_report_their_time_to_first_token() {
+        let mut first = Call::new(0, 1, false, &timing(5000, 4900, Some(true), 0.98));
+        first.prefill_ms = 120;
+        first.typed = true;
+        let mut second = Call::new(0, 2, false, &timing(5200, 5000, Some(true), 0.97));
+        second.prefill_ms = 80;
+        second.typed = true;
+        let untyped = Call::new(0, 3, false, &timing(5400, 5100, Some(true), 0.97));
+        let s = Summary::of(&[first, second, untyped]);
+        assert_eq!(s.typed, 2);
+        assert_eq!(s.typed_ttft_s(), Some(0.1));
     }
 }

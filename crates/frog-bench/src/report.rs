@@ -162,7 +162,7 @@ fn pct(x: Option<f64>) -> String {
 
 fn cache_row(name: &str, s: &Summary) {
     println!(
-        "  {:<26} {:>6} {:>6} {:>10} {:>9} {:>5} {:>8} {:>9}",
+        "  {:<26} {:>6} {:>6} {:>10} {:>9} {:>5} {:>8} {:>9} {:>8}",
         name,
         s.calls,
         pct(s.hit_rate()),
@@ -179,6 +179,9 @@ fn cache_row(name: &str, s: &Summary) {
         } else {
             "·".into()
         },
+        s.typed_ttft_s()
+            .map(|t| format!("{t:.2}"))
+            .unwrap_or_else(|| "·".into()),
     );
 }
 
@@ -189,8 +192,8 @@ fn print_cache(groups: &BTreeMap<Config, Vec<&RunResult>>) {
         return;
     }
     println!(
-        "\nprompt cache{:<16} {:>6} {:>6} {:>10} {:>9} {:>5} {:>8} {:>9}",
-        "", "calls", "hit", "prefill/c", "pf s/c", "cold", "rewrites", "reopened"
+        "\nprompt cache{:<16} {:>6} {:>6} {:>10} {:>9} {:>5} {:>8} {:>9} {:>8}",
+        "", "calls", "hit", "prefill/c", "pf s/c", "cold", "rewrites", "reopened", "typed s"
     );
     let mut cold = Vec::new();
     for ((model, mode), runs) in groups {

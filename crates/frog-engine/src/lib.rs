@@ -57,6 +57,8 @@ pub mod sidecar;
 pub mod skills;
 pub mod subagent;
 pub mod summary;
+#[cfg(test)]
+mod test_watchdog;
 mod text_filter;
 pub mod thinking;
 pub mod next;
