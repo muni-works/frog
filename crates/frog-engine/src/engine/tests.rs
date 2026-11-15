@@ -14085,3 +14085,306 @@ fn edits_and_passing_checks_count_as_progress_reads_and_failures_dont() {
     assert!(!progressed(&call("Bash", json!({ "command": "grep -rn x ." })), &res("x", false)));
     assert!(!progressed(&call("Read", json!({})), &res("x", false)));
 }
+
+// --- Warm-ups (`Op::Warm`, docs/design/zero-prefill.md) -----------------------------------
+
+/// An engine on a scripted server that prefills: what it was asked to warm, and what it was
+/// sent. With `gate`, warm-ups pend until the test opens it.
+fn engine_warm(
+    script: Vec<Response>,
+    gate: Option<Arc<std::sync::atomic::AtomicBool>>,
+    hold: Option<Arc<(std::sync::atomic::AtomicBool, std::sync::atomic::AtomicBool)>>,
+) -> (
+    Handle,
+    Arc<Mutex<Vec<String>>>,
+    Arc<Mutex<Vec<scripted::Prefilled>>>,
+) {
+    let dir = tmp_store();
+    let mut profile = Profile::new(ProviderKind::Ollama, "test");
+    profile.tool_mode = ToolMode::Native;
+    let opts = Options {
+        cfg: Config {
+            hermetic: true,
+            ..Config::default()
+        },
+        profile_name: "test".into(),
+        profile,
+        cwd: dir.clone(),
+        mode: Mode::AcceptEdits,
+        can_ask: true,
+        resume: None,
+        store: Some(dir),
+        sandbox: false,
+        rich: false,
+        subagent: false,
+        chat: false,
+    };
+    let (mut client, prefills) = scripted::Client::new(script).with_prefill();
+    client.prefill_gate = gate;
+    client.hold = hold;
+    let sent = client.sent.clone();
+    (
+        start(opts, Provider::Scripted(client)).unwrap(),
+        sent,
+        prefills,
+    )
+}
+
+/// Wait (a few seconds at most) until the server has seen `n` warm-ups.
+async fn warmed(
+    prefills: &Arc<Mutex<Vec<scripted::Prefilled>>>,
+    n: usize,
+) -> Vec<scripted::Prefilled> {
+    for _ in 0..1000 {
+        let got = prefills.lock().unwrap().clone();
+        if got.len() >= n {
+            return got;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    panic!("expected {n} warm-ups, got {:?}", prefills.lock().unwrap());
+}
+
+fn warm(h: &Handle, draft: Option<&str>) {
+    h.ops
+        .send(Op::Warm {
+            draft: draft.map(String::from),
+        })
+        .unwrap();
+}
+
+/// The bet itself: what the composer warmed while the user typed is exactly the start of the
+/// request their message sends, so the server prefills nothing it already read. Keyed by the
+/// session, so the server warms this conversation's slot.
+#[tokio::test]
+async fn a_warmed_draft_is_the_prefix_of_the_turn_that_sends_it() {
+    let script = vec![
+        reply(vec![text("hello")], Stop::End),
+        reply(vec![text("fixed")], Stop::End),
+    ];
+    let (mut h, sent, prefills) = engine_warm(script, None, None);
+    let sid = run(&mut h, "hi").await[0].session.clone();
+    warm(&h, Some("fix the bug in parse"));
+    let got = warmed(&prefills, 1).await;
+    assert_eq!(got[0].key.as_deref(), Some(sid.as_str()));
+    assert!(got[0].request.contains("fix the bug in parse"));
+    h.ops
+        .send(Op::Submit {
+            text: "fix the bug in parse".into(),
+            images: Vec::new(),
+            more: Vec::new(),
+        })
+        .unwrap();
+    let calls = calls(&until_idle(&mut h).await);
+    let sent = sent.lock().unwrap().clone();
+    assert_eq!(sent.len(), 2);
+    assert_eq!(
+        sent[1], got[0].request,
+        "the turn sends exactly what was warmed"
+    );
+    // And the call says so (`frog bench` reads it): it only appended to the warm-up.
+    assert_eq!(calls[0].extends, Some(true));
+    shutdown(h).await;
+}
+
+/// Warming before the first message of a session: the system prompt and tools are the
+/// conversation, and the draft is its first message.
+#[tokio::test]
+async fn a_new_sessions_first_message_is_warmed_too() {
+    let script = vec![reply(vec![text("hi")], Stop::End)];
+    let (mut h, sent, prefills) = engine_warm(script, None, None);
+    while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+    // Nothing to warm yet: an empty conversation and no draft.
+    warm(&h, None);
+    warm(&h, Some("what does this repo do"));
+    let got = warmed(&prefills, 1).await;
+    run_no_wait(&mut h, "what does this repo do").await;
+    assert_eq!(
+        prefills.lock().unwrap().len(),
+        1,
+        "the bare warm sent nothing"
+    );
+    assert_eq!(sent.lock().unwrap()[0], got[0].request);
+    shutdown(h).await;
+}
+
+/// Submit and collect through `Idle`, without first waiting for one.
+async fn run_no_wait(h: &mut Handle, prompt: &str) -> Vec<Envelope> {
+    h.ops
+        .send(Op::Submit {
+            text: prompt.into(),
+            images: Vec::new(),
+            more: Vec::new(),
+        })
+        .unwrap();
+    until_idle(h).await
+}
+
+/// Shell output waiting to go along with the next message (`!cmd`) is part of what's warmed,
+/// ahead of the words, as the turn will send it.
+#[tokio::test]
+async fn a_warm_up_carries_pending_shell_output() {
+    let script = vec![
+        reply(vec![text("hello")], Stop::End),
+        reply(vec![text("seen")], Stop::End),
+    ];
+    let (mut h, sent, prefills) = engine_warm(script, None, None);
+    run(&mut h, "hi").await;
+    h.ops
+        .send(Op::Shell {
+            command: "echo pending-output".into(),
+        })
+        .unwrap();
+    until_idle(&mut h).await;
+    warm(&h, Some("why did that print"));
+    let got = warmed(&prefills, 1).await;
+    assert!(got[0].request.contains("pending-output"));
+    run_no_wait(&mut h, "why did that print").await;
+    assert_eq!(sent.lock().unwrap()[1], got[0].request);
+    shutdown(h).await;
+}
+
+/// Typing sends a warm-up after every pause. While one runs, newer drafts replace the one
+/// waiting: the server works on the latest text, never a backlog of stale ones.
+#[tokio::test]
+async fn drafts_typed_during_a_warm_up_coalesce_to_the_latest() {
+    let gate = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let script = vec![reply(vec![text("hello")], Stop::End)];
+    let (mut h, _sent, prefills) = engine_warm(script, Some(gate.clone()), None);
+    run(&mut h, "hi").await;
+    warm(&h, Some("fix"));
+    warm(&h, Some("fix the"));
+    warm(&h, Some("fix the parser"));
+    // Let the ops land before the first warm-up gets through.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    gate.store(true, std::sync::atomic::Ordering::SeqCst);
+    let got = warmed(&prefills, 2).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let got_all = prefills.lock().unwrap().clone();
+    assert_eq!(got_all.len(), 2, "{got_all:?}");
+    assert!(got[0].request.contains("\"fix\""));
+    assert!(got[1].request.contains("fix the parser"));
+    shutdown(h).await;
+}
+
+/// Sending the message makes a draft still waiting to warm stale: the turn's own call warms
+/// the slot, and a late warm-up of an older draft would only rewind it.
+#[tokio::test]
+async fn sending_drops_a_draft_still_waiting_to_warm() {
+    let gate = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let script = vec![
+        reply(vec![text("hello")], Stop::End),
+        reply(vec![text("done")], Stop::End),
+    ];
+    let (mut h, _sent, prefills) = engine_warm(script, Some(gate.clone()), None);
+    run(&mut h, "hi").await;
+    warm(&h, Some("first draft"));
+    warm(&h, Some("second draft"));
+    run_no_wait(&mut h, "what I sent").await;
+    gate.store(true, std::sync::atomic::Ordering::SeqCst);
+    warmed(&prefills, 1).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let got = prefills.lock().unwrap().clone();
+    assert_eq!(
+        got.len(),
+        1,
+        "only the warm-up already running went out: {got:?}"
+    );
+    assert!(got[0].request.contains("first draft"));
+    shutdown(h).await;
+}
+
+/// Mid-turn the server is busy with the turn, which leaves the slot warm: a draft typed then
+/// isn't sent (it would queue behind the turn's calls). It goes once the turn is over, on top
+/// of the conversation as the turn left it, since the composer won't send the same text again.
+#[tokio::test]
+async fn a_draft_typed_mid_turn_is_warmed_when_the_turn_ends() {
+    let hold = Arc::new((
+        std::sync::atomic::AtomicBool::new(true),
+        std::sync::atomic::AtomicBool::new(false),
+    ));
+    let script = vec![
+        reply(vec![text("done")], Stop::End),
+        reply(vec![text("next")], Stop::End),
+    ];
+    let (mut h, sent, prefills) = engine_warm(script, None, Some(hold.clone()));
+    while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+    h.ops
+        .send(Op::Submit {
+            text: "go".into(),
+            images: Vec::new(),
+            more: Vec::new(),
+        })
+        .unwrap();
+    while sent.lock().unwrap().is_empty() {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    warm(&h, Some("typed while it works"));
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(
+        prefills.lock().unwrap().is_empty(),
+        "nothing warms mid-turn"
+    );
+    hold.1.store(true, std::sync::atomic::Ordering::SeqCst);
+    until_idle(&mut h).await;
+    let got = warmed(&prefills, 1).await;
+    assert!(got[0].request.contains("typed while it works"));
+    assert!(
+        got[0].request.contains("done"),
+        "warmed after the turn's reply"
+    );
+    run_no_wait(&mut h, "typed while it works").await;
+    assert_eq!(sent.lock().unwrap()[1], got[0].request);
+    shutdown(h).await;
+}
+
+/// A message sent while the turn runs supersedes the draft typed before it: that draft is
+/// never warmed (it would rewind the slot the follow-up's turn just filled).
+#[tokio::test]
+async fn a_message_sent_mid_turn_makes_the_held_draft_stale() {
+    let hold = Arc::new((
+        std::sync::atomic::AtomicBool::new(true),
+        std::sync::atomic::AtomicBool::new(false),
+    ));
+    let script = vec![
+        reply(vec![text("done")], Stop::End),
+        reply(vec![text("next")], Stop::End),
+    ];
+    let (mut h, sent, prefills) = engine_warm(script, None, Some(hold.clone()));
+    while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+    h.ops
+        .send(Op::Submit {
+            text: "go".into(),
+            images: Vec::new(),
+            more: Vec::new(),
+        })
+        .unwrap();
+    while sent.lock().unwrap().is_empty() {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    warm(&h, Some("half a thought"));
+    h.ops
+        .send(Op::Submit {
+            text: "the whole thought".into(),
+            images: Vec::new(),
+            more: Vec::new(),
+        })
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    hold.1.store(true, std::sync::atomic::Ordering::SeqCst);
+    while sent.lock().unwrap().len() < 2 {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    until_idle(&mut h).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(
+        prefills
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|p| !p.request.contains("half a thought")),
+        "{:?}",
+        prefills.lock().unwrap()
+    );
+    shutdown(h).await;
+}

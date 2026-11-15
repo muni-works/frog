@@ -405,8 +405,13 @@ struct Shared {
     journal: Arc<Journal>,
     /// Terminal and preview panes, driven by the router so they work mid-turn.
     panes: Arc<crate::panes::Panes>,
-    /// The agent is handling an op (a turn, mostly); the router drops `Warm` meanwhile.
+    /// The agent is handling an op (a turn, mostly); the router holds `Warm` meanwhile.
     working: AtomicBool,
+    /// The latest `Warm` that came in mid-turn (its draft, if any): the turn keeps the
+    /// server busy and its slot warm, so it isn't sent then, but the composer won't send
+    /// the same draft again, so it goes once the turn is over and the engine is about to
+    /// idle. A message sent meanwhile makes it stale.
+    late_warm: Mutex<Option<Option<String>>>,
     /// Background tasks, jobs and monitors (see `background`).
     bg: Arc<crate::background::Registry>,
     /// The IRC agent bus, when the engine posts to one (`SetClientCaps { irc }`). The engine
@@ -673,6 +678,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         kids: Default::default(),
         ready: Default::default(),
         working: Default::default(),
+        late_warm: Default::default(),
         bg: {
             let j = journal.clone();
             crate::background::Registry::new(move |e| j.emit(e))
@@ -848,8 +854,11 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                 Op::DrainAbort => {
                     *router.draining.lock().unwrap() = None;
                 }
-                // Mid-turn the server is busy with the turn itself, which leaves it warm.
-                Op::Warm { .. } if router.working.load(Ordering::Relaxed) => {}
+                // Mid-turn the server is busy with the turn itself, which leaves it warm; the
+                // draft waits for the turn to end (`late_warm`).
+                Op::Warm { draft } if router.working.load(Ordering::Relaxed) => {
+                    *router.late_warm.lock().unwrap() = Some(draft);
+                }
                 // Stopping mid-turn ends the turn first (cancelled, and logged as such), rather
                 // than waiting behind it: a client that stops an engine gives it about a second
                 // before killing it, and a turn cut off there would stay open in the log.
@@ -1157,6 +1166,8 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                 continue;
             }
             shared.working.store(true, Ordering::Relaxed);
+            // One held from before this op is stale now.
+            shared.late_warm.lock().unwrap().take();
             agent.meter_busy(true);
             let token = CancellationToken::new();
             *shared.cancel.lock().unwrap() = token.clone();
@@ -1240,6 +1251,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             // before the engine goes idle — the first is its input, the rest as `more`, in
             // order, each with its images. Never lost.
             let parked = take_submitted(&shared);
+            let late = shared.late_warm.lock().unwrap().take();
             if !parked.is_empty() {
                 let mut parts = parked.into_iter();
                 let first = parts.next().expect("checked non-empty");
@@ -1257,6 +1269,11 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             {
                 held = Some(Op::Wake);
                 continue;
+            }
+            // The draft typed while the turn ran, warmed on top of the conversation as the
+            // turn left it.
+            if let Some(draft) = late {
+                agent.warm(draft.as_deref());
             }
             agent.emit(Event::Idle);
             agent.meter_busy(false);

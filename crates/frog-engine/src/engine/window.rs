@@ -546,7 +546,7 @@ Not saved: the next session starts on {from} again"
             return;
         };
         *self.sent.lock().unwrap() = flatten(req.system, req.tools, req.messages);
-        let prefill: Warming = Box::pin(prefill);
+        let prefill: Warming = prefill;
         let mut w = self.warming.lock().unwrap();
         if w.0 {
             w.1 = Some(prefill);
