@@ -1,6 +1,8 @@
 import SwiftUI
 
+#if DEBUG
 /// Preview-only Pond concept. Deliberately uses local fake data and has no engine side effects.
+/// Debug builds only: the release app ships no mock.
 struct PondMock: View {
     @State private var expanded: Set<String> = ["infra"]
 
@@ -141,3 +143,4 @@ struct PondMock: View {
         .padding()
         .background(Color(nsColor: .windowBackgroundColor))
 }
+#endif
