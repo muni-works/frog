@@ -11,6 +11,9 @@ load_claude_md = true
 # Start Read, Grep and Glob calls as soon as their arguments arrive, while the model is still
 # writing the rest of its reply. Same results; less waiting.
 # early_tools = true
+# When your Frog Cloud model stays busy through every retry, let another Frog Cloud model answer
+# that step (the transcript says so) instead of ending the turn. false: never swap the model.
+# cloud_fallback = true
 
 # WebSearch backend: "searxng", "brave", "exa" or "tavily". Keys: `frog --set-key brave` (stdin),
 # or BRAVE_SEARCH_API_KEY / EXA_API_KEY / TAVILY_API_KEY. Unconfigured, WebSearch isn't offered.
