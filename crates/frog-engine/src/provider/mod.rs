@@ -444,9 +444,12 @@ impl Provider {
     pub fn prefill(
         &self,
         req: &Request,
-    ) -> Option<impl std::future::Future<Output = Result<()>> + Send + 'static> {
+    ) -> Option<std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'static>>>
+    {
         match self {
-            Self::OpenAi(c) => Some(c.prefill(req)),
+            Self::OpenAi(c) => Some(Box::pin(c.prefill(req))),
+            #[cfg(test)]
+            Self::Scripted(c) if c.prefills.is_some() => Some(Box::pin(c.prefill(req))),
             _ => None,
         }
     }
@@ -478,6 +481,12 @@ impl Provider {
             // `prompt_cache_keys` tell placement which node holds it.
             Self::Node(_) => Extensions {
                 cache_key: true,
+                ..Extensions::default()
+            },
+            #[cfg(test)]
+            Self::Scripted(c) => Extensions {
+                cache_key: c.prefills.is_some(),
+                prefill: c.prefills.is_some(),
                 ..Extensions::default()
             },
             _ => Extensions::default(),
