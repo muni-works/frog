@@ -183,7 +183,7 @@ Per class, in `engine.rs`'s test harness (`engine_perm_cfg`, scripted classifier
 7. roll-up counts: one of each path → `Op::ApprovalDigest` returns 1/1/1 (+ never-delegable).
 8. all #95 approval tests still pass unchanged.
 9. egress ask in auto with `egress-widen` granted → `DelegateApproval` to the chief, no card; the approval runs the call with the hosts granted (`egress_tests::an_egress_ask_routes_to_the_chief_when_the_class_is_granted`).
-10. egress ask with no grant, or a grant list without `egress-widen` → the card, no chief (`…::an_egress_ask_cards_the_user_without_the_grant`).
-11. `rm -rf` outside scratch that also names `allow_hosts` → Cam's card, chief never asked, even with both grants (`…::a_never_delegable_egress_ask_still_cards_the_user`).
+10. egress ask with no grant, or a grant list without `egress-widen` → in auto mode, denied without a card, no chief (`…::an_egress_ask_is_denied_without_the_grant`).
+11. `rm -rf` outside scratch that also names `allow_hosts` → denied in auto mode, chief never asked, even with both grants (`…::a_never_delegable_egress_ask_is_denied_without_the_chief`).
 12. second pass fails → `fallback` layer, card, chief never asked (`a_failed_second_pass_cards`).
 13. broker: the chief answers a pending card (decision reaches the engine, `delegated:chief` row), a stranger is refused, a session can't answer its own (`SessionBrokerTests.testTheChiefAnswersAPendingCardAndNobodyElseCan`, `testAParentAnswersItsChildsPendingCard`).

@@ -6995,10 +6995,11 @@ mod egress_tests {
         }
     }
 
-    /// `allow_hosts` asks under an enforced list in auto (and default, accept-edits), and the
+    /// `allow_hosts` asks under an enforced list in default mode (and accept-edits), and the
     /// answer is the grant: Allow covers that one run, "always" the rest of the session.
-    /// Leaving the sandbox asks too, and headless both are denied. Yolo never asks: see
-    /// `yolo_never_cards_on_egress`.
+    /// Leaving the sandbox asks too, and headless both are denied. Auto mode never asks (see
+    /// `an_egress_ask_is_denied_without_the_grant`); yolo never asks either (see
+    /// `yolo_never_cards_on_egress`).
     #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn an_explicit_grant_unblocks_one_call_or_adds_the_host() {
@@ -7018,7 +7019,7 @@ mod egress_tests {
                 reply(vec![text("ok")], Stop::End),
             ],
             true,
-            Mode::Auto,
+            Mode::Default,
         );
         submit(&mut h, "fetch").await;
         let mut evs = Vec::new();
@@ -7076,7 +7077,7 @@ mod egress_tests {
         assert!(!tool_output(&evs, "after_always").contains("frog blocked"));
         let _ = std::fs::remove_dir_all(dir);
 
-        // Leaving the sandbox past an enforced list asks in auto too; headless, it's denied.
+        // Leaving the sandbox past an enforced list asks too; headless, it's denied.
         // The command must not be a routine local step: where a shell sandbox exists
         // (macOS), `echo hi` + `unsandboxed` is a needless escape and gets that wording.
         let (mut h, dir) = egress_engine(
@@ -7088,7 +7089,7 @@ mod egress_tests {
                 reply(vec![text("ok")], Stop::End),
             ],
             true,
-            Mode::Auto,
+            Mode::Default,
         );
         submit(&mut h, "go").await;
         loop {
@@ -7431,11 +7432,11 @@ mod egress_tests {
         );
     }
 
-    /// Without the grant (no chief, or a chief that doesn't hold `egress-widen`) the
-    /// egress card reaches the user exactly as before.
+    /// Without the grant (no chief, or a chief that doesn't hold `egress-widen`) auto mode
+    /// denies the egress ask: no chief, no card, and the model is told why.
     #[cfg(target_os = "macos")]
     #[tokio::test]
-    async fn an_egress_ask_cards_the_user_without_the_grant() {
+    async fn an_egress_ask_is_denied_without_the_grant() {
         for classes in [Vec::new(), vec!["scratch-deletes".to_string()]] {
             let (mut h, dir) = egress_engine_with(
                 vec![
@@ -7457,21 +7458,23 @@ mod egress_tests {
             let (evs, asked_chief, carded) = run_turn(&mut h, None, Decision::Deny).await;
             shutdown(h).await;
             let _ = std::fs::remove_dir_all(dir);
-            assert_eq!((asked_chief, carded), (0, 1), "{classes:?}");
+            assert_eq!((asked_chief, carded), (0, 0), "{classes:?}");
+            assert_eq!(outcome_of(&evs, "hosts"), Some(ToolOutcome::Denied), "{classes:?}");
             assert_eq!(
                 layers(&evs, "hosts").first(),
-                Some(&("ask".to_string(), "ask".to_string())),
+                Some(&("auto-mode".to_string(), "deny".to_string())),
                 "{classes:?}"
             );
+            assert!(tool_output(&evs, "hosts").contains("auto mode denied"), "{classes:?}");
         }
     }
 
     /// A call that both widens egress and is never-delegable (`rm -rf` outside the
-    /// session's scratch) cards the user even with `egress-widen` granted: the hard class
-    /// wins, and the chief is never asked.
+    /// session's scratch) is denied even with `egress-widen` granted: the hard class wins,
+    /// the chief is never asked, and auto mode has no card to fall back to.
     #[cfg(target_os = "macos")]
     #[tokio::test]
-    async fn a_never_delegable_egress_ask_still_cards_the_user() {
+    async fn a_never_delegable_egress_ask_is_denied_without_the_chief() {
         let theirs = format!("/var/tmp/deleg-egress-{}", new_id());
         let (mut h, dir) = egress_engine_with(
             vec![
@@ -7498,11 +7501,11 @@ mod egress_tests {
         shutdown(h).await;
         let _ = std::fs::remove_dir_all(dir);
         assert_eq!(asked_chief, 0, "the chief was asked about a never-delegable call");
-        assert_eq!(carded, 1);
+        assert_eq!(carded, 0, "auto mode never cards");
         assert_eq!(outcome_of(&evs, "rm"), Some(ToolOutcome::Denied));
         assert_eq!(
             layers(&evs, "rm").first(),
-            Some(&("never-delegable".to_string(), "ask".to_string())),
+            Some(&("never-delegable".to_string(), "deny".to_string())),
             "{:?}",
             layers(&evs, "rm")
         );
@@ -10919,8 +10922,8 @@ async fn auto_mode_falls_back_to_the_fast_path_when_the_classifier_fails() {
             vec![Block::ToolUse {
                 id: "w".into(),
                 name: "Bash".into(),
-                // Not a routine build step: provenance can't pass it, so
-                // with the classifier down it asks.
+                // Not a routine build step: provenance can't pass it, so with the
+                // classifier down no rule can prove it harmless — auto mode denies it.
                 input: json!({ "command": "python3 -c 'print(1)' > made-up-file" }),
             }],
             Stop::ToolUse,
@@ -10928,34 +10931,8 @@ async fn auto_mode_falls_back_to_the_fast_path_when_the_classifier_fails() {
         reply(vec![text("done")], Stop::End),
     ];
     let mut h = engine_perm(script, Mode::Auto, Some("nonexistent/no-classifier"));
-    while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
-    h.ops
-        .send(Op::Submit {
-            text: "go".into(),
-            images: Vec::new(),
-            more: Vec::new(),
-        })
-        .unwrap();
-    let mut evs = Vec::new();
-    let mut asked = 0;
-    loop {
-        let env = h.events.recv().await.unwrap();
-        let idle = matches!(env.event, Event::Idle);
-        if let Event::PermissionRequest { id, .. } = &env.event {
-            asked += 1;
-            h.ops
-                .send(Op::Permission {
-                    id: id.clone(),
-                    decision: Decision::Deny,
-                    note: None,
-                })
-                .unwrap();
-        }
-        evs.push(env);
-        if idle {
-            break;
-        }
-    }
+    let evs = run(&mut h, "go").await;
+    shutdown(h).await;
     // The read-only command ran without asking: the fast path is checked
     // before any model call, so a down classifier can't block it.
     let read_only_ran = evs.iter().any(|e| matches!(
@@ -10963,12 +10940,16 @@ async fn auto_mode_falls_back_to_the_fast_path_when_the_classifier_fails() {
             Event::ItemCompleted { ref id, item: Item::ToolCall { outcome: ToolOutcome::Ok, .. }, .. } if id == "ro"
         ));
     assert!(read_only_ran, "the read-only call ran");
-    // …the write asked…
-    assert_eq!(asked, 1, "the write asked");
+    // …the write was denied without a card, and the reason is the outage, not "dangerous".
+    assert_eq!(asked(&evs), 0, "auto mode never cards: {:?}", names(&evs));
+    assert_eq!(outcome_of(&evs, "w"), Some(ToolOutcome::Denied));
+    let out = tool_output(&evs, "w").unwrap();
+    assert!(out.contains("auto mode denied"), "{out}");
+    assert!(out.contains("switch to default mode"), "{out}");
     // …and the failure was logged once, not per call.
     let notices = evs
             .iter()
-            .filter(|e| matches!(&e.event, Event::Notice { message, .. } if message.contains("classifier") && message.contains("is down")))
+            .filter(|e| matches!(&e.event, Event::Notice { message, .. } if message.contains("classifier") && message.contains("is down") && !message.contains("auto mode denied")))
             .count();
     assert_eq!(notices, 1, "one classifier-failure notice");
 }
@@ -11079,8 +11060,8 @@ fn classifier_cfg(base: &str, fallback: Option<&str>) -> Config {
 
 /// Item 1 (org reliability): with the classifier unreachable, a read-only call the
 /// classifier would have judged runs on the built-in rules with no card, a delete of
-/// scratch the session didn't make still cards, and the outage is one notice, not one
-/// per call.
+/// scratch the session didn't make is denied (auto mode never cards), and the outage is
+/// one notice, not one per call.
 #[tokio::test]
 async fn an_unreachable_classifier_falls_back_to_the_rules_not_to_cards() {
     let script = vec![
@@ -11123,24 +11104,22 @@ async fn an_unreachable_classifier_falls_back_to_the_rules_not_to_cards() {
         &e.event,
         Event::AutoApproved { item, reason } if item == "shot" && reason.contains("rules decided")
     )));
+    assert!(!carded("rm"), "auto mode never cards: {:?}", names(&evs));
+    // The deny says which rule gap kept it from running, not just that the classifier is down.
+    let outcome = outcome_of(&evs, "rm");
+    assert_eq!(outcome, Some(ToolOutcome::Denied));
+    let out = tool_output(&evs, "rm").unwrap_or_default();
     assert!(
-        carded("rm"),
-        "a delete outside its own scratch must still card"
-    );
-    // The card says which rule gap made it ask, not just that the classifier is down.
-    let reason = evs.iter().find_map(|e| match &e.event {
-        Event::PermissionRequest { item, reason, .. } if item == "rm" => reason.clone(),
-        _ => None,
-    });
-    assert!(
-        reason
-            .unwrap_or_default()
-            .contains("no built-in rule covers it")
+        out.contains("no built-in rule covers it"),
+        "{out}"
     );
     let notices: Vec<&str> = evs
         .iter()
         .filter_map(|e| match &e.event {
-            Event::Notice { message, .. } if message.contains("classifier") => {
+            // The outage line itself, not the per-call auto-mode deny lines.
+            Event::Notice { message, .. }
+                if message.contains("classifier") && !message.starts_with("auto mode denied") =>
+            {
                 Some(message.as_str())
             }
             _ => None,
@@ -11431,21 +11410,18 @@ async fn auto_mode_lets_a_build_touch_only_its_own_scratch() {
             )),
             "the scratch build ran without asking"
         );
+
+
+    // …and nothing else was permitted to run outside: auto mode denies, it never asks.
     assert!(
         !evs.iter().any(|e| matches!(
             e.event,
-            Event::PermissionRequest { ref item, .. } if item == "build"
+            Event::PermissionRequest { .. }
         )),
-        "the scratch build never asked"
+        "auto mode never cards: {:?}",
+        names(&evs)
     );
-    // …and nothing else was permitted to run outside.
-    assert!(
-        evs.iter().any(|e| matches!(
-            e.event,
-            Event::PermissionRequest { ref item, .. } if item == "outside"
-        )),
-        "the outside command asked"
-    );
+    assert_eq!(outcome_of(&evs, "outside"), Some(ToolOutcome::Denied));
     let _ = std::fs::remove_dir_all("/private/tmp/skittish-test-target");
 }
 
@@ -12059,7 +12035,8 @@ async fn a_call_denied_twice_in_a_session_is_auto_denied_after() {
 
 /// (6) Auto mode: a Write to a fresh file under the shared temp dir is the session's own
 /// scratch and runs without a card (it used to card as "writes outside the project");
-/// overwriting a temp file someone else made still asks.
+/// overwriting a temp file someone else made is denied, not carded — auto mode never asks
+/// (Cam, 2026-11-12), it denies and says why to the model.
 #[tokio::test]
 async fn auto_mode_writes_its_own_fresh_temp_scratch_without_a_card() {
     // Scratch in the OS temp dir, which is what the scratch rules key on everywhere
@@ -12107,9 +12084,170 @@ async fn auto_mode_writes_its_own_fresh_temp_scratch_without_a_card() {
         names(&evs)
     );
     assert_eq!(fresh_ok.as_deref(), Some("mine\n"));
-    assert_eq!(asked(&evs), 1, "only the existing temp file should ask");
+    assert_eq!(asked(&evs), 0, "auto mode never cards: {:?}", names(&evs));
     assert_eq!(outcome_of(&evs, "theirs"), Some(ToolOutcome::Denied));
     assert_eq!(theirs_now.as_deref(), Some("someone else's\n"));
+    // The deny is the engine's, not the person's, and it says so on the record.
+    assert!(
+        evs.iter().any(|e| matches!(
+            &e.event,
+            Event::PermissionDecision { item, layer, outcome, .. }
+                if item == "theirs" && layer == "auto-mode" && outcome == "deny"
+        )),
+        "{:?}",
+        names(&evs)
+    );
+    // The model is told why and what to do instead.
+    let out = tool_output(&evs, "theirs").unwrap();
+    assert!(out.contains("auto mode denied"), "{out}");
+    assert!(out.contains("switch to default mode"), "{out}");
+    // The person gets one quiet line, not a card.
+    let all = notices(&evs);
+    assert!(
+        all.iter().any(|n| n.starts_with("auto mode denied") && n.contains("default mode")),
+        "{all:?}"
+    );
+}
+
+/// Auto mode never prompts: a call its classifier flags is denied, the model is told
+/// why and how to proceed, and the person gets one quiet line instead of a card
+/// (Cam, 2026-11-12: "in auto mode we shouldn't prompt for permission, just deny and
+/// move on"). Reverting the deny at `permit` turns this red: the call cards instead.
+#[tokio::test]
+async fn auto_mode_denies_a_flagged_call_instead_of_carding() {
+    let id = new_id();
+    let host = format!("box-{id}-flagged");
+    crate::auto::script_judge(&host, crate::auto::Verdict::Ask("remote shell".into()));
+    crate::auto::script_rejudge(
+        &format!("{host} — remote host not seen earlier"),
+        crate::auto::Verdict::Ask("a host this session didn't create".into()),
+    );
+    let script = vec![
+        bash_call("ssh", &format!("ssh -o ConnectTimeout=1 root@{host} true")),
+        reply(vec![text("done")], Stop::End),
+    ];
+    let mut h = engine_deleg(script, None);
+    let evs = loop_collect(&mut h, |_, _| {}).await;
+    shutdown(h).await;
+    // No card, ever.
+    assert_eq!(asked(&evs), 0, "auto mode asked: {:?}", names(&evs));
+    assert_eq!(outcome_of(&evs, "ssh"), Some(ToolOutcome::Denied));
+    // The audit names auto mode, and never the person.
+    assert!(
+        evs.iter().any(|e| matches!(
+            &e.event,
+            Event::PermissionDecision { item, layer, outcome, .. }
+                if item == "ssh" && layer == "auto-mode" && outcome == "deny"
+        )),
+        "{:?}",
+        names(&evs)
+    );
+    assert!(
+        !evs.iter().any(|e| matches!(
+            &e.event,
+            Event::PermissionDecision { item, outcome, reason, .. }
+                if item == "ssh" && outcome == "deny" && reason.contains("the user denied")
+        )),
+        "the record must not claim the user denied it"
+    );
+    // The model gets the reason and the way out, so it can change course.
+    let out = tool_output(&evs, "ssh").unwrap();
+    assert!(out.contains("auto mode denied"), "{out}");
+    assert!(out.contains("switch to default mode"), "{out}");
+    assert!(out.contains("different approach"), "{out}");
+    // The person gets exactly one quiet line naming the call.
+    let all = notices(&evs);
+    let lines: Vec<&String> = all.iter().filter(|n| n.starts_with("auto mode denied")).collect();
+    assert_eq!(lines.len(), 1, "{all:?}");
+    assert!(lines[0].contains("default mode"), "{}", lines[0]);
+    // And the turn carried on rather than stopping on a frame the user never saw.
+    assert_eq!(ended(&evs), Some(EndReason::Complete));
+}
+
+/// The same flagged call twice in one turn: both are denied and both tool results carry
+/// the reason, but the person hears about it once — the notice is per call per turn, not
+/// per attempt. Dropping the `turn_denied_unasked` check in `denied_unasked` turns this red.
+#[tokio::test]
+async fn auto_mode_notices_a_repeated_denied_call_once_per_turn() {
+    let id = new_id();
+    let host = format!("box-{id}-again");
+    crate::auto::script_judge(&host, crate::auto::Verdict::Ask("remote shell".into()));
+    crate::auto::script_rejudge(
+        &format!("{host} — remote host not seen earlier"),
+        crate::auto::Verdict::Ask("a host this session didn't create".into()),
+    );
+    let cmd = format!("ssh -o ConnectTimeout=1 root@{host} true");
+    let script = vec![
+        bash_call("ssh", &cmd),
+        bash_call("again", &cmd),
+        reply(vec![text("done")], Stop::End),
+    ];
+    let mut h = engine_deleg(script, None);
+    let evs = loop_collect(&mut h, |_, _| {}).await;
+    shutdown(h).await;
+    assert_eq!(asked(&evs), 0, "auto mode asked: {:?}", names(&evs));
+    for item in ["ssh", "again"] {
+        assert_eq!(outcome_of(&evs, item), Some(ToolOutcome::Denied), "{item}");
+        let out = tool_output(&evs, item).unwrap();
+        assert!(out.contains("auto mode denied"), "{item}: {out}");
+    }
+    let all = notices(&evs);
+    let lines = all.iter().filter(|n| n.starts_with("auto mode denied")).count();
+    assert_eq!(lines, 1, "{all:?}");
+}
+
+/// `Verdict::Cam` (never-delegable in the second pass) folds into the same deny: in
+/// auto mode there's nobody to name, so it denies with the reason, not a card.
+#[tokio::test]
+async fn auto_mode_denies_a_verdict_cam_call_the_same_way() {
+    let id = new_id();
+    let host = format!("box-{id}-cam");
+    crate::auto::script_judge(&host, crate::auto::Verdict::Ask("remote shell".into()));
+    crate::auto::script_rejudge(
+        &format!("{host} — remote host not seen earlier"),
+        crate::auto::Verdict::Cam("only the user may allow this".into()),
+    );
+    let script = vec![
+        bash_call("ssh", &format!("ssh -o ConnectTimeout=1 root@{host} true")),
+        reply(vec![text("done")], Stop::End),
+    ];
+    let mut h = engine_deleg(script, None);
+    let evs = loop_collect(&mut h, |_, _| {}).await;
+    shutdown(h).await;
+    assert_eq!(asked(&evs), 0, "auto mode asked: {:?}", names(&evs));
+    assert_eq!(outcome_of(&evs, "ssh"), Some(ToolOutcome::Denied));
+    let out = tool_output(&evs, "ssh").unwrap();
+    assert!(out.contains("auto mode denied"), "{out}");
+}
+
+/// The other modes still card: the deny is auto mode's alone, and nothing about it
+/// peeled a card off default or accept-edits. (Yolo never asks by design; it's
+/// covered by its own tests.)
+#[tokio::test]
+async fn other_modes_still_card_a_flagged_call() {
+    for mode in [Mode::Default, Mode::AcceptEdits, Mode::Auto] {
+        let id = new_id();
+        let host = format!("box-{id}-modes");
+        crate::auto::script_judge(&host, crate::auto::Verdict::Ask("remote shell".into()));
+        crate::auto::script_rejudge(
+            &format!("{host} — remote host not seen earlier"),
+            crate::auto::Verdict::Ask("a host this session didn't create".into()),
+        );
+        let script = vec![
+            bash_call("ssh", &format!("ssh -o ConnectTimeout=1 root@{host} true")),
+            reply(vec![text("done")], Stop::End),
+        ];
+        let mut h = engine_perm(script, mode, Some("nonexistent/no-classifier"));
+        let evs = turn_answering(&mut h, |_| Some((Decision::Deny, None))).await;
+        shutdown(h).await;
+        let asked_it = asked(&evs);
+        if mode == Mode::Auto {
+            assert_eq!(asked_it, 0, "auto mode carded: {:?}", names(&evs));
+        } else {
+            assert_eq!(asked_it, 1, "{mode:?} stopped carding: {:?}", names(&evs));
+        }
+        assert_eq!(outcome_of(&evs, "ssh"), Some(ToolOutcome::Denied), "{mode:?}");
+    }
 }
 
 // ---- delegated approvals: the second pass (docs/design/delegation.md) ----
@@ -12247,15 +12385,16 @@ async fn rm_rf_outside_scratch_is_never_delegated() {
     let kept = dir.exists();
     let _ = std::fs::remove_dir_all(&dir);
     assert!(!asked_chief, "the chief was asked about rm -rf outside scratch");
-    assert_eq!(asked(&evs), 1);
+    assert_eq!(asked(&evs), 0, "auto mode never cards: {:?}", names(&evs));
     assert!(kept, "nothing was deleted");
     assert_eq!(outcome_of(&evs, "rm"), Some(ToolOutcome::Denied));
     let l = layers(&evs, "rm");
-    assert_eq!(l.first(), Some(&("never-delegable".to_string(), "ask".to_string())), "{l:?}");
+    assert_eq!(l.first(), Some(&("never-delegable".to_string(), "deny".to_string())), "{l:?}");
 }
 
 /// `ssh` into a host the session brought up (it's in an earlier tool result) is
-/// cleared by the second pass; `ssh` into a host it never saw keeps the card.
+/// cleared by the second pass; `ssh` into a host it never saw is denied, not carded —
+/// auto mode never asks (Cam, 2026-11-12).
 #[tokio::test]
 async fn ssh_into_its_own_scratch_runs_and_ssh_elsewhere_cards() {
     let id = new_id();
@@ -12279,17 +12418,20 @@ async fn ssh_into_its_own_scratch_runs_and_ssh_elsewhere_cards() {
         reply(vec![text("done")], Stop::End),
     ];
     let mut h = engine_deleg(script, None);
-    let evs = turn_answering(&mut h, |_| Some((Decision::Deny, None))).await;
+    let evs = loop_collect(&mut h, |_, _| {}).await;
     shutdown(h).await;
     assert_eq!(layers(&evs, "mine"), vec![("second-pass".into(), "allow".into())]);
     assert_ne!(outcome_of(&evs, "mine"), Some(ToolOutcome::Denied));
-    assert_eq!(asked(&evs), 1, "only the foreign host asked");
+    assert_eq!(asked(&evs), 0, "auto mode never cards: {:?}", names(&evs));
     assert_eq!(outcome_of(&evs, "other"), Some(ToolOutcome::Denied));
-    assert_eq!(layers(&evs, "other").first(), Some(&("second-pass".to_string(), "ask".to_string())));
+    assert_eq!(layers(&evs, "other").first(), Some(&("second-pass".to_string(), "deny".to_string())));
+    let out = tool_output(&evs, "other").unwrap();
+    assert!(out.contains("auto mode denied"), "{out}");
 }
 
-/// A second pass that errors keeps the flag: the card goes up (never fail-open), even
-/// when the chief's grants cover the call's soft class — an outage is not a route.
+/// A second pass that errors keeps the flag — never fail-open — but in auto mode a
+/// kept flag is a deny, not a card, even when the chief's grants cover the class
+/// (an outage is not a route).
 #[tokio::test]
 async fn a_failed_second_pass_cards() {
     let dir = scratch_path("err");
@@ -12313,14 +12455,17 @@ async fn a_failed_second_pass_cards() {
     shutdown(h).await;
     let kept = dir.exists();
     let _ = std::fs::remove_dir_all(&dir);
-    assert_eq!(asked(&evs), 1);
+    assert_eq!(asked(&evs), 0, "auto mode never cards: {:?}", names(&evs));
     assert!(kept);
     assert!(!asked_chief, "the chief was asked about a call the second pass couldn't judge");
+    assert_eq!(outcome_of(&evs, "rm"), Some(ToolOutcome::Denied));
     let reason = evs.iter().find_map(|e| match &e.event {
         Event::PermissionDecision { item, layer, reason, .. } if item == "rm" && layer == "fallback" => Some(reason.clone()),
         _ => None,
     });
     assert!(reason.as_deref().is_some_and(|r| r.contains("couldn't finish")), "{reason:?}");
+    let out = tool_output(&evs, "rm").unwrap();
+    assert!(out.contains("auto mode denied"), "{out}");
 }
 
 /// Still flagged and in the chief's grant list: the engine asks the client to
@@ -12358,7 +12503,7 @@ async fn chief_approval_delegates_the_flagged_call() {
     assert_eq!(asked(&evs), 0, "{:?}", names(&evs));
 }
 
-/// Chief unreachable (the broker errors): the card falls back to the user.
+/// Chief unreachable (the broker errors): auto mode denies the call rather than carding.
 #[tokio::test]
 async fn unreachable_chief_falls_back_to_a_card() {
     let dir = scratch_path("chief-dead");
@@ -12382,14 +12527,16 @@ async fn unreachable_chief_falls_back_to_a_card() {
     }).await;
     shutdown(h).await;
     let _ = std::fs::remove_dir_all(&dir);
-    assert_eq!(asked(&evs), 1, "{:?}", names(&evs));
+    assert_eq!(asked(&evs), 0, "auto mode never cards: {:?}", names(&evs));
     assert!(evs.iter().any(|e| matches!(&e.event,
-        Event::Notice { message, .. } if message.contains("delegated:chief: fell back to the user") && message.contains("chief folder is gone"))));
-    assert!(layers(&evs, "ssh").contains(&("delegated".into(), "ask".into())));
+        Event::Notice { message, .. } if message.contains("delegated:chief: fell back") && message.contains("chief folder is gone"))));
+    assert_eq!(outcome_of(&evs, "ssh"), Some(ToolOutcome::Denied));
+    let out = tool_output(&evs, "ssh").unwrap();
+    assert!(out.contains("auto mode denied"), "{out}");
 }
 
-/// A chief that never answers: after `chief_timeout_secs` the card falls back to the
-/// user; a broker-shaped JSON answer (`ResolveDelegated`) is honored, note and all.
+/// A chief that never answers: after `chief_timeout_secs` auto mode denies the call; a
+/// broker-shaped JSON answer (`ResolveDelegated`) is honored, note and all.
 #[tokio::test]
 async fn silent_chief_times_out_to_a_card_and_json_answers_are_honored() {
     for (tag, answer) in [("silent", None), ("json", Some(json!({"decision": "allow", "note": "its pod"})))] {
@@ -12415,9 +12562,10 @@ async fn silent_chief_times_out_to_a_card_and_json_answers_are_honored() {
         .await;
         shutdown(h).await;
         if answer.is_none() {
-            assert_eq!(asked(&evs), 1, "{:?}", names(&evs));
+            assert_eq!(asked(&evs), 0, "auto mode never cards: {:?}", names(&evs));
             assert!(evs.iter().any(|e| matches!(&e.event,
                 Event::Notice { message, .. } if message.contains("didn't answer in 1s"))));
+            assert_eq!(outcome_of(&evs, "ssh"), Some(ToolOutcome::Denied));
         } else {
             assert_eq!(asked(&evs), 0, "{:?}", names(&evs));
             let why = evs.iter().find_map(|e| match &e.event {
@@ -12461,7 +12609,8 @@ async fn chief_decline_denies_without_a_card() {
 }
 
 /// The digest roll-up counts each path once: a classifier allow, a chief
-/// approval, and a never-delegable card. `Op::ApprovalDigest` replies with today's counts.
+/// approval, and a never-delegable deny. `Op::ApprovalDigest` replies with today's counts.
+/// Auto mode shows no card, so the never-delegable call is counted and denied.
 #[tokio::test]
 async fn digest_counts_each_path() {
     let dir = scratch_path("digest");
@@ -12497,19 +12646,20 @@ async fn digest_counts_each_path() {
     };
     shutdown(h).await;
     let _ = std::fs::remove_dir_all(&dir);
-    assert_eq!(asked(&evs), 1, "{:?}", names(&evs));
+    assert_eq!(asked(&evs), 0, "auto mode never cards: {:?}", names(&evs));
     assert!(summary.contains("1 auto-allowed"), "{summary}");
     assert!(summary.contains("1 chief-approved"), "{summary}");
     assert!(summary.contains("1 blocked (1 never-delegable)"), "{summary}");
     assert!(summary.contains("(3 calls total)"), "{summary}");
-    // The first card of the day carries the roll-up, once.
+    assert_eq!(outcome_of(&evs, "push"), Some(ToolOutcome::Denied));
+    // The first blocked call of the day carries the roll-up, once.
     let daily = evs.iter().filter(|e| matches!(&e.event,
         Event::Notice { message, .. } if message.starts_with("approvals today:"))).count();
     assert_eq!(daily, 1);
 }
 
-/// A never-delegable call cards the user even when the chief's grants cover
-/// its soft shape (a force push is also a push to a remote).
+/// A never-delegable call never reaches the chief, even when its grants cover the call's
+/// soft shape (a force push is also a push to a remote); in auto mode it is denied.
 #[tokio::test]
 async fn a_chief_grant_never_routes_a_never_delegable_call() {
     let branch = format!("deleg-{}", new_id());
@@ -12526,8 +12676,9 @@ async fn a_chief_grant_never_routes_a_never_delegable_call() {
     let evs = loop_collect(&mut h, |_, tool| asked_chief |= tool == "DelegateApproval").await;
     shutdown(h).await;
     assert!(!asked_chief, "the chief was asked about a force push");
-    assert_eq!(asked(&evs), 1);
-    assert_eq!(layers(&evs, "push").first(), Some(&("never-delegable".to_string(), "ask".to_string())));
+    assert_eq!(asked(&evs), 0, "auto mode never cards: {:?}", names(&evs));
+    assert_eq!(outcome_of(&evs, "push"), Some(ToolOutcome::Denied));
+    assert_eq!(layers(&evs, "push").first(), Some(&("never-delegable".to_string(), "deny".to_string())));
 }
 
 #[tokio::test]
@@ -13289,6 +13440,7 @@ async fn prs_bind_from_gh_pr_create_and_by_hand() {
         .send(Op::Submit { text: "open a pr".into(), images: Vec::new(), more: Vec::new() })
         .unwrap();
     let mut sid = String::new();
+    let mut evs = Vec::new();
     loop {
         let env = h.events.recv().await.unwrap();
         sid = env.session.clone();
@@ -13297,17 +13449,31 @@ async fn prs_bind_from_gh_pr_create_and_by_hand() {
                 .send(Op::Permission { id: id.clone(), decision: Decision::Allow, note: None })
                 .unwrap();
         }
-        if matches!(env.event, Event::Idle) {
+        let idle = matches!(env.event, Event::Idle);
+        evs.push(env);
+        if idle {
             break;
         }
     }
+    // The bind below only happens when the `gh pr create` call ran; say so, don't hang.
+    assert_eq!(
+        outcome_of(&evs, "a"),
+        Some(ToolOutcome::Ok),
+        "{:?} {:?}",
+        tool_output(&evs, "a"),
+        names(&evs)
+    );
     h.ops
         .send(Op::BindPr { pr: crate::prs::PrBinding::new("o/other", 4) })
         .unwrap();
     h.ops.send(Op::UnbindPr { repo: "o/r".into(), number: 9 }).unwrap();
     let mut seen = 0;
     while seen < 2 {
-        if let Event::Prs { .. } = h.events.recv().await.unwrap().event {
+        let env = tokio::time::timeout(std::time::Duration::from_secs(30), h.events.recv())
+            .await
+            .expect("both PR list changes arrive")
+            .unwrap();
+        if let Event::Prs { .. } = env.event {
             seen += 1;
         }
     }
