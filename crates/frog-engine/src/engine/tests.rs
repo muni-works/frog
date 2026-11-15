@@ -11973,6 +11973,38 @@ async fn auto_mode_denies_a_flagged_call_instead_of_carding() {
     assert_eq!(ended(&evs), Some(EndReason::Complete));
 }
 
+/// The same flagged call twice in one turn: both are denied and both tool results carry
+/// the reason, but the person hears about it once — the notice is per call per turn, not
+/// per attempt. Dropping the `turn_denied_unasked` check in `denied_unasked` turns this red.
+#[tokio::test]
+async fn auto_mode_notices_a_repeated_denied_call_once_per_turn() {
+    let id = new_id();
+    let host = format!("box-{id}-again");
+    crate::auto::script_judge(&host, crate::auto::Verdict::Ask("remote shell".into()));
+    crate::auto::script_rejudge(
+        &format!("{host} — remote host not seen earlier"),
+        crate::auto::Verdict::Ask("a host this session didn't create".into()),
+    );
+    let cmd = format!("ssh -o ConnectTimeout=1 root@{host} true");
+    let script = vec![
+        bash_call("ssh", &cmd),
+        bash_call("again", &cmd),
+        reply(vec![text("done")], Stop::End),
+    ];
+    let mut h = engine_deleg(script, None);
+    let evs = loop_collect(&mut h, |_, _| {}).await;
+    shutdown(h).await;
+    assert_eq!(asked(&evs), 0, "auto mode asked: {:?}", names(&evs));
+    for item in ["ssh", "again"] {
+        assert_eq!(outcome_of(&evs, item), Some(ToolOutcome::Denied), "{item}");
+        let out = tool_output(&evs, item).unwrap();
+        assert!(out.contains("auto mode denied"), "{item}: {out}");
+    }
+    let all = notices(&evs);
+    let lines = all.iter().filter(|n| n.starts_with("auto mode denied")).count();
+    assert_eq!(lines, 1, "{all:?}");
+}
+
 /// `Verdict::Cam` (never-delegable in the second pass) folds into the same deny: in
 /// auto mode there's nobody to name, so it denies with the reason, not a card.
 #[tokio::test]
