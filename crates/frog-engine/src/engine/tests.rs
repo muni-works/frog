@@ -6135,6 +6135,61 @@ async fn clear_inbox_drops_queued_messages_so_a_stop_stays_stopped() {
     shutdown(h).await;
 }
 
+/// Issue #117: a parent's message to an engine-owned child that arrives mid-turn parks for
+/// the turn's next tool-call boundary (see the router's `Op::Deliver` arm). A stop with
+/// `clear_queue` (kids' StopSession sends `ClearInbox` + `Interrupt`) must void it too: the
+/// stand-down a manager sent just before stopping a worker must not restart that worker the
+/// moment its turn ends, which is how a finished worker kept issuing cards after the stop.
+#[tokio::test]
+async fn clear_inbox_drops_a_parked_parent_message_so_a_stop_stays_stopped() {
+    let script = vec![
+        reply(vec![list_sessions_call()], Stop::ToolUse),
+        reply(vec![text("re-issuing the push card")], Stop::End),
+    ];
+    let mut h = engine(script, true);
+    caps(&h, true);
+    while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+    h.ops
+        .send(Op::Submit {
+            text: "work".into(),
+            images: Vec::new(),
+            more: Vec::new(),
+        })
+        .unwrap();
+    let mut evs = Vec::new();
+    let mut cleared = false;
+    loop {
+        let env = h.events.recv().await.unwrap();
+        if let Event::SessionRequest { .. } = &env.event {
+            // Mid-turn: the parent's stand-down parks, then the stop clears the queue.
+            h.ops
+                .send(Op::Deliver {
+                    from: "parent".into(),
+                    from_name: "parent".into(),
+                    message: "stand down".into(),
+                })
+                .unwrap();
+            h.ops.send(Op::ClearInbox).unwrap();
+            h.ops.send(Op::Interrupt).unwrap();
+            cleared = true;
+        }
+        let idle = matches!(env.event, Event::Idle);
+        evs.push(env);
+        if idle && cleared {
+            break;
+        }
+    }
+    let started: Vec<String> = evs
+        .iter()
+        .filter_map(|e| match &e.event {
+            Event::TurnStarted { input, .. } => Some(input.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(started, ["work"], "a voided parent message started a turn");
+    shutdown(h).await;
+}
+
 #[tokio::test]
 async fn deliver_while_busy_waits_for_the_turn_boundary() {
     let script = vec![
