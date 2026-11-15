@@ -388,20 +388,29 @@ pub struct GitConfig {
     ///   that started in its own worktree, has commits ahead of its base, and has no PR yet.
     ///   `shouldOpenPR` (FrogKit) is that predicate; managers and read-only sessions are
     ///   excluded there, not here, because only the client knows the session tree.
-    /// - `auto`: **parsed and documented, deliberately not wired.** It behaves exactly like
-    ///   `ask` today. Opening a PR without being asked is the part worth getting right, and
-    ///   it stays unbuilt until `ask` has been used enough to say what it should do.
+    /// - `auto`: the engine opens a **draft** PR itself when a turn completes with nothing
+    ///   queued behind it: one push of the session's own branch and one `gh pr create
+    ///   --draft` against the remote's default branch, a standing grant for exactly those
+    ///   two commands (see `open_pr`). Workers (started by an agent), managers, read-only
+    ///   sessions and opted-out ones never open one. When it can't, it says why once and the
+    ///   composer's `ask` offer stays.
     #[serde(default)]
     pub open_pr_when_done: OpenPr,
+    /// The `gh` the auto path runs (tests point it at a stand-in). Not a config key.
+    #[serde(skip)]
+    pub gh: Option<std::path::PathBuf>,
 }
 
 impl Default for GitConfig {
     fn default() -> Self {
-        Self { open_pr_when_done: OpenPr::Ask }
+        Self {
+            open_pr_when_done: OpenPr::Ask,
+            gh: None,
+        }
     }
 }
 
-/// `[git] open_pr_when_done`: off, ask (the default), or auto (deferred).
+/// `[git] open_pr_when_done`: off, ask (the default), or auto.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum OpenPr {
@@ -410,24 +419,23 @@ pub enum OpenPr {
     /// The composer offers Open PR once the work is done. The default.
     #[default]
     Ask,
-    /// Open it without asking. Not implemented: reads as `Ask` (see [`GitConfig`]).
+    /// Open a draft PR without asking (see [`GitConfig`]).
     Auto,
 }
 
 impl OpenPr {
-    /// What this setting does *now*. `Auto` is deliberately not implemented, so it does what
-    /// `Ask` does; the client reads this rather than the raw value, so a stray `auto` can never
-    /// grow teeth by accident.
+    /// What the composer does under this setting: `Auto` offers exactly what `Ask` does.
+    /// The engine opens the PR itself under `Auto`; the offer is its fallback, for a session
+    /// it declined (a manager, say) or a push that failed.
     pub fn effective(self) -> OpenPr {
         match self {
-            // The auto path is deliberately not wired until `ask` has been used. This is the
-            // one line to change when it is.
             OpenPr::Auto => OpenPr::Ask,
             other => other,
         }
     }
 
-    /// The word the client gets: "off" or "ask" (never "auto", which isn't implemented).
+    /// The word the client gets: "off" or "ask". `auto` reads as "ask" on the wire because
+    /// the engine, not the client, does the unattended part.
     pub fn effective_word(self) -> &'static str {
         match self.effective() {
             OpenPr::Off => "off",
@@ -836,7 +844,7 @@ mod tests {
     }
 
     #[test]
-    fn open_pr_when_done_defaults_to_ask_and_auto_is_not_wired() {
+    fn open_pr_when_done_defaults_to_ask_and_auto_offers_like_ask() {
         // The default is `ask`, in code and only in code: nobody's config.toml is touched.
         assert_eq!(Config::default().git.open_pr_when_done, OpenPr::Ask);
         assert_eq!(OpenPr::default(), OpenPr::Ask);
@@ -847,7 +855,8 @@ mod tests {
         for (word, parsed, effective) in [
             ("off", OpenPr::Off, "off"),
             ("ask", OpenPr::Ask, "ask"),
-            // Parsed, accepted, and deliberately inert: `auto` behaves as `ask` today.
+            // The composer offers under `auto` what it offers under `ask`; the engine opens
+            // the PR itself (see `open_pr`).
             ("auto", OpenPr::Auto, "ask"),
         ] {
             let cfg: Config = toml::from_str(&format!("[git]\nopen_pr_when_done = \"{word}\"")).unwrap();

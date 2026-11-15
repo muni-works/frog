@@ -287,6 +287,11 @@ root {}. Re-`cd` if you need the old location back.</system-note>",
             return self.ask_user(id, input).await;
         }
         if crate::tools::sessions::is_tool(name) && !self.subagent {
+            // A session that starts sessions is a manager: `open_pr_when_done = "auto"`
+            // leaves its PRs to people.
+            if name == crate::tools::sessions::START {
+                self.started_sessions = true;
+            }
             return self.session_tool(id, name, input).await;
         }
         if name == crate::irc::TOOL && !self.subagent {
