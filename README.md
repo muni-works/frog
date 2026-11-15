@@ -1,12 +1,23 @@
 # frog
 
-A free, open-source terminal coding agent for local models. [frog.toys](https://frog.toys)
+**No caps. Your machines. One agent.** [frog.toys](https://frog.toys)
+
+A free, open-source coding agent. Frog owns the whole path: the agent, the inference engine
+([tang](https://github.com/muni-works/tang)) and the route to your hardware. Run as many agents as
+your machines can hold, with no rate limits. When you want more, Frog Cloud is billed by the token.
 
 ```sh
 curl -fsSL https://frog.toys/install.sh | sh
 ```
 
-frog runs on your machine by default. Its own inference engine (`local/`, powered by tang) runs models on Apple Metal with nothing else to install. It also works with ollama, LM Studio, Apple's on-device model, Anthropic and OpenAI.
+- **Every frog is a node.** Pair another Mac or a Linux GPU box with a 6-digit code and it joins
+  one pool. The composer chip and the map show where the model runs; if a machine drops out
+  mid-turn, the turn finishes on another one.
+- **No caps, measured.** Qwen3-8B on this Mac + a Linux box with an RTX 3090: 41 passed runs in
+  15 minutes vs 21 on the box alone, zero rate-limit errors. Not every task got faster; the
+  numbers and the caveats are in [docs/no-caps-bench.md](docs/no-caps-bench.md).
+- **Bring any model.** Besides its own engine, frog works with ollama, LM Studio, Apple's
+  on-device model, Anthropic, OpenAI and Frog Cloud.
 
 ## Quickstart
 
@@ -15,114 +26,55 @@ cd your-repo
 frog
 ```
 
-The default model is `local/qwen3-4b` (Qwen3 4B, 4-bit) on frog's own engine. Ask for something:
+With nothing configured, frog picks the first of these that works: `local/qwen3-4b` (Qwen3 4B, 4-bit) on frog's own engine, a model running in ollama, then LM Studio, then Apple Intelligence, then Frog Cloud's default if you're signed in. Local models run on this machine and cost nothing. `-m`, `FROG_MODEL` or `default_model` in `config.toml` override that, and otherwise the last model you used wins. The banner at the top of every session says which model is in use and whether it's free or billed. Ask for something:
 
 ```
 > why does `cargo test` fail? fix it.
 ```
 
-frog reads the code, runs commands and edits files. Edits and unsandboxed commands ask first; **shift+tab** cycles the permission mode.
+frog reads the code, runs commands and edits files. New sessions start in **auto** mode: a local classifier approves the steps that plainly serve your request and asks about the rest. `frog --resume` with no mode flag runs in **default** (edits and unsandboxed commands ask first) unless the session saved a mode. **shift+tab** cycles the mode.
 
 Switch models with `-m` (or `/model` inside a session):
 
 ```sh
 frog -m ollama/qwen3-coder:30b       # any provider/model
-frog -m lmstudio/qwen3-coder-30b
-frog -m local/qwen3-4b                # frog's own engine on this Mac, no ollama needed
-frog -m apple/on-device              # Apple's on-device Foundation Model (macOS 26)
+frog -m apple/on-device              # Apple's on-device model (macOS 26)
 frog -m anthropic/claude-sonnet-5
+frog -m cloud/qwen3-coder-next       # Frog Cloud: hosted, billed per token
 ```
 
-One-shot, for scripts:
+For Frog Cloud, sign in once. New accounts start with a small free credit, no card needed:
 
 ```sh
-frog -p "why does the build fail?"   # prints to stdout
-frog -p --json "..."                 # every engine event as a JSON line
+frog login                           # browser sign-in; the key goes in the Keychain
+frog account                         # which model, free or billed, and which key
+frog logout
 ```
 
-More in [docs/quickstart.md](docs/quickstart.md).
-
-## Run on frog cloud
-
-Local models are private and free, but slow on small machines. frog cloud hosts Qwen3-Coder-Next, powered by tang, for when you want speed. It is in free, invite-only beta.
-
-```sh
-export FROG_API_KEY=...              # during the beta, get one at https://api.frog.toys/beta
-frog -m cloud/qwen3-coder-next
-```
-
-If frog cloud is offline or out of credit or capacity, frog says so and carries on with a local model: `FROG_FALLBACK_MODEL` if set, otherwise the default `local/qwen3-4b`. `FROG_BASE_URL` points it at a different endpoint (a key saved in the app or Keychain only goes to `https://api.frog.toys`; elsewhere, only `FROG_API_KEY` is sent). `frog account` shows which key is in use. Old names (`frog-api/`, `tang/`) still work.
-
-### Other agents
-
-frog cloud's endpoint, frog api, is OpenAI-compatible, so other agents can use it too. Base URL
-`https://api.frog.toys/v1`, model `qwen3-coder-next`, key `FROG_API_KEY` (get one at
-[api.frog.toys/beta](https://api.frog.toys/beta)). Beta limits are low, and you'll get a 503 when
-it's at capacity.
-
-**opencode** (`opencode.json`)
-```json
-{"provider":{"frog":{"npm":"@ai-sdk/openai-compatible","name":"frog cloud","options":{"baseURL":"https://api.frog.toys/v1","apiKey":"{env:FROG_API_KEY}"},"models":{"qwen3-coder-next":{"name":"Qwen3-Coder-Next (frog cloud)"}}}},"model":"frog/qwen3-coder-next"}
-```
-
-**Cline, Roo Code, Kilo Code**: Settings → API Provider: **OpenAI Compatible** → Base URL
-`https://api.frog.toys/v1` → API Key: your `frog_` key → Model ID `qwen3-coder-next`. Turn on
-native tool calling. Context window 131072.
-
-**Continue** (`config.yaml`)
-```yaml
-models:
-  - name: Qwen3-Coder-Next (frog cloud)
-    provider: openai
-    model: qwen3-coder-next
-    apiBase: https://api.frog.toys/v1
-    apiKey: ${{ secrets.FROG_API_KEY }}
-    roles: [chat, edit, apply]
-```
+One-shot, for scripts: `frog -p "why does the build fail?"` (add `--json` for every engine event as a JSON line). More in [docs/quickstart.md](docs/quickstart.md).
 
 ## Features
 
-- **Sessions you can branch.** Every session is an append-only log that survives crashes.
-  ```sh
-  frog -c                              # continue the last session in this dir
-  frog --sessions                      # list sessions started in this dir
-  frog --fork <id>@3                   # branch a session right after turn 3
-  ```
-- **Sandboxed shell.** Commands run under seatbelt (macOS) or bubblewrap (Linux): they can write only inside the project and caches, and can't read `~/.ssh`, `~/.aws` and other credentials. Sandboxed commands don't need to ask. `frog --sandbox` confines writes to this directory.
-- **Headless.** `-p` for one-shots, `frog --serve` to speak the engine protocol over stdio, and `--acp` for editors.
-- **MCP.** Connect Model Context Protocol servers from `config.toml` or the project's `.mcp.json`. `frog --mcp` lists them.
-- **Injection quarantine.** MCP tools whose descriptions try to steer the model are withheld before the model sees them. See [docs/quarantine.md](docs/quarantine.md).
+- **Local first.** Your code and prompts stay on your machine unless you pick a cloud model, and a project can deny cloud models outright.
+- **Your machines as one pool.** On a Linux box, `curl -fsSL https://frog.toys/node | sh`; on a Mac, Settings › Share with my other machines. Type the node's 6-digit code once. A scheduler sends each call to the machine that will finish it first, and the picker can load a model onto a paired node.
+- **Sessions you can branch.** Every session is an append-only log that survives crashes: `frog -c` continues, `frog --sessions` lists, `frog --fork <id>@3` branches after turn 3. Parallel work runs as child sessions, which `frog --sessions` draws as a tree.
+- **Sandboxed shell.** Commands run under seatbelt (macOS) or bubblewrap (Linux): they can write only inside the project and caches, and can't read `~/.ssh`, `~/.aws` and other credentials.
 - **Built for small models.** frog probes each local model once and picks how to call tools (native, text or grammar-constrained JSON), budgets thinking, and guards against loops.
-- Agent Skills, subagents, offline dependency docs, web fetch and search, project memory, and `AGENTS.md`/`CLAUDE.md` instructions.
+- **Headless and pluggable.** `-p` for one-shots, `--serve` for the engine protocol, `--acp` for editors, MCP servers with [injection quarantine](docs/quarantine.md), Agent Skills, subagents, and `AGENTS.md`/`CLAUDE.md` instructions.
 
 ## Docs
 
 - [Quickstart](docs/quickstart.md)
-- [Reference](docs/reference.md): providers, tools, permissions, sessions, memory
-- [Prompt-injection quarantine](docs/quarantine.md)
+- [Reference](docs/reference.md): providers, Frog Cloud (sign-in, fallback, other agents), tools, permissions, sessions, memory
+- [Model policy](docs/design/model-policy.md)
+- [Releasing](docs/releasing.md): the two publishers, the draft rule, and the asset guard
 - [config.example.toml](config.example.toml)
 - [Contributing](CONTRIBUTING.md) and [Security](SECURITY.md)
 
-Build from source:
-
-```sh
-cargo install --path crates/frog
-```
+Build from source with `cargo install --path crates/frog`.
 
 ## License
 
-Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
-Contributions are signed off under the [DCO](CONTRIBUTING.md).
+Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option. Contributions are signed off under the [DCO](CONTRIBUTING.md).
 
-frog is free and meant to be used, forked and built on, including commercially. (That's an
-intent, not a license term.)
-
-## macOS unsigned builds
-
-If you download an unsigned build, you may need to remove the quarantine attribute:
-
-```sh
-xattr -dr com.apple.quarantine Frog.app
-```
-
-## License
+frog is free and meant to be used, forked and built on, including commercially. (That's an intent, not a license term.)

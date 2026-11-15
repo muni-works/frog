@@ -23,8 +23,14 @@ enum Markdown {
         var paragraph: [String] = []
         var fence: (lang: String, lines: [String])?
         var table: (header: [String], align: [TableAlign], rows: [[String]])?
+        // Lines of the quote being read: consecutive `>` lines are one quote, as in CommonMark.
+        var quote: [String]?
 
         func flush() {
+            if let q = quote {
+                blocks.append(.quote(q.joined(separator: "\n").trimmingCharacters(in: .newlines)))
+                quote = nil
+            }
             if !paragraph.isEmpty {
                 blocks.append(.paragraph(paragraph.joined(separator: "\n")))
                 paragraph = []
@@ -84,11 +90,16 @@ enum Markdown {
                 blocks.append(.rule)
                 continue
             }
-            if trimmed.hasPrefix("> ") {
-                flush()
-                blocks.append(.quote(String(trimmed.dropFirst(2))))
+            // `> a`, a bare `>` (a break inside the quote) and nested `> > b`, flattened: a quote
+            // is drawn one level deep.
+            if trimmed.hasPrefix(">") {
+                var rest = Substring(trimmed)
+                while rest.hasPrefix(">") { rest = rest.dropFirst().drop(while: { $0 == " " }) }
+                if quote == nil { flush() }
+                quote = (quote ?? []) + [String(rest)]
                 continue
             }
+            if quote != nil { flush() }
             if let (marker, text) = listItem(trimmed) {
                 flush()
                 let indent = line.prefix(while: { $0 == " " }).count / 2
@@ -265,18 +276,18 @@ struct CodeBlock: View {
                 .buttonStyle(.borderless)
                 .help("Copy")
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+            .padding(.horizontal, TurnSpace.Inset.roomy)
+            .padding(.vertical, TurnSpace.Inset.snug)
             Divider().opacity(0.5)
             ScrollView(.horizontal, showsIndicators: false) {
                 Text(Highlight.block(code, Highlight.lang(fence: language)))
                     .font(.system(.callout, design: .monospaced))
-                    .padding(12)
+                    .padding(TurnSpace.Inset.roomy)
                     .fixedSize(horizontal: true, vertical: true)
             }
         }
-        .background(.quaternary.opacity(0.35), in: .rect(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.quaternary, lineWidth: 0.5))
+        .background(.quaternary.opacity(0.35), in: .rect(cornerRadius: TurnSpace.Card.radius))
+        
         .contextMenu {
             Button("Copy", systemImage: "doc.on.doc") { copy() }
             #if os(macOS)

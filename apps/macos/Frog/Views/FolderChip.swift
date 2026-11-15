@@ -39,9 +39,9 @@ struct FolderChip: View {
                 Image(systemName: current == nil ? "bubble.left" : "folder")
                 Text(current?.lastPathComponent ?? "No folder")
                     .lineLimit(1)
-                Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
+                Image(systemName: "chevron.down").font(.frog(size: 9, weight: .semibold))
             }
-            .font(.callout)
+            .font(.frog(size: 12))
             .foregroundStyle(.secondary)
             .hoverPlate()
         }
@@ -69,7 +69,7 @@ enum FolderPanel {
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.prompt = "Choose"
-        panel.message = "Choose the folder frog works in"
+        panel.message = "Choose the folder Frog works in"
         return panel.runModal() == .OK ? panel.url : nil
     }
 }

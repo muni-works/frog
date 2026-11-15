@@ -27,7 +27,13 @@ struct WorkspaceView: View {
     /// This view's window, so the sidebar can bring an already-open conversation forward.
     @State private var window: NSWindow?
     @State private var renamingTitle = false
+    /// The session the title menu's Delete… is asking about.
+    @State private var deletingSession: String?
     @State private var newTitle = ""
+    // The sidebar's view options, for the quick-switch shortcuts' reading of it.
+    @AppStorage("sidebarGroup") private var sidebarGroup = SessionList.Grouping.date
+    @AppStorage("sidebarSort") private var sidebarSort = SessionList.Sort.activity
+    @AppStorage("sidebarScope") private var sidebarScope = AttentionTree.Scope.live
 
     struct Docked: Equatable {
         var sessions = false
@@ -73,6 +79,18 @@ struct WorkspaceView: View {
     static let headerClearance: CGFloat = PaneView.headerHeight + 8
 
     private var focused: Pane { panes.focused }
+
+    /// The sidebar's conversations as its top-level rows, in the order its groups show them:
+    /// pins, then one group per project folder (newest activity first), then chats — the
+    /// started-by children are nested under their parents and don't count. What the
+    /// quick-switch shortcuts (⌘1…9, ⇧⌘]/⇧⌘[) step through.
+    /// Derived by `SessionOrder` (below) from the listing, pins, archive and grouping — none of
+    /// which a streamed turn touches. The window root used to re-derive it on every body pass
+    /// (per streamed delta): the tree walk sorted every session, twice, per 30 Hz batch.
+    private var sidebarOrder: [SessionInfo] {
+        SessionOrder.order(group: sidebarGroup, sort: sidebarSort, scope: sidebarScope,
+                           current: workspace.opening ?? workspace.currentSession)
+    }
     private var workspace: Workspace { focused.workspace }
     private var minColumn: CGFloat { panes.isSplit ? Self.minSplitColumn : Self.minColumn }
 
@@ -88,9 +106,11 @@ struct WorkspaceView: View {
         return Self.margin + (open ? Self.sessionsWidth : SessionRail.width) + Self.gap
     }
 
-    private func extent(changes open: Bool, _ pane: Pane) -> CGFloat {
+    private func extent(changes open: Bool, _ pane: Pane, paneWidth: CGFloat = .infinity) -> CGFloat {
         guard pane.hasTabs || pane.hasRail else { return Self.gap }
-        let width = open ? pane.cardWidth : (pane.hasTabs ? Self.changesPill : TimelineRail.width)
+        // A narrow split pane's rail is its slim strip (see `PaneWidth`): it reserves only that.
+        let rail = panes.isSplit && PaneWidth(paneWidth) == .narrow ? TimelineRail.slimWidth : TimelineRail.width
+        let width = open ? pane.cardWidth : (pane.hasTabs ? Self.changesPill : rail)
         return Self.margin + width + Self.gap
     }
 
@@ -101,14 +121,21 @@ struct WorkspaceView: View {
     }
 
     /// Smallest a pane may be dragged to, across a divider.
-    static let minPane: CGFloat = 280
+    /// Smaller is unreadable even with a narrow pane's slimmed chrome.
+    static let minPane: CGFloat = 360
+    /// Smallest a pane showing a terminal or preview may get: the card is the pane's point, and
+    /// a preview reads fine at this width. (A conversation pane keeps `minPane`.)
+    static let minToolPane: CGFloat = 260
     /// The canvas's coordinate space, for dragging dividers.
     static let canvasSpace = "frog-canvas"
 
     /// A pane's frame in the window and the insets that keep its column clear of the cards.
+    /// A maximized pane takes the whole canvas region; the others are empty (their contents
+    /// step aside, cut to nothing), and the layout comes back exactly on restore.
     private func placement(_ pane: Pane, sessions open: Bool, changes: Bool) -> (frame: CGRect, insets: EdgeInsets) {
         let ext = extent(sessions: open)
-        var r = panes.layout.frames(in: region(sessions: open))[pane.id] ?? .zero
+        var r = panes.layout.frames(in: region(sessions: open), maximizing: panes.maximized)[pane.id] ?? .zero
+        if r == .zero { return (r, EdgeInsets()) }
         let leftmost = r.minX <= ext + 0.5
         if leftmost {
             r.size.width += r.minX
@@ -116,7 +143,7 @@ struct WorkspaceView: View {
         }
         // Split panes have a header to keep clear of.
         let top = panes.isSplit ? Self.headerClearance + Self.margin : 0
-        return (r, EdgeInsets(top: top, leading: leftmost ? ext : Self.gap, bottom: 0, trailing: extent(changes: changes, pane)))
+        return (r, EdgeInsets(top: top, leading: leftmost ? ext : Self.gap, bottom: 0, trailing: extent(changes: changes, pane, paneWidth: r.width)))
     }
 
     private func placement(_ pane: Pane) -> (frame: CGRect, insets: EdgeInsets) {
@@ -159,12 +186,6 @@ struct WorkspaceView: View {
 
     private func changesVisible(_ pane: Pane) -> Bool {
         docked.changes.contains(pane.id) || (pane.peekChanges && pane.hasTabs)
-    }
-
-    /// Where the (only) pane's column is centered, relative to the window's center.
-    private var focusedOffset: CGFloat {
-        let p = placement(focused)
-        return p.frame.minX + p.insets.leading + (p.frame.width - p.insets.leading - p.insets.trailing) / 2 - canvasSize.width / 2
     }
 
     private func toggleSessions() {
@@ -309,6 +330,14 @@ struct WorkspaceView: View {
         panes.open(s, in: focused, window: window)
     }
 
+    /// The phone offered the conversation you're reading here, and back: open it focused.
+    private func continueHandoff(_ a: NSUserActivity) {
+        let id = a.userInfo?["session"] as? String
+        let s = id.flatMap { id in Library.shared.sessions.first { $0.id == id } }
+        guard let s else { return }
+        openInFocused(s)
+    }
+
     private func split(_ s: SessionInfo? = nil, _ edge: PaneEdge = .right) {
         Haptics.settle()
         panes.split(s, on: edge, window: window)
@@ -328,7 +357,10 @@ struct WorkspaceView: View {
                     toggleChanges: { toggleChanges(pane) },
                     window: window
                 )
-                .frame(width: max(0, place.frame.width), height: max(0, place.frame.height))
+                // Exactly its frame: content that wants more is cut at the pane's own edge, never
+                // centered out over its neighbors (the rail and text of one pane over the next).
+                .frame(width: max(0, place.frame.width), height: max(0, place.frame.height), alignment: .topLeading)
+                .clipped()
                 .offset(x: place.frame.minX, y: place.frame.minY)
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
             }
@@ -346,9 +378,9 @@ struct WorkspaceView: View {
             .environment(\.startConversation) { panes.start($1, in: $0, pane: focused) }
             .environment(\.paneNumbers, numbers)
 
-            ForEach(panes.layout.dividers(in: region(sessions: docked.sessions))) { d in
+            ForEach(panes.layout.dividers(in: region(sessions: docked.sessions), maximizing: panes.maximized)) { d in
                 PaneDividerHandle(divider: d, resizing: $resizing) { t in
-                    panes.moveDivider(d, to: t, minimum: Self.minPane)
+                    panes.moveDivider(d, to: t, minimum: panes.minimum(paneWidth: Self.minPane, forToolPanes: Self.minToolPane, beside: d))
                 } equalize: {
                     panes.equalize(d)
                 }
@@ -392,36 +424,34 @@ struct WorkspaceView: View {
         // scratch space, not a document of yours.
         .modifier(FolderDocument(folder: workspace.isChat ? nil : workspace.folder))
         .navigationTitle(windowTitle)
-        .navigationSubtitle(place)
-        .toolbarTitleMenu { if let c = workspace.conversation { titleMenu(c) } }
+        // The menu's content builds when it opens (a title menu is deferred by the system), but
+        // the toolbar's item body runs per body pass: read the mirror, not the conversation.
+        // The title bar is the title and a ⌄ menu (Rename, Archive, Delete), as on the web: the
+        // system's title menu shows no chevron, so the title is drawn here and the system's hidden.
+        .toolbar(removing: .title)
         // One backdrop for the whole canvas, so the conversation reads as a single surface.
         .background(FrogCanvas.color.ignoresSafeArea())
         .background(WindowReader {
             window = $0
             Library.shared.register(window: $0, panes: panes)
+            if let w = $0 { TypeToFocus.register(window: w, panes: panes) }
         })
         .animation(Motion.panel(reduced: reduceMotion), value: sessionsVisible)
         .animation(Motion.panel(reduced: reduceMotion), value: docked)
         .animation(resizing ? nil : Motion.panel(reduced: reduceMotion), value: panes.layout)
+        .animation(Motion.panel(reduced: reduceMotion), value: panes.maximized)
         .animation(Motion.quick(reduced: reduceMotion), value: focused.ui.paletteShown)
         .onChange(of: workspace.selection) { peekSessions = false }
         .onChange(of: panes.focusedID) { peekSessions = false }
         .onExitCommand {
-            if focused.ui.findShown {
+            if let maxed = panes.maximizedPane {
+                panes.toggleMaximized(maxed)
+            } else if focused.ui.findShown {
                 focused.ui.findShown = false
             } else {
                 peekSessions = false
                 panes.items.forEach { $0.peekChanges = false }
             }
-        }
-        // The morning notice was clicked: the brief, in a new chat, unless one's already showing.
-        .onReceive(NotificationCenter.default.publisher(for: .showBrief)) { _ in
-            guard window?.isKeyWindow ?? true else { return }
-            showBrief()
-        }
-        // Clicking the notice launched frog: this is the first window, so it shows the brief.
-        .task {
-            if MorningNotice.pendingShow { showBrief() }
         }
         .focusedSceneValue(\.frogWindow, FrogWindow(
             workspace: workspace, state: focused.ui,
@@ -434,7 +464,9 @@ struct WorkspaceView: View {
             },
             split: panes.canSplit ? { split(nil, $0 == .vertical ? .bottom : .right) } : nil,
             closePane: panes.isSplit ? { panes.close(focused) } : nil,
-            focusPane: panes.isSplit ? { panes.focus(step: $0) } : nil
+            focusPane: panes.isSplit ? { panes.focus(step: $0) } : nil,
+            sidebarOrder: sidebarOrder,
+            openSidebarSession: { openInFocused($0) }
         ))
         // The phone asked for a conversation: here if this pane is a blank chat, else beside it,
         // so nothing on screen is replaced.
@@ -457,56 +489,49 @@ struct WorkspaceView: View {
                 r.done(pane.conversation)
             }
         }
-        // Handoff: the phone offers the conversation you're reading here, and back.
-        .userActivity(Handoff.conversation, isActive: workspace.conversation?.sessionID != nil) { a in
-            a.title = workspace.conversation?.title ?? "Conversation"
-            a.userInfo = ["session": workspace.conversation?.sessionID ?? ""]
+        // Handoff: the phone offers the conversation you're reading here, and back. The id via
+        // the workspace's mirror, so the root body doesn't observe the streaming conversation.
+        .userActivity(Handoff.conversation, isActive: workspace.currentSession != nil) { a in
+            a.title = workspace.currentTitle ?? "Conversation"
+            a.userInfo = ["session": workspace.currentSession ?? ""]
             a.isEligibleForHandoff = true
         }
         .onContinueUserActivity(Handoff.conversation) { a in
-            guard let id = a.userInfo?["session"] as? String,
-                  let s = Library.shared.sessions.first(where: { $0.id == id }) else { return }
-            openInFocused(s)
+            continueHandoff(a)
+        }
+        .confirmationDialog("Delete this conversation?", isPresented: Binding(
+            get: { deletingSession != nil }, set: { if !$0 { deletingSession = nil } }
+        )) {
+            Button("Move to Trash", role: .destructive) {
+                if let id = deletingSession {
+                    Library.shared.delete(id)
+                    workspace.newSession()
+                }
+                deletingSession = nil
+            }
+            Button("Cancel", role: .cancel) { deletingSession = nil }
+        } message: {
+            Text("Its log moves to the Trash.")
         }
         .alert("Rename Conversation", isPresented: $renamingTitle) {
             TextField("Title", text: $newTitle)
             Button("Rename") {
-                if let id = workspace.conversation?.sessionID {
+                if let id = workspace.currentSession {
                     Task { await Library.shared.rename(id, to: newTitle) }
                 }
             }
             Button("Cancel", role: .cancel) {}
         }
         .toolbar {
+            // As on the web: a plain title (no glass pill) at the left, the controls at the right.
+            ToolbarItem(placement: .navigation) { titleBar }
+                .sharedBackgroundVisibility(.hidden)
+            ToolbarSpacer(.flexible)
             if compact && !sessionsVisible {
                 ToolbarItem(placement: .navigation) {
                     Button("Show Conversations", systemImage: "sidebar.left", action: toggleSessions)
                         .help("Show conversations (⌃⌘S)")
                 }
-            }
-            ToolbarItem(placement: .principal) {
-                // Split, each pane shows its own in its header.
-                if !panes.isSplit, let c = workspace.conversation, workspace.race == nil {
-                    // Over the column, not the window.
-                    ActivityViewer(workspace: workspace, conversation: c) { focused.ui.jumpTo = $0 }
-                        .environment(\.openSession) { openInFocused($0) }
-                        .offset(x: focusedOffset)
-                }
-            }
-            // The viewer draws its own glass capsule; without this the toolbar adds a second.
-            .sharedBackgroundVisibility(.hidden)
-            ToolbarItem(placement: .primaryAction) {
-                Menu {
-                    Button("Terminal", systemImage: "terminal", action: showTerminal)
-                    Button("Preview", systemImage: "globe", action: showPreview)
-                    if focused.changeCount > 0 {
-                        Button("Changes", systemImage: "plusminus") { revealPanes(focused) }
-                    }
-                } label: {
-                    Label("Panes", systemImage: "sidebar.right")
-                }
-                .help("Panes: terminal (⇧⌘T), preview (⇧⌘P), changes (⌥⌘0)")
-                .disabled(focused.conversation == nil)
             }
             ToolbarItem(placement: .primaryAction) {
                 Button("Split", systemImage: "rectangle.split.2x1") { split() }
@@ -521,6 +546,12 @@ struct WorkspaceView: View {
                 Button("Commands", systemImage: "command") { focused.ui.paletteShown.toggle() }
                     .help("Command Palette (⌘K)")
             }
+            // The inspector toggle, rightmost: Changes, Terminal and Preview as tabs of one panel.
+            ToolbarItem(placement: .primaryAction) {
+                Button("Inspector", systemImage: "sidebar.right") { toggleChanges(focused) }
+                    .help("Inspector: changes, terminal, preview (⌥⌘0)")
+                    .disabled(focused.conversation == nil)
+            }
         }
     }
 
@@ -532,13 +563,15 @@ struct WorkspaceView: View {
         if sessionsVisible {
             SessionList(workspace: workspace, maxHeight: room) { toggleSessions() }
                 .frame(width: Self.sessionsWidth)
-                .glassEffect(.regular, in: .rect(cornerRadius: 18))
+                // One look: an opaque panel one step off the canvas (#0a0a0a, 12 pt radius), not
+                // glass. It also draws in -FrogSnapshot, which glass doesn't.
+                .background(Tokens.sidebar, in: .rect(cornerRadius: 12))
                 .glassEffectID("sessions", in: glass)
                 .shadow(color: .black.opacity(peekSessions ? 0.35 : 0), radius: 24, y: 10)
         } else if !compact {
             // Folded, it's a rail of status tiles that morphs back out.
             SessionRail(workspace: workspace, maxHeight: room, expand: toggleSessions)
-                .glassEffect(.regular, in: .rect(cornerRadius: 18))
+                .background(Tokens.sidebar, in: .rect(cornerRadius: 12))
                 .glassEffectID("sessions", in: glass)
         }
     }
@@ -557,24 +590,38 @@ extension View {
 }
 
 extension WorkspaceView {
-    /// The brief, in a new chat, unless an empty chat (where it sits) is already showing.
-    private func showBrief() {
-        MorningNotice.pendingShow = false
-        let showing = Frog.isChat(workspace.folder) && (workspace.conversation?.turns.isEmpty ?? false)
-        if !showing { panes.switchFolder(nil, in: focused) }
-        Task { await Pond.shared.refresh() }
-    }
-
     private var windowTitle: String {
-        if workspace.race != nil { return workspace.name }
+        // The mirror (see `Workspace.currentTitle`), not the conversation: the root body
+        // reading the streaming conversation re-evaluated per delta to redraw a title that
+        // only changes when the engine names the session.
+        if let t = workspace.currentTitle { return t }
         return workspace.conversation?.title ?? (workspace.isChat ? "New Chat" : "New Conversation")
     }
 
     /// Where the focused conversation lives: the project and its branch; nothing for a chat.
     private var place: String {
-        if workspace.race != nil { return "Racing" }
         guard !workspace.isChat else { return "" }
         return [workspace.name, workspace.git?.branch].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    /// The title and its ⌄ menu. The menu's content builds when it opens; the label reads the
+    /// mirror, not the streaming conversation.
+    private var titleBar: some View {
+        Menu {
+            if let c = workspace.conversation { titleMenu(c) }
+        } label: {
+            HStack(spacing: 5) {
+                Text(windowTitle).font(.frog(size: 13, weight: .semibold)).lineLimit(1)
+                Image(systemName: "chevron.down").font(.frog(size: 9, weight: .semibold))
+                    .foregroundStyle(Tokens.textSecondary)
+            }
+            .contentShape(.rect)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Rename, archive or delete this conversation")
     }
 
     @ViewBuilder
@@ -584,23 +631,13 @@ extension WorkspaceView {
             renamingTitle = true
         }
         .disabled(conversation.sessionID == nil)
-        if !workspace.isChat {
-            Button("Show Folder in Finder") { NSWorkspace.shared.activateFileViewerSelecting([workspace.folder]) }
-        }
-        Picker("Cloud Models", selection: Binding(get: { workspace.cloud }, set: { c in Task { await workspace.setCloud(c) } })) {
-            Text("Ask First").tag(Workspace.CloudPolicy.ask)
-            Text("Allow").tag(Workspace.CloudPolicy.allow)
-            Text("Keep Code on Your Devices").tag(Workspace.CloudPolicy.deny)
-        }
         if let id = conversation.sessionID {
-            Button("Copy Session ID") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(id, forType: .string)
-            }
+            // This menu is the open conversation's own: archiving it always clears the view,
+            // which is what ArchiveNav decides for every view of a session.
+            Button("Archive") { ArchiveNav.archive(id, from: workspace) }
             Divider()
-            Button("Archive") {
-                Library.shared.setArchived(id, true)
-                workspace.newSession()
+            Button("Delete…", role: .destructive) {
+                deletingSession = id
             }
         }
     }
@@ -615,11 +652,18 @@ struct ConversationDropZone: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .dropDestination(for: URL.self) { urls, _ in
-                guard !urls.isEmpty else { return false }
-                conversation.dropped = urls
+            // Item providers, not `dropDestination(for: URL.self)`: the screenshot thumbnail
+            // drags a file promise and image data, not a file URL (see `DropFiles`).
+            .onDrop(of: DropFiles.types, isTargeted: $targeted) { providers in
+                guard !providers.isEmpty else { return false }
+                // The drag pasteboard only holds this drag's promises until the drop ends.
+                let promises = DropFiles.pendingPromises()
+                Task { @MainActor in
+                    let urls = await DropFiles.urls(from: providers, promises: promises, into: DropFiles.folder())
+                    if !urls.isEmpty { conversation.dropped = urls }
+                }
                 return true
-            } isTargeted: { targeted = $0 }
+            }
             .overlayPreferenceValue(FrogAnchorKey.self) { frog in
                 if targeted {
                     DropOverlay(playful: playful, frog: frog)
@@ -665,7 +709,7 @@ private struct DropOverlay: View {
                     }
                 }
                 Label("Drop to attach", systemImage: "paperclip")
-                    .font(.headline)
+                    .font(.frog(size: 13, weight: .semibold))
                     .padding(.horizontal, 14).padding(.vertical, 8)
                     .glassEffect(.regular, in: .capsule)
                     .position(center)
@@ -733,13 +777,13 @@ struct SessionTree: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("Session tree", systemImage: "arrow.triangle.branch").font(.headline)
+            Label("Session tree", systemImage: "arrow.triangle.branch").font(.frog(size: 13, weight: .semibold))
             if let diagram, !diagram.nodes.isEmpty {
                 ScrollView([.horizontal, .vertical]) {
-                    DiagramCanvas(diagram: diagram) { node in
+                    DiagramCanvas(diagram: diagram, onNode: { node in
                         workspace.selection = node.id
                         dismiss()
-                    }
+                    }, expanded: true)
                 }
                 .frame(width: min(720, (diagram.layout?.width ?? 300) + 4), height: min(520, (diagram.layout?.height ?? 200) + 4))
             } else if loaded {

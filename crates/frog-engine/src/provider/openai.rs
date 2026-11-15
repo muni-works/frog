@@ -1,6 +1,6 @@
 //! OpenAI-compatible chat completions: llama.cpp, LM Studio, vLLM, MLX, ollama's /v1, OpenAI itself.
 
-use super::{Request, Response, Stop, StreamEvent, assistant_message, deep_merge, parse_args, sse};
+use super::{Request, Response, Stop, StreamError, StreamEvent, assistant_message, deep_merge, parse_args, sse};
 use crate::message::{Block, Role, Usage};
 use anyhow::{Result, bail};
 use serde_json::{Value, json};
@@ -13,16 +13,21 @@ pub struct Client {
     pub extra: Option<Value>,
     /// Used when the request is sent as an Anthropic Messages call (see [`Self::gateway_claude`]).
     pub anthropic: super::anthropic::Settings,
+    /// `x-frog-priority` for a tang node (`interactive` or `background`); None sends none.
+    pub priority: Option<&'static str>,
 }
 
 impl Client {
-    /// `vercel/anthropic/*` on Vercel's AI Gateway: the gateway also serves the Anthropic
-    /// Messages API (same host, `/v1/messages`, `x-api-key`), which keeps `cache_control`,
+    /// `anthropic/*` on Vercel's or Cloudflare's AI Gateway, or on OpenRouter: all three also
+    /// serve the Anthropic Messages API (same base, `/v1/messages`), which keeps `cache_control`,
     /// thinking and effort and returns real cache usage, none of which survive the
     /// chat-completions translation.
     fn gateway_claude(&self) -> Option<super::anthropic::Client> {
         let base = self.base.trim_end_matches('/');
-        if !base.contains("ai-gateway.vercel.sh") || !self.model.starts_with("anthropic/") {
+        let gateway = base.contains("ai-gateway.vercel.sh")
+            || super::anthropic::on_cloudflare(base)
+            || super::anthropic::on_openrouter(base);
+        if !gateway || !self.model.starts_with("anthropic/") {
             return None;
         }
         Some(super::anthropic::Client {
@@ -70,7 +75,7 @@ impl Client {
             .as_array()?
             .iter()
             .find(|m| m["id"].as_str() == Some(self.model.as_str()))
-            .and_then(|m| m["max_model_len"].as_u64())
+            .and_then(|m| m["max_model_len"].as_u64().or(m["context_length"].as_u64()))
     }
 
     /// OpenAI's own API (not a compatible server).
@@ -209,6 +214,9 @@ impl Client {
             o.remove("stream_options");
         }
         let mut rb = self.http.post(url).json(&body);
+        if let Some(p) = self.priority {
+            rb = rb.header("x-frog-priority", p);
+        }
         if let Some(k) = &self.key {
             rb = rb.bearer_auth(k);
         }
@@ -228,10 +236,14 @@ impl Client {
         }
         let url = format!("{}/chat/completions", self.base.trim_end_matches('/'));
         let mut rb = self.http.post(url).json(&self.body(req));
+        if let Some(p) = self.priority {
+            rb = rb.header("x-frog-priority", p);
+        }
         if let Some(k) = &self.key {
             rb = rb.bearer_auth(k);
         }
         let resp = sse::check(rb.send().await?).await?;
+        let upstream = upstream(resp.headers());
 
         let mut text = String::new();
         let mut thinking = String::new();
@@ -250,18 +262,12 @@ impl Client {
             }
             let v: Value = serde_json::from_str(data)?;
             if let Some(err) = v.get("error") {
-                bail!("server error: {err}");
+                bail!(StreamError {
+                    message: err.to_string()
+                });
             }
             if let Some(u) = v.get("usage").filter(|u| u.is_object()) {
-                let cached = u["prompt_tokens_details"]["cached_tokens"]
-                    .as_u64()
-                    .unwrap_or(0);
-                usage.input = u["prompt_tokens"]
-                    .as_u64()
-                    .unwrap_or(0)
-                    .saturating_sub(cached);
-                usage.cache_read = cached;
-                usage.output = u["completion_tokens"].as_u64().unwrap_or(0);
+                usage = read_usage(u);
             }
             if let Some(r) = v["choices"][0]["finish_reason"].as_str() {
                 stop = Some(Stop::from_reason(r));
@@ -336,6 +342,7 @@ impl Client {
             .filter(|c| !c.1.is_empty())
             .map(|(id, name, args)| (id, name, parse_args(&args)))
             .collect();
+        usage.upstream = upstream;
         Ok(Response {
             message: assistant_message(thinking, None, text, calls),
             usage,
@@ -344,10 +351,52 @@ impl Client {
     }
 }
 
+/// Who served the call, when the server says (frog cloud's `x-frog-upstream`).
+fn upstream(headers: &reqwest::header::HeaderMap) -> Option<String> {
+    let v = headers.get("x-frog-upstream")?.to_str().ok()?.trim();
+    (!v.is_empty()).then(|| v.to_string())
+}
+
+/// A chat-completions `usage` object. `prompt_tokens` includes the cached part; gateways that
+/// pass Anthropic's cache writes through say so in `cache_creation_input_tokens`.
+fn read_usage(u: &Value) -> Usage {
+    let details = &u["prompt_tokens_details"];
+    let cached = details["cached_tokens"].as_u64().unwrap_or(0);
+    let written = details["cache_write_tokens"]
+        .as_u64()
+        .or(u["cache_creation_input_tokens"].as_u64())
+        .unwrap_or(0);
+    let input = u["prompt_tokens"]
+        .as_u64()
+        .unwrap_or(0)
+        .saturating_sub(cached);
+    Usage {
+        input,
+        cache_read: cached,
+        cache_write: written.min(input),
+        output: u["completion_tokens"].as_u64().unwrap_or(0),
+        model: None,
+        upstream: None,
+        ran_on: None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::message::Message;
+
+    #[test]
+    fn cached_prompt_tokens_are_split_out() {
+        let u = read_usage(&json!({
+            "prompt_tokens": 152_219,
+            "completion_tokens": 6_500,
+            "prompt_tokens_details": { "cached_tokens": 151_667 },
+        }));
+        assert_eq!((u.input, u.cache_read, u.cache_write, u.output), (552, 151_667, 0, 6_500));
+        let u = read_usage(&json!({ "prompt_tokens": 10, "completion_tokens": 2 }));
+        assert_eq!((u.input, u.cache_read, u.output), (10, 0, 2));
+    }
 
     #[test]
     fn images_follow_tool_results_as_a_user_message() {
@@ -358,6 +407,7 @@ mod tests {
             key: None,
             extra: None,
             anthropic: Default::default(),
+            priority: None,
         };
         let msgs = vec![Message {
             role: Role::User,
@@ -383,6 +433,7 @@ mod tests {
             think: None,
             think_budget: None,
             cache_key: None,
+            background: false,
         };
         let body = c.body(&req);
         let m = body["messages"].as_array().unwrap();
@@ -403,6 +454,7 @@ mod tests {
             key: None,
             extra: None,
             anthropic: Default::default(),
+            priority: None,
         };
         let msgs = vec![Message::user("hi")];
         let req = |think_budget| Request {
@@ -414,6 +466,7 @@ mod tests {
             think: None,
             think_budget,
             cache_key: None,
+            background: false,
         };
         let tang = client("http://192.168.2.12:8420/v1");
         assert_eq!(tang.body(&req(Some(1024)))["thinking_budget"], 1024);
@@ -436,6 +489,7 @@ mod tests {
             key: None,
             extra: None,
             anthropic: Default::default(),
+            priority: None,
         };
         let msgs = vec![Message::user("hi")];
         let req = |cache_key| Request {
@@ -447,6 +501,7 @@ mod tests {
             think: None,
             think_budget: None,
             cache_key,
+            background: false,
         };
         assert_eq!(c.body(&req(Some("abc")))["prompt_cache_key"], "abc");
         assert!(c.body(&req(None)).get("prompt_cache_key").is_none());
@@ -461,6 +516,7 @@ mod tests {
             key: None,
             extra,
             anthropic: Default::default(),
+            priority: None,
         };
         let msgs = vec![Message::user("hi")];
         let req = |think| Request {
@@ -472,6 +528,7 @@ mod tests {
             think,
             think_budget: None,
             cache_key: None,
+            background: false,
         };
         let local = client("http://localhost:8911/v1", None);
         assert_eq!(
@@ -510,7 +567,47 @@ mod gateway_tests {
             key: key.map(Into::into),
             extra: None,
             anthropic: Default::default(),
+            priority: None,
         }
+    }
+
+    /// Frog cloud's `x-frog-upstream` lands on the response's usage.
+    #[tokio::test]
+    async fn the_upstream_header_is_kept() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut s, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 65536];
+            let _ = s.read(&mut buf).await;
+            let body = "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"hm\"}}]}\n\n\
+                        data: {\"choices\":[{\"delta\":{\"content\":\"hi\"},\"finish_reason\":\"stop\"}]}\n\n\
+                        data: {\"choices\":[],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":1}}\n\n\
+                        data: [DONE]\n\n";
+            let head = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nx-frog-upstream: workers-ai\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                body.len()
+            );
+            s.write_all(head.as_bytes()).await.unwrap();
+            s.write_all(body.as_bytes()).await.unwrap();
+        });
+        let c = client(&format!("http://{addr}/v1"), "glm-5.3-flash", None);
+        let messages = vec![crate::message::Message::user("hello")];
+        let req = Request {
+            system: "",
+            messages: &messages,
+            tools: &[],
+            max_tokens: None,
+            format: None,
+            think: None,
+            think_budget: None,
+            cache_key: None,
+            background: false,
+        };
+        let resp = c.complete(&req, &mut |_| {}).await.unwrap();
+        assert_eq!(resp.usage.upstream.as_deref(), Some("workers-ai"));
+        assert_eq!(resp.usage.output, 1);
     }
 
     #[test]
@@ -528,6 +625,69 @@ mod gateway_tests {
     }
 
     #[test]
+    fn cloudflare_anthropic_models_use_the_messages_api() {
+        let c = client(
+            "https://api.cloudflare.com/client/v4/accounts/abc/ai/v1",
+            "anthropic/claude-opus-5.5",
+            Some("cf-token"),
+        )
+        .gateway_claude()
+        .unwrap();
+        assert_eq!(
+            c.base,
+            "https://api.cloudflare.com/client/v4/accounts/abc/ai"
+        );
+        assert_eq!(c.model, "anthropic/claude-opus-5.5");
+    }
+
+    #[test]
+    fn openrouter_anthropic_models_use_the_messages_api() {
+        // The preset's base (providers.rs): `gateway_claude` strips `/v1`, and the Messages
+        // path adds it back. Pin the URL the request actually lands on, so a preset change
+        // can't silently send `/api/v1/v1/messages` or `/api/messages`.
+        let c = client(
+            "https://openrouter.ai/api/v1",
+            "anthropic/claude-opus-5.5",
+            Some("or-key"),
+        )
+        .gateway_claude()
+        .unwrap();
+        assert_eq!(c.base, "https://openrouter.ai/api");
+        assert_eq!(c.messages_url(), "https://openrouter.ai/api/v1/messages");
+        assert_eq!(c.model, "anthropic/claude-opus-5.5");
+        assert_eq!(c.key, "or-key");
+        // OpenRouter takes the key as a bearer; `x-api-key` there is a 401.
+        assert!(super::super::anthropic::wants_bearer(&c.base));
+    }
+
+    #[test]
+    fn vercel_and_cloudflare_messages_urls_and_auth_are_unchanged() {
+        let v = client(
+            "https://ai-gateway.vercel.sh/v1",
+            "anthropic/claude-opus-5.5",
+            Some("k"),
+        )
+        .gateway_claude()
+        .unwrap();
+        assert_eq!(v.messages_url(), "https://ai-gateway.vercel.sh/v1/messages");
+        // Vercel keeps Anthropic's own header.
+        assert!(!super::super::anthropic::wants_bearer(&v.base));
+        let c = client(
+            "https://api.cloudflare.com/client/v4/accounts/abc/ai/v1",
+            "anthropic/claude-opus-5.5",
+            Some("k"),
+        )
+        .gateway_claude()
+        .unwrap();
+        assert_eq!(
+            c.messages_url(),
+            "https://api.cloudflare.com/client/v4/accounts/abc/ai/v1/messages"
+        );
+        // Cloudflare takes the bearer, as before.
+        assert!(super::super::anthropic::wants_bearer(&c.base));
+    }
+
+    #[test]
     fn other_models_and_hosts_stay_on_chat_completions() {
         let v = "https://ai-gateway.vercel.sh/v1";
         assert!(
@@ -542,7 +702,7 @@ mod gateway_tests {
         );
         assert!(
             client(
-                "https://openrouter.ai/api/v1",
+                "https://api.openai.com/v1",
                 "anthropic/claude-opus-5.5",
                 Some("k")
             )

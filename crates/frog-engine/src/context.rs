@@ -20,6 +20,14 @@ pub const PRUNE_AT: f64 = 0.60;
 pub const PRUNE_TO: f64 = 0.45;
 /// If pruning can't get below this, summarize with the LLM.
 pub const COMPACT_AT: f64 = 0.80;
+/// Pre-flight, before every call: past this fraction of the provider's real window, compact now,
+/// even mid-turn and even right after a compaction, rather than send a request the provider may
+/// reject. The estimate is calibrated from server counts but can be off; the overflow recovery in
+/// the engine covers what slips past.
+pub const HARD_LIMIT: f64 = 0.85;
+/// The largest share of the window one tool result may occupy: a single oversized result can't
+/// overflow the window (and, being recent, would never be pruned).
+pub const MAX_RESULT_SHARE: f64 = 0.25;
 /// The most recent tool results are never pruned.
 pub const KEEP_RECENT: usize = 4;
 /// Results smaller than this aren't worth pruning.
@@ -186,6 +194,34 @@ pub fn plan_prune(msgs: &[Message], budget_chars: usize) -> Vec<(String, String)
         take(r, replacement, &mut total, &mut plan);
     }
     plan
+}
+
+/// Deterministic last resort before a summarization call that would itself overflow: clip every
+/// oversized tool result — including the recent ones `plan_prune` keeps — down to `budget_chars`
+/// apiece. What the window can never hold is trimmed so the summary request fits.
+pub fn plan_emergency(msgs: &[Message], budget_chars: usize) -> Vec<(String, String)> {
+    msgs.iter()
+        .flat_map(|m| &m.content)
+        .filter_map(|b| match b {
+            Block::ToolResult {
+                id, content, name, ..
+            } if content.len() > budget_chars.max(MIN_PRUNE_CHARS) && *name != crate::skills::TOOL => {
+                Some((id.clone(), truncate_oldest(content, budget_chars)))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// The head of `s` up to `budget_chars`, with a marker.
+fn truncate_oldest(s: &str, budget_chars: usize) -> String {
+    let cut = s.floor_char_boundary(budget_chars);
+    format!(
+        "{}\n[… clipped, {} of {} bytes cut to fit the context window …]",
+        &s[..cut],
+        s.len() - cut,
+        s.len()
+    )
 }
 
 /// Rewrite the content of tool results by id.

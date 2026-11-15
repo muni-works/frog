@@ -1,0 +1,434 @@
+{
+ "about": "The composer states the parity shots draw (docs/design/parity/composer.html), each merged onto cases.json's base like a case's `given`.",
+ "states": [
+  {
+   "name": "idle",
+   "caption": "In a session, nothing typed",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": []
+    }
+   }
+  },
+  {
+   "name": "typing",
+   "caption": "Typing: the action is Send",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": []
+    },
+    "draft": {
+     "text": "add a test for the stack pill",
+     "attachments": [],
+     "caret": 29
+    }
+   }
+  },
+  {
+   "name": "working",
+   "caption": "Working, a follow-up queued",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": []
+    },
+    "busy": "working",
+    "queued": 1,
+    "draft": {
+     "text": "also run the linter",
+     "attachments": [],
+     "caret": 19
+    }
+   }
+  },
+  {
+   "name": "no-repo",
+   "caption": "A folder outside git",
+   "given": {
+    "where": {
+     "kind": "folder",
+     "folder": "/Users/cam/notes",
+     "branch": "",
+     "worktree": false,
+     "git": false,
+     "dirty": false
+    }
+   }
+  },
+  {
+   "name": "worktree",
+   "caption": "A worktree with changes: Commit",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 48,
+      "del": 12,
+      "files": 3
+     },
+     "dirty": true,
+     "ahead": 0,
+     "prs": []
+    }
+   }
+  },
+  {
+   "name": "pr-draft",
+   "caption": "PR: draft",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": [
+      {
+       "repo": "muni-works/frog",
+       "number": 297,
+       "title": "Composer: the tray",
+       "state": "draft",
+       "checks": {
+        "ok": 3,
+        "total": 3
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "pr-checks",
+   "caption": "PR: checks running, ahead: Push",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 1,
+     "prs": [
+      {
+       "repo": "muni-works/frog",
+       "number": 297,
+       "title": "Composer: the tray",
+       "state": "checks",
+       "checks": {
+        "ok": 1,
+        "total": 3
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "pr-failing",
+   "caption": "PR: failing: Fix",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": [
+      {
+       "repo": "muni-works/frog",
+       "number": 297,
+       "title": "Composer: the tray",
+       "state": "failing",
+       "checks": {
+        "ok": 2,
+        "total": 3
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "pr-approved",
+   "caption": "PR: approved: Merge",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": [
+      {
+       "repo": "muni-works/frog",
+       "number": 297,
+       "title": "Composer: the tray",
+       "state": "approved",
+       "checks": {
+        "ok": 3,
+        "total": 3
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "pr-merged",
+   "caption": "PR: merged: Archive",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": [
+      {
+       "repo": "muni-works/frog",
+       "number": 297,
+       "title": "Composer: the tray",
+       "state": "merged",
+       "checks": {
+        "ok": 3,
+        "total": 3
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "pr-closed",
+   "caption": "PR: closed: Reopen",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": [
+      {
+       "repo": "muni-works/frog",
+       "number": 297,
+       "title": "Composer: the tray",
+       "state": "closed",
+       "checks": {
+        "ok": 3,
+        "total": 3
+       }
+      }
+     ]
+    }
+   }
+  },
+  {
+   "name": "stack",
+   "caption": "Three PRs, the stack open",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": [
+      {
+       "repo": "muni-works/frog",
+       "number": 297,
+       "title": "Composer: the tray",
+       "state": "approved",
+       "checks": {
+        "ok": 3,
+        "total": 3
+       }
+      },
+      {
+       "repo": "muni-works/zest",
+       "number": 41,
+       "title": "PR state endpoint",
+       "state": "failing",
+       "checks": {
+        "ok": 4,
+        "total": 6
+       }
+      },
+      {
+       "repo": "muni-works/frog",
+       "number": 298,
+       "title": "Tokens for pr.*",
+       "state": "checks",
+       "checks": {
+        "ok": 1,
+        "total": 3
+       }
+      }
+     ]
+    },
+    "stackOpen": true
+   }
+  },
+  {
+   "name": "new-folder",
+   "caption": "New session: a folder",
+   "given": {}
+  },
+  {
+   "name": "new-cloud",
+   "caption": "New session: Frog Cloud",
+   "given": {
+    "where": {
+     "kind": "cloud",
+     "repo": "muni-works/frog",
+     "branch": "main"
+    },
+    "model": {
+     "id": "cloud/glm-5.3-flash",
+     "name": "GLM-5.3 Flash",
+     "place": "cloud",
+     "node": null
+    }
+   }
+  },
+  {
+   "name": "new-chat",
+   "caption": "New session: just chat",
+   "given": {
+    "where": {
+     "kind": "chat"
+    }
+   }
+  },
+  {
+   "name": "error",
+   "caption": "An error slot: out of credit",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": []
+    },
+    "model": {
+     "id": "cloud/glm-5.3-flash",
+     "name": "GLM-5.3 Flash",
+     "place": "cloud",
+     "node": null
+    },
+    "draft": {
+     "text": "add a test",
+     "attachments": [],
+     "caret": 10
+    },
+    "error": {
+     "code": "no_credit",
+     "message": "Out of credit",
+     "actions": [
+      "add_credit",
+      "use_local"
+     ],
+     "control": null,
+     "detail": null,
+     "retryIn": null
+    }
+   }
+  }
+ ]
+}

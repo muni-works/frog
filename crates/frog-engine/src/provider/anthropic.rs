@@ -1,6 +1,6 @@
 //! Anthropic Messages API with streaming and prompt caching.
 
-use super::{Request, Response, Stop, StreamEvent, deep_merge, parse_args, sse};
+use super::{Request, Response, Stop, StreamError, StreamEvent, deep_merge, parse_args, sse};
 use crate::config::{AnthropicThinking, Profile, Thinking};
 use crate::message::{Block, Message, Role, Usage};
 use anyhow::{Result, bail};
@@ -13,6 +13,23 @@ pub struct Client {
     pub key: String,
     pub extra: Option<Value>,
     pub settings: Settings,
+}
+
+/// Cloudflare's AI Gateway REST API (`api.cloudflare.com/client/v4/accounts/{id}/ai`).
+pub fn on_cloudflare(base: &str) -> bool {
+    base.starts_with("https://api.cloudflare.com/client/v4/accounts/")
+}
+
+/// OpenRouter's API (`openrouter.ai/api/v1`), which serves the Messages API too.
+pub fn on_openrouter(base: &str) -> bool {
+    base.contains("openrouter.ai")
+}
+
+/// Gateways that take the API key as an `Authorization: Bearer` instead of Anthropic's
+/// `x-api-key`: Cloudflare's AI Gateway and OpenRouter. A gateway that wants the bearer and
+/// is sent `x-api-key` answers 401, so this decides auth for the Messages path.
+pub fn wants_bearer(base: &str) -> bool {
+    on_cloudflare(base) || on_openrouter(base)
 }
 
 /// Per-profile request options (see the matching `Profile` fields).
@@ -275,19 +292,32 @@ impl Client {
         (Some(thinking), effort)
     }
 
+    /// The Messages endpoint for this client's base. `base` is stored without a trailing `/v1`
+    /// (see `openai::Client::gateway_claude`), so the path is added once here.
+    pub fn messages_url(&self) -> String {
+        format!("{}/v1/messages", self.base.trim_end_matches('/'))
+    }
+
+    /// The request as it will be sent: URL, auth and the Messages body.
+    fn request(&self, req: &Request<'_>) -> reqwest::RequestBuilder {
+        let rb = self.http.post(self.messages_url());
+        // Some gateways take the API key as a bearer, not Anthropic's own header.
+        let rb = if wants_bearer(&self.base) {
+            rb.bearer_auth(&self.key)
+        } else {
+            rb.header("x-api-key", &self.key)
+        };
+        rb.header("anthropic-version", "2023-06-01")
+            .json(&self.body(req))
+    }
+
     pub async fn complete(
         &self,
         req: &Request<'_>,
         on: &mut (dyn FnMut(StreamEvent) + Send),
     ) -> Result<Response> {
-        let resp = self
-            .http
-            .post(format!("{}/v1/messages", self.base.trim_end_matches('/')))
-            .header("x-api-key", &self.key)
-            .header("anthropic-version", "2023-06-01")
-            .json(&self.body(req))
-            .send()
-            .await?;
+        let rb = self.request(req);
+        let resp = rb.send().await?;
         let resp = sse::check(resp).await?;
 
         let mut parts: Vec<Partial> = Vec::new();
@@ -303,10 +333,7 @@ impl Client {
             let v: Value = serde_json::from_str(data)?;
             match v["type"].as_str().unwrap_or("") {
                 "message_start" => {
-                    let u = &v["message"]["usage"];
-                    usage.input = u["input_tokens"].as_u64().unwrap_or(0)
-                        + u["cache_creation_input_tokens"].as_u64().unwrap_or(0);
-                    usage.cache_read = u["cache_read_input_tokens"].as_u64().unwrap_or(0);
+                    read_usage(&v["message"]["usage"], &mut usage, true);
                 }
                 "content_block_start" => {
                     let b = &v["content_block"];
@@ -369,17 +396,11 @@ impl Client {
                     if let Some(r) = v["delta"]["stop_reason"].as_str() {
                         stop = Some(Stop::from_reason(r));
                     }
-                    let u = &v["usage"];
-                    usage.output = u["output_tokens"].as_u64().unwrap_or(usage.output);
-                    // Some gateways (Vercel) report input and cache counts only here.
-                    if let Some(i) = u["input_tokens"].as_u64().filter(|&i| i > 0) {
-                        usage.input = i + u["cache_creation_input_tokens"].as_u64().unwrap_or(0);
-                    }
-                    if let Some(c) = u["cache_read_input_tokens"].as_u64().filter(|&c| c > 0) {
-                        usage.cache_read = c;
-                    }
+                    read_usage(&v["usage"], &mut usage, false);
                 }
-                "error" => bail!("anthropic error: {}", v["error"]),
+                "error" => bail!(StreamError {
+                    message: v["error"].to_string()
+                }),
                 _ => {}
             }
             Ok(())
@@ -413,9 +434,182 @@ impl Client {
     }
 }
 
+/// Token counts from a `message_start` (`start`) or `message_delta` usage object. Some gateways
+/// (Vercel) report input and cache counts only in the delta, so a delta's missing or zero
+/// counts keep what the start said.
+fn read_usage(u: &Value, usage: &mut Usage, start: bool) {
+    let n = |k: &str| u[k].as_u64().filter(|&n| start || n > 0);
+    if !start {
+        usage.output = u["output_tokens"].as_u64().unwrap_or(usage.output);
+    }
+    if let Some(i) = n("input_tokens").or(start.then_some(0)) {
+        let kept = if start { 0 } else { usage.cache_write };
+        usage.cache_write = n("cache_creation_input_tokens").unwrap_or(kept);
+        usage.input = i + usage.cache_write;
+    }
+    if let Some(c) = n("cache_read_input_tokens").or(start.then_some(0)) {
+        usage.cache_read = c;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cache_reads_and_writes_are_counted_apart() {
+        let mut u = Usage::default();
+        read_usage(
+            &json!({ "input_tokens": 52, "cache_creation_input_tokens": 500,
+                     "cache_read_input_tokens": 151_667, "output_tokens": 1 }),
+            &mut u,
+            true,
+        );
+        read_usage(&json!({ "output_tokens": 6_500 }), &mut u, false);
+        assert_eq!((u.input, u.cache_write, u.cache_read, u.output), (552, 500, 151_667, 6_500));
+        // Vercel: counts only in the delta.
+        let mut u = Usage::default();
+        read_usage(&json!({ "input_tokens": 0 }), &mut u, true);
+        read_usage(
+            &json!({ "input_tokens": 10, "cache_read_input_tokens": 900, "output_tokens": 5 }),
+            &mut u,
+            false,
+        );
+        assert_eq!((u.input, u.cache_write, u.cache_read, u.output), (10, 0, 900, 5));
+    }
+
+    /// Serve one streaming Messages reply and hand back the request's head (headers + line).
+    async fn serve_one() -> (String, tokio::task::JoinHandle<String>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            let (mut s, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 65536];
+            let n = s.read(&mut buf).await.unwrap_or(0);
+            let got = String::from_utf8_lossy(&buf[..n]).to_string();
+            let body = "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":3}}}\n\n\
+                        data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n\
+                        data: {\"type\":\"message_stop\"}\n\n";
+            let head = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = s.write_all(head.as_bytes()).await;
+            let _ = s.write_all(body.as_bytes()).await;
+            got
+        });
+        (format!("http://{addr}"), handle)
+    }
+
+    /// The Messages path a real request lands on. A loopback base can't also be a gateway
+    /// host, so auth is asserted on the built request instead (below).
+    #[tokio::test]
+    async fn a_gateway_base_posts_to_the_messages_path_once() {
+        let (base, server) = serve_one().await;
+        let c = Client {
+            http: reqwest::Client::new(),
+            // As `gateway_claude` stores it: the preset's `/v1` already stripped.
+            base: format!("{base}/api"),
+            model: "anthropic/claude-opus-5.5".into(),
+            key: "k".into(),
+            extra: None,
+            settings: Settings::default(),
+        };
+        let messages = vec![text(Role::User, "hello")];
+        let req = Request {
+            system: "",
+            messages: &messages,
+            tools: &[],
+            max_tokens: Some(16),
+            format: None,
+            think: None,
+            think_budget: None,
+            cache_key: None,
+            background: false,
+        };
+        c.complete(&req, &mut |_| {}).await.unwrap();
+        let got = server.await.unwrap();
+        assert!(
+            got.starts_with("POST /api/v1/messages "),
+            "wrong path: {got}"
+        );
+    }
+
+    fn head(c: &Client) -> (String, Vec<(String, String)>) {
+        let messages = vec![text(Role::User, "hello")];
+        let req = Request {
+            system: "",
+            messages: &messages,
+            tools: &[],
+            max_tokens: Some(16),
+            format: None,
+            think: None,
+            think_budget: None,
+            cache_key: None,
+            background: false,
+        };
+        let built = c.request(&req).build().unwrap();
+        let headers = built
+            .headers()
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.as_str().to_string(),
+                    v.to_str().unwrap_or_default().to_string(),
+                )
+            })
+            .collect();
+        (built.url().to_string(), headers)
+    }
+
+    fn at(base: &str, key: &str) -> Client {
+        Client {
+            http: reqwest::Client::new(),
+            base: base.into(),
+            model: "anthropic/claude-opus-5.5".into(),
+            key: key.into(),
+            extra: None,
+            settings: Settings::default(),
+        }
+    }
+
+    /// OpenRouter's Messages endpoint authenticates with a bearer; `x-api-key` there is a 401.
+    #[test]
+    fn openrouter_takes_the_key_as_a_bearer() {
+        let (url, headers) = head(&at("https://openrouter.ai/api", "or-key"));
+        assert_eq!(url, "https://openrouter.ai/api/v1/messages");
+        let auth = |n: &str| headers.iter().find(|(k, _)| k == n).map(|(_, v)| v.as_str());
+        assert_eq!(auth("authorization"), Some("Bearer or-key"));
+        assert_eq!(auth("x-api-key"), None);
+        assert_eq!(auth("anthropic-version"), Some("2023-06-01"));
+    }
+
+    /// Cloudflare's AI Gateway wants a bearer too; this must not change.
+    #[test]
+    fn cloudflare_takes_the_key_as_a_bearer() {
+        let base = "https://api.cloudflare.com/client/v4/accounts/abc/ai";
+        let (url, headers) = head(&at(base, "cf-token"));
+        assert_eq!(
+            url,
+            "https://api.cloudflare.com/client/v4/accounts/abc/ai/v1/messages"
+        );
+        let auth = |n: &str| headers.iter().find(|(k, _)| k == n).map(|(_, v)| v.as_str());
+        assert_eq!(auth("authorization"), Some("Bearer cf-token"));
+        assert_eq!(auth("x-api-key"), None);
+    }
+
+    /// Vercel's gateway and api.anthropic.com keep Anthropic's own header; this must not change.
+    #[test]
+    fn vercel_and_anthropic_keep_x_api_key() {
+        for base in ["https://ai-gateway.vercel.sh", "https://api.anthropic.com"] {
+            let (url, headers) = head(&at(base, "gw-key"));
+            assert_eq!(url, format!("{base}/v1/messages"));
+            let auth = |n: &str| headers.iter().find(|(k, _)| k == n).map(|(_, v)| v.as_str());
+            assert_eq!(auth("x-api-key"), Some("gw-key"), "base {base}");
+            assert_eq!(auth("authorization"), None, "base {base}");
+        }
+    }
 
     fn client(model: &str, settings: Settings) -> Client {
         Client {
@@ -451,6 +645,7 @@ mod tests {
             think: Some(false),
             think_budget: None,
             cache_key: None,
+            background: false,
         })
     }
 

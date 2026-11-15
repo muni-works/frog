@@ -5,12 +5,25 @@ import SwiftUI
 /// don't: This Mac, then your servers, then frog cloud, then each other cloud provider. A model
 /// you'd download is just a model on this Mac in the Not downloaded state.
 enum ModelSections {
+    /// Launch: every picker lists Frog Cloud's models and nothing else: no models on this Mac,
+    /// your servers or other providers, and no Models settings page (Cam, 2026-10-30). The
+    /// engine still lists them all; turning this off brings the full list back.
+    static let frogCloudOnly = true
+
+    /// Cam, 2026-11-12: "everything remote will go through frog cloud, let's not worry about the
+    /// providers in the app." The picker offers This Mac and Frog Cloud only, so bringing your
+    /// own provider (a preset's key, a server of your own) is hidden, not deleted: presets,
+    /// Keychain keys, `ProviderStore` and the Settings plumbing all stay, reachable but
+    /// unadvertised. Flip this one constant to bring the "Add a Provider…" and "Add Server…"
+    /// entry points back.
+    static let providersHidden = true
+
     /// `usable`: what frog listed (plus the current model, even if it wasn't listed).
     /// `suggested`: what frog recommends downloading.
-    /// `alwaysFrogCloud`: show frog cloud even when nothing listed it (signed out, or an older
-    /// engine), with its built-in model. Off while searching.
+    /// Frog Cloud's models are only what the engine listed (Frog Cloud's own `/v1/models`, its
+    /// public list when signed out): none listed, no Frog Cloud section.
     @MainActor
-    static func make(usable: [ModelIdentity], suggested: [ModelIdentity], alwaysFrogCloud: Bool = true) -> [(title: String, models: [ModelIdentity])] {
+    static func make(usable: [ModelIdentity], suggested: [ModelIdentity]) -> [(title: String, models: [ModelIdentity])] {
         let order: (ModelIdentity.Place) -> Int = { p in
             switch p {
             case .mac, .apple: 0
@@ -36,9 +49,7 @@ enum ModelSections {
         // Compared with old ids folded in: an older engine may still say "tang/…".
         let have = Set(usable.map { ProviderID.canonicalSpec($0.spec) })
         var all = usable + suggested.filter { !have.contains(ProviderID.canonicalSpec($0.spec)) }
-        if alwaysFrogCloud, !all.contains(where: \.place.isFrogCloud) {
-            all.append(ModelIdentity.of(ProviderID.cloudModel, in: []))
-        }
+        if frogCloudOnly { all = all.filter(\.place.isFrogCloud) }
         return Dictionary(grouping: all) { $0.place.label }
             .sorted { a, b in
                 let pa = order(a.value[0].place), pb = order(b.value[0].place)

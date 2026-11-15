@@ -345,10 +345,7 @@ impl Term {
                 pixel_height: 0,
             })
             .context("opening a pty")?;
-        let shell = std::env::var("SHELL")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "/bin/zsh".into());
+        let shell = login_shell(std::env::var("SHELL").ok());
         let (mut cmd, rc) = shell_command(&shell)?;
         cmd.cwd(cwd);
         cmd.env("TERM", "xterm-256color");
@@ -421,6 +418,16 @@ impl Term {
         let g = self.grid.lock().unwrap();
         g.prompts == 0 || g.prompts > self.sent_at
     }
+}
+
+/// The shell a terminal pane runs: `$SHELL` when it's set and exists, else the first of zsh,
+/// bash and sh that does. A container (Frog Cloud's sandbox) often has no `$SHELL` and no zsh.
+fn login_shell(env: Option<String>) -> String {
+    env.into_iter()
+        .filter(|s| !s.is_empty())
+        .chain(["/bin/zsh", "/bin/bash", "/bin/sh"].map(String::from))
+        .find(|s| std::path::Path::new(s).exists())
+        .unwrap_or_else(|| "/bin/sh".into())
 }
 
 /// The shell with hooks that print a prompt marker, so a finished command is a fact rather
@@ -1342,6 +1349,16 @@ fn image_bytes(v: &Value) -> Option<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_terminal_finds_a_shell_that_exists() {
+        // A missing $SHELL (a container's) falls through to one that's there; /bin/sh always is.
+        let s = login_shell(Some("/nonexistent/zsh".into()));
+        assert!(std::path::Path::new(&s).exists(), "{s}");
+        assert!(std::path::Path::new(&login_shell(None)).exists());
+        assert_eq!(login_shell(Some("/bin/sh".into())), "/bin/sh");
+    }
+
     use super::*;
 
     #[test]

@@ -4,9 +4,18 @@ set -e
 export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 REPO="$SRCROOT/../.."
 PROFILE=release
-cargo build --manifest-path "$REPO/Cargo.toml" --release -p frog
 DEST="$BUILT_PRODUCTS_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH"
 mkdir -p "$DEST"
+# Dev escape hatch: copy engine binaries built outside Xcode (for environments whose own
+# sandboxing conflicts with SwiftPM's or Cargo's, which set FROG_PREBUILT_DIR).
+if [ -n "$FROG_PREBUILT_DIR" ]; then
+    rm -f "$DEST/frog" "$DEST/frog-apple" "$DEST/frog-desktop"
+    cp "$FROG_PREBUILT_DIR/frog" "$DEST/frog"
+    cp "$FROG_PREBUILT_DIR/frog-apple" "$DEST/frog-apple"
+    cp "$FROG_PREBUILT_DIR/frog-desktop" "$DEST/frog-desktop"
+    exit 0
+fi
+cargo build --manifest-path "$REPO/Cargo.toml" --release -p frog
 # This workspace, like tang below, may configure a shared Cargo target directory.
 FROG_TARGET="$(cargo metadata --manifest-path "$REPO/Cargo.toml" --no-deps --format-version 1 --quiet | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')"
 rm -f "$DEST/frog"; cp "$FROG_TARGET/$PROFILE/frog" "$DEST/frog"

@@ -72,10 +72,14 @@ final class ProviderStore {
     func name(of provider: String) -> String { self.provider(provider)?.name ?? provider }
 
     /// Save a key (empty removes it), then refresh what it unlocks.
-    func setKey(_ key: String, for id: String) async {
-        await run(["--set-key", id], input: key)
+    /// False when the engine couldn't save it (missing or failing `frog`): sign-in must say so
+    /// rather than look done with no key behind it.
+    @discardableResult
+    func setKey(_ key: String, for id: String) async -> Bool {
+        let ok = await run(["--set-key", id], input: key)
         await load()
         await loadCatalog(refresh: true)
+        return ok
     }
 
     func addServer(id: String, name: String, url: String, ollama: Bool) async -> Bool {

@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import XCTest
 @testable import Frog
 
@@ -29,6 +30,19 @@ final class ModelIdentityTests: XCTestCase {
         XCTAssertEqual(ModelIdentity.of("tang/mlx-community/Qwen3-4B-4bit", in: []).place, .mac)
         XCTAssertEqual(ModelIdentity.of("tang/mlx-community/Qwen3-4B-4bit", in: []).name, "Qwen3 4B")
         XCTAssertEqual(ModelIdentity.of("ollama/qwen3:4b", in: []).spoken, "Qwen3 4B, on this Mac")
+    }
+
+    /// Frog Cloud's models go by their plain names, and old ids (an old log's `cloud/bull`)
+    /// read as today's.
+    @MainActor
+    func testFrogCloudModelsByPlainNames() {
+        XCTAssertEqual(ModelIdentity.of("cloud/deepseek-v4.1-flash", in: []).name, "DeepSeek V4.1 Flash")
+        XCTAssertEqual(ModelIdentity.of("cloud/bull", in: []).name, "DeepSeek V4.1 Flash")
+        XCTAssertEqual(ModelIdentity.of("cloud/bull", in: []).spec, "cloud/deepseek-v4.1-flash")
+        XCTAssertEqual(ModelIdentity.of("frog/tree", in: []).name, "GLM-5.3 Flash")
+        XCTAssertEqual(ModelIdentity.of("cloud/dart", in: []).name, "Qwen3 Coder Next")
+        XCTAssertEqual(ProviderID.canonicalSpec("cloud/tree"), "cloud/glm-5.3-flash")
+        XCTAssertEqual(ProviderID.canonicalSpec("ollama/tree"), "ollama/tree")
     }
 
     func testFitAndStateLines() {
@@ -80,6 +94,46 @@ final class ModelIdentityTests: XCTestCase {
                     let text = (line as NSString).substring(with: m.range(at: 1))
                     if banned.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil {
                         problems.append("\(where_) says \"\(text)\": see the vocabulary in docs/models.md")
+                    }
+                }
+            }
+        }
+        XCTAssert(problems.isEmpty, problems.joined(separator: "\n"))
+    }
+
+    /// Cam's rule (docs/models.md, "Place color"): cloud green, local blue, everywhere. Any
+    /// cloud is green, Anthropic and OpenAI as much as Frog Cloud.
+    func testPlaceColorIsCloudGreenLocalBlue() {
+        let cloud: [ModelIdentity.Place] = [.frogCloud, .cloud("Anthropic"), .cloud("OpenAI")]
+        let local: [ModelIdentity.Place] = [.mac, .apple, .server("mew (RTX 3090)")]
+        for p in cloud { XCTAssertEqual(Color.place(p), Tokens.placeCloud, "\(p)") }
+        for p in local { XCTAssertEqual(Color.place(p), Tokens.placeLocal, "\(p)") }
+        for p in cloud + local { XCTAssertEqual(p.color, Color.place(p)) }
+        // That cloud green is the accent itself is checked on the JSON (apps/web/test/place.test.ts).
+    }
+
+    /// Every place annotation goes through `Color.place(_:)`: no surface picks its own green or
+    /// blue for where a model runs, or colors a turn by who served it.
+    func testPlaceAnnotationsGoThroughOneFunction() throws {
+        let apps = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let roots = ["FrogKit", "macos/Frog", "ios/Frog"].map { apps.appending(path: $0) }
+        // A raw color on a line about a place, a served-by color, or the old Bool form.
+        let banned = try NSRegularExpression(pattern: #"Color\.served|served\(|place\(cloud:|PlaceIcon\([^)]*tint:|ModelLabel\([^)]*tint:"#)
+        let placeLine = try NSRegularExpression(pattern: #"(?i)(cloud|place|serving|frogCloud|cloudTarget)"#)
+        let raw = try NSRegularExpression(pattern: #"\.(green|blue)\b|Color\.(green|blue)|Tokens\.accent|\.accentColor"#)
+        var problems: [String] = []
+        for root in roots {
+            let files = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)?
+                .compactMap { $0 as? URL }.filter { $0.pathExtension == "swift" && $0.lastPathComponent != "Tokens.swift" } ?? []
+            for file in files {
+                let lines = try String(contentsOf: file, encoding: .utf8).components(separatedBy: "\n")
+                for (i, line) in lines.enumerated() where !line.trimmingCharacters(in: .whitespaces).hasPrefix("//") {
+                    let r = NSRange(line.startIndex..., in: line), at = "\(file.lastPathComponent):\(i + 1)"
+                    if banned.firstMatch(in: line, range: r) != nil { problems.append("\(at) colors a place its own way: use Color.place(_:)") }
+                    if placeLine.firstMatch(in: line, range: r) != nil, raw.firstMatch(in: line, range: r) != nil,
+                       line.contains("foregroundStyle") || line.contains("stroke") || line.contains(".tint(") {
+                        problems.append("\(at) a raw green/blue on a place: use Color.place(_:)")
                     }
                 }
             }

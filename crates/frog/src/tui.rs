@@ -232,7 +232,10 @@ impl Tui {
                     r.idle();
                     return true;
                 }
-                Event::Status(s) => self.status = Some(s),
+                Event::Status(s) => {
+                    r.set_model(&s.model);
+                    self.status = Some(s)
+                }
                 Event::TurnEnded { .. } if !replay => {}
                 ev => r.event(ev),
             }
@@ -292,7 +295,10 @@ impl Tui {
                     self.since = Some(Instant::now());
                 }
             }
-            Event::Status(s) => self.status = Some(s),
+            Event::Status(s) => {
+                r.set_model(&s.model);
+                self.status = Some(s)
+            }
             Event::ModelChanged { model } => {
                 // A bare `frog` starts where you left off.
                 frog_engine::models::remember_last_used(&model);
@@ -372,6 +378,21 @@ impl Tui {
     fn input(&mut self, line: &str) -> bool {
         let line = line.trim();
         if let Some((id, _)) = self.asking.take() {
+            // `n: <note>` (or `no, <note>`): deny and tell the agent why, so it adjusts.
+            let lowered = line.to_lowercase();
+            if let Some(note) = ["n:", "no:", "n,", "no,"]
+                .iter()
+                .find_map(|p| lowered.starts_with(p).then(|| line[p.len()..].trim()))
+                .filter(|n| !n.is_empty())
+            {
+                render::say(&format!("  {}", "denied with a note".red()));
+                self.send(Op::Permission {
+                    id,
+                    decision: Decision::Deny,
+                    note: Some(note.to_string()),
+                });
+                return true;
+            }
             let (decision, said) = match line.to_lowercase().as_str() {
                 "" | "y" | "yes" => (Decision::Allow, "yes".green()),
                 "a" | "always" => (Decision::AllowAlways, "always".green()),
@@ -380,7 +401,11 @@ impl Tui {
                 _ => (Decision::Deny, "denied · sending your message".red()),
             };
             render::say(&format!("  {said}"));
-            self.send(Op::Permission { id, decision });
+            self.send(Op::Permission {
+                id,
+                decision,
+                note: None,
+            });
             if matches!(
                 line.to_lowercase().as_str(),
                 "" | "y" | "yes" | "a" | "always" | "n" | "no"
@@ -424,6 +449,7 @@ impl Tui {
             self.send(Op::Submit {
                 text: line.into(),
                 images: Vec::new(),
+                more: Vec::new(),
             });
         }
         true
@@ -435,6 +461,7 @@ impl Tui {
             self.send(Op::Permission {
                 id,
                 decision: Decision::Deny,
+                note: None,
             });
             self.send(Op::Interrupt);
             return true;
@@ -461,6 +488,11 @@ impl Tui {
             s.model.clone().cyan(),
             cwd.dark_grey()
         );
+        // Which model, and whether it's free or billed, before the first prompt.
+        if let Ok((spec, p)) = self.cfg.resolve(Some(&s.model)) {
+            let runs = frog_engine::model_policy::where_it_runs(&spec, &p);
+            render::info(&format!("   {spec} · {runs} · /model to switch"));
+        }
         render::info(
             "   /help for commands · shift+tab cycles permission mode · alt+enter for newline",
         );
@@ -546,6 +578,7 @@ impl Tui {
             "remember" | "forget" | "memory" | "recall" => Op::Submit {
                 text: format!("/{cmd}"),
                 images: Vec::new(),
+                more: Vec::new(),
             },
             _ => {
                 render::warn(&format!("  unknown command /{name} — try /help"));
@@ -619,11 +652,13 @@ pub async fn run(h: Handle, cfg: Config, queued: Option<String>) -> Result<()> {
         return Ok(());
     }
     // Someone's at the keyboard to answer `Ask`. Previews need a client that hosts them.
-    // Queued like any op, so it ends with its own `Idle`.
+    // Queued like any op, so it ends with its own `Idle`. The IRC bus stays off in the
+    // terminal: it's config-gated and the Mac app declares it.
     let _ = tui.h.ops.send(Op::SetClientCaps {
         panes: false,
         ask: true,
         sessions: false,
+        irc: false,
     });
     if !tui.drain_startup(false).await {
         return Ok(());

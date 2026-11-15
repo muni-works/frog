@@ -84,6 +84,21 @@ either hold up at frog's typical 4-way concurrency?
   TTFT under 1s at 4-concurrent, and pricing already equal — so the decision
   rests on speed and the single-token (no per-provider key) setup.
 
+## Benchmark result (2026-10-22): not run to completion
+
+`scripts/bench-gateways.sh` ran, but both Workers AI cells returned
+`403 Forbidden` for every request: the CF account behind the available
+`CLOUDFLARE_API_TOKEN` is on the **Workers Free plan**, and both
+`@cf/zai-org/glm-5.3` and `@cf/deepseek-ai/deepseek-v4.1-flash-1017` are
+pay-plan-only ("Model is not available on the Workers Free plan. Upgrade to
+access this model"). A free-plan model (`@cf/meta/llama-3.3-70b-instruct-fp8-fast`)
+authenticates and streams fine on the same endpoint and token, so the setup
+(path, `Bearer` auth, SSE) is verified; only the plan gates the two target
+models. Vercel was skipped: no `AI_GATEWAY_API_KEY` in the environment.
+
+No TTFT/tok/s numbers were collected. Rerun on an account with the Workers
+Paid plan (and a Vercel key exported) to get them.
+
 ## Verdict
 
 Prices are identical; the choice is operational. Vercel is already a preset with

@@ -1,5 +1,6 @@
 pub mod anthropic;
 pub mod codex;
+pub mod node;
 pub mod ollama;
 pub mod openai;
 #[cfg(test)]
@@ -12,6 +13,12 @@ use anyhow::Result;
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
+
+/// How long one model request may run before it's abandoned: ten minutes. Generous enough for
+/// a long prefill and a long answer on a slow local model, tight enough that a dead socket
+/// surfaces in minutes rather than hanging the turn. Override per profile with
+/// `request_timeout_secs`.
+pub const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 600;
 
 #[derive(Clone, Debug)]
 pub struct ToolSpec {
@@ -40,6 +47,10 @@ pub struct Request<'a> {
     /// The conversation this call continues, so the server keeps its prompt cached (sent as
     /// `prompt_cache_key`); only set for servers that take it.
     pub cache_key: Option<&'a str>,
+    /// Work beside the conversation (subagents, the auto-mode classifier, compaction,
+    /// warming, titles): a node runs it only when no interactive call waits, and it goes out
+    /// as `x-frog-priority: background`.
+    pub background: bool,
 }
 
 /// Request fields a server takes beyond the standard API (see [`Provider::extensions`]).
@@ -103,6 +114,12 @@ impl Stop {
 pub struct HttpError {
     pub status: u16,
     pub body: String,
+    /// The edge's billing verdict for this refusal, when it said (its `x-frog-billing`
+    /// response header). `None` from every other provider — then the body decides.
+    pub billing: Option<Billing>,
+    /// How long the provider asked us to wait before retrying (its `retry-after` header, in
+    /// seconds). `None` when it sent none, or sent a date instead of a delay.
+    pub retry_after: Option<Duration>,
 }
 
 impl std::fmt::Display for HttpError {
@@ -113,23 +130,203 @@ impl std::fmt::Display for HttpError {
 
 impl std::error::Error for HttpError {}
 
+impl HttpError {
+    /// A `retry-after` header as a delay. The spec allows either delta-seconds or an HTTP
+    /// date; every provider that sends one in practice sends seconds, and a date would need a
+    /// date parser for a case that doesn't occur — so an unparseable value is `None` and the
+    /// retry falls back to its own backoff.
+    pub fn retry_after_header(v: &str) -> Option<Duration> {
+        v.trim()
+            .parse::<u64>()
+            .ok()
+            .map(Duration::from_secs)
+    }
+
+    /// What a person would want to read: the provider's own `error.message` when its body is
+    /// JSON (OpenAI's shape, which frog cloud uses), else the status alone.
+    pub fn summary(&self) -> String {
+        serde_json::from_str::<serde_json::Value>(&self.body)
+            .ok()
+            .and_then(|v| v["error"]["message"].as_str().map(str::to_string))
+            .unwrap_or_else(|| format!("HTTP {}", self.status))
+    }
+}
+
+/// The edge's billing verdict for a 402 (its `x-frog-billing` response header):
+/// `credit: <micros>` = the wallet pays the next call at usage prices and the retry is
+/// admitted; `allowance` = the refusal isn't admitted (nothing can pay).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Billing {
+    /// The wallet pays for the next call at usage prices; `Some` is what's left when the
+    /// edge said, `None` when it didn't (a bare `credit`, or the body's credit semantics).
+    Credit { balance_micro: Option<u64> },
+    /// Not admitted: the wallet is empty, or the edge wouldn't transition this refusal.
+    Allowance,
+}
+
+impl Billing {
+    /// From the edge's `x-frog-billing` header: `credit: 5000000` or a bare `credit`.
+    pub fn from_header(v: &str) -> Option<Self> {
+        let v = v.trim();
+        let rest = v.strip_prefix("credit")?;
+        Some(match rest.strip_prefix(':') {
+            // `credit: 0` says the wallet is empty: not admitted.
+            Some(n) if n.trim().parse::<u64>().is_ok_and(|b| b > 0) => {
+                Self::Credit {
+                    balance_micro: n.trim().parse().ok(),
+                }
+            }
+            Some(_) => Self::Allowance,
+            None => Self::Credit { balance_micro: None },
+        })
+    }
+
+    /// The provider's error body decides when the header is missing (BYOK gateways, the edge
+    /// before it ships the header). OpenAI's shape (`error.type` `insufficient_quota`): a
+    /// refusal whose words say the session can keep going on credit is admitted; a bare
+    /// limit is not.
+    pub fn parse(body: &str) -> Option<Self> {
+        let v = serde_json::from_str::<Value>(body).ok()?;
+        let err = &v["error"];
+        let ty = err["type"].as_str().unwrap_or_default();
+        let code = err["code"]
+            .as_i64()
+            .or(err["code"].as_str().and_then(|c| c.parse().ok()));
+        if !matches!(ty, "insufficient_quota") && code != Some(402) {
+            return None;
+        }
+        let msg = err["message"].as_str().unwrap_or_default().to_lowercase();
+        // "add credit to keep going at usage prices": the edge's own promise that the
+        // wallet pays for the next call.
+        (msg.contains("credit to keep going") || msg.contains("billing credit"))
+            .then_some(Self::Credit { balance_micro: None })
+    }
+}
+
+impl HttpError {
+    /// A billing refusal (402, or a body the provider bills with): the transcript's typed
+    /// billing path instead of a provider error dump.
+    pub fn is_billing(&self) -> bool {
+        self.status == 402 || self.billing.is_some()
+    }
+
+    /// Whether the next call was admitted at usage prices: the edge's header when it said,
+    /// else the body's credit semantics.
+    pub fn billing_admitted(&self) -> bool {
+        match self.billing {
+            Some(b) => matches!(b, Billing::Credit { .. }),
+            None => Billing::parse(&self.body).is_some_and(|b| matches!(b, Billing::Credit { .. })),
+        }
+    }
+
+    /// The remaining credit when the edge said, in millionths of a dollar.
+    pub fn billing_balance(&self) -> Option<u64> {
+        match self.billing {
+            Some(Billing::Credit { balance_micro }) => balance_micro,
+            _ => None,
+        }
+    }
+
+    /// Which allowance this refusal names, from the provider's own words: the 5-hour window,
+    /// the weekly one, or the wallet itself.
+    pub fn billing_window(&self) -> &'static str {
+        let msg = serde_json::from_str::<Value>(&self.body)
+            .ok()
+            .and_then(|v| v["error"]["message"].as_str().map(str::to_string))
+            .unwrap_or_else(|| self.body.clone());
+        let msg = msg.to_lowercase();
+        if msg.contains("5-hour") || msg.contains("5 hour") {
+            "5h"
+        } else if msg.contains("week") {
+            "weekly"
+        } else {
+            "credit"
+        }
+    }
+}
+
+/// An error event inside an otherwise-accepted (2xx) response stream: OpenAI-compatible
+/// gateways and Anthropic send these mid-stream when their upstream stumbles — the stream
+/// ends before the terminal chunk, the upstream is overloaded or timed out. The call may
+/// already have streamed partial text, so the engine drops what it showed and retries.
+#[derive(Debug)]
+pub struct StreamError {
+    pub message: String,
+}
+
+impl std::fmt::Display for StreamError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "server error mid-stream: {}", self.message)
+    }
+}
+
+impl std::error::Error for StreamError {}
+
+impl HttpError {
+    /// A "your request exceeds the model's context window" rejection: OpenAI-style and
+    /// Anthropic wording, and the variants Vercel's AI Gateway fans a gateway 400 out to.
+    /// `true` for the same class of error reported by any of its providers.
+    pub fn context_overflow(&self) -> bool {
+        if !matches!(self.status, 400 | 413) {
+            return false;
+        }
+        let b = self.body.to_lowercase();
+        [
+            "maximum context length",
+            "context window",
+            "context length",
+            "input too long",
+            "prompt is too long",
+            "prompt too long",
+            "exceeds the maximum allowed input length",
+            "exceeds max length",
+            "longer than the model's context",
+            "longer than the context length",
+            "reduce the length of the input",
+            "reduce the length of the messages",
+            "reduce the input",
+            "too large for this model",
+            "input_length_exceeded",
+            "request too large",
+        ]
+        .iter()
+        .any(|m| b.contains(m))
+    }
+}
+
 pub enum Provider {
     OpenAi(openai::Client),
     Anthropic(anthropic::Client),
     Ollama(ollama::Client),
     Codex(codex::Client),
+    Node(node::Client),
     #[cfg(test)]
     Scripted(scripted::Client),
 }
 
 impl Provider {
-    pub fn new(p: &Profile) -> Result<Self> {
-        let http = reqwest::Client::builder()
+    /// The HTTP client every provider call goes through. A connect timeout alone leaves an
+    /// established socket that goes quiet (a dead upstream, a stream that stalls mid-flight)
+    /// waiting forever, so the whole request is bounded too.
+    pub fn http_client(p: &Profile) -> Result<reqwest::Client> {
+        Ok(reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(10))
-            .build()?;
+            .timeout(Duration::from_secs(
+                p.request_timeout_secs.unwrap_or(DEFAULT_REQUEST_TIMEOUT_SECS),
+            ))
+            .build()?)
+    }
+
+    pub fn new(p: &Profile) -> Result<Self> {
+        let http = Self::http_client(p)?;
         let key = p.api_key();
         let extra = p.extra.clone();
         Ok(match p.provider {
+            ProviderKind::Node => Self::Node(node::Client::new(
+                crate::nodes::Pool::global(),
+                &p.model,
+                Some(p),
+            )),
             ProviderKind::Codex => Self::Codex(codex::Client::new(
                 std::env::current_dir()?,
                 p.model.clone(),
@@ -141,9 +338,14 @@ impl Provider {
                     .clone()
                     .unwrap_or_else(|| "https://api.openai.com/v1".into()),
                 model: p.model.clone(),
-                key,
+                key: if p.sidecar.as_deref() == Some(crate::sidecar::APPLE) {
+                    crate::sidecar::apple_token()
+                } else {
+                    key
+                },
                 extra,
                 anthropic: anthropic::Settings::from_profile(p, true),
+                priority: None,
             }),
             ProviderKind::Anthropic => Self::Anthropic(anthropic::Client {
                 http,
@@ -183,6 +385,27 @@ impl Provider {
         self
     }
 
+    /// The server's compiled-memory endpoints, for an OpenAI-compatible server that may
+    /// have them (not OpenAI's own API).
+    pub fn memory_remote(&self) -> Option<crate::compiled_memory::Remote> {
+        match self {
+            Self::OpenAi(c) if !c.is_openai() => Some(crate::compiled_memory::Remote::new(
+                c.http.clone(),
+                &c.base,
+                c.key.clone(),
+            )),
+            _ => None,
+        }
+    }
+
+    /// Where a pooled model's last call ran.
+    pub fn ran_on(&self) -> Option<crate::protocol::RanOn> {
+        match self {
+            Self::Node(c) => c.ran_on(),
+            _ => None,
+        }
+    }
+
     pub fn take_codex_items(&self) -> Vec<(String, String, serde_json::Value)> {
         match self {
             Self::Codex(c) => c.take_items(),
@@ -201,6 +424,11 @@ impl Provider {
             Self::Anthropic(_) => Some(true),
             Self::OpenAi(c) if c.is_openai() => Some(true),
             Self::Codex(_) => Some(false),
+            Self::Node(c) => tokio::time::timeout(Duration::from_secs(3), c.capabilities())
+                .await
+                .ok()
+                .flatten()
+                .map(|caps| caps.iter().any(|c| c == "vision")),
             Self::OpenAi(c) => tokio::time::timeout(Duration::from_secs(3), c.capabilities())
                 .await
                 .ok()
@@ -246,16 +474,28 @@ impl Provider {
                     prefill: has("prefill"),
                 }
             }
+            // Every node is a tang: the key keeps the conversation's KV, and its
+            // `prompt_cache_keys` tell placement which node holds it.
+            Self::Node(_) => Extensions {
+                cache_key: true,
+                ..Extensions::default()
+            },
             _ => Extensions::default(),
         }
     }
 
     /// The context window the server reports, if it does. Bounded by a short timeout.
+    /// frog cloud, at its own address or wherever FROG_BASE_URL points.
+    pub fn is_frog_api(&self) -> bool {
+        matches!(self, Self::OpenAi(c) if c.is_frog_api())
+    }
+
     pub async fn probe_context(&self) -> Option<u64> {
         let probe = async {
             match self {
                 Self::Ollama(c) => c.probe_context().await,
                 Self::OpenAi(c) => c.probe_context().await,
+                Self::Node(c) => c.probe_context().await,
                 _ => None,
             }
         };
@@ -290,6 +530,7 @@ impl Provider {
             Self::Anthropic(c) => c.complete(req, on).await,
             Self::Ollama(c) => c.complete(req, on).await,
             Self::Codex(c) => c.complete(req, on).await,
+            Self::Node(c) => c.complete(req, on).await,
             #[cfg(test)]
             Self::Scripted(c) => c.complete(req, on).await,
         }
@@ -347,5 +588,140 @@ pub fn deep_merge(a: &mut Value, b: &Value) {
             }
         }
         (a, b) => *a = b.clone(),
+    }
+}
+
+#[cfg(test)]
+mod http_error_tests {
+    use super::{Billing, DEFAULT_REQUEST_TIMEOUT_SECS, HttpError, Provider};
+    use crate::config::{Profile, ProviderKind};
+    use std::time::Duration;
+
+    #[test]
+    fn summary_is_the_providers_own_message() {
+        let e = HttpError {
+            status: 429,
+            body: r#"{"error":{"message":"deepseek-v4.1-flash is busy right now","type":"rate_limit_error"}}"#.into(),
+            billing: None,
+            retry_after: None,
+        };
+        assert_eq!(e.summary(), "deepseek-v4.1-flash is busy right now");
+        let plain = HttpError { status: 502, body: "<html>bad gateway</html>".into(), billing: None, retry_after: None };
+        assert_eq!(plain.summary(), "HTTP 502");
+    }
+
+    #[test]
+    fn a_busy_provider_can_say_how_long_to_wait() {
+        // delta-seconds, as providers actually send it.
+        assert_eq!(
+            HttpError::retry_after_header("120"),
+            Some(Duration::from_secs(120))
+        );
+        assert_eq!(
+            HttpError::retry_after_header(" 7 "),
+            Some(Duration::from_secs(7))
+        );
+        // No header, an empty one, or a form we don't parse: back off on our own clock.
+        assert_eq!(HttpError::retry_after_header(""), None);
+        assert_eq!(HttpError::retry_after_header("soon"), None);
+        assert_eq!(
+            HttpError::retry_after_header("Wed, 21 Oct 2026 07:28:00 GMT"),
+            None
+        );
+    }
+
+    #[test]
+    fn a_request_has_a_total_timeout_not_just_a_connect_one() {
+        let mut p = Profile::new(ProviderKind::Openai, "m");
+        p.base_url = Some("http://127.0.0.1:1/v1".into());
+        assert_eq!(p.request_timeout_secs, None);
+        // The default is generous for a slow local prefill, and finite: a dead socket has to
+        // surface in minutes, not hang the turn.
+        assert!(DEFAULT_REQUEST_TIMEOUT_SECS >= 300);
+        assert!(DEFAULT_REQUEST_TIMEOUT_SECS <= 1800);
+        // Both clients build with either setting.
+        assert!(Provider::http_client(&p).is_ok());
+        p.request_timeout_secs = Some(45);
+        assert!(Provider::http_client(&p).is_ok());
+    }
+
+    /// The bug this bounds: a socket that accepts and then says nothing. With only a connect
+    /// timeout the request hangs forever; with the total timeout it fails.
+    #[tokio::test]
+    async fn a_socket_that_never_answers_fails_instead_of_hanging() {
+        use tokio::io::AsyncReadExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        // Accept and read, never write: connected, then silent.
+        tokio::spawn(async move {
+            let (mut s, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 1024];
+            let _ = s.read(&mut buf).await;
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        });
+        let mut p = Profile::new(ProviderKind::Openai, "m");
+        p.base_url = Some(format!("http://{addr}/v1"));
+        // One second, so the test is quick; the shape is what production runs.
+        p.request_timeout_secs = Some(1);
+        let http = Provider::http_client(&p).unwrap();
+        let started = std::time::Instant::now();
+        let r = http.get(format!("http://{addr}/v1/models")).send().await;
+        let e = r.expect_err("a silent socket must not answer");
+        assert!(e.is_timeout(), "expected a timeout, got {e}");
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn the_edge_header_decides_the_admit_and_the_balance() {
+        let admitted = |v: &str| {
+            HttpError {
+                status: 402,
+                body: "{}".into(),
+                billing: Billing::from_header(v),
+                retry_after: None,
+            }
+        };
+        let yes = admitted("credit: 4200000");
+        assert!(yes.billing_admitted());
+        assert_eq!(yes.billing_balance(), Some(4_200_000));
+        assert_eq!(yes.billing_window(), "credit");
+        // A bare `credit`: admitted, no balance to show.
+        let bare = admitted("credit");
+        assert!(bare.billing_admitted());
+        assert_eq!(bare.billing_balance(), None);
+        // `credit: 0`: the wallet is empty — the edge won't bill a refusal to nothing.
+        let zero = admitted("credit: 0");
+        assert!(!zero.billing_admitted());
+        // A non-credit header (or none): the body decides.
+        assert!(!admitted("allowance").billing_admitted());
+        assert!(!HttpError { status: 402, body: "{}".into(), billing: None, retry_after: None }.billing_admitted());
+    }
+
+    #[test]
+    fn the_body_admits_when_it_says_credit_semantics() {
+        let with = |body: &str| HttpError { status: 402, body: body.into(), billing: None, retry_after: None };
+        // frog cloud's 5-hour window: credit semantics, admitted.
+        let five = with(
+            r#"{"error":{"message":"5-hour plan limit reached; add credit to keep going at usage prices","type":"insufficient_quota","code":402}}"#,
+        );
+        assert!(five.billing_admitted());
+        assert_eq!(five.billing_window(), "5h");
+        assert_eq!(five.summary(), "5-hour plan limit reached; add credit to keep going at usage prices");
+        // A bare wallet-empty refusal: not admitted, but still billing (typed, not a dump).
+        let empty = with(r#"{"error":{"message":"Insufficient credits","type":"insufficient_credits"}}"#);
+        assert!(!empty.billing_admitted());
+        assert!(empty.is_billing());
+        // A busy provider isn't billing, even with the same shape on another status.
+        let busy = HttpError {
+            status: 429,
+            body: r#"{"error":{"message":"deepseek-v4.1-flash is busy"}}"#.into(),
+            billing: None,
+            retry_after: None,
+        };
+        assert!(!busy.is_billing());
     }
 }

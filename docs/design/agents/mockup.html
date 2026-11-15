@@ -1,0 +1,338 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>frog — agents mockup</title>
+<style>
+  :root {
+    --bg: #1e1e1e; --side: #262627; --card: #2a2a2b; --raise: #333335;
+    --text: #ececec; --sec: rgba(235,235,245,.60); --ter: rgba(235,235,245,.32); --quat: rgba(235,235,245,.16);
+    --sep: rgba(255,255,255,.09); --accent: #30d158; --red: #ff453a; --orange: #ff9f0a; --blue: #0a84ff;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #111; font: 13px -apple-system, "SF Pro Text", system-ui, sans-serif; color: var(--text); -webkit-font-smoothing: antialiased; }
+  .page { padding: 28px 32px 48px; }
+  h1 { font: 600 20px -apple-system; margin: 0 0 4px; }
+  .lede { color: var(--sec); margin: 0 0 20px; max-width: 900px; line-height: 1.5; }
+  .callout-n { display: inline-flex; width: 18px; height: 18px; border-radius: 9px; background: #ffd60a; color: #000; font: 700 11px -apple-system; align-items: center; justify-content: center; }
+
+  /* window */
+  .win { width: 1640px; height: 860px; border-radius: 12px; overflow: hidden; display: flex; position: relative; background: var(--bg); box-shadow: 0 30px 80px rgba(0,0,0,.6), 0 0 0 .5px rgba(255,255,255,.12); }
+  .side { width: 280px; background: var(--side); border-right: .5px solid var(--sep); padding: 12px 8px; display: flex; flex-direction: column; gap: 2px; }
+  .lights { display: flex; gap: 8px; padding: 2px 6px 14px; }
+  .lights i { width: 12px; height: 12px; border-radius: 6px; background: #ff5f57; } .lights i:nth-child(2){background:#febc2e} .lights i:nth-child(3){background:#28c840}
+  .search { background: rgba(255,255,255,.06); border-radius: 7px; padding: 5px 9px; color: var(--ter); margin: 0 4px 10px; }
+  .sec-h { font: 600 10.5px -apple-system; letter-spacing: .04em; color: var(--ter); padding: 10px 10px 4px; text-transform: uppercase; }
+  .sec-h.need { color: var(--orange); }
+  .row { display: flex; align-items: center; gap: 7px; padding: 5px 10px; border-radius: 8px; position: relative; }
+  .row .t { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row .sub { font-size: 11px; color: var(--sec); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row.sel { background: rgba(48,209,88,.16); }
+  .row.l1 { padding-left: 26px; } .row.l2 { padding-left: 44px; } .row.l3 { padding-left: 62px; }
+  .mono { width: 18px; height: 18px; border-radius: 5px; font: 600 9px -apple-system; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+  .chev { color: var(--ter); font-size: 9px; width: 8px; flex: none; }
+  .dot { width: 7px; height: 7px; border-radius: 4px; flex: none; }
+  .spin { width: 10px; height: 10px; border-radius: 5px; border: 1.5px solid var(--quat); border-top-color: var(--sec); flex: none; animation: s 1s linear infinite; }
+  @keyframes s { to { transform: rotate(360deg); } }
+  .x { color: var(--red); font-weight: 700; font-size: 11px; flex: none; }
+  .chip { font: 500 10.5px -apple-system; color: var(--sec); background: rgba(255,255,255,.07); border-radius: 9px; padding: 1px 6px 1px 5px; display: inline-flex; align-items: center; gap: 4px; flex: none; white-space: nowrap; }
+  .chip.bad { color: var(--red); background: rgba(255,69,58,.14); }
+  .pie { width: 10px; height: 10px; border-radius: 5px; flex: none; background: conic-gradient(var(--accent) 0 var(--p), var(--quat) var(--p) 100%); }
+  .folded { color: var(--ter); font-size: 11.5px; padding: 3px 10px 3px 44px; }
+  .folded .bad { color: var(--red); }
+  .agent-glyph { color: var(--ter); font-size: 10px; flex: none; }
+
+  /* main */
+  .main { flex: 1; position: relative; display: flex; flex-direction: column; }
+  .toolbar { height: 52px; display: flex; align-items: center; justify-content: center; border-bottom: .5px solid var(--sep); position: relative; }
+  .pill { display: inline-flex; align-items: center; gap: 9px; height: 30px; padding: 0 14px; border-radius: 15px; background: rgba(255,255,255,.08); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.12); font-size: 13px; position: relative; }
+  .pill .sec { color: var(--sec); } .pill .div { width: 1px; height: 14px; background: var(--sep); }
+  .pill .agents { display: inline-flex; gap: 5px; align-items: center; color: var(--sec); }
+  .pill .agents b { color: var(--red); font-weight: 500; }
+  .frog { width: 16px; height: 16px; border-radius: 8px; background: var(--accent); position: relative; flex: none; }
+  .frog::before, .frog::after { content: ""; position: absolute; top: 3px; width: 4px; height: 4px; border-radius: 2px; background: #0b2; box-shadow: inset 0 0 0 1px #052; }
+  .frog::before { left: 2px; } .frog::after { right: 2px; }
+  .workline { position: absolute; left: 16px; right: 16px; bottom: 0; height: 2px; border-radius: 1px; background: linear-gradient(90deg, transparent 20%, rgba(48,209,88,.9) 45%, transparent 70%); }
+
+  .scroll { flex: 1; overflow: hidden; display: flex; justify-content: center; position: relative; }
+  .col { width: 720px; padding: 26px 0 0; }
+  .prompt { display: flex; justify-content: flex-end; margin-bottom: 18px; }
+  .bubble { background: #2fb350; color: #fff; padding: 8px 14px; border-radius: 18px; max-width: 540px; font-size: 14px; line-height: 1.45; }
+  p.body { font-size: 14px; line-height: 1.55; margin: 0 0 14px; }
+  code { font: 12.5px var(--mono); background: rgba(255,255,255,.08); border-radius: 4px; padding: 1px 4px; }
+  .act { color: var(--sec); font-size: 12.5px; margin: 0 0 6px; }
+  .act .chev2 { color: var(--ter); font-size: 9px; margin-left: 4px; }
+
+  /* anchor line: the thread line at the call */
+  .anchor { display: flex; align-items: center; gap: 8px; font-size: 12.5px; margin: 2px -10px 6px; padding: 5px 10px; border-radius: 8px; position: relative; }
+  .anchor:hover, .anchor.hover { background: rgba(255,255,255,.05); }
+  .anchor .ic { width: 18px; text-align: center; color: var(--sec); flex: none; }
+  .anchor .what { font-weight: 500; }
+  .anchor .now { color: var(--sec); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .anchor .meta { color: var(--ter); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .anchor .open { margin-left: auto; color: var(--ter); font-size: 11px; white-space: nowrap; }
+  .anchor.running .ic { color: var(--accent); }
+  .anchor.failed .ic, .anchor.failed .why { color: var(--red); }
+  .anchor.failed { background: rgba(255,69,58,.07); }
+  .anchor.selected { box-shadow: inset 0 0 0 1px rgba(255,69,58,.45); }
+  .anchor .stop { font-size: 11px; color: var(--sec); background: rgba(255,255,255,.08); border-radius: 6px; padding: 1px 7px; }
+  .faces { display: inline-flex; }
+  .live-status { display: flex; gap: 8px; align-items: center; color: var(--sec); font-size: 12.5px; margin-top: 10px; }
+
+  /* peek */
+  .peek { position: absolute; left: 30px; top: 34px; width: 420px; background: #323234; border-radius: 12px; box-shadow: 0 16px 40px rgba(0,0,0,.55), 0 0 0 .5px rgba(255,255,255,.14); padding: 12px; z-index: 5; font-size: 12.5px; }
+  .peek .h { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .peek .h .meta { margin-left: auto; color: var(--ter); font-variant-numeric: tabular-nums; }
+  .step { display: flex; gap: 7px; align-items: center; color: var(--sec); padding: 2px 0; font-size: 12px; }
+  .step .m { font-family: var(--mono); font-size: 11px; color: var(--ter); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .step .ok { color: var(--accent); margin-left: auto; font-size: 10px; } .step .no { color: var(--red); margin-left: auto; font-size: 10px; }
+  .peek .tail { color: var(--ter); font-style: italic; margin-top: 6px; }
+  .peek .foot { display: flex; gap: 14px; margin-top: 10px; padding-top: 8px; border-top: .5px solid var(--sep); font-size: 11.5px; color: var(--sec); }
+  .peek .foot b { color: var(--text); font-weight: 500; }
+  kbd { font: 10.5px -apple-system; border: .5px solid var(--quat); border-radius: 4px; padding: 0 4px; color: var(--sec); }
+
+  /* rail */
+  .rail { position: absolute; right: 22px; top: 70px; width: 28px; height: 250px; border-radius: 14px; background: rgba(255,255,255,.06); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.1); }
+  .rail .line { position: absolute; left: 13.5px; top: 12px; bottom: 12px; width: 1px; background: rgba(255,255,255,.14); }
+  .rail .ch { position: absolute; left: 11.5px; width: 5px; height: 5px; border-radius: 3px; background: rgba(255,255,255,.4); }
+  .rail .ch.here { left: 10.5px; width: 7px; height: 7px; border-radius: 4px; background: rgba(255,255,255,.85); }
+  .rail .thumb { position: absolute; left: 8px; width: 12px; border-radius: 6px; background: rgba(255,255,255,.09); }
+  .rail .span { position: absolute; left: 18px; width: 3px; border-radius: 2px; background: rgba(255,255,255,.35); }
+  .rail .span.failed { background: var(--red); }
+  .rail .span.running { background: var(--accent); }
+  .rail-label { position: absolute; right: 52px; background: rgba(50,50,52,.95); border-radius: 12px; padding: 4px 10px; font-size: 12px; white-space: nowrap; box-shadow: 0 0 0 .5px rgba(255,255,255,.14); }
+  .rail-label .x { margin-right: 4px; }
+
+  /* thread pane */
+  .thread { width: 420px; margin: 10px 10px 10px 0; background: var(--card); border-radius: 18px; box-shadow: 0 0 0 .5px rgba(255,255,255,.1); display: flex; flex-direction: column; overflow: hidden; }
+  .tabs { display: flex; gap: 4px; padding: 10px 10px 0; font-size: 12px; }
+  .tab { padding: 4px 10px; border-radius: 7px; color: var(--sec); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 170px; }
+  .tab.on { background: rgba(255,255,255,.09); color: var(--text); }
+  .tab .x { margin-right: 4px; }
+  .th-head { padding: 12px 16px 10px; border-bottom: .5px solid var(--sep); }
+  .th-head .crumb { font-size: 11px; color: var(--ter); margin-bottom: 4px; }
+  .th-head .title { font: 600 14px -apple-system; display: flex; align-items: center; gap: 8px; }
+  .th-head .stat { font-size: 11.5px; color: var(--sec); margin-top: 3px; font-variant-numeric: tabular-nums; }
+  .th-head .btns { display: flex; gap: 6px; margin-top: 10px; }
+  .btn { font-size: 11.5px; padding: 3px 9px; border-radius: 7px; background: rgba(255,255,255,.08); color: var(--text); }
+  .btn.pri { background: rgba(48,209,88,.2); color: #7ee29a; }
+  .th-body { padding: 14px 16px; overflow: hidden; flex: 1; font-size: 13px; }
+  .th-body .bubble { font-size: 12.5px; padding: 7px 12px; max-width: 330px; background: rgba(255,255,255,.1); color: var(--text); }
+  .th-body .act { font-size: 12px; }
+  .stepbox { border: .5px solid var(--sep); border-radius: 8px; margin: 6px 0 10px; }
+  .stepbox .r { display: flex; gap: 6px; padding: 6px 10px; color: var(--sec); font-size: 12px; border-top: .5px solid rgba(255,255,255,.05); }
+  .stepbox .r:first-child { border-top: 0; }
+  .stepbox .r.fail { background: rgba(255,69,58,.08); color: var(--text); }
+  .stepbox .r .o { color: var(--red); }
+  .err { font: 11px var(--mono); color: #ff8a80; background: rgba(255,69,58,.08); border-radius: 6px; padding: 8px 10px; margin: -4px 0 10px; line-height: 1.45; }
+  .end-banner { display: flex; gap: 8px; align-items: center; color: var(--red); font-size: 12.5px; }
+  .landed { font-size: 10.5px; color: var(--ter); margin: 0 0 4px; }
+
+  .composer { margin: 0 auto 18px; width: 720px; height: 46px; border-radius: 14px; background: rgba(255,255,255,.06); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.12); color: var(--ter); display: flex; align-items: center; padding: 0 14px; font-size: 13.5px; }
+
+  .note { position: absolute; z-index: 9; }
+
+  /* states strip */
+  .strip { margin-top: 36px; width: 1640px; display: grid; grid-template-columns: 780px 1fr; gap: 28px; }
+  .panel { background: var(--bg); border-radius: 12px; padding: 18px 22px; box-shadow: 0 0 0 .5px rgba(255,255,255,.1); }
+  .panel h2 { font: 600 13px -apple-system; margin: 0 0 12px; color: var(--sec); text-transform: uppercase; letter-spacing: .04em; font-size: 11px; }
+  .lbl { font-size: 11px; color: var(--ter); margin: 10px 0 2px; }
+  .legend { color: var(--sec); line-height: 1.6; font-size: 12.5px; }
+  .legend li { margin-bottom: 6px; }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>agents: glance → peek → open</h1>
+  <p class="lede">A worker session ("subagent visibility") has started three agents in its turn. One reported back, one failed, and one is still running.
+    Yellow numbers mark each new surface; the notes are under the window. Everything here comes from data the engine already streams, plus
+    one addition: each agent gets its own log.</p>
+
+  <div class="win">
+    <!-- ───────── sidebar ───────── -->
+    <div class="side">
+      <div class="lights"><i></i><i></i><i></i></div>
+      <div class="search">Search or jump</div>
+      <div class="row" style="background:rgba(255,255,255,.05);padding:7px 10px">
+        <span class="mono" style="width:26px;height:26px;border-radius:7px;background:rgba(191,90,242,.2);color:#bf5af2;font-size:12px">C</span>
+        <div style="flex:1;min-width:0"><div class="t" style="font-weight:600">chief</div><div class="sub">frog manager: 2 workers · 1 agent failed</div></div>
+        <span class="spin"></span>
+      </div>
+
+      <div class="sec-h need">Needs you 2</div>
+      <div class="row">
+        <span class="x">✕</span>
+        <div style="flex:1;min-width:0"><div class="t">subagent visibility</div><div class="sub" style="color:var(--red)">agent failed: rate limited by provider (429)</div></div>
+        <span class="sub">now</span>
+      </div>
+      <div class="row">
+        <span class="dot" style="background:var(--orange)"></span>
+        <div style="flex:1;min-width:0"><div class="t">gateway batching</div><div class="sub">Bash git push origin gateway-batching</div></div>
+        <span class="sub">1m</span>
+      </div>
+
+      <div class="sec-h">Org</div>
+      <div class="row"><span class="chev">⌄</span><span class="mono" style="background:rgba(48,209,88,.18);color:var(--accent)">F</span><span class="t" style="font-weight:600">frog manager</span><span class="spin"></span></div>
+      <div class="row l1 sel" style="position:relative">
+        <span class="chev">⌄</span><span class="t">subagent visibility</span>
+        <span class="chip bad" title="3 agents: 1 running, 1 failed, 1 done"><span class="pie" style="--p:33%"></span>3 · 1 failed</span>
+        <span class="spin"></span>
+        <span class="note" style="left:-2px;top:5px"><span class="callout-n">5</span></span>
+      </div>
+      <div class="row l2"><span class="agent-glyph">↳</span><span class="spin" style="width:9px;height:9px"></span><span class="t" style="color:var(--sec)">audit SubagentRunSheet</span><span class="sub">42s</span></div>
+      <div class="row l2"><span class="agent-glyph">↳</span><span class="x">✕</span><span class="t">survey background tasks</span></div>
+      <div class="folded">› 1 agent done</div>
+      <div class="row l1"><span class="chev"></span><span class="t">graceful restart</span><span class="dot" style="background:var(--accent)"></span></div>
+      <div class="folded" style="padding-left:26px">› 8 done · <span class="bad">1 failed</span></div>
+      <div class="row"><span class="chev">›</span><span class="mono" style="background:rgba(255,159,10,.18);color:var(--orange)">F</span><span class="t" style="font-weight:600">frog cloud manager</span>
+        <span class="chip"><span class="pie" style="--p:60%"></span>5</span><span class="spin"></span></div>
+      <div class="row"><span class="chev">›</span><span class="mono" style="background:rgba(10,132,255,.18);color:var(--blue)">O</span><span class="t" style="font-weight:600">okc manager</span><span class="sub">12m</span></div>
+
+      <div class="sec-h">Yours</div>
+      <div class="row"><span class="mono" style="background:rgba(255,255,255,.08);color:var(--sec)">B</span><span class="t">blaze distill</span></div>
+      <div style="flex:1"></div>
+      <div class="sub" style="text-align:right;padding:6px 10px;color:var(--ter)">11 live · 4 agents</div>
+    </div>
+
+    <!-- ───────── transcript ───────── -->
+    <div class="main">
+      <div class="toolbar">
+        <div class="pill">
+          <span class="frog"></span>
+          <span>Reading SubagentView.swift</span>
+          <span class="sec">2m 14s</span>
+          <span class="div"></span>
+          <span class="agents" title="1 running, 1 failed, 1 done">⧉ 3 agents · <b>1 failed</b></span>
+          <span class="div"></span>
+          <span class="sec">opus 5.5 · 48 w/s</span>
+          <span class="workline"></span>
+          <span class="note" style="left:-26px;top:6px"><span class="callout-n">4</span></span>
+        </div>
+      </div>
+
+      <div class="scroll">
+        <div class="col">
+          <div class="prompt"><div class="bubble">Audit how the sidebar, the rail and the pill show subagents. Use agents for the three areas.</div></div>
+          <div class="act">Thought, then read 4 files, searched for “SubagentRun” <span class="chev2">›</span></div>
+
+          <div class="anchor done">
+            <span class="ic">⧉</span><span class="what">map the rail code</span>
+            <span class="meta">reported · 14 steps · 1m 12s</span>
+            <span class="open">Open ›</span>
+          </div>
+          <p class="body">The rail draws per turn: chapter dots come from <code>Chapter.cached</code>, and jumps go to a turn, not an item. A span per agent can use the same memo, keyed on the last turn's Task states.</p>
+
+          <div class="anchor failed selected" style="position:relative">
+            <span class="ic">⧉</span><span class="what">survey background tasks</span>
+            <span class="why">failed: rate limited by provider (429)</span>
+            <span class="meta">· 6 steps · 38s</span>
+            <span class="open" style="color:var(--red)">Open at failure ›</span>
+            <span class="note" style="left:-30px;top:5px"><span class="callout-n">1</span></span>
+          </div>
+
+          <div class="anchor running hover" style="position:relative">
+            <span class="ic"><span class="spin" style="display:inline-block;border-top-color:var(--accent)"></span></span>
+            <span class="what">audit SubagentRunSheet</span>
+            <span class="now">Reading SubagentView.swift</span>
+            <span class="meta">· 9 steps · 42s</span>
+            <span class="open"><span class="stop">■ Stop</span></span>
+
+            <!-- peek -->
+            <div class="peek">
+              <div class="h"><span style="color:var(--accent)">⧉</span><b>audit SubagentRunSheet</b><span class="meta">sonnet · 61 w/s · 42s</span></div>
+              <div class="step"><span>📄</span>Read <span class="m">TurnView.swift</span><span class="ok">✓</span></div>
+              <div class="step"><span>🔍</span>Searched for <span class="m">“ItemView(”</span><span class="ok">✓</span></div>
+              <div class="step"><span>📄</span>Reading <span class="m">SubagentView.swift</span><span class="spin" style="margin-left:auto"></span></div>
+              <div class="tail">…the sheet renders raw ItemView per item, so tool calls never fold into activity lines…</div>
+              <div class="foot"><span><b>Click</b> open beside</span><span><b>⌘-click</b> own pane</span><span><kbd>space</kbd> peek</span></div>
+              <span class="note" style="right:-10px;top:-10px"><span class="callout-n">2</span></span>
+            </div>
+          </div>
+
+          <div class="live-status" style="margin-top:182px"><span class="spin"></span>Waiting on 1 agent… 42s</div>
+        </div>
+
+        <!-- rail -->
+        <div class="rail">
+          <div class="line"></div>
+          <div class="ch" style="top:28px"></div>
+          <div class="ch" style="top:74px"></div>
+          <div class="ch" style="top:120px"></div>
+          <div class="ch here" style="top:196px"></div>
+          <div class="thumb" style="top:188px;height:44px"></div>
+          <div class="span" style="top:200px;height:6px"></div>
+          <div class="span failed" style="top:208px;height:5px"></div>
+          <div class="span running" style="top:215px;height:12px"></div>
+          <div class="span failed" style="top:92px;height:4px"></div>
+          <div class="note" style="left:-8px;top:-10px"><span class="callout-n">3</span></div>
+        </div>
+        <div class="rail-label" style="top:270px"><span class="x">✕</span>survey background tasks · failed 38s</div>
+      </div>
+      <div class="composer">Reply…</div>
+    </div>
+
+    <!-- ───────── thread pane ───────── -->
+    <div class="thread">
+      <div class="tabs">
+        <span class="tab">Changes</span>
+        <span class="tab on"><span class="x">✕</span>survey background tasks</span>
+        <span class="tab">audit SubagentRunSheet</span>
+      </div>
+      <div class="th-head">
+        <div class="crumb">subagent visibility › agent 2 of 3 · turn 14</div>
+        <div class="title"><span class="x" style="font-size:13px">✕</span>survey background tasks</div>
+        <div class="stat">failed after 38s · 6 steps · sonnet · 18k tokens</div>
+        <div class="btns"><span class="btn pri">Retry</span><span class="btn">Continue as session</span><span class="btn">Show in turn</span></div>
+      </div>
+      <div class="th-body">
+        <div class="prompt" style="margin-bottom:10px"><div class="bubble">Find where Task { background: true } runs and how its events reach the app. Report file:line.</div></div>
+        <div class="act">Read background.rs, searched for “start_task” <span class="chev2">›</span></div>
+        <p class="body" style="font-size:13px">Background tasks go through <code>start_task</code> (background.rs:415), which forwards events as <code>Subagent{item: "task-N"}</code>.</p>
+        <div class="landed">↓ landed here: the failing step</div>
+        <div class="stepbox">
+          <div class="r">Read Conversation.swift <span style="color:var(--ter)">· 1195 lines</span></div>
+          <div class="r fail">Model call <span class="o">· failed</span><span style="margin-left:auto;color:var(--red)">⌄</span></div>
+        </div>
+        <div class="err">provider error 429: rate_limit_exceeded<br>retry-after: 20s · 3 retries used</div>
+        <div class="end-banner">⬣ Stopped: the provider refused 3 retries</div>
+        <span class="note" style="position:relative;display:inline-block;margin-top:10px"><span class="callout-n">6</span></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ───────── states + notes ───────── -->
+  <div class="strip">
+    <div class="panel">
+      <h2>The anchor line, every state (replaces the big card)</h2>
+      <div class="lbl">starting</div>
+      <div class="anchor running"><span class="ic"><span class="spin" style="display:inline-block;border-top-color:var(--accent)"></span></span><span class="what">map the rail code</span><span class="now">Starting</span><span class="meta">· 0s</span></div>
+      <div class="lbl">running (hover: Stop + peek)</div>
+      <div class="anchor running hover"><span class="ic"><span class="spin" style="display:inline-block;border-top-color:var(--accent)"></span></span><span class="what">map the rail code</span><span class="now">Searching for “Chapter.cached”</span><span class="meta">· 4 steps · 18s</span><span class="open"><span class="stop">■ Stop</span></span></div>
+      <div class="lbl">waiting on you (its permission card is the one up)</div>
+      <div class="anchor" style="background:rgba(255,159,10,.08)"><span class="ic" style="color:var(--orange)">✋</span><span class="what">map the rail code</span><span class="now" style="color:var(--orange)">Needs approval: Bash cargo test</span><span class="open" style="color:var(--orange)">Review ›</span></div>
+      <div class="lbl">reported</div>
+      <div class="anchor"><span class="ic">⧉</span><span class="what">map the rail code</span><span class="meta">reported · 14 steps · 1m 12s</span><span class="open">Open ›</span></div>
+      <div class="lbl">stopped by you</div>
+      <div class="anchor"><span class="ic" style="color:var(--ter)">■</span><span class="what">map the rail code</span><span class="meta">stopped · kept what it found · 4 steps · 21s</span><span class="open">Open ›</span></div>
+      <div class="lbl">failed</div>
+      <div class="anchor failed"><span class="ic">⧉</span><span class="what">map the rail code</span><span class="why">failed: step limit (40) reached</span><span class="meta">· 40 steps · 3m</span><span class="open" style="color:var(--red)">Open at failure ›</span></div>
+      <div class="lbl">background (the turn didn't wait; reports later as a wake)</div>
+      <div class="anchor running"><span class="ic"><span class="spin" style="display:inline-block;border-top-color:var(--accent)"></span></span><span class="what">nightly audit</span><span class="now">Running the tests</span><span class="meta">· in background · 4m</span><span class="open">Open ›</span></div>
+    </div>
+    <div class="panel legend">
+      <h2>What each number is</h2>
+      <ol style="padding-left:18px;margin:0">
+        <li><b>Anchor line at the call.</b> One line in the column where the card was. A Slack-style thread link: name, live step, steps, time. A failure reads in red and links to where it failed. The report still lands in the transcript as text the parent quotes.</li>
+        <li><b>Peek.</b> Hover or press space: the last 3 steps, the newest thinking, model and speed. Quick Look, not a sheet. Most checks end here.</li>
+        <li><b>Rail spans.</b> One short bar per agent beside its turn (Temporal's timeline), colored by outcome. Chapter dots stay as they are. Hovering a red span names it, and a click goes to its anchor. Memoized like <code>Chapter.cached</code>, so no per-row cost.</li>
+        <li><b>Pill.</b> "3 agents · 1 failed" after the live step. Clicking the count lists them in the activity panel, each with Show.</li>
+        <li><b>Sidebar.</b> The parent row gets a pie and a count (Things 3). Agents fold under it and unfold only while running or when they need you. A failed agent puts its parent in <i>Needs you</i>. Finished OK: one "› 1 agent done" line.</li>
+        <li><b>Thread pane.</b> Opens the agent's real transcript as a tab of the right-hand card (same TranscriptView, so markdown, activity lines and ink match). Opening a failed agent lands on the failing step, expanded (GitHub Actions). <i>Continue as session</i> turns it into a standing child that keeps its log.</li>
+      </ol>
+      <p style="color:var(--ter);margin-top:14px">Not built in this pass: dragging an agent onto the composer, a graph view of agents, cross-agent messaging UI.</p>
+    </div>
+  </div>
+</div>
+</body>
+</html>

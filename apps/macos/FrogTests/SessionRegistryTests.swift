@@ -89,6 +89,59 @@ final class SessionRegistryTests: XCTestCase {
         XCTAssertTrue(c.userStopped)
     }
 
+
+    // MARK: Graceful restart
+
+    /// The update manifest: `afterUpdate` + `suspendedByUpdate` round-trip, and the restore
+    /// action a suspended session gets.
+    func testUpdateManifestRoundTripAndActions() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appending(path: "frog-registry-\(UUID().uuidString)/open-sessions.json")
+        var s = OpenSessions()
+        s.sessions = [
+            OpenSession(id: "a", cwd: "/tmp/a", model: "m", window: 0, pane: 0, turnRunning: true,
+                        suspendedByUpdate: true),
+            OpenSession(id: "b", cwd: "/tmp/b", model: "m", window: 0, pane: 1, turnRunning: false),
+        ]
+        s.quit = .resume
+        s.afterUpdate = true
+        SessionRegistry.save(s, to: url)
+        XCTAssertEqual(SessionRegistry.load(url), s, "suspendedByUpdate survives the write")
+        XCTAssertEqual(s.action(for: s.sessions[0]), .continue, "a suspended turn carries on")
+        XCTAssertEqual(s.action(for: s.sessions[1]), .reopen, "an idle session just reopens")
+    }
+
+    /// A drained session continues with the update note, never the crash default: the op
+    /// the engine sees carries the update wording.
+    func testContinueAfterUpdateSendsTheUpdateNote() throws {
+        let link = RecordingLink()
+        let c = Conversation(folder: URL(fileURLWithPath: "/tmp/demo"), link: link, replay: true, session: "s")
+        c.continueAfterUpdate()
+        XCTAssertTrue(c.resumedAfterRestart)
+        XCTAssertTrue(c.suspendedByUpdate)
+        link.onEvent(try envelope(#""event":"synced","upto":0"#))
+        link.onEvent(try envelope(#""event":"idle""#))
+        XCTAssertEqual(link.ops, ["subscribe", "continue"])
+        // The note rides on the continue op (the engine turns it into the turn's input).
+        let data = try JSONEncoder().encode(Op.continue(note: SUSPENDED_NOTE))
+        let obj = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let note = try XCTUnwrap(obj["note"] as? String)
+        XCTAssertTrue(note.contains("resumed after the app updated"), note)
+        XCTAssertFalse(note.contains("interrupted"), "never the crash wording")
+    }
+
+    /// The drain op encodes with its unix-ms deadline; the interrupted turn is never
+    /// marked user-stopped.
+    func testDrainOpEncodesDeadlineAndIsNeverAStop() {
+        let link = RecordingLink()
+        let c = Conversation(folder: URL(fileURLWithPath: "/tmp/demo"), link: link, replay: false)
+        c.sendDrain(deadline: 1_700_000_000_000)
+        XCTAssertEqual(link.ops, ["drain"])
+        XCTAssertFalse(c.userStopped)
+        let data = try? JSONEncoder().encode(Op.drain(deadline: 1_700_000_000_000))
+        let obj = (try? JSONSerialization.jsonObject(with: XCTUnwrap(data)) as? [String: Any])
+        XCTAssertEqual(obj?["deadline"] as? Int64, 1_700_000_000_000)
+    }
     private var seq: UInt64 = 0
 
     private func envelope(_ body: String) throws -> Envelope {

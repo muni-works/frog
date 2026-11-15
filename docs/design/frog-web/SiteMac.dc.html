@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Frog for Mac</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/frog/tokens.css">
+<link rel="stylesheet" href="ds/frog/components/bundle.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+a{color:var(--fg)}a:hover{color:var(--frog)}
+.k{font:500 11px/1 var(--font-mono);letter-spacing:.01em;color:var(--muted)}
+.frogname{color:var(--frog);font-weight:600}
+#story-copy{transition:opacity .6s ease,transform .6s cubic-bezier(.2,.7,.2,1)}
+.s-dot{all:unset;cursor:pointer;display:flex;flex-direction:column;gap:8px;flex:1;min-width:0}
+.s-dot i{display:block;height:2px;background:#2e2e2e;border-radius:2px;overflow:hidden}
+.s-dot i b{display:block;height:100%;width:0;background:var(--frog)}
+.s-dot span{font:500 10px/1.3 var(--font-mono);color:var(--faint)}
+.s-dot[aria-current="true"] span{color:var(--fg)}
+.pip{position:absolute;right:56px;bottom:40px;z-index:3;width:300px;padding:14px 16px;border-radius:18px;background:rgba(44,44,46,.6);-webkit-backdrop-filter:blur(24px) saturate(1.6);backdrop-filter:blur(24px) saturate(1.6);border:1px solid rgba(255,255,255,.08);box-shadow:0 20px 50px rgba(0,0,0,.45);display:flex;flex-direction:column;gap:8px;font-size:13px;line-height:1.45;color:var(--fg);opacity:0;transform:translateY(8px);transition:opacity .5s ease,transform .5s cubic-bezier(.2,.7,.2,1);pointer-events:none}
+.pip.on{opacity:1;transform:none}
+.pip .row{display:flex;align-items:center;gap:8px;font:500 12px/1.3 var(--font-mono)}
+.pip .chip{margin-left:auto;font:600 11px/1 var(--font-sans);padding:6px 10px;border-radius:999px;background:var(--frog);color:#08130b}
+.pip .muted{color:var(--muted)}
+.hint{position:absolute;left:50%;bottom:24px;z-index:2;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:10px;transition:opacity .5s;pointer-events:none}
+.hint i{display:block;width:1px;height:36px;background:linear-gradient(#646464,transparent);position:relative;overflow:hidden}
+.hint i::after{content:"";position:absolute;left:0;top:-12px;width:1px;height:12px;background:#ececec;animation:drip 2.2s cubic-bezier(.6,0,.4,1) infinite}
+@keyframes drip{to{top:36px}}
+@media (prefers-reduced-motion: reduce){.hint i::after{animation:none;top:12px}}
+@media (max-width: 640px){.nav-x,.cite{display:none}.pip{left:16px;right:16px;width:auto;bottom:20px}#s-title{letter-spacing:-.035em}}
+.s-dot:focus-visible{outline:2px solid var(--frog);outline-offset:4px;border-radius:4px}
+</style>
+</helmet>
+<div data-theme="{{theme}}" class="f-root" style="position: relative; height: 600vh; background: #0b0b0b; color: var(--fg); -webkit-font-smoothing: antialiased;">
+<div id="s-frame" style="position: sticky; top: 0; height: 100vh; min-height: 640px; overflow: hidden;">
+  <header style="position: absolute; top: 0; left: 0; right: 0; z-index: 5; display: flex; align-items: center; gap: 28px; padding: 18px 32px; flex-wrap: wrap;">
+    <a href="Landing.dc.html" style="display: flex; align-items: center; gap: 10px; text-decoration: none;">
+      <img src="/_blob/a7cbfb1c65a16387b5addf3f6c09ad4c" alt="" style="width: 24px; height: 24px;">
+      <span style="font-weight: 600; font-size: 15px; letter-spacing: -0.01em;">Frog</span>
+    </a>
+    <span style="flex: 1;"></span>
+    <a href="SiteDocs.dc.html" class="nav-x" style="font-size: 14px; text-decoration: none; color: var(--muted);">Docs</a>
+    <a href="Plans.dc.html" class="nav-x" style="font-size: 14px; text-decoration: none; color: var(--muted);">Pricing</a>
+    <a href="#download" style="text-decoration: none; font: 600 14px/1 var(--font-sans); padding: 9px 16px; border-radius: var(--radius-pill); background: var(--fg); color: #0b0b0b;">Download</a>
+  </header>
+
+  <div id="s-app" aria-hidden="true" style="position: absolute; left: 0; top: 0; width: 1180px; transform-origin: 590px 360px; height: 720px; transform: scale(.56); opacity: 0; z-index: 1; border-radius: 22px; overflow: hidden; box-shadow: 0 40px 120px rgba(0,0,0,.6), 0 0 0 1px rgba(255,255,255,.06); pointer-events: none;">
+    <dc-import name="Workspace" platform="mac" theme="dark" height="720" hint-size="1180px,720px"></dc-import>
+  </div>
+  <canvas id="frogfx" aria-hidden="true" style="position: absolute; inset: 0; width: 100%; height: 100%;"></canvas>
+
+  <main id="s-main" style="position: absolute; left: 16px; right: 16px; top: clamp(76px, 11vh, 110px); z-index: 2; max-width: 680px; margin: 0 auto; display: flex; flex-direction: column; align-items: center; text-align: center; gap: clamp(16px, 2.6vh, 24px); pointer-events: none;">
+    <div id="story-copy" aria-live="polite" style="display: flex; flex-direction: column; align-items: center; gap: 14px;">
+      <h1 id="s-title" style="margin: 0; font-family: var(--font-display); font-size: clamp(38px, 6.4vw, 64px); line-height: 1; letter-spacing: -0.045em; text-wrap: balance; font-weight: 700; color: #f2f2ee;">Intelligence that stays home.</h1>
+      <p id="s-body" style="margin: 0; max-width: 560px; font-size: clamp(16px, 1.6vw, 18px); line-height: 1.5; color: var(--muted); text-wrap: pretty;">A coding agent built around the model already on your Mac.</p>
+    </div>
+    <div style="display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; pointer-events: auto;">
+      <a href="#download" style="text-decoration: none; font: 600 15px/1 var(--font-sans); padding: 14px 24px; border-radius: var(--radius-pill); background: var(--frog); color: #08130b;">Download for Mac</a>
+      <a href="Landing.dc.html" style="text-decoration: none; font: 500 15px/1 var(--font-sans); padding: 14px 20px; border-radius: var(--radius-pill); border: 1px solid var(--line-strong);">Try it in the browser</a>
+    </div>
+  </main>
+
+  <div class="pip" id="s-pip" aria-hidden="true"></div>
+  <div class="hint" id="s-hint" aria-hidden="true"><span class="k" style="font-size: 10px; color: var(--faint);">Scroll</span><i></i></div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;theme&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;dark&quot;,&quot;light&quot;],&quot;default&quot;:&quot;dark&quot;},&quot;$preview&quot;:{&quot;width&quot;:1280,&quot;height&quot;:820}}">
+class Component extends DCLogic {
+  renderVals() {
+    const chapters = ['Home', 'Orbit', 'Harness', 'Private', 'Cloud', 'Plan'].map((name, i) => ({ i, name }));
+    return { theme: this.props.theme ?? 'dark', chapters };
+  }
+}
+</script>
+<script>
+// /mac in one frame: the Bohr frog tells the story, one chapter at a time.
+(function () {
+  const SRC = '/_blob/a7cbfb1c65a16387b5addf3f6c09ad4c';
+  const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const DUR = 7500, MARK = 240, STEP = 4.6;
+  const STORY = [
+    ['Frog for Mac', 'Intelligence that stays home.', 'A coding agent built around the model already inside your Mac. One quiet window, and everything else gets out of the way.'],
+    ['Everything orbits', 'Your Mac is the center.', 'The model, your code, the docs for the exact versions you run, your voice. Nothing rented, nothing far away.'],
+    ['The harness', 'Small model. Steady hands.', 'Frog budgets every token, lets stale output go, and won\'t make the same mistake three times.'],
+    ['Private by construction', 'Your code stays home.', 'Nothing leaves unless you send it. Every edit waits for your nod, and injected instructions go nowhere.'],
+    ['Frog Cloud', 'The cloud, when you need it.', 'When a task outgrows a laptop, Frog asks first, borrows the power, and comes straight home. Sign in for $5 in credits.'],
+    ['The master plan', 'This is the first step.', 'Frog is the Desk stage, the only one that\'s real today. Seven more launch windows follow, each one farther out.'],
+  ];
+  // the matching moment in the app, floating beside chapters 2–5
+  const PIP = [null,
+    '<div class="row"><span style="color:#30d158">●</span>local/qwen3-4b<span class="muted" style="margin-left:auto">on this Mac</span></div><div class="muted">First token in 0.9 s. No network.</div>',
+    '<div class="row"><span style="color:#ff9f0a">■</span>Bash cargo test<span class="muted" style="margin-left:auto">3rd time</span></div><div>Refused: same command, same failure. Frog tries something else.</div>',
+    '<div class="row">Edit src/parse.rs<span class="chip">Allow ⌘↩</span></div><div class="row" style="color:#ff6961">− s.parse().unwrap()</div><div class="row" style="color:#30d158">+ s.trim().parse()?</div>',
+    '<div>This one is big for a laptop. Send it to Frog Cloud?</div><div class="row"><span class="muted">~40 s · $0.04</span><span class="chip" style="background:#64d2ff">Send</span></div>',
+    null];
+  // where each electron lands in the window (atom space at zoom 1)
+  const LAND = { model: [0, -186], tools: [40, -20], repo: [-262, -130], docs: [40, -70], voice: [270, 152], sessions: [-262, -80], Pip: [-262, 150] };
+  // the window outline the nucleons trace: [x0, y0, x1, y1] segments
+  const WIN = [[-330, -202, 330, -202], [330, -202, 330, 202], [330, 202, -330, 202], [-330, 202, -330, -202], [-185, -202, -185, 202], [-185, -168, 330, -168], [-120, 128, 300, 128], [300, 128, 300, 176], [300, 176, -120, 176], [-120, 176, -120, 128]];
+  const SHELLS = [{ rx: 165, ry: 54, tilt: -0.35, sp: 1 }, { rx: 240, ry: 80, tilt: 0.42, sp: .64 }, { rx: 320, ry: 104, tilt: -0.12, sp: .42 }, { rx: 405, ry: 134, tilt: 0.2, sp: .26 }];
+  const ELS = [['model', '#30d158', 0, 0], ['tools', '#30d158', 0, 3.1], ['repo', '#0a84ff', 1, .5], ['docs', '#0a84ff', 1, 2.6], ['voice', '#0a84ff', 1, 4.7], ['sessions', '#ececec', 2, 1.2], ['Pip', '#30d158', 2, 4.2]];
+  // the master plan, one Earth→Mars launch window per stage (captions from the paper's flywheel table)
+  const PLAN = [['Desk', 'Frog and Frog Cloud; arms, sold one at a time', '~10 kW'], ['Shop', 'Two lymbs that work at any table, and build lymbs', '~100 kW'],
+    ['Road', 'A duet on legs that fits its own model', '~1 MW'], ['City', "A city's fleet and its twin", '~10 MW'], ['Home', 'The company on its own power', '~1 GW+'],
+    ['Moon', 'A seed grows a duet, with a lifeline', 'first kW off Earth'], ['Mars', 'The same seed, lifeline cut', '0 human commands'], ['Star', 'A swarm of collectors', 'a fraction of 3.8e26 W']];
+  let sr = 11; const rnd = () => (sr = sr * 16807 % 2147483647) / 2147483647;
+  const STARS = Array.from({ length: 700 }, () => ({ x: rnd(), y: rnd(), r: rnd() * rnd() * 1.6 + .2, d: rnd() * .9 + .1, o: rnd() * .7 + .15 }));
+  const ease = x => x < 0 ? 0 : x > 1 ? 1 : x * x * (3 - 2 * x);
+  const pos = (s, a) => { const x = Math.cos(a) * s.rx, y = Math.sin(a) * s.ry, c = Math.cos(s.tilt), n = Math.sin(s.tilt); return [x * c - y * n, x * n + y * c]; };
+
+  function boot(root) {
+    const cv = root.querySelector('#frogfx'), ctx = cv.getContext('2d'), dpr = Math.min(devicePixelRatio || 1, 2);
+    const $ = id => root.querySelector('#' + id), copy = $('story-copy');
+    const dots = [...root.querySelectorAll('.s-dot')];
+    let W = 0, H = 0;
+    const fit = () => { const b = cv.getBoundingClientRect(); W = b.width; H = b.height; cv.width = W * dpr; cv.height = H * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); };
+    fit(); addEventListener('resize', fit);
+    let mx = -1e4, my = -1e4;
+    root.addEventListener('pointermove', e => { const b = cv.getBoundingClientRect(); mx = e.clientX - b.left; my = e.clientY - b.top; });
+
+    let scene = -1, u = 0;
+    function go(i) {
+      if (i === scene) return; scene = i;
+      copy.style.opacity = 0; copy.style.transform = 'translateY(6px)';
+      setTimeout(() => { const [k, t, b] = STORY[scene]; $('s-title').textContent = t; $('s-body').textContent = b; copy.style.opacity = 1; copy.style.transform = 'none'; }, 300);
+      dots.forEach((d, j) => d.setAttribute('aria-current', j === scene));
+    }
+    const span = () => Math.max(1, root.offsetHeight - innerHeight);
+    const top0 = () => root.getBoundingClientRect().top + scrollY;
+    function onScroll() { u = Math.min(STORY.length - 1e-4, Math.max(0, (scrollY - top0()) / span() * STORY.length)); go(Math.floor(u)); $('s-hint').style.opacity = u > .15 ? 0 : 1; if (still) requestAnimationFrame(frame); }
+    addEventListener('scroll', onScroll, { passive: true });
+    dots.forEach((d, j) => d.addEventListener('click', () => scrollTo({ top: top0() + (j + .35) / STORY.length * span(), behavior: still ? 'auto' : 'smooth' })));
+    // camera per chapter: [focus x, focus y, zoom, roll]; it holds, then glides to the next one near the end of each chapter
+    const CAM = [[0, 0, 1, 0], [0, 10, .95, -.04], [-40, -20, 1.55, .05], [20, 0, .82, 0], [150, -30, .8, -.06], [0, 0, .27, 0]];
+    const ORDER = [6, 1, 2, 3, 4, 5]; // display chapter → animation id
+    const cam = () => { const i = Math.floor(u), f = ease((u - i - .62) / .38), a = CAM[i], b = CAM[Math.min(i + 1, CAM.length - 1)]; return a.map((v, k) => v + (b[k] - v) * f); };
+    let nuc = [];
+    function scatter() { for (const n of nuc) { const a = Math.random() * 6.283, r = 400 + Math.random() * 500; n.sx = Math.cos(a) * r; n.sy = Math.sin(a) * r * .6; n.d = Math.random() * .5; } }
+    const img = new Image(); img.src = SRC;
+    img.onload = () => {
+      const o = document.createElement('canvas'); o.width = o.height = MARK;
+      const ox = o.getContext('2d'); ox.drawImage(img, 0, 0, MARK, MARK);
+      let px; try { px = ox.getImageData(0, 0, MARK, MARK).data; } catch (e) { return; }
+      for (let y = 0; y < MARK; y += STEP) for (let x = (y / STEP & 1) * STEP / 2; x < MARK; x += STEP) {
+        const i = ((y | 0) * MARK + (x | 0)) * 4; if (px[i + 3] < 140) continue;
+        const p = Math.random() < .55;
+        nuc.push({ ox: x - MARK / 2, oy: y - MARK / 2, z: Math.random(), r: STEP * (.6 + Math.random() * .08), ph: Math.random() * 6.28,
+          c: p ? [px[i], px[i + 1], px[i + 2]] : [px[i] * .45 + 20, px[i + 1] * .5 + 20, px[i + 2] * .45 + 22] });
+      }
+      nuc.sort((a, b) => a.z - b.z);
+      const lens = WIN.map(([a, b, c, d]) => Math.hypot(c - a, d - b)), total = lens.reduce((a, b) => a + b);
+      nuc.forEach((n, i) => { let d = (i * 0.618034 % 1) * total, k = 0; while (d > lens[k]) d -= lens[k++]; const [a, b, c, e] = WIN[k], f = d / lens[k]; n.wx = a + (c - a) * f; n.wy = b + (e - b) * f; });
+      scatter(); onScroll();
+      requestAnimationFrame(frame);
+    };
+
+    function glowDot(x, y, col, r, a) {
+      ctx.globalAlpha = a;
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r * 5); g.addColorStop(0, col); g.addColorStop(.25, col + '88'); g.addColorStop(1, col + '00');
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r * 5, 0, 6.283); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(x, y, r, 0, 6.283); ctx.fill();
+    }
+    function label(x, y, text, col, a) { ctx.globalAlpha = a; ctx.font = '500 9.5px ui-monospace, SFMono-Regular, Menlo, monospace'; ctx.letterSpacing = '0px'; ctx.fillStyle = col; ctx.globalAlpha = a * .8; ctx.fillText(text, x + 10, y - 8); }
+    const sprites = new Map();
+    function sprite(c, R) {
+      const key = c.map(v => v >> 4).join() + '|' + Math.round(R * 4);
+      let sp = sprites.get(key); if (sp) return sp;
+      const n = Math.ceil(R * 2 * dpr) + 2; sp = document.createElement('canvas'); sp.width = sp.height = n;
+      const g = sp.getContext('2d'), h = n / 2, rr = R * dpr, [r, gg, b] = c;
+      const sg = g.createRadialGradient(h - rr * .35, h - rr * .4, rr * .08, h, h, rr);
+      sg.addColorStop(0, `rgb(${Math.min(255, r + 120)},${Math.min(255, gg + 120)},${Math.min(255, b + 120)})`); sg.addColorStop(.4, `rgb(${r},${gg},${b})`); sg.addColorStop(1, `rgb(${r * .2 | 0},${gg * .2 | 0},${b * .2 | 0})`);
+      g.fillStyle = sg; g.beginPath(); g.arc(h, h, rr, 0, 6.283); g.fill();
+      sprites.set(key, sp); return sp;
+    }
+    function nucleus(T, form, excite, w, fade) {
+      const br = 1 + Math.sin(T / 1500) * .015;
+      const gl = ctx.createRadialGradient(0, 0, 10, 0, 0, 210); gl.addColorStop(0, `rgba(88,204,111,${(.2 + Math.sin(T / 1500) * .05) * form})`); gl.addColorStop(1, 'rgba(88,204,111,0)');
+      ctx.globalAlpha = 1 - w; ctx.fillStyle = gl; ctx.fillRect(-220, -220, 440, 440);
+      for (const n of nuc) {
+        const k = ease((form - n.d) / (1 - n.d) * 1.0);
+        let x = n.sx + (n.ox * br - n.sx) * k, y = n.sy + (n.oy * br - n.sy) * k;
+        if (w > 0) { const q = ease(w * 1.3 - n.z * .3); x += (n.wx - x) * q; y += (n.wy - y) * q; }
+        const near = Math.max(0, 1 - Math.hypot((x - fx) * z - (mx - cx), (y - fy) * z - (my - cy)) / 140), amp = .25 + near * 2.2 + excite;
+        x += Math.sin(T / 140 + n.ph) * amp; y += Math.cos(T / 170 + n.ph * 1.3) * amp;
+        ctx.globalAlpha = (.2 + .8 * k) * (1 - fade * .9);
+        const sp = sprite(n.c, n.r); ctx.drawImage(sp, x - n.r - 1 / dpr, y - n.r - 1 / dpr, sp.width / dpr, sp.height / dpr);
+      }
+    }
+    // flight-control callout: corner reticle on the body, 45° leader, tick, then name + data lines
+    function callout(x, y, lines, col, side = 1) {
+      const b = 7, lx = x + side * 26, ly = y - 26, tx = lx + side * 18;
+      ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.globalAlpha = .8; ctx.beginPath();
+      for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) { ctx.moveTo(x + sx * b, y + sy * (b - 3)); ctx.lineTo(x + sx * b, y + sy * b); ctx.lineTo(x + sx * (b - 3), y + sy * b); }
+      ctx.moveTo(x + side * b, y - b); ctx.lineTo(lx, ly); ctx.lineTo(tx, ly); ctx.stroke();
+      ctx.font = '500 9.5px ui-monospace, SFMono-Regular, Menlo, monospace'; ctx.letterSpacing = '0px'; ctx.textAlign = side > 0 ? 'left' : 'right';
+      lines.forEach((t, i) => { ctx.globalAlpha = i ? .7 : 1; ctx.fillStyle = i ? '#9b9b9b' : '#ececec'; ctx.fillText(t, tx + side * 6, ly + 3 + i * 13); });
+      ctx.textAlign = 'left'; ctx.letterSpacing = '0px';
+    }
+    // schematic inner solar system, tilted; each stage is one launch window that leaves a fading arc
+    function starmap(p, T) {
+      const show = ease(p * 4); if (show <= 0) return;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.globalAlpha = show; ctx.fillStyle = '#0b0b0b'; ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = '#fff'; for (const st of STARS) { ctx.globalAlpha = show * st.o * (.6 + .4 * Math.sin(T / 900 + st.x * 50)); ctx.fillRect(st.x * W, st.y * H - p * 30 * st.d, st.r, st.r); }
+      const mb = main.getBoundingClientRect().bottom - cv.getBoundingClientRect().top, room = H - mb;
+      const U = Math.min(W / 9.5, room / 4.6), sx = W / 2, sy = mb + room * .52, SQ = .5;
+      const at = (r, a) => [sx + Math.cos(a) * r * U, sy + Math.sin(a) * r * U * SQ];
+      const S = Math.min(7.5, p * 8.6), i0 = Math.floor(S), q = S - i0;
+      const thE = s => .4 + s * .85, thM = s => 1.65 + (s - .6) * .85;
+      ctx.save(); ctx.beginPath(); ctx.rect(0, mb + 12, W, H); ctx.clip(); // keep the map under the copy
+      [1.15, 1.85, 2.75, 3.85, 7.9].forEach((r, k) => { ctx.globalAlpha = show * (k === 2 ? .35 : .14); ctx.strokeStyle = k === 2 ? '#0a84ff' : '#fff'; ctx.lineWidth = .75; ctx.beginPath(); ctx.ellipse(sx, sy, r * U, r * U * SQ, 0, 0, 6.283); ctx.stroke(); });
+      ctx.globalAlpha = show * .08; ctx.setLineDash([1, 5]); ctx.lineWidth = .3 * U; ctx.beginPath(); ctx.ellipse(sx, sy, 5.6 * U, 5.6 * U * SQ, 0, 0, 6.283); ctx.stroke(); ctx.setLineDash([]); ctx.lineWidth = 1;
+      ctx.globalCompositeOperation = 'lighter';
+      const sun = ctx.createRadialGradient(sx, sy, 0, sx, sy, U * .38 * (1 + .05 * Math.sin(T / 1300) + .03 * Math.sin(T / 470)));
+      sun.addColorStop(0, '#fff8e6'); sun.addColorStop(.18, 'rgba(255,236,200,.55)'); sun.addColorStop(1, 'rgba(255,236,200,0)');
+      ctx.globalAlpha = show; ctx.fillStyle = sun; ctx.beginPath(); ctx.arc(sx, sy, U * .45, 0, 6.283); ctx.fill();
+      const planet = (r, a, c, sz) => { const [x, y] = at(r, a); glowDot(x, y, c, sz, show); return [x, y]; };
+      planet(1.15, .9 + S * 2.1, '#8a8a8a', 1.4); planet(1.85, 2.2 + S * 1.4, '#c9c2b0', 1.8); planet(7.9, 4.1 + S * .11, '#ffd60a', 3.4);
+      const E = planet(2.75, thE(S), '#0a84ff', 2.6), M = planet(3.85, thM(S), '#ff453a', 2.2);
+      // the route for stage i: ease out of Earth, swing past Mars, exit the frame
+      const route = (i, t) => {
+        const [ex, ey] = at(2.75, thE(i)), [mx2, my2] = at(3.85, thM(i + .6)), cx2 = (ex + mx2) / 2 + (sy - (ey + my2) / 2) * .35, cy2 = (ey + my2) / 2 + ((ex + mx2) / 2 - sx) * .2;
+        if (t <= .6) { const k = Math.pow(t / .6, 1.6), a = 1 - k; return [a * a * ex + 2 * a * k * cx2 + k * k * mx2, a * a * ey + 2 * a * k * cy2 + k * k * my2]; }
+        const k = (t - .6) / .4, dx = mx2 - cx2, dy = my2 - cy2, d = Math.hypot(dx, dy) || 1; return [mx2 + dx / d * k * W * .7, my2 + dy / d * k * W * .7];
+      };
+      const path = (i, t1) => { ctx.beginPath(); for (let t = 0; t <= t1; t += .01) { const [x, y] = route(i, t); t ? ctx.lineTo(x, y) : ctx.moveTo(x, y); } ctx.stroke(); };
+      ctx.lineWidth = 1.2; ctx.strokeStyle = '#30d158';
+      for (let i = 0; i < i0; i++) { ctx.globalAlpha = show * .28 * Math.pow(.8, i0 - i); path(i, .75); }
+      ctx.globalAlpha = show * .9; path(i0, q);
+      const [px2, py2] = route(i0, q); glowDot(px2, py2, '#30d158', 2.6, show);
+      if (q < .12) { ctx.globalAlpha = show * (1 - q / .12); ctx.strokeStyle = '#0a84ff'; ctx.beginPath(); ctx.arc(E[0], E[1], 6 + q * 200, 0, 6.283); ctx.stroke(); }
+      if (Math.abs(q - .6) < .08) { ctx.globalAlpha = show * (1 - Math.abs(q - .6) / .08); ctx.strokeStyle = '#ff453a'; ctx.beginPath(); ctx.arc(M[0], M[1], 8 + (q - .52) * 160, 0, 6.283); ctx.stroke(); }
+      ctx.globalCompositeOperation = 'source-over'; ctx.restore();
+      const [name, cap, pw] = PLAN[i0];
+      callout(E[0], E[1], ['Earth', '1.00 AU'], '#0a84ff', -1); callout(M[0], M[1], ['Mars', '1.52 AU'], '#ff453a', -1);
+      if (q < .85) callout(px2, py2, [`${name}${i0 === 0 ? ' · now' : ''}`, cap, `order ${pw}`], '#30d158', px2 > W * .5 ? -1 : 1);
+      ctx.globalAlpha = 1;
+    }
+    function orbit(s, a, dash) { ctx.save(); ctx.rotate(s.tilt); ctx.globalAlpha = a; ctx.strokeStyle = 'rgba(255,255,255,.08)'; ctx.lineWidth = .75; ctx.setLineDash(dash ? [1.5, 6] : []); ctx.beginPath(); ctx.ellipse(0, 0, s.rx, s.ry, 0, 0, 6.283); ctx.stroke(); ctx.restore(); }
+
+    const main = $('s-main'), app = $('s-app'), pip = $('s-pip'); let pipAt = -2;
+    let cx = 0, cy = 0, fx = 0, fy = 0, z = 1; const t0 = performance.now();
+    function frame(now) {
+      const id = ORDER[scene], T = still ? 0 : now, p = u - scene, intro = still ? 1 : ease((now - t0) / 2600);
+      dots.forEach((d, j) => d.querySelector('b').style.width = (j < scene ? 100 : j === scene ? p * 100 : 0) + '%');
+      const mb = main.getBoundingClientRect().bottom - cv.getBoundingClientRect().top, room = H - mb - 28;
+      const g = Math.max(.35, Math.min(1, (W - 32) / 660, room / 440));
+      cx = W / 2; const ty = mb + 14 + room / 2; cy = cy ? cy + (ty - cy) * .08 : ty; // ease as the copy height changes
+      let roll; [fx, fy, z, roll] = cam(); z *= g;
+      const hold = id === 6 ? 0 : 1; fx += Math.sin(T / 9000) * 6 * hold; fy += Math.cos(T / 11000) * 4 * hold; // a slow handheld drift
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, W, H);
+      ctx.translate(cx, cy); ctx.rotate(roll); ctx.scale(z, z); ctx.translate(-fx, -fy);
+
+      const form = intro, w = id === 6 ? 1 - ease((p - .5) / .45) : 0, fade = id === 6 ? 1 - ease((p - .35) / .25) : 0;
+      app.style.opacity = fade; app.style.left = (cx - 590) + 'px'; app.style.top = (cy - 360) + 'px'; app.style.transform = `scale(${.56 * g * (.97 + .03 * fade)})`;
+      if (pipAt !== scene) { pipAt = scene; pip.classList.toggle('on', !!PIP[scene]); if (PIP[scene]) pip.innerHTML = PIP[scene]; }
+      const elVis = i => id === 0 ? 0 : id === 1 ? ease((p * 7 - i * .7)) : 1;
+      SHELLS.slice(0, 3).forEach((s, i) => orbit(s, (id === 0 || id === 6 ? 0 : id === 1 ? ease(p * 4 - i * .5) : 1)));
+      if (id === 4 || id === 5) orbit(SHELLS[3], id === 4 ? ease(p * 4) : 1, true);
+
+      // electrons, back half first
+      const live = ELS.map(([name, col, sh, ph], i) => { const s = SHELLS[sh], a = ph + T / 1000 * .75 * s.sp; let [x, y] = pos(s, a); if (w > 0) { const [lx, ly] = LAND[name]; x += (lx - x) * w; y += (ly - y) * w; } return { name, col, x, y, back: Math.sin(a) < 0 && w < .5, v: id === 6 ? 0 : elVis(i) }; });
+      if (id === 2) { // a looping command, ejected on the third try
+        const a = 1.4 + T / 1000 * 1.3, [x, y] = pos(SHELLS[0], a), out = ease((p - .55) * 3);
+        const tries = Math.min(3, 1 + Math.floor(p / .2));
+        live.push({ name: out > 0 ? 'refused' : `cargo test ×${tries}`, col: '#ff9f0a', x: x * (1 + out * 3), y: y * (1 + out * 3) - out * 120, back: false, v: 1 - ease((p - .8) * 5) });
+        live.push({ name: 'stale output · dropped', col: '#8a8a8a', ...(([x, y]) => ({ x, y }))(pos(SHELLS[1], 3.6 + T / 1500)), back: false, v: 1 - ease(p * 2.5) });
+      }
+      if (id >= 4 && id < 6) { const a = .3 + T / 1000 * .2, [x, y] = pos(SHELLS[3], a); live.push({ name: 'cloud/ · when you ask', col: '#64d2ff', x, y, back: Math.sin(a) < 0, v: id === 4 ? ease(p * 4) : 1, cloud: true }); }
+      const draw = e => { if (e.v <= 0) return; glowDot(e.x, e.y, e.col, 2, e.v * (e.back ? .55 : 1)); label(e.x, e.y, e.name, e.col, e.v * (e.back ? .45 : .85)); };
+      live.filter(e => e.back).forEach(draw);
+      nucleus(T, form, id === 2 && p > .4 && p < .65 ? 1.5 : 0, w, fade);
+      live.filter(e => !e.back).forEach(draw);
+
+      if (id === 3) { // the boundary, and a request that bounces off it
+        const R = 340, g = ease(p * 3);
+        ctx.globalAlpha = .5 * g; ctx.strokeStyle = '#30d158'; ctx.setLineDash([3, 7]); ctx.lineWidth = 1.2;
+        ctx.beginPath(); ctx.arc(0, 0, R, 0, 6.283); ctx.stroke(); ctx.setLineDash([]); ctx.lineWidth = 1;
+        label(-R * .7, -R * .72, 'your Mac', '#30d158', .8 * g);
+        const q = (p - .2) / .7; if (q > 0 && q < 1) {
+          const hit = .5, d = q < hit ? 760 - (760 - R - 6) * ease(q / hit) : R + 6 + 380 * ease((q - hit) / (1 - hit));
+          const x = d * Math.cos(-.5), y = d * Math.sin(-.5);
+          glowDot(x, y, '#ff453a', 2.6, 1 - ease((q - .75) * 4)); label(x, y, 'ignore previous instructions…', '#ff453a', .8 * (1 - ease((q - .75) * 4)));
+          if (Math.abs(q - hit) < .08) { ctx.globalAlpha = 1 - Math.abs(q - hit) / .08; ctx.strokeStyle = '#ff453a'; ctx.beginPath(); ctx.arc(R * Math.cos(-.5), R * Math.sin(-.5), 26, 0, 6.283); ctx.stroke(); }
+        }
+      }
+      if (id === 4) { // one packet out to the cloud and home again
+        const c = live.find(e => e.cloud), q = (p - .25) / .6;
+        if (q > 0 && q < 1) {
+          const outb = q < .45, k = outb ? ease(q / .45) : q < .6 ? 1 : 1 - ease((q - .6) / .4);
+          glowDot(c.x * k, c.y * k, outb ? '#64d2ff' : '#30d158', 3.4, 1);
+          label(c.x * k, c.y * k + 26, outb ? 'dart · tz tests' : q < .6 ? '40 s on GPUs' : 'all green · back home', outb ? '#64d2ff' : '#30d158', .9);
+        }
+      }
+
+      ctx.globalAlpha = 1;
+      if (id === 5) starmap(p, T);
+      if (!still) requestAnimationFrame(frame);
+    }
+  }
+  const wait = setInterval(() => { const cv = document.getElementById('frogfx'); if (cv && cv.closest('.f-root') && !cv.dataset.on) { cv.dataset.on = 1; clearInterval(wait); boot(cv.closest('.f-root')); } }, 100);
+})();
+</script>
+</body>
+</html>

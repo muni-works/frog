@@ -48,12 +48,24 @@ final class PaneHub {
     var comparing: UInt64?
     /// The mention token last inserted from the preview, shown as a chip while it's in the composer.
     var mention: String?
-    /// What the composer currently holds, so the chip knows when the mention is gone.
-    var draft = ""
+    /// What the composer currently holds, so the chip knows when the mention is gone. Not
+    /// observed: the composer writes it on every keystroke, and a tracked write there would
+    /// re-render every view of the panes (the preview, the terminal, their tabs) per character.
+    /// What those views actually read is `draftHasMention`, which changes only when it flips.
+    @ObservationIgnored var draft = ""
+    /// Whether the mention is still in the draft (see `noteDraft`).
+    private(set) var draftHasMention = false
     /// Text the composer should insert at the cursor (a mention picked in the preview).
     var insert: String?
     /// The preview's inspect mode toggle, driven from the menu (⇧⌘I).
     var inspecting = false
+    /// Hubs with a popped-out preview, by pane id: the pop-out window finds its hub here (it's
+    /// a separate scene, so it can't reach the conversation's view otherwise). Entries drop
+    /// when the pop-out closes.
+    @ObservationIgnored static var poppedOutHubs: [String: PaneHub] = [:]
+    /// Whether the preview's web view is presented in its own window instead of the card
+    /// (the pop-out reuses the one `PreviewHost`, so engine reads and screenshots keep working).
+    var poppedOut = false
     /// Recent reports per pane, for the engine's `console` request.
     private(set) var reports: [String: [PaneReport]] = [:]
     /// The turn the engine is on, so an in-app checkpoint screenshot is filed under it.
@@ -116,6 +128,8 @@ final class PaneHub {
 
     func close(_ id: String) {
         guard let i = index(id) else { return }
+        Self.poppedOutHubs[id] = nil
+        poppedOut = false
         if !panes[i].pending { send(.paneClose(id: id)) }
         panes.remove(at: i)
         handlers[id] = nil
@@ -190,12 +204,18 @@ final class PaneHub {
         mention = token
         insert = token + " "
         inspecting = false
+        noteDraft(draft)
     }
 
     /// Is the mention still in what's being typed?
-    var mentionInDraft: Bool {
-        guard let mention else { return false }
-        return draft.contains(mention)
+    var mentionInDraft: Bool { draftHasMention }
+
+    /// The composer's text changed: keep it, and say whether the mention is still in it. Only
+    /// the answer is observed, so typing re-renders the chip when it should and nothing else.
+    func noteDraft(_ text: String) {
+        draft = text
+        let has = mention.map { text.contains($0) } ?? false
+        if has != draftHasMention { draftHasMention = has }
     }
 
     /// Keep a screenshot of the preview for `turn` (the engine asked with `for: checkpoint`).
@@ -255,10 +275,12 @@ final class PaneHub {
             if panes[i].kind == .preview || panes[i].screen == nil {
                 panes.remove(at: i)
                 hosts[id] = nil
+                Self.poppedOutHubs[id] = nil
                 if selected == .pane(id) { selected = panes.last.map { .pane($0.id) } }
             } else {
                 panes[i].closed = true
             }
+            poppedOut = false
             handlers[id] = nil
         case .paneRequest(let req):
             handle(req)

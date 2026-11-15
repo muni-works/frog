@@ -7,8 +7,14 @@ import XCTest
 /// or a screen: `$TMPDIR/frog-snapshots/<fixture>-<state>.png`.
 @MainActor
 final class SnapshotTests: XCTestCase {
+    /// `$FROG_SNAPSHOT_DIR` when set (pass it as `TEST_RUNNER_FROG_SNAPSHOT_DIR` to xcodebuild):
+    /// the shared temp folder is written by every worktree's test run, so two sessions rendering
+    /// at once overwrite each other's PNGs.
     private var outDir: URL {
-        FileManager.default.temporaryDirectory.appending(path: "frog-snapshots")
+        if let dir = ProcessInfo.processInfo.environment["FROG_SNAPSHOT_DIR"], !dir.isEmpty {
+            return URL(fileURLWithPath: dir)
+        }
+        return FileManager.default.temporaryDirectory.appending(path: "frog-snapshots")
     }
 
     private func fixtures() throws -> [URL] {
@@ -59,7 +65,7 @@ final class SnapshotTests: XCTestCase {
             try render(EnergyCard(energy: energy, usage: usage).fixedSize().frame(maxHeight: .infinity, alignment: .top)
                         .background(Color(nsColor: .windowBackgroundColor)),
                        size: CGSize(width: 290, height: 520), to: "energy-card-\(name)", appearance: look)
-            try render(PriceCard(cost: 0.214, usage: usage, listed: (15, 75)).fixedSize().frame(maxHeight: .infinity, alignment: .top)
+            try render(PriceCard(cost: 0.214, usage: usage, listed: .init(spec: usage.model ?? "", input: 15, output: 75)).fixedSize().frame(maxHeight: .infinity, alignment: .top)
                         .background(Color(nsColor: .windowBackgroundColor)),
                        size: CGSize(width: 290, height: 460), to: "price-card-\(name)", appearance: look)
         }
@@ -217,7 +223,7 @@ extension SnapshotTests {
                 HStack(spacing: 24) {
                     ModelLabel(model: model).frame(width: 190, alignment: .leading)
                     HStack {
-                        ModelLabel(model: model, size: .row, detail: "38 words/s")
+                        ModelLabel(model: model, size: .row, detail: "38 tok/s")
                         Spacer()
                         ModelStateAction(model: model)
                     }
@@ -273,7 +279,7 @@ extension SnapshotTests {
     /// frog cloud's card signed out, with a Keychain key and with FROG_API_KEY: `frog-cloud-card.png`.
     func testRenderFrogCloudCard() throws {
         func p(_ key: String?) -> ProviderInfo {
-            ProviderInfo(id: "cloud", name: "frog cloud", kind: "openai", baseUrl: "https://api.frog.toys/v1",
+            ProviderInfo(id: "cloud", name: "Frog Cloud", kind: "openai", baseUrl: "https://api.frog.toys/v1",
                          local: false, custom: false, key: key, keyUrl: "https://api.frog.toys/beta",
                          connected: key != nil, rank: 2, pinned: true)
         }
@@ -427,6 +433,62 @@ extension SnapshotTests {
         print("snapshots: \(outDir.path)")
     }
 
+    /// Agents as calm steps (docs/design/agents/calm.html): a turn that ran two agents (one
+    /// failed) and waits on a third with a plan; its steps opened; the sidebar's agent rows
+    /// while it runs, and the fold once it ends.
+    func testRenderAgentsCalm() throws {
+        // Sent 42s ago, so the running clocks read like a real run.
+        let created = #""created":\#(UInt64(Date().addingTimeInterval(-42).timeIntervalSince1970 * 1000))"#
+        func env(_ s: String) throws -> Envelope {
+            try JSONDecoder.frog.decode(Envelope.self, from: Data(s.replacingOccurrences(of: #""created":0"#, with: created).utf8))
+        }
+        func sub(_ item: String, _ inner: String) -> String {
+            #"{"seq":0,"session":"s","created":0,"event":"subagent","item":"\#(item)","inner":\#(inner)}"#
+        }
+        func task(_ id: String, _ arg: String, _ outcome: String, _ output: String) -> [String] {[
+            #"{"seq":0,"session":"s","created":0,"event":"item_started","id":"\#(id)","kind":{"type":"tool_call","name":"Task","arg":"\#(arg)"}}"#,
+            sub(id, #"{"event":"item_completed","id":"\#(id)a","item":{"type":"tool_call","name":"Grep","arg":"rail","input":{},"outcome":"ok","output":"","display":null}}"#),
+            #"{"seq":0,"session":"s","created":0,"event":"item_completed","id":"\#(id)","item":{"type":"tool_call","name":"Task","arg":"\#(arg)","input":{},"outcome":"\#(outcome)","output":"\#(output)","display":null}}"#,
+        ]}
+        let todos = #"{"todos":[{"content":"a","status":"completed"},{"content":"b","status":"completed"},{"content":"c","status":"completed"},{"content":"d","status":"in_progress"},{"content":"e","status":"pending"}]}"#
+        let lines = [
+            #"{"seq":1,"session":"s","created":0,"event":"turn_started","turn":1,"input":"Audit how the sidebar, the rail and the pill show subagents. Use agents for the three areas."}"#,
+            #"{"seq":2,"session":"s","created":0,"event":"item_started","id":"r","kind":{"type":"tool_call","name":"Read","arg":"apps/FrogKit/UI/Transcript/TimelineRail.swift"}}"#,
+            #"{"seq":3,"session":"s","created":0,"event":"item_completed","id":"r","item":{"type":"tool_call","name":"Read","arg":"apps/FrogKit/UI/Transcript/TimelineRail.swift","input":{},"outcome":"ok","output":"","display":null}}"#,
+        ] + task("t1", "map the rail code", "ok", "The rail draws per turn.")
+          + task("t2", "survey bg tasks", "error", "rate limited (429)")
+          + [
+            #"{"seq":0,"session":"s","created":0,"event":"item_started","id":"t3","kind":{"type":"tool_call","name":"Task","arg":"audit run sheet"}}"#,
+            sub("t3", #"{"event":"item_completed","id":"p","item":{"type":"tool_call","name":"TodoWrite","arg":"","input":\#(todos),"outcome":"ok","output":"","display":null}}"#),
+            sub("t3", #"{"event":"item_started","id":"q","kind":{"type":"tool_call","name":"Read","arg":"apps/FrogKit/UI/Transcript/SubagentView.swift"}}"#),
+          ]
+        let live = Conversation(preview: URL(fileURLWithPath: "/tmp/demo"))
+        try lines.map(env).forEach(live.ingest)
+        try render(transcript(live), size: CGSize(width: 760, height: 420), to: "agents-calm-live")
+        let steps = try XCTUnwrap(live.turns.last?.items)
+        try render(ActivitySteps(steps: steps, conversation: live).padding(24).frame(maxHeight: .infinity, alignment: .top)
+                    .background(Color(nsColor: .windowBackgroundColor)),
+                   size: CGSize(width: 600, height: 200), to: "agents-calm-steps")
+        let sidebar = VStack(alignment: .leading, spacing: 0) {
+            SessionAgents(conversation: live, depth: 1) {}
+        }
+        try render(sidebar.padding(8).frame(maxHeight: .infinity, alignment: .top).background(Color(nsColor: .underPageBackgroundColor)),
+                   size: CGSize(width: 300, height: 120), to: "agents-calm-sidebar")
+
+        try [
+            #"{"seq":0,"session":"s","created":0,"event":"item_completed","id":"t3","item":{"type":"tool_call","name":"Task","arg":"audit run sheet","input":{},"outcome":"ok","output":"done","display":null}}"#,
+            #"{"seq":0,"session":"s","created":0,"event":"turn_ended","turn":1,"reason":{"type":"complete"},"usage":{"input_tokens":1,"output_tokens":1,"model_calls":1}}"#,
+        ].map(env).forEach(live.ingest)
+        XCTAssertEqual(live.agentList.done, 2)
+        XCTAssertEqual(live.agentList.failed, 1)
+        let folded = VStack(alignment: .leading, spacing: 0) {
+            SessionAgents(conversation: live, depth: 1) {}
+        }
+        try render(folded.padding(8).frame(maxHeight: .infinity, alignment: .top).background(Color(nsColor: .underPageBackgroundColor)),
+                   size: CGSize(width: 300, height: 60), to: "agents-calm-folded")
+        print("snapshots: \(outDir.path)")
+    }
+
     /// The terminal pane from a sample grid, and the preview pane on a local page: what the
     /// engine's side will drive.
     func testRenderPanes() throws {
@@ -457,6 +519,12 @@ extension SnapshotTests {
         try render(
             PaneArea(conversation: c, height: 400, width: .constant(480)).background(Color(nsColor: .windowBackgroundColor)),
             size: CGSize(width: 480, height: 400), to: "pane-area")
+        // The bug: the Changes tab with no changes. The card should fill its height; the
+        // "No Changes Yet" view centered in it once shrank the whole card to its content.
+        hub.selected = .changes
+        try render(
+            PaneArea(conversation: c, height: 400, width: .constant(480)).background(Color(nsColor: .windowBackgroundColor)),
+            size: CGSize(width: 480, height: 400), to: "pane-area-empty-changes")
         print("snapshots: \(outDir.path)")
     }
 
@@ -520,6 +588,66 @@ extension SnapshotTests {
                 try render(view, size: CGSize(width: w, height: h), to: name + (dark ? "" : "-light"))
             }
         }
+    }
+
+    /// Tool rows at the new rhythm: a run of six calls, a row with no gist yet, a failed row,
+    /// and a gist row with a diff — light and dark. The point of the height check beside the
+    /// shots: the gist row and the no-gist row must be the same height, or the transcript
+    /// jumps as gists land. `tool-rows-dark` / `tool-rows-light`.
+    func testRenderToolRows() throws {
+        func tool(_ id: String, _ name: String, _ arg: String, gist: String? = nil,
+                  outcome: ToolOutcome = .ok, diff: FileDiff? = nil) -> ItemState {
+            var item = ItemState(id: id, kind: .tool(name: name, arg: arg))
+            item.done = true
+            item.gist = gist
+            item.result = Item.ToolResult(
+                name: name, arg: arg, input: nil, outcome: outcome, output: "",
+                display: nil, diff: diff, diagram: nil, present: nil, images: nil, app: nil, widget: nil)
+            return item
+        }
+        let edit = FileDiff(
+            path: "apps/FrogKit/UI/Transcript/ActivityLine.swift", created: false, added: 24, removed: 7, hunks: [])
+        let steps = [
+            tool("b1", "Bash", "git log --oneline -5", gist: "git log of the sleep-events worktree"),
+            tool("b2", "Bash", "cargo test -p frog-engine --lib"),
+            tool("g1", "Grep", "fn worth"),
+            tool("r1", "Read", "crates/frog-engine/src/gist.rs"),
+            tool("e1", "Edit", "apps/FrogKit/UI/Transcript/ActivityLine.swift",
+                 gist: "moved the row's verb to the gist", diff: edit),
+            tool("f1", "Bash", "cargo test -- --nocapture", outcome: .error),
+            tool("m1", "mcp__github__list_issues", #"{"repo":"muni-works/frog"}"#),
+        ]
+        let lines = VerbLine.lines(steps)
+        // The proof that matters: a gist row and a no-gist row are the same height.
+        let gisted = try XCTUnwrap(lines.first { $0.arg == nil && !$0.quiet })
+        let raw = try XCTUnwrap(lines.first { $0.arg != nil && $0.verb.isEmpty })
+        XCTAssertEqual(try renderedHeight(VerbLineView(line: gisted), width: 560),
+                       try renderedHeight(VerbLineView(line: raw), width: 560), accuracy: 0.5)
+        for dark in [true, false] {
+            let view = VStack(alignment: .leading, spacing: 6) {
+                ForEach(Array(lines.enumerated()), id: \.offset) { _, v in
+                    VerbLineView(line: v)
+                }
+            }
+            .padding(20)
+            .background(Color(nsColor: .windowBackgroundColor))
+            .environment(\.colorScheme, dark ? .dark : .light)
+            try render(view, size: CGSize(width: 620, height: 240), to: "tool-rows" + (dark ? "" : "-light"),
+                       appearance: dark ? .darkAqua : .aqua)
+        }
+        print("snapshots: \(outDir.path)")
+    }
+
+    /// A row's rendered height, the BillingTests way.
+    @MainActor
+    private func renderedHeight<V: View>(_ view: V, width: CGFloat) throws -> CGFloat {
+        let host = NSHostingView(rootView: view.frame(width: width))
+        host.layoutSubtreeIfNeeded()
+        let window = NSWindow(contentRect: host.bounds, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = host
+        host.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.15))
+        return host.fittingSize.height
     }
 }
 

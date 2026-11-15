@@ -1,8 +1,0 @@
-# Cloudflare Pages configuration
-# Deployed as frog.toys
-
-[pages]
-build_output_dir = "."
-
-[vars]
-compatibility_date = "2026-05-03"

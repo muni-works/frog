@@ -7,8 +7,14 @@ final class HTTPServer: @unchecked Sendable {
     struct Request {
         let method: String
         let path: String
+        let headers: [String: String]
         let body: Data
     }
+
+    /// Largest request accepted (head + body), and how long a client gets to send it.
+    static let maxRequest = 8 << 20
+    static let maxHead = 32 << 10
+    static let readTimeout: TimeInterval = 30
 
     final class Response: @unchecked Sendable {
         private let conn: NWConnection
@@ -60,37 +66,69 @@ final class HTTPServer: @unchecked Sendable {
     func start() {
         listener.newConnectionHandler = { [self] conn in
             conn.start(queue: .global())
-            read(conn, buffer: Data())
+            // Slow or stalled clients don't get to hold a connection open forever.
+            let deadline = DispatchWorkItem { [weak conn] in conn?.cancel() }
+            DispatchQueue.global().asyncAfter(deadline: .now() + Self.readTimeout, execute: deadline)
+            read(conn, buffer: Data(), deadline: deadline)
         }
         listener.start(queue: .global())
     }
 
-    private func read(_ conn: NWConnection, buffer: Data) {
+    private func read(_ conn: NWConnection, buffer: Data, deadline: DispatchWorkItem) {
         conn.receive(minimumIncompleteLength: 1, maximumLength: 1 << 20) { [self] data, _, done, err in
             var buf = buffer
             if let data { buf += data }
-            if let req = parse(buf) {
+            switch parse(buf) {
+            case .complete(let req):
+                deadline.cancel()
                 Task { await self.handler(req, Response(conn)) }
-            } else if done || err != nil {
+            case .invalid(let status, let message):
+                deadline.cancel()
+                Response(conn).json(status, ["error": ["message": message]])
+            case .incomplete where done || err != nil:
+                deadline.cancel()
                 conn.cancel()
-            } else {
-                read(conn, buffer: buf)
+            case .incomplete:
+                read(conn, buffer: buf, deadline: deadline)
             }
         }
     }
 
-    /// A complete request, or nil if more bytes are needed.
-    private func parse(_ data: Data) -> Request? {
-        guard let split = data.range(of: Data("\r\n\r\n".utf8)) else { return nil }
+    enum Parsed {
+        case complete(Request)
+        case incomplete
+        case invalid(Int, String)
+    }
+
+    /// A complete request, `.incomplete` if more bytes are needed, or why it's refused.
+    private func parse(_ data: Data) -> Parsed {
+        guard let split = data.range(of: Data("\r\n\r\n".utf8)) else {
+            return data.count > Self.maxHead ? .invalid(431, "request head too large") : .incomplete
+        }
+        guard split.lowerBound <= Self.maxHead else { return .invalid(431, "request head too large") }
         let head = String(decoding: data[..<split.lowerBound], as: UTF8.self)
         let lines = head.components(separatedBy: "\r\n")
         let parts = lines.first?.split(separator: " ") ?? []
-        guard parts.count >= 2 else { return nil }
-        let length = lines.dropFirst()
-            .first { $0.lowercased().hasPrefix("content-length:") }
-            .flatMap { Int($0.split(separator: ":")[1].trimmingCharacters(in: .whitespaces)) } ?? 0
+        guard parts.count >= 2 else { return .invalid(400, "malformed request line") }
+        var headers: [String: String] = [:]
+        for line in lines.dropFirst() {
+            guard let colon = line.firstIndex(of: ":") else { continue }
+            let name = line[..<colon].trimmingCharacters(in: .whitespaces).lowercased()
+            let value = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+            if headers[name] != nil, name == "content-length" || name == "host" {
+                return .invalid(400, "duplicate \(name) header")
+            }
+            headers[name] = value
+        }
+        if headers["transfer-encoding"] != nil { return .invalid(501, "chunked bodies aren't supported") }
+        var length = 0
+        if let raw = headers["content-length"] {
+            guard let n = Int(raw), n >= 0 else { return .invalid(400, "invalid Content-Length") }
+            length = n
+        }
+        guard length <= Self.maxRequest - split.upperBound else { return .invalid(413, "request too large") }
         let body = data[split.upperBound...]
-        guard body.count >= length else { return nil }
-        return Request(method: String(parts[0]), path: String(parts[1]), body: Data(body.prefix(length)))
+        guard body.count >= length else { return .incomplete }
+        return .complete(Request(method: String(parts[0]), path: String(parts[1]), headers: headers, body: Data(body.prefix(length))))
     }
 }

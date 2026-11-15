@@ -4,7 +4,7 @@ const crypto = require("node:crypto");
 const { validate, jwt, request, _reset } = require("../api/_apns.js");
 
 const token = "a".repeat(64);
-const ok = { token, topic: "eco.frog.remote", payload: JSON.stringify({ aps: { alert: "hi" } }) };
+const ok = { token, topic: "toys.frog.remote", payload: JSON.stringify({ aps: { alert: "hi" } }) };
 
 test("accepts a frog push and defaults to production alerts", () => {
   const p = validate(ok);
@@ -21,7 +21,7 @@ test("refuses other apps, bad tokens and oversized payloads", () => {
 });
 
 test("live activity pushes use their own topic and a larger limit", () => {
-  const p = validate({ ...ok, topic: "eco.frog.remote.push-type.liveactivity", push_type: "liveactivity",
+  const p = validate({ ...ok, topic: "toys.frog.remote.push-type.liveactivity", push_type: "liveactivity",
     payload: JSON.stringify({ x: "y".repeat(4500) }) });
   assert.equal(request(p, "t").headers["apns-push-type"], "liveactivity");
 });

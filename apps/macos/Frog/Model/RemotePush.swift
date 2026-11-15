@@ -22,11 +22,27 @@ final class RemotePush {
     }
 
     /// Where pushes for real phones go.
+    static let defaultRelay = URL(string: "https://frog.toys/api/push")!
+    /// A malformed FROG_PUSH_RELAY falls back to the default instead of crashing.
     static var relay: URL {
-        URL(string: ProcessInfo.processInfo.environment["FROG_PUSH_RELAY"] ?? "https://frog.eco/api/push")!
+        relay(ProcessInfo.processInfo.environment["FROG_PUSH_RELAY"])
+    }
+    static func relay(_ override: String?) -> URL {
+        guard let s = override, !s.isEmpty, let url = URL(string: s), url.scheme != nil else { return defaultRelay }
+        return url
+    }
+
+    /// What the relay wants to hear from a Mac (`PUSH_RELAY_SECRET` there): Settings › General,
+    /// or FROG_PUSH_SECRET. Empty, pushes to real phones stay home; the Simulator path doesn't
+    /// need it. One shared secret is the beta's answer; a per-Mac secret minted at pairing is the
+    /// plan (docs/ios/surfaces.md).
+    static let secretKey = "pushRelaySecret"
+    static var secret: String {
+        ProcessInfo.processInfo.environment["FROG_PUSH_SECRET"] ?? UserDefaults.standard.string(forKey: secretKey) ?? ""
     }
 
     private(set) var devices: [Device]
+    private var warnedNoSecret = false
 
     private init() {
         let data = UserDefaults.standard.data(forKey: "remoteDevices") ?? Data()
@@ -73,7 +89,13 @@ final class RemotePush {
         switch obj["event"] as? String {
         case "permission_request": asked(obj, session: session)
         case "question": choosing(obj, session: session)
-        case "turn_ended": finished(obj, session: session)
+        // A finished turn is not a push: it's already on the Mac's screen, and the model
+        // decides what's worth reaching a phone with. Its `Notify` goes out through
+        // `MacEffects.notified` (which has the conversation's title), not from this line:
+        // one path, one push.
+        // The Live Activity still follows the turn, because it's the lock screen's state, not
+        // an alert.
+        case "turn_ended": activityEnded(obj, session: session)
         case "item_started", "item_completed", "turn_started": activityUpdate(obj, session: session)
         default: break
         }
@@ -121,8 +143,6 @@ final class RemotePush {
         if let reason = obj["reason"] { request["reason"] = reason }
         if let preview = obj["preview"] as? [String: Any] { request["preview"] = Self.trim(preview) }
         payload["request"] = request
-        // APNs takes 4 KB; the diff is the first thing to go.
-        if (try? JSONSerialization.data(withJSONObject: payload))?.count ?? 0 > 3800 { request["preview"] = nil; payload["request"] = request }
         send(payload, collapse: "perm-\(session)")
         let creating = (obj["preview"] as? [String: Any])?["created"] as? Bool ?? false
         let question = PermissionRequest.question(name: name, arg: arg, outsideSandbox: obj["reason"] is String, creating: creating)
@@ -151,8 +171,56 @@ final class RemotePush {
         ], collapse: "ask-\(session)")
     }
 
-    private func finished(_ obj: [String: Any], session: String) {
-        let (title, _) = title(session)
+    /// The model asked for the person's attention (its `Notify` tool), from `MacEffects`: the
+    /// only alert a turn can raise on the phone. A finished reply isn't one, so nothing arrives
+    /// unless the model said it mattered. Urgency picks the interruption level — `attention`
+    /// is time-sensitive with a sound, `done` is active (a banner, no breakthrough), `silent`
+    /// is passive with no sound: a quiet entry in Notification Center, no interruption at all.
+    func notify(_ note: NotifyNote, session: String?, project: String?) {
+        guard let session, !devices.isEmpty else { return }
+        sendNotify(title: note.title ?? title(session).title, body: note.body,
+                   urgency: note.urgency, folder: project ?? title(session).folder, session: session)
+    }
+
+    /// One `Notify` to every paired phone. Each is its own news, so they don't collapse into
+    /// one another the way a permission card's refreshes do.
+    private func sendNotify(title: String, body: String, urgency: NotifyUrgency,
+                            folder: String?, session: String) {
+        guard let payload = Self.notifyPayload(title: title, body: body, urgency: urgency,
+                                               folder: folder, session: session)
+        else { return }
+        send(payload, collapse: nil)
+    }
+
+    /// The APNs body for a `Notify`, as iOS reads it: the category the phone registered
+    /// (NOTIFY), the interruption level each urgency maps to, and no sound at all for
+    /// `silent`. Pure, so the mapping is testable without a phone.
+    static func notifyPayload(title: String, body: String, urgency: NotifyUrgency,
+                              folder: String?, session: String) -> [String: Any]? {
+        let body = String(body.prefix(300))
+        guard !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        let (level, sound): (String, String?) = switch urgency {
+        case .attention: ("time-sensitive", "default")
+        case .done: ("active", "default")
+        case .silent: ("passive", nil)
+        }
+        var alert: [String: Any] = ["title": title, "body": body]
+        if let folder { alert["subtitle"] = "frog in \(folder)" }
+        var aps: [String: Any] = [
+            "alert": alert,
+            "category": "NOTIFY",
+            "thread-id": session,
+            "interruption-level": level,
+        ]
+        // `silent` carries no sound at all: that's what "no interruption" means on iOS.
+        if let sound { aps["sound"] = sound }
+        return ["aps": aps, "session": session, "urgency": urgency.rawValue]
+    }
+
+    /// The turn ended: close its Live Activity (the lock screen's state), and push nothing.
+    /// A Live Activity only exists because the person added it to that session, so ending it
+    /// is what they asked for; an alert on every turn end is what they didn't.
+    private func activityEnded(_ obj: [String: Any], session: String) {
         let reason = (obj["reason"] as? [String: Any])?["type"] as? String ?? "complete"
         let answer = Library.shared.conversation(session)?.turns.last?.items.last { $0.kind == .message }?.text ?? ""
         let line = answer.split(separator: "\n").first { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.map(String.init) ?? ""
@@ -166,10 +234,6 @@ final class RemotePush {
             body = "Stopped: " + ((e?["message"] as? String) ?? "something went wrong")
         default: body = "Stopped."
         }
-        send([
-            "aps": ["alert": ["title": title, "body": body], "category": "DONE", "thread-id": session, "sound": "default"],
-            "session": session,
-        ], collapse: "done-\(session)")
         activityEnd(session: session, summary: body)
     }
 
@@ -239,8 +303,60 @@ final class RemotePush {
 
     // MARK: Delivering
 
+    /// An alert to every phone: sealed for real ones (the relay and Apple see a placeholder),
+    /// as is for the Simulator on this Mac.
     private func send(_ payload: [String: Any], collapse: String?) {
-        for d in devices { deliver(payload, to: d, collapse: collapse, activityToken: nil) }
+        let sealed = Self.sealed(payload, code: RemoteBridge.token)
+        for d in devices {
+            let p = d.transport == "apns" ? sealed : Self.fitted(payload)
+            guard let p else { continue }
+            deliver(p, to: d, collapse: collapse, activityToken: nil)
+        }
+    }
+
+    /// APNs takes 4 KB; the diff is the first thing to go, then the request's detail.
+    private static func fitted(_ payload: [String: Any], limit: Int = 3800) -> [String: Any]? {
+        var p = payload
+        for strip in [[], ["preview"], ["preview", "card"], ["*"]] {
+            if let data = try? JSONSerialization.data(withJSONObject: p), data.count <= limit { return p }
+            guard var request = p["request"] as? [String: Any] else { break }
+            if strip == ["*"] { p["request"] = nil; p["arg"] = (p["arg"] as? String).map { String($0.prefix(120)) }; continue }
+            for k in strip { request[k] = nil }
+            p["request"] = request
+        }
+        if let data = try? JSONSerialization.data(withJSONObject: p), data.count <= limit { return p }
+        return nil
+    }
+
+    /// `payload` sealed for the phone paired with `code` (`PushCrypto`), inside what iOS needs in
+    /// the clear: the category, thread and sound as given, `mutable-content` so the phone's
+    /// extension runs, and a placeholder alert for a phone that can't open it.
+    static func sealed(_ payload: [String: Any], code: String, limit: Int = 4000) -> [String: Any]? {
+        guard !code.isEmpty, let aps = payload["aps"] as? [String: Any] else { return nil }
+        var outerAps: [String: Any] = ["alert": ["title": "frog", "body": placeholder(category: aps["category"] as? String)],
+                                       "mutable-content": 1]
+        for k in ["category", "thread-id", "sound", "interruption-level"] where aps[k] != nil { outerAps[k] = aps[k] }
+        // Sealing and base64 cost about a third: fit the plain payload into what's left.
+        var budget = Int(Double(limit - 220) * 0.74)
+        while budget > 400 {
+            guard let inner = fitted(payload, limit: budget),
+                  let data = try? JSONSerialization.data(withJSONObject: inner),
+                  let enc = try? PushCrypto.seal(data, code: code) else { return nil }
+            let outer: [String: Any] = ["aps": outerAps, PushCrypto.field: enc, "v": PushCrypto.version]
+            if (try? JSONSerialization.data(withJSONObject: outer))?.count ?? .max <= limit { return outer }
+            budget -= 300
+        }
+        return nil
+    }
+
+    /// What a phone shows when it can't open the push: enough to know to look at the Mac.
+    private static func placeholder(category: String?) -> String {
+        switch category {
+        case "PERMISSION": "frog needs you"
+        case "ASK": "frog has a question"
+        case "DONE": "frog finished"
+        default: "frog"
+        }
     }
 
     private func deliver(_ payload: [String: Any], to d: Device, collapse: String?, activityToken: String?) {
@@ -265,9 +381,16 @@ final class RemotePush {
                 try? FileManager.default.removeItem(at: file)
             }
         case "apns":
+            let secret = Self.secret
+            guard !secret.isEmpty else {
+                if !warnedNoSecret { EngineProcess.log("remote: no push relay secret; set it in Settings › General") }
+                warnedNoSecret = true
+                return
+            }
             var req = URLRequest(url: Self.relay)
             req.httpMethod = "POST"
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.setValue("Bearer \(secret)", forHTTPHeaderField: "Authorization")
             var body: [String: Any] = [
                 "token": activityToken ?? d.address,
                 "env": d.env ?? "production",
@@ -278,9 +401,14 @@ final class RemotePush {
             if let collapse { body["collapse_id"] = collapse }
             req.httpBody = try? JSONSerialization.data(withJSONObject: body)
             let address = d.address
-            URLSession.shared.dataTask(with: req) { _, response, _ in
+            URLSession.shared.dataTask(with: req) { body, response, error in
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                if status != 200 {
+                    let why = body.flatMap { String(data: $0, encoding: .utf8) } ?? error?.localizedDescription ?? ""
+                    EngineProcess.log("remote: push relay said \(status) \(why.prefix(200))")
+                }
                 // 410: the app was deleted or pushes turned off; stop sending to it.
-                guard (response as? HTTPURLResponse)?.statusCode == 410, activityToken == nil else { return }
+                guard status == 410, activityToken == nil else { return }
                 Task { @MainActor in RemotePush.shared.forget(address) }
             }.resume()
         default:

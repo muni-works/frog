@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Frog plans</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/frog/tokens.css">
+<link rel="stylesheet" href="ds/frog/components/bundle.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+a{color:var(--frog)}a:hover{color:var(--fg)}
+</style>
+</helmet>
+<div data-theme="{{theme}}" class="f-root" style="min-height: 1040px; background: var(--bg); font-size: 17px; line-height: 1.55;">
+  <header style="display: flex; align-items: center; justify-content: space-between; padding: 20px 32px; flex-wrap: wrap; gap: 12px; border-bottom: 1px solid var(--line);">
+    <a href="WebSettings.dc.html" style="display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--fg);">
+      <img src="/_blob/a7cbfb1c65a16387b5addf3f6c09ad4c" alt="" style="width: 28px; height: 28px;">
+      <span style="font-weight: 700; font-size: 19px; letter-spacing: -0.01em;">Frog</span>
+    </a>
+    <a href="WebSettings.dc.html" style="font-size: 15px;">Back to your account</a>
+  </header>
+
+  <main style="max-width: 1160px; margin: 0 auto; padding: 56px 24px 72px; display: flex; flex-direction: column; gap: 40px;">
+    <div style="text-align: center; display: flex; flex-direction: column; gap: 12px; align-items: center;">
+      <h1 style="margin: 0; font-family: var(--font-display); font-size: 56px; line-height: 1.05; letter-spacing: -0.03em;">Free on your Mac. Faster in the cloud.</h1>
+      <p style="margin: 0; max-width: 620px; font-size: 21px; line-height: 1.4; color: var(--muted);">Every plan is the full agent. Paying adds cloud speed and room, never features you had.</p>
+    </div>
+
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; align-items: stretch;">
+      <sc-for list="{{plans}}" as="p" hint-placeholder-count="4">
+        <section class="f-card" style="padding: 24px; border-radius: var(--radius-field); display: flex; flex-direction: column; gap: 16px; border-color: {{p.edge}};">
+          <div style="display: flex; align-items: center; gap: 8px; min-height: 22px;">
+            <h2 style="margin: 0; font-size: 21px;">{{p.name}}</h2>
+            <sc-if value="{{p.current}}" hint-placeholder-val="{{ false }}"><span class="f-badge" style="font-size: 12px; line-height: 16px; padding: 2px 8px;">Your plan</span></sc-if>
+          </div>
+          <div>
+            <span style="font-family: var(--font-rounded); font-size: 40px; font-weight: 600; letter-spacing: -0.02em;">{{p.price}}</span>
+            <span style="font-size: 15px; color: var(--muted);">{{p.per}}</span>
+          </div>
+          <p style="margin: 0; font-size: 15px; color: var(--muted); min-height: 46px;">{{p.blurb}}</p>
+          <ul style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; font-size: 15px; flex: 1;">
+            <sc-for list="{{p.items}}" as="it" hint-placeholder-count="4">
+              <li style="display: flex; gap: 8px; align-items: flex-start;">
+                <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--frog)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="flex: none; margin-top: 4px;"><path d="m5 12 5 5 9-10"></path></svg>
+                <span>{{it}}</span>
+              </li>
+            </sc-for>
+          </ul>
+          <a href="{{p.href}}" class="{{p.btn}}" style="text-decoration: none; justify-content: center; height: 44px; box-sizing: border-box; font-size: 15px;">{{p.cta}}</a>
+        </section>
+      </sc-for>
+    </div>
+
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; font-size: 15px; color: var(--muted);">
+      <p style="margin: 0;"><b style="color: var(--fg);">Run out mid-task?</b> Frog finishes it, then goes back to your Mac. It never stops halfway.</p>
+      <p style="margin: 0;"><b style="color: var(--fg);">Cancel any time.</b> One button on your account page. Your Mac keeps working the same.</p>
+      <p style="margin: 0;"><b style="color: var(--fg);">Open source.</b> The agent, the app and the CLI are free to read, fork and run.</p>
+    </div>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"dark"},"$preview":{"width":1280,"height":1040}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const prom = 'f-btn f-btn--prominent', bord = 'f-btn f-btn--bordered';
+    const plans = [
+      { name: 'Free', price: '$0', per: 'forever', current: true, cta: 'Your current plan', btn: bord, href: 'WebSettings.dc.html',
+        blurb: 'The full agent with local models. No account needed.',
+        items: ['Runs on your Mac, private', 'Local memory and routines', 'Signed in: $5 cloud credits', 'Signed in: Pip on every device'] },
+      { name: 'API', price: 'Pay', per: 'as you go', cta: 'Get a key', btn: bord, href: '#',
+        blurb: 'Frog Cloud models with a key, for your own tools.',
+        items: ['OpenAI-compatible endpoint', 'Per-token pricing [RATES]', 'Works with any client', 'No monthly fee'] },
+      { name: 'Pro', price: '$20', per: 'a month', cta: 'Upgrade to Pro', btn: prom, href: 'WebSettings.dc.html', featured: true,
+        blurb: 'Cloud speed for daily work.',
+        items: ['[INCLUDED CLOUD USAGE]', 'Routines in the cloud while you sleep', 'Bigger models (tree)', 'Parallel tasks'] },
+      { name: 'Max', price: '$200', per: 'a month', cta: 'Get Max', btn: bord, href: 'WebSettings.dc.html',
+        blurb: 'For running Frog all day. Or Max 5x at $100.',
+        items: ['[INCLUDED CLOUD USAGE] × 20', 'Everything in Pro', 'Priority on Frog Cloud', 'Max 5x: $100 a month'] },
+    ];
+    return {
+      theme: this.props.theme ?? 'dark',
+      plans: plans.map((p) => ({ ...p, current: !!p.current, edge: p.featured ? 'var(--frog)' : 'var(--line)' })),
+    };
+  }
+}
+</script>
+</body>
+</html>

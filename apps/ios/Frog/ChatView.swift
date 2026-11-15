@@ -209,7 +209,7 @@ struct ChatView: View {
                 if let openError { Text(openError).font(.caption).foregroundStyle(.orange) }
             }
             if !conversation.queue.isEmpty {
-                QueuedMessages(conversation: conversation)
+                QueuedMessages(conversation: conversation, streaming: conversation.busy)
             }
             if !attachments.isEmpty {
                 AttachmentStrip(images: $attachments, blind: conversation.status?.vision == false ? identity?.name : nil)
@@ -226,7 +226,7 @@ struct ChatView: View {
                         .disabled(!canSend)
                         .onSubmit(send)
                     SendButton(conversation: conversation, canSend: canSend && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty),
-                               send: send, tint: Color.place(cloud: identity?.place.isCloud ?? false))
+                               send: send, tint: Color.place(identity?.place ?? .mac))
                         .transition(.scale.combined(with: .opacity))
                 }
                 .animation(.spring(duration: 0.3, bounce: 0.3), value: conversation.busy)
@@ -256,6 +256,11 @@ struct ChatView: View {
         .padding(.horizontal, 12)
         .padding(.top, 6)
         .padding(.bottom, 8)
+        // A queued message's "x" puts it back in the field to edit, ahead of what's typed.
+        .onChange(of: conversation.restored) { _, back in
+            guard !back.isEmpty else { return }
+            (draft, attachments) = conversation.takeRestored(into: draft, attachments: attachments)
+        }
     }
 
     /// Images for the next message: from Photos, or what's been copied.

@@ -6,6 +6,9 @@ set -eu
 # Public GitHub repo. Change once the name is final.
 FROG_REPO="${FROG_REPO:-muni-works/frog}"
 
+# minisign public key for release signatures (the second line of minisign.pub, "RW...").
+FROG_MINISIGN_PUBKEY="RWRxRLpWXDJlkcb7OZvuKFrMJn/XlofsgSMtRT9i8UUtQHmfT4xM+Dov"
+
 err() { printf 'frog-install: error: %s\n' "$*" >&2; exit 1; }
 info() { printf 'frog-install: %s\n' "$*"; }
 need() { command -v "$1" >/dev/null 2>&1 || err "missing required command: $1"; }
@@ -47,7 +50,8 @@ resolve_version() {
     esac
     return
   fi
-  # For prereleases (v*-rc*), use the latest prerelease; otherwise latest release
+  # Fetches the latest non-prerelease release (GitHub's releases/latest skips prereleases).
+  # To install an rc, set FROG_VERSION (e.g. FROG_VERSION=v0.1.0-rc1).
   meta="$tmp/latest.json"
   fetch "https://api.github.com/repos/$FROG_REPO/releases/latest" "$meta"
   v=$(sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$meta" | head -n1)
@@ -63,6 +67,34 @@ sha256_of() {
   else
     err "need sha256sum or shasum to verify the download"
   fi
+}
+
+# Returns 1 quietly when the URL isn't there (e.g. an unsigned release).
+fetch_optional() {
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$1" -o "$2" 2>/dev/null
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO "$2" "$1" 2>/dev/null
+  else
+    return 1
+  fi
+}
+
+# The checksum comes from the same host as the tarball; the signature proves who built it.
+# A signature that's present but doesn't verify is fatal.
+verify_signature() {
+  [ -n "$FROG_MINISIGN_PUBKEY" ] || return 0
+  if ! fetch_optional "$2.minisig" "$1.minisig"; then
+    info "warning: no signature published for $(basename "$1"); checksum only"
+    return 0
+  fi
+  if ! command -v minisign >/dev/null 2>&1; then
+    info "warning: minisign not installed; skipping signature check (checksum verified)"
+    return 0
+  fi
+  minisign -Vqm "$1" -x "$1.minisig" -P "$FROG_MINISIGN_PUBKEY" \
+    || err "signature verification failed for $(basename "$1"); not installing"
+  info "signature verified"
 }
 
 main() {
@@ -81,36 +113,7 @@ main() {
   version=$(resolve_version)
   name="frog-$version-$target"
   base="https://github.com/$FROG_REPO/releases/download/$version"
-  
-  # For macOS, check for both .tar.gz (CLI) and .zip (app bundle) artifacts
-  if [ "$target" = "aarch64-apple-darwin" ]; then
-    # Try the app bundle first (Frog.zip), fall back to CLI tarball
-    if curl -sfI "$base/Frog.zip" >/dev/null 2>&1; then
-      info "downloading Frog $version (app bundle)"
-      fetch "$base/Frog.zip" "$tmp/Frog.zip"
-      fetch "$base/Frog.zip.sha256" "$tmp/Frog.zip.sha256"
-      want=$(cut -d' ' -f1 < "$tmp/Frog.zip.sha256")
-      got=$(sha256_of "$tmp/Frog.zip")
-      if [ -z "$want" ] || [ "$want" != "$got" ]; then
-        err "checksum mismatch for Frog.zip (want $want, got $got)"
-      fi
-      # Extract the app bundle
-      cd "$tmp"
-      unzip -q Frog.zip
-      cd -
-      APP_DIR="$tmp/Frog.app"
-      # Create a simple CLI wrapper that launches the app
-      mkdir -p "$dir"
-      cat > "$dir/frog" << 'WRAPPER'
-#!/bin/sh
-open -a "$(dirname "$0")/../Resources/frog" "$@"
-WRAPPER
-      chmod +x "$dir/frog"
-      info "installed Frog $version (app bundle) to $dir/frog"
-      exit 0
-    fi
-  fi
-  
+
   info "downloading $name"
   fetch "$base/$name.tar.gz" "$tmp/$name.tar.gz"
   fetch "$base/$name.tar.gz.sha256" "$tmp/$name.tar.gz.sha256"
@@ -120,6 +123,7 @@ WRAPPER
   if [ -z "$want" ] || [ "$want" != "$got" ]; then
     err "checksum mismatch for $name.tar.gz (want $want, got $got)"
   fi
+  verify_signature "$tmp/$name.tar.gz" "$base/$name.tar.gz"
 
   tar -xzf "$tmp/$name.tar.gz" -C "$tmp" || err "failed to extract $name.tar.gz"
   [ -f "$tmp/$name/frog" ] || err "archive missing frog binary"

@@ -57,4 +57,31 @@ enum Git {
         p.waitUntilExit()
         return p.terminationStatus == 0 ? String(data: data, encoding: .utf8) : nil
     }
+
+    /// A worktree session's branch, commits ahead of origin/main, and dirty file count —
+    /// the numbers SessionStatus and ListSessions report. Nil branch when not a repo.
+    /// Off the main actor (a subprocess); cheap enough to call per status read.
+    static func quick(_ folder: URL) async -> (branch: String?, ahead: Int?, dirty: Int?) {
+        await Task.detached {
+            let out = run(folder, ["status", "--porcelain=v2", "--branch"]) ?? ""
+            var branch: String?
+            var ahead = 0
+            var haveUpstream = false
+            var dirty = 0
+            for line in out.split(separator: "\n") {
+                if line.hasPrefix("# branch.head ") {
+                    branch = String(line.dropFirst("# branch.head ".count))
+                    if branch == "(detached)" { branch = nil }
+                } else if line.hasPrefix("# branch.ab ") {
+                    // "# branch.ab +2 -0"
+                    let parts = line.split(separator: " ")
+                    if let a = parts.first(where: { $0.hasPrefix("+") }) { ahead = Int(a.dropFirst()) ?? 0 }
+                    haveUpstream = true
+                } else if !line.hasPrefix("#") {
+                    dirty += 1
+                }
+            }
+            return (branch, haveUpstream ? ahead : nil, dirty)
+        }.value
+    }
 }

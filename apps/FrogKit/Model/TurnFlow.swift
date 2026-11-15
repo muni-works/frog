@@ -35,6 +35,7 @@ struct TurnFlow {
             guard case .tool(let name, _) = item.kind else { return false }
             if !item.done && item.imagePreview != nil { return true }
             if name == "Diagram" { return item.result?.diagram != nil || !item.done }
+            if name == "Visualize" { return item.result?.widget != nil || !item.done }
             guard let r = item.result, r.outcome == .ok else { return false }
             if r.present != nil { return true }
             if let app = r.app { return latestApp[app.server + app.uri] == item.id }
@@ -50,8 +51,9 @@ struct TurnFlow {
             if run.allSatisfy({ $0.kind == .reasoning && $0.done && ActivityGroup.isShort($0) }) { return }
             // A long thought before acting is its own line ("Thought for 12s"); a short one
             // folds into the line that follows ("Thought, then read 3 files").
+            // Any thought before acting is its own quiet line ("Thought ›"), as on the web.
             if run.count > 1, let first = run.first, first.kind == .reasoning, first.done,
-               !ActivityGroup.isShort(first), run.dropFirst().contains(where: { $0.kind != .reasoning }) {
+               run.dropFirst().contains(where: { $0.kind != .reasoning }) {
                 segments.append(.activity(ActivityGroup(steps: [first])))
                 segments.append(.activity(ActivityGroup(steps: Array(run.dropFirst()))))
             } else {
@@ -80,6 +82,68 @@ struct TurnFlow {
             }
         }
         flush()
+    }
+}
+
+/// What a finished item shows, cheaply comparable: the transcript rebuilds a row only when its
+/// stamp changes, instead of every row on every chunk (`ItemState` isn't Equatable, so SwiftUI
+/// can't tell an unchanged row from a changed one by itself).
+struct ItemStamp: Equatable {
+    let id: String
+    let text: Int
+    let output: Int
+    let result: Bool
+    let ok: Bool
+    let needsPermission: Bool
+    let preview: Bool
+    /// The row's gist, which arrives after it finished: a change rebuilds the row.
+    let gist: String?
+    let subagentItems: Int
+    let subagentEnded: Date?
+}
+
+extension ItemState {
+    /// Nil while the item is still running: a live row always rebuilds.
+    var stamp: ItemStamp? {
+        guard done else { return nil }
+        return ItemStamp(id: id, text: text.utf8.count, output: output.utf8.count, result: result != nil,
+                         ok: result?.outcome == .ok, needsPermission: needsPermission, preview: imagePreview != nil,
+                         // A gist lands after the row finished: it has to rebuild for it.
+                         gist: gist,
+                         subagentItems: subagent?.items.count ?? 0, subagentEnded: subagent?.endedAt)
+    }
+
+    /// What a turn's tail row (plan, live status, changes, footer) reads from one item, cheaply
+    /// comparable — kind and size, not the strings themselves (see `TurnView.==`).
+    var itemKey: String {
+        let kind: String
+        switch self.kind {
+        case .message: kind = "m"
+        case .reasoning: kind = "r"
+        case .tool(let name, _): kind = "t:" + name
+        case .notice(let warning): kind = warning ? "nw" : "n"
+        }
+        return "\(id)|\(kind)|\(done ? "d" : "u")|\(text.utf8.count)|\(output.utf8.count)|\(result != nil ? (result?.outcome == .ok ? "ok" : "no") : "-")|\(needsPermission ? "p" : "-")"
+    }
+}
+
+extension TurnFlow.Segment {
+    /// Nil while any of its items is running.
+    /// A step in it is waiting on a permission answer (its card shows).
+    var waiting: Bool {
+        if case .activity(let g) = self { return g.steps.contains(where: \.needsPermission) }
+        return false
+    }
+
+    var stamp: [ItemStamp]? {
+        switch self {
+        case .text(let i), .visual(let i), .notice(let i): i.stamp.map { [$0] }
+        case .activity(let g):
+            g.steps.reduce(into: [ItemStamp]?([])) { acc, step in
+                guard let s = step.stamp else { acc = nil; return }
+                acc?.append(s)
+            }
+        }
     }
 }
 
@@ -209,22 +273,25 @@ enum ActivityWords {
         case "WebSearch":
             return [.text(args.count == 1 ? "searched the web for “\(args[0])”" : "searched the web \(args.count) times")]
         case "Task":
-            return [.text(calls.count == 1 ? "ran a subagent" : "ran \(count(calls.count, "subagent"))")]
+            return [.text(calls.count == 1 ? "ran an agent" : "ran \(count(calls.count, "agent"))")]
         case "TodoWrite": return [.text("updated the plan")]
         case "Image": return [.text("generated images")]
         case "Screenshot": return [.text("captured the page")]
         case "Compare": return [.text("compared the images")]
         case "Diagram": return [.text("drew a diagram")]
+        case "Visualize": return [.text(calls.count == 1 ? "made a visual" : "made \(count(calls.count, "visual"))")]
+        case "VisualGuide": return [.text("read the visual guide")]
         case "Present": return [.text("showed results")]
         case "Ask": return [.text(calls.count == 1 ? "asked you" : "asked you \(count(calls.count, "question"))")]
         case "CodeMap": return [.text("mapped the code")]
         case "Docs": return [.text("read the docs")]
+        case "Models": return [.text("listed the models")]
         case "Skill": return [.text(args.count == 1 && !args[0].isEmpty ? "used the \(args[0]) skill" : "used \(count(calls.count, "skill"))")]
         case "Recall": return [.text("looked through past sessions")]
         case "UseFolder":
             guard let to = calls.last(where: { $0.result?.outcome == .ok })?.arg else { return [.text("asked to use a folder")] }
             return [.text("moved to \((to as NSString).lastPathComponent)")]
-        case "McpTools": return [.text("looked up tools")]
+        case "McpTools", "ToolSearch": return [.text("looked up tools")]
         case let k where k.hasPrefix("mcp:"):
             let server = String(k.dropFirst(4))
             return [.text(calls.count == 1 ? "used \(server)" : "used \(server) \(calls.count) times")]
@@ -251,13 +318,16 @@ enum ActivityWords {
             case "Bash", "!": return "Ran \(arg)"
             case "WebFetch": return "Fetched \(arg)"
             case "WebSearch": return "Searched the web for “\(arg)”"
-            case "Task": return arg.isEmpty ? "Ran a subagent" : "Subagent: \(arg)"
+            case "Task": return arg.isEmpty ? "Ran an agent" : "Agent: \(arg)"
             case "TodoWrite": return "Updated the plan"
             case "Diagram": return arg.isEmpty ? "Drew a diagram" : "Drew \(arg)"
+            case "Visualize": return "Made a visual"
+            case "VisualGuide": return "Read the visual guide"
             case "Present": return "Showed results"
             case "Ask": return "Asked you"
             case "CodeMap": return "Mapped the code"
             case "Docs": return arg.isEmpty ? "Read the docs" : "Read the docs for \(arg)"
+            case "Models": return "Listed the models"
             case "Skill": return "Used the \(arg) skill"
             case "Recall": return arg.isEmpty ? "Looked through past sessions" : "Looked through past sessions for “\(arg)”"
             case "UseFolder": return "Moved to \(arg.isEmpty ? "a folder" : arg)"
@@ -280,7 +350,8 @@ enum ActivityWords {
             case "Bash", "!": return isTest(arg) ? "Running the tests…" : "Running \(arg)…"
             case "WebFetch": return "Fetching \(host(arg))…"
             case "WebSearch": return "Searching the web for “\(arg)”…"
-            case "Task": return item.subagent?.activity.appending("…") ?? "Starting a subagent…"
+            case "Task":
+                return item.subagent.map { "Agent: \($0.activity)…" } ?? "Starting an agent…"
             case "TodoWrite": return "Updating the plan…"
             case "Image": return "Generating images…"
             case "Screenshot": return "Capturing the page…"
@@ -290,6 +361,7 @@ enum ActivityWords {
             case "Ask": return "Waiting for your answer…"
             case "CodeMap": return "Mapping the code…"
             case "Docs": return "Reading the docs…"
+            case "Models": return "Listing the models…"
             case "Recall": return "Looking through past sessions…"
             case "UseFolder": return "Moving to a folder…"
             default: return "Using \(ToolIcon.title(name))…"
@@ -351,7 +423,8 @@ enum ActivityWords {
 }
 
 /// Which turns show their model/speed footer without hovering: the latest finished one, one
-/// whose model differs from the turn before, and one that cost money.
+/// whose model differs from the turn before, and one that cost money. Touch screens only: on
+/// the Mac every footer is hover-only (`TranscriptView`), so nothing is pinned at rest.
 enum TurnFooter {
     static func pinned(_ turns: [TurnState], cost: (TurnUsage) -> Double? = { _ in nil }) -> Set<TurnState.ID> {
         var out = Set<TurnState.ID>()

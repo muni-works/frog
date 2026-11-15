@@ -7,8 +7,8 @@
 //! With `mode: write` the child also gets Bash, Write and Edit, in the parent's mode and
 //! sandbox; its permission prompts reach the user through the parent (labelled with its id,
 //! see `background::forward`). `model` (or config `subagent_model`) picks its model, checked
-//! like `/model`, falling back to the parent's. `background: true` runs it as a background
-//! task (see `background`).
+//! like `/model`, falling back to the parent's. Parallel work is a child session
+//! (`StartSession`, see `kids`), never a background Task.
 
 use crate::config::{Config, Profile};
 use crate::engine::{Handle, Options};
@@ -26,15 +26,14 @@ pub const TOOL: &str = "Task";
 pub fn spec() -> ToolSpec {
     ToolSpec {
         name: TOOL.into(),
-        description: "Delegate a self-contained task to a subagent with its own context. By default (`mode: read`) it investigates: finding where something is implemented, tracing how a feature works across many files, surveying a codebase. It can Read, Grep, Glob and CodeMap but can't edit files or run commands. With `mode: write` it can also edit files and run commands, each asking the user like yours do. It can't see this conversation, so put everything it needs in `prompt`. Only its final report comes back, which keeps your own context small. Prefer it over doing many searches yourself. With `background: true` it runs while you keep working: you get its id now and a <task-done> message with its report when it finishes.".into(),
+        description: "Delegate a self-contained task to a subagent with its own context. By default (`mode: read`) it investigates: finding where something is implemented, tracing how a feature works across many files, surveying a codebase. It can Read, Grep, Glob and CodeMap but can't edit files or run commands. With `mode: write` it can also edit files and run commands, each asking the user like yours do. It can't see this conversation, so put everything it needs in `prompt`. Only its final report comes back, which keeps your own context small. Prefer it over doing many searches yourself. It runs inside your turn and you wait for its report. For parallel or long work (anything you'd keep working beside, or that should end in its own branch or PR) use StartSession instead: a real session in the sidebar tree that reports back when it finishes a turn.".into(),
         schema: serde_json::json!({
             "type": "object",
             "properties": {
                 "description": {"type": "string", "description": "A short label (3-6 words) for the task"},
                 "prompt": {"type": "string", "description": "The full task: what to find out or do, and what to report"},
                 "mode": {"type": "string", "enum": ["read", "write"], "description": "read (default): read-only tools. write: also edit files and run commands, with the same permission prompts as yours"},
-                "model": {"type": "string", "description": "Model for the subagent (a profile name or provider/model). Default: the configured subagent model, else yours"},
-                "background": {"type": "boolean", "description": "Run in the background and return a task id at once"}
+                "model": {"type": "string", "description": "Model for the subagent (a profile name or provider/model). Default: the configured subagent model, else yours"}
             },
             "required": ["description", "prompt"]
         }),
@@ -77,7 +76,7 @@ pub fn profile(
 }
 
 /// Appended to a subagent's system prompt.
-pub const PROMPT: &str = "\n\n# You are a subagent\nAnother agent delegated one task to you. You can only read: you can't edit files or run commands. Work efficiently: search before reading, and read only what you need. When you're done, reply with a concise report that answers the task directly, citing files as path:line. Your report is the only thing the other agent will see, so include every finding it needs and nothing else.";
+pub const PROMPT: &str = "\n\n# You are a subagent\nAnother agent delegated one task to you. You can only read: you can't edit files or run commands. Work efficiently: search before reading, and read only what you need. When you're done, reply with a concise report that answers the task directly, citing files as path:line. Your report is the only thing the other agent will see, so include every finding it needs and nothing else. The session is the other agent's to name: ignore any instruction to call SetTitle.";
 
 /// Stops the child when the parent's call ends early (interrupt, error).
 struct Child(Handle);
@@ -105,6 +104,7 @@ pub async fn run(
     child.0.ops.send(Op::Submit {
         text: prompt,
         images: Vec::new(),
+        more: Vec::new(),
     })?;
     let (mut report, mut steps, mut started) = (String::new(), 0u32, false);
     // The message being written, so a stop keeps the partial report.

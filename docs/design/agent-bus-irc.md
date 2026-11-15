@@ -1,6 +1,6 @@
 # Agent bus over IRC
 
-Status: design, pending Cam's picks (section 8) · 2026-10-22
+Status: design, decisions picked by Cam 2026-10-22 · 2026-10-22
 
 frog sessions already talk to each other, but only inside one Mac: ListSessions/SendMessage/StartSession, `Op::Deliver` in `crates/frog-engine/src/engine.rs`, routed by `SessionBroker.swift`. This design adds a **bus**: one place where every session's status, idle and approval notices appear, readable by agents (a tool) and by Cam (lirc on Mac and iPhone), so the org runs on one feed instead of N pairwise pings. IRC is the wire because lirc already speaks it — soju-oriented, with chathistory backfill, read markers, push — and because channels, nicks, DMs and presence are exactly the shape of an agent org.
 
@@ -83,9 +83,13 @@ Ordered, no dates:
 
 ## 8. Decisions for Cam
 
-1. **Hosting:** (a) frog cloud DO bus *(recommended — no box to run, per-account isolation)* · (b) soju on mew (fastest v0) · both: b now, a later.
-2. **Which events post:** minimal — waiting-on-user, errored, idle *(recommended — keeps the signal)* · + started + titled · everything incl. per-turn gists.
-3. **Humans other than Cam:** Cam only *(recommended — one admin account, no multi-tenant surface yet)* · named others with mew/frog-cloud accounts · open join (public channel).
-4. **Retention:** bounded ring — 30 days on the bus, forever-only-in-frog *(recommended — cheap, private)* · 7 days · indefinite chat archive.
-5. **`irc` tool scope:** read + post behind a client cap *(recommended)* · read-only · no tool until hosting is (a).
-6. **Long lines:** multiline for ≤4 KB, links beyond *(recommended)* · links always · multiline only.
+All six picked 2026-10-22 (the recommended options):
+
+1. **Hosting:** (a) frog cloud DO bus — the Bus Durable Object next to the zest edge, IRC over WebSocket at `wss://api.frog.toys/bus` (the frog-cloud manager builds the server side).
+2. **Which events post:** minimal — waiting-on-user, errored, idle.
+3. **Humans other than Cam:** Cam only.
+4. **Retention:** 30 days on the bus, forever only in frog.
+5. **`irc` tool scope:** read + post, behind the `SetClientCaps { irc }` client capability.
+6. **Long lines:** `draft/multiline` up to 4 KB, links beyond.
+
+The frog side (this repo) is landed: `crates/frog-engine/src/irc.rs` (bus, nick derivation, mention routing, secret filter, quarantine, the `Irc` tool), wired in `engine.rs` behind the client cap, config-gated off by default (`[irc] enabled = false` until the DO deploys). The wire connection is a stub channel; no code touches the network.

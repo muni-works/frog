@@ -2,9 +2,10 @@ use super::{Ctx, Output};
 use crate::provider::ToolSpec;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use schemars::JsonSchema;
 use serde_json::{Value, json};
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Todo {
     pub content: String,
     pub status: String,
@@ -64,6 +65,7 @@ pub fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         diff: None,
         diagram: None,
         present: None,
+        widget: None,
         ..Default::default()
     })
 }

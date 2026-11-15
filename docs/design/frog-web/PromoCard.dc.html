@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Frog cards</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/frog/tokens.css">
+<link rel="stylesheet" href="ds/frog/components/bundle.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.pc a{color:var(--frog)}
+</style>
+</helmet>
+<div data-theme="{{theme}}" class="f-root pc" style="display: flex; flex-direction: column; gap: 8px; padding: 0 12px 12px; border-radius: var(--radius-card); background: var(--card); border: 1px solid var(--line); overflow: hidden; font-size: 13px; line-height: 1.4;">
+  <svg viewBox="0 0 224 120" role="img" aria-label="{{alt}}" style="display: block; margin: 0 -12px; width: calc(100% + 24px); height: auto; background: linear-gradient(180deg, {{wash}}, transparent 85%);">
+    <ellipse cx="112" cy="104" rx="88" ry="13" fill="var(--frog)" opacity=".18"></ellipse>
+    <ellipse cx="112" cy="58" rx="86" ry="26" fill="none" stroke="var(--fg)" stroke-opacity=".12" stroke-dasharray="2 5"></ellipse>
+
+    <sc-if value="{{isMac}}" hint-placeholder-val="{{ true }}"><g>
+      <circle cx="31" cy="52" r="4" fill="var(--place-local)"></circle><circle cx="186" cy="74" r="3.5" fill="var(--notice)"></circle><circle cx="166" cy="36" r="3" fill="var(--frog)"></circle>
+      <rect x="66" y="40" width="92" height="56" rx="6" fill="var(--icon-ground)"></rect><rect x="70" y="44" width="84" height="48" rx="3" fill="#20251f"></rect>
+      <path d="M54 96 h116 a4 4 0 0 1 -4 6 h-108 a4 4 0 0 1 -4 -6z" fill="var(--line-strong)"></path>
+      <text x="31" y="66" text-anchor="middle" font-size="7" fill="var(--muted)" font-family="var(--font-mono)">model</text>
+      <text x="186" y="88" text-anchor="middle" font-size="7" fill="var(--muted)" font-family="var(--font-mono)">repo</text>
+      <text x="166" y="28" text-anchor="middle" font-size="7" fill="var(--muted)" font-family="var(--font-mono)">tools</text>
+    </g></sc-if>
+    <sc-if value="{{isPhone}}" hint-placeholder-val="{{ false }}"><g>
+      <rect x="86" y="18" width="52" height="96" rx="10" fill="var(--icon-ground)"></rect><rect x="90" y="22" width="44" height="88" rx="7" fill="#1d3b2a"></rect>
+      <rect x="93" y="70" width="38" height="20" rx="5" fill="rgba(255,255,255,.18)"></rect>
+      <rect x="96" y="83" width="15" height="4" rx="2" fill="#58cc6f"></rect><rect x="113" y="83" width="15" height="4" rx="2" fill="rgba(255,255,255,.35)"></rect>
+      <circle cx="40" cy="60" r="3.5" fill="var(--notice)"></circle><text x="40" y="74" text-anchor="middle" font-size="7" fill="var(--muted)" font-family="var(--font-mono)">allow</text>
+      <circle cx="184" cy="44" r="3.5" fill="var(--frog)"></circle><text x="184" y="34" text-anchor="middle" font-size="7" fill="var(--muted)" font-family="var(--font-mono)">merge</text>
+    </g></sc-if>
+    <sc-if value="{{isCloud}}" hint-placeholder-val="{{ false }}"><g>
+      <path d="M70 92a20 20 0 0 1-2-40 26 26 0 0 1 50-6 20 20 0 0 1 36 18 16 16 0 0 1-4 28z" fill="var(--badge-bg)" stroke="var(--place-cloud)" stroke-width="1.5"></path>
+      <rect x="132" y="70" width="34" height="22" rx="4" fill="var(--icon-ground)"></rect><text x="149" y="85" text-anchor="middle" font-size="8" fill="#58cc6f" font-family="var(--font-mono)">$_</text>
+      <circle cx="28" cy="58" r="3.5" fill="var(--place-cloud)"></circle><text x="28" y="72" text-anchor="middle" font-size="7" fill="var(--muted)" font-family="var(--font-mono)">dart</text>
+      <circle cx="196" cy="48" r="3.5" fill="var(--place-local)"></circle><text x="196" y="38" text-anchor="middle" font-size="7" fill="var(--muted)" font-family="var(--font-mono)">sandbox</text>
+    </g></sc-if>
+    <sc-if value="{{isWatch}}" hint-placeholder-val="{{ false }}"><g>
+      <rect x="98" y="8" width="28" height="18" rx="4" fill="var(--line-strong)"></rect><rect x="98" y="92" width="28" height="22" rx="4" fill="var(--line-strong)"></rect>
+      <rect x="86" y="24" width="52" height="70" rx="16" fill="var(--icon-ground)"></rect><rect x="91" y="29" width="42" height="60" rx="12" fill="#000"></rect>
+      <rect x="96" y="70" width="32" height="10" rx="5" fill="#58cc6f"></rect>
+      <circle cx="40" cy="54" r="3.5" fill="var(--frog)"></circle><text x="40" y="68" text-anchor="middle" font-size="7" fill="var(--muted)" font-family="var(--font-mono)">tap</text>
+    </g></sc-if>
+    <sc-if value="{{isMoon}}" hint-placeholder-val="{{ false }}"><g>
+      <circle cx="176" cy="34" r="14" fill="#f2c94c" opacity=".85"></circle><circle cx="182" cy="29" r="12" fill="var(--card)"></circle>
+      <circle cx="40" cy="30" r="1.4" fill="var(--muted)"></circle><circle cx="60" cy="18" r="1" fill="var(--muted)"></circle><circle cx="150" cy="16" r="1.2" fill="var(--muted)"></circle>
+      <rect x="66" y="50" width="92" height="46" rx="6" fill="var(--icon-ground)"></rect><text x="112" y="70" text-anchor="middle" font-size="8" fill="#58cc6f" font-family="var(--font-mono)">✓ 3 routines</text><text x="112" y="84" text-anchor="middle" font-size="7" fill="#9a9a96" font-family="var(--font-mono)">ran at 3:00</text>
+    </g></sc-if>
+    <sc-if value="{{isOss}}" hint-placeholder-val="{{ false }}"><g>
+      <circle cx="70" cy="40" r="6" fill="none" stroke="var(--frog)" stroke-width="2"></circle><circle cx="70" cy="90" r="6" fill="none" stroke="var(--frog)" stroke-width="2"></circle><circle cx="154" cy="90" r="6" fill="none" stroke="var(--frog)" stroke-width="2"></circle>
+      <path d="M70 46v38M154 84V66a18 18 0 0 0-18-18H88" stroke="var(--frog)" stroke-width="2" fill="none"></path>
+      <text x="186" y="44" text-anchor="middle" font-size="7" fill="var(--muted)" font-family="var(--font-mono)">MIT</text><text x="34" y="66" text-anchor="middle" font-size="7" fill="var(--muted)" font-family="var(--font-mono)">fork</text>
+    </g></sc-if>
+
+    <g transform="translate({{faceX}} {{faceY}}) scale({{faceS}})">
+      <ellipse cx="0" cy="4" rx="22" ry="15" fill="var(--mark-skin)"></ellipse>
+      <circle cx="-11" cy="-10" r="8" fill="var(--mark-skin)"></circle><circle cx="11" cy="-10" r="8" fill="var(--mark-skin)"></circle>
+      <circle cx="-11" cy="-10" r="4.6" fill="var(--mark-paper)"></circle><circle cx="11" cy="-10" r="4.6" fill="var(--mark-paper)"></circle>
+      <circle cx="-10" cy="-9.5" r="2.6" fill="var(--mark-ink)"></circle><circle cx="12" cy="-9.5" r="2.6" fill="var(--mark-ink)"></circle>
+      <path d="M-8 6 q8 6 16 0" stroke="var(--mark-ink)" stroke-width="2" fill="none" stroke-linecap="round"></path>
+      <circle cx="-15" cy="4" r="2.4" fill="var(--mark-spot)"></circle><circle cx="15" cy="4" r="2.4" fill="var(--mark-spot)"></circle>
+    </g>
+  </svg>
+  <div style="font-weight: 600; font-size: 14px;">{{title}}</div>
+  <div style="font-size: 13px; color: var(--muted);">{{body}}</div>
+  <a href="{{href}}" class="f-btn f-btn--bordered" style="text-decoration: none; justify-content: center; font-size: 13px; color: var(--fg);">{{cta}}</a>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"dark"},"kind":{"editor":"enum","options":["mac","iphone","cloud","watch","routines","oss"],"default":"mac"},"$preview":{"width":260,"height":300}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const k = this.props.kind || 'mac';
+    const C = {
+      mac: { title: 'Frog runs best on your Mac', body: 'Free and private, with local models and your real repos.', cta: 'Download for Mac', href: 'SiteMac.dc.html', alt: 'Frog on a MacBook on a lily pad, with its tools orbiting', face: [112, 72, 1], wash: 'var(--frog-pad)' },
+      iphone: { title: 'Frog in your pocket', body: 'Approve edits from your lock screen and steer any session from your iPhone.', cta: 'Get it on the App Store', href: '#', alt: 'An iPhone with a Frog notification asking to allow an edit', face: [112, 46, .62], wash: 'var(--frog-pad)' },
+      cloud: { title: 'Bigger jobs, in Frog Cloud', body: 'A private sandbox with bigger models that keeps going when your laptop sleeps.', cta: 'See plans', href: 'Plans.dc.html', alt: 'Frog riding a cloud next to a terminal', face: [104, 66, .8], wash: 'var(--badge-bg)' },
+      watch: { title: 'Answers on your wrist', body: 'A tap when Frog needs you. Allow, deny or merge without reaching for your phone.', cta: 'Set up Apple Watch', href: '#', alt: 'An Apple Watch showing a Frog approval', face: [112, 50, .5], wash: 'var(--frog-pad)' },
+      routines: { title: 'Work while you sleep', body: 'Routines run in Frog Cloud overnight: bump deps, triage issues, fix flaky tests.', cta: 'Try Pro', href: 'Plans.dc.html', alt: 'A moon over a terminal listing finished routines', face: [44, 82, .6], wash: 'rgba(242,201,76,.16)' },
+      oss: { title: 'Free to read, fork and run', body: 'The engine and every app are open source under MIT or Apache 2.0.', cta: 'View on GitHub', href: '#', alt: 'A branching git graph', face: [112, 70, .55], wash: 'var(--frog-pad)' },
+    }[k];
+    return {
+      theme: this.props.theme ?? 'dark', ...C,
+      faceX: C.face[0], faceY: C.face[1], faceS: C.face[2],
+      isMac: k === 'mac', isPhone: k === 'iphone', isCloud: k === 'cloud', isWatch: k === 'watch', isMoon: k === 'routines', isOss: k === 'oss',
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -13,6 +13,8 @@ struct MessageText: NSViewRepresentable {
 
     func makeNSView(context: Context) -> MessageTextView {
         let view = MessageTextView(usingTextLayoutManager: false)
+        // Draws inline code's rounded backgrounds (see `InlineCodeLayoutManager`).
+        view.textContainer?.replaceLayoutManager(InlineCodeLayoutManager())
         view.isEditable = false
         view.isSelectable = true
         view.isRichText = true
@@ -27,10 +29,18 @@ struct MessageText: NSViewRepresentable {
         view.linkTextAttributes = [.foregroundColor: NSColor.controlAccentColor, .cursor: NSCursor.pointingHand]
         view.setContentHuggingPriority(.defaultLow, for: .horizontal)
         view.layoutManager?.delegate = view
+        // Every NSTextView in the window hears every view's frame change (AppKit looks for an
+        // enclosing clip view), so in a long transcript each row placed paid for all the others.
+        // Nothing here tracks frames: the container width is set from `setFrameSize`.
+        view.postsFrameChangedNotifications = false
         return view
     }
 
     func updateNSView(_ view: MessageTextView, context: Context) {
+        // This runs inside SwiftUI's graph update: nothing in here may invalidate the layout
+        // SwiftUI is computing (see `MessageTextView.updating`).
+        view.updating = true
+        defer { view.updating = false }
         view.reveal.streaming = streaming
         view.show(blocks)
     }
@@ -45,10 +55,47 @@ final class MessageTextView: NSTextView, @MainActor NSLayoutManagerDelegate {
     private var shown: [MarkdownBlock] = []
     /// Where each shown block's text sits in the storage, separator included.
     private var ranges: [NSRange] = []
-    /// The code blocks laid over their attachments, in order.
-    private var codeViews: [NSHostingView<CodeOverlay>] = []
+    /// The code blocks laid over their attachments, in order. Nil until the block comes near
+    /// the visible rect: a hosting view per code block is a large part of building a row, and a
+    /// jump through a long transcript builds rows it never shows.
+    private var codeViews: [NSHostingView<CodeOverlay>?] = []
     private var placePending = false
     lazy var reveal = InkReveal(view: self)
+    /// Measures code blocks: one SwiftUI graph for every message, rather than one per view (a
+    /// row a jump lands on is a new view) or a new one for every streamed token.
+    private static let sizer: NSHostingController<CodeOverlay> = {
+        let c = NSHostingController(rootView: CodeOverlay(language: "", code: ""))
+        c.sizingOptions = []
+        return c
+    }()
+    private struct CodeKey: Hashable { let lines: Int, titled: Bool, line: CGFloat }
+    /// Code block heights by line count. A block never wraps (it scrolls sideways), so its
+    /// height is its header plus its lines, whatever the code or the width: a block streaming
+    /// in is measured once per new line, not once per token (a SwiftUI sizing pass each).
+    private static var codeHeights: [CodeKey: CGFloat] = [:]
+    /// Inside `MessageText.updateNSView`, i.e. inside SwiftUI's update of the transcript.
+    /// Invalidating this view's size from there changes an input of the graph mid-update (an
+    /// AttributeGraph corruption suspect, docs/design/attributegraph-corruption.md); SwiftUI
+    /// measures the view again after the update anyway, so it waits for the next turn.
+    var updating = false
+    private var invalidatePending = false
+
+    /// The view's height changed: tell SwiftUI, now if it's safe, else right after this update.
+    func sizeChanged() {
+        guard updating else {
+            invalidateIntrinsicContentSize()
+            superview?.needsLayout = true
+            return
+        }
+        guard !invalidatePending else { return }
+        invalidatePending = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.invalidatePending = false
+            self.invalidateIntrinsicContentSize()
+            self.superview?.needsLayout = true
+        }
+    }
 
     // MARK: Content
 
@@ -60,15 +107,22 @@ final class MessageTextView: NSTextView, @MainActor NSLayoutManagerDelegate {
         let tail = NSMutableAttributedString()
         var newRanges = Array(ranges.prefix(keep))
         for (i, block) in blocks.enumerated().dropFirst(keep) {
-            let piece = MessageStyle.piece(block, first: i == 0)
+            let piece = MessageStyle.piece(block, after: i == 0 ? nil : blocks[i - 1])
             newRanges.append(NSRange(location: from + tail.length, length: piece.length))
             tail.append(piece)
         }
         // Code blocks are measured before they go in, so their lines are the right height from
         // the first layout.
-        let before = codeAttachments(in: NSRange(location: 0, length: from)).count
+        // One attachment per code block (`MessageStyle.codeBlock`): counted from the blocks
+        // kept, not by walking the storage before them on every streamed delta.
+        let before = shown.prefix(keep).reduce(0) { n, b in if case .code = b { n + 1 } else { n } }
         let incoming = Self.attachments(in: tail, range: NSRange(location: 0, length: tail.length))
-        while codeViews.count > before + incoming.count { codeViews.removeLast().removeFromSuperview() }
+        while codeViews.count > before + incoming.count {
+            // Not torn down mid-update: hidden now, gone once SwiftUI's update is over.
+            guard let gone = codeViews.removeLast() else { continue }
+            gone.isHidden = true
+            DispatchQueue.main.async { gone.removeFromSuperview() }
+        }
         for (j, item) in incoming.enumerated() {
             item.cell.height = measure(item.cell, at: before + j)
         }
@@ -78,24 +132,52 @@ final class MessageTextView: NSTextView, @MainActor NSLayoutManagerDelegate {
         shown = blocks
         ranges = newRanges
         needsLayout = true
-        invalidateIntrinsicContentSize()
+        sizeChanged()
         reveal.textChanged()
     }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         reveal.windowChanged()
+        stopHearingFrames()
+        NotificationCenter.default.removeObserver(self, name: NSView.boundsDidChangeNotification, object: nil)
+        guard window != nil, let clip = enclosingScrollView?.contentView else { return }
+        clip.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(self, selector: #selector(clipScrolled), name: NSView.boundsDidChangeNotification, object: clip)
+    }
+
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        stopHearingFrames()
+    }
+
+    /// NSTextView listens to every view's frame change in the process (it's looking for a clip
+    /// view to adopt), so every frame change in the transcript paid once per row's text view.
+    /// This view never scrolls itself; it doesn't need to.
+    private func stopHearingFrames() {
+        NotificationCenter.default.removeObserver(self, name: NSView.frameDidChangeNotification, object: nil)
+    }
+
+    /// The transcript scrolled: code blocks coming into view get their views.
+    @objc private func clipScrolled(_ note: Notification) {
+        if codeViews.contains(where: { $0 == nil }) { placeCode() }
+    }
+
+    override func viewWillDraw() {
+        if codeViews.contains(where: { $0 == nil }) { placeCode() }
+        super.viewWillDraw()
     }
 
     /// A code block shows once the pen reaches it.
     func syncCodeVisibility() {
         for (i, item) in codeAttachments().enumerated() where i < codeViews.count {
+            guard let host = codeViews[i] else { continue }
             let visible = reveal.codeVisible(at: item.range.location)
             let alpha: CGFloat = visible ? 1 : 0
-            guard codeViews[i].alphaValue != alpha else { continue }
+            guard host.alphaValue != alpha else { continue }
             NSAnimationContext.runAnimationGroup { ctx in
                 ctx.duration = visible ? 0.3 : 0
-                codeViews[i].animator().alphaValue = alpha
+                host.animator().alphaValue = alpha
             }
         }
     }
@@ -161,31 +243,68 @@ final class MessageTextView: NSTextView, @MainActor NSLayoutManagerDelegate {
         return out
     }
 
-    /// Puts the block's view in place `index` (making it if needed) and returns its height.
+    /// Updates the block's view in place `index` if it has one (holding the place if not) and
+    /// returns its height.
     private func measure(_ cell: CodeAttachmentCell, at index: Int) -> CGFloat {
         let overlay = CodeOverlay(language: cell.language, code: cell.code)
         if index < codeViews.count {
-            codeViews[index].rootView = overlay
+            codeViews[index]?.rootView = overlay
         } else {
-            let host = NSHostingView(rootView: overlay)
-            host.sizingOptions = []
-            addSubview(host)
-            codeViews.append(host)
+            codeViews.append(nil)
         }
-        let width = textContainer?.containerSize.width ?? 0
-        let size = NSHostingController(rootView: overlay)
-            .sizeThatFits(in: CGSize(width: width > 0 && width < 10_000 ? width : 600, height: .greatestFiniteMagnitude))
-        return ceil(size.height)
+        cell.placeholder = codeViews[index] == nil
+        let lines = max(1, cell.code.reduce(into: 1) { n, c in if c == "\n" { n += 1 } })
+        let key = CodeKey(lines: lines, titled: !cell.language.isEmpty, line: MessageStyle.lineHeight)
+        if let height = Self.codeHeights[key] { return height }
+        let width: CGFloat = 600
+        Self.sizer.rootView = CodeOverlay(language: cell.language.isEmpty ? "" : "x",
+                                          code: Array(repeating: "x", count: lines).joined(separator: "\n"))
+        let height = ceil(Self.sizer.sizeThatFits(in: CGSize(width: width, height: .greatestFiniteMagnitude)).height)
+        if Self.codeHeights.count > 4096 { Self.codeHeights.removeAll() }
+        Self.codeHeights[key] = height
+        return height
     }
 
-    private func placeCode() {
+    private var makePending = false
+
+    /// Places the code views; one that's missing and near the visible rect is made `now`, or
+    /// on the next turn of the run loop, after the frame that brought its row in.
+    private func placeCode(now: Bool = false) {
         guard let layout = layoutManager, let container = textContainer else { return }
+        // Only what's on screen: making blocks ahead (measured: half a screen) put a jump's
+        // neighbours into the frame after it. A block scrolled into view shows its placeholder
+        // for one frame instead.
+        let near = visibleRect
         for (i, item) in codeAttachments().enumerated() where i < codeViews.count {
             let glyphs = layout.glyphRange(forCharacterRange: item.range, actualCharacterRange: nil)
             layout.ensureLayout(forGlyphRange: glyphs)
             let rect = layout.boundingRect(forGlyphRange: glyphs, in: container)
-            codeViews[i].frame = NSRect(x: rect.minX, y: rect.maxY - item.cell.height, width: bounds.width - rect.minX,
-                                        height: item.cell.height)
+            let frame = NSRect(x: rect.minX, y: rect.maxY - item.cell.height, width: bounds.width - rect.minX,
+                               height: item.cell.height)
+            if let host = codeViews[i] {
+                host.frame = frame
+            } else if !near.isEmpty, frame.intersects(near) {
+                guard now else {
+                    if !makePending {
+                        makePending = true
+                        DispatchQueue.main.async { [weak self] in
+                            self?.makePending = false
+                            self?.placeCode(now: true)
+                        }
+                    }
+                    continue
+                }
+                let host = NSHostingView(rootView: CodeOverlay(language: item.cell.language, code: item.cell.code,
+                                                               selected: isSelected(item.range)))
+                host.sizingOptions = []
+                host.postsFrameChangedNotifications = false
+                host.alphaValue = reveal.codeVisible(at: item.range.location) ? 1 : 0
+                host.frame = frame
+                addSubview(host)
+                codeViews[i] = host
+                item.cell.placeholder = false
+                setNeedsDisplay(frame)
+            }
         }
     }
 
@@ -194,12 +313,21 @@ final class MessageTextView: NSTextView, @MainActor NSLayoutManagerDelegate {
     }
 
     /// A selection that covers a code block shows it selected, too.
+    /// Some code block may be drawn selected.
+    private var codeTinted = false
+
     override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
         super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
+        // TextKit sets an empty selection on every storage edit (each streamed delta): with
+        // nothing selected now or before, no code block's tint changes.
+        let selecting = ranges.contains { $0.rangeValue.length > 0 }
+        guard selecting || codeTinted else { return }
+        codeTinted = selecting
         for (i, item) in codeAttachments().enumerated() where i < codeViews.count {
+            guard let host = codeViews[i] else { continue }
             let selected = isSelected(item.range)
-            if codeViews[i].rootView.selected != selected {
-                codeViews[i].rootView = CodeOverlay(language: item.cell.language, code: item.cell.code, selected: selected)
+            if host.rootView.selected != selected {
+                host.rootView = CodeOverlay(language: item.cell.language, code: item.cell.code, selected: selected)
             }
         }
     }
@@ -235,7 +363,7 @@ struct CodeOverlay: View {
             .textSelection(.enabled)
             .overlay {
                 if selected {
-                    RoundedRectangle(cornerRadius: 10)
+                    RoundedRectangle(cornerRadius: TurnSpace.Card.radius)
                         .fill(Color(nsColor: .selectedTextBackgroundColor).opacity(0.45))
                         .allowsHitTesting(false)
                 }
@@ -268,28 +396,85 @@ final class CodeAttachmentCell: NSTextAttachmentCell {
 
     override func cellSize() -> NSSize { NSSize(width: 1, height: height) }
     override func draw(withFrame cellFrame: NSRect, in controlView: NSView?) {}
+
+    /// No view laid over it yet (it's made the run-loop turn after its row comes in; see
+    /// `MessageTextView.placeCode`): draw the block's card and plain code, for that frame.
+    var placeholder = true
+
+    override func draw(withFrame cellFrame: NSRect, in controlView: NSView?, characterIndex charIndex: Int,
+                       layoutManager: NSLayoutManager) {
+        guard placeholder, (controlView as? MessageTextView)?.reveal.codeVisible(at: charIndex) ?? true else { return }
+        NSColor.quaternaryLabelColor.withAlphaComponent(0.35).setFill()
+        NSBezierPath(roundedRect: cellFrame, xRadius: TurnSpace.Card.radius, yRadius: TurnSpace.Card.radius).fill()
+        let caption = NSFont.preferredFont(forTextStyle: .caption1)
+        let head = NSAttributedString(string: language, attributes: [
+            .font: NSFont.systemFont(ofSize: caption.pointSize, weight: .medium), .foregroundColor: NSColor.secondaryLabelColor,
+        ])
+        let top = cellFrame.minY + TurnSpace.Inset.snug
+        head.draw(at: NSPoint(x: cellFrame.minX + TurnSpace.Inset.roomy, y: top))
+        let mono = NSFont.monospacedSystemFont(ofSize: NSFont.preferredFont(forTextStyle: .callout).pointSize, weight: .regular)
+        let body = NSAttributedString(string: code, attributes: [.font: mono, .foregroundColor: NSColor.labelColor])
+        let y = top + ceil(head.size().height) + TurnSpace.Inset.snug + 1 + TurnSpace.Inset.roomy
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(rect: cellFrame).addClip()
+        body.draw(at: NSPoint(x: cellFrame.minX + TurnSpace.Inset.roomy, y: y))
+        NSGraphicsContext.restoreGraphicsState()
+    }
     override func wantsToTrackMouse() -> Bool { false }
 }
 
 extension NSAttributedString.Key {
     /// Marks a code block's attachment with its code, for copying.
     static let frogCode = NSAttributedString.Key("frogCode")
+    /// Inline code: a rounded tint behind it, hugging the glyphs rather than the line.
+    static let frogInlineCode = NSAttributedString.Key("frogInlineCode")
+}
+
+/// Inline code sits on a small rounded tint, like claude.ai's: around the glyphs' own height,
+/// not the line's (which includes the leading and a paragraph's space above). A plain
+/// `.backgroundColor` can only fill the line fragment, square. Drawn under the selection.
+final class InlineCodeLayoutManager: NSLayoutManager {
+    static let pad: CGFloat = 2
+    static let radius: CGFloat = 4
+
+    override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
+        if let storage = textStorage, let container = textContainers.first {
+            let chars = characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
+            NSColor.labelColor.withAlphaComponent(0.09).setFill()
+            storage.enumerateAttribute(.frogInlineCode, in: chars) { value, range, _ in
+                guard value != nil, let font = storage.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont else { return }
+                // Not written in yet (see `InkReveal`): no tint ahead of the pen.
+                if temporaryAttribute(.foregroundColor, atCharacterIndex: range.location, effectiveRange: nil) as? NSColor == .clear { return }
+                let glyphs = glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+                var g = glyphs.location
+                // One rounded rect per line the code wraps across.
+                while g < NSMaxRange(glyphs) {
+                    var line = NSRange()
+                    let fragment = lineFragmentRect(forGlyphAt: g, effectiveRange: &line)
+                    let run = NSIntersectionRange(line, glyphs)
+                    guard run.length > 0 else { break }
+                    let span = boundingRect(forGlyphRange: run, in: container)
+                    let baseline = fragment.minY + location(forGlyphAt: run.location).y
+                    let rect = NSRect(x: span.minX - Self.pad, y: baseline - font.ascender - 1,
+                                      width: span.width + Self.pad * 2, height: font.ascender - font.descender + 2)
+                    NSBezierPath(roundedRect: rect.offsetBy(dx: origin.x, dy: origin.y),
+                                 xRadius: Self.radius, yRadius: Self.radius).fill()
+                    g = NSMaxRange(run)
+                }
+            }
+        }
+        super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
+    }
 }
 
 /// How each markdown block looks as attributed text. Spacing comes from `TurnSpace`, so a
-/// message reads with the transcript's rhythm: taller line height within a paragraph, more
-/// room between blocks, and list items tighter than blocks.
+/// message reads with the transcript's rhythm: taller line height within a paragraph, room
+/// between paragraphs, more above a heading, and list items tighter than paragraphs.
 enum MessageStyle {
-    /// The density setting, as `piece` is built on a text-queue (AppKit) thread at times.
-    static var compact: Bool {
-        UserDefaults.standard.string(forKey: "density") == Density.compact.rawValue
-    }
+    /// The density setting's scale, as `piece` is built on a text-queue (AppKit) thread at times.
+    static var lineHeight: CGFloat { TurnSpace.current.line }
 
-    static var blockGap: CGFloat { compact ? TurnSpace.blockCompact : TurnSpace.block }
-    static var listGap: CGFloat { compact ? TurnSpace.listItemCompact : TurnSpace.listItem }
-    static var lineHeight: CGFloat { compact ? TurnSpace.lineHeightCompact : TurnSpace.lineHeight }
-
-    static var body: NSFont { .systemFont(ofSize: NSFont.systemFontSize) }
+    static var body: NSFont { .systemFont(ofSize: TurnType.body) }
 
     static func paragraph(_ configure: (NSMutableParagraphStyle) -> Void = { _ in }) -> NSMutableParagraphStyle {
         let p = NSMutableParagraphStyle()
@@ -298,32 +483,40 @@ enum MessageStyle {
         return p
     }
 
-    /// One block, preceded by the newline that separates it from the last (unless it's first).
-    static func piece(_ block: MarkdownBlock, first: Bool) -> NSAttributedString {
+    /// One block, preceded by the newline that separates it from the one before (nil: it's
+    /// first). Its gap depends on that block (see `TurnSpace.Scale.gap`); streaming rebuilds
+    /// from the first block that changed, so a block is never left with a stale neighbor.
+    static func piece(_ block: MarkdownBlock, after previous: MarkdownBlock?) -> NSAttributedString {
         let out = NSMutableAttributedString()
-        if !first { out.append(NSAttributedString(string: "\n", attributes: [.font: body])) }
-        let gap: CGFloat = first ? 0 : blockGap
+        if previous != nil { out.append(NSAttributedString(string: "\n", attributes: [.font: body])) }
+        let gap = TurnSpace.current.gap(block, after: previous)
         switch block {
         case .paragraph(let s):
             out.append(inline(s, font: body, style: paragraph { $0.paragraphSpacingBefore = gap }))
         case .heading(let level, let s):
-            let size: CGFloat = level == 1 ? 17 : level == 2 ? 15 : 13
-            let font = NSFont.systemFont(ofSize: size, weight: .semibold)
-            out.append(inline(s, font: font, style: paragraph { $0.paragraphSpacingBefore = gap + 4 }))
+            let font = NSFont.systemFont(ofSize: TurnType.heading(level), weight: .semibold)
+            out.append(inline(s, font: font, style: paragraph { $0.paragraphSpacingBefore = gap }))
         case .bullet(let indent, let marker, let s):
-            let lead = CGFloat(indent) * 16
-            let markerWidth = (marker as NSString).size(withAttributes: [.font: body]).width
-            let head = lead + max(markerWidth, 10) + 8
+            // A fixed marker column: the marker right-aligned to it, the text after it, wrapped
+            // lines hanging under the text. A nested list steps in by one column.
+            let lead = CGFloat(indent) * TurnType.markerColumn
+            let mark = TurnType.marker(marker, indent: indent)
+            let markFont = NSFont.monospacedDigitSystemFont(ofSize: TurnType.body, weight: .regular)
+            let markWidth = ceil((mark as NSString).size(withAttributes: [.font: markFont]).width)
+            let head = lead + max(TurnType.markerColumn, markWidth + TurnType.markerGap)
             let style = paragraph {
                 $0.paragraphSpacingBefore = gap
-                $0.paragraphSpacing = listGap
-                $0.firstLineHeadIndent = lead
+                // The marker starts where it ends flush with the column (right-aligned by its
+                // measured width, not a leading tab, so a copied list reads "• item").
+                $0.firstLineHeadIndent = head - TurnType.markerGap - markWidth
                 $0.headIndent = head
                 $0.tabStops = [NSTextTab(textAlignment: .left, location: head)]
             }
-            out.append(NSAttributedString(string: "\(marker)\t", attributes: [
-                .font: NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular),
-                .foregroundColor: NSColor.secondaryLabelColor, .paragraphStyle: style,
+            // A bullet is a small glyph: in the text's own color it weighs what a number does in
+            // secondary.
+            let markColor: NSColor = marker == "•" ? .labelColor : .secondaryLabelColor
+            out.append(NSAttributedString(string: "\(mark)\t", attributes: [
+                .font: markFont, .foregroundColor: markColor, .paragraphStyle: style,
             ]))
             out.append(inline(s, font: body, style: style))
         case .quote(let s):
@@ -331,7 +524,7 @@ enum MessageStyle {
             let block = QuoteTextBlock(gap: gap)
             block.setValue(100, type: .percentageValueType, for: .width)
             block.setWidth(gap, type: .absoluteValueType, for: .padding, edge: .minY)
-            block.setWidth(12, type: .absoluteValueType, for: .padding, edge: .minX)
+            block.setWidth(TurnSpace.Inset.roomy, type: .absoluteValueType, for: .padding, edge: .minX)
             let text = inline(s, font: body, style: paragraph { $0.textBlocks = [block] })
             text.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, range: NSRange(location: 0, length: text.length))
             out.append(text)
@@ -347,7 +540,28 @@ enum MessageStyle {
         case .table(let header, let align, let rows):
             out.append(table(header: header, align: align, rows: rows, gap: gap))
         }
+        // A paragraph or heading that starts in Arabic or Hebrew reads right to left, right
+        // aligned, whatever the Mac's own language (`.natural` follows the locale, not the text).
+        switch block {
+        case .paragraph(let t), .heading(_, let t):
+            if startsRightToLeft(t) {
+                out.enumerateAttribute(.paragraphStyle, in: NSRange(location: 0, length: out.length)) { v, r, _ in
+                    guard let p = (v as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle else { return }
+                    p.baseWritingDirection = .rightToLeft
+                    out.addAttribute(.paragraphStyle, value: p, range: r)
+                }
+            }
+        default: break
+        }
         return out
+    }
+
+    /// The first strong letter is from a right-to-left script.
+    static func startsRightToLeft(_ s: String) -> Bool {
+        for u in s.unicodeScalars where u.properties.isAlphabetic {
+            return (0x0590...0x08FF).contains(u.value) || (0xFB1D...0xFDFF).contains(u.value) || (0xFE70...0xFEFF).contains(u.value)
+        }
+        return false
     }
 
     private static func codeBlock(language: String, code: String, gap: CGFloat) -> NSAttributedString {
@@ -366,23 +580,25 @@ enum MessageStyle {
         table.numberOfColumns = max(columns, 1)
         table.collapsesBorders = true
         table.setWidth(gap, type: .absoluteValueType, for: .margin, edge: .minY)
-        let font = NSFont.systemFont(ofSize: 12)
+        let font = NSFont.systemFont(ofSize: TurnType.small)
         let out = NSMutableAttributedString()
         for (r, row) in ([header] + rows).enumerated() {
             for c in 0..<columns {
                 let cell = NSTextTableBlock(table: table, startingRow: r, rowSpan: 1, startingColumn: c, columnSpan: 1)
-                cell.setWidth(0.5, type: .absoluteValueType, for: .border)
-                cell.setBorderColor(.separatorColor)
-                cell.setWidth(10, type: .absoluteValueType, for: .padding, edge: .minX)
-                cell.setWidth(10, type: .absoluteValueType, for: .padding, edge: .maxX)
-                cell.setWidth(6, type: .absoluteValueType, for: .padding, edge: .minY)
-                cell.setWidth(6, type: .absoluteValueType, for: .padding, edge: .maxY)
+                // Quiet, like claude.ai: no cell borders at all (a bordered grid is the
+                // loudest thing in the column) — the header's wash and the row padding do
+                // the separating.
+                cell.setWidth(0, type: .absoluteValueType, for: .border)
+                cell.setWidth(8, type: .absoluteValueType, for: .padding, edge: .minX)
+                cell.setWidth(8, type: .absoluteValueType, for: .padding, edge: .maxX)
+                cell.setWidth(5, type: .absoluteValueType, for: .padding, edge: .minY)
+                cell.setWidth(5, type: .absoluteValueType, for: .padding, edge: .maxY)
                 if r == 0 { cell.backgroundColor = NSColor.labelColor.withAlphaComponent(0.05) }
                 let a = align[safe: c] ?? .leading
                 let style = NSMutableParagraphStyle()
                 style.textBlocks = [cell]
                 style.alignment = a == .center ? .center : a == .trailing ? .right : .left
-                let text = inline(row[safe: c] ?? "", font: r == 0 ? .systemFont(ofSize: 12, weight: .semibold) : font, style: style)
+                let text = inline(row[safe: c] ?? "", font: r == 0 ? .systemFont(ofSize: TurnType.small, weight: .semibold) : font, style: style)
                 out.append(text)
                 // Every cell is its own paragraph; the message's last cell ends the table.
                 if !(r == rows.count && c == columns - 1) { out.append(NSAttributedString(string: "\n", attributes: [.paragraphStyle: style])) }
@@ -401,11 +617,18 @@ enum MessageStyle {
             var attrs: [NSAttributedString.Key: Any] = [.paragraphStyle: style, .foregroundColor: NSColor.labelColor]
             if let intent = run.inlinePresentationIntent {
                 var traits: NSFontDescriptor.SymbolicTraits = []
-                if intent.contains(.stronglyEmphasized) { traits.insert(.bold) }
+                if intent.contains(.stronglyEmphasized) {
+                    // Medium, not bold: an emphasized run mid-sentence ("**1. The watcher
+                    // rescans…**" with a full stop) reads as a false heading in bold, fighting
+                    // the paragraph. Headings and table headers keep their semibold, set at
+                    // the font level.
+                    f = NSFont.systemFont(ofSize: font.pointSize, weight: .medium)
+                    traits.insert(.bold)
+                }
                 if intent.contains(.emphasized) { traits.insert(.italic) }
                 if intent.contains(.code) {
                     f = .monospacedSystemFont(ofSize: font.pointSize - 1, weight: .regular)
-                    attrs[.backgroundColor] = NSColor.labelColor.withAlphaComponent(0.08)
+                    attrs[.frogInlineCode] = true
                 }
                 if intent.contains(.strikethrough) { attrs[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
                 if !traits.isEmpty {

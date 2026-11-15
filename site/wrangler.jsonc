@@ -1,0 +1,31 @@
+// frog.toys on Workers static assets. Deploy: `npx wrangler deploy` from site/.
+{
+  "name": "frog-site",
+  "main": "worker.js",
+  "compatibility_date": "2026-05-03",
+  "assets": {
+    // site/build.sh fills dist: the web app at /, marketing at /mac.
+    "directory": "./dist",
+    // The worker serves the app's page for /s/<id> (a conversation's URL) through this.
+    "binding": "ASSETS",
+    // /energy -> /energy/, /index.html -> /, like vercel.json's cleanUrls.
+    "html_handling": "auto-trailing-slash",
+    // No SPA fallback: unmatched paths go to the worker, which 404s.
+    "not_found_handling": "none",
+    // The installer is a file, but the worker sees it first to count the hit (worker.js).
+    "run_worker_first": ["/install.sh"]
+  },
+  // Launch analytics: one point per install hit and appcast fetch (docs/privacy.md). The
+  // dataset is created on first write.
+  "analytics_engine_datasets": [{ "binding": "ANALYTICS", "dataset": "frog_site" }],
+  "workers_dev": true,
+  "vars": {
+    // The Frog Cloud gateway the app's /v1 requests (and session websockets) go to. Same
+    // origin for the browser, so no CORS. Placeholder until the production gateway exists.
+    "GATEWAY_ORIGIN": "https://api.frog.toys"
+  },
+  "routes": [
+    { "pattern": "frog.toys", "custom_domain": true },
+    { "pattern": "www.frog.toys", "custom_domain": true }
+  ]
+}

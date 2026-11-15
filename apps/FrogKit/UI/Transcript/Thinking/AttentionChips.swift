@@ -68,7 +68,7 @@ struct AttentionChip: View {
 
     var body: some View {
         Text(chip.label)
-            .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+            .font(.frog(size: 10.5, weight: .medium, design: .monospaced))
             .lineLimit(1)
             .truncationMode(.middle)
             .padding(.horizontal, 7)
