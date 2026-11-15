@@ -1101,6 +1101,8 @@ fn seatbelt(
   (subpath "/private/var/folders")
   (literal "/dev/null")
   (literal "/dev/tty")
+  (literal "/dev/ptmx")
+  (regex #"^/dev/ttys[0-9]+")
   (regex #"^/dev/fd/"){caches}{git}{writes}){protected}
 (deny file-read* file-write*{secrets}){reads}{network}"#,
         quote(root),
@@ -1790,6 +1792,14 @@ mod tests {
         assert!(
             deny_pos < allow_pos,
             "config.toml allow must come after the deny"
+        );
+        // The pty devices are writable: `xcodebuild test`'s runner launch goes through
+        // `_openpty` (IDELaunchServicesLauncher._setupPTY), which fails EPERM without them —
+        // the "Pseudo Terminal Setup Error" that made every agent escape to unsandboxed.
+        assert!(
+            profile.contains("(literal \"/dev/ptmx\")")
+                && profile.contains(r##"(regex #"^/dev/ttys[0-9]+")"##),
+            "pty write hole missing:\n{profile}"
         );
     }
 

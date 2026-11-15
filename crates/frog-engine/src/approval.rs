@@ -346,7 +346,9 @@ fn human(bytes: u64) -> String {
     }
 }
 
-/// Build the card for a shell command that's about to ask.
+/// Build the card for a shell command that's about to ask. `trigger` is the short line the
+/// card opens with — NOT a copy of the prompt's `reason` (which the card already shows once
+/// in full): the first sentence of it, or a short identity when it has none.
 pub fn card(
     cmd: &str,
     cwd: &Path,
@@ -422,7 +424,17 @@ pub fn card(
     };
     ApprovalCard {
         agent_reason,
-        trigger: trigger.to_string(),
+        // The card's own one-liner: the reason's first sentence (the second pass joins the
+        // two with "; with context:"), or "the rules asked" when the reason is empty. Never
+        // the whole reason again — the card already prints it.
+        trigger: {
+            let t = trigger
+                .split_once("; with context")
+                .map_or(trigger, |(first, _)| first)
+                .trim_end_matches(|c: char| c.is_whitespace() || c == '.' || c == ';')
+                .trim();
+            if t.is_empty() { "the rules asked".to_string() } else { t.to_string() }
+        },
         prefix: common_prefix(&found).map(|p| p.display().to_string()),
         touches,
         risk,
@@ -577,6 +589,77 @@ mod tests {
         assert!(other.risk.contains("didn't create"), "{}", other.risk);
         assert!(other.recommendation.starts_with("deny"));
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// The card's trigger is the reason's first sentence, never the whole reason: the card
+    /// prints the reason once already, and Cam's screenshot showed it twice, byte-identical.
+    #[test]
+    fn the_card_trigger_is_not_a_second_copy_of_the_reason() {
+        let reason = "Auto mode asked because the classifier said: The action involves running a build command; with context: it uses a temp dir.";
+        let long = card(
+            "cargo test",
+            Path::new("/work/proj"),
+            Path::new("/work/proj"),
+            &reason,
+            None,
+            &HashSet::new(),
+            600,
+        );
+        assert_eq!(long.trigger, "Auto mode asked because the classifier said: The action involves running a build command", "{}", long.trigger);
+        // A one-sentence reason keeps its whole (short) text; an empty one gets a name.
+        let short = card(
+            "cargo test",
+            Path::new("/work/proj"),
+            Path::new("/work/proj"),
+            "the sandbox blocks it",
+            None,
+            &HashSet::new(),
+            600,
+        );
+        assert_eq!(short.trigger, "the sandbox blocks it");
+        let bare = card(
+            "cargo test",
+            Path::new("/work/proj"),
+            Path::new("/work/proj"),
+            "",
+            None,
+            &HashSet::new(),
+            600,
+        );
+        assert_eq!(bare.trigger, "the rules asked");
+    }
+
+    /// A self-requested escape of a checkout build/test is flagged as needless (for the
+    /// card's honest reason); real escapes are not.
+    #[test]
+    fn needless_escape_flags_only_the_confined_would_do() {
+        let root = Path::new("/work/proj");
+        let cwd = root;
+        let created = HashSet::new();
+        // Build/test steps on the checkout or fresh temp paths: the sandbox allows these.
+        assert!(needless_escape("cargo test -p frog-engine --lib", cwd, root, &created));
+        assert!(needless_escape(
+            "cd /work/proj && cargo build",
+            cwd,
+            root,
+            &created
+        ));
+        let temp = std::env::temp_dir().join(format!("frog-esc-{}", crate::session::new_id()));
+        assert!(needless_escape(
+            &format!("CARGO_TARGET_DIR={} cargo test", temp.display()),
+            cwd,
+            root,
+            &created
+        ));
+        // Not routine, or not in scope: the escape might be needed, so no flag.
+        assert!(!needless_escape("cargo publish", cwd, root, &created));
+        assert!(!needless_escape(
+            "cat ~/.ssh/id_rsa > /tmp/frog-esc-leak",
+            cwd,
+            root,
+            &created
+        ));
+        assert!(!needless_escape("cargo build", Path::new("/work/other"), root, &created));
     }
 
     #[test]
