@@ -59,13 +59,34 @@ pub fn local_repo(model: &str) -> &str {
         .map_or(model, |(_, repo)| repo)
 }
 
-/// A spec as frog writes it today: new provider ids, short names for bundled local models.
+/// frog cloud's old model ids and their explicit names today. The gateway still answers
+/// the old ids as hidden aliases; frog maps them at read time so old configs, saved picks
+/// and session logs keep working.
+pub const CLOUD_ALIASES: &[(&str, &str)] = &[
+    ("bull", "deepseek-v4.1-flash"),
+    ("tree", "glm-5.3-flash"),
+    ("dart", "qwen3-coder-next"),
+];
+
+/// A frog cloud model id as the gateway names it today.
+pub fn cloud_model(id: &str) -> &str {
+    CLOUD_ALIASES
+        .iter()
+        .find(|(old, _)| *old == id)
+        .map_or(id, |(_, new)| new)
+}
+
+/// A spec as frog writes it today: new provider ids, short names for bundled local models,
+/// explicit names for frog cloud's old model ids.
 /// Inputs in old forms keep working; this is what gets stored.
 pub fn normalize(spec: &str) -> String {
     let Some((prov, model)) = spec.split_once('/') else {
         return spec.to_string();
     };
     let prov = canonical(prov);
+    if prov == CLOUD {
+        return format!("{CLOUD}/{}", cloud_model(model));
+    }
     if prov == LOCAL
         && let Some((short, _)) = LOCAL_MODELS.iter().find(|(_, repo)| *repo == model)
     {
@@ -148,6 +169,19 @@ pub const PRESETS: &[Preset] = &[
         key_url: "https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai%2Fapi-keys",
         local: false,
     },
+    // Cloudflare AI Gateway: its REST API serves Workers AI models (cloudflare/@cf/zai-org/glm-5.3)
+    // and third-party ones on unified billing (cloudflare/anthropic/claude-opus-5.5), one token
+    // for all. The account id lives in the URL, so the base URL is built at request time
+    // from CLOUDFLARE_ACCOUNT_ID (cf_base_url).
+    Preset {
+        id: "cloudflare",
+        name: "Cloudflare AI Gateway",
+        kind: ProviderKind::Openai,
+        base_url: "", // resolved per-request via cf_base_url_from
+        key_env: &["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_API_KEY"],
+        key_url: "https://dash.cloudflare.com/profile/api-tokens",
+        local: false,
+    },
     Preset {
         id: "anthropic",
         name: "Anthropic",
@@ -190,6 +224,28 @@ pub fn preset(id: &str) -> Option<&'static Preset> {
     let id = canonical(id);
     PRESETS.iter().find(|p| p.id == id)
 }
+
+/// Cloudflare AI Gateway's base URL, OpenAI-compatible, with the account id in the URL.
+/// `None` until `CLOUDFLARE_ACCOUNT_ID` is set: it can't be a static `Preset::base_url`.
+pub fn cf_base_url_from(env: &dyn Fn(&str) -> Option<String>) -> Option<String> {
+    let id = env("CLOUDFLARE_ACCOUNT_ID")?;
+    Some(format!(
+        "https://api.cloudflare.com/client/v4/accounts/{id}/ai/v1"
+    ))
+}
+
+/// Cloudflare AI Gateway's base URL, once `CLOUDFLARE_ACCOUNT_ID` is set.
+pub fn cf_base_url() -> Option<String> {
+    cf_base_url_from(&env_var)
+}
+
+/// Cloudflare's models frog suggests: Workers AI's own, and Claude through the gateway.
+/// (id, name, context)
+pub const CF_MODELS: &[(&str, &str, u64)] = &[
+    ("@cf/zai-org/glm-5.3", "GLM 5.3", 1_048_576),
+    ("@cf/deepseek-ai/deepseek-v4.1-flash-1017", "DeepSeek V4.1 Flash", 1_048_576),
+    ("anthropic/claude-opus-5.5", "Claude Opus 5.5", 200_000),
+];
 
 /// frog cloud's base URL, from the first non-empty override, else the preset's.
 pub fn cloud_base_url_from(env: &dyn Fn(&str) -> Option<String>) -> String {
@@ -293,13 +349,19 @@ pub struct ProviderInfo {
 pub fn list(state: &State) -> Vec<ProviderInfo> {
     let presets = PRESETS.iter().map(|p| {
         let key = key_source(p.id);
+        // Cloudflare's base URL has the account id in it: empty until CLOUDFLARE_ACCOUNT_ID
+        // is set, and it needs that id (with the key) to count as connected.
+        let cf = p.id == "cloudflare";
         let base_url = if p.id == CLOUD {
             cloud_base_url()
+        } else if cf {
+            cf_base_url().unwrap_or_default()
         } else {
             p.base_url.into()
         };
         let connected = match p.id {
             LOCAL => crate::sidecar::available("tang"),
+            _ if cf => key.is_some() && !base_url.is_empty(),
             _ => p.local || key.is_some(),
         };
         ProviderInfo {
@@ -434,7 +496,7 @@ impl Account {
     pub fn render(&self) -> String {
         if !self.connected {
             let mut s = format!(
-                "frog cloud: not connected: set FROG_API_KEY or add a key in the app; get one at {}\n",
+                "frog cloud: not connected: run `frog login` (or set FROG_API_KEY; keys at {})\n",
                 self.key_url
             );
             if self.keychain_withheld {
@@ -467,6 +529,11 @@ impl Account {
     }
 }
 
+/// Whether frog cloud's key is saved in the Keychain (`frog logout` removes it).
+pub fn cloud_key_saved() -> bool {
+    keychain_get(CLOUD).is_some()
+}
+
 /// Store a key (empty removes it).
 pub fn set_key(id: &str, key: &str) -> Result<()> {
     let id = canonical(id);
@@ -475,6 +542,26 @@ pub fn set_key(id: &str, key: &str) -> Result<()> {
         return keychain::delete(id);
     }
     keychain::set(id, key)
+}
+
+/// A paired node's key (docs/node-protocol.md §7): Keychain account `node:<node_id>`, which
+/// the Mac app writes when pairing finishes.
+pub fn node_key(node_id: &str) -> Option<String> {
+    keychain::get(&format!("node:{node_id}"))
+}
+
+/// MCP OAuth's Keychain accounts (`mcp-oauth:<server>`), through the same module so
+/// `FROG_KEYCHAIN=off` and the cache behave the same.
+pub(crate) fn keychain_mcp_get(id: &str) -> Option<String> {
+    keychain::get(id)
+}
+
+pub(crate) fn keychain_mcp_set(id: &str, value: &str) -> Result<()> {
+    keychain::set(id, value)
+}
+
+pub(crate) fn keychain_mcp_delete(id: &str) {
+    let _ = keychain::delete(id);
 }
 
 /// A provider id for a server you add: lowercase letters, digits and dashes, not a preset's.
@@ -653,6 +740,12 @@ mod tests {
                 "cloud/qwen3-coder-next"
             );
         }
+        // frog cloud's old model ids read as their explicit names.
+        assert_eq!(normalize("cloud/bull"), "cloud/deepseek-v4.1-flash");
+        assert_eq!(normalize("frog/tree"), "cloud/glm-5.3-flash");
+        assert_eq!(normalize("cloud/dart"), "cloud/qwen3-coder-next");
+        assert_eq!(normalize("cloud/glm-5.3-flash"), "cloud/glm-5.3-flash");
+        assert_eq!(normalize("ollama/tree"), "ollama/tree");
         assert_eq!(
             normalize("anthropic/claude-sonnet-5"),
             "anthropic/claude-sonnet-5"
@@ -778,6 +871,32 @@ mod tests {
     }
 
     #[test]
+    fn cf_base_url_needs_the_account_id() {
+        let set = env_of(&[("CLOUDFLARE_ACCOUNT_ID", "abc123")]);
+        assert_eq!(
+            cf_base_url_from(&set).unwrap(),
+            "https://api.cloudflare.com/client/v4/accounts/abc123/ai/v1"
+        );
+        let empty = env_of(&[]);
+        assert_eq!(cf_base_url_from(&empty), None);
+        // The preset exists but has no static base URL: it's built per-request.
+        let p = preset("cloudflare").unwrap();
+        assert_eq!(p.base_url, "");
+        assert!(p.key_env.contains(&"CLOUDFLARE_API_TOKEN"));
+    }
+
+    #[test]
+    fn cf_model_specs_round_trip() {
+        for (id, _, _) in CF_MODELS {
+            let spec = format!("cloudflare/{id}");
+            assert_eq!(normalize(&spec), spec);
+            let (prov, model) = spec.split_once('/').unwrap();
+            assert_eq!(preset(prov).unwrap().id, "cloudflare");
+            assert_eq!(model, *id);
+        }
+    }
+
+    #[test]
     fn account_text() {
         let kc_none = |_: &str| None;
         let out = env_of(&[]);
@@ -785,7 +904,7 @@ mod tests {
         assert!(!a.connected);
         assert_eq!(
             a.render(),
-            "frog cloud: not connected: set FROG_API_KEY or add a key in the app; get one at https://api.frog.toys/beta\n"
+            "frog cloud: not connected: run `frog login` (or set FROG_API_KEY; keys at https://api.frog.toys/beta)\n"
         );
         let kc = |id: &str| (id == CLOUD).then(|| "k".to_string());
         let env = env_of(&[("FROG_API_KEY", "e")]);

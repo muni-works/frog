@@ -1,5 +1,9 @@
 import SwiftUI
 
+#if DEBUG
+import os
+#endif
+
 struct TranscriptView: View {
     let conversation: Conversation
     let actions: TurnActions
@@ -8,119 +12,336 @@ struct TranscriptView: View {
     /// Told which turns are on screen.
     var onVisibleTurns: ([TurnState.ID]) -> Void = { _ in }
     @AppStorage("density") private var density = Density.comfortable.rawValue
+    private var space: TurnSpace.Scale { TurnSpace.scale(density) }
     /// The toolbar's height over the transcript, for the fade under it.
     @State private var topInset: CGFloat = 0
     /// The view keeps to the bottom as content grows (see `onScrollGeometryChange`).
     @State private var following = true
-    @State private var userScrolling = false
-    /// Where the last turn starts, in the content: a long answer stops following once its
-    /// prompt would pass the top of the view, so you read it from the beginning.
-    @State private var lastTurnTop: CGFloat = .infinity
-    /// Stopped short of the end, with more below (stopped at a long answer's start, or you
-    /// scrolled up while it wrote): the pill offers the way down.
-    @State private var parked = false
-    /// Content below the view, in points.
-    @State private var below: CGFloat = 0
-    /// How tall the content was when the view stopped following: the pill only shows once
-    /// something new has come in past it, not for what was already there.
-    @State private var parkedHeight: CGFloat?
-    @State private var height: CGFloat = 0
+    /// Where the view is and what's below it. Written on every scroll and every bit of growth,
+    /// so it isn't view state: only the pill and the bottom fade read it, and the transcript's
+    /// body (every turn in it) doesn't rebuild each time the content grows a line.
+    @State private var track = ScrollTrack()
+    /// The first turn the transcript builds: a few dozen rows from the end when it opens, and
+    /// earlier as you scroll up to it (`showEarlier`) or jump to a turn before it. Turns above
+    /// aren't in the stack at all: a lazy stack still does work for every row it holds (5,000
+    /// rows took 300 ms more to open), and older history folding in
+    /// (`Conversation.olderPending`) never moves what's on screen. Nil: the last rows.
+    @State private var shownFrom: TurnState.ID?
+    /// Rows are going in above the view (see `showEarlier`).
+    @State private var growingAbove = false
+    /// Finished turns' flows, so the rows aren't re-derived for every turn on every chunk.
+    @State private var flows = FlowCache()
+    @AppStorage(Verbosity.key) private var defaultVerbosity = Verbosity.standard.rawValue
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Opening the session a line names (a worktree's owner, a message's sender).
+    @Environment(\.openSessionID) private var openSessionID
+
+    /// Rows built when the transcript opens, and added each time you reach its top.
+    static var windowRows = 50
+    static var earlierRows = 200
+    /// How near the top of what's built (in points) builds more above it.
+    static let nearTop: CGFloat = 60
+
+    #if os(macOS)
+    @State private var tableHandle = TableTranscriptHandle()
+    @State private var safeInsets = EdgeInsets()
+    #endif
 
     var body: some View {
+        #if os(macOS)
+        if TranscriptContainer.table {
+            table
+        } else {
+            stack
+        }
+        #else
+        stack
+        #endif
+    }
+
+    #if os(macOS)
+    /// The `NSTableView` transcript (see `TableTranscript`), behind `TranscriptContainer.table`.
+    private var table: some View {
+        TableTranscript(conversation: conversation, actions: actions, jump: jump, onVisibleTurns: onVisibleTurns,
+                        track: track, space: space, showThinking: verbosity.showsThinking, handle: tableHandle,
+                        insets: safeInsets)
+            .ignoresSafeArea(.container, edges: .vertical)
+            .background {
+                // The toolbar and the composer, which the rows scroll under.
+                Color.clear.onGeometryChange(for: EdgeInsets.self, of: { $0.safeAreaInsets }) {
+                    safeInsets = $0
+                    topInset = $0.top
+                }
+            }
+            .environment(\.transcriptTrack, track)
+            .mask { TranscriptMask(topInset: topInset, track: track).ignoresSafeArea(.container, edges: .vertical) }
+            .overlay(alignment: .bottom) {
+                NewBelowPill(track: track, writing: conversation.busy) {
+                    tableHandle.toEnd()
+                }
+            }
+            .overlay {
+                if conversation.turns.isEmpty, !conversation.busy, !conversation.replaying, conversation.failure == nil {
+                    EmptyTranscript(conversation: conversation)
+                }
+            }
+    }
+    #endif
+
+    private var stack: some View {
         ScrollViewReader { proxy in
             transcript
                 // Open at the end, whole: straight to the last row, laid out for real, rather
                 // than an estimate of where the end is that settles into place as rows measure.
                 .onAppear { proxy.scrollTo(Self.end, anchor: .bottom) }
+                // Until it's set, the window is the last rows; once a turn is added it's pinned
+                // where it was, so the new turn doesn't push the top one out from above you.
+                // (Set on appear, it left the stack over rows it hadn't laid out.)
+                // Only for turns added at the end: older history folding in above
+                // (`Conversation.olderPending`) leaves the last rows where they are, and pinning
+                // to "the first `old` turns" then pointed at a turn far up in that history: the
+                // stack rebuilt hundreds of rows and settled again (the switch benchmark's
+                // intermittent "ready over budget", whenever the fold beat the first settle).
+                .onChange(of: TurnEnds(conversation.turns)) { old, new in
+                    guard shownFrom == nil, new.count > old.count, old.count > 0, new.first == old.first else { return }
+                    shownFrom = Self.start(of: Array(conversation.turns.prefix(old.count)), rows: Self.windowRows)
+                }
                 .onChange(of: jump.wrappedValue) { _, id in
                     guard let id else { return }
                     following = false
-                    withAnimation(.snappy(duration: 0.35)) { proxy.scrollTo(id, anchor: .top) }
                     jump.wrappedValue = nil
+                    // A turn above what's built: build down from it first, then go there.
+                    guard let target = conversation.turns.firstIndex(where: { $0.id == id }) else { return }
+                    let row = firstRow(of: conversation.turns[target])
+                    if target < firstShown {
+                        shownFrom = id
+                        DispatchQueue.main.async {
+                            withAnimation(.snappy(duration: 0.35)) { proxy.scrollTo(row, anchor: .top) }
+                        }
+                        return
+                    }
+                    withAnimation(.snappy(duration: 0.35)) { proxy.scrollTo(row, anchor: .top) }
+                }
+                // Older turns folded in while you were at the top: carry on up into them.
+                .onChange(of: conversation.turns.first?.id) {
+                    if track.atTop { showEarlier(proxy) }
                 }
                 // A new turn goes below one that may be taller than the window. The lazy stack
                 // guesses that turn's height, and the bottom anchor alone can land past the real
                 // content: a blank transcript until you scroll. Scrolling to a row at the end lays
                 // the new rows out for real, and following keeps the view there as it grows.
                 .onChange(of: conversation.turns.last?.id) { _, id in
-                    guard let id else { return }
+                    guard id != nil else { return }
                     following = true
-                    parked = false
+                    track.unpark()
                     proxy.scrollTo(Self.end, anchor: .bottom)
                 }
                 // Follow the answer as it streams: while following, content that grows takes the
                 // view back to the bottom. The size-change anchor alone loses the bottom once the
                 // lazy stack re-estimates rows it hasn't laid out.
                 .onScrollGeometryChange(for: ScrollEnd.self, of: ScrollEnd.init) { old, new in
-                    below = new.below
-                    height = new.contentHeight
+                    defer { track.measured(below: new.below, height: new.contentHeight) }
+                    // Near the top of what's built, once it has opened at the end: build more
+                    // above (and, when what's built is shorter than the view, until it isn't).
+                    // A row in the lazy stack can't be the trigger: the stack estimates the rows
+                    // it hasn't built from the ones it has, and a small one at the top made it
+                    // land short of the end on open, over nothing.
+                    if new.atBottom { track.openedAtEnd = true }
+                    let atTop = track.openedAtEnd && new.contentHeight > 0 && new.visibleTop < Self.nearTop
+                    if atTop != track.atTop {
+                        track.atTop = atTop
+                        if atTop { DispatchQueue.main.async { showEarlier(proxy) } }
+                    }
                     let growth = new.contentHeight - old.contentHeight
-                    if userScrolling {
+                    if track.userScrolling {
                         // Only your own scrolling ends a stop: back at the end, it follows again.
                         following = new.atBottom
-                        if !new.atBottom, parked || conversation.busy {
-                            park(at: new.contentHeight)
+                        if !new.atBottom, track.parked || conversation.busy {
+                            track.park(at: new.contentHeight)
                         } else {
-                            parked = false
+                            track.unpark()
                         }
-                    } else if following, conversation.busy, growth > 0,
-                              lastTurnTop < new.visibleTop + growth + topInset + 4,
-                              let id = conversation.turns.last?.id {
-                        // Keeping to the bottom would push the answer's start above the top:
-                        // stop with the prompt at the top instead, and read from there.
-                        following = false
-                        park(at: old.contentHeight)
-                        withAnimation(Motion.quick(reduced: reduceMotion)) { proxy.scrollTo(id, anchor: .top) }
-                    } else if following, !new.atBottom {
-                        proxy.scrollTo(Self.end, anchor: .bottom)
+                        return
                     }
+                    // Past the end of what's laid out: nothing to draw (the lazy stack's estimate
+                    // of rows above shrank under a still offset). Back to the end, and follow.
+                    if new.pastEnd {
+                        following = true
+                        track.unpark()
+                        return follow(proxy)
+                    }
+                    if following, conversation.busy, growth > 0, let live = liveAnswer,
+                       let top = live.first ? track.lastTurnTop : track.answerTop(live.item),
+                       top < new.visibleTop + growth + topInset + 4 {
+                        // Keeping to the bottom would push the answer's start above the top:
+                        // stop at its start instead (the prompt, when it's the turn's first
+                        // words), and read from there. Only for an answer: a turn of tool calls
+                        // and short notes keeps following, however long it gets. Not animated, and
+                        // after this update: an animated scroll on the lazy stack aims at where it
+                        // estimated the row while the content keeps growing under it, and can
+                        // stop past the laid-out end, a blank transcript until you scroll.
+                        following = false
+                        track.park(at: old.contentHeight)
+                        let target = live.first ? firstRow(of: conversation.turns[conversation.turns.count - 1])
+                            : TranscriptRow.ID(turn: live.turn, part: live.item)
+                        DispatchQueue.main.async { proxy.scrollTo(target, anchor: .top) }
+                        return
+                    }
+                    // Only growth needs chasing (shrinking clamps to the bottom anyway).
+                    guard following, !new.atBottom, new.contentHeight > old.contentHeight else { return }
+                    follow(proxy)
                 }
                 // Only your own scrolling stops (or restarts) following: the lazy stack also
                 // moves the offset as it measures rows, and that mustn't count.
                 .onScrollPhaseChange { _, phase in
-                    userScrolling = phase == .tracking || phase == .interacting || phase == .decelerating
+                    track.userScrolling = phase == .tracking || phase == .interacting || phase == .decelerating
                 }
                 .overlay(alignment: .bottom) {
-                    if unseen {
-                        NewBelow(writing: conversation.busy) {
-                            parked = false
-                            following = true
-                            withAnimation(Motion.panel(reduced: reduceMotion)) { proxy.scrollTo(Self.end, anchor: .bottom) }
-                        }
-                        .padding(.bottom, 14)
-                        .transition(.opacity.combined(with: .scale(scale: 0.92, anchor: .bottom)))
+                    NewBelowPill(track: track, writing: conversation.busy) {
+                        track.unpark()
+                        following = true
+                        withAnimation(Motion.panel(reduced: reduceMotion)) { proxy.scrollTo(Self.end, anchor: .bottom) }
                     }
                 }
-                .animation(Motion.quick(reduced: reduceMotion), value: unseen)
+        }
+        .environment(\.transcriptTrack, track)
+    }
+
+    /// Back to the end. The scroll waits for the next turn of the run loop, once per turn:
+    /// scrolling inside the scroll view's own update re-estimates the lazy rows, which changes
+    /// the geometry again, and AppKit aborts on the constraint loop.
+    private func follow(_ proxy: ScrollViewProxy) {
+        guard !track.followPending else { return }
+        track.followPending = true
+        DispatchQueue.main.async {
+            track.followPending = false
+            guard following, !track.userScrolling else { return }
+            #if DEBUG
+            // Perf task: the follow fires at most once per run-loop turn.
+            os_signpost(.event, log: Self.followLog, name: "transcript.follow")
+            TranscriptProbe.follows += 1
+            #endif
+            proxy.scrollTo(Self.end, anchor: .bottom)
         }
     }
 
-    private func park(at contentHeight: CGFloat) {
-        if !parked { parkedHeight = contentHeight }
-        parked = true
+    /// The rows of the turns built, in order (see `TranscriptRow`).
+    private var rows: [TranscriptRow] {
+        Self.rows(of: conversation.turns, from: firstShown, flows: flows, showThinking: verbosity.showsThinking, space: space)
     }
 
-    /// Something new came in below where you stopped (more than a line: the thinking row
-    /// changing size doesn't count), and it's still out of view.
-    private var unseen: Bool {
-        guard parked, below > 30, let parkedHeight else { return false }
-        return height - parkedHeight > 40
+    /// The rows of `turns` from index `first`: per turn its head (if any), its flow's segments,
+    /// and its tail. Shared by the lazy stack and the table transcript.
+    static func rows(of turns: [TurnState], from first: Int, flows: FlowCache, showThinking: Bool,
+                     space: TurnSpace.Scale) -> [TranscriptRow] {
+        var out: [TranscriptRow] = []
+        for t in turns.indices where t >= first {
+            let turn = turns[t]
+            let start = out.count
+            func add(_ part: TurnPart, _ key: String) {
+                let leads = out.count == start
+                out.append(TranscriptRow(turn: turn, part: part, first: leads,
+                                         gap: space.gap(part, after: leads ? nil : out.last?.part, first: out.isEmpty),
+                                         id: TranscriptRow.ID(turn: turn.id, part: key)))
+            }
+            if TurnView.hasHead(turn) { add(.head, "head") }
+            for segment in flows.segments(of: turn, showThinking: showThinking) { add(.segment(segment), segment.id) }
+            add(.tail, "tail")
+        }
+        return out
+    }
+
+    /// A turn's first row: where scrolling to the turn goes.
+    private func firstRow(of turn: TurnState) -> TranscriptRow.ID {
+        if TurnView.hasHead(turn) { return TranscriptRow.ID(turn: turn.id, part: "head") }
+        let first = flows.segments(of: turn, showThinking: verbosity.showsThinking).first
+        return TranscriptRow.ID(turn: turn.id, part: first?.id ?? "tail")
+    }
+
+    private var verbosity: Verbosity {
+        VerbosityOverrides.shared.level(
+            for: conversation.sessionID, default: Verbosity(rawValue: defaultVerbosity) ?? .normal)
+    }
+
+    /// Where the built turns start, in `conversation.turns`.
+    private var firstShown: Int {
+        let turns = conversation.turns
+        guard let id = shownFrom ?? Self.start(of: turns, rows: Self.windowRows),
+              let i = turns.firstIndex(where: { $0.id == id }) else { return 0 }
+        return i
+    }
+
+    /// The turn that starts the last `rows` rows (items), counting back from the end.
+    static func start(of turns: [TurnState], rows: Int, before end: Int? = nil) -> TurnState.ID? {
+        var counted = 0
+        var i = (end ?? turns.count) - 1
+        while i > 0, counted + turns[i].items.count < rows {
+            counted += max(1, turns[i].items.count)
+            i -= 1
+        }
+        return turns.indices.contains(i) ? turns[i].id : turns.first?.id
+    }
+
+    /// You're at the top of what's built: build more above it, and keep the row that was at
+    /// the top where it was. A lazy stack doesn't hold its place when rows go in above (it
+    /// shows the new rows' estimated end instead), so it's put back by scrolling to that row,
+    /// laid out for real; it was within `nearTop` of the top, so that's as far as it moves.
+    private func showEarlier(_ proxy: ScrollViewProxy) {
+        let first = firstShown
+        guard first > 0, !growingAbove,
+              let id = Self.start(of: conversation.turns, rows: Self.earlierRows, before: first) else {
+            #if DEBUG
+            TranscriptProbe.fillBlocked = first == 0 ? "at first turn" : (growingAbove ? "growing" : "no turns above")
+            #endif
+            return
+        }
+        let keep = firstRow(of: conversation.turns[first])
+        #if DEBUG
+        TranscriptProbe.earlier += 1
+        // The row under it (prompts aren't counted as mounted, segments are).
+        TranscriptProbe.kept = flows.segments(of: conversation.turns[first], showThinking: verbosity.showsThinking).first?.id ?? keep.part
+        #endif
+        growingAbove = true
+        shownFrom = id
+        // Again as the rows around it measure (each changes the estimate of the rest).
+        DispatchQueue.main.async {
+            proxy.scrollTo(keep, anchor: .top)
+            DispatchQueue.main.async { proxy.scrollTo(keep, anchor: .top) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                proxy.scrollTo(keep, anchor: .top)
+                growingAbove = false
+                #if DEBUG
+                // The fill is settled (its last keep-scroll ran): this is the signal the
+                // scroll-up benchmark waits on before it samples what stayed on screen.
+                TranscriptProbe.fillSettles += 1
+                #endif
+            }
+        }
+    }
+
+    /// The answer being written now, when it's the last thing in the transcript: whether it's
+    /// the turn's first words (nothing ran before it), for where a long one stops.
+    private var liveAnswer: (turn: TurnState.ID, item: String, first: Bool)? {
+        guard let turn = conversation.turns.last, let last = turn.items.last,
+              last.kind == .message, !last.done else { return nil }
+        let first = !turn.items.dropLast().contains { if case .tool = $0.kind { true } else { false } }
+        return (turn.id, last.id, first)
     }
 
     /// Where the view is against the end of the content.
     private struct ScrollEnd: Equatable {
         let contentHeight: CGFloat
-        let offset: CGFloat
         let atBottom: Bool
         /// Content below the view.
         let below: CGFloat
         /// The top of the visible area, in content coordinates.
         let visibleTop: CGFloat
+        /// The whole visible area is below the end of the content.
+        let pastEnd: Bool
 
         init(_ g: ScrollGeometry) {
+            pastEnd = g.contentSize.height > 0 && g.visibleRect.minY >= g.contentSize.height - 1
             contentHeight = g.contentSize.height
-            offset = g.contentOffset.y
             // Against what's actually visible above the composer. The offset alone misses the top
             // inset, which is large while the content is shorter than the view (it's anchored to
             // the bottom): the transcript never thought it was at the end, and following
@@ -131,62 +352,61 @@ struct TranscriptView: View {
         }
     }
 
-    /// The transcript's content, for measuring where a turn starts in it.
-    private static let content = "transcript-content"
+    /// The transcript's content, for measuring where a turn (or an answer) starts in it.
+    static let content = "transcript-content"
+
+    #if DEBUG
+    /// For the perf task: the deferred, coalesced follow-scroll signpost. Instruments' "Points
+    /// of Interest" misses `OSLog.pointsOfInterest` under explicit modules, so a named one.
+    static let followLog = OSLog(subsystem: "toys.frog", category: "transcript-follow")
+    #endif
 
     /// A row at the very end of the transcript, below the last turn and its indicators.
     private static let end = "transcript-end"
 
     private var transcript: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: density == Density.compact.rawValue ? 12 : 22) {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                #if os(macOS)
+                // On the Mac every turn's footer (model, cost, speed, energy) is hover-only,
+                // the last one too: nothing pinned under the answer at rest.
+                let footers = Set<TurnState.ID>()
+                #else
+                // No hover on a phone: the footers that matter stay pinned.
                 let footers = TurnFooter.pinned(conversation.turns) { ModelStats.shared.cost(of: $0) }
-                ForEach(conversation.turns) { turn in
-                    TurnView(turn: turn, conversation: conversation, actions: actions, pinsFooter: footers.contains(turn.id))
+                #endif
+                let lastTurn = conversation.turns.last?.id
+                // The transcript's first line: the last compaction's banner. Replay and
+                // reopen keep it (a durable event); sessions compacted before receipts
+                // existed show nothing.
+                if let kept = conversation.carriedForward {
+                    CarriedForwardBanner(kept: kept)
+                }
+                // A row per piece of each turn: only what's on screen is built (see `TurnPart`).
+                ForEach(rows) { row in
+                    TurnView(turn: row.turn, conversation: conversation, actions: actions, part: row.part,
+                             gap: row.gap, pinsFooter: footers.contains(row.turn.id))
+                        .equatable()
+                        .id(row.id)
                         .background {
-                            if turn.id == conversation.turns.last?.id {
+                            if row.first, row.turn.id == lastTurn {
                                 Color.clear.onGeometryChange(for: CGFloat.self, of: { $0.frame(in: .named(Self.content)).minY }) {
-                                    lastTurnTop = $0
+                                    track.lastTurnTop = $0
                                 }
                             }
                         }
                 }
-                if let q = conversation.question {
-                    QuestionCard(question: q, conversation: conversation)
-                        .id(q.id)
-                        .transition(.opacity.combined(with: .move(edge: .bottom)))
-                }
-                if let e = conversation.elicitation {
-                    ElicitationCard(request: e, conversation: conversation)
-                        .id(e.id)
-                        .transition(.opacity.combined(with: .move(edge: .bottom)))
-                }
-                // The running turn's live line shows progress once there's something to show.
-                if conversation.replaying {
-                    LoadingIndicator(since: conversation.opened)
-                } else if conversation.busy, conversation.permission == nil, conversation.elicitation == nil,
-                   conversation.question == nil,
-                   conversation.turns.last?.items.isEmpty ?? true {
-                    WorkingIndicator(progress: conversation.progress, since: conversation.progressSince)
-                }
-                if let preview = conversation.presentPreview {
-                    PresentCard(present: preview)
-                        .opacity(0.85)
-                        .transition(.opacity)
-                }
-                if let failure = conversation.failure {
-                    Label(failure, systemImage: "exclamationmark.octagon")
-                        .foregroundStyle(.red)
-                        .textSelection(.enabled)
-                }
-                Color.clear.frame(height: 0).id(Self.end)
+                // What follows the turns: cards that need you, the live line, a failure.
+                TranscriptTrailer(conversation: conversation)
+                Color.clear.frame(height: space.turn).id(Self.end)
             }
             .scrollTargetLayout()
             .coordinateSpace(.named(Self.content))
-            .frame(maxWidth: 820)
-            .padding(.horizontal, 28)
-            .padding(.top, 20)
-            .padding(.bottom, 12)
+            .environment(\.turnSpace, space)
+            .frame(maxWidth: TurnSpace.measure)
+            .padding(.horizontal, TurnSpace.gutter)
+            .padding(.top, TurnSpace.top)
+            .padding(.bottom, TurnSpace.bottom)
             .frame(maxWidth: .infinity)
             .background(ScrollBackdropClear())
             // The canvas's margins are for this scroll view, not for ones inside it (code
@@ -197,19 +417,11 @@ struct TranscriptView: View {
         // The system's scroll-edge blur is hidden (see ScrollBackdropClear), so fade the
         // content out under the toolbar instead of letting it run into the title.
         .onGeometryChange(for: CGFloat.self, of: { $0.safeAreaInsets.top }) { topInset = $0 }
-        .mask {
-            VStack(spacing: 0) {
-                Color.clear.frame(height: max(0, topInset - 12))
-                LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
-                    .frame(height: 28)
-                Color.black
-                // A soft edge where the text carries on below the view.
-                LinearGradient(colors: [.black, .black.opacity(below > 8 ? 0.05 : 1)], startPoint: .top, endPoint: .bottom)
-                    .frame(height: 44)
-            }
-            .ignoresSafeArea()
+        .mask { TranscriptMask(topInset: topInset, track: track) }
+        .onScrollTargetVisibilityChange(idType: TranscriptRow.ID.self, threshold: 0.05) { ids in
+            var seen = Set<TurnState.ID>()
+            onVisibleTurns(ids.map(\.turn).filter { seen.insert($0).inserted })
         }
-        .onScrollTargetVisibilityChange(idType: TurnState.ID.self, threshold: 0.05) { onVisibleTurns($0) }
         // Start at the bottom, and keep short content there. While following (above), growth
         // keeps the view at the bottom too; once a long answer has stopped at its start, it
         // grows downward under a still view instead.
@@ -224,18 +436,87 @@ struct TranscriptView: View {
     }
 }
 
+/// What comes after the last turn: a question or elicitation that needs you, the running
+/// turn's live line, a presentation preview, a failure, the overflow rescue. Several views, so a
+/// lazy stack places each on its own; the table transcript wraps it in one row.
+struct TranscriptTrailer: View {
+    let conversation: Conversation
+    @Environment(\.turnSpace) private var space
+    @Environment(\.openSessionID) private var openSessionID
+
+    var body: some View {
+        if let q = conversation.question {
+            QuestionCard(question: q, conversation: conversation)
+                .padding(.top, space.turn)
+                .id(q.id)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+        }
+        if let e = conversation.elicitation {
+            ElicitationCard(request: e, conversation: conversation)
+                .padding(.top, space.turn)
+                .id(e.id)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+        }
+        // The running turn's live line shows progress once there's something to show.
+        // A busy state with no live engine behind it (the stream died mid-turn) doesn't:
+        // it's a stale window until the watchdog reconciles from the log.
+        // (Not over the newest rows read from the log: they're the transcript already.)
+        if conversation.replaying, conversation.turns.isEmpty {
+            LoadingIndicator(since: conversation.opened)
+                .padding(.top, space.turn)
+        } else if conversation.busy, conversation.engineAlive, conversation.permission == nil,
+           conversation.elicitation == nil, conversation.question == nil,
+           conversation.turns.last?.items.isEmpty ?? true {
+            WorkingIndicator(progress: conversation.progress, since: conversation.progressSince)
+                .padding(.top, space.turn)
+        }
+        if let preview = conversation.presentPreview {
+            PresentCard(present: preview)
+                .opacity(0.85)
+                .padding(.top, space.turn)
+                .transition(.opacity)
+        }
+        if let failure = conversation.failure {
+            VStack(alignment: .leading, spacing: 8) {
+                Label(failure, systemImage: "exclamationmark.octagon")
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+                // A worktree another engine holds: one press goes to the session that
+                // owns it (its window, or its transcript here) instead of leaving the
+                // user to hunt for the id in the line above.
+                if let owner = conversation.heldBy, openSessionID != nil {
+                    Button { openSessionID?(owner) } label: {
+                        Label("Open \(owner)", systemImage: "arrow.up.forward.square")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+            .padding(.top, space.turn)
+        }
+        if conversation.overflowRescue {
+            OverflowRescueView(conversation: conversation)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+        }
+        // A server someone configured that isn't signed in to: its tools are missing from the
+        // model's list, so say so here too — never only in Settings, where nobody looks.
+        if let out = conversation.signedOutServers {
+            SignedOutCard(servers: out, conversation: conversation)
+                .padding(.top, space.turn)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+        }
+    }
+}
+
 struct UserPrompt: View {
     let text: String
     var images: [ToolImage] = []
-    /// Where the turn ran: iMessage blue on this Mac or your own server, green in the cloud,
-    /// like the model's name in its footer.
-    var tint: Color = .accentColor
 
     var body: some View {
         let (message, contexts) = PromptContext.split(text)
-        VStack(alignment: .trailing, spacing: 6) {
+        VStack(alignment: .trailing, spacing: TurnSpace.Inset.snug) {
             if !images.isEmpty {
-                HStack(spacing: 6) {
+                HStack(spacing: TurnSpace.Inset.snug) {
                     ForEach(Array(images.enumerated()), id: \.offset) { i, img in
                         if let ns = img.image {
                             Image(platformImage: ns)
@@ -243,25 +524,29 @@ struct UserPrompt: View {
                                 .aspectRatio(contentMode: .fill)
                                 .frame(width: images.count == 1 ? 220 : 110, height: images.count == 1 ? 150 : 80)
                                 .clipShape(.rect(cornerRadius: 12))
-                                .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.separator))
+                                
                                 .opensInLightbox(images, at: i)
                         }
                     }
                 }
             }
-            if !message.isEmpty {
+            if !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 Text(message)
+                    .font(.frog(size: TurnType.body))
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    // Solid, with white text, like iMessage (blue) and SMS (green).
-                    .foregroundStyle(.white)
-                    .background(tint, in: .rect(cornerRadius: 18))
+                    .padding(.horizontal, TurnSpace.Inset.roomy + TurnSpace.Inset.tight)
+                    .padding(.vertical, TurnSpace.Inset.snug + TurnSpace.Inset.tight)
+                    // Neutral raised gray: the prompt is you, not the place that served
+                    // you. Where it ran shows in the model pill and the turn's footer.
+                    // 14×10 padding: the bubble hugs closer than the web's `.me` (9×13 at
+                    // 12px text) scaled up, so a short prompt doesn't float in a grey slab.
+                    .foregroundStyle(Tokens.text)
+                    .background(Tokens.bubble, in: .rect(cornerRadius: Tokens.Radius.bubble, style: .continuous))
             }
             ForEach(contexts) { ContextDisclosure(context: $0) }
         }
-        .frame(maxWidth: 560, alignment: .trailing)
+        .frame(maxWidth: TurnSpace.promptWidth, alignment: .trailing)
         .frame(maxWidth: .infinity, alignment: .trailing)
     }
 }
@@ -274,11 +559,11 @@ private struct ContextDisclosure: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: 6) {
+        VStack(alignment: .trailing, spacing: TurnSpace.Inset.snug) {
             Button {
                 withAnimation(Motion.quick(reduced: reduceMotion)) { open.toggle() }
             } label: {
-                HStack(spacing: 5) {
+                HStack(spacing: TurnSpace.Inset.tight) {
                     Image(systemName: "chevron.right")
                         .font(.caption2.weight(.semibold))
                         .rotationEffect(.degrees(open ? 90 : 0))
@@ -286,7 +571,7 @@ private struct ContextDisclosure: View {
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                .padding(.horizontal, 10)
+                .padding(.horizontal, TurnSpace.Inset.card)
                 .frame(height: 24)
                 .contentShape(.capsule)
             }
@@ -299,7 +584,7 @@ private struct ContextDisclosure: View {
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(12)
+                    .padding(TurnSpace.Inset.roomy)
                     .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 12))
                     .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .topTrailing)))
             }
@@ -320,16 +605,23 @@ struct EndView: View {
         switch reason {
         case .complete, .denied:
             if let usage, usage.modelCalls > 0 {
-                HStack(spacing: 10) {
+                HStack(spacing: TurnSpace.Inset.card) {
                     // Where it ran, then what it cost (cloud) or how fast it wrote.
                     if let spec = usage.model {
                         ModelLabel(model: ModelIdentity.of(spec, in: models), size: .caption)
+                    }
+                    // Who served it is a place tag too: a Frog Cloud turn is cloud green whoever's
+                    // GPUs answered (docs/models.md, "Place color"), and reads as Frog Cloud
+                    // whoever proxied it (Cam, 2026-11-12: the upstream is opaque to the user;
+                    // `servedBy.name` keeps it for the log).
+                    if let s = usage.servedBy {
+                        Text(s.displayName).foregroundStyle(Color.place(.frogCloud))
                     }
                     // What it cost (cloud) or how fast it wrote; each opens its working.
                     if let c = ModelStats.shared.cost(of: usage) {
                         PriceHint(cost: c, usage: usage)
                     } else if let tps = usage.tokensPerSec, tps > 0 {
-                        Text(ModelStats.speedText(tps * ModelStats.wordsPerToken))
+                        Text(ModelStats.speedText(tps))
                             .help("\(usage.modelCalls) call\(usage.modelCalls == 1 ? "" : "s") · \(usage.inputTokens.tokens) in, \(usage.outputTokens.tokens) out") // advanced
                     }
                     if showEnergy, let e = usage.energy {
@@ -348,14 +640,38 @@ struct EndView: View {
             }
         case .cancelled:
             banner("Interrupted", symbol: "stop.circle", color: .secondary)
-        case .maxTokens:
-            banner("Hit the output token limit", symbol: "text.append", color: .orange)
+        case .suspended:
+            banner("Suspended for app update", symbol: "pause.circle", color: .secondary)
+        case .maxTokens(let autoContinued):
+            banner(
+                autoContinued == 0
+                    ? "Hit the output token limit"
+                    : "Hit the output token limit (auto-continued \(autoContinued)x)",
+                symbol: "text.append",
+                color: .orange
+            )
         case .looping:
-            banner("Stopped: the model kept repeating the same tool call", symbol: "arrow.trianglehead.2.clockwise", color: .orange)
+            banner("Stopped: the model kept making tool calls that couldn't help", symbol: "arrow.trianglehead.2.clockwise", color: .orange)
         case .stepLimit:
             banner("Stopped at the step limit. Say “continue” to keep going.", symbol: "flag.checkered", color: .orange)
+        case .blockedOnApproval(let denial):
+            banner("Stopped: retried a call that was already denied (\(denial))", symbol: "hand.raised", color: .orange)
+        case .billingLimit(let b):
+            BillingEndView(limit: b)
         case .error(let e):
-            banner(e.description, symbol: "exclamationmark.octagon", color: .red)
+            VStack(alignment: .leading, spacing: 4) {
+                banner(e.description, symbol: "exclamationmark.octagon", color: .red)
+                // The raw provider reply, out of the way: for a bug report, not for reading.
+                DisclosureGroup("Details") {
+                    Text(e.detail)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -364,6 +680,24 @@ struct EndView: View {
             .font(.callout)
             .foregroundStyle(color)
             .textSelection(.enabled)
+    }
+}
+
+/// Out of credit (`EndReason.billingLimit`): the one end that's about money, not a model
+/// failure. Styled like the calm system rows (muted, not red), with the fix right there:
+/// "add credit" opens the account page the settings use (BillingSettings' billing link).
+struct BillingEndView: View {
+    let limit: BillingLimit
+
+    var body: some View {
+        HStack(spacing: TurnSpace.Inset.row) {
+            Label("out of credit", systemImage: "creditcard")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+            Link("add credit", destination: URL(string: "https://frog.toys/?settings=billing")!)
+                .font(.callout)
+        }
     }
 }
 
@@ -385,7 +719,7 @@ struct WorkingIndicator: View {
         if let progress, let completed = progress.completed, let total = progress.total, total > 0 {
             ProbeProgress(progress: progress, completed: completed, total: total, since: since ?? .now)
         } else {
-            HStack(spacing: 8) {
+            HStack(spacing: TurnSpace.Inset.row) {
                 ProgressView().controlSize(.small)
                 Text(progress.map { Self.title($0.label) } ?? "Working…")
                     .font(.callout)
@@ -412,8 +746,8 @@ private struct ProbeProgress: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: 0.08)) { timeline in
             let elapsed = max(0, timeline.date.timeIntervalSince(since))
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
+            VStack(alignment: .leading, spacing: TurnSpace.Inset.snug) {
+                HStack(alignment: .firstTextBaseline, spacing: TurnSpace.Inset.card) {
                     Text(Self.probeTitle(for: progress.label))
                         .font(.callout.weight(.medium))
                         .foregroundStyle(.secondary)
@@ -514,6 +848,8 @@ struct EmptyTranscript: View {
     @State private var hovering = false
     @State private var line = 0
     @State private var hop = 0
+    /// A hop is playing (it lasts one `FrogPose.hop` period).
+    @State private var hopping = false
 
     private var isChat: Bool { FrogPaths.isChat(conversation.folder) }
 
@@ -528,7 +864,7 @@ struct EmptyTranscript: View {
     }
 
     private func content(details: Bool, card: Bool) -> some View {
-        VStack(spacing: 10) {
+        VStack(spacing: TurnSpace.Inset.card) {
             if !details {
                 EmptyView()
             } else if playful {
@@ -546,7 +882,7 @@ struct EmptyTranscript: View {
             #if os(macOS)
             if card {
                 EmptyPageExtras(conversation: conversation)
-                    .padding(.top, 6)
+                    .padding(.top, TurnSpace.Inset.snug)
             }
             #endif
         }
@@ -558,16 +894,18 @@ struct EmptyTranscript: View {
 
     /// The frog on its lily pad. Hover and it says something; drop a file and it hops.
     private var mascot: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: TurnSpace.Inset.tight) {
             ZStack(alignment: .bottom) {
                 LilyPad()
                     .fill(Color.accentColor.opacity(0.22))
                     .frame(width: 76, height: 26)
                     .offset(y: 4)
-                FrogFace(mood: .idle, size: 48, hop: hop)
+                // Still until hovered or hopping: its idle loop at 30 frames a second kept an
+                // empty window at about 10% of a core.
+                FrogFace(mood: .idle, size: 48, hop: hop, animating: hovering || hopping)
                     .anchorPreference(key: FrogAnchorKey.self, value: .bounds) { $0 }
             }
-            .padding(.top, 4)
+            .padding(.top, TurnSpace.Inset.tight)
             .contentShape(.rect)
             .onHover { hovering = $0 }
             Text(FrogCopy.hovers[line % FrogCopy.hovers.count])
@@ -588,6 +926,12 @@ struct EmptyTranscript: View {
         }
         .onChange(of: conversation.dropped) { _, urls in
             if !urls.isEmpty { hop += 1 }
+        }
+        .task(id: hop) {
+            guard hop > 0 else { return }
+            hopping = true
+            try? await Task.sleep(for: .seconds(2.5))
+            if !Task.isCancelled { hopping = false }
         }
     }
 }
@@ -638,6 +982,110 @@ struct ScrollBackdropClear: View {
 }
 #endif
 
+/// Where the transcript is against its end, kept off the view's own state: geometry callbacks
+/// write it on every scroll and every line of growth, and only what reads `unseen` or
+/// `moreBelow` (the pill and the bottom fade) updates when those flip.
+@MainActor @Observable
+final class ScrollTrack {
+    /// Something new came in below where you stopped, and it's still out of view.
+    private(set) var unseen = false
+    /// The turn the pointer is over, any of its rows: its footer shows.
+    var hoveredTurn: TurnState.ID?
+    /// Text carries on below the view (the soft bottom edge).
+    private(set) var moreBelow = false
+
+    /// Stopped short of the end, with more below (stopped at a long answer's start, or you
+    /// scrolled up while it wrote): the pill offers the way down.
+    @ObservationIgnored private(set) var parked = false
+    /// How tall the content was when the view stopped following: the pill only shows once
+    /// something new has come in past it, not for what was already there.
+    @ObservationIgnored private var parkedHeight: CGFloat?
+    @ObservationIgnored private var below: CGFloat = 0
+    @ObservationIgnored private var height: CGFloat = 0
+    @ObservationIgnored var userScrolling = false
+    /// A follow scroll is queued for the next run-loop turn; coalesces bursts of growth.
+    @ObservationIgnored var followPending = false
+    /// Where the last turn starts, in the content.
+    @ObservationIgnored var lastTurnTop: CGFloat = .infinity
+    /// Where the answer being written starts, in the content (reported by its row).
+    @ObservationIgnored var answer: (item: String, top: CGFloat)?
+    /// The view is near the top of what's built (see `TranscriptView.nearTop`).
+    @ObservationIgnored var atTop = false
+    /// It has been at the end once: it opened.
+    @ObservationIgnored var openedAtEnd = false
+    func answerTop(_ item: String) -> CGFloat? {
+        answer?.item == item ? answer?.top : nil
+    }
+
+    func park(at contentHeight: CGFloat) {
+        if !parked { parkedHeight = contentHeight }
+        parked = true
+        refresh()
+    }
+
+    func unpark() {
+        parked = false
+        refresh()
+    }
+
+    func measured(below: CGFloat, height: CGFloat) {
+        self.below = below
+        self.height = height
+        refresh()
+    }
+
+    /// Observed values are written only when they change: each write would update their readers.
+    private func refresh() {
+        // More than a line: the thinking row changing size doesn't count.
+        let unseen = parked && below > 30 && parkedHeight.map { height - $0 > 40 } == true
+        if unseen != self.unseen { self.unseen = unseen }
+        let more = below > 8
+        if more != moreBelow { moreBelow = more }
+    }
+}
+
+extension EnvironmentValues {
+    /// The transcript's scroll tracking, for rows that report where they are (the live answer).
+    @Entry var transcriptTrack: ScrollTrack? = nil
+}
+
+/// The toolbar fade at the top and, where the text carries on below the view, a soft edge.
+struct TranscriptMask: View {
+    let topInset: CGFloat
+    let track: ScrollTrack
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Color.clear.frame(height: max(0, topInset - 12))
+            LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                .frame(height: 28)
+            Color.black
+            LinearGradient(colors: [.black, .black.opacity(track.moreBelow ? 0.05 : 1)], startPoint: .top, endPoint: .bottom)
+                .frame(height: 44)
+        }
+        .ignoresSafeArea()
+    }
+}
+
+/// The pill, when something new came in below where you're reading.
+struct NewBelowPill: View {
+    let track: ScrollTrack
+    let writing: Bool
+    let action: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        ZStack {
+            if track.unseen {
+                NewBelow(writing: writing, action: action)
+                    .padding(.bottom, 14)
+                    .transition(.opacity.combined(with: .scale(scale: 0.92, anchor: .bottom)))
+            }
+        }
+        .animation(Motion.quick(reduced: reduceMotion), value: track.unseen)
+    }
+}
+
 /// The way down to a message that came in below where you're reading.
 private struct NewBelow: View {
     let writing: Bool
@@ -645,18 +1093,99 @@ private struct NewBelow: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 7) {
+            HStack(spacing: TurnSpace.Inset.snug) {
                 Image(systemName: "arrow.down")
                     .symbolEffect(.pulse, options: .repeating, isActive: writing)
                 Text("New message")
             }
             .font(.callout.weight(.medium))
             .padding(.horizontal, 14)
-            .padding(.vertical, 8)
+            .padding(.vertical, TurnSpace.Inset.row)
             .contentShape(.capsule)
         }
         .buttonStyle(.plain)
         .glassEffect(.regular.interactive(), in: .capsule)
         .help("Go to the end and follow the answer")
+    }
+}
+
+/// How many turns there are and which comes first: whether turns were added at the end or
+/// folded in above.
+struct TurnEnds: Equatable {
+    let count: Int
+    let first: TurnState.ID?
+    init(_ turns: [TurnState]) { count = turns.count; first = turns.first?.id }
+}
+
+/// One row of the transcript's lazy stack: a piece of a turn (see `TurnPart`).
+struct TranscriptRow: Identifiable {
+    struct ID: Hashable {
+        let turn: TurnState.ID
+        /// "head", "tail", or the segment's id.
+        let part: String
+    }
+
+    let turn: TurnState
+    let part: TurnPart
+    /// The turn's first row.
+    let first: Bool
+    let gap: CGFloat
+    let id: ID
+}
+
+/// Finished turns' flows, by turn: a finished turn's rows only change when items are added
+/// to it (a notice) or the thinking setting changes. The running turn's is cached too, keyed
+/// by a signature of what the segmentation can depend on (identity, kinds, done, text
+/// emptiness, the visual flags): re-deriving the segments (the activity groups, the visual
+/// scan) on every streamed chunk was O(turn) per 30 Hz batch per mounted turn (see the
+/// perf-structural notes). Never the streaming text itself.
+@MainActor
+final class FlowCache {
+    private struct Entry {
+        var count: Int
+        var thinking: Bool
+        var signature: String?
+        var segments: [TurnFlow.Segment]
+    }
+    private var flows: [TurnState.ID: Entry] = [:]
+
+    func segments(of turn: TurnState, showThinking: Bool) -> [TurnFlow.Segment] {
+        if let hit = flows[turn.id], hit.count == turn.items.count, hit.thinking == showThinking {
+            if turn.finished, hit.signature == nil { return hit.segments }
+            if !turn.finished, hit.signature == Self.signature(of: turn) { return hit.segments }
+        }
+        let segments = TurnFlow(turn.items, showThinking: showThinking).segments
+        flows[turn.id] = Entry(count: turn.items.count, thinking: showThinking,
+                               signature: turn.finished ? nil : Self.signature(of: turn), segments: segments)
+        return segments
+    }
+
+    /// What the segmentation can depend on, item by item: identity, kind, done, and the flags
+    /// `TurnFlow` reads. Text *emptiness* (a message that hasn't said anything doesn't break
+    /// the group) and a thought's `isShort` (a short one is dropped), not the text itself — so
+    /// a streaming answer's growing text leaves the signature alone and the segments stay
+    /// cached between item boundaries.
+    private static func signature(of turn: TurnState) -> String {
+        var out = ""
+        out.reserveCapacity(turn.items.count * 16)
+        for item in turn.items {
+            let kind: String
+            switch item.kind {
+            case .message: kind = item.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "me" : "M"
+            case .reasoning: kind = ActivityGroup.isShort(item) ? "rs" : "RL"
+            case .tool(let name, _): kind = "t:" + name
+            case .notice(let warning): kind = warning ? "nw" : "n"
+            }
+            out += "\(item.id)|\(kind)|\(item.done ? "d" : "u")|"
+            if item.imagePreview != nil { out += "v" }
+            // The segments hold copies of the items: a step that starts waiting on a permission
+            // must rebuild its group, or the card (keyed on `needsPermission`) never shows.
+            if item.needsPermission { out += "w" }
+            if let r = item.result {
+                out += "\(r.present != nil ? "p" : "-")\(r.app != nil ? "a" : "-")\((r.images ?? []).isEmpty ? "-" : "i")\(r.diagram != nil ? "d" : "-")\(r.diff != nil ? "f" : "-")"
+            }
+            out += "|"
+        }
+        return out
     }
 }

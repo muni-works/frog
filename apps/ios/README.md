@@ -1,4 +1,4 @@
-# frog for iPhone, iPad and Apple Watch
+# frog for iPhone and iPad
 
 A remote for frog on your Mac. The work runs on the Mac; the phone watches it, answers frog's
 questions and sends it the next thing.
@@ -28,41 +28,34 @@ a phone asks rather than decides. A `model` choice goes to the pane showing the 
 which does what the Mac's picker would (switch, download first, or ask about the cloud); `manage`
 is the sidebar's row menu (archive, pin, rename).
 
-## The house (no Mac needed)
-
-Settings › The House, and Siri's "Ask Frog about the house", talk to `frog --listen` on a home
-server over HTTPS instead of the Mac bridge. See [../../docs/ios-siri.md](../../docs/ios-siri.md).
-
 ## Targets
 
 | target | what |
 |---|---|
 | `Frog` | the app: list, threads, glass composer, questions, Siri/Shortcuts intents |
-| `FrogNotify` | long-press a question: the command or diff |
-| `FrogWidgets` | Live Activity + Dynamic Island, home/lock widgets, Control Center control |
-| `FrogShare` | "Send to frog" in the share sheet |
-| `FrogWatch` | what needs you (answer with ✕ / ✓) and what's running |
-| `FrogWatchWidgets` | the complication: the iPhone's status widget, built for watchOS |
+| `FrogPush` | opens a sealed push (the relay and Apple see "frog needs you"; the phone has the key) |
+
+The Watch app, widgets and Live Activity, the long-press notification preview and the share
+extension were cut in Phase 5 (docs/plans/2026-10-27-elegant-and-legendary.md).
 
 Shared with the Mac app: `Protocol.swift`, `Diagram.swift`, `FrogFace.swift`.
 
 ## Working on it without a Mac
 
 Recorded sessions (the Mac's `Fixtures/`) play back as if live: answers stream, tools take their
-time, and the first command or edit stops to ask. They drive the Live Activity, widgets and watch
-too.
+time, and the first command or edit stops to ask.
 
 ```
-xcrun simctl launch booted eco.frog.remote -fixtures YES          # the list of recordings
-xcrun simctl launch booted eco.frog.remote -fixture long-answer    # straight into one
+xcrun simctl launch booted toys.frog.remote -fixtures YES          # the list of recordings
+xcrun simctl launch booted toys.frog.remote -fixture long-answer    # straight into one
 ```
 
 ## Against the Mac, in the Simulator
 
 ```
-defaults write eco.frog.dev remoteEnabled -bool YES     # the debug Mac app, eco.frog.dev
-defaults read eco.frog.dev remoteToken                  # the code
-SIMCTL_CHILD_FROG_REMOTE_CODE=<code> xcrun simctl launch booted eco.frog.remote
+defaults write toys.frog.dev remoteEnabled -bool YES     # the debug Mac app, toys.frog.dev
+defaults read toys.frog.dev remoteToken                  # the code
+SIMCTL_CHILD_FROG_REMOTE_CODE=<code> xcrun simctl launch booted toys.frog.remote
 ```
 
 Once connected, the phone registers with the Mac for pushes. In the Simulator the Mac delivers
@@ -71,11 +64,11 @@ a paid team's APNs key and isn't deployed yet.
 
 ## Not done yet
 
-- A paid team: a real device, APNs (and deploying the relay, with rate limits), TestFlight.
-- The complication is built and fed, but hasn't been placed on a watch face in the Simulator.
-- Still Mac-only: races, the morning brief, the terminal and preview panes, the timeline rail,
+- TestFlight. (A real device and APNs work: the relay runs at frog.toys/api/push, with a caller
+  secret and rate limits; the Mac's Settings › General holds the secret.)
+- Still Mac-only: races, the terminal and preview panes, the timeline rail,
   moving a conversation to another folder, `@file` and `/skill` in the composer, and Settings
   beyond spending and energy (models, keys, permissions, MCP).
 
 Everything a phone shows of a conversation is FrogKit's (see ../FrogKit/README.md): change a
-component there and the Mac, iPhone, iPad and extensions all change with it.
+component there and the Mac, iPhone and iPad all change with it.

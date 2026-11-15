@@ -1,13 +1,13 @@
 //! A vision rubric plus local SSIM, with durable, bounded loop state.
-use super::{str_arg, visual, Ctx, Output};
+use super::{Ctx, Output, str_arg, visual};
 use crate::{
     message::{Block, Message, Role},
     provider::{Provider, Request, ToolSpec},
 };
-use anyhow::{bail, Context, Result};
-use image::{imageops::FilterType, DynamicImage, GenericImageView};
+use anyhow::{Context, Result, bail};
+use image::{DynamicImage, GenericImageView, imageops::FilterType};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::time::Duration;
 
 const MAX_DESCRIPTION: usize = 600;
@@ -317,7 +317,7 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
             bail!("invalid loop_id");
         }
         let path = ctx
-            .cwd
+            .root
             .join(".frog/visual-loops")
             .join(format!("{id}.json"));
         visual::workspace_path(ctx, &path)?;
@@ -360,7 +360,7 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         .judge
         .as_ref()
         .context("Compare needs a vision judge; configure compare_model")?;
-    crate::policy::check(&ctx.cwd, &profile.model, profile)?;
+    crate::policy::check(&ctx.root, &profile.model, profile)?;
     crate::sidecar::ensure(profile).await?;
     let provider = Provider::new(profile)?;
     if !profile
@@ -434,6 +434,7 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         think: Some(false),
         think_budget: None,
         cache_key: None,
+        background: false,
     };
     if let Some(tx) = &ctx.progress {
         let _ = tx.send("Judging full images and worst-region crops…".into());

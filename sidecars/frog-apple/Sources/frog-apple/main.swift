@@ -1,7 +1,10 @@
 // frog-apple: Apple's on-device Foundation Model behind an OpenAI-compatible API, so frog (and
 // anything else that speaks /v1/chat/completions) can use it like any local server.
 //
-//   frog-apple [--port 8912]
+//   FROG_APPLE_TOKEN=… frog-apple [--port 8912]
+//
+// Every request but /health needs `Authorization: Bearer $FROG_APPLE_TOKEN` (frog's launcher makes
+// the token and keeps it in its data dir), and a loopback Host, so web pages can't drive it.
 //
 // No native tool calling: frog drives it in `json` tool mode, which arrives here as a
 // `response_format` JSON schema and runs as guided generation, so every reply is a valid action.
@@ -14,6 +17,26 @@ import ImagePlayground
 let modelID = "apple"
 let args = CommandLine.arguments
 let port = args.firstIndex(of: "--port").flatMap { args.indices.contains($0 + 1) ? UInt16(args[$0 + 1]) : nil } ?? 8912
+let token: String = {
+    guard let t = ProcessInfo.processInfo.environment["FROG_APPLE_TOKEN"], t.utf8.count >= 32 else {
+        FileHandle.standardError.write(Data("frog-apple: FROG_APPLE_TOKEN (32+ characters) is required; frog's launcher sets it\n".utf8))
+        exit(2)
+    }
+    return t
+}()
+
+/// Loopback only: a DNS-rebinding page reaches 127.0.0.1 with its own name in Host.
+func loopbackHost(_ host: String?) -> Bool {
+    guard let host else { return false }
+    return ["127.0.0.1:\(port)", "localhost:\(port)", "[::1]:\(port)"].contains(host.lowercased())
+}
+
+func authorized(_ header: String?) -> Bool {
+    guard let header, header.hasPrefix("Bearer ") else { return false }
+    let given = Array(header.dropFirst(7).utf8), want = Array(token.utf8)
+    guard given.count == want.count else { return false }
+    return zip(given, want).reduce(0) { $0 | ($1.0 ^ $1.1) } == 0
+}
 
 func text(_ content: Any?) -> String {
     if let s = content as? String { return s }
@@ -165,6 +188,11 @@ func chat(_ body: [String: Any], _ res: HTTPServer.Response) async {
 
 let ctx = SystemLanguageModel.default.contextSize
 let server = try HTTPServer(port: port) { req, res in
+    guard loopbackHost(req.headers["host"]) else { res.json(403, ["error": ["message": "bad Host"]]); return }
+    let route = req.path.split(separator: "?").first.map(String.init) ?? req.path
+    guard route == "/health" || authorized(req.headers["authorization"]) else {
+        res.json(401, ["error": ["message": "missing or wrong bearer token"]]); return
+    }
     switch (req.method, req.path.split(separator: "?").first.map(String.init) ?? req.path) {
     case ("GET", "/health"): res.json(200, ["status": "ok"])
     case ("GET", "/props"): res.json(200, ["n_ctx": ctx, "default_generation_settings": ["n_ctx": ctx]])
@@ -187,5 +215,18 @@ let server = try HTTPServer(port: port) { req, res in
 }
 server.start()
 FileHandle.standardError.write(Data("frog-apple: listening on http://127.0.0.1:\(port) (context \(ctx))\n".utf8))
+// Started for the Mac app (whose engines pass `FROG_APP_PID` down), it goes when the app does:
+// it's detached from the engine so later sessions reuse it, which left it running, ppid 1, after
+// the app quit or crashed. Started from the CLI, it outlives the engine as before.
+let appWatch: DispatchSourceProcess? = ProcessInfo.processInfo.environment["FROG_APP_PID"]
+    .flatMap { pid_t($0) }
+    .map { pid in
+        let source = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit, queue: .main)
+        source.setEventHandler { exit(0) }
+        source.resume()
+        // Already gone before the watch began (kqueue reports nothing for a dead pid).
+        if kill(pid, 0) != 0, errno == ESRCH { exit(0) }
+        return source
+    }
 NSApplication.shared.setActivationPolicy(.prohibited)
 NSApplication.shared.run()

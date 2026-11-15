@@ -7,17 +7,22 @@ struct PaneArea: View {
     let height: CGFloat
     @Binding var width: CGFloat
     var collapse: (() -> Void)?
+    /// Where a terminal opened from its tab starts.
+    var folder: URL? = nil
     @State private var dragStart: CGFloat?
 
     static let minWidth: CGFloat = 420
     static let maxWidth: CGFloat = 560
 
     private var hub: PaneHub { conversation.panes }
-    private var changeCount: Int { conversation.sessionChanges.count }
+    /// Any changed file at all. The count would walk every turn's diffs per body pass; the
+    /// card's tab list only needs whether there are any (see `Conversation.changesVersion`).
+    private var hasChanges: Bool { conversation.changesVersion > 0 && !conversation.sessionChanges.isEmpty }
 
-    /// Tabs in order: Changes (when there are any), then panes as they opened.
+    /// Tabs in order: Changes, then panes as they opened (the inspector's strip always shows
+    /// Changes, Terminal and Preview; see `strip`).
     var tabs: [PaneHub.Tab] {
-        (changeCount > 0 ? [.changes] : []) + hub.panes.map { .pane($0.id) }
+        [.changes] + hub.panes.map { .pane($0.id) }
     }
 
     private var current: PaneHub.Tab? {
@@ -28,11 +33,16 @@ struct PaneArea: View {
     var body: some View {
         VStack(spacing: 0) {
             strip
-            Divider().opacity(0.5)
             ZStack {
                 if current == .changes {
-                    ChangesInspector(conversation: conversation, maxHeight: height - 44)
-                        .frame(maxHeight: .infinity, alignment: .top)
+                    if hasChanges {
+                        ChangesInspector(conversation: conversation, maxHeight: height - 44)
+                            .frame(maxHeight: .infinity, alignment: .top)
+                    } else {
+                        ContentUnavailableView("No Changes Yet", systemImage: "plusminus",
+                                               description: Text("Files Frog edits show up here."))
+                            .frame(maxHeight: .infinity, alignment: .top)
+                    }
                 }
                 // Panes stay mounted behind the front one: the engine keeps reading a preview
                 // (and a shell keeps its focus) while another tab is up.
@@ -68,6 +78,17 @@ struct PaneArea: View {
                     hub.selected = tab
                 }
             }
+            // The inspector's fixed tabs: Terminal and Preview open their pane when there's none.
+            if !hub.panes.contains(where: { $0.kind == .terminal }), let folder {
+                TabButton(title: "Terminal", symbol: "terminal", selected: false, close: nil) {
+                    hub.openTerminal(cwd: folder)
+                }
+            }
+            if !hub.panes.contains(where: { $0.kind == .preview }) {
+                TabButton(title: "Preview", symbol: "globe", selected: false, close: nil) {
+                    hub.openPreview()
+                }
+            }
             Spacer(minLength: 0)
             if let collapse {
                 Button(action: collapse) {
@@ -75,7 +96,7 @@ struct PaneArea: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
-                .help("Hide panes (⌥⌘0)")
+                .help("Hide inspector (⌥⌘0)")
             }
         }
         .padding(.horizontal, 8)
@@ -133,8 +154,8 @@ private struct TabButton: View {
     var body: some View {
         Button(action: select) {
             HStack(spacing: 5) {
-                Image(systemName: symbol).font(.caption)
-                Text(title).font(.callout).lineLimit(1)
+                Image(systemName: symbol).font(.frog(size: 10))
+                Text(title).font(.frog(size: 12)).lineLimit(1)
                 if let close {
                     Button(action: close) {
                         Image(systemName: "xmark").font(.caption2.weight(.semibold)).frame(width: 14, height: 14)

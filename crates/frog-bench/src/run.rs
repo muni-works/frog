@@ -66,6 +66,9 @@ pub struct RunResult {
     pub presented: Vec<String>,
     pub workspace: PathBuf,
     pub check_output: String,
+    /// Retry storms the engine announced (a 429, a 5xx, a dropped stream): one per storm.
+    #[serde(default)]
+    pub retries: u32,
 }
 
 /// Energy for one run, in watt-hours. `local` is measured on this Mac (the engine, a local model
@@ -168,6 +171,7 @@ pub async fn run(r: Run<'_>) -> Result<RunResult> {
         presented: Vec::new(),
         workspace: r.workspace.clone(),
         check_output: String::new(),
+        retries: 0,
     };
 
     let started = Instant::now();
@@ -191,6 +195,7 @@ pub async fn run(r: Run<'_>) -> Result<RunResult> {
         h.ops.send(Op::Submit {
             text: turn.prompt.clone(),
             images: Vec::new(),
+            more: Vec::new(),
         })?;
         let mut at = Place {
             turn: i as u32,
@@ -278,7 +283,12 @@ async fn drive(
 
 /// Shut the engine down and read what's left.
 async fn close(h: Handle, out: &mut RunResult, at: &mut Place) {
-    let Handle { ops, mut events } = h;
+    // The bench never bridges the IRC bus; `..` keeps this compiling as Handle grows.
+    let Handle {
+        ops,
+        mut events,
+        bus: _,
+    } = h;
     let _ = ops.send(Op::Shutdown);
     while let Ok(Some(env)) = tokio::time::timeout(Duration::from_secs(15), events.recv()).await {
         record(env, out, at);
@@ -345,6 +355,7 @@ fn record(env: Envelope, out: &mut RunResult, at: &mut Place) {
                 }
             }
         }
+        Event::Notice { message, .. } if message.contains("retrying") => out.retries += 1,
         Event::Error { error } => out.error = Some(error.to_string()),
         _ => {}
     }

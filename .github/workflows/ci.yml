@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14, ubuntu-latest]
+        os: [macos-26, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -25,3 +25,106 @@ jobs:
       # No -D warnings yet: frog-engine has outstanding clippy warnings.
       - run: cargo clippy -p frog -p frog-engine
       - run: cargo test -p frog-engine -p frog
+      # schema.rs's artifact_matches_types rewrites schema/frog-engine-1.json from the
+      # protocol types; a diff here means the committed artifact is stale.
+      - name: protocol schema is regenerated and committed
+        run: git diff --exit-code -- crates/frog-engine/schema/frog-engine-1.json
+
+  # cargo passing doesn't mean the app builds: compile the Swift app and run its unit tests.
+  # PRs and main only (not every branch push), since macOS minutes are the expensive ones.
+  macos-app:
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    # The app targets macOS 26 (SwiftPM tools 6.2), so it needs the macOS 26 image's Xcode.
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # The engine build that build-engine.sh runs (cargo registry + target/).
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-app
+      - name: cache SwiftPM sidecar builds
+        uses: actions/cache@v4
+        with:
+          path: |
+            sidecars/frog-apple/.build
+            sidecars/frog-desktop/.build
+          key: sidecars-${{ runner.os }}-${{ hashFiles('sidecars/*/Package.swift', 'sidecars/*/Sources/**') }}
+          restore-keys: sidecars-${{ runner.os }}-
+      - name: install xcodegen
+        run: brew install xcodegen
+      # ToolRowRenderTests reads the rendered tool row back out of its PNG, which is the only
+      # way a test can see the label drawn twice (a hosted SwiftUI view exposes no text to the
+      # accessibility tree). Without this the test skips, and the pixel half of the guard is
+      # absent from CI. Cached: it's a formula, not a build.
+      - name: install tesseract (the tool row's readback)
+        run: |
+          brew install tesseract || brew upgrade tesseract
+          tesseract --version | head -1
+      - name: generate project
+        run: cd apps/macos && xcodegen generate --quiet
+      # build-engine.sh (pre-build phase) builds frog + the frog-apple/frog-desktop sidecars.
+      # No tang checkout here, so it skips tang-llm with a warning (no FROG_REQUIRE_TANG).
+      - name: build
+        run: |
+          cd apps/macos
+          xcodebuild build -quiet \
+            -project Frog.xcodeproj -scheme Frog -configuration Debug \
+            -derivedDataPath build/ci -destination 'platform=macOS,arch=arm64' \
+            CODE_SIGN_IDENTITY="-" DEVELOPMENT_TEAM="" CODE_SIGN_STYLE="Manual"
+      - name: test
+        # xcodebuild passes TEST_RUNNER_* to the test process without the prefix: the tests see
+        # CI and give wall-clock budgets runner room (FrogTests TestRunner). A failing test gets
+        # up to 2 more tries (the window benchmarks share a VM's frames); it must pass once.
+        env:
+          TEST_RUNNER_CI: "true"
+        run: |
+          cd apps/macos
+          xcodebuild test -quiet -retry-tests-on-failure -test-iterations 3 \
+            -project Frog.xcodeproj -scheme Frog -configuration Debug \
+            -derivedDataPath build/ci -destination 'platform=macOS,arch=arm64' \
+            CODE_SIGN_IDENTITY="-" DEVELOPMENT_TEAM="" CODE_SIGN_STYLE="Manual"
+      # Release builds break differently from Debug (DEBUG-only symbols used
+      # unconditionally, warnings as errors differences): the launch pipeline
+      # (release.yml) builds Release, so CI guards it too.
+      - name: build Release
+        run: |
+          cd apps/macos
+          xcodebuild build -quiet \
+            -project Frog.xcodeproj -scheme Frog -configuration Release \
+            -derivedDataPath build/ci-release -destination 'platform=macOS,arch=arm64' \
+            CODE_SIGN_IDENTITY="-" DEVELOPMENT_TEAM="" CODE_SIGN_STYLE="Manual"
+
+      # The remote app's targets (iPhone, iPad, extensions): the same Swift as the Mac, but
+      # these targets compile FrogKit/UI/Basics without UI/Transcript, which is where
+      # cross-folder drift breaks them. Simulator destinations, so no signing is needed.
+      # (The Watch app was cut in fb778843, which removed the FrogWatch and FrogWatchWidgets
+      # targets from project.yml; its build step is gone with them. Restore the targets first
+      # if Watch comes back.)
+      - name: generate iOS project
+        run: cd apps/ios && xcodegen generate --quiet
+      - name: build iOS app
+        run: |
+          cd apps/ios
+          xcodebuild build -quiet \
+            -project FrogRemote.xcodeproj -scheme Frog -configuration Debug \
+            -derivedDataPath build/ci -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      - run: npm run build

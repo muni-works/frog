@@ -1,4 +1,4 @@
-//! `frog-bench export`: a results file as the public JSON frog.eco/energy reads. Everything a
+//! `frog-bench export`: a results file as the public JSON frog.toys/energy reads. Everything a
 //! reader needs to check the numbers, nothing about the machine's owner (no paths, no output).
 
 use crate::run::RunResult;

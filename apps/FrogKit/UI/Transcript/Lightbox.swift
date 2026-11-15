@@ -150,7 +150,7 @@ private struct LightboxView: View {
                     Spacer()
                     Button { dismiss() } label: {
                         Image(systemName: "xmark")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.frog(size: 13, weight: .semibold))
                             .frame(width: 30, height: 30)
                     }
                     .buttonStyle(.plain)
@@ -199,7 +199,7 @@ private struct LightboxView: View {
             #else
             ShareLink(item: Image(platformImage: ns), preview: SharePreview("Image", image: Image(platformImage: ns))) {
                 Image(systemName: "square.and.arrow.up")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.frog(size: 13, weight: .medium))
                     .frame(width: 30, height: 28)
             }
             .buttonStyle(.plain)
@@ -213,7 +213,7 @@ private struct LightboxView: View {
     private func bar(_ symbol: String, _ help: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 13, weight: .medium))
+                .font(.frog(size: 13, weight: .medium))
                 .contentTransition(.symbolEffect(.replace))
                 .frame(width: 30, height: 28)
                 .contentShape(.rect)

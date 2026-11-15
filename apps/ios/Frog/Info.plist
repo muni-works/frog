@@ -20,7 +20,7 @@
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>eco.frog.remote</string>
+			<string>toys.frog.remote</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>frog</string>
@@ -30,7 +30,7 @@
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>FrogKeychainGroup</key>
-	<string>$(AppIdentifierPrefix)eco.frog.remote</string>
+	<string>$(AppIdentifierPrefix)toys.frog.remote</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
@@ -40,11 +40,9 @@
 	<array>
 		<string>_frog._tcp</string>
 	</array>
-	<key>NSSupportsLiveActivities</key>
-	<true/>
 	<key>NSUserActivityTypes</key>
 	<array>
-		<string>eco.frog.conversation</string>
+		<string>toys.frog.conversation</string>
 	</array>
 </dict>
 </plist>

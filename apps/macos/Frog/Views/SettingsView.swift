@@ -1,7 +1,7 @@
 import CoreImage
 import SwiftUI
 
-/// ⌘, : General, Models, Energy, Permissions, MCP, Appearance, Shortcuts.
+/// ⌘, : General, Models, Energy, Lend, Permissions, MCP, Appearance, Shortcuts.
 struct SettingsView: View {
     /// The open tab; "Manage models…" in the model picker sets it to "models".
     @AppStorage("settingsTab") private var tab = "general"
@@ -9,8 +9,10 @@ struct SettingsView: View {
     var body: some View {
         TabView(selection: $tab) {
             Tab("General", systemImage: "gearshape", value: "general") { GeneralSettings() }
-            Tab("Models", systemImage: "cpu", value: "models") { ModelSettings() }
+            Tab("Models", systemImage: "cpu", value: "models") { MachinesSettings() }
+            Tab("Billing", systemImage: "creditcard", value: "billing") { BillingSettings() }
             Tab("Energy", systemImage: "leaf", value: "energy") { EnergySettings() }
+            Tab("Lend", systemImage: "dot.radiowaves.left.and.right", value: "lend") { LendSettings() }
             Tab("Permissions", systemImage: "hand.raised", value: "permissions") { PermissionSettings() }
             Tab("MCP", systemImage: "puzzlepiece.extension", value: "mcp") { MCPSettings() }
             Tab("Appearance", systemImage: "paintbrush", value: "appearance") { AppearanceSettings() }
@@ -27,20 +29,10 @@ private struct GeneralSettings: View {
     @AppStorage("editor") private var editor = ""
     @AppStorage("notifyWhenDone") private var notifyWhenDone = true
     @AppStorage("remoteEnabled") private var remote = false
+    @AppStorage(RemotePush.secretKey) private var pushSecret = ""
     @State private var code = RemoteBridge.token
-    @State private var pond = Pond.shared
-    @AppStorage(CalendarSense.key) private var calendarSense = false
-    @AppStorage(MorningNotice.key) private var morningNotice = true
-
-    private func setCalendar(_ on: Bool) async {
-        guard on else {
-            calendarSense = false
-            CalendarSense.forget()
-            return
-        }
-        calendarSense = await CalendarSense.requestAccess()
-        if calendarSense { await pond.refresh() }
-    }
+    @AppStorage(UpdateDrain.key) private var gracefulUpdates = false
+    @AppStorage(UpdateDrain.budgetKey) private var drainBudget = 20.0
 
     var body: some View {
         Form {
@@ -55,26 +47,16 @@ private struct GeneralSettings: View {
                     .tag(e.id)
                 }
             }
-            Toggle("Notify me when a turn finishes while I'm in another app", isOn: $notifyWhenDone)
+            Toggle("Let frog notify me when I'm in another app", isOn: $notifyWhenDone)
             Section {
-                Toggle("Keep the brief fresh while Frog is closed", isOn: Binding(
-                    get: { pond.background ?? false },
-                    set: { on in Task { await pond.setBackground(on) } }
-                ))
-                .disabled(pond.background == nil)
-                Toggle("Tell me about the brief in the morning", isOn: Binding(
-                    get: { morningNotice },
-                    set: { on in
-                        morningNotice = on
-                        if on { Task { if await Notifier.shared.notAskedYet() { await Notifier.shared.ask() } } }
+                Toggle("Pause agents for app updates and resume them", isOn: $gracefulUpdates)
+                if gracefulUpdates {
+                    Stepper(value: $drainBudget, in: 5...120, step: 5) {
+                        Text("Wait up to \(Int(drainBudget))s for agents to stop")
                     }
-                ))
-                Toggle("Include my calendar", isOn: Binding(
-                    get: { calendarSense },
-                    set: { on in Task { await setCalendar(on) } }
-                ))
+                }
             } footer: {
-                Text("Looks at GitHub every 15 minutes from login, so the brief is ready when you open Frog. In the morning, one notification when there's something new, never more than once a day. Your calendar is read on this Mac and never leaves it. The brief only reads; nothing is sent or changed for you.")
+                Text("Off, an update stops working agents where they are and they resume as after a crash. On, an update asks each agent to stop at its next safe point first, waits up to the budget, then installs — agents resume their turns on the model they were running, right where they stopped. Long-running jobs they had are stopped and listed; the agent decides what to re-run.")
                     .foregroundStyle(.secondary)
             }
             Section {
@@ -89,13 +71,13 @@ private struct GeneralSettings: View {
                         RemoteBridge.shared.start()
                         code = RemoteBridge.token
                     }
+                    SecureField("Push relay secret", text: $pushSecret)
                 }
             } footer: {
-                Text("Scan the code with your iPhone's camera, or pick this Mac in frog and type the code. The connection is encrypted with it. A new code signs out every phone.")
+                Text("Scan the code with your iPhone's camera, or pick this Mac in frog and type the code. The connection is encrypted with it. A new code signs out every phone. The relay secret lets this Mac wake your phone through frog.toys when frog needs you; without it, you only hear while the app is open.")
             }
         }
         .formStyle(.grouped)
-        .task { await pond.loadBackground() }
     }
 }
 
@@ -160,7 +142,7 @@ struct ModelSettings: View {
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
                         Text(section.title)
                         if section.title == ProviderID.localName {
-                            Text("powered by tang").font(.caption2).foregroundStyle(.tertiary) // advanced: the one place the engine is named
+                            Text("powered by tang").font(.frog(size: 10)).foregroundStyle(.tertiary) // advanced: the one place the engine is named
                         }
                     }
                 }
@@ -270,7 +252,7 @@ struct ModelSettings: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(p.name)
                         Text(count(p) == 0 ? "No models in the picker yet" : "\(count(p)) model\(count(p) == 1 ? "" : "s") in the picker")
-                            .font(.caption)
+                            .font(.frog(size: 10))
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
@@ -287,7 +269,9 @@ struct ModelSettings: View {
                     .fixedSize()
                 }
             }
-            if !unconnected.isEmpty {
+            // Cam, 2026-11-12: Frog Cloud serves, so adding your own provider isn't advertised.
+            // The presets and Keychain keys stay; only this entry point is hidden.
+            if !unconnected.isEmpty, !ModelSections.providersHidden {
                 Menu(cloudProviders.isEmpty ? "Add a Provider…" : "Add Another Provider…") {
                     ForEach(unconnected) { p in
                         Button(p.name) { keyFor = p }
@@ -334,7 +318,7 @@ struct ModelSettings: View {
                                  ? "Running · \(count(p)) model\(count(p) == 1 ? "" : "s")"
                                  : up == false ? "Not responding" : "Checking…")
                         }
-                        .font(.caption)
+                        .font(.frog(size: 10))
                         .foregroundStyle(.secondary)
                     }
                     Spacer()
@@ -352,7 +336,11 @@ struct ModelSettings: View {
                 }
                 .help(p.baseUrl)
             }
-            Button("Add Server…") { addingServer = true }
+            // Cam, 2026-11-12: hidden with the providers above; `ServerSheet` and the add-server
+            // path in `ProviderStore` stay for when it comes back.
+            if !ModelSections.providersHidden {
+                Button("Add Server…") { addingServer = true }
+            }
         } header: {
             Text("Servers and Apps")
         } footer: {
@@ -366,14 +354,14 @@ struct ModelSettings: View {
     private var advanced: some View {
         Section {
             DisclosureGroup("Engine details") {
-                Text("Models on This Mac run on tang, frog's engine.") // advanced
-                    .font(.caption)
+                Text("Models on This Mac run on tang, Frog's engine.") // advanced
+                    .font(.frog(size: 10))
                     .foregroundStyle(.secondary)
                 ForEach(models) { m in
                     VStack(alignment: .leading, spacing: 2) {
                         Text(m.spec).font(.callout.monospaced()) // advanced
                         Text("\(m.source) · \(m.toolMode) tool calls · \(m.tier) tier") // advanced
-                            .font(.caption)
+                            .font(.frog(size: 10))
                             .foregroundStyle(.secondary)
                     }
                     .textSelection(.enabled)
@@ -459,7 +447,7 @@ private struct CatalogRow: View {
         Toggle(isOn: Binding(get: { model.enabled ?? false }, set: toggle)) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(model.name)
-                Text(details).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                Text(details).font(.frog(size: 10)).foregroundStyle(.secondary).lineLimit(1)
             }
         }
         .disabled(!(provider?.connected ?? false) && model.enabled != true)
@@ -486,6 +474,24 @@ struct FrogCloudCard: View {
     @State private var store = ProviderStore.shared
 
     static let getKeyURL = URL(string: "https://api.frog.toys/beta")!
+    @State private var signingIn: Task<Void, Never>?
+    /// Why the last sign-in didn't finish (nil once you cancel or retry), and with what.
+    @State private var failure: String?
+    @State private var lastProvider = "github"
+
+    /// GitHub or Google in the browser, back to this Mac with its own key, saved where frog reads it.
+    private func signIn(_ provider: String = "github") {
+        failure = nil
+        lastProvider = provider
+        signingIn = Task {
+            defer { signingIn = nil }
+            do {
+                try await CloudAccount.signInAndSave(provider: provider)
+            } catch {
+                failure = CloudAccount.signInFailure(error)
+            }
+        }
+    }
 
     /// Where the key comes from, or nil when there's none. FROG_API_KEY wins over a saved key.
     static func keyLine(_ source: String?) -> String? {
@@ -501,7 +507,7 @@ struct FrogCloudCard: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "cloud.fill").foregroundStyle(.green.opacity(0.85)).frame(width: 20)
+            Image(systemName: "cloud.fill").foregroundStyle(Color.place(.frogCloud)).frame(width: 20)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(ProviderID.cloudName)
@@ -509,21 +515,36 @@ struct FrogCloudCard: View {
                         .font(.caption2.weight(.semibold))
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
-                        .background(.green.opacity(0.18), in: .capsule)
-                        .foregroundStyle(.green)
+                        .background(Color.place(.frogCloud).opacity(0.18), in: .capsule)
+                        .foregroundStyle(Color.place(.frogCloud))
                 }
                 Text(Self.keyLine(provider?.key) ?? "Fast hosted models from frog. Sign in or add a key to use them.")
-                    .font(.caption)
+                    .font(.frog(size: 10))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                if let failure, signingIn == nil {
+                    HStack(spacing: 6) {
+                        Text(failure).font(.frog(size: 10)).foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button("Try Again") { signIn(lastProvider) }
+                            .controlSize(.mini)
+                    }
+                }
             }
             Spacer()
             if provider?.key == nil {
-                #if FROG_SIGN_IN
-                Button("Sign In") {}
+                if let task = signingIn {
+                    Text("Signing In…").font(.frog(size: 11)).foregroundStyle(.secondary)
+                    Button("Cancel") { task.cancel() }
+                        .controlSize(.small)
+                } else {
+                    Menu("Sign In") {
+                        Button("Continue with GitHub") { signIn("github") }
+                        Button("Continue with Google") { signIn("google") }
+                    }
                     .controlSize(.small)
-                    .disabled(true) // device flow lands post-launch (docs/plans/2026-10-21-frog-account-design.md)
-                #endif
+                    .fixedSize()
+                }
                 Link("Get a Key", destination: Self.getKeyURL)
                     .controlSize(.small)
                 if let provider {
@@ -532,6 +553,8 @@ struct FrogCloudCard: View {
                 }
             } else if let provider {
                 Menu {
+                    Button("Sign In Again with GitHub") { signIn("github") }
+                    Button("Sign In Again with Google") { signIn("google") }
                     Button("Change Key…") { addKey(provider) }
                     // Only a saved key can be removed here; an environment key is the shell's.
                     if provider.key == "keychain" {
@@ -558,17 +581,17 @@ struct KeySheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Connect \(provider.displayName)").font(.headline)
+            Text("Connect \(provider.displayName)").font(.frog(size: 13, weight: .semibold))
             SecureField("API key", text: $key)
                 .textFieldStyle(.roundedBorder)
                 .onSubmit(save)
             if let url = URL(string: provider.keyUrl), !provider.keyUrl.isEmpty {
-                Link("Get a key from \(provider.displayName)", destination: url).font(.callout)
+                Link("Get a key from \(provider.displayName)", destination: url).font(.frog(size: 12))
             }
-            Text("Stored in your Keychain. frog sends it only to \(provider.displayName).")
-                .font(.caption)
+            Text("Stored in your Keychain. Frog sends it only to \(provider.displayName).")
+                .font(.frog(size: 10))
                 .foregroundStyle(.secondary)
-            if let e = store.error { Text(e).font(.caption).foregroundStyle(.red) }
+            if let e = store.error { Text(e).font(.frog(size: 10)).foregroundStyle(.red) }
             HStack {
                 if provider.key == "keychain" {
                     Button("Remove Key", role: .destructive) {
@@ -665,7 +688,9 @@ struct SuggestedModelRow: View {
 // MARK: - Permissions
 
 private struct PermissionSettings: View {
-    @AppStorage("defaultMode") private var defaultMode = Mode.default.rawValue
+    /// New threads start here; Auto by default (a local classifier plus a read-only
+    /// fast path approves plain work; risky steps still ask).
+    @AppStorage("defaultMode") private var defaultMode = Mode.auto.rawValue
     @AppStorage("computerUse") private var computerUse = false
     @AppStorage("sandboxShell") private var sandboxShell = true
 
@@ -695,11 +720,11 @@ private struct PermissionSettings: View {
             }
             Section("Computer use") {
                 Toggle("Let frog see and use other apps", isOn: $computerUse)
-                Text("frog reads windows through Accessibility and acts on their buttons and fields, usually without taking over your screen. Every action asks first unless you allow it, and it never types into password fields. New sessions pick this up.")
+                Text("Frog reads windows through Accessibility and acts on their buttons and fields, usually without taking over your screen. Every action asks first unless you allow it, and it never types into password fields. New sessions pick this up.")
                     .foregroundStyle(.secondary)
             }
             Section("Always-allowed commands") {
-                Text("Command prefixes that never ask (like `cargo check`) live in frog's config file, shared with the terminal app.")
+                Text("Command prefixes that never ask (like `cargo check`) live in Frog's config file, shared with the terminal app.")
                     .foregroundStyle(.secondary)
                 Button("Open config.toml…") {
                     if !FileManager.default.fileExists(atPath: configURL.path) {
@@ -735,17 +760,17 @@ private struct AppearanceSettings: View {
             .pickerStyle(.segmented)
             .help("How much of the model's work a conversation shows. Session › Detail changes it for one conversation.")
             Text((Verbosity(rawValue: verbosity) ?? .normal).detail)
-                .font(.callout)
+                .font(.frog(size: 12))
                 .foregroundStyle(.secondary)
             Section {
                 Toggle("Playful frog", isOn: $playfulFrog)
-                    .help("The frog blinks, reads and hops along with the conversation.")
+                    .help("The frog greets you on a new conversation and hops when you drop a file; the activity line gets playful words.")
                 Toggle("Frog sounds", isOn: $playfulSounds)
                     .help("A quiet plip when you send, a ribbit when a turn finishes, a drip when it needs permission.")
             }
             Section {
                 Toggle("Show energy use", isOn: $showEnergy)
-                    .help("Each turn's watt-hours, from this Mac's power sensor, above what it drew at rest. Cloud models add an estimate for their data center. frog.eco/energy has the method.")
+                    .help("Each turn's watt-hours, from this Mac's power sensor, above what it drew at rest. Cloud models add an estimate for their data center. frog.toys/energy has the method.")
             }
         }
         .formStyle(.grouped)
@@ -803,6 +828,11 @@ struct MCPStatus: Decodable, Identifiable {
     let error: String?
     let tools: [String]
     let quarantined: [Quarantined]
+    /// The server answered 401 and wants an OAuth sign-in: "Sign in" is the button for it,
+    /// and the only thing in frog that opens a browser for MCP. Older engines omit it.
+    let needsAuth: Bool?
+    /// The person already declined this server's sign-in (remembered across sessions).
+    let declined: Bool?
     var id: String { name }
 }
 
@@ -811,6 +841,8 @@ struct MCPStatus: Decodable, Identifiable {
 private struct MCPSettings: View {
     @State private var servers: [MCPStatus] = []
     @State private var loading = true
+    /// Servers with a sign-in in flight, so a second click doesn't open a second browser.
+    @State private var signingIn: Set<String> = []
 
     private var configURL: URL {
         FileManager.default.homeDirectoryForCurrentUser.appending(path: ".config/frog/config.toml")
@@ -827,22 +859,32 @@ private struct MCPSettings: View {
                 ForEach(servers) { s in
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
-                            Image(systemName: s.connected ? "checkmark.circle.fill" : "xmark.octagon.fill")
-                                .foregroundStyle(s.connected ? .green : .red)
+                            Image(systemName: icon(s))
+                                .foregroundStyle(tint(s))
                             Text(s.name).fontWeight(.medium)
                             Spacer()
                             if s.connected {
                                 Text("\(s.tools.count) tool\(s.tools.count == 1 ? "" : "s")").foregroundStyle(.secondary)
+                            } else if s.needsAuth == true {
+                                // Signed out is a state, not a failure: the button is the fix.
+                                Text(s.declined == true ? "signed out · you declined" : "signed out")
+                                    .foregroundStyle(.orange)
+                                if signingIn.contains(s.name) {
+                                    ProgressView().controlSize(.small)
+                                } else {
+                                    Button("Sign in") { signIn(s) }
+                                        .controlSize(.small)
+                                }
                             }
                         }
-                        if let e = s.error {
-                            Text(e).font(.caption).foregroundStyle(.red).lineLimit(3)
+                        if let e = s.error, s.needsAuth != true {
+                            Text(e).font(.frog(size: 10)).foregroundStyle(.red).lineLimit(3)
                         } else if !s.tools.isEmpty {
-                            Text(s.tools.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary).lineLimit(3)
+                            Text(s.tools.joined(separator: " · ")).font(.frog(size: 10)).foregroundStyle(.secondary).lineLimit(3)
                         }
                         ForEach(s.quarantined, id: \.tool) { q in
                             Label("Withheld \(q.tool): its description \(q.reason)", systemImage: "exclamationmark.shield")
-                                .font(.caption)
+                                .font(.frog(size: 10))
                                 .foregroundStyle(.orange)
                         }
                     }
@@ -892,6 +934,35 @@ private struct MCPSettings: View {
                                          cwd: FileManager.default.homeDirectoryForCurrentUser)) ?? []
         loading = false
     }
+
+    /// A server that wants a sign-in isn't broken: a key, not a red octagon.
+    private func icon(_ s: MCPStatus) -> String {
+        if s.connected { return "checkmark.circle.fill" }
+        if s.needsAuth == true { return "key.fill" }
+        return "xmark.octagon.fill"
+    }
+
+    private func tint(_ s: MCPStatus) -> Color {
+        if s.connected { return .green }
+        if s.needsAuth == true { return .orange }
+        return .red
+    }
+
+    /// The only thing in frog that opens a browser for MCP. It runs in this process (a
+    /// one-shot `frog --mcp-signin`), waits at most a few minutes, then reloads the list so
+    /// the server's tools show up without anyone pressing Refresh.
+    private func signIn(_ s: MCPStatus) {
+        guard !signingIn.contains(s.name) else { return }
+        signingIn.insert(s.name)
+        Task {
+            try? await Frog.run(args: ["--mcp-signin", s.name],
+                                cwd: FileManager.default.homeDirectoryForCurrentUser)
+            // Reload either way: a successful sign-in shows the tools, a declined or closed
+            // one leaves the row signed out, and the server's own state is the truth.
+            await load()
+            signingIn.remove(s.name)
+        }
+    }
 }
 
 /// The QR code a phone scans to pair (a `frog://pair` link the Camera app opens in frog), and the
@@ -911,7 +982,7 @@ private struct PairingCard: View {
                     .background(.white, in: .rect(cornerRadius: 10))
             }
             VStack(alignment: .leading, spacing: 8) {
-                Text(RemoteBridge.name).font(.headline)
+                Text(RemoteBridge.name).font(.frog(size: 13, weight: .semibold))
                 Text(code).font(.body.monospaced()).textSelection(.enabled)
                 Button("New Code", action: renew)
             }

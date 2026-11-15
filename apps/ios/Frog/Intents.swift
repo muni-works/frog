@@ -139,8 +139,6 @@ struct FrogShortcuts: AppShortcutsProvider {
                     shortTitle: "Ask frog", systemImageName: "bubble.left.and.text.bubble.right")
         AppShortcut(intent: FrogStatusIntent(), phrases: ["What's \(.applicationName) doing", "Check on \(.applicationName)", "Does \(.applicationName) need me"],
                     shortTitle: "What's frog doing?", systemImageName: "hand.raised")
-        AppShortcut(intent: AskHouseIntent(), phrases: ["Ask \(.applicationName) about the house", "Ask the house with \(.applicationName)", "Check the house with \(.applicationName)"],
-                    shortTitle: "Ask the house", systemImageName: "house")
         AppShortcut(intent: OpenConversationIntent(), phrases: ["Open \(\.$target) in \(.applicationName)"],
                     shortTitle: "Open conversation", systemImageName: "bubble.left")
     }

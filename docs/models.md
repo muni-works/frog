@@ -42,7 +42,7 @@ Use these words, and only these, in every string about models.
 | Accepts images | **Sees images** | vision, multimodal |
 | Thinks before answering | **Reasons** | reasoning tokens, thinking budget |
 | How capable it is for agent work | (not shown; frog adapts on its own) | tier, small/medium/large |
-| Speed | **38 words/s** (measured on this Mac) | tok/s, estimated speeds |
+| Speed | **38 tok/s** (measured on this Mac) | estimated speeds |
 | Price | **Free**, **~4¢ a turn**, **$1.84 this week** | per-M-token prices (hover only) |
 | Doesn't fit | **Needs 32 GB** | OOM, too large |
 | The automatic choice | **Auto** | router, handoff, cascade |
@@ -60,7 +60,7 @@ A value type built in one place (`ModelIdentity(entry:catalog:machine:usage:)`) 
 | `place` | `ModelEntry.source` and the provider | `.mac` (tang, ollama), `.apple`, `.server(name)` (your own servers), `.cloud(provider)`; a config.toml profile follows its provider's local flag, and anything unknown counts as cloud |
 | `abilities` | caps and catalog | `usesTools`, `seesImages`, `reasons` |
 | `fit` | parameter count, quantization, this Mac's memory | `.fits`, `.tight`, `.wontFit(needs: GB)`; local only |
-| `speed` | measured words/s on this Mac, per model | nil until the first turn |
+| `speed` | measured tok/s on this Mac, per model | nil until the first turn |
 | `cost` | catalog prices × this person's recent average turn size | nil for local |
 | `state` | downloads, keys, reachability, project policy | see States |
 | `spec` | `ModelEntry.spec` | for ⌥-hover, Settings > Advanced and the engine only |
@@ -78,7 +78,37 @@ One view, `ModelLabel(identity, size:)`, in four sizes. Every surface picks a si
 | `.menu` | name, place as a subtitle, checkmark | Model menu, Settings default picker, Race sheet, command palette |
 | `.caption` | place icon and name in secondary text | empty conversation, turn footer, session hover |
 
-The place icon is `laptopcomputer` for On this Mac, `apple.intelligence` for Apple Intelligence, `server.rack` for your own servers, `cloud` for Cloud. Cloud names carry a faint tint of the cloud color, while On this Mac stays neutral. Like Safari's lock, the signal is small, always in the same spot, and never loud.
+The place icon is `laptopcomputer` for On this Mac, `apple.intelligence` for Apple Intelligence, `server.rack` for your own servers, `cloud` for Cloud. Like Safari's lock, the signal is small, always in the same spot, and never loud.
+
+### Place color
+
+A model's name, its place tag and the "where it runs" chip are colored by where the model runs, and by nothing else. **Cloud is green, local is blue, everywhere**: the Mac, the phone and the web.
+
+| Place | Color | Token |
+|---|---|---|
+| Any cloud: Frog Cloud, and Anthropic or OpenAI with your own key | cloud green: frog green, the accent (`#2e9e4f` light, `#58cc6f` dark) | `place-cloud` / `Tokens.placeCloud` |
+| Local: this Mac, Apple Intelligence, a paired node or your own server | local blue (`#3478e0` light, `#64a4ff` dark) | `place-local` / `Tokens.placeLocal` |
+
+- Third-party clouds are cloud green too. The color answers "does my code leave my machines?", and for Anthropic or OpenAI it does, the same as for Frog Cloud.
+- A Frog Cloud turn is green whoever's GPUs served it. The served-by name in the footer is a place tag, so it's green too; it no longer turns blue on Frog Cloud's own GPUs.
+- One function decides: `Color.place(_:)` in FrogKit (`ModelIdentity.Place.color` calls it) and `placeColor(placeOf(spec))` in `apps/web/src/models.ts`. No view picks its own green or blue for a place, and `ModelLabel` and `PlaceIcon` take no tint. `ModelIdentityTests` and `apps/web/test/place.test.ts` fail on any that does.
+- Status colors are not place colors: a device's online dot, a running spinner and the send button's ready state keep their own meaning.
+- Both colors come from `design/tokens.json`. The blue sits at the green's lightness so neither shouts: 4.3:1 on white and 8.3:1 on black, against the green's 3.4:1 and 10:1.
+
+### Opacity: Frog Cloud serves, whoever proxied it
+
+Cam, 2026-11-12: "everything remote will go through frog cloud, let's not worry about the providers in the app. it should be opaque — frog cloud serves, and may proxy, but we don't need to tell the user that." This supersedes decisions 1 and 8 of the gateway plan, and decision 6 as far as upstream naming goes.
+
+**Presentation is opaque. Data stays truthful.**
+
+- A Frog Cloud turn reads **"Frog Cloud"** in the footer, whichever upstream answered.
+- `served_by.id`, `served_by.name` and `served_by.third_party` keep saying who really answered. A cache miss or a cost spike is debugged from them, so they stay in the session log and the data model untouched. `/v1/models`'s explicit `served_by.name` is kept verbatim for the same reason.
+- **Cost is not opacity.** A turn that ran cold on an overflow upstream costs several times a warm one; the price stays real and visible. `TurnCosts`/`turnCost` never consult the display helper.
+- **Routing is not touched.** "May proxy" means the gateway keeps its upstream list, failover and sticky sessions.
+- One helper per surface, so the label is reversible in one place: `ServedBy::display_name` (engine), `ServedBy.displayName` (FrogKit), `servedByName` (`apps/web/src/models.ts`). Views render those, never `.name`. Pinned by `protocol::tests::*display_name*`, `apps/web/test/opacity.test.ts` and `OpacityTests` (Mac).
+
+The picker follows the same decision: **This Mac and Frog Cloud only**. Bring-your-own providers are hidden, not deleted — `ModelSections.providersHidden` gates the "Add a Provider…" and "Add Server…" entry points, and the presets, Keychain keys and `ProviderStore` all stay in the code.
+
 
 VoiceOver reads every size as one element: "Qwen3 8B, on this Mac, free" or "Claude Sonnet 5, cloud, Anthropic, about 4 cents a turn".
 
@@ -138,11 +168,11 @@ The same check feeds the Unreachable state: a model whose app or server doesn't 
 
 ## Cost and speed
 
-- **Turn footer** (next to the existing token count): the model caption, then "3¢" for cloud or "41 words/s" for local. Tokens stay on hover.
+- **Turn footer** (next to the existing token count): the model caption, then "3¢" for cloud or "41 tok/s" for local. Tokens stay on hover.
 - **Activity capsule hover:** the conversation's total cost, or average speed.
-- **Measured speed:** words/s per model on this Mac, from finished turns, a rolling median of the last 20. The picker shows it once there is one.
+- **Measured speed:** tok/s per model on this Mac, from finished turns, a rolling median of the last 20. The picker shows it once there is one.
 - **Estimated cost:** the catalog price times this person's median turn size, rounded to a friendly number ("~4¢ a turn"). Before any history, a default turn of 8k in and 1k out.
-- **Built:** `ModelStats` keeps per-model speeds (words/s, the median of the last 20 turns), turn sizes, learned prices and weekly spend. The engine now names the model in each turn's usage (`TurnUsage.model`), so a turn is priced by the model that ran it even after a switch. The turn footer shows the model caption, then cost or speed; tokens are on hover. The picker shows measured speed for your devices and "~4¢ a turn" for cloud. The capsule's hover adds the conversation's cost. "tok/s" joined the banned words.
+- **Built:** `ModelStats` keeps per-model speeds (tok/s, the median of the last 20 turns), turn sizes, learned prices and weekly spend. The engine now names the model in each turn's usage (`TurnUsage.model`), so a turn is priced by the model that ran it even after a switch. The turn footer shows the model caption, then cost or speed; tokens are on hover. The picker shows measured speed for your devices and "~4¢ a turn" for cloud. The capsule's hover adds the conversation's cost. Speed is shown in tok/s everywhere (house rule; never words/s).
 - **Spending cap** (Settings > Models > Cloud, with step 6): optional, per month. At 80% frog says so once. At 100%, Auto goes local-only and cloud models go to a Paused state with "Raise cap…".
 
 ## First run
@@ -167,7 +197,7 @@ Consistency has to be enforced, or it erodes one feature at a time.
 
 - **Snapshot tests** (`FrogTests/SnapshotTests.swift`) render `ModelLabel` in every size × state × place, light and dark. A visual change shows up as a diff in review.
 - **No raw specs in views** (`ModelIdentityTests.testViewsNameModelsOneWay`). The test scans `Frog/Views` for `.spec` on lines that show text (`Text(`, `.help(`, `title:`, `subtitle:`, `Label(`, `Section(`, `Button(`), ignoring ids and tags, and fails with a pointer to this doc.
-- **Vocabulary check.** The same test fails on string literals on those lines that contain "tier", "tool calls", "tool mode", "tang" or "ollama". "tok/s" joins the list when speed moves to words/s (build step 5).
+- **Vocabulary check.** The same test fails on string literals on those lines that contain "tier", "tool calls", "tool mode", "tang" or "ollama". "words/s" joins the list (speed stays in tok/s).
 - **The exception is marked.** A line that is meant to show engine details (Settings' engine hover, the detail card's spec, server setup naming its software) ends with `// advanced`, so every exception is visible in review.
 - **This doc** is the reference: a new model surface picks a `ModelLabel` size, and a new state is added to the table here first.
 
@@ -193,4 +223,4 @@ Steps 1 and 2 are app-only. Steps 3–5 need small engine additions: an escalati
 1. **Is Auto the default once cloud is set up?** Proposed: yes, for new projects that allow cloud; existing conversations keep their model.
 2. **Frog Pro or bring-your-own-key first?** Proposed: Frog Pro is the first-run path (one sign-in, no keys), and keys are the advanced path in Settings. That depends on Pro shipping; until then, keys are the only path and the cloud card says "Add a key…".
 3. **Is cloud permission per project or global?** Proposed: per project, with plain chats sharing one answer.
-4. **Words/s or tokens/s?** Proposed: words/s in the UI (people read words), tokens/s in Advanced and in `frog bench`.
+4. **Words/s or tokens/s?** **Decided: tok/s**, everywhere (UI, Advanced, `frog bench`). Never words/s.

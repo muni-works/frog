@@ -17,6 +17,9 @@ final class WindowState {
     var findQuery = ""
     var findIndex = 0
 
+    /// The composer while its view exists (type-to-focus asks it to take a character).
+    @ObservationIgnored weak var composer: ComposerController?
+
     /// Bumped to ask the composer to take focus / open the race popover / start or stop
     /// dictation.
     private(set) var focusComposerRequest = 0

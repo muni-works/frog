@@ -67,7 +67,7 @@ struct CommandPalette: View {
                 Image(systemName: "command").foregroundStyle(.secondary)
                 TextField("Type a command or session…", text: $query)
                     .textFieldStyle(.plain)
-                    .font(.title3)
+                    .font(.frog(size: 15))
                     .focused($focused)
                     .onSubmit { run(list) }
                     .onKeyPress(.upArrow) { picked = max(0, picked - 1); return .handled }
@@ -86,7 +86,7 @@ struct CommandPalette: View {
                                     Image(systemName: cmd.symbol).frame(width: 20).foregroundStyle(.secondary)
                                     Text(cmd.title).lineLimit(1)
                                     Spacer(minLength: 12)
-                                    Text(cmd.subtitle).foregroundStyle(.secondary).lineLimit(1).font(.callout)
+                                    Text(cmd.subtitle).foregroundStyle(.secondary).lineLimit(1).font(.frog(size: 12))
                                 }
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 7)

@@ -1,0 +1,171 @@
+/* frog — generated from design/tokens.json by design/generate.mjs; edit the JSON, not this file. */
+:root, [data-theme="light"] {
+  --canvas: #ffffff;
+  --bg: #ffffff;
+  --sidebar: #fafafa;
+  --card: #f4f4f4;
+  --well: #ececec;
+  --hover: rgba(0, 0, 0, 0.05);
+  --line: #e3e3e3;
+  --line-strong: #d2d2d2;
+  --fg: #1b1d1a;
+  --muted: #5e5e5e;
+  --faint: #767676;
+  --frog: #2e9e4f;
+  --on-frog: #ffffff;
+  --frog-pad: rgba(46, 158, 79, 0.22);
+  --warn: #c4513d;
+  --notice: #ff9500;
+  --notice-bg: rgba(255, 149, 0, 0.09);
+  --place-local: #3478e0;
+  --place-cloud: #2e9e4f;
+  --pr-failing: #d9403b;
+  --pr-checks: #cc851f;
+  --pr-draft: #8a8a8a;
+  --pr-approved: #2e9e4f;
+  --pr-closed: #b04a3c;
+  --pr-merged: #8250df;
+  --badge-bg: rgba(52, 199, 89, 0.18);
+  --glass-fill: rgba(250, 250, 250, 0.9);
+  --glass-fallback: #fafafa;
+  --glass-edge: rgba(255, 255, 255, 0.7);
+  --mark-skin: #51da60;
+  --mark-spot: #36b347;
+  --mark-ink: #15171a;
+  --mark-paper: #fbfbf9;
+  --icon-ground: #171a18;
+  --icon-ground-deep: #0f110f;
+  --shadow-cta: 0 1px 0 rgba(255, 255, 255, 0.18) inset;
+  --shadow-float: 0 16px 40px -14px rgba(0, 0, 0, 0.22);
+  --shadow-toast: 0 8px 24px -10px rgba(0, 0, 0, 0.35);
+  --shadow-glass: 0 1px 0 rgba(255, 255, 255, 0.7) inset, 0 8px 24px -14px rgba(0, 0, 0, 0.35);
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --canvas: #000000;
+  --bg: #000000;
+  --sidebar: #0a0a0a;
+  --card: #121212;
+  --well: #1a1a1a;
+  --hover: rgba(255, 255, 255, 0.07);
+  --line: #2a2a2a;
+  --line-strong: #383838;
+  --fg: #ececec;
+  --muted: #a3a3a3;
+  --faint: #808080;
+  --frog: #58cc6f;
+  --on-frog: #0d1a10;
+  --frog-pad: rgba(88, 204, 111, 0.22);
+  --warn: #e5775f;
+  --notice: #ff9f0a;
+  --notice-bg: rgba(255, 159, 10, 0.09);
+  --place-local: #64a4ff;
+  --place-cloud: #58cc6f;
+  --pr-failing: #e5775f;
+  --pr-checks: #ff9f0a;
+  --pr-draft: #8e8e8e;
+  --pr-approved: #58cc6f;
+  --pr-closed: #c9705f;
+  --pr-merged: #a887f0;
+  --badge-bg: rgba(48, 209, 88, 0.18);
+  --glass-fill: rgba(10, 10, 10, 0.9);
+  --glass-fallback: #0a0a0a;
+  --glass-edge: rgba(255, 255, 255, 0.12);
+  --mark-skin: #51da60;
+  --mark-spot: #36b347;
+  --mark-ink: #15171a;
+  --mark-paper: #fbfbf9;
+  --icon-ground: #171a18;
+  --icon-ground-deep: #0f110f;
+  --shadow-cta: 0 1px 0 rgba(255, 255, 255, 0.18) inset;
+  --shadow-float: 0 16px 40px -12px rgba(0, 0, 0, 0.95);
+  --shadow-toast: 0 8px 24px -10px rgba(0, 0, 0, 0.35);
+  --shadow-glass: 0 1px 0 rgba(255, 255, 255, 0.12) inset, 0 8px 24px -14px rgba(0, 0, 0, 0.35);
+} }
+:root[data-theme="dark"] {
+  --canvas: #000000;
+  --bg: #000000;
+  --sidebar: #0a0a0a;
+  --card: #121212;
+  --well: #1a1a1a;
+  --hover: rgba(255, 255, 255, 0.07);
+  --line: #2a2a2a;
+  --line-strong: #383838;
+  --fg: #ececec;
+  --muted: #a3a3a3;
+  --faint: #808080;
+  --frog: #58cc6f;
+  --on-frog: #0d1a10;
+  --frog-pad: rgba(88, 204, 111, 0.22);
+  --warn: #e5775f;
+  --notice: #ff9f0a;
+  --notice-bg: rgba(255, 159, 10, 0.09);
+  --place-local: #64a4ff;
+  --place-cloud: #58cc6f;
+  --pr-failing: #e5775f;
+  --pr-checks: #ff9f0a;
+  --pr-draft: #8e8e8e;
+  --pr-approved: #58cc6f;
+  --pr-closed: #c9705f;
+  --pr-merged: #a887f0;
+  --badge-bg: rgba(48, 209, 88, 0.18);
+  --glass-fill: rgba(10, 10, 10, 0.9);
+  --glass-fallback: #0a0a0a;
+  --glass-edge: rgba(255, 255, 255, 0.12);
+  --mark-skin: #51da60;
+  --mark-spot: #36b347;
+  --mark-ink: #15171a;
+  --mark-paper: #fbfbf9;
+  --icon-ground: #171a18;
+  --icon-ground-deep: #0f110f;
+  --shadow-cta: 0 1px 0 rgba(255, 255, 255, 0.18) inset;
+  --shadow-float: 0 16px 40px -12px rgba(0, 0, 0, 0.95);
+  --shadow-toast: 0 8px 24px -10px rgba(0, 0, 0, 0.35);
+  --shadow-glass: 0 1px 0 rgba(255, 255, 255, 0.12) inset, 0 8px 24px -14px rgba(0, 0, 0, 0.35);
+}
+:root {
+  --size-body: 14px;
+  --size-secondary: 13px;
+  --size-status: 12.5px;
+  --size-meta: 11.5px;
+  --size-label: 10.5px;
+  --radius-plate: 7px;
+  --radius-nested: 8px;
+  --radius-banner: 10px;
+  --radius-card: 12px;
+  --radius-field: 16px;
+  --radius-bubble: 16px;
+  --radius-panel: 18px;
+  --radius-pill: 999px;
+  --space-hair: 2px;
+  --space-tight: 4px;
+  --space-snug: 6px;
+  --space-row: 8px;
+  --space-card: 10px;
+  --space-roomy: 12px;
+  --space-field: 14px;
+  --space-icon: 18px;
+  --space-sheet: 20px;
+  --space-gutter: 32px;
+  --measure: 720px;
+  --prompt-width: 540px;
+  --face-pill: 16px;
+  --face-card: 28px;
+  --font-sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+  --font-display: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-rounded: ui-rounded, "SF Pro Rounded", -apple-system, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+.title { font-family: var(--font-sans); font-size: 22px; line-height: 26px; font-weight: 400; }
+.headline { font-family: var(--font-sans); font-size: 13px; line-height: 16px; font-weight: 700; }
+.body { font-family: var(--font-sans); font-size: 13px; line-height: 16px; font-weight: 400; }
+.callout { font-family: var(--font-sans); font-size: 12px; line-height: 15px; font-weight: 400; }
+.callout-semibold { font-family: var(--font-sans); font-size: 12px; line-height: 15px; font-weight: 600; }
+.caption { font-family: var(--font-sans); font-size: 10px; line-height: 13px; font-weight: 400; }
+.caption2-semibold { font-family: var(--font-sans); font-size: 10px; line-height: 13px; font-weight: 600; }
+.code { font-family: var(--font-mono); font-size: 10.5px; line-height: 14px; font-weight: 400; }
+.meta { font-family: var(--font-mono); font-size: 11px; line-height: 16px; font-weight: 400; }
+.hero { font-family: var(--font-display); font-size: 56px; line-height: 1.05; font-weight: 700; letter-spacing: -0.03em; }
+.lede { font-family: var(--font-sans); font-size: 21px; line-height: 1.4; font-weight: 400; }
+.web-body { font-family: var(--font-sans); font-size: 17px; line-height: 1.55; font-weight: 400; }
+.web-button { font-family: var(--font-sans); font-size: 17px; line-height: 22px; font-weight: 600; }
+.web-small { font-family: var(--font-sans); font-size: 14px; line-height: 20px; font-weight: 400; }

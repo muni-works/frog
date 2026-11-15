@@ -18,6 +18,9 @@ struct PromptContext: Identifiable, Equatable {
 
     /// Your request, and the context blocks after it.
     static func split(_ text: String) -> (message: String, contexts: [PromptContext]) {
+        // Nearly every message has no block: skip the regex (slow over a long brief, and the
+        // timeline rail asks for every turn's request on each switch).
+        guard text.contains("<context") else { return (text, []) }
         let block = /<context([^>]*)>\n?([\s\S]*?)\n?<\/context>/
         var contexts: [PromptContext] = []
         for (i, m) in text.matches(of: block).enumerated() {
@@ -41,6 +44,10 @@ struct PromptContext: Identifiable, Equatable {
 }
 
 extension TurnState {
-    /// What you asked, without the context sent along with it.
-    var request: String { PromptContext.split(input).message }
+    /// What you asked, without the context sent along with it: every message of the turn,
+    /// a blank line apart.
+    var request: String {
+        ([input] + more.map(\.text)).map { PromptContext.split($0).message }
+            .filter { !$0.isEmpty }.joined(separator: "\n\n")
+    }
 }

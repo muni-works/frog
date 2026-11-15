@@ -1,0 +1,10 @@
+.assetsignore
+.vercelignore
+.wrangler
+node_modules
+api
+functions
+test
+vercel.json
+worker.js
+wrangler.jsonc

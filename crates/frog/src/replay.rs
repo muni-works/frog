@@ -157,6 +157,10 @@ pub async fn run(spec: &str, speed: f64, ask: bool) -> Result<()> {
             tokens_per_sec: None,
             todos: Vec::new(),
             vision: false,
+            degraded: Vec::new(),
+            ran_on: None,
+            // A replay shows finished turns; nothing is in flight while it plays.
+            waiting: None,
         },
         ops,
     };
@@ -243,6 +247,8 @@ async fn play(p: &mut Player, events: &[Envelope], ask: bool) -> Result<(), Inte
     let mut prev = events.first().map(|e| e.created).unwrap_or(0);
     let mut turn = 0;
     let mut open = false;
+    // A recorded permission request with no answer yet in the log.
+    let mut pending = false;
     for env in events {
         let gap = ((env.created - prev) as f64).clamp(0.0, 1500.0);
         prev = env.created;
@@ -303,6 +309,7 @@ async fn play(p: &mut Player, events: &[Envelope], ask: bool) -> Result<(), Inte
                         preview: diffs.get(id.as_str()).map(|d| (*d).clone()),
                         reason: None,
                         subagent: None,
+                        card: None,
                     });
                     p.answer().await?;
                 }
@@ -366,10 +373,23 @@ async fn play(p: &mut Player, events: &[Envelope], ask: bool) -> Result<(), Inte
             }
             // Ask mode synthesizes its own permission flow.
             Event::PermissionResolved { .. } if ask => {}
+            Event::PermissionRequest { .. } if !ask => {
+                pending = true;
+                p.emit(env.event.clone());
+            }
+            Event::PermissionResolved { .. } => {
+                pending = false;
+                p.emit(env.event.clone());
+            }
             // Questions are put again above, under their own ids.
             Event::QuestionResolved { .. } => {}
             _ => p.emit(env.event.clone()),
         }
+    }
+    // A log that ends on an unanswered permission request (the parity fixture) holds there,
+    // card open and turn running, like an engine waiting on you.
+    if open && pending {
+        return Ok(());
     }
     // A log that ends mid-turn (crash or timeout) still ends cleanly for the client.
     if open {

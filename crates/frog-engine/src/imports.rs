@@ -65,12 +65,18 @@ fn claude_json() -> PathBuf {
 /// Claude Code's MCP servers for a folder: its user-wide ones, then the ones it keeps for
 /// this project (or the nearest folder above it that has some).
 fn claude_servers_in(file: &Path, cwd: &Path) -> BTreeMap<String, ServerConfig> {
-    let Some(j) = std::fs::read(file).ok().and_then(|b| serde_json::from_slice::<ClaudeJson>(&b).ok()) else {
+    let Some(j) = std::fs::read(file)
+        .ok()
+        .and_then(|b| serde_json::from_slice::<ClaudeJson>(&b).ok())
+    else {
         return BTreeMap::new();
     };
     let mut all = j.servers;
     let cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
-    if let Some(p) = cwd.ancestors().find_map(|a| j.projects.get(a.to_string_lossy().as_ref())) {
+    if let Some(p) = cwd
+        .ancestors()
+        .find_map(|a| j.projects.get(a.to_string_lossy().as_ref()))
+    {
         for (name, s) in &p.servers {
             all.entry(name.clone()).or_insert_with(|| s.clone());
         }
@@ -139,7 +145,10 @@ mod tests {
         let here = claude_servers_in(&file, &project.join("apps"));
         assert_eq!(here.keys().collect::<Vec<_>>(), ["fusion", "vcad"]);
         assert_eq!(here["vcad"].args, ["serve"]);
-        assert_eq!(claude_servers_in(&file, &dir).keys().collect::<Vec<_>>(), ["fusion"]);
+        assert_eq!(
+            claude_servers_in(&file, &dir).keys().collect::<Vec<_>>(),
+            ["fusion"]
+        );
         assert!(claude_servers_in(&dir.join("missing.json"), &dir).is_empty());
         let _ = std::fs::remove_dir_all(dir);
     }

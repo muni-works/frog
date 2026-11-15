@@ -112,7 +112,7 @@ final class Race: Identifiable {
 
     /// Stop every attempt and remove the worktrees.
     func discard() {
-        for a in attempts { a.conversation.stop() }
+        for a in attempts { a.conversation.stop(reason: "race discarded") }
         let dirs = attempts.flatMap { ["--discard-attempt", $0.dir.path] }
         let root = root
         Task.detached {

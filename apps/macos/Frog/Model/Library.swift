@@ -13,9 +13,55 @@ final class Library {
     typealias Live = SessionLive
 
     private(set) var sessions: [SessionInfo] = []
+    /// This Mac's sessions and Frog Cloud's, which `sessions` lists together: one list, as
+    /// on the web, each opening through its own link (`isCloud`).
+    private var local: [SessionInfo] = []
+    private var cloud: [SessionInfo] = []
+    private(set) var cloudIDs: Set<String> = []
+
+    func isCloud(_ id: String) -> Bool { cloudIDs.contains(id) }
+
+    /// Frog Cloud's list changed (`CloudSessions` polls it): its rows join this Mac's.
+    func cloudChanged(_ rows: [CloudGateway.Session]) {
+        #if DEBUG
+        // A staging snapshot owns the list: the 15 s poll must not paste the real account's
+        // cloud rows over its fixtures mid-render.
+        if staged { return }
+        #endif
+        let mapped = rows.filter { $0.archived != true }.map(Self.row)
+        // A sandbox still starting reads as running.
+        for r in rows where r.archived != true {
+            let busy = r.state == "starting"  // as on the web; an open one says so itself
+            if busy, live[r.id] == nil { live[r.id] = .running }
+            if !busy, live[r.id] == .running { live[r.id] = nil }
+        }
+        guard mapped != cloud else { return }
+        cloud = mapped
+        cloudIDs = Set(mapped.map(\.id))
+        sessions = local + mapped
+    }
+
+    /// A cloud session as a row: its repo stands where a folder would (`/Frog Cloud/owner/repo`,
+    /// so the row's place reads as the repo), its times the gateway's.
+    static func row(_ s: CloudGateway.Session) -> SessionInfo {
+        let modified = Int64(s.last_turn ?? s.updated)
+        return SessionInfo(id: s.id, modified: modified, created: Int64(s.created ?? s.updated), model: "",
+                           firstInput: nil, title: s.title.isEmpty ? "New session" : s.title,
+                           end: s.state == "error" ? .failed : nil, forkedFrom: nil,
+                           cwd: s.repo.isEmpty ? "/Frog Cloud" : "/Frog Cloud/\(s.repo)")
+    }
     private(set) var pinned: Set<String>
     private(set) var archived: Set<String>
-    private(set) var live: [String: Live] = [:]
+    private(set) var live: [String: Live] = [:] {
+        // The Dock frog wants you exactly when some session is waiting on you.
+        didSet {
+            DockActivity.shared.attention = live.values.contains(.waiting)
+            // A session that stops running settles its tree: the git badge re-reads it.
+            if live != oldValue { GitIndex.shared.liveChanged(from: oldValue, to: live) }
+        }
+    }
+    /// The chief of staff: one session, as a tile above the pins. It keeps its pin.
+    private(set) var chief: String?
     /// Sessions started by another session (`StartSession`): child id → parent id.
     private(set) var parents: [String: String]
     /// The session shown in the key window: finishing there doesn't count as unread.
@@ -23,49 +69,177 @@ final class Library {
     @ObservationIgnored private var windows: [ObjectIdentifier: WeakWindow] = [:]
     @ObservationIgnored private var conversations: [String: WeakConversation] = [:]
     @ObservationIgnored private var refreshing: Task<Void, Never>?
+    /// What the coalesced refresh still owes: every call's scope, merged, until a listing
+    /// answers it. A call cancels the one waiting, so its ids must carry over.
+    @ObservationIgnored private var owed: RefreshScope?
+    /// When the last `frog --sessions --all` started. A listing costs about a second of CPU
+    /// with a thousand sessions, and a streaming session asks for one every second.
+    @ObservationIgnored private var lastListed = ContinuousClock.now - .seconds(60)
+    static let listInterval = Duration.seconds(3)
+    /// The last full listing, kept so a watcher refresh only fetches what changed: the ids the
+    /// watcher names go out as `--sessions --ids` and their rows merge in here. Refreshing one
+    /// session costs ~5 ms instead of the full 1.5 MB listing's 0.05 s + 1,026 stat calls.
+    @ObservationIgnored private var listed: [String: SessionInfo] = [:]
+    /// cwd → whether it exists, cached (folders rarely appear or disappear): the listing filter
+    /// used to stat one per session, 1,026 `fileExists` on the main actor per refresh.
+    @ObservationIgnored private var existingFolders: [String: (exists: Bool, at: ContinuousClock.Instant)] = [:]
+    static let folderCacheTTL: Duration = .seconds(60)
 
     private init() {
         pinned = Set(UserDefaults.standard.stringArray(forKey: "pinnedSessions") ?? [])
         archived = Set(UserDefaults.standard.stringArray(forKey: "archivedSessions") ?? [])
+        chief = UserDefaults.standard.string(forKey: "chiefSession")
         parents = UserDefaults.standard.dictionary(forKey: "sessionParents") as? [String: String] ?? [:]
         _ = SessionDirectoryWatcher.shared
         refresh()
     }
 
-    /// Reload the list (coalesced: a burst of calls makes one `frog --sessions --all`).
-    func refresh() {
+    /// Reload the list (coalesced: a burst of calls makes one `frog --sessions`). With `ids`
+    /// (the watcher's changed set), only those sessions are re-listed (`--sessions --ids`) and
+    /// merged into the cached full listing; without, the full `--sessions --all` runs.
+    func refresh(ids: Set<String> = []) {
+        #if DEBUG
+        dispatchPrecondition(condition: .onQueue(.main))  // see Conversation.apply
+        if staged { return }
+        #endif
+        owed = RefreshScope.merged(owed, ids.isEmpty ? .full : .ids(ids))
         refreshing?.cancel()
         refreshing = Task {
-            try? await Task.sleep(for: .milliseconds(150))
+            let due = lastListed + Self.listInterval - .now
+            try? await Task.sleep(for: max(.milliseconds(150), due))
             guard !Task.isCancelled else { return }
+            lastListed = .now
             let home = FileManager.default.homeDirectoryForCurrentUser
-            if let all = try? await Frog.json([SessionInfo].self, args: ["--sessions", "--all", "--json"], cwd: home) {
-                // A conversation whose folder is gone can't be reopened.
-                // Race attempts live in their own worktrees and are shown in the race, not here;
-                // agents' scratch worktrees aren't projects. Worktrees a session started for
-                // another (`<repo>/.frog/worktrees/`) are shown, under their parent.
-                sessions = all.filter { s in
-                    guard let cwd = s.cwd, !cwd.contains("/.local/share/frog/attempts/"),
-                          !cwd.contains("/.claude/worktrees/") else { return false }
-                    return FileManager.default.fileExists(atPath: cwd)
-                }
-                archiveQuietChats()
-                RemoteBridge.shared.listChanged()
+            // Everything asked for since the last listing that ran, not only this call's ids:
+            // a burst of sessions (twenty headless runs) each cancelled the one before, and a
+            // session whose last change was its turn ending kept its spinner for hours.
+            // A partial refresh with no cached listing has nothing to merge into: full then.
+            guard let scope = owed else { return }
+            owed = nil
+            let ids = scope.ids
+            let known = !ids.isEmpty && !listed.isEmpty
+            let args = known ? ["--sessions", "--ids", ids.sorted().joined(separator: ","), "--all", "--json"]
+                             : ["--sessions", "--all", "--json"]
+            guard let rows = try? await Frog.json([SessionInfo].self, args: args, cwd: home) else {
+                // The listing failed or was cancelled mid-run: still owed, to the next one.
+                owed = RefreshScope.merged(owed, scope)
+                return
+            }
+            #if DEBUG
+            if staged { return }  // a listing already in flight when a snapshot staged its own
+            #endif
+            // Unchanged ids stay as the full listing read them: a partial refresh's rows
+            // replace only their own. Race attempts live in their own worktrees and are
+            // shown in the race card, not here; worker worktrees are shown under their repo
+            // (see `Sidebar.home`).
+            if known {
+                var merged = listed
+                for id in ids { merged.removeValue(forKey: id) }  // keep only refreshed rows
+                for row in rows { merged[row.id] = row }
+                apply(merged.values.filter { present($0) })
+            } else {
+                apply(rows.filter { present($0) })
             }
         }
+    }
+
+    /// Write a listing: only when it changed (every view of the list would rebuild for nothing).
+    private func apply(_ listed: [SessionInfo]) {
+        guard listed != local else { return }
+        local = listed
+        let all = listed + cloud
+        // Children the engine owned itself name their parent in their log: file them in the
+        // tree too, unless the sidebar already has (a MoveSession wins). Through `liveParent`
+        // like every other recording path, so an archived parent files under its live ancestor.
+        for s in listed {
+            guard let p = s.parent, parents[s.id] == nil else { continue }
+            if let resolved = Self.liveParent(p, of: s.id, sessions: all, archived: archived, parents: parents) {
+                parents[s.id] = resolved
+            }
+        }
+        sessions = all
+        self.listed = Dictionary(listed.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        GitIndex.shared.listingChanged(listed)
+        archiveQuietChats()
+        RemoteBridge.shared.listChanged()
+        onOrderInvalidated?()
+    }
+
+    /// Set by `SessionOrder` (the quick-switch shortcuts' cached sidebar order): the listing,
+    /// pins, archive or parents moved, so the cache re-derives. Nothing a streamed turn does
+    /// reaches it — its whole point is to leave the order alone per delta.
+    @ObservationIgnored var onOrderInvalidated: (() -> Void)?
+
+    /// Whether a session's folder exists, from the cache (fresh for `folderCacheTTL`): a
+    /// Documents/Desktop/Downloads session can't be stat'd without a TCC prompt anyway.
+    private func present(_ s: SessionInfo) -> Bool {
+        guard let cwd = s.cwd, !cwd.contains("/.local/share/frog/attempts/") else { return false }
+        if FrogPaths.isPrivacyProtected(cwd) { return true }
+        let now = ContinuousClock.now
+        if let cached = existingFolders[cwd], now < cached.at + Self.folderCacheTTL {
+            return cached.exists
+        }
+        let exists = FileManager.default.fileExists(atPath: cwd)
+        existingFolders[cwd] = (exists, now)
+        return exists
     }
 
     // MARK: Pins and archive
 
     func togglePin(_ id: String) {
+        // The chief keeps its pin (the folded strip and the phone show it as one); Remove
+        // Chief first to unpin it. Flag off, it's a pin like any other.
+        if FeatureFlags.chief, id == chief { return }
         if pinned.remove(id) == nil { pinned.insert(id) }
         UserDefaults.standard.set(Array(pinned), forKey: "pinnedSessions")
+        onOrderInvalidated?()
+    }
+
+    // MARK: Chief
+
+    /// The chief of staff's session, as the sidebar shows it.
+    var chiefSession: SessionInfo? { chief.flatMap { id in sessions.first { $0.id == id } } }
+
+    /// Make session `id` the chief: pinned if it isn't already, never archived.
+    /// (Flag off, this stays reachable from the data layer but the UI never calls it.)
+    func makeChief(_ id: String) {
+        archived.remove(id)
+        pinned.insert(id)
+        UserDefaults.standard.set(Array(pinned), forKey: "pinnedSessions")
+        UserDefaults.standard.set(Array(archived), forKey: "archivedSessions")
+        let was = chief
+        chief = id
+        if was != id { UserDefaults.standard.set(id, forKey: "chiefSession") }
+        onOrderInvalidated?()
+    }
+
+    /// No chief, until one is made again.
+    func removeChief() {
+        chief = nil
+        UserDefaults.standard.removeObject(forKey: "chiefSession")
+        onOrderInvalidated?()
     }
 
     func setArchived(_ id: String, _ on: Bool) {
+        // However it's archived (sidebar, phone, a session's ArchiveSession), nothing queued
+        // for it runs afterwards.
+        if on { SessionBroker.shared.clearQueue(id) }
         if on { archived.insert(id); pinned.remove(id) } else { archived.remove(id) }
+        if on, FeatureFlags.chief, chief == id { chief = nil; UserDefaults.standard.removeObject(forKey: "chiefSession") }
         UserDefaults.standard.set(Array(archived), forKey: "archivedSessions")
         UserDefaults.standard.set(Array(pinned), forKey: "pinnedSessions")
+        onOrderInvalidated?()
+    }
+
+    /// Delete a session: its log goes to the Trash (recoverable from there) and its row leaves
+    /// the list. Archiving first stops anything queued for it.
+    func delete(_ id: String) {
+        setArchived(id, true)
+        let log = FrogPaths.sessions.appending(path: "\(id).jsonl")
+        try? FileManager.default.trashItem(at: log, resultingItemURL: nil)
+        archived.remove(id)
+        UserDefaults.standard.set(Array(archived), forKey: "archivedSessions")
+        onOrderInvalidated?()
     }
 
     /// Plain chats archive themselves after this long without activity, unless pinned, live or
@@ -90,14 +264,136 @@ final class Library {
 
     // MARK: Sessions started by sessions
 
+    /// `StartSession`: file the new session under the session that started it. The recorded
+    /// parent is resolved first (`liveParent`), so a manager archived since it started the
+    /// child doesn't leave the child pointing at a row the sidebar no longer has.
     func setParent(of child: String, to parent: String) {
-        parents[child] = parent
+        let resolved = Self.liveParent(parent, of: child, sessions: sessions, archived: archived, parents: parents)
+        if let resolved { parents[child] = resolved } else { parents.removeValue(forKey: child) }
         UserDefaults.standard.set(parents, forKey: "sessionParents")
+        onOrderInvalidated?()
     }
 
-    /// Part of a group of sessions: started by one, or started one.
-    func isAgentSession(_ id: String) -> Bool {
-        parents[id] != nil || parents.values.contains(id)
+    /// The parent to record for `child`: `wanted` itself when the sidebar has a row for it,
+    /// else the nearest ancestor it does have, else nil.
+    ///
+    /// A parent must be a session the sidebar can show. Archiving hides a session's row but
+    /// keeps it in `sessions`, so a child filed under an archived manager was recorded
+    /// against an id no row carries, and the tree dropped the child to the root (dangling
+    /// parents, 2026-11-13). Cam archives managers routinely, so this is the ordinary case:
+    /// the child files under the nearest live ancestor, and with none it is a top-level row
+    /// rather than a reference to a ghost.
+    ///
+    /// This is the one place that decides, shared by `setParent` (`StartSession`), `move`
+    /// (`MoveSession`) and the engine's own header parent (`apply`), so no path can record a
+    /// dangling reference. It reads the archive live, never migrating what's stored: archive
+    /// state changes at runtime, and rewriting the dictionary would fight it.
+    static func liveParent(_ wanted: String?, of child: String, sessions: [SessionInfo],
+                           archived: Set<String>, parents: [String: String]) -> String? {
+        let live = Set(sessions.map(\.id)).subtracting(archived)
+        // The child is never its own ancestor, and an existing cycle still terminates.
+        var seen: Set<String> = [child]
+        var at = wanted
+        while let current = at, seen.insert(current).inserted {
+            if live.contains(current) { return current }
+            at = parents[current]
+        }
+        return nil
+    }
+
+    /// Why a [`Library.move`] was refused; the message is the tool's error.
+    enum MoveRefusal: Error, Equatable {
+        /// The new parent sits under the session being moved (or is it).
+        case nestsWithinItself
+
+        var message: String {
+            switch self {
+            case .nestsWithinItself:
+                "That would nest the session under itself or one of its descendants."
+            }
+        }
+    }
+
+    /// `MoveSession`: re-file `child` under `parent` (nil unparents; a top-level row
+    /// again). Sidebar nesting only — the log, model, mode and history are the session's
+    /// own. The parent is resolved first (`liveParent`): asking for an archived or vanished
+    /// session files the child under its nearest live ancestor, or unparents it, because a
+    /// recorded parent the sidebar has no row for drops the child to the root. Refuses a move
+    /// that would nest a session under itself or a descendant (the sidebar's tree walks
+    /// tolerate a cycle, but one must never be recorded). Unparenting an unparented session
+    /// is a successful no-op. The recorded parent comes back in the success. `parents` is
+    /// observed, so the sidebar's grouping re-derives on the change.
+    @discardableResult
+    func move(_ child: String, to parent: String?) -> Result<String?, MoveRefusal> {
+        let resolved = parent.flatMap {
+            Self.liveParent($0, of: child, sessions: sessions, archived: archived, parents: parents)
+        }
+        if let resolved {
+            guard !Self.wouldCycle(child, parent: resolved, in: parents) else {
+                return .failure(.nestsWithinItself)
+            }
+            parents[child] = resolved
+        } else {
+            guard parents.removeValue(forKey: child) != nil else { return .success(nil) }
+        }
+        UserDefaults.standard.set(parents, forKey: "sessionParents")
+        onOrderInvalidated?()
+        return .success(resolved)
+    }
+
+    /// Whether moving `child` under `parent` would close a loop: its own descendant. The
+    /// walk is bounded by the recorded parents, so it terminates even on an existing cycle.
+    static func wouldCycle(_ child: String, parent: String?, in parents: [String: String]) -> Bool {
+        guard let parent else { return false }  // unparenting can't cycle
+        // Walk up from the proposed parent: if the child is anywhere above it (or is it),
+        // the move would nest the session under its own subtree.
+        var seen: Set<String> = []
+        var at: String? = parent
+        while let current = at, seen.insert(current).inserted {
+            if current == child { return true }
+            at = parents[current]
+        }
+        return false
+    }
+
+    // MARK: Stored model and mode
+
+    /// Durable per-session overrides, applied by the next engine start (SetSessionModel /
+    /// SetSessionMode while no engine is running).
+    func setStoredModel(_ id: String, _ spec: String) {
+        var stored = UserDefaults.standard.dictionary(forKey: "sessionModels") as? [String: String] ?? [:]
+        stored[id] = spec
+        UserDefaults.standard.set(stored, forKey: "sessionModels")
+    }
+
+    func setStoredMode(_ id: String, _ mode: Mode) {
+        var stored = UserDefaults.standard.dictionary(forKey: "sessionModes") as? [String: String] ?? [:]
+        stored[id] = mode.rawValue
+        UserDefaults.standard.set(stored, forKey: "sessionModes")
+    }
+
+    /// The stored model override for session `id`, if any.
+    func storedModel(_ id: String) -> String? {
+        (UserDefaults.standard.dictionary(forKey: "sessionModels") as? [String: String])?[id]
+    }
+
+    /// The stored permission mode override for session `id`, if any.
+    func storedMode(_ id: String) -> Mode? {
+        (UserDefaults.standard.dictionary(forKey: "sessionModes") as? [String: String])?[id]
+            .flatMap(Mode.init(rawValue:))
+    }
+
+    /// Session `id`'s stored overrides, cleared as they're taken: the engine starting now
+    /// applies them, and after that its log remembers them (`model_changed`/`mode_changed`),
+    /// so a later change made in the session isn't overridden at every restart.
+    func takeStored(_ id: String) -> (model: String?, mode: Mode?) {
+        let taken = (storedModel(id), storedMode(id))
+        for key in ["sessionModels", "sessionModes"] {
+            guard var stored = UserDefaults.standard.dictionary(forKey: key) as? [String: String],
+                  stored.removeValue(forKey: id) != nil else { continue }
+            UserDefaults.standard.set(stored, forKey: key)
+        }
+        return taken
     }
 
     // MARK: Renaming
@@ -123,11 +419,68 @@ final class Library {
         conversations[id]?.value
     }
 
-    /// An open conversation's state; called as its events arrive.
+    /// Every conversation open on this Mac right now.
+    var open: [Conversation] {
+        conversations.values.compactMap(\.value)
+    }
+
+    /// What session `id` is waiting on you for, in a line: its question, the tool it wants
+    /// to run, or the server's request. Nil when it isn't open here or isn't asking.
+    func asking(_ id: String) -> String? {
+        #if DEBUG
+        if let staged = stagedAsks[id] { return staged }
+        #endif
+        guard let c = conversation(id) else { return nil }
+        if let q = c.question { return q.question }
+        if let p = c.permission { return Self.askLine(p) }
+        if let e = c.elicitation { return e.message }
+        return nil
+    }
+
+    #if DEBUG
+    @ObservationIgnored private var stagedAsks: [String: String] = [:]
+    @ObservationIgnored private var staged = false
+
+    /// Snapshot tests: replace the listing with fixtures (nothing persisted, no refresh).
+    func stage(sessions: [SessionInfo], live: [String: Live] = [:], parents: [String: String] = [:],
+               chief: String? = nil, pinned: Set<String> = [], archived: Set<String> = [],
+               asks: [String: String] = [:]) {
+        if !staged { backup = (self.sessions, self.live, self.parents, self.chief, self.pinned, self.archived) }
+        staged = true
+        refreshing?.cancel()
+        self.sessions = sessions
+        self.live = live
+        self.parents = parents
+        self.chief = chief
+        self.pinned = pinned
+        self.archived = archived
+        stagedAsks = asks
+    }
+
+    @ObservationIgnored private var backup: ([SessionInfo], [String: Live], [String: String], String?, Set<String>, Set<String>)?
+
+    /// Back to the real listing after `stage`.
+    func unstage() {
+        guard staged, let b = backup else { return }
+        (sessions, live, parents, chief, pinned, archived) = b
+        stagedAsks = [:]
+        staged = false
+        backup = nil
+    }
+    #endif
+
+    /// An open conversation's state; called as its events arrive. The one truth for the
+    /// sidebar's dot and every list: a session is running when a turn is open OR messages
+    /// are still queued in its engine's inbox (bug 2d — a queued-only session used to read
+    /// as idle until its next turn boundary).
     func report(_ id: String, conversation: Conversation, running: Bool, waiting: Bool) {
+        #if DEBUG
+        dispatchPrecondition(condition: .onQueue(.main))  // see Conversation.apply
+        #endif
         conversations[id] = WeakConversation(value: conversation)
         SessionBroker.shared.observe(id, running: running, waiting: waiting)
-        let now: Live? = waiting ? .waiting : running ? .running : (live[id] == .unread ? .unread : nil)
+        let queued = SessionBroker.shared.pendingInbound(id) != 0
+        let now: Live? = waiting ? .waiting : (running || queued) ? .running : (live[id] == .unread ? .unread : nil)
         if live[id] != now {
             live[id] = now
             RemoteBridge.shared.listChanged()
@@ -143,6 +496,15 @@ final class Library {
 
     func markRead(_ id: String) {
         if live[id] == .unread { live[id] = nil }
+    }
+
+    /// A message landed in session `id`'s engine inbox while it was busy: the sidebar dot
+    /// says running right away, not only at the next turn boundary.
+    func reportQueued(_ id: String) {
+        if live[id] != .waiting, live[id] != .running {
+            live[id] = .running
+            RemoteBridge.shared.listChanged()
+        }
     }
 
     // MARK: Windows

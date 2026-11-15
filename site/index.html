@@ -4,14 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Frog</title>
-<meta name="description" content="A coding agent for your Mac, built for local models.">
+<meta name="description" content="A coding agent that runs on the machines you own. No caps. Your machines. One agent.">
 <meta property="og:title" content="Frog">
-<meta property="og:description" content="A coding agent for your Mac, built for local models.">
-<meta property="og:image" content="https://frog.eco/icon.png">
+<meta property="og:description" content="A coding agent that runs on the machines you own. No caps. Your machines. One agent.">
+<meta property="og:image" content="https://frog.toys/icon.png">
 <meta name="theme-color" content="#f6f5f1" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#141513" media="(prefers-color-scheme: dark)">
-<link rel="icon" href="favicon.svg" type="image/svg+xml">
-<link rel="apple-touch-icon" href="icon.png">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon.png">
 <style>
   :root {
     --bg: #f6f5f1;
@@ -352,7 +352,7 @@
   .pal li.sel span { color: inherit; opacity: .7; }
   .pal li.gone { display: none; }
 
-  /* Energy: one wide card, from the bench's own export (data/bench-v1.json). */
+  /* Energy: one wide card, from the bench's own export (/data/bench-v1.json). */
   .card.wide { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 8px; align-items: center; }
   .stage.energy { flex-direction: row; align-items: center; gap: 24px; height: 150px; padding: 18px 22px; }
   .energy .big { display: flex; align-items: baseline; gap: 6px; flex: none; }
@@ -406,12 +406,26 @@
   footer a { color: inherit; text-decoration-color: var(--faint); text-underline-offset: 3px; }
   footer a:hover { color: var(--fg); }
   footer .end { margin-left: auto; font-family: var(--mono); font-size: 12px; color: var(--faint); }
+  footer nav { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+
+  /* Frog Cloud. */
+  .cloud { margin-top: 64px; }
+  .cloud h2 { font-size: 17px; margin: 0 0 4px; }
+  .cloud > p { color: var(--muted); font-size: 15px; margin: 0 0 14px; }
+  .cloud a { color: var(--accent); text-decoration: none; font-weight: 600; white-space: nowrap; }
+  .cloud a::after { content: " →"; }
+  .prices { list-style: none; margin: 0 0 12px; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .prices li { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+  .prices b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; }
+  .prices span { font-size: 12px; color: var(--muted); }
 
   @media (max-width: 560px) {
     main { padding-top: 40px; }
     h1 { font-size: 44px; }
     .lede { font-size: 19px; }
     .features { grid-template-columns: 1fr; }
+    .prices { grid-template-columns: 1fr; }
+    footer { flex-wrap: wrap; }
   }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { transition: none !important; animation: none !important; }
@@ -436,7 +450,7 @@
     </div>
     <p class="says" aria-live="polite">what shall we fix?</p>
     <h1>Frog</h1>
-    <p class="lede">A coding agent for your Mac, built for local models.</p>
+    <p class="lede">No caps. Your machines. One agent.</p>
     <a class="download" href="/download">
       <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M10 2a1 1 0 0 1 1 1v8.59l2.3-2.3a1 1 0 1 1 1.4 1.42l-4 4a1 1 0 0 1-1.4 0l-4-4a1 1 0 1 1 1.4-1.42L9 11.6V3a1 1 0 0 1 1-1Zm-6 14a1 1 0 0 1 1-1h10a1 1 0 1 1 0 2H5a1 1 0 0 1-1-1Z"/></svg>
       Download for Mac
@@ -445,8 +459,8 @@
   </section>
 
   <picture class="shot">
-    <source srcset="shot-dark.png" media="(prefers-color-scheme: dark)">
-    <img src="shot-light.png" width="2292" height="1612" fetchpriority="high"
+    <source srcset="/shot-dark.png" media="(prefers-color-scheme: dark)">
+    <img src="/shot-light.png" width="2292" height="1612" fetchpriority="high"
          alt="Frog's window: a flaky test found and fixed on Qwen3 Coder 30B, running on this Mac, with the two changed files underneath.">
   </picture>
 
@@ -466,13 +480,13 @@
       <div class="stage" aria-hidden="true">
         <ul class="models">
           <li class="on">apple/on-device<span class="where">this Mac</span></li>
-          <li>tang/Qwen3-4B-4bit<span class="where">Metal</span></li>
-          <li>ollama/qwen3-coder:30b<span class="where">ollama</span></li>
-          <li>anthropic/claude-sonnet-5<span class="where">key</span></li>
+          <li>Qwen3-8B-4bit<span class="where">on a PC</span></li>
+          <li>ollama/qwen3-coder:30b<span class="where">this Mac</span></li>
+          <li>Qwen3-Coder-Next<span class="where">Frog Cloud</span></li>
         </ul>
       </div>
-      <h3>Your models, your Mac</h3>
-      <p>Runs open models itself on Metal, or through ollama and LM Studio. Cloud keys are optional.</p>
+      <h3>Every model, and where it runs</h3>
+      <p>The picker lists models with the machine each would run on. Load one onto a node right from the picker. Cloud keys are optional.</p>
     </li>
     <li class="card" data-play="budget">
       <div class="stage" aria-hidden="true">
@@ -540,16 +554,16 @@
         <span class="line">Worked 42s<span class="skim"> · read 3 files</span> · edited 1 file</span>
       </div>
       <h3>Rewind anything</h3>
-      <p>Every turn is a checkpoint. Undo what it edited and what its commands did.</p>
+      <p>Every turn is a checkpoint. Undo what it edited and what its commands did, or fork a turn and keep every branch in the session tree.</p>
     </li>
     <li class="card" data-play="race">
       <div class="stage" aria-hidden="true">
-        <div class="lane" data-t="2600" data-pass="0"><span class="meta">attempt 1</span><span class="bar"><i></i></span><span class="res"></span></div>
-        <div class="lane" data-t="1900" data-pass="1"><span class="meta">attempt 2</span><span class="bar"><i></i></span><span class="res"></span></div>
-        <div class="lane" data-t="3100" data-pass="0"><span class="meta">attempt 3</span><span class="bar"><i></i></span><span class="res"></span></div>
+        <div class="lane" data-t="2600" data-pass="0"><span class="meta">on a PC</span><span class="bar"><i></i></span><span class="res"></span></div>
+        <div class="lane" data-t="1900" data-pass="1"><span class="meta">this Mac</span><span class="bar"><i></i></span><span class="res"></span></div>
+        <div class="lane" data-t="3100" data-pass="0"><span class="meta">on jetson</span><span class="bar"><i></i></span><span class="res"></span></div>
       </div>
-      <h3>Race attempts</h3>
-      <p>Run one prompt 2–4 ways in parallel worktrees, score them with your tests, keep the best.</p>
+      <h3>The turn survives</h3>
+      <p>If a machine drops out mid-turn, the partial answer is dropped and the turn reruns on the next node with that model, with one line saying so.</p>
     </li>
     <li class="card" data-play="sandbox">
       <div class="stage" aria-hidden="true">
@@ -657,14 +671,49 @@
       <div class="bar"><i></i><i></i><i></i><span>zsh</span><button class="copy" type="button" aria-label="Copy the alias">Copy</button></div>
 <pre><span class="p">$ </span><span class="cmd">alias frog=/Applications/Frog.app/Contents/Resources/frog</span>
 <span class="p">$ </span>frog -m ollama/qwen3-coder:30b
-<span class="p">$ </span>frog -p "why does the build fail?"   <span class="c"># one-shot, to stdout</span></pre>
+<span class="p">$ </span>frog -p "why does the build fail?"   <span class="c"># one-shot, to stdout</span>
+<span class="p">$ </span>frog login                          <span class="c"># sign in to Frog Cloud</span></pre>
     </div>
+  </section>
+
+  <section class="cli" id="nodes">
+    <h2>Every frog is a node</h2>
+    <p>Pair another machine with a 6-digit code: no addresses, no keys to copy. The composer chip and the map show where the model runs. A Linux box with a GPU joins with one command.</p>
+    <div class="term">
+      <div class="bar"><i></i><i></i><i></i><span>your GPU box</span></div>
+<pre><span class="p">$ </span>curl -fsSL https://frog.toys/node | sh   <span class="c"># installs tang-llm, prints a pairing code</span></pre>
+    </div>
+  </section>
+
+  <section class="cloud" id="no-caps">
+    <h2>No caps</h2>
+    <p>Run as many agents as your hardware holds, never rate-limited. Six agents for 15 minutes on Qwen3-8B, with this Mac (M4 Max) added to a PC (RTX 3090):</p>
+    <ul class="prices">
+      <li><b>41</b><span>tasks passed on Mac + PC</span></li>
+      <li><b>21</b><span>tasks passed on the PC alone</span></li>
+      <li><b>0</b><span>rate-limit errors</span></li>
+    </ul>
+    <p>More hardware isn't free: one task got slower with the second machine. <a href="https://github.com/muni-works/frog/blob/main/docs/no-caps-bench.md">The bench</a></p>
+  </section>
+
+  <section class="cloud" id="cloud">
+    <h2>Frog Cloud</h2>
+    <p>When you want more, run the same agent on Qwen3-Coder-Next, served by tang. Paid in dollars per token, from the Mac app or in the browser at frog.toys, with one look across both. New accounts start with a small free credit, no card needed.</p>
+    <p><a href="/pricing">See pricing</a></p>
   </section>
 
   <footer>
     <svg viewBox="0 0 100 100" aria-hidden="true"><path fill-rule="evenodd" d="M12 30a18 18 0 1 0 36 0a18 18 0 1 0 -36 0Z M23.5 27a6.5 6.5 0 1 0 13 0a6.5 6.5 0 1 0 -13 0Z"/><path fill-rule="evenodd" d="M52 30a18 18 0 1 0 36 0a18 18 0 1 0 -36 0Z M63.5 27a6.5 6.5 0 1 0 13 0a6.5 6.5 0 1 0 -13 0Z"/><path fill-rule="evenodd" d="M8 62a42 29 0 1 0 84 0a42 29 0 1 0 -84 0Z M31 66Q50 82 69 66Q50 75 31 66Z M41.5 53a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0 -5 0Z M53.5 53a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0 -5 0Z"/></svg>
     <span>Made by <a href="https://campedersen.com">Cam Pedersen</a></span>
-    <span class="end">eco.frog</span>
+    <nav aria-label="Site">
+      <a href="/pricing">Pricing</a>
+      <a href="https://api.frog.toys/docs">Docs</a>
+      <a href="/privacy">Privacy</a>
+      <a href="https://github.com/muni-works/frog/blob/main/docs/privacy.md">What we count</a>
+      <a href="/terms">Terms</a>
+      <a href="https://api.frog.toys/status">Status</a>
+    </nav>
+    <span class="end">toys.frog</span>
   </footer>
 </main>
 
@@ -760,7 +809,7 @@
   // Not on a Mac: say so where the requirements are.
   const ua = navigator.userAgent;
   const req = document.querySelector(".req");
-  if (/iPhone|iPad|Android/.test(ua)) req.textContent = "Frog is a Mac app. Open frog.eco on your Mac to get it.";
+  if (/iPhone|iPad|Android/.test(ua)) req.textContent = "Frog is a Mac app. Open frog.toys on your Mac to get it.";
   else if (!/Mac/.test(ua)) req.textContent = "Frog is a Mac app, for macOS 26 on Apple silicon.";
 
   // The terminal's copy button copies the alias, and says so.
@@ -870,7 +919,7 @@
         i.style.width = "100%";
         await pause(t);
         const pass = l.dataset.pass === "1";
-        $(l, ".res").textContent = pass ? "✓ tests pass" : "2 failing";
+        $(l, ".res").textContent = pass ? "✓ finished" : "dropped";
         if (pass) l.classList.add("win");
       }));
       el.classList.add("done");
@@ -1009,7 +1058,7 @@
     $$(el, ".fill").forEach(f => (f.style.width = f.dataset.w));
   };
   try {
-    const data = await (await fetch("data/bench-v1.json")).json();
+    const data = await (await fetch("/data/bench-v1.json")).json();
     const solved = data.models.filter(m => m.wh_per_solve != null).sort((a, b) => a.wh_per_solve - b.wh_per_solve);
     const best = solved.find(m => !m.estimated);
     if (best) {

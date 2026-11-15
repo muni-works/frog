@@ -15,9 +15,9 @@ final class PaneLayoutTests: XCTestCase {
     }
 
     func testSplittingTheSameWayJoinsTheRow() {
-        // c takes half of a's space; b keeps its own.
+        // c joins a's row and the row evens out (halving a left three panes at 25/25/50).
         let row = PaneLayout.even(.horizontal, [.leaf(a), .leaf(b)]).inserting(c, beside: a, on: .right)
-        XCTAssertEqual(row, .split(.horizontal, [.leaf(a), .leaf(c), .leaf(b)], weights: [0.25, 0.25, 0.5]))
+        XCTAssertEqual(row, .even(.horizontal, [.leaf(a), .leaf(c), .leaf(b)]))
     }
 
     func testSplittingAcrossNests() {
@@ -35,7 +35,7 @@ final class PaneLayoutTests: XCTestCase {
         // a | (b / c): move c to a's left → c | a | b.
         let grid = PaneLayout.even(.horizontal, [.leaf(a), .even(.vertical, [.leaf(b), .leaf(c)])])
         let moved = grid.removing(c)!.inserting(c, beside: a, on: .left)
-        XCTAssertEqual(moved, .split(.horizontal, [.leaf(c), .leaf(a), .leaf(b)], weights: [0.25, 0.25, 0.5]))
+        XCTAssertEqual(moved, .even(.horizontal, [.leaf(c), .leaf(a), .leaf(b)]))
         XCTAssertEqual(moved.leaves, [c, a, b])
     }
 

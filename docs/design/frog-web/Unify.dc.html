@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>One Frog: the rules</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="ds/frog/tokens.css">
+<link rel="stylesheet" href="ds/frog/components/bundle.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+a{color:var(--frog)}a:hover{color:var(--fg)}
+.zone{border:1.5px dashed var(--line-strong);border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
+.zone b{color:var(--fg);font-size:14px}
+td,th{padding:11px 14px;text-align:left;vertical-align:top}
+tr+tr{border-top:1px solid var(--line)}
+</style>
+</helmet>
+<div data-theme="{{theme}}" class="f-root" style="width: 1280px; height: 1400px; box-sizing: border-box; padding: 60px 64px; background: var(--bg); display: flex; flex-direction: column; gap: 30px; font-size: 15px; line-height: 1.5;">
+  <div style="display: flex; flex-direction: column; gap: 8px; max-width: 900px;">
+    <h1 style="margin: 0; font-family: var(--font-display); font-size: 52px; line-height: 1.05; letter-spacing: -0.03em;">One Frog</h1>
+    <p style="margin: 0; font-size: 20px; color: var(--muted);">One window on Mac and web, the same parts on iPhone and iPad. Only the frame and where work runs change between them.</p>
+  </div>
+
+  <section aria-label="Anatomy of the window" style="display: flex; gap: 10px; height: 330px; padding: 10px; border-radius: 18px; background: var(--canvas); border: 1px solid var(--line);">
+    <div style="width: 230px; display: flex; flex-direction: column; gap: 8px;">
+      <div class="zone"><b>1 · Top links</b>New session, Search, Repos, Routines, Skills</div>
+      <div class="zone"><b>2 · Needs you</b>The question, with Allow and Deny right there</div>
+      <div class="zone" style="flex: 1;"><b>3 · Sessions by repo</b>Status symbol, one-line detail, ☁ when it runs in Frog Cloud</div>
+    </div>
+    <div style="flex: 1; display: flex; flex-direction: column; gap: 8px;">
+      <div class="zone"><b>4 · Title bar</b>Thread title, repo, branch, step, and where it runs</div>
+      <div class="zone" style="flex: 1;"><b>5 · Transcript</b>Tool lines, Decided steps, diff and question cards with real buttons</div>
+      <div class="zone"><b>6 · Composer</b>PR bar above it (repo, branch, bound PR and checks, Commit or Push). Inside it: +, run-on chip, model pill</div>
+    </div>
+    <div class="zone" style="width: 220px;"><b>7 · Inspector</b>Changes, Terminal and Preview tabs. Commit and Open PR live here.</div>
+  </section>
+
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+    <section class="f-card" style="padding: 22px 26px; border-radius: var(--radius-field); display: flex; flex-direction: column; gap: 10px;">
+      <h2 style="margin: 0; font-size: 20px;">Rules</h2>
+      <ul style="margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px;">
+        <li><b>One component per part.</b> Workspace, Composer and Card are shared; boards import them, never redraw them.</li>
+        <li><b>Asks are cards, not modals.</b> Approvals, questions, sign-up and out-of-credits sit in the column.</li>
+        <li><b>One prominent action per view.</b> Everything else is bordered or plain. No glows.</li>
+        <li><b>Say where it runs.</b> Blue for your device, green for Frog Cloud, every time.</li>
+        <li><b>Answerable anywhere.</b> Any approval can be answered from the sidebar, iPhone, Watch or the menu bar; the first answer wins.</li>
+      </ul>
+    </section>
+    <section class="f-card" style="padding: 22px 26px; border-radius: var(--radius-field); display: flex; flex-direction: column; gap: 10px;">
+      <h2 style="margin: 0; font-size: 20px;">Decisions</h2>
+      <ul style="margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px;">
+        <li>The web is cloud-only: each session gets its own Frog Cloud sandbox.</li>
+        <li>Cloud sessions belong to the account and appear on every device; local sessions stay on their Mac.</li>
+        <li>frog.toys opens straight into the app; marketing lives at /mac.</li>
+        <li>iPhone is a full app from the App Store, not a remote.</li>
+        <li>Dark is the default look. Sentence case, no all-caps.</li>
+        <li>Removed: race, the house, the $0.50 trial. Open: onboarding without sign-up.</li>
+      </ul>
+    </section>
+  </div>
+
+  <section style="display: flex; flex-direction: column; gap: 10px;">
+    <h2 style="margin: 0; font-size: 20px;">Only the frame changes</h2>
+    <div style="border: 1px solid var(--line); border-radius: var(--radius-card); background: var(--card); overflow: hidden;">
+      <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+        <thead><tr style="color: var(--muted);"><th></th><th>Mac</th><th>Web</th><th>iPhone</th><th>iPad</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Top of sidebar</th><td>Window controls</td><td>Frog logo</td><td>Large title, list</td><td>Large title, sidebar</td></tr>
+          <tr><th scope="row">Runs on</th><td>This Mac or Frog Cloud</td><td>Frog Cloud only</td><td>Frog Cloud or a paired Mac</td><td>Frog Cloud or a paired Mac</td></tr>
+          <tr><th scope="row">Default model</th><td>qwen3-4b on this Mac</td><td>dart</td><td>dart</td><td>dart</td></tr>
+          <tr><th scope="row">Inspector</th><td>Right pane</td><td>Right pane</td><td>Segmented tabs</td><td>Right pane</td></tr>
+          <tr><th scope="row">Extras</th><td>Menu bar, dictation</td><td>Frog for Mac card</td><td>Lock screen, Live Activity, Watch</td><td>Keyboard shortcuts</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["light","dark"],"default":"dark"},"$preview":{"width":1280,"height":1400}}'>
+class Component extends DCLogic {
+  renderVals() { return { theme: this.props.theme ?? 'dark' }; }
+}
+</script>
+</body>
+</html>

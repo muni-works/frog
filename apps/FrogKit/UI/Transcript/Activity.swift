@@ -4,11 +4,15 @@ import SwiftUI
 /// "Interrupted". The Mac's activity viewer leads with it; the phone's chat title shows it.
 struct ActivityLabel: View {
     let conversation: Conversation
-    /// The frog's face as the icon, or a plain symbol (Settings › Appearance on the Mac).
+    /// Playful words ("Hopping to it", "Caught it") or plain ones (Settings › Appearance on the
+    /// Mac). The icon is a plain symbol either way.
     var playful = true
     var maxWidth: CGFloat = 300
 
     var body: some View {
+        #if DEBUG
+        let _ = PillProbe.label()
+        #endif
         if conversation.failure != nil {
             HStack(spacing: 7) {
                 icon { Image(systemName: "exclamationmark.octagon.fill").foregroundStyle(.red) }
@@ -21,15 +25,14 @@ struct ActivityLabel: View {
                 Text("Opening…").foregroundStyle(.secondary)
             }
         } else if conversation.busy, let turn = conversation.turns.last, !turn.finished {
-            TimelineView(.periodic(from: .now, by: 1)) { _ in
-                HStack(spacing: 7) {
-                    icon { Image(systemName: Self.symbol(turn)).foregroundStyle(.tint) }
-                    // Hugs the text, up to `maxWidth`.
-                    Text(Self.live(turn, in: conversation)).lineLimit(1).truncationMode(.middle)
-                        .frame(maxWidth: maxWidth, alignment: .leading)
-                        .fixedSize(horizontal: true, vertical: false)
-                    Text(Self.elapsed(turn)).foregroundStyle(.secondary).monospacedDigit()
-                }
+            // No clock here: the app keeps exactly one, the live status row in the transcript.
+            // The words change when the work does, so the label has nothing to tick for.
+            HStack(spacing: 7) {
+                icon { Image(systemName: Self.symbol(turn)).foregroundStyle(.tint) }
+                // Hugs the text, up to `maxWidth`.
+                Text(Self.live(turn, in: conversation)).lineLimit(1).truncationMode(.middle)
+                    .frame(maxWidth: maxWidth, alignment: .leading)
+                    .fixedSize(horizontal: true, vertical: false)
             }
         } else if conversation.busy {
             HStack(spacing: 7) {
@@ -51,20 +54,16 @@ struct ActivityLabel: View {
             }
         } else {
             HStack(spacing: 7) {
-                icon { Image(systemName: "circle.fill").font(.system(size: 7)).foregroundStyle(.green) }
+                icon { Image(systemName: "circle.fill").font(.frog(size: 7)).foregroundStyle(.green) }
                 Text("Ready").foregroundStyle(.secondary)
             }
         }
     }
 
-    /// The frog, or the plain symbol when the playful frog is off.
-    @ViewBuilder
+    /// The state's plain symbol. The frog's face is retired from the live chrome (it stays on
+    /// the empty page and decorative spots); `playful` now only flavors the words.
     private func icon(@ViewBuilder plain: () -> some View) -> some View {
-        if playful {
-            FrogFace(mood: conversation.failure != nil ? .sad : conversation.mood, size: 16).frame(width: 16)
-        } else {
-            plain().frame(width: 14)
-        }
+        plain().frame(width: 14)
     }
 
     /// A permission prompt or a server's question, in a few words.
@@ -87,15 +86,15 @@ struct ActivityLabel: View {
     static func live(_ turn: TurnState, in c: Conversation) -> String {
         if c.permission != nil { return "Waiting for your permission" }
         guard let last = turn.items.last else { return "Thinking" }
+        // A Task in hand: the agents say what they're doing in the sidebar; here, how many.
+        if let waiting = c.waitingOnAgents(turn) { return waiting }
         switch last.kind {
-        case .tool("Task", _):
-            return "Subagent: \(last.subagent?.activity ?? "Starting")"
         case .tool(let name, let arg):
             let verb = ["Bash": "Running", "Read": "Reading", "Edit": "Editing", "Write": "Writing",
-                        "Grep": "Searching", "Glob": "Finding", "Diagram": "Drawing", "CodeMap": "Mapping",
+                        "Grep": "Searching", "Glob": "Finding", "Diagram": "Drawing", "Visualize": "Making a visual", "VisualGuide": "Reading the visual guide", "CodeMap": "Mapping",
                         "Present": "Laying out", "Ask": "Asking",
-                        "Task": "Delegating", "McpTools": "Finding tools", "Skill": "Loading skill",
-                        "WebFetch": "Fetching", "WebSearch": "Searching the web", "Docs": "Reading docs"][name]
+                        "Task": "Delegating", "McpTools": "Finding tools", "ToolSearch": "Finding tools", "Skill": "Loading skill",
+                        "WebFetch": "Fetching", "WebSearch": "Searching the web", "Docs": "Reading docs", "Models": "Listing models"][name]
                 ?? ToolIcon.title(name)
             return arg.isEmpty ? verb : "\(verb) \(arg)"
         case .reasoning: return "Thinking"
@@ -104,12 +103,7 @@ struct ActivityLabel: View {
         }
     }
 
-    /// "12s", "3m 4s": a running turn so far, or a finished one start to end.
-    static func elapsed(_ turn: TurnState) -> String {
-        guard let a = turn.startedAt else { return "" }
-        return clock(Int((turn.endedAt ?? .now).timeIntervalSince(a)))
-    }
-
+    /// "12s", "3m 4s": a finished turn, start to end.
     static func duration(_ turn: TurnState) -> String? {
         guard let a = turn.startedAt, let b = turn.endedAt else { return nil }
         return clock(Int(b.timeIntervalSince(a)))
@@ -121,10 +115,17 @@ struct ActivityLabel: View {
         switch end {
         case .complete: ("Finished", "checkmark.circle.fill", .green)
         case .denied: ("Stopped: permission denied", "hand.raised.fill", .orange)
+        case .blockedOnApproval: ("Stopped: retried a denied call", "hand.raised.fill", .orange)
         case .cancelled: ("Interrupted", "stop.circle.fill", .secondary)
-        case .maxTokens: ("Hit the output limit", "text.append", .orange)
+        case .suspended: ("Suspended for app update", "pause.circle.fill", .secondary)
+        case .maxTokens(let autoContinued): (
+            autoContinued == 0 ? "Hit the output limit" : "Hit the output limit (\(autoContinued)x)",
+            "text.append",
+            .orange
+        )
         case .looping: ("Stopped: repeating itself", "arrow.trianglehead.2.clockwise", .orange)
         case .stepLimit: ("Stopped at the step limit", "flag.checkered", .orange)
+        case .billingLimit: ("Out of credit", "creditcard", .secondary)
         case .error: ("Failed", "exclamationmark.octagon.fill", .red)
         }
     }
@@ -186,8 +187,9 @@ struct ActivityPanel: View {
             HStack(alignment: .firstTextBaseline) {
                 Text(turn.number.map { "Turn \($0)" } ?? "This turn").font(.headline)
                 Spacer()
-                TimelineView(.periodic(from: .now, by: 1)) { _ in
-                    Text(ActivityLabel.elapsed(turn)).font(.callout.monospacedDigit()).foregroundStyle(.secondary)
+                // How long it took, once it's done; a running turn's clock is the transcript's.
+                if let d = ActivityLabel.duration(turn) {
+                    Text(d).font(.callout.monospacedDigit()).foregroundStyle(.secondary)
                 }
             }
             if !turn.input.isEmpty {
@@ -222,7 +224,7 @@ struct ActivityPanel: View {
 
     private func stats(_ u: TurnUsage) -> some View {
         var parts = ["\(u.modelCalls) call\(u.modelCalls == 1 ? "" : "s")", "\(u.inputTokens.tokens) in", "\(u.outputTokens.tokens) out"]
-        if let tps = u.tokensPerSec, tps > 0 { parts.append(ModelStats.speedText(tps * ModelStats.wordsPerToken)) }
+        if let tps = u.tokensPerSec, tps > 0 { parts.append(ModelStats.speedText(tps)) }
         if let c = ModelStats.shared.cost(of: u) { parts.append(ModelStats.money(c)) }
         if UserDefaults.standard.bool(forKey: ModelStats.energyKey), let e = u.energy {
             parts.append(ModelStats.energy(e.totalWh, estimated: e.estimated))
@@ -272,7 +274,15 @@ struct WorkingLine: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1 / 60, paused: reduceMotion)) { ctx in
+        #if DEBUG
+        let _ = PillProbe.line()
+        #endif
+        // The sweep rides a 1Hz beat, not its own 60/s timeline: the motion is 1.6s long, so
+        // one step a second is indistinguishable at this height and the churn mostly leaves.
+        TimelineView(.periodic(from: .now, by: 1)) { ctx in
+            #if DEBUG
+            let _ = PillProbe.line()
+            #endif
             GeometryReader { geo in
                 let w = geo.size.width
                 let t = ctx.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1.6) / 1.6

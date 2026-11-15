@@ -16,6 +16,9 @@ struct OpenSession: Codable, Equatable, Sendable {
     var userStopped = false
     /// Messages typed while a turn ran, not yet sent; they're sent after the restore.
     var queued: [String] = []
+    /// The turn was suspended by an app update's drain (`Op::Drain`), so it carries on at
+    /// relaunch on this session's stored model — with the update notice, not the crash one.
+    var suspendedByUpdate = false
 }
 
 /// Everything open, written on every change to
@@ -27,6 +30,9 @@ struct OpenSessions: Codable, Equatable, Sendable {
     var quit: Quit?
     /// Sessions the user said not to pick back up on their own after a restart.
     var noAutoContinue: [String] = []
+    /// The relaunch was an update whose drains the app waited for: suspended turns resume
+    /// with the update notice.
+    var afterUpdate = false
 
     enum Quit: String, Codable, Sendable {
         /// Quit, keeping running turns to carry on next launch.
@@ -78,7 +84,10 @@ final class SessionRegistry {
     private let enabled: Bool
     private var frozen = false
 
-    init(url: URL = SessionRegistry.defaultURL, enabled: Bool = !SingleInstance.isTesting && !MorningNotice.headless) {
+    /// A replay (`-FrogReplay`, the parity harness and hero shots) shows its fixture and nothing
+    /// else: it neither restores the last run's sessions nor writes over the user's list.
+    init(url: URL = SessionRegistry.defaultURL,
+         enabled: Bool = !SingleInstance.isTesting && UserDefaults.standard.string(forKey: "FrogReplay") == nil) {
         self.url = url
         self.enabled = enabled
         let loaded = Self.load(url) ?? OpenSessions()
@@ -105,6 +114,28 @@ final class SessionRegistry {
         guard let data = try? enc.encode(s) else { return }
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? data.write(to: url, options: .atomic)
+    }
+
+    /// The resume manifest for an update: how every session stands right now, marked
+    /// `quit = .resume` (so every restore action is `.continue`) and `afterUpdate` (so
+    /// suspended turns get the update notice). Written after the drains finish, before
+    /// Sparkle terminates the app; the new app reads it at launch.
+    func manifestForUpdate() {
+        var next = OpenSessions()
+        next.sessions = snapshot()
+        for i in next.sessions.indices {
+            // The turn the drain suspended: its engine ended it `suspended` and closed its
+            // turn, so `turnRunning` is false again — `suspendedByUpdate` is what says "carry
+            // this one on".
+            let c = Library.shared.conversation(next.sessions[i].id)
+            next.sessions[i].suspendedByUpdate = c.map { $0.turns.last?.end == .suspended } ?? false
+            next.sessions[i].turnRunning = next.sessions[i].suspendedByUpdate || next.sessions[i].turnRunning
+        }
+        next.quit = .resume
+        next.afterUpdate = true
+        guard enabled else { return }
+        Self.save(next, to: url)
+        frozen = true
     }
 
     /// Whether windows opening now will be handed sessions to restore.
@@ -176,8 +207,12 @@ final class SessionRegistry {
     // MARK: Restoring
 
     /// Whether the engine has a log for this session (`-r` fails without one).
+    /// Looked up where the engine looks: under `$HOME`, which a launch can set (the parity
+    /// harness's throwaway home) apart from the account's home. Checking the account's home
+    /// resumed ids the engine couldn't find ("no session …: No such file or directory").
     static func logExists(_ id: String) -> Bool {
-        let home = FileManager.default.homeDirectoryForCurrentUser
+        let home = ProcessInfo.processInfo.environment["HOME"].map { URL(fileURLWithPath: $0) }
+            ?? FileManager.default.homeDirectoryForCurrentUser
         return FileManager.default.fileExists(atPath: home.appending(path: ".local/share/frog/sessions/\(id).jsonl").path)
     }
 
@@ -195,7 +230,15 @@ final class SessionRegistry {
                 panes.add(workspace)
             }
             guard let c = workspace.conversation else { continue }
-            if previous.action(for: s) == .continue { c.continueInterrupted() }
+            switch (previous.afterUpdate, previous.action(for: s)) {
+            case (true, true == s.suspendedByUpdate ? .continue : .reopen):
+                // An update drained this session: carry it on with the update notice (the
+                // engine runs on the session's stored model from the log header, never the
+                // default or a sender's).
+                if s.suspendedByUpdate { c.continueAfterUpdate() }
+            case (_, .continue): c.continueInterrupted()
+            case (_, .reopen): break
+            }
             for text in s.queued { c.submit(text) }
         }
     }
@@ -234,6 +277,45 @@ private struct WeakPanes {
 /// Asks before quitting while turns run: carry on with them next launch, or let them go.
 @MainActor
 final class QuitGuard: NSObject, NSApplicationDelegate {
+    /// One Frog at a time: a second copy of the same build hands over and quits (the
+    /// machine-wide lock already stopped the rest — this catches a same-build copy that raced
+    /// past `handOff`'s lock check). Test hosts are left alone: XCTest launches the app to run
+    /// its tests, and its runner exits "code 0 before establishing connection" if this quits
+    /// while one is open.
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        // Session rows name models as the picker does (see `ModelIdentity.rowName`).
+        ModelIdentity.rowName = { Workspace.modelName($0) }
+        guard !SingleInstance.isTesting, let id = Bundle.main.bundleIdentifier else { return }
+        let me = ProcessInfo.processInfo.processIdentifier
+        guard let other = NSRunningApplication.runningApplications(withBundleIdentifier: id)
+            .first(where: { $0.processIdentifier != me && !$0.isTerminated })
+        else { return }
+        SingleInstance.passFolder()
+        other.activate()
+        exit(0)
+    }
+
+    /// Hand-offs from a second copy reach the app, not a window, so none is lost with every
+    /// window closed.
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        guard !SingleInstance.isTesting else { return }
+        Snapshot.scheduleIfAsked()
+        SingleInstance.listen()
+    }
+
+    /// A folder opened from Finder or dropped on the Dock icon while Frog runs: its own window.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls where url.hasDirectoryPath || (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
+            FolderOpener.open(url)
+        }
+    }
+
+    /// frog came forward: the "something finished while you were away" badge has been looked
+    /// at. (Pending permission requests keep their count — those are still blocked work.)
+    func applicationDidBecomeActive(_ notification: Notification) {
+        Notifier.shared.focus()
+    }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         let registry = SessionRegistry.shared
         let running = registry.running

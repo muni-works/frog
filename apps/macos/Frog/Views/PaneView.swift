@@ -16,6 +16,9 @@ struct PaneView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.controlActiveState) private var activeState
     @Namespace private var glass
+    /// This pane's width: when it can't fit the rail beside the transcript's column, the column
+    /// gives way rather than running under the rail.
+    @State private var width: CGFloat = 1_200
 
     static let headerHeight: CGFloat = 32
 
@@ -25,6 +28,11 @@ struct PaneView: View {
     private var focused: Bool { panes.focusedID == pane.id }
     private var changesVisible: Bool { changesDocked || (pane.peekChanges && pane.hasTabs) }
     private var margin: CGFloat { WorkspaceView.margin }
+
+    /// Room right of the centered 820 pt column, short of the rail (the rail's labels use it).
+    private func gutter(_ w: CGFloat) -> CGFloat {
+        max(0, (w - insets.leading - insets.trailing - 820) / 2 + insets.trailing - TimelineRail.width - margin - 12)
+    }
 
     var body: some View {
         paneBody
@@ -49,32 +57,41 @@ struct PaneView: View {
 
             GeometryReader { geo in
                 let room = max(120, geo.size.height - margin * 2)
+                // The transcript is a centered 820 pt column: what's right of it, short of the rail.
+                let gutter = gutter(geo.size.width)
                 GlassEffectContainer(spacing: 20) {
                     HStack(alignment: .top, spacing: 0) {
                         Spacer(minLength: 0)
-                        instruments(room: room)
+                        instruments(room: room, gutter: gutter)
                     }
                 }
                 .padding(margin)
             }
 
+        }
+        // Overlays, not stack members: a wide pill or find bar can't widen the pane (a split
+        // pane's fixed-size pill did, spilling its rail and text over the next pane).
+        .overlay(alignment: .top) {
             if let number {
                 header(number)
                     .padding(.leading, insets.leading)
                     .padding(.trailing, insets.trailing)
                     .padding(.top, margin)
-                    .frame(maxWidth: .infinity)
             }
-
+        }
+        .overlay(alignment: .top) {
             if ui.findShown, let conversation {
                 FindBar(state: ui, turns: conversation.turns)
                     .padding(.leading, insets.leading)
                     .padding(.trailing, insets.trailing)
-                    .frame(maxWidth: .infinity)
                     .padding(.top, margin + (number == nil ? 0 : Self.headerHeight + 8))
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
+        // Nothing (pill, rail, changes) draws into the pane beside it.
+        .clipped()
+        .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width = $0 }
+        .environment(\.paneWidth, number == nil ? .wide : PaneWidth(width))
         .environment(\.canvasInsets, insets)
         .environment(\.projectFolder, workspace.folder)
         .environment(\.models, workspace.models)
@@ -110,12 +127,8 @@ struct PaneView: View {
                 if let n = undoTurn?.number { Task { await workspace.rewind(toBefore: n) } }
             }
         } message: {
-            Text("Files frog edited in that turn go back to how they were, and the conversation continues from just before it. The current session is kept, so you can go back to it.")
+            Text("Files Frog edited in that turn go back to how they were, and the conversation continues from just before it. The current session is kept, so you can go back to it.")
         }
-        .onChange(of: workspace.conversation?.busy ?? false, initial: true) { _, busy in
-            DockActivity.shared.set(ObjectIdentifier(workspace), busy: busy)
-        }
-        .onDisappear { DockActivity.shared.set(ObjectIdentifier(workspace), busy: false) }
         // A new workspace in this pane starts its views fresh.
         .id(ObjectIdentifier(workspace))
     }
@@ -133,27 +146,39 @@ struct PaneView: View {
 
     @ViewBuilder
     private var detail: some View {
-        if let race = workspace.race {
-            RaceView(race: race) { workspace.endRace() }
+        if let id = workspace.opening, id != workspace.conversation?.sessionID, id != workspace.conversation?.cloudSession {
+            OpeningPane(title: Library.shared.sessions.first { $0.id == id }?.displayTitle)
         } else if let conversation = workspace.conversation {
             TranscriptView(
                 conversation: conversation,
                 actions: turnActions,
                 jump: Bindable(ui).jumpTo,
-                onVisibleTurns: { ui.visibleTurns = Set($0) }
+                // Called from the scroll view's layout: the rail reads this, so the write waits
+                // for the next turn of the run loop (latest wins) rather than changing the
+                // window's graph while it updates, and only when the set actually changed.
+                onVisibleTurns: { ids in
+                    let visible = Set(ids)
+                    DispatchQueue.main.async { if ui.visibleTurns != visible { ui.visibleTurns = visible } }
+                }
             )
             // Another conversation is a fresh scroll view, starting at its end, not this one's
             // offset over different content.
             .id(ObjectIdentifier(conversation))
+            // No gray scroll-edge wash behind the composer: true black runs to the bottom.
+            .scrollEdgeEffectHidden(true, for: .bottom)
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 VStack(spacing: 0) {
+                    // A race's outcome: one card at the foot of the conversation.
+                    if let race = workspace.race {
+                        RaceCard(race: race) { workspace.endRace() }
+                    }
                     ResumedBanner(conversation: conversation)
                         .id(ObjectIdentifier(conversation))
                     BiggerModelLine(workspace: workspace, conversation: conversation)
                         .id(ObjectIdentifier(conversation))
                     PingLine(conversation: conversation)
                         .id(ObjectIdentifier(conversation))
-                    ComposerView(workspace: workspace, conversation: conversation, window: ui)
+                    ComposerView(workspace: workspace, conversation: conversation, window: ui, openDiff: { pane.showChanges = true })
                         .id(ObjectIdentifier(conversation))
                         // The panes you're not typing into step back a little.
                         .opacity(focused ? 1 : 0.72)
@@ -172,24 +197,23 @@ struct PaneView: View {
     private func header(_ number: Int) -> some View {
         let badge = ActivityViewer.PaneBadge(number: number, focused: focused) { panes.close(pane) }
         Group {
-            if let c = workspace.conversation, workspace.race == nil {
-                ActivityViewer(workspace: workspace, conversation: c, jump: { ui.jumpTo = $0 }, pane: badge)
-            } else if workspace.race != nil {
-                Text("\(number)  \(workspace.name) · Racing")
-                    .font(.callout)
-                    .padding(.horizontal, 12)
-                    .frame(height: 30)
-                    .glassEffect(.regular, in: .capsule)
+            if let c = workspace.conversation {
+                // The words give way in a narrow pane, so the capsule stays inside it.
+                ActivityViewer(workspace: workspace, conversation: c, jump: { ui.jumpTo = $0 }, pane: badge,
+                               labelWidth: max(80, min(300, width - insets.leading - insets.trailing - 340)))
             }
         }
-        // The handle: drag it onto another pane's edge to move this pane there.
+        // The handle: drag it onto another pane's edge to move this pane there; double-click
+        // fills the canvas with this pane (and again, or Escape, puts the layout back).
         .paneDraggable(.pane(pane.id), title: conversation?.title ?? workspace.name)
+        .onTapGesture(count: 2) { panes.toggleMaximized(pane) }
+        .help("Double-click to \(panes.maximized == pane.id ? "restore" : "maximize") this pane")
         .opacity(focused ? 1 : 0.8)
     }
 
     /// Changes (card or pill) above the timeline rail.
     @ViewBuilder
-    private func instruments(room: CGFloat) -> some View {
+    private func instruments(room: CGFloat, gutter: CGFloat = 0) -> some View {
         let top = number == nil ? 0 : WorkspaceView.headerClearance
         if let conversation, pane.hasTabs || pane.hasRail {
             VStack(alignment: .trailing, spacing: 8) {
@@ -199,7 +223,8 @@ struct PaneView: View {
                         PaneArea(conversation: conversation,
                                  height: max(160, room - top - (pane.hasRail ? 160 : 0)),
                                  width: .constant(pane.cardWidth),
-                                 collapse: { toggleChanges() })
+                                 collapse: { toggleChanges() },
+                                 folder: pane.workspace.isChat ? nil : pane.workspace.folder)
                             .glassEffect(.regular, in: .rect(cornerRadius: 18))
                             .glassEffectID("changes", in: glass)
                             .shadow(color: .black.opacity(pane.peekChanges && !changesDocked ? 0.35 : 0), radius: 24, y: 10)
@@ -227,7 +252,7 @@ struct PaneView: View {
                         .glassEffect(.regular.interactive(), in: .capsule)
                         .glassEffectID("changes", in: glass)
                         .help(pane.changeCount > 0
-                              ? "\(pane.changeCount) file\(pane.changeCount == 1 ? "" : "s") changed (⌥⌘0)"
+                              ? "Files changed (⌥⌘0)"
                               : "Terminal and preview (⌥⌘0)")
                     }
                 }
@@ -236,11 +261,12 @@ struct PaneView: View {
                         conversation: conversation,
                         visible: ui.visibleTurns,
                         marked: ui.findShown ? Set(ui.matches(in: conversation.turns)) : [],
+                        labelRoom: gutter,
                         actions: turnActions,
                         jump: { ui.jumpTo = $0 }
                     )
                     // Grows with the conversation instead of standing full height from turn one.
-                    .frame(height: min(room - top, CGFloat(conversation.turns.count) * 22 + 28))
+                    .frame(height: TimelineRail.height(for: conversation.turns, room: room - top))
                     .glassEffect(.regular, in: .capsule)
                     .glassEffectID("timeline", in: glass)
                     .transition(.opacity)
@@ -315,8 +341,9 @@ struct PaneView: View {
     }
 }
 
-/// The line between two panes: invisible until hovered, then a small glass grip; drag it to
-/// resize the panes beside it, double-click to share the space evenly again.
+/// The line between two panes: a faint hairline at rest (something to aim at), a brighter grip
+/// on hover, tinted while dragging; drag it to resize the panes beside it, double-click to share
+/// the space evenly again.
 struct PaneDividerHandle: View {
     let divider: PaneLayout.Divider
     @Binding var resizing: Bool
@@ -343,6 +370,14 @@ struct PaneDividerHandle: View {
                     .glassEffect(.regular, in: .capsule)
                     .opacity(hovering || dragging ? 1 : 0)
             }
+            .overlay {
+                // The grip at rest: a hairline down (or across) the hit area, always faintly
+                // there so the divider reads as draggable before the pointer reaches it.
+                Capsule()
+                    .fill(.primary.opacity(hovering || dragging ? 0 : 0.28))
+                    .frame(width: horizontal ? 1 : 28, height: horizontal ? 28 : 1)
+                    .allowsHitTesting(false)
+            }
             .frame(width: frame.width, height: frame.height)
             .offset(x: frame.minX, y: frame.minY)
             .pointerStyle(horizontal ? .columnResize : .rowResize)
@@ -365,5 +400,24 @@ struct PaneDividerHandle: View {
             )
             .animation(.easeOut(duration: 0.12), value: hovering)
             .help("Drag to resize, double-click to even out")
+    }
+}
+
+/// The click's answer while a conversation opens: its title where the transcript will be,
+/// so the screen changes at once rather than when its log has been read.
+private struct OpeningPane: View {
+    let title: String?
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Spacer()
+            ProgressView().controlSize(.small)
+            if let title {
+                Text(title).font(.frog(size: 13)).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(FrogCanvas.color)
     }
 }

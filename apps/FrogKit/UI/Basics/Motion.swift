@@ -63,17 +63,17 @@ enum Haptics {
 
 /// The app's canvas. On the Mac, a neutral gray in dark mode (no wallpaper tint, which turns
 /// macOS's window background blue on many desktops) and the usual light gray in light mode.
-/// Elsewhere, the system's own background.
+/// The dark value is `Tokens.canvas` (#191919). Elsewhere, the system's own background.
 enum FrogCanvas {
     #if os(macOS)
     static let nsColor = NSColor(name: "FrogCanvas") { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(white: 0.118, alpha: 1)
-            : NSColor(white: 0.955, alpha: 1)
+            ? NSColor(white: 0, alpha: 1)
+            : NSColor(white: 1, alpha: 1)
     }
     static let color = Color(nsColor: nsColor)
     #elseif os(iOS)
-    static let color = Color(uiColor: .systemBackground)
+    static let color = Color(uiColor: UIColor { $0.userInterfaceStyle == .dark ? .black : .white })
     #else
     static let color = Color.black
     #endif

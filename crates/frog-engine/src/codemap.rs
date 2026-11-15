@@ -234,7 +234,11 @@ pub fn scan(root: &Path, focus: Option<&Path>) -> Graph {
     scan_files_bounded(root, source_files(root, focus), None).0
 }
 
-pub(crate) fn scan_files_bounded(root: &Path, files: Vec<String>, deadline: Option<std::time::Instant>) -> (Graph, bool) {
+pub(crate) fn scan_files_bounded(
+    root: &Path,
+    files: Vec<String>,
+    deadline: Option<std::time::Instant>,
+) -> (Graph, bool) {
     let set: HashSet<&str> = files.iter().map(String::as_str).collect();
     let mut g = Graph {
         files: files.clone(),
@@ -244,7 +248,10 @@ pub(crate) fn scan_files_bounded(root: &Path, files: Vec<String>, deadline: Opti
     let texts: HashMap<&str, String> = files
         .iter()
         .filter_map(|f| {
-            if deadline.is_some_and(|d| std::time::Instant::now() >= d) { capped = true; return None; }
+            if deadline.is_some_and(|d| std::time::Instant::now() >= d) {
+                capped = true;
+                return None;
+            }
             std::fs::read_to_string(root.join(f))
                 .ok()
                 .map(|t| (f.as_str(), t))
