@@ -114,26 +114,17 @@ no turn starts for it."
         },
         ToolSpec {
             name: START.into(),
-            description: "Start a new long-running session (shown in the sidebar under this \
-one) with a first prompt. Only for a large, independent piece: many minutes of work that \
-touches no file another session (or you) is editing. Each child starts cold in its own \
-worktree and re-reads whatever you don't hand it, so small or coupled work is faster done \
-yourself. Brief it like a peer: put what you already know in head_start (files and line \
-ranges located, decisions made, the check that proves it done) so it doesn't re-explore; a \
-bare one-liner is refused. It can SendMessage(to: \"parent\") a question and keep going; \
-answer it promptly. It's a \
-real session you and the user can open, steer, stop or archive (Task is only for quick \
+            description: "Start a new long-running session with a first prompt. Only for a large, independent piece; a child starts cold, so small or coupled work \
+is faster done yourself. Put what you already know in head_start so it starts warm; a bare one-liner \
+is refused. It can SendMessage(to: \"parent\") a question; answer promptly. You and the user can open, steer, stop or archive it (Task is only for quick \
 in-turn reads). A write-capable child gets its own git worktree and branch named from its \
-title by default; read_only: true shares this folder. Optionally in another folder (cwd), with another model, or in its own \
-git worktree on a new branch (worktree: true) based on the repo's remote default branch \
-(origin/HEAD, e.g. origin/main) so its edits don't collide with yours. mode starts it in a \
-permission mode (default, accept-edits, auto, yolo); it defaults to your own mode but is never \
-above it, so a yolo session starts its children in yolo. When it goes idle you get a message from \
-\"system\" with its last reply (its report), unless report: false. Returns its id and name for \
-SendMessage, and for a worktree the branch it's on and the base ref it started from. Worker \
-sessions belong in worktrees: without worktree: true, a cwd in the user's main checkout (the repo \
-that holds .frog/worktrees) is refused unless allow_main_checkout: true (only when the user asked), \
-an existing worktree path is reused as-is, and one another engine runs in is refused."
+title, based on the remote default branch (e.g. origin/main); read_only: true shares this \
+folder. cwd and model are optional; mode defaults to yours and is never above it. When it \
+goes idle you get a message from \"system\" with its last reply, unless report: false. \
+Returns its id and name for SendMessage, and a worktree's branch and base ref. A cwd in the \
+user's main checkout is refused unless worktree: true or allow_main_checkout: true (only when \
+the user asked); an existing worktree path is reused as-is, and one another engine runs in is \
+refused."
                 .into(),
             schema: json!({
                 "type": "object",
@@ -141,10 +132,10 @@ an existing worktree path is reused as-is, and one another engine runs in is ref
                     "title": { "type": "string" },
                     "prompt": { "type": "string" },
                     "cwd": { "type": "string" },
-                    "model": { "type": "string", "description": "the model the new session runs on (e.g. local/qwen3-4b, cloud/glm-5.3-flash); default: this session's model" },
-                    "mode": { "type": "string", "enum": ["default", "accept-edits", "auto", "yolo"], "description": "permission mode for the new session (default: yours, capped so it can never exceed yours)" },
-                    "worktree": { "type": "boolean", "description": "its own git worktree on a new branch, based on the remote default branch (default false)" },
-                    "allow_main_checkout": { "type": "boolean", "description": "run in the user's main repo checkout anyway; only when the user asked for it (default false)" },
+                    "model": { "type": "string", "description": "model for the new session (default: yours)" },
+                    "mode": { "type": "string", "enum": ["default", "accept-edits", "auto", "yolo"], "description": "its permission mode (default: yours, never above yours)" },
+                    "worktree": { "type": "boolean", "description": "its own git worktree on a new branch (default false)" },
+                    "allow_main_checkout": { "type": "boolean", "description": "run in the user's main checkout anyway; only when the user asked" },
                     "report": { "type": "boolean", "description": "send its last reply back here when it goes idle (default true)" },
                     "read_only": { "type": "boolean", "description": "it only reads (investigates, reviews): it shares this folder instead of getting a worktree (default false)" },
                     "head_start": {
