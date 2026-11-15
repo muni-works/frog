@@ -3215,6 +3215,108 @@ fn log_turn_started(dir: &std::path::Path, id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Options for an engine resuming `resume` from `store`, serving from `cwd`.
+fn resume_opts(store: &Path, resume: &str, cwd: PathBuf) -> Options {
+    let mut profile = Profile::new(ProviderKind::Ollama, "test");
+    profile.tool_mode = ToolMode::Native;
+    Options {
+        cfg: Config {
+            hermetic: true,
+            ..Config::default()
+        },
+        profile_name: "test".into(),
+        profile,
+        cwd,
+        mode: Mode::Default,
+        can_ask: true,
+        resume: Some(resume.into()),
+        store: Some(store.to_path_buf()),
+        sandbox: false,
+        rich: false,
+        subagent: false,
+        chat: false,
+    }
+}
+
+/// Issue #107: an engine restarted in the wrong folder (the main checkout, while the
+/// session's worktree still exists) refuses to serve the session, naming both folders, so its
+/// commands and edits can't land in another tree. From its own folder it resumes as before.
+#[tokio::test]
+async fn a_resume_from_another_folder_refuses_while_the_sessions_folder_exists() {
+    let base = std::env::temp_dir().join(format!("frog-serve-cwd-{}", new_id()));
+    let (tree, checkout, store) = (base.join("tree"), base.join("checkout"), base.join("store"));
+    for d in [&tree, &checkout, &store] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    let mut h = engine_with(
+        vec![reply(vec![text("hello")], Stop::End)],
+        true,
+        Some(store.clone()),
+        None,
+        None,
+        tree.clone(),
+    );
+    let sid = run(&mut h, "hi").await[0].session.clone();
+    shutdown(h).await;
+
+    let script = || Provider::Scripted(scripted::Client::new(vec![]));
+    let err = match start(resume_opts(&store, &sid, checkout.clone()), script()) {
+        Ok(_) => panic!("an engine in the wrong folder served the session"),
+        Err(e) => format!("{e:#}"),
+    };
+    let real = |p: &Path| p.canonicalize().unwrap().display().to_string();
+    assert!(
+        err.contains(&real(&tree)) && err.contains(&real(&checkout)),
+        "names both folders: {err}"
+    );
+    // Refused before anything opened: the session's own folder resumes it fine.
+    let mut h = start(resume_opts(&store, &sid, tree.clone()), script()).unwrap();
+    until_idle(&mut h).await;
+    shutdown(h).await;
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// When the session's folder is gone (a cleaned-up worktree), there's no tree to protect and
+/// refusing would strand its history: it serves from where it was started, and says so once.
+#[tokio::test]
+async fn a_resume_whose_folder_is_gone_serves_here_with_one_warning() {
+    let base = std::env::temp_dir().join(format!("frog-serve-gone-{}", new_id()));
+    let (tree, checkout, store) = (base.join("tree"), base.join("checkout"), base.join("store"));
+    for d in [&tree, &checkout, &store] {
+        std::fs::create_dir_all(d).unwrap();
+    }
+    let mut h = engine_with(
+        vec![reply(vec![text("hello")], Stop::End)],
+        true,
+        Some(store.clone()),
+        None,
+        None,
+        tree.clone(),
+    );
+    let sid = run(&mut h, "hi").await[0].session.clone();
+    shutdown(h).await;
+    std::fs::remove_dir_all(&tree).unwrap();
+
+    let script = Provider::Scripted(scripted::Client::new(vec![]));
+    let mut h = start(resume_opts(&store, &sid, checkout.clone()), script).unwrap();
+    let warned: Vec<String> = until_idle(&mut h)
+        .await
+        .into_iter()
+        .filter_map(|e| match e.event {
+            Event::Notice { message, .. } if message.contains("no longer exists") => Some(message),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(warned.len(), 1, "{warned:?}");
+    assert!(
+        warned[0].contains(&tree.display().to_string()),
+        "{}",
+        warned[0]
+    );
+    shutdown(h).await;
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 #[tokio::test]
 async fn crashed_mid_turn_session_is_repaired_on_resume() {
     let dir = tmp_store();

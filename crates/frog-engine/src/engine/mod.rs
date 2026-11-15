@@ -690,6 +690,8 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
     });
     shared.bg.set_wake(&work_tx);
     shared.kids.set_inbox(&op_tx);
+    // A resumed session serves from the folder its log says it belongs to, or not at all (#107).
+    let moved = serving_folder(&opts).map_err(|e| ConfigError(format!("{e:#}")))?;
     // One engine per linked worktree (see `worktree`): taken before the session opens, so a
     // refused engine leaves nothing behind. Subagents share their parent's engine's tree.
     let worktree_lock = if opts.subagent || opts.store.is_none() {
@@ -984,6 +986,9 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                 "[git] open_pr_when_done = \"auto\" is not implemented yet: it behaves as \"ask\"",
             );
         }
+        if let Some(line) = moved {
+            agent.notice(Level::Warn, line);
+        }
         agent.connect_mcp();
         // Restore MCP tools that were loaded in a previous session
         if !agent.loaded_tools.is_empty() {
@@ -1274,6 +1279,47 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         events: ev_rx,
         bus,
     })
+}
+
+/// A resumed engine must serve from the folder its session belongs to: the log header's `cwd`
+/// (kept current by `UseFolder`). Restarts are where this goes wrong (#107): an engine
+/// relaunched in the main checkout while its session's worktree still exists would run the
+/// session's shell, edits and git there, in someone else's tree. So when the recorded folder
+/// still exists and isn't this engine's, it refuses to start, naming both. When the recorded
+/// folder is gone (a cleaned-up worktree, a moved repo) there is no right tree to protect and
+/// refusing would strand the session's history, so it serves where it was started and says so
+/// once, with both paths (`Some(line)`). Fresh sessions, forks and subagents aren't checked.
+fn serving_folder(opts: &Options) -> anyhow::Result<Option<String>> {
+    let (Some(id), Some(dir)) = (&opts.resume, &opts.store) else {
+        return Ok(None);
+    };
+    if opts.subagent {
+        return Ok(None);
+    }
+    // No readable header: `Agent::new` reports the broken log in its own words.
+    let Ok(header) = session::header(dir, id) else {
+        return Ok(None);
+    };
+    let real = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    let (recorded, serving) = (real(&header.cwd), real(&opts.cwd));
+    if recorded == serving {
+        return Ok(None);
+    }
+    if recorded.is_dir() {
+        anyhow::bail!(
+            "session {id} belongs to {}, but this engine was started in {}. \
+Refusing to serve it from here, so its commands and edits can't land in another tree: \
+resume it from {} instead.",
+            recorded.display(),
+            serving.display(),
+            recorded.display()
+        );
+    }
+    Ok(Some(format!(
+        "session {id} was working in {}, which no longer exists: serving it from {} instead",
+        header.cwd.display(),
+        serving.display()
+    )))
 }
 
 /// Waits until `Op::Drain`'s deadline has passed — the step in flight is then killed (the
