@@ -55,9 +55,9 @@ final class PerfProbeTests: XCTestCase {
 
     func testLongTranscript() throws {
         for table in [false, true] {
-            TranscriptContainer.table = table
             let was = TranscriptContainer.table
             defer { TranscriptContainer.table = was }
+            TranscriptContainer.table = table
             print("PROBE container: \(table ? "table" : "lazy stack")")
             try longTranscript()
         }
@@ -107,9 +107,9 @@ final class PerfProbeTests: XCTestCase {
 
     func testStreamCost() throws {
         for table in [false, true] {
-            TranscriptContainer.table = table
             let was = TranscriptContainer.table
             defer { TranscriptContainer.table = was }
+            TranscriptContainer.table = table
             print("PROBE container: \(table ? "table" : "lazy stack")")
             try streamCost()
         }
@@ -191,9 +191,9 @@ final class PerfProbeTests: XCTestCase {
     /// Once into each container.
     func testStreamLive() throws {
         for table in [false, true] {
-            TranscriptContainer.table = table
             let was = TranscriptContainer.table
             defer { TranscriptContainer.table = was }
+            TranscriptContainer.table = table
             try streamLive()
         }
         // What the ink costs, in the table (as under Reduce Motion: words just appear).

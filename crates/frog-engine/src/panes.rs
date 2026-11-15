@@ -331,12 +331,12 @@ struct Term {
     user_typing: bool,
     /// `prompts` when the last command line was sent; a later prompt means it finished.
     sent_at: u64,
-    /// Keeps the shell hook files alive.
+    /// Keeps the shell hook files alive. Present for the shells that print prompt markers.
     _rc: Option<tempdir::Dir>,
 }
 
 impl Term {
-    fn spawn(cwd: &Path, cols: u16, rows: u16) -> Result<Self> {
+    fn spawn(cwd: &Path, cols: u16, rows: u16, env: &[(String, String)]) -> Result<Self> {
         let pty = portable_pty::native_pty_system()
             .openpty(PtySize {
                 rows,
@@ -352,6 +352,9 @@ impl Term {
         cmd.env("FROG", "1");
         cmd.env("PAGER", "cat");
         cmd.env("GIT_PAGER", "cat");
+        for (k, v) in env {
+            cmd.env(k, v);
+        }
         let mut child = pty
             .slave
             .spawn_command(cmd)
@@ -531,6 +534,8 @@ struct State {
     /// `@mention` → element context from the preview.
     mentions: HashMap<String, String>,
     root: PathBuf,
+    /// Extra environment for new shells (a test gives them their own `HOME`).
+    shell_env: Vec<(String, String)>,
 }
 
 pub struct Panes {
@@ -556,6 +561,11 @@ impl Panes {
     /// Where new shells start.
     pub fn configure(&self, root: PathBuf) {
         self.state.lock().unwrap().root = root;
+    }
+
+    #[cfg(test)]
+    fn set_shell_env(&self, env: Vec<(String, String)>) {
+        self.state.lock().unwrap().shell_env = env;
     }
 
     pub fn set_client(&self, panes: bool) {
@@ -707,7 +717,7 @@ impl Panes {
             let term = match kind {
                 PaneKind::Terminal => {
                     let dir = cwd.clone().unwrap_or_else(|| s.root.clone());
-                    Some(Term::spawn(&dir, cols, rows)?)
+                    Some(Term::spawn(&dir, cols, rows, &s.shell_env)?)
                 }
                 PaneKind::Preview => None,
             };
@@ -1049,13 +1059,18 @@ impl Panes {
     /// command isn't typed into the startup noise. Shells without markers get a settle wait.
     /// The marker comes before the prompt is drawn, so then wait for the drawing to stop too:
     /// typed before the line editor starts, a command is echoed twice.
+    ///
+    /// A shell with markers waits for its marker, not for output to settle: an rc that prints
+    /// and then works for a while (oh-my-zsh's update check fetches before it asks) goes quiet
+    /// long before its prompt, and a command typed then lands in the rc and reads the rc's own
+    /// first prompt as its end.
     async fn wait_ready(&self, id: &str) {
-        let grid = {
+        let (grid, marks) = {
             let s = self.state.lock().unwrap();
             let Some(t) = s.panes.get(id).and_then(|p| p.term.as_ref()) else {
                 return;
             };
-            t.grid.clone()
+            (t.grid.clone(), t._rc.is_some())
         };
         let started = Instant::now();
         while started.elapsed() < Duration::from_secs(5) {
@@ -1067,7 +1082,7 @@ impl Panes {
                 if g.prompts > 0 && g.quiet_for() > Duration::from_millis(120) {
                     return;
                 }
-                if g.received > 0 && g.quiet_for() > Duration::from_millis(700) {
+                if !marks && g.received > 0 && g.quiet_for() > Duration::from_millis(700) {
                     return;
                 }
             }
@@ -1541,16 +1556,64 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn terminal_run_waits_for_the_prompt_and_keeps_state() {
+    /// A shell whose `HOME` holds only `rc` as its rc files (none when empty), so what the
+    /// user's own rc files print (an oh-my-zsh update notice or `[Y/n]` question) can't reach a
+    /// test. `None` for a shell without prompt markers (the test skips).
+    fn hermetic_shell(
+        rc: &str,
+    ) -> Option<(
+        Arc<Panes>,
+        tokio::sync::mpsc::UnboundedReceiver<Event>,
+        std::path::PathBuf,
+    )> {
         if std::env::var("SHELL").is_ok_and(|s| !s.ends_with("zsh") && !s.ends_with("bash")) {
-            return;
+            return None;
         }
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let home = std::env::temp_dir()
+            .canonicalize()
+            .unwrap()
+            .join(format!("frog-pane-home-{}", crate::session::new_id()));
+        std::fs::create_dir_all(&home).unwrap();
+        if !rc.is_empty() {
+            for f in [".zshrc", ".bashrc"] {
+                std::fs::write(home.join(f), rc).unwrap();
+            }
+        }
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let panes = Panes::new(move |e| {
             let _ = tx.send(e);
         });
         panes.configure(std::env::temp_dir().canonicalize().unwrap());
+        panes.set_shell_env(vec![("HOME".into(), home.display().to_string())]);
+        Some((panes, rx, home))
+    }
+
+    /// Startup noise that outlasts the settle wait (an rc that prints, then works for a while,
+    /// as oh-my-zsh's update check does) isn't the prompt: the command waits for the real one
+    /// instead of being typed into the rc, and its output is only its own.
+    #[tokio::test]
+    async fn terminal_run_waits_out_a_slow_noisy_rc() {
+        let rc = "echo \"[oh-my-zsh] It's time to update!\"\nsleep 1.5\necho rc-done\n";
+        let Some((panes, _rx, home)) = hermetic_shell(rc) else {
+            return;
+        };
+        let out = panes
+            .terminal(
+                &json!({ "action": "run", "command": "echo hi-$((20+3))", "wait_ms": 15000 }),
+                false,
+            )
+            .await
+            .unwrap();
+        assert_eq!(out.content.trim(), "hi-23", "{}", out.content);
+        panes.shutdown();
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[tokio::test]
+    async fn terminal_run_waits_for_the_prompt_and_keeps_state() {
+        let Some((panes, mut rx, home)) = hermetic_shell("") else {
+            return;
+        };
         let out = panes
             .terminal(
                 &json!({ "action": "run", "command": "echo hi-$((20+3))", "wait_ms": 15000 }),
@@ -1628,5 +1691,6 @@ mod tests {
             std::iter::from_fn(|| rx.try_recv().ok())
                 .any(|e| matches!(e, Event::PaneClosed { .. }))
         );
+        let _ = std::fs::remove_dir_all(home);
     }
 }
