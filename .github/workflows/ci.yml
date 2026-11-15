@@ -2,7 +2,13 @@ name: ci
 
 on:
   push:
+    # The merge queue's temporary branches are tested through merge_group, below.
+    branches-ignore: ["gh-readonly-queue/**"]
   pull_request:
+  # A merge queue tests each PR on top of main and the PRs queued ahead of it, then merges the
+  # commit it tested. The required checks must report on that commit, so every required job
+  # runs here too.
+  merge_group:
 
 env:
   CARGO_TERM_COLOR: always
@@ -31,9 +37,10 @@ jobs:
         run: git diff --exit-code -- crates/frog-engine/schema/frog-engine-1.json
 
   # cargo passing doesn't mean the app builds: compile the Swift app and run its unit tests.
-  # PRs and main only (not every branch push), since macOS minutes are the expensive ones.
+  # PRs, the merge queue and main only (not every branch push), since macOS minutes are the
+  # expensive ones. It must run for merge_group: a skipped required job counts as passing.
   macos-app:
-    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.ref == 'refs/heads/main'
     # The app targets macOS 26 (SwiftPM tools 6.2), so it needs the macOS 26 image's Xcode.
     runs-on: macos-26
     timeout-minutes: 60
