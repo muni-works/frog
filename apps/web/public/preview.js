@@ -65,6 +65,8 @@
   // Title.
   let lastTitle = "";
   const watchTitle = () => {
+    // The gateway's own error page isn't the app's: its title is no news (the load failed is).
+    if (document.querySelector('meta[name="frog-preview-error"]')) return;
     const t = document.querySelector("title");
     const tell = () => { if (document.title !== lastTitle) { lastTitle = document.title; post({ type: "title", message: document.title }); } };
     tell();

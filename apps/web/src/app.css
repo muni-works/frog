@@ -716,6 +716,7 @@ button.tool:hover .tool-chev { opacity: 1; }
 .cz-qcount { position: absolute; top: -4px; right: -4px; min-width: 14px; height: 14px; padding: 0 3px; box-sizing: border-box; border-radius: 7px; background: var(--muted); color: var(--bg); font: 700 9px/14px var(--font-sans); }
 
 /* Preview pane (ui/PreviewPane.tsx): toolbar over an iframe onto the sandbox's dev server. */
+.pv { container-type: inline-size; }
 .pv-bar { display: flex; align-items: center; gap: 4px; padding: 8px 10px 8px 10px; }
 .pv-bar .icon-plate:disabled { opacity: .4; cursor: default; background: transparent; }
 .pv-addr { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; height: 26px; padding: 0 8px; border-radius: 8px; background: rgba(127,127,127,.12); color: var(--faint); }
@@ -730,5 +731,7 @@ button.tool:hover .tool-chev { opacity: 1; }
 .pv-frame iframe { flex: 1; border: 0; width: 100%; height: 100%; background: var(--canvas); }
 .pv-frame iframe.pv-hidden { visibility: hidden; }
 .pv-over { position: absolute; inset: 0; }
-.pv-toast { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); padding: 5px 10px; border-radius: 999px; font-size: 11px; color: var(--fg); background: var(--glass-fill); box-shadow: var(--shadow-glass); pointer-events: none; white-space: nowrap; }
+.pv-toast { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); padding: 5px 10px; border-radius: 999px; font-size: 11px; color: var(--fg); background: var(--card); border: 1px solid var(--line); box-shadow: var(--shadow-toast); pointer-events: none; white-space: nowrap; }
+/* A narrow inspector keeps the address readable: device widths need room to mean anything. */
+@container (max-width: 440px) { .pv-devices { display: none; } }
 @media (prefers-reduced-motion: reduce) { .pv-spin { animation: none; } .pv-frame { transition: none; } }

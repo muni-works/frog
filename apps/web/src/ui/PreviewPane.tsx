@@ -17,6 +17,7 @@ export function usePreviewHub(hub: PreviewHub | undefined) {
   useSyncExternalStore(hub?.subscribe ?? noop, v, v)
 }
 const noop = () => () => {}
+const sentence = (s: string) => s[0].toUpperCase() + s.slice(1) + (/[.?!]$/.test(s) ? '' : '.')
 
 const Icon = ({ d, size = 14 }: { d: string; size?: number }) => (
   <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d={d} /></svg>
@@ -90,7 +91,7 @@ export function PreviewPane({ hub, pane, send }: { hub: PreviewHub; pane?: Pane;
         </button>
       </form>
       <div className="pv-stage">
-        <div className="pv-frame" style={width ? { width, maxWidth: '100%' } : undefined}>
+        <div className="pv-frame" style={width ? { width, maxWidth: '100%', flex: '0 1 auto' } : undefined}>
           {/* Its own origin, and sandboxed so it can't navigate the app away. */}
           <iframe ref={frame} title={s?.title || 'Preview'} className={page && !s?.error ? '' : 'pv-hidden'} onLoad={() => id && hub.loaded(id)}
             sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads" allow="clipboard-write" referrerPolicy="same-origin" />
@@ -103,7 +104,7 @@ export function PreviewPane({ hub, pane, send }: { hub: PreviewHub; pane?: Pane;
           {s?.error && (
             <div className="term-empty pv-over">
               <b>Couldn’t load</b>
-              <span className="det wrap">{s.error[0].toUpperCase() + s.error.slice(1).replace(/\.?$/, '.')}</span>
+              <span className="det wrap">{sentence(s.error)}</span>
               <button type="button" className="f-btn f-btn--bordered" onClick={() => id && hub.reload(id)}>Try again</button>
             </div>
           )}
