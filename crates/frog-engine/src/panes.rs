@@ -29,6 +29,11 @@ pub const PREVIEW: &str = "Preview";
 const REPORTS: usize = 200;
 /// Error reports queued for the model between calls.
 const QUEUE: usize = 20;
+/// How long a report made between turns waits for the next one before it's stale.
+const HELD_FOR: Duration = Duration::from_secs(10 * 60);
+/// A failed terminal command's report keeps this much of the end of its output.
+const FAIL_LINES: usize = 40;
+const FAIL_BYTES: usize = 2_000;
 /// Plain-text scrollback kept per terminal, in bytes.
 const LOG_MAX: usize = 200_000;
 /// How long the client has to answer a request.
@@ -155,10 +160,30 @@ pub fn label(name: &str, input: &Value) -> String {
 
 // ---- the screen emulator ----
 
-/// The marker our shell hooks print before each prompt: `ESC ] 133 ; D ; <exit code> BEL`
-/// (the semantic-prompt convention). Exact "the command finished", with its status.
-static PROMPT_MARK: std::sync::LazyLock<regex::bytes::Regex> =
-    std::sync::LazyLock::new(|| regex::bytes::Regex::new(r"\x1b\]133;D(?:;(\d+))?\x07").unwrap());
+/// The markers our shell hooks print (the semantic-prompt convention): before each prompt
+/// `ESC ] 133 ; D ; <exit code> BEL`, exact "the command finished", with its status; and as a
+/// command starts, `ESC ] 133 ; C [; <command>] BEL` (zsh's preexec, bash's PS0, which can't
+/// say what ran), so a prompt after Enter is known to end a command and not an empty line.
+static PROMPT_MARK: std::sync::LazyLock<regex::bytes::Regex> = std::sync::LazyLock::new(|| {
+    regex::bytes::Regex::new(r"\x1b\]133;(?:D(?:;(\d+))?|C(?:;([^\x07\x1b]*))?)\x07").unwrap()
+});
+
+/// A command line the user entered in a pane, until its prompt comes back.
+struct Entered {
+    /// The screen line it was typed on (prompt included), for shells that don't say.
+    line: String,
+    /// Set by the start marker: what ran, and where its output starts in the log.
+    ran: Option<(String, usize)>,
+}
+
+/// A command the user ran that exited non-zero.
+#[derive(Debug, PartialEq)]
+struct Failure {
+    command: String,
+    code: i32,
+    /// The end of what it printed, capped.
+    output: String,
+}
 
 /// A terminal's screen grid plus a plain-text log of everything it printed.
 pub struct Grid {
@@ -176,6 +201,9 @@ pub struct Grid {
     prompt_mark: usize,
     /// Exit status carried by the last prompt marker.
     last_status: Option<i32>,
+    /// The user's command line in flight; `Failure`s it left, for the watcher to report.
+    entered: Option<Entered>,
+    failed: Vec<Failure>,
     seq: u64,
     exit: Option<i32>,
 }
@@ -192,6 +220,8 @@ impl Grid {
             prompts: 0,
             prompt_mark: 0,
             last_status: None,
+            entered: None,
+            failed: Vec::new(),
             seq: 0,
             exit: None,
         }
@@ -215,15 +245,72 @@ impl Grid {
         for m in PROMPT_MARK.captures_iter(&buf) {
             let whole = m.get(0).unwrap();
             self.append(&buf[at..whole.start()]);
+            at = whole.end();
+            if whole.as_bytes()[6] == b'C' {
+                let command = m
+                    .get(2)
+                    .map(|c| String::from_utf8_lossy(c.as_bytes()).trim().to_string())
+                    .unwrap_or_default();
+                let mark = self.mark();
+                if let Some(e) = self.entered.as_mut().filter(|e| e.ran.is_none()) {
+                    e.ran = Some((command, mark));
+                }
+                continue;
+            }
             self.prompts += 1;
             self.prompt_mark = self.mark();
             self.last_status = m
                 .get(1)
                 .and_then(|c| std::str::from_utf8(c.as_bytes()).ok())
                 .and_then(|c| c.parse().ok());
-            at = whole.end();
+            self.finish();
         }
         self.append(&buf[at..]);
+    }
+
+    /// A prompt came back: if it ends a command the user ran (one the shell marked as
+    /// started, so not an empty line or a keypress into someone else's command) and it
+    /// failed, keep a report of it.
+    fn finish(&mut self) {
+        let Some(Entered {
+            line,
+            ran: Some((command, mark)),
+        }) = self.entered.take()
+        else {
+            return;
+        };
+        let Some(code) = self.last_status.filter(|c| *c != 0) else {
+            return;
+        };
+        let command = if command.is_empty() { line } else { command };
+        let output = output_tail(self.since(mark, Some(self.prompt_mark)));
+        self.failed.push(Failure {
+            command: truncate_middle(&command, 300),
+            code,
+            output,
+        });
+    }
+
+    /// The user pressed Enter. A command already running keeps its claim (Enter into it is
+    /// input to it, not a new command).
+    fn user_entered(&mut self) {
+        if self.entered.as_ref().is_some_and(|e| e.ran.is_some()) {
+            return;
+        }
+        let (row, _) = self.parser.screen().cursor_position();
+        let line = self.lines().get(row as usize).map(|l| l.trim().to_string());
+        self.entered = Some(Entered {
+            line: line.unwrap_or_default(),
+            ran: None,
+        });
+    }
+
+    /// The model sent a line: it isn't the user's command (its result comes back to the
+    /// model as the tool's output). A user's command already running stays theirs.
+    fn model_entered(&mut self) {
+        if self.entered.as_ref().is_some_and(|e| e.ran.is_none()) {
+            self.entered = None;
+        }
     }
 
     fn append(&mut self, raw: &[u8]) {
@@ -304,6 +391,23 @@ impl Grid {
     fn quiet_for(&self) -> Duration {
         self.last_output.map(|t| t.elapsed()).unwrap_or_default()
     }
+}
+
+/// The last `FAIL_LINES` lines of a command's output, at most `FAIL_BYTES` of them.
+fn output_tail(text: &str) -> String {
+    let text = text.trim_end();
+    // zsh's `%` + padding that marks a missing final newline.
+    let text = text.strip_suffix('%').map(str::trim_end).unwrap_or(text);
+    let lines: Vec<&str> = text.lines().collect();
+    let mut out = lines[lines.len().saturating_sub(FAIL_LINES)..].join("\n");
+    if out.len() > FAIL_BYTES {
+        let cut = out.ceil_char_boundary(out.len() - FAIL_BYTES);
+        out = format!("…{}", &out[cut..]);
+    }
+    if lines.len() > FAIL_LINES || out.starts_with('…') {
+        out = format!("[…earlier output in the pane]\n{out}");
+    }
+    out
 }
 
 /// Whether `esc` (starting with ESC) is cut off before its final byte.
@@ -448,7 +552,8 @@ fn shell_command(shell: &str) -> Result<(CommandBuilder, Option<tempdir::Dir>)> 
     match name {
         "zsh" => {
             let dir = tempdir::Dir::new("frog-zdot")?;
-            let hook = "__frog_precmd() { printf '\\e]133;D;%s\\a' \"$?\"; }\nprecmd_functions+=(__frog_precmd)\n";
+            let hook = "__frog_precmd() { printf '\\e]133;D;%s\\a' \"$?\"; }\nprecmd_functions+=(__frog_precmd)\n\
+__frog_preexec() { printf '\\e]133;C;%s\\a' \"${1//[[:cntrl:]]/ }\"; }\npreexec_functions+=(__frog_preexec)\n";
             for f in [".zshenv", ".zprofile", ".zshrc", ".zlogin"] {
                 let mut body = format!("[ -f \"$HOME/{f}\" ] && source \"$HOME/{f}\"\n");
                 if f == ".zshrc" {
@@ -470,7 +575,8 @@ fn shell_command(shell: &str) -> Result<(CommandBuilder, Option<tempdir::Dir>)> 
                 "for f in \"$HOME/.bash_profile\" \"$HOME/.bash_login\" \"$HOME/.profile\"; do [ -f \"$f\" ] && { source \"$f\"; break; }; done\n\
 [ -f \"$HOME/.bashrc\" ] && source \"$HOME/.bashrc\"\n\
 __frog_precmd() { printf '\\e]133;D;%s\\a' \"$?\"; }\n\
-PROMPT_COMMAND=\"__frog_precmd${PROMPT_COMMAND:+;$PROMPT_COMMAND}\"\n",
+PROMPT_COMMAND=\"__frog_precmd${PROMPT_COMMAND:+;$PROMPT_COMMAND}\"\n\
+PS0=\"\\e]133;C\\a${PS0:-}\"\n",
             )?;
             argv.push("--rcfile".into());
             argv.push(file.display().to_string());
@@ -526,11 +632,24 @@ struct Pane {
 struct State {
     next: u64,
     panes: BTreeMap<String, Pane>,
-    /// Error reports waiting for the next model call, newest last.
-    queued: Vec<String>,
+    /// Error reports waiting for the next model call, newest last, with when they came.
+    queued: Vec<(Instant, String)>,
     /// `@mention` → element context from the preview.
     mentions: HashMap<String, String>,
     root: PathBuf,
+}
+
+impl State {
+    /// Queue a report for the model, once, dropping the oldest past `QUEUE`.
+    fn queue(&mut self, line: String) {
+        if self.queued.iter().any(|(_, l)| *l == line) {
+            return;
+        }
+        if self.queued.len() >= QUEUE {
+            self.queued.remove(0);
+        }
+        self.queued.push((Instant::now(), line));
+    }
 }
 
 pub struct Panes {
@@ -615,7 +734,9 @@ impl Panes {
                     if data.contains(['\r', '\n', '\x03', '\x15']) {
                         t.user_typing = false;
                         if data.contains(['\r', '\n']) {
-                            t.sent_at = t.grid.lock().unwrap().prompts;
+                            let mut g = t.grid.lock().unwrap();
+                            t.sent_at = g.prompts;
+                            g.user_entered();
                         }
                     } else if !data.is_empty() {
                         t.user_typing = true;
@@ -755,11 +876,15 @@ impl Panes {
                 }
                 tokio::time::sleep(SCREEN_INTERVAL).await;
                 let Some(panes) = weak.upgrade() else { break };
-                let (event, exit) = {
-                    let g = grid.lock().unwrap();
-                    (g.screen_event(&id), g.exit)
+                let (event, exit, failed) = {
+                    let mut g = grid.lock().unwrap();
+                    let failed = std::mem::take(&mut g.failed);
+                    (g.screen_event(&id), g.exit, failed)
                 };
                 panes.emit(event);
+                for f in failed {
+                    panes.command_failed(&id, f);
+                }
                 if let Some(code) = exit {
                     panes.close(&id, Some(code));
                     break;
@@ -830,13 +955,7 @@ impl Panes {
         if level != ReportLevel::Error || !self.in_turn.load(Ordering::Relaxed) {
             return;
         }
-        let line = format!("[preview {id}] {text}");
-        if !s.queued.contains(&line) {
-            if s.queued.len() >= QUEUE {
-                s.queued.remove(0);
-            }
-            s.queued.push(line);
-        }
+        s.queue(format!("[preview {id}] {text}"));
         drop(s);
         self.emit(Event::PaneNotice {
             id: id.to_string(),
@@ -845,9 +964,31 @@ impl Panes {
         });
     }
 
-    /// Error reports gathered during the turn, for the next model call.
+    /// A command the user ran in a terminal pane failed: tell the model on its next call.
+    /// Unlike a preview's console, this is held between turns too: the user ran it on
+    /// purpose, and the failure is likely what they're about to ask about.
+    fn command_failed(&self, id: &str, f: Failure) {
+        let head = format!("`{}` failed (exit {})", f.command, f.code);
+        let mut line = format!("[terminal {id}] {head}");
+        if !f.output.is_empty() {
+            line.push_str(&format!(":\n{}", f.output));
+        }
+        self.state.lock().unwrap().queue(line);
+        self.emit(Event::PaneNotice {
+            id: id.to_string(),
+            level: ReportLevel::Error,
+            message: head,
+        });
+    }
+
+    /// Error reports gathered since the last call, for the next one (those held from
+    /// between turns are dropped once stale).
     pub fn take_queued(&self) -> Vec<String> {
         std::mem::take(&mut self.state.lock().unwrap().queued)
+            .into_iter()
+            .filter(|(at, _)| at.elapsed() < HELD_FOR)
+            .map(|(_, line)| line)
+            .collect()
     }
 
     /// Element context the user attached to `@mention` in a preview, if any.
@@ -986,7 +1127,9 @@ impl Panes {
                         bail!("the user is typing in {id}; read it instead of typing over them");
                     }
                     if text.contains(['\r', '\n']) {
-                        t.sent_at = t.grid.lock().unwrap().prompts;
+                        let mut g = t.grid.lock().unwrap();
+                        t.sent_at = g.prompts;
+                        g.model_entered();
                     }
                     t.write(text.as_bytes())?;
                 }
@@ -1097,10 +1240,11 @@ impl Panes {
                 );
             }
             let grid = t.grid.clone();
-            let g = grid.lock().unwrap();
+            let mut g = grid.lock().unwrap();
             if g.exit.is_some() {
                 bail!("the shell in {id} has exited; `open` a new pane");
             }
+            g.model_entered();
             let (mark, prompts) = (g.mark(), g.prompts);
             drop(g);
             t.sent_at = prompts;
@@ -1429,6 +1573,86 @@ mod tests {
     }
 
     #[test]
+    fn grid_reports_a_user_command_that_fails_and_nothing_else() {
+        let mut g = Grid::new(40, 6);
+        g.feed(b"\x1b]133;D;0\x07$ ");
+        // The user runs a failing command: start marker, output, prompt with its status.
+        g.feed(b"make");
+        g.user_entered();
+        g.feed(b"\r\n\x1b]133;C;make test\x07boom\r\nerror: 2 failed\r\n\x1b]133;D;2\x07$ ");
+        assert_eq!(
+            std::mem::take(&mut g.failed),
+            [Failure {
+                command: "make test".into(),
+                code: 2,
+                output: "boom\nerror: 2 failed".into(),
+            }]
+        );
+        // One that succeeds says nothing.
+        g.user_entered();
+        g.feed(b"\r\n\x1b]133;C;true\x07\x1b]133;D;0\x07$ ");
+        // Enter on an empty line: no start marker, and the prompt repeats the last `$?`.
+        g.feed(b"\x1b]133;D;1\x07$ ");
+        g.user_entered();
+        g.feed(b"\r\n\x1b]133;D;1\x07$ ");
+        // The model's own command (its result is the tool's output).
+        g.user_entered();
+        g.model_entered();
+        g.feed(b"false\r\n\x1b]133;C;false\x07\x1b]133;D;1\x07$ ");
+        // The user pressing Enter into the model's running command doesn't claim it.
+        g.feed(b"cat\r\n\x1b]133;C;cat\x07");
+        g.user_entered();
+        g.feed(b"\x1b]133;D;130\x07$ ");
+        assert_eq!(g.failed, []);
+        // Enter into the user's own running command keeps it theirs; a shell that doesn't
+        // say what ran (bash's PS0) gets the screen line.
+        g.feed(b"read x");
+        g.user_entered();
+        g.feed(b"\r\n\x1b]133;C\x07");
+        g.user_entered();
+        g.model_entered();
+        g.feed(b"\r\n\x1b]133;D;1\x07$ ");
+        assert_eq!(g.failed.len(), 1);
+        assert_eq!(g.failed[0].command, "$ read x");
+        assert_eq!((g.failed[0].code, g.failed[0].output.as_str()), (1, ""));
+    }
+
+    #[test]
+    fn a_failed_commands_output_is_capped_to_its_tail() {
+        let mut g = Grid::new(80, 6);
+        g.user_entered();
+        g.feed(b"\x1b]133;C;cargo test\x07");
+        for i in 0..5_000 {
+            g.feed(format!("line {i} {}\r\n", "x".repeat(60)).as_bytes());
+        }
+        g.feed(b"\x1b]133;D;101\x07$ ");
+        let out = &g.failed[0].output;
+        assert!(out.len() <= FAIL_BYTES + 100, "{} bytes", out.len());
+        assert!(out.starts_with("[…earlier output in the pane]"), "{out}");
+        assert!(
+            out.ends_with(&format!("line 4999 {}", "x".repeat(60))),
+            "{out}"
+        );
+        assert!(!out.contains("line 4900 "), "{out}");
+        // Short and many lines: the last FAIL_LINES.
+        let tail = output_tail(&(0..100).map(|i| format!("{i}\n")).collect::<String>());
+        assert_eq!(tail.lines().count(), FAIL_LINES + 1);
+        assert!(tail.ends_with("\n99") && tail.contains("\n60\n") && !tail.contains("\n59\n"));
+    }
+
+    #[test]
+    fn reports_held_between_turns_go_stale() {
+        let panes = Panes::new(|_| {});
+        let mut s = panes.state.lock().unwrap();
+        s.queue("old".into());
+        s.queued[0].0 = Instant::now() - HELD_FOR - Duration::from_secs(1);
+        s.queue("new".into());
+        s.queue("new".into());
+        drop(s);
+        assert_eq!(panes.take_queued(), ["new"]);
+    }
+
+    #[test]
     fn grid_scrollback_tail_and_resize() {
         let mut g = Grid::new(10, 2);
         for i in 0..50 {
@@ -1628,5 +1852,70 @@ mod tests {
             std::iter::from_fn(|| rx.try_recv().ok())
                 .any(|e| matches!(e, Event::PaneClosed { .. }))
         );
+    }
+
+    #[tokio::test]
+    async fn a_users_failed_terminal_command_reaches_the_model_once() {
+        if !std::env::var("SHELL").is_ok_and(|s| s.ends_with("zsh")) {
+            return;
+        }
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let panes = Panes::new(move |e| {
+            let _ = tx.send(e);
+        });
+        panes.configure(std::env::temp_dir().canonicalize().unwrap());
+        // Between turns: held for the next one.
+        panes.set_in_turn(false);
+        // The model's own failure comes back as its tool result, not again as a report.
+        let out = panes
+            .terminal(
+                &json!({ "action": "run", "command": "false", "wait_ms": 15000 }),
+                false,
+            )
+            .await
+            .unwrap();
+        assert!(out.content.contains("[exit code 1]"), "{}", out.content);
+        let prompts = || {
+            let s = panes.state.lock().unwrap();
+            s.panes["t1"]
+                .term
+                .as_ref()
+                .unwrap()
+                .grid
+                .lock()
+                .unwrap()
+                .prompts
+        };
+        let user_runs = |line: &str| {
+            let before = prompts();
+            panes.handle(&Op::PaneInput {
+                id: "t1".into(),
+                data: format!("{line}\r"),
+            });
+            async move {
+                let started = Instant::now();
+                while prompts() == before && started.elapsed() < Duration::from_secs(10) {
+                    tokio::time::sleep(Duration::from_millis(40)).await;
+                }
+                // Past the watcher's coalescing interval.
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+        };
+        user_runs("true").await;
+        user_runs("").await;
+        assert_eq!(panes.take_queued(), Vec::<String>::new());
+        user_runs("echo nope; (exit 3)").await;
+        assert_eq!(
+            panes.take_queued(),
+            ["[terminal t1] `echo nope; (exit 3)` failed (exit 3):\nnope"]
+        );
+        // Enter on the empty prompt that follows repeats `$?` but ran nothing.
+        user_runs("").await;
+        assert_eq!(panes.take_queued(), Vec::<String>::new());
+        assert!(std::iter::from_fn(|| rx.try_recv().ok()).any(|e| matches!(
+            e,
+            Event::PaneNotice { ref message, .. } if message == "`echo nope; (exit 3)` failed (exit 3)"
+        )));
+        panes.shutdown();
     }
 }
