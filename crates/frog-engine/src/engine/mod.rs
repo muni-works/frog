@@ -436,8 +436,10 @@ struct Shared {
     /// turn, in order, each exactly once) instead of letting each start its own turn after
     /// this one. Empty between turns — the router forwards straight through then, and any
     /// leftovers here would be lost, so the work loop takes the queue at every boundary
-    /// including the last one before `Idle`.
-    submitted: Mutex<Vec<crate::protocol::Part>>,
+    /// including the last one before `Idle`. The flag marks a parent's message to an
+    /// engine-owned child (parked the same way): `Op::ClearInbox` voids those, like the
+    /// session messages in the work queue, and keeps the user's own follow-ups.
+    submitted: Mutex<Vec<(crate::protocol::Part, bool)>>,
     /// The mode the client asked for ([`Op::SetMode`]), as a [`Mode`] discriminant. The router
     /// stores it immediately (a safety setting, not conversation state), the permit path picks
     /// it up per decision, and the agent's `handle` reconciles its own copy and logs
@@ -758,6 +760,13 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                     // The queued deliveries are voided now: they never run, so they stop
                     // counting (and anything sent after the clear counts from zero).
                     router.inbox_waiting.store(0, Ordering::Relaxed);
+                    // A parent's message parked mid-turn is a session message too: a stop
+                    // that clears the queue must not have it restart the session (#117).
+                    router
+                        .submitted
+                        .lock()
+                        .unwrap()
+                        .retain(|(_, session)| !session);
                 }
                 Op::DismissWakes => router.bg.dismiss(),
                 // A permission mode is a safety setting, not conversation state: it applies at
@@ -777,10 +786,13 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                     from_name,
                     message,
                 } if from == "parent" && router.working.load(Ordering::Relaxed) => {
-                    router.submitted.lock().unwrap().push(crate::protocol::Part {
-                        text: crate::tools::sessions::wrap(&from, &from_name, &message),
-                        images: Vec::new(),
-                    });
+                    router.submitted.lock().unwrap().push((
+                        crate::protocol::Part {
+                            text: crate::tools::sessions::wrap(&from, &from_name, &message),
+                            images: Vec::new(),
+                        },
+                        true,
+                    ));
                 }
                 op @ Op::Deliver { .. } => {
                     router.inbox_sent.fetch_add(1, Ordering::SeqCst);
@@ -929,7 +941,11 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                     if router.working.load(Ordering::Relaxed) {
                         let mut all = vec![crate::protocol::Part { text, images }];
                         all.extend(more);
-                        router.submitted.lock().unwrap().extend(all);
+                        router
+                            .submitted
+                            .lock()
+                            .unwrap()
+                            .extend(all.into_iter().map(|p| (p, false)));
                     } else if work_tx
                         .send(Op::Submit { text, images, more })
                         .is_err()
@@ -1311,7 +1327,10 @@ fn draining(shared: &Shared) -> bool {
     /// messages of the running turn, so the model reads them before its next step (they no
     /// longer wait for the whole turn to end). Exactly once: drained is drained.
     fn take_submitted(shared: &Shared) -> Vec<crate::protocol::Part> {
-        std::mem::take(&mut shared.submitted.lock().unwrap())
+        std::mem::take(&mut *shared.submitted.lock().unwrap())
+            .into_iter()
+            .map(|(part, _)| part)
+            .collect()
     }
 
 /// Like [`drain_pending`], but for the composer's queue: yields first so the router task
