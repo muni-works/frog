@@ -28,7 +28,7 @@ enum ToolIcon {
         case "Skill": "sparkles.rectangle.stack"
         case "Recall": "clock.arrow.circlepath"
         case "UseFolder": "folder"
-        case "McpTools": "puzzlepiece.extension"
+        case "McpTools", "ToolSearch": "puzzlepiece.extension"
         case let n where n.hasPrefix("mcp__desktop__"): "macwindow.and.cursorarrow"
         case let n where n.hasPrefix("mcp__"): "puzzlepiece.extension"
         default: "wrench.and.screwdriver"
