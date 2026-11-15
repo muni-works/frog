@@ -143,8 +143,10 @@ test("the engine's requests get one pane_reply each, as the Mac answers them", a
   hub.request({ call: "c4", id: "p1", action: "type" });
   assert.deepEqual(ops("pane_reply").at(-1), { op: "pane_reply", call: "c4", result: null, error: "type needs a selector" });
 
-  hub.request({ call: "c5", id: "p1", action: "screenshot" });
+  const seen = hub.attention;
+  hub.request({ call: "c5", id: "p1", action: "screenshot", args: { for: "checkpoint" } });
   assert.deepEqual(ops("pane_reply").at(-1), { op: "pane_reply", call: "c5", result: null, error: NO_SCREENSHOT });
+  assert.equal(hub.attention, seen, "a turn's checkpoint doesn't bring the preview forward");
 
   // Nothing comes back: answered just before the engine's 20s, and only once.
   hub.request({ call: "c6", id: "p1", action: "eval", args: { js: "1" } });

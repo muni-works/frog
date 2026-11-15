@@ -281,6 +281,9 @@ export class PreviewHub {
       const lines = (this.reports.get(req.id) ?? []).slice(-100).map(({ id: _, ...r }) => r)
       return reply(lines)
     }
+    // Before bringing anything forward: the engine asks for one at every turn's end while a
+    // preview is open (its checkpoint), and that mustn't pop the inspector open each time.
+    if (req.action === 'screenshot') return reply(null, NO_SCREENSHOT)
     this.timer(() => reply(null, "the preview didn't answer in time"), REQUEST_GIVE_UP_MS)
     // The engine is looking at the preview: bring it forward so the user sees what it sees.
     this.attention++
@@ -314,8 +317,6 @@ export class PreviewHub {
       case 'eval':
         if (typeof args.js !== 'string') return reply(null, 'eval needs js')
         return call('eval', { js: args.js })
-      case 'screenshot':
-        return reply(null, NO_SCREENSHOT)
       case 'navigate': {
         if (typeof args.url !== 'string') return reply(null, 'navigate needs a url')
         // `wait`: the pane was just opened at this URL; answer when that load settles rather
