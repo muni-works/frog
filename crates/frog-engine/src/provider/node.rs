@@ -18,8 +18,8 @@ pub struct Client {
     pub hash: String,
     /// The node the session is pinned to (`node/<hash>@<pin>`).
     pub pin: Option<String>,
-    /// Where the last call that finished ran: placement prefers it next.
-    last: Mutex<Option<Placed>>,
+    /// Where the last call (or warm-up) that finished ran: placement prefers it next.
+    last: Arc<Mutex<Option<Placed>>>,
     anthropic: super::anthropic::Settings,
     extra: Option<serde_json::Value>,
     watch: Mutex<Option<tokio_util::sync::DropGuard>>,
@@ -90,7 +90,7 @@ impl Client {
             pool,
             hash: hash.to_lowercase(),
             pin: pin.map(String::from),
-            last: Mutex::new(None),
+            last: Default::default(),
             anthropic: p
                 .map(|p| super::anthropic::Settings::from_profile(p, true))
                 .unwrap_or_default(),
@@ -138,6 +138,31 @@ impl Client {
                 "interactive"
             }),
         }
+    }
+
+    /// Warm `req` (tang's `/v1/prefill`) on the node placement picks for it now, as a
+    /// background call, and have the next call prefer that node, whose KV then holds the
+    /// conversation. Placed on what the pool knows (no `/node` refresh): `None` when nowhere
+    /// can take it, or when the best place is this Mac's tang not yet running, since a
+    /// warm-up never starts one.
+    pub fn prefill(
+        &self,
+        req: &Request<'_>,
+    ) -> Option<impl std::future::Future<Output = Result<()>> + Send + 'static> {
+        let at = self.place(Some(req)).ok()?;
+        if at.start.is_some() {
+            return None;
+        }
+        let flight = self.pool.begin(&at, true);
+        let warm = self.openai(&at, true).prefill(req);
+        let last = self.last.clone();
+        Some(async move {
+            let r = warm.await;
+            drop(flight);
+            r?;
+            *last.lock().unwrap() = Some(at);
+            Ok(())
+        })
     }
 
     /// The context window the node reports for this model.
@@ -503,5 +528,85 @@ mod tests {
         assert_eq!(text, "from the mac");
         assert!(r.unwrap().usage.ran_on.unwrap().local);
         assert_eq!(starts.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    fn warm_req<'a>(messages: &'a [Message]) -> Request<'a> {
+        Request {
+            system: "you are frog",
+            messages,
+            tools: &[],
+            max_tokens: None,
+            format: None,
+            think: None,
+            think_budget: None,
+            cache_key: Some("s1"),
+            background: true,
+        }
+    }
+
+    /// A pooled model warms too: the draft goes to the node placement picks, as background
+    /// work under the conversation's key, and the next call prefers that node, whose KV now
+    /// holds it.
+    #[tokio::test]
+    async fn a_warm_up_goes_to_the_placed_node_and_the_next_call_follows_it() {
+        let node = spawn(
+            "fa",
+            900,
+            vec![("org/Qwen3-4B", Q4, true)],
+            Chat::Reply("hello"),
+        )
+        .await;
+        let pool = crate::nodes::Pool::fixed(vec![paired("mew", "fa", &node)], None, quick());
+        let c = Client::new(pool, "aa11bb22cc33", None);
+        c.pool.ensure_fresh().await;
+        let messages = vec![Message {
+            role: Role::User,
+            content: vec![Block::Text {
+                text: "fix the parser".into(),
+            }],
+        }];
+        c.prefill(&warm_req(&messages))
+            .expect("a placed warm-up")
+            .await
+            .unwrap();
+        let got = node.prefills.lock().unwrap().clone();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].0, "background");
+        assert_eq!(got[0].1["prompt_cache_key"], "s1");
+        assert!(got[0].1["messages"].to_string().contains("fix the parser"));
+        assert!(got[0].1.get("stream").is_none());
+        assert_eq!(c.ran_on().unwrap().name, "mew");
+        assert_eq!(node.chats(), 0, "a warm-up is not a chat");
+    }
+
+    /// A warm-up never starts this Mac's tang: that's a model load, for a head start.
+    #[tokio::test]
+    async fn a_warm_up_does_not_start_this_macs_tang() {
+        let (pool, starts, _up) = startable(vec![]);
+        let c = Client::new(pool, "aa11bb22cc33", None);
+        c.pool.ensure_fresh().await;
+        let messages = vec![Message {
+            role: Role::User,
+            content: vec![Block::Text { text: "hi".into() }],
+        }];
+        assert!(c.prefill(&warm_req(&messages)).is_none());
+        assert_eq!(starts.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    /// The pool says whether warm-ups work: its tangs list `prefill` among the model's
+    /// capabilities.
+    #[tokio::test]
+    async fn a_pooled_model_reports_prefill_when_its_node_does() {
+        let node = spawn(
+            "fa",
+            900,
+            vec![("org/Qwen3-4B", Q4, true)],
+            Chat::Reply("hello"),
+        )
+        .await;
+        let pool = crate::nodes::Pool::fixed(vec![paired("mew", "fa", &node)], None, quick());
+        let p = super::super::Provider::Node(Client::new(pool, "aa11bb22cc33", None));
+        let ext = p.extensions().await;
+        assert!(ext.cache_key && ext.prefill);
     }
 }

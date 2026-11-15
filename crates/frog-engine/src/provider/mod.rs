@@ -448,6 +448,7 @@ impl Provider {
     {
         match self {
             Self::OpenAi(c) => Some(Box::pin(c.prefill(req))),
+            Self::Node(c) => c.prefill(req).map(|f| Box::pin(f) as _),
             #[cfg(test)]
             Self::Scripted(c) if c.prefills.is_some() => Some(Box::pin(c.prefill(req))),
             _ => None,
@@ -478,11 +479,20 @@ impl Provider {
                 }
             }
             // Every node is a tang: the key keeps the conversation's KV, and its
-            // `prompt_cache_keys` tell placement which node holds it.
-            Self::Node(_) => Extensions {
-                cache_key: true,
-                ..Extensions::default()
-            },
+            // `prompt_cache_keys` tell placement which node holds it. Warm-ups go to the node
+            // placement picks, when its tang prefills.
+            Self::Node(c) => {
+                let caps = tokio::time::timeout(Duration::from_secs(3), c.capabilities())
+                    .await
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default();
+                Extensions {
+                    cache_key: true,
+                    prefill: caps.iter().any(|c| c == "prefill"),
+                    ..Extensions::default()
+                }
+            }
             #[cfg(test)]
             Self::Scripted(c) => Extensions {
                 cache_key: c.prefills.is_some(),

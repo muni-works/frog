@@ -1160,6 +1160,8 @@ pub mod fake {
         pub node: Arc<std::sync::Mutex<serde_json::Value>>,
         /// Each chat's `x-frog-priority`.
         pub priorities: Arc<std::sync::Mutex<Vec<String>>>,
+        /// Each `/v1/prefill`: its `x-frog-priority` and body.
+        pub prefills: Arc<std::sync::Mutex<Vec<(String, serde_json::Value)>>>,
     }
 
     impl Fake {
@@ -1218,6 +1220,8 @@ pub mod fake {
         let count = chats.clone();
         let priorities = Arc::new(std::sync::Mutex::new(Vec::new()));
         let heard = priorities.clone();
+        let prefills = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let warmed = prefills.clone();
         let loaded: Vec<_> = models
             .iter()
             .filter(|m| m.2)
@@ -1240,8 +1244,13 @@ pub mod fake {
         let served = node.clone();
         tokio::spawn(async move {
             while let Ok((mut s, _)) = listener.accept().await {
-                let (count, node, chat, heard) =
-                    (count.clone(), served.clone(), chat.clone(), heard.clone());
+                let (count, node, chat, heard, warmed) = (
+                    count.clone(),
+                    served.clone(),
+                    chat.clone(),
+                    heard.clone(),
+                    warmed.clone(),
+                );
                 tokio::spawn(async move {
                     let mut got = Vec::new();
                     loop {
@@ -1285,6 +1294,28 @@ pub mod fake {
                     let out = if line.starts_with("GET /node") {
                         let body = node.lock().unwrap().to_string();
                         ok(&body, "application/json")
+                    } else if line.contains("/v1/prefill") {
+                        let raw = String::from_utf8_lossy(&got).to_string();
+                        let (head, body) = raw.split_once("\r\n\r\n").unwrap_or((&raw, ""));
+                        let priority = head
+                            .to_ascii_lowercase()
+                            .lines()
+                            .find_map(|l| l.strip_prefix("x-frog-priority: ").map(str::to_owned))
+                            .unwrap_or_default();
+                        let body = serde_json::from_str(body).unwrap_or_default();
+                        warmed
+                            .lock()
+                            .unwrap()
+                            .push((priority.trim().to_string(), body));
+                        ok(r#"{"object":"prefill"}"#, "application/json")
+                    } else if line.contains("/v1/models") {
+                        let ids: Vec<_> = node.lock().unwrap()["models"]["loaded"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .map(|m| json!({"id": m["id"], "capabilities": ["prompt_cache_key", "prefill"]}))
+                            .collect();
+                        ok(&json!({"data": ids}).to_string(), "application/json")
                     } else if line.contains("/v1/chat/completions") {
                         count.fetch_add(1, Ordering::SeqCst);
                         let head = String::from_utf8_lossy(&got).to_ascii_lowercase();
@@ -1324,6 +1355,7 @@ pub mod fake {
             chats,
             node,
             priorities,
+            prefills,
         }
     }
 

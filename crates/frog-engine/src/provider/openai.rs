@@ -206,7 +206,7 @@ impl Client {
 
     /// Have the server prefill `req` without answering (tang-llm's `/v1/prefill`), so the
     /// call that follows starts from a warm cache.
-    pub fn prefill(&self, req: &Request<'_>) -> impl Future<Output = Result<()>> + Send + 'static {
+    pub fn prefill(&self, req: &Request<'_>) -> impl Future<Output = Result<()>> + Send + use<> {
         let url = format!("{}/prefill", self.base.trim_end_matches('/'));
         let mut body = self.body(req);
         if let Some(o) = body.as_object_mut() {
