@@ -630,13 +630,13 @@ mod tests {
         // The platform default first, then the largest window; never itself, a model
         // without tools or another provider's.
         assert_eq!(
-            pick("cloud/deepseek-v4.1-flash", 10_000, &[]),
-            ["cloud/glm-5.3-flash", "cloud/big", "cloud/small"]
+            pick("cloud/glm-5.3-flash", 10_000, &[]),
+            ["cloud/deepseek-v4.1-flash", "cloud/big", "cloud/small"]
         );
         // A thread too big for a model's window skips it.
-        assert_eq!(pick("cloud/deepseek-v4.1-flash", 195_000, &[]), ["cloud/big"]);
+        assert_eq!(pick("cloud/glm-5.3-flash", 195_000, &[]), ["cloud/big"]);
         assert_eq!(
-            pick("cloud/deepseek-v4.1-flash", 10_000, &["cloud/glm-5.3-flash".into()]),
+            pick("cloud/glm-5.3-flash", 10_000, &["cloud/deepseek-v4.1-flash".into()]),
             ["cloud/big", "cloud/small"]
         );
         // BYOK never falls back: nothing hops between tiers.
