@@ -103,6 +103,18 @@ c("dirty with no PR: commit","Top line · Commit",{"where":sess(dirty=True,diff=
 c("commit hook failure keeps the message and shows output","Top line · Commit",{"where":sess(dirty=True)},{"type":"failed","code":"hook_failed","detail":"lint: 2 errors"},{"error":{"code":"hook_failed","message":"A commit hook failed","actions":["show_output"],"control":"git_action","detail":"lint: 2 errors"}})
 c("show output from the hook error","Top line · Commit",{"where":sess(dirty=True),"error":{"code":"hook_failed","message":"A commit hook failed","actions":["show_output"],"control":"git_action","detail":"lint: 2 errors","retryIn":None}},{"type":"error_action","action":"show_output"},{"error":{"code":"hook_failed"}},[{"type":"show_output","detail":"lint: 2 errors"}])
 c("committed with no PR: open PR","Top line · Open PR",{"where":sess(ahead=2)},{"type":"git_action"},{"derived":{"gitAction":"open_pr"}},[{"type":"open_pr"}])
+# --- Open PR when the work is done (docs/plans/2026-11-13-open-pr-when-done.md)
+# `openPr` is the emphasis: the action exists on "commits ahead, no PR" either way, and the
+# predicate only decides whether the chip is urged. Both reducers pass these.
+ELIGIBLE={"worktree":True,"ahead":2}
+c("open PR when the work is done is urged","Top line · Open PR",{"where":sess(ahead=2),"openPr":ELIGIBLE},{"type":"type","text":""},{"derived":{"gitAction":"open_pr","openPr":True}})
+c("no predicate facts: open PR stays plain","Top line · Open PR",{"where":sess(ahead=2)},{"type":"type","text":""},{"derived":{"gitAction":"open_pr","openPr":False}})
+c("off: open PR is not offered at all","Top line · Open PR",{"where":sess(ahead=2),"openPr":ELIGIBLE,"openPrWhenDone":"off"},{"type":"type","text":""},{"derived":{"gitAction":None,"openPr":False}})
+c("ask offers it; auto is parsed and offers the same","Top line · Open PR",{"where":sess(ahead=2),"openPr":ELIGIBLE,"openPrWhenDone":"ask"},{"type":"type","text":""},{"derived":{"gitAction":"open_pr","openPr":True}})
+c("a manager is not urged, but may still open one","Top line · Open PR",{"where":sess(ahead=2),"openPr":{"worktree":True,"ahead":2,"depth":0,"hasChildren":True}},{"type":"type","text":""},{"derived":{"gitAction":"open_pr","openPr":False}})
+c("read-only is not urged","Top line · Open PR",{"where":sess(ahead=2),"openPr":{"worktree":True,"ahead":2,"readOnly":True}},{"type":"type","text":""},{"derived":{"gitAction":"open_pr","openPr":False}})
+c("opted out is not urged","Top line · Open PR",{"where":sess(ahead=2),"openPr":{"worktree":True,"ahead":2,"optedOut":True}},{"type":"type","text":""},{"derived":{"gitAction":"open_pr","openPr":False}})
+c("no worktree is not urged","Top line · Open PR",{"where":sess(ahead=2),"openPr":{"worktree":False,"ahead":2}},{"type":"type","text":""},{"derived":{"gitAction":"open_pr","openPr":False}})
 c("open PR without gh auth: connect GitHub","Top line · Open PR",{"where":sess(ahead=2)},{"type":"failed","code":"gh_auth"},{"error":{"code":"gh_auth","message":"Connect GitHub to open a PR","actions":["connect_github"],"control":"git_action"}})
 c("connect GitHub runs gh auth login","Top line · Open PR",{"where":sess(ahead=2),"error":{"code":"gh_auth","message":"Connect GitHub to open a PR","actions":["connect_github"],"control":"git_action","detail":None,"retryIn":None}},{"type":"error_action","action":"connect_github"},{"error":None},[{"type":"gh_auth_login"}])
 c("ahead of the PR: push","Top line · Push",{"where":sess(ahead=1,prs=[pr(297,"checks",ok=1,total=3)])},{"type":"git_action"},{"derived":{"gitAction":"push","prSummary":{"count":1,"worst":"checks","label":"#297"}}},[{"type":"push"}])

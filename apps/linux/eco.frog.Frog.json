@@ -1,0 +1,34 @@
+{
+  "id": "eco.frog.Frog",
+  "runtime": "org.gnome.Platform",
+  "runtime-version": "49",
+  "sdk": "org.gnome.Sdk",
+  "sdk-extensions": ["org.freedesktop.Sdk.Extension.rust-stable"],
+  "command": "frog-app",
+  "finish-args": [
+    "--share=network",
+    "--share=ipc",
+    "--socket=wayland",
+    "--socket=fallback-x11",
+    "--device=dri",
+    "--filesystem=home",
+    "--talk-name=org.freedesktop.Flatpak"
+  ],
+  "build-options": {
+    "append-path": "/usr/lib/sdk/rust-stable/bin",
+    "build-args": ["--share=network"],
+    "env": { "CARGO_HOME": "/run/build/frog/cargo" }
+  },
+  "modules": [
+    {
+      "name": "frog",
+      "buildsystem": "simple",
+      "build-commands": [
+        "cargo build --release --locked -p frog -p frog-gtk",
+        "install -Dm755 target/release/frog /app/bin/frog",
+        "BIN=target/release/frog-app PREFIX=/app apps/linux/install.sh"
+      ],
+      "sources": [{ "type": "dir", "path": "../.." }]
+    }
+  ]
+}

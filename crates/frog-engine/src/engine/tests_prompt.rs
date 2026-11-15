@@ -173,8 +173,10 @@ async fn prompt_breakdown() {
 
 /// The budget for what a plain coding call re-sends, in chars. Set from the size after the
 /// prompt diet (see the PR); raise it only on purpose, since every call pays it.
-const HEADLESS_BUDGET: usize = 19_000;
-const APP_BUDGET: usize = 22_000;
+/// Raised by about 1,000 for Grep's context output and Read's `files`: the text that lets one
+/// call do what took three.
+const HEADLESS_BUDGET: usize = 20_100;
+const APP_BUDGET: usize = 22_750;
 
 #[tokio::test]
 async fn the_fixed_prompt_stays_under_budget() {

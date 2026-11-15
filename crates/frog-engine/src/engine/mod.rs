@@ -960,6 +960,14 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                 format!("[delegation] chief_classes: ignoring unknown class(es) {unknown}"),
             );
         }
+        if agent.cfg.git.open_pr_when_done == crate::config::OpenPr::Auto {
+            // Said once at startup, so nobody wonders why branches pile up: the setting parses,
+            // and does what `ask` does until the unattended path is built.
+            agent.notice(
+                Level::Warn,
+                "[git] open_pr_when_done = \"auto\" is not implemented yet: it behaves as \"ask\"",
+            );
+        }
         agent.connect_mcp();
         // Restore MCP tools that were loaded in a previous session
         if !agent.loaded_tools.is_empty() {
@@ -1590,6 +1598,9 @@ struct Agent {
     subagent: bool,
     chat: bool,
     store: Option<PathBuf>,
+    /// This session's `Ask` ledger (`<store>/questions/<id>.jsonl`): what it asked and how
+    /// each question stands, shared with its tree (see `questions`). `None` without a store.
+    ledger: Option<crate::questions::File>,
     last_call: Duration,
     /// The model call in flight, if any: when this attempt started, which attempt it is, and
     /// the provider's `retry-after` when a busy answer gave one. `Status.waiting` reads it, so
@@ -1942,6 +1953,7 @@ impl Agent {
             subagent: o.subagent,
             chat: o.chat,
             store: o.store,
+            ledger: None,
             last_call: Duration::ZERO,
             call_started: Mutex::new(None),
             detour: Mutex::new(None),
@@ -2007,6 +2019,12 @@ impl Agent {
             chapter_titles: Default::default(),
             shared,
         };
+        // The question ledger goes beside this session's log, keyed on the id it actually runs
+        // (a resumed session's, not a fresh one's).
+        agent.ledger = agent
+            .store
+            .as_ref()
+            .map(|dir| crate::questions::File::new(dir, &agent.conv.session_id));
         if resumed {
             // A session that died mid-turn may have dangling tool calls, and a turn that never
             // ended: end it, cancelled, so clients don't show it running forever.
@@ -2242,6 +2260,8 @@ impl Agent {
             degraded: self.degraded(),
             ran_on: self.provider.ran_on(),
             waiting: self.waiting(),
+            open_pr_when_done: self.cfg.git.open_pr_when_done.effective_word().into(),
+            read_only: self.subagent,
         }));
     }
 

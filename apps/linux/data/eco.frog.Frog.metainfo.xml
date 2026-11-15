@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>eco.frog.Frog</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LicenseRef-proprietary</project_license>
+  <name>Frog</name>
+  <summary>A coding agent built for local models</summary>
+  <developer id="eco.frog">
+    <name>Cam Pedersen</name>
+  </developer>
+  <description>
+    <p>Frog reads, edits and runs code in your projects, with a model on your own hardware (tang, ollama, llama.cpp) or in the cloud.</p>
+    <ul>
+      <li>Answers stream in as they are written; thinking folds away</li>
+      <li>Every tool call shows its output, and every edit its diff</li>
+      <li>Frog asks before it changes a file or runs a command</li>
+      <li>Continue or fork any earlier conversation</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">eco.frog.Frog.desktop</launchable>
+  <provides>
+    <binary>frog-app</binary>
+  </provides>
+  <url type="homepage">https://frog.eco</url>
+  <url type="bugtracker">https://github.com/ecto/frog/issues</url>
+  <screenshots>
+    <screenshot type="default">
+      <caption>A conversation with a tool call and its diff</caption>
+      <image>https://raw.githubusercontent.com/ecto/frog/main/apps/linux/screenshots/gnome-light.png</image>
+    </screenshot>
+  </screenshots>
+  <content_rating type="oars-1.1"/>
+  <requires>
+    <display_length compare="ge">360</display_length>
+  </requires>
+  <branding>
+    <color type="primary" scheme_preference="light">#8ff0a4</color>
+    <color type="primary" scheme_preference="dark">#1f7a3a</color>
+  </branding>
+  <releases>
+    <release version="0.1.0" date="2026-10-08"/>
+  </releases>
+</component>

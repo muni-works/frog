@@ -2,7 +2,6 @@ pub mod bash;
 pub mod compare;
 pub mod deferred;
 pub mod diagram;
-pub mod visualize;
 pub mod docs;
 pub mod fs;
 pub mod image;
@@ -14,6 +13,7 @@ pub mod search;
 pub mod sessions;
 pub mod todo;
 pub mod visual;
+pub mod visualize;
 pub mod web;
 pub mod websearch;
 
@@ -62,6 +62,8 @@ pub struct Ctx {
     pub web: std::sync::Arc<web::Web>,
     /// The model has read `VisualGuide` this session (or been told to).
     pub visual_guide: bool,
+    /// The last sandboxed Bash call was blocked by the sandbox: an `unsandboxed` rerun is real.
+    pub shell_blocked: bool,
 }
 
 impl Ctx {
@@ -84,6 +86,7 @@ impl Ctx {
             cancel: None,
             web: Default::default(),
             visual_guide: false,
+            shell_blocked: false,
         }
     }
 
@@ -366,6 +369,14 @@ pub fn label(name: &str, input: &Value, ctx: &Ctx) -> (String, String) {
     let s = |k: &str| input[k].as_str().unwrap_or("").to_string();
     let arg = match name {
         "Bash" => s("command").lines().next().unwrap_or("").to_string(),
+        "Read" if input["files"].is_array() => input["files"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|f| f.as_str().or(f["file_path"].as_str()))
+            .map(|p| ctx.display(&ctx.resolve(p)))
+            .collect::<Vec<_>>()
+            .join(", "),
         "Read" | "Write" | "Edit" => ctx.display(&ctx.resolve(&s("file_path"))),
         "Glob" | "Grep" => s("pattern"),
         "Diagram" | visualize::TOOL => s("title"),
