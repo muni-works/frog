@@ -441,7 +441,7 @@ impl Win {
         if let Some(cmd) = t.strip_prefix('!') {
             self.send(Op::Shell { command: cmd.to_string() });
         } else {
-            self.send(Op::Submit { text: t.to_string(), images: vec![] });
+            self.send(Op::Submit { text: t.to_string(), images: vec![], more: vec![] });
         }
     }
 
@@ -453,7 +453,7 @@ impl Win {
 
     fn decide(self: &Rc<Self>, d: Decision) {
         let Some((id, _)) = self.state.borrow().permission.clone() else { return };
-        self.send(Op::Permission { id, decision: d });
+        self.send(Op::Permission { id, decision: d, note: None });
     }
 
     // ---- events
@@ -556,7 +556,7 @@ impl Win {
                     }
                 }
             }
-            Event::PermissionRequest { id, item, name, arg, always, preview, reason } => {
+            Event::PermissionRequest { id, item, name, arg, always, preview, reason, .. } => {
                 if let Some(t) = self.state.borrow().tools.get(&item) {
                     t.waiting(true)
                 }
@@ -588,11 +588,18 @@ impl Win {
             Event::TurnEnded { reason, .. } => {
                 let note = match &reason {
                     EndReason::Complete => None,
-                    EndReason::MaxTokens => Some(("Stopped at the output limit.", "warning")),
+                    EndReason::MaxTokens { .. } => Some(("Stopped at the output limit.", "warning")),
                     EndReason::Denied => Some(("Stopped: you denied a tool call.", "dim-label")),
                     EndReason::Looping => Some(("Stopped: the model kept repeating the same call.", "warning")),
                     EndReason::StepLimit => Some(("Stopped at the step limit.", "warning")),
                     EndReason::Cancelled => Some(("Interrupted.", "dim-label")),
+                    EndReason::BlockedOnApproval { .. } => {
+                        Some(("Stopped: a call you denied was tried again.", "dim-label"))
+                    }
+                    EndReason::Suspended => Some(("Paused; it picks up when frog restarts.", "dim-label")),
+                    EndReason::BillingLimit { .. } => {
+                        Some(("Stopped: the Frog Cloud spending limit was reached.", "warning"))
+                    }
                     EndReason::Error { .. } => None,
                 };
                 if let Some((t, c)) = note {
@@ -607,7 +614,7 @@ impl Win {
                 self.set_busy(false);
                 self.refresh_sessions();
             }
-            Event::Compacted { tokens_before, tokens_after } => {
+            Event::Compacted { tokens_before, tokens_after, .. } => {
                 self.add(widgets::note(&format!("Compacted the conversation: {tokens_before} → {tokens_after} tokens."), "dim-label"))
             }
             Event::ModelChanged { model } => {
@@ -619,7 +626,7 @@ impl Win {
                 self.state.borrow_mut().cwd = cwd;
                 self.update_subtitle();
             }
-            Event::Progress { label } => self.progress.set_text(&label),
+            Event::Progress { label, .. } => self.progress.set_text(&label),
             Event::Notice { level, message } => self.add(widgets::note(
                 &message,
                 match level {

@@ -114,7 +114,7 @@ impl Link {
         let mut link = Link { child, stdin };
         if replay().is_none() {
             // The window can put the model's questions to a person, so it gets `Ask`.
-            link.send(&Op::SetClientCaps { panes: false, ask: true });
+            link.send(&Op::SetClientCaps { panes: false, ask: true, sessions: false, irc: false });
             if start.resume.is_some() || start.fork.is_some() {
                 link.send(&Op::Subscribe { after: 0 });
             }
