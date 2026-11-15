@@ -214,7 +214,15 @@ impl Client {
             o.remove("stream_options");
         }
         let mut rb = self.http.post(url).json(&body);
-        if let Some(p) = self.priority {
+        // A warm-up is a head start, never work anyone waits on: as background work it gives
+        // way to an interactive call (the turn it warms, or another conversation's) instead of
+        // holding it up. Only tang prefills, and it takes the header without a node.
+        let priority = if req.background {
+            Some("background")
+        } else {
+            self.priority
+        };
+        if let Some(p) = priority {
             rb = rb.header("x-frog-priority", p);
         }
         if let Some(k) = &self.key {
@@ -505,6 +513,50 @@ mod tests {
         };
         assert_eq!(c.body(&req(Some("abc")))["prompt_cache_key"], "abc");
         assert!(c.body(&req(None)).get("prompt_cache_key").is_none());
+    }
+
+    /// The engine's warm-ups (`background`) go to tang as background work even on a server
+    /// that's no node (the Mac's own tang, Frog Cloud), so they never hold up a real call.
+    #[tokio::test]
+    async fn a_background_prefill_says_so_to_the_server() {
+        let tang = crate::nodes::fake::spawn(
+            "fa",
+            1,
+            vec![("m", "aa11bb22cc33dd44", true)],
+            crate::nodes::fake::Chat::Reply("x"),
+        )
+        .await;
+        let c = Client {
+            http: reqwest::Client::new(),
+            base: format!("{}/v1", tang.base),
+            model: "m".into(),
+            key: None,
+            extra: None,
+            anthropic: Default::default(),
+            priority: None,
+        };
+        let msgs = vec![Message::user("fix the parser")];
+        let req = |background| Request {
+            system: "s",
+            messages: &msgs,
+            tools: &[],
+            max_tokens: None,
+            format: None,
+            think: None,
+            think_budget: None,
+            cache_key: Some("s1"),
+            background,
+        };
+        c.prefill(&req(true)).await.unwrap();
+        c.prefill(&req(false)).await.unwrap();
+        let got: Vec<_> = tang
+            .prefills
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(p, _)| p.clone())
+            .collect();
+        assert_eq!(got, ["background", ""]);
     }
 
     #[test]
