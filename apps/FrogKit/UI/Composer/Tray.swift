@@ -93,6 +93,10 @@ struct TrayDot: View {
 struct TrayChip<Label: View>: View {
     var outlined = false
     var strong = false
+    /// The line's one emphatic control (Open PR when the work is done). Tokens' rule is that
+    /// state color lives on glyphs and text, never on fills, so this is a hairline in the accent
+    /// plus a slightly heavier fill — the same restraint as the send button, not a green slab.
+    var accent = false
     let action: () -> Void
     @ViewBuilder let label: Label
 
@@ -101,9 +105,14 @@ struct TrayChip<Label: View>: View {
             HStack(spacing: 5) { label }
                 .padding(.horizontal, 8)
                 .frame(height: 22)
-                .background(Color.primary.opacity(strong ? 0.1 : 0.06), in: .rect(cornerRadius: 6, style: .continuous))
+                .background(Color.primary.opacity(accent ? 0.14 : strong ? 0.1 : 0.06),
+                            in: .rect(cornerRadius: 6, style: .continuous))
                 .overlay {
-                    if outlined { RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Tokens.fail, lineWidth: 1) }
+                    if outlined {
+                        RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Tokens.fail, lineWidth: 1)
+                    } else if accent {
+                        RoundedRectangle(cornerRadius: 6, style: .continuous).strokeBorder(Tokens.accent.opacity(0.55), lineWidth: 1)
+                    }
                 }
                 .contentShape(.rect)
         }
@@ -157,10 +166,16 @@ struct TrayGitLine: View {
             Spacer(minLength: 6)
             if let summary = d.prSummary { prPill(summary) }
             if let a = d.gitAction {
-                TrayChip(outlined: state.error?.control == "git_action", strong: true, action: { send(.gitAction) }) {
-                    Text(a.label).font(.frog(size: 12, weight: .medium)).foregroundStyle(Tokens.text)
+                // Open PR, when the work is done and opening one is wanted, is the line's one
+                // emphatic control: the setting's `ask` made visible, in the place the action
+                // already was (docs/plans/2026-11-13-open-pr-when-done.md).
+                TrayChip(outlined: state.error?.control == "git_action", strong: true, accent: d.openPr, action: { send(.gitAction) }) {
+                    Text(a.label)
+                        .font(.frog(size: 12, weight: d.openPr ? .semibold : .medium))
+                        .foregroundStyle(d.openPr ? Tokens.accent : Tokens.text)
                 }
                 .disabled(state.busy == .sending)
+                .help(d.openPr ? "The work is done: push this branch and open a pull request" : "")
             }
         }
         .font(.frog(size: 12))
