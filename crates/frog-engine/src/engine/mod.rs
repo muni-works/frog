@@ -960,14 +960,6 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                 format!("[delegation] chief_classes: ignoring unknown class(es) {unknown}"),
             );
         }
-        if agent.cfg.git.open_pr_when_done == crate::config::OpenPr::Auto {
-            // Said once at startup, so nobody wonders why branches pile up: the setting parses,
-            // and does what `ask` does until the unattended path is built.
-            agent.notice(
-                Level::Warn,
-                "[git] open_pr_when_done = \"auto\" is not implemented yet: it behaves as \"ask\"",
-            );
-        }
         agent.connect_mcp();
         // Restore MCP tools that were loaded in a previous session
         if !agent.loaded_tools.is_empty() {
@@ -1236,6 +1228,11 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             {
                 held = Some(Op::Wake);
                 continue;
+            }
+            // The work is done (the last turn completed and nothing is queued behind it):
+            // `[git] open_pr_when_done = "auto"` opens its draft PR now, before `Idle`.
+            if std::mem::take(&mut agent.pr_due) {
+                agent.auto_open_pr().await;
             }
             agent.emit(Event::Idle);
             agent.meter_busy(false);
@@ -1593,6 +1590,15 @@ struct Agent {
     mode_logged: Option<Mode>,
     /// PRs bound to the session (`Op::BindPr`, or opened from its branch), from its log.
     prs: Vec<crate::prs::PrBinding>,
+    /// A turn just completed under `open_pr_when_done = "auto"`: the work loop considers
+    /// opening the PR before going idle (see `auto_open_pr`).
+    pr_due: bool,
+    /// The head `auto_open_pr` last tried: one attempt per head, so a failure (or a decline)
+    /// isn't repeated every turn.
+    pr_tried: Option<String>,
+    /// The session started other sessions (`StartSession`, from its log or this run): a
+    /// manager, which never opens a PR on its own.
+    started_sessions: bool,
     can_ask: bool,
     rich: bool,
     subagent: bool,
@@ -1910,6 +1916,12 @@ impl Agent {
         let shell_root = o.cwd.canonicalize().unwrap_or_else(|_| o.cwd.clone());
         shared.panes.configure(o.cwd.clone());
         let (map_build_tx, map_build_rx) = std::sync::mpsc::channel();
+        // A resumed session that started sessions is still a manager (see `auto_open_pr`).
+        let started_sessions = messages.iter().any(|m| {
+            m.content.iter().any(
+                |b| matches!(b, Block::ToolUse { name, .. } if name == crate::tools::sessions::START),
+            )
+        });
         let mut agent = Self {
             conv: Conversation {
                 messages,
@@ -1948,6 +1960,9 @@ impl Agent {
             mode: resumed_mode.unwrap_or(o.mode),
             mode_logged: resumed_mode,
             prs: resumed_prs,
+            pr_due: false,
+            pr_tried: None,
+            started_sessions,
             can_ask: o.can_ask,
             rich: o.rich,
             subagent: o.subagent,
@@ -2458,6 +2473,12 @@ impl Agent {
     }
 
     fn end_turn(&mut self, turn: u64, reason: EndReason) {
+        // Only a turn that finished its answer counts as the work being done.
+        if reason == EndReason::Complete
+            && self.cfg.git.open_pr_when_done == crate::config::OpenPr::Auto
+        {
+            self.pr_due = true;
+        }
         self.auto_title(turn);
         let timing = self.turn_clock.map(|start| {
             let mut t = self.timing.clone();
@@ -2531,6 +2552,92 @@ impl Agent {
         }
         self.sync_log();
         self.write_summary();
+    }
+
+    /// `[git] open_pr_when_done = "auto"`, at the end of the work: open a draft PR for the
+    /// session's branch when `open_pr::should_open` holds. Nothing to do is silent; a policy
+    /// that rules the push out, or a failure, says so once per head, and the composer's offer
+    /// stays as the way to do it by hand. Never under `off` or `ask`.
+    async fn auto_open_pr(&mut self) {
+        if self.cfg.git.open_pr_when_done != crate::config::OpenPr::Auto
+            || self.subagent
+            || self.chat
+        {
+            return;
+        }
+        let root = self.root.clone();
+        let Ok(Some(branch)) = tokio::task::spawn_blocking({
+            let root = root.clone();
+            move || crate::open_pr::branch(&root)
+        })
+        .await
+        .unwrap_or_else(|e| Err(e.into())) else {
+            return;
+        };
+        if self.pr_tried.as_deref() == Some(branch.head.as_str()) {
+            return;
+        }
+        let facts = crate::open_pr::Facts {
+            worktree: crate::worktree::linked(&root).is_some(),
+            ahead: branch.ahead,
+            has_pr: !self.prs.is_empty(),
+            manager: self.started_sessions || self.shared.kids.live() > 0,
+            worker: self.cfg.worker || self.cfg.parent_session.is_some(),
+            read_only: self.subagent,
+            opted_out: crate::open_pr::opted_out(self.conv.inputs.first().map(String::as_str)),
+        };
+        if !crate::open_pr::should_open(&facts) {
+            return;
+        }
+        self.pr_tried = Some(branch.head.clone());
+        // The grant covers the push, not a network policy that rules it out.
+        let network = self
+            .cfg
+            .sandbox
+            .network
+            .as_deref()
+            .filter(|n| *n != "open" && !n.is_empty());
+        let enforced = self.ctx.egress.as_ref().is_some_and(|e| e.enforced());
+        if network.is_some() || enforced {
+            let why = network.map_or("an enforced egress allow-list".to_string(), |n| {
+                format!("sandbox.network = \"{n}\"")
+            });
+            self.notice(
+                Level::Info,
+                format!(
+                    "[git] open_pr_when_done = \"auto\": not pushing {} under {why}; Open PR is offered instead",
+                    branch.name
+                ),
+            );
+            return;
+        }
+        let gh = self
+            .cfg
+            .git
+            .gh
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("gh"));
+        match crate::open_pr::open(&root, &branch, &gh).await {
+            Ok(pr) => {
+                let url = pr.url();
+                self.bind_pr(pr);
+                self.notice(
+                    Level::Info,
+                    format!(
+                        "opened draft PR {url} for {} ([git] open_pr_when_done = \"auto\")",
+                        branch.name
+                    ),
+                );
+            }
+            Err(e) => self.notice(
+                Level::Warn,
+                format!(
+                    "[git] open_pr_when_done = \"auto\" couldn't open a PR for {}: {e:#}. Open PR is offered instead.",
+                    branch.name
+                ),
+            ),
+        }
+        self.sync_log();
     }
 
     /// Bind (or update) a PR and tell every client the new list. No change, no event.

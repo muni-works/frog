@@ -3,8 +3,9 @@ import Foundation
 /// When the composer offers to open a pull request, and when it must not.
 ///
 /// The setting is `[git] open_pr_when_done` in config.toml: `off`, `ask` (the default) or
-/// `auto`. `auto` is parsed and documented but **deliberately not wired** — it reads as `ask`
-/// until `ask` has been used enough to say what opening one unattended should do.
+/// `auto`. Under `auto` the **engine** opens a draft PR itself when the work is done
+/// (`crates/frog-engine/src/open_pr.rs`, the same predicate plus "not a worker"); the
+/// composer's side of `auto` is `ask`, the fallback when the engine declined or failed.
 ///
 /// `ask` is what the composer already does by hand: the git line's Open PR action, which
 /// `ComposerModel.derive` produces from "commits ahead, no PR yet". This file adds the part
@@ -20,10 +21,10 @@ enum OpenPR {
         case off
         /// Offer Open PR once the work is done. The default.
         case ask
-        /// Open it unattended. **Not implemented**: `effective` maps it to `.ask`.
+        /// The engine opens a draft PR unattended; the composer treats it as `.ask`.
         case auto
 
-        /// What the setting does now. The one place `auto` stops being `auto`.
+        /// What the setting means for the composer: `auto` offers what `ask` offers.
         var effective: Setting { self == .auto ? .ask : self }
 
         /// Whether the composer may offer Open PR at all under this setting.
@@ -95,9 +96,8 @@ enum OpenPR {
     /// The whole decision, in one place: the session has its own branch with commits on it, no
     /// PR yet, is not a manager, is not read-only, and did not opt out.
     ///
-    /// Note what this does **not** know: whether the session was started by an agent
-    /// (`--worker`). That exclusion is a separate decision (see the PR body), so it is not
-    /// smuggled in here.
+    /// Note what this does **not** know: whether the session was started by an agent. The
+    /// engine's `auto` path excludes those (Cam, 2026-11-15); the composer's offer doesn't.
     static func shouldOpenPR(_ s: Input) -> Bool {
         s.worktree
             && s.ahead > 0
@@ -107,8 +107,8 @@ enum OpenPR {
             && !s.optedOut
     }
 
-    /// Whether the composer should offer (or, later, take) Open PR for this session under this
-    /// setting. `off` never offers; `auto` offers exactly as `ask` does today.
+    /// Whether the composer should offer Open PR for this session under this setting. `off`
+    /// never offers; `auto` offers exactly as `ask` does.
     static func offers(_ setting: Setting, _ s: Input) -> Bool {
         setting.offers && shouldOpenPR(s)
     }

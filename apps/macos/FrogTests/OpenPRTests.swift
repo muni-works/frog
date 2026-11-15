@@ -93,10 +93,11 @@ final class OpenPRTests: XCTestCase {
     func testTheSettingGatesTheOfferAndAutoIsAsk() {
         // `off`: nothing is offered, however eligible.
         XCTAssertFalse(OpenPR.offers(.off, eligible))
-        // `ask` (the default) and `auto` (parsed, deliberately not wired) both offer it.
+        // `ask` (the default) and `auto` both offer it (under `auto` the engine opens the PR
+        // itself; the offer is the fallback).
         XCTAssertTrue(OpenPR.offers(.ask, eligible))
         XCTAssertTrue(OpenPR.offers(.auto, eligible))
-        // "auto" is not auto: it resolves to "ask" and offers nothing more.
+        // The composer's side of "auto" is "ask": it offers nothing more.
         XCTAssertEqual(OpenPR.Setting.auto.effective, .ask)
         // The default is `ask` in code: a config that says nothing about it parses to `ask`.
         XCTAssertEqual(OpenPR.Setting(rawValue: "ask"), .some(.ask))

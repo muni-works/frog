@@ -13871,3 +13871,180 @@ fn edits_and_passing_checks_count_as_progress_reads_and_failures_dont() {
     assert!(!progressed(&call("Bash", json!({ "command": "grep -rn x ." })), &res("x", false)));
     assert!(!progressed(&call("Read", json!({})), &res("x", false)));
 }
+
+/// `[git] open_pr_when_done` tests: an engine in a linked worktree (branch `feat`, one commit
+/// ahead of `origin/main`) with a stand-in `gh` (see `open_pr::tests`).
+mod open_pr_tests {
+    use super::*;
+    use crate::config::OpenPr;
+    use crate::open_pr::tests::{fake_gh, remote_branch, repo_with_feature};
+
+    fn engine_in(
+        setting: OpenPr,
+        cwd: PathBuf,
+        gh: PathBuf,
+        parent: Option<&str>,
+        script: Vec<Response>,
+    ) -> Handle {
+        let mut profile = Profile::new(ProviderKind::Ollama, "test");
+        profile.tool_mode = ToolMode::Native;
+        let mut cfg = Config {
+            hermetic: true,
+            parent_session: parent.map(str::to_string),
+            ..Config::default()
+        };
+        cfg.git.open_pr_when_done = setting;
+        cfg.git.gh = Some(gh);
+        let opts = Options {
+            cfg,
+            profile_name: "test".into(),
+            profile,
+            cwd,
+            mode: Mode::Default,
+            can_ask: true,
+            resume: None,
+            store: Some(tmp_store()),
+            sandbox: false,
+            rich: false,
+            subagent: false,
+            chat: false,
+        };
+        start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap()
+    }
+
+    fn notices(evs: &[Envelope]) -> Vec<String> {
+        evs.iter()
+            .filter_map(|e| match &e.event {
+                Event::Notice { message, .. } if message.contains("open_pr_when_done") => {
+                    Some(message.clone())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// `auto`: the turn completes, and before going idle the engine pushes the session's own
+    /// branch and opens a draft PR against the default branch, then binds it.
+    #[tokio::test]
+    async fn auto_pushes_and_opens_a_draft_pr_when_the_work_is_done() {
+        let (base, wt, origin) = repo_with_feature();
+        let gh = fake_gh(&base);
+        let mut h = engine_in(
+            OpenPr::Auto,
+            wt.clone(),
+            gh,
+            None,
+            vec![reply(vec![text("done: added b")], Stop::End)],
+        );
+        let evs = run(&mut h, "add b").await;
+        assert!(
+            remote_branch(&origin, "feat").is_some(),
+            "the branch was pushed"
+        );
+        let args = std::fs::read_to_string(base.join("gh.args")).unwrap_or_default();
+        assert_eq!(
+            args.trim(),
+            "pr create --draft --fill --base main --head feat"
+        );
+        let bound = evs.iter().find_map(|e| match &e.event {
+            Event::Prs { prs } => prs.first().cloned(),
+            _ => None,
+        });
+        assert_eq!(bound.map(|p| (p.repo, p.number)), Some(("o/r".into(), 41)));
+        let said = notices(&evs);
+        assert!(
+            said.len() == 1 && said[0].contains("opened draft PR"),
+            "{said:?}"
+        );
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// `ask` and `off` never push or open anything, whatever the branch looks like.
+    #[tokio::test]
+    async fn ask_and_off_never_push_or_open() {
+        for setting in [OpenPr::Ask, OpenPr::Off] {
+            let (base, wt, origin) = repo_with_feature();
+            let gh = fake_gh(&base);
+            let mut h = engine_in(
+                setting,
+                wt.clone(),
+                gh,
+                None,
+                vec![reply(vec![text("done")], Stop::End)],
+            );
+            let evs = run(&mut h, "add b").await;
+            assert!(
+                remote_branch(&origin, "feat").is_none(),
+                "{setting:?} pushed"
+            );
+            assert!(!base.join("gh.args").exists(), "{setting:?} ran gh");
+            assert!(notices(&evs).is_empty(), "{setting:?}");
+            shutdown(h).await;
+            let _ = std::fs::remove_dir_all(&base);
+        }
+    }
+
+    /// A worker (a session another session started) never opens one under `auto`, and says
+    /// nothing about it: not a failure, the decision is its manager's.
+    #[tokio::test]
+    async fn auto_leaves_a_workers_branch_alone() {
+        let (base, wt, origin) = repo_with_feature();
+        let gh = fake_gh(&base);
+        let mut h = engine_in(
+            OpenPr::Auto,
+            wt.clone(),
+            gh,
+            Some("chief-0001"),
+            vec![reply(vec![text("done")], Stop::End)],
+        );
+        let evs = run(&mut h, "add b").await;
+        assert!(
+            remote_branch(&origin, "feat").is_none(),
+            "a worker's branch was pushed"
+        );
+        assert!(!base.join("gh.args").exists(), "a worker ran gh");
+        assert!(notices(&evs).is_empty(), "{:?}", notices(&evs));
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A failure says why once and isn't retried for the same head: the next turn, with
+    /// nothing new committed, stays quiet.
+    #[tokio::test]
+    async fn a_failure_is_said_once_per_head() {
+        let (base, wt, _) = repo_with_feature();
+        let gh = base.join("gh-broken");
+        std::fs::write(&gh, "#!/bin/sh\necho 'gh: not logged in' >&2\nexit 1\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut h = engine_in(
+            OpenPr::Auto,
+            wt.clone(),
+            gh,
+            None,
+            vec![
+                reply(vec![text("done")], Stop::End),
+                reply(vec![text("still done")], Stop::End),
+            ],
+        );
+        let first = notices(&run(&mut h, "add b").await);
+        assert!(
+            first.len() == 1
+                && first[0].contains("not logged in")
+                && first[0].contains("Open PR is offered"),
+            "{first:?}"
+        );
+        h.ops
+            .send(Op::Submit {
+                text: "anything else?".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            })
+            .unwrap();
+        let second = notices(&until_idle(&mut h).await);
+        assert!(second.is_empty(), "retried the same head: {second:?}");
+        shutdown(h).await;
+        let _ = std::fs::remove_dir_all(&base);
+    }
+}

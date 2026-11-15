@@ -7034,7 +7034,7 @@
         },
         "open_pr_when_done": {
           "default": "ask",
-          "description": "`[git] open_pr_when_done` as it applies here: \"off\" or \"ask\". Never \"auto\", which is\nparsed but deliberately not wired (see `config::GitConfig`). The composer offers Open PR\nwhen this is \"ask\" and its own `shouldOpenPR` holds.",
+          "description": "`[git] open_pr_when_done` as the composer applies it: \"off\" or \"ask\". \"auto\" reads as\n\"ask\" here: under it the engine opens the draft PR itself (see `open_pr`), and the\ncomposer's offer is the fallback. The composer offers Open PR when this is \"ask\" and\nits own `shouldOpenPR` holds.",
           "type": "string"
         },
         "ran_on": {
