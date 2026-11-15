@@ -5224,6 +5224,194 @@ async fn an_interrupt_dismisses_the_question() {
     assert!(asked.is_some());
 }
 
+/// What a session in a tree did next: opened a card, or finished a tool call (its output).
+enum TreeStep {
+    Card(String),
+    Done(String),
+}
+
+/// Drive `h` until it opens a question card or finishes a tool call, answering every
+/// `SessionTree` request with `tree` as the Mac's broker would.
+async fn tree_step(h: &mut Handle, tree: &serde_json::Value) -> TreeStep {
+    loop {
+        match h.events.recv().await.unwrap().event {
+            Event::SessionRequest { id, tool, .. } => {
+                assert_eq!(tool, crate::tools::sessions::TREE, "only the tree is asked for");
+                h.ops
+                    .send(Op::SessionReply { id, result: Some(tree.clone()), error: None })
+                    .unwrap();
+            }
+            Event::Question { id, .. } => return TreeStep::Card(id),
+            Event::ItemCompleted {
+                item: Item::ToolCall { output, .. },
+                ..
+            } => return TreeStep::Done(output),
+            _ => {}
+        }
+    }
+}
+
+/// A session's id, read off its first `Idle` once it has its client caps.
+async fn caps_and_id(h: &mut Handle) -> String {
+    h.ops
+        .send(Op::SetClientCaps { irc: false, panes: false, ask: true, sessions: true })
+        .unwrap();
+    loop {
+        let env = h.events.recv().await.unwrap();
+        if matches!(env.event, Event::Idle) {
+            return env.session;
+        }
+    }
+}
+
+/// Two sessions in one tree (a manager and the worker it started, sharing a store, the client
+/// reporting both through `SessionTree`) never put the same question to the user twice: while
+/// the manager's card is open the worker gets no card, only where it waits; once the manager's
+/// is answered the worker gets that answer; and ListQuestions shows the tree's ledger.
+#[tokio::test]
+async fn a_tree_never_asks_the_same_question_twice() {
+    let store = tmp_store();
+    let manager_script = vec![
+        reply(vec![ask_call()], Stop::ToolUse),
+        reply(vec![text("ok")], Stop::End),
+    ];
+    let list = Block::ToolUse {
+        id: "l".into(),
+        name: crate::tools::sessions::QUESTIONS.into(),
+        input: json!({}),
+    };
+    let worker_script = vec![
+        reply(vec![ask_call()], Stop::ToolUse),
+        reply(vec![text("waiting")], Stop::End),
+        reply(vec![ask_call()], Stop::ToolUse),
+        reply(vec![list], Stop::ToolUse),
+        reply(vec![text("ok")], Stop::End),
+    ];
+    let mut manager = engine_at(manager_script, true, Some(store.clone()), None);
+    let mut worker = engine_at(worker_script, true, Some(store.clone()), None);
+    let m = caps_and_id(&mut manager).await;
+    let w = caps_and_id(&mut worker).await;
+    assert_ne!(m, w);
+    let tree = json!({ "sessions": [w.clone(), m.clone()], "names": { m.clone(): "manager" } });
+
+    // The manager asks; its card stays up.
+    submit(&manager, "fix it");
+    let TreeStep::Card(card) = tree_step(&mut manager, &tree).await else {
+        panic!("the manager's question should open a card");
+    };
+
+    // The worker asks the same thing: no second card, told where the first one waits.
+    submit(&worker, "fix it");
+    let out = match tree_step(&mut worker, &tree).await {
+        TreeStep::Done(out) => out,
+        TreeStep::Card(_) => panic!("the worker opened a second card for an open question"),
+    };
+    assert!(out.contains("already open in manager"), "{out}");
+    assert!(out.contains(&m), "{out}");
+
+    // The user answers the manager's card.
+    manager
+        .ops
+        .send(Op::Answer {
+            id: card,
+            answer: Answer { choices: vec!["Truncate".into()], other: None },
+        })
+        .unwrap();
+    let TreeStep::Done(out) = tree_step(&mut manager, &tree).await else {
+        panic!("one card only");
+    };
+    assert_eq!(out, "The user chose: Truncate");
+
+    // Asked again, the worker gets the answer, still with no card.
+    submit(&worker, "fix it");
+    let out = match tree_step(&mut worker, &tree).await {
+        TreeStep::Done(out) => out,
+        TreeStep::Card(_) => panic!("the worker re-asked an answered question"),
+    };
+    assert!(out.contains("already answered in manager"), "{out}");
+    assert!(out.contains("Truncate"), "{out}");
+
+    // ListQuestions: the engine answers it from the tree's ledgers, names from the tree.
+    let TreeStep::Done(listed) = tree_step(&mut worker, &tree).await else {
+        panic!("no card for a listing");
+    };
+    let v: serde_json::Value = serde_json::from_str(&listed).expect(&listed);
+    let rows = v["questions"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "one question in the tree, asked once: {listed}");
+    assert_eq!(rows[0]["state"], "answered");
+    assert_eq!(rows[0]["session"], m.as_str());
+    assert_eq!(rows[0]["name"], "manager");
+    assert_eq!(rows[0]["answer"], "Truncate");
+
+    shutdown(manager).await;
+    shutdown(worker).await;
+    let _ = std::fs::remove_dir_all(store);
+}
+
+/// The same pair with no client that owns parentage (headless, the web app): the worker's
+/// log header names its parent, and that is the tree. No card, no error.
+#[tokio::test]
+async fn without_a_client_the_tree_comes_from_the_logs() {
+    let store = tmp_store();
+    let mut manager = engine_at(
+        vec![reply(vec![ask_call()], Stop::ToolUse), reply(vec![text("ok")], Stop::End)],
+        true,
+        Some(store.clone()),
+        None,
+    );
+    manager
+        .ops
+        .send(Op::SetClientCaps { irc: false, panes: false, ask: true, sessions: false })
+        .unwrap();
+    let m = loop {
+        let env = manager.events.recv().await.unwrap();
+        if matches!(env.event, Event::Idle) {
+            break env.session;
+        }
+    };
+    submit(&manager, "fix it");
+    let none = json!(null);
+    let TreeStep::Card(_) = tree_step(&mut manager, &none).await else {
+        panic!("the manager's question should open a card");
+    };
+    // A worker whose header names the manager, as `kids::child_options` starts one.
+    let mut cfg = Config { hermetic: true, ..Config::default() };
+    cfg.parent_session = Some(m.clone());
+    let mut profile = Profile::new(ProviderKind::Ollama, "test");
+    profile.tool_mode = ToolMode::Native;
+    let opts = Options {
+        cfg,
+        profile_name: "test".into(),
+        profile,
+        cwd: std::env::temp_dir(),
+        mode: Mode::Default,
+        can_ask: true,
+        resume: None,
+        store: Some(store.clone()),
+        sandbox: false,
+        rich: false,
+        subagent: false,
+        chat: false,
+    };
+    let script = vec![reply(vec![ask_call()], Stop::ToolUse), reply(vec![text("ok")], Stop::End)];
+    let mut worker = start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap();
+    worker
+        .ops
+        .send(Op::SetClientCaps { irc: false, panes: false, ask: true, sessions: false })
+        .unwrap();
+    while !matches!(worker.events.recv().await.unwrap().event, Event::Idle) {}
+    submit(&worker, "fix it");
+    let out = match tree_step(&mut worker, &none).await {
+        TreeStep::Done(out) => out,
+        TreeStep::Card(_) => panic!("the worker opened a second card for its parent's question"),
+    };
+    assert!(out.contains("already open"), "{out}");
+    assert!(out.contains(&m), "{out}");
+    shutdown(manager).await;
+    shutdown(worker).await;
+    let _ = std::fs::remove_dir_all(store);
+}
+
 #[tokio::test]
 async fn ask_needs_a_client_that_shows_questions() {
     let script = vec![

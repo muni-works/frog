@@ -43,7 +43,7 @@
 
 use crate::protocol::{Answer, AskOption};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 /// How many recent answered rows a file keeps before it is compacted down to the live set.
@@ -518,6 +518,79 @@ pub fn members(id: &str, parent: impl Fn(&str) -> Option<String>, known: &[Strin
         }
     }
     out
+}
+
+/// The tree from the session logs' own headers (`parent`, written at `StartSession`), with
+/// each member's title. The tree when no client owns parentage: headless, the CLI, the web
+/// app (its children are the engine's own, see `kids`), or a client that didn't answer
+/// `SessionTree`. Headers can't see a `MoveSession` re-file — only the Mac does that, and it
+/// answers `SessionTree` itself.
+pub fn from_headers(dir: &Path, me: &str) -> (Vec<String>, HashMap<String, String>) {
+    let infos = crate::session::list(dir, None, None).unwrap_or_default();
+    let parents: HashMap<String, String> = infos
+        .iter()
+        .filter_map(|i| i.header.parent.clone().map(|p| (i.id.clone(), p)))
+        .collect();
+    let known: Vec<String> = infos.iter().map(|i| i.id.clone()).collect();
+    let tree = members(me, |id| parents.get(id).cloned(), &known);
+    let names = infos
+        .into_iter()
+        .filter(|i| tree.contains(&i.id))
+        .filter_map(|i| i.title.map(|t| (i.id, t)))
+        .collect();
+    (tree, names)
+}
+
+/// Fill in each row's asking-session title from `names` where the ledger has none.
+pub fn named(mut rows: Vec<Asked>, names: &HashMap<String, String>) -> Vec<Asked> {
+    for r in &mut rows {
+        if r.name.is_none() {
+            r.name = names.get(&r.session).cloned();
+        }
+    }
+    rows
+}
+
+/// `ListQuestions`' answer: the tree's questions, newest first, open ones only unless `all`.
+/// `names` fills in the asking session's title (the ledger stores none; titles are the
+/// client's).
+pub fn listing(
+    rows: &[Asked],
+    all: bool,
+    names: &HashMap<String, String>,
+    now_ms: i64,
+) -> serde_json::Value {
+    use serde_json::json;
+    let shown: Vec<serde_json::Value> = rows
+        .iter()
+        .rev()
+        .filter(|r| all || r.is_open())
+        .map(|r| {
+            let mut row = json!({
+                "question_id": r.id,
+                "question": r.question,
+                "options": r.options.iter().map(|o| o.label.clone()).collect::<Vec<_>>(),
+                "session": r.session,
+                "name": r.name.clone().or_else(|| names.get(&r.session).cloned()),
+                "state": r.state(),
+                "age_seconds": (now_ms - r.asked_ms).max(0) / 1000,
+            });
+            if let Some(a) = &r.answer {
+                row["answer"] = json!(a.words());
+            }
+            row
+        })
+        .collect();
+    let open = rows.iter().filter(|r| r.is_open()).count();
+    let note = match (shown.len(), open) {
+        (0, _) => "No questions in this tree.".to_string(),
+        (_, 0) => "Nothing open. `dismissed` means put away unanswered: ask again if you need it.".to_string(),
+        (_, n) => format!(
+            "{n} open, waiting on the user in the session that asked. Don't ask them again. \
+`dismissed` means put away unanswered: ask again if you need it."
+        ),
+    };
+    json!({ "questions": shown, "note": note })
 }
 
 /// Whether `up` is `at` itself or above it.
