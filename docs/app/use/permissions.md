@@ -5,11 +5,11 @@ Frog asks before steps that change things. How often it asks is the session's mo
 | Mode | What it does |
 | --- | --- |
 | Auto | Runs what plainly serves your request and asks about the rest. New sessions start here. |
-| Ask | Asks before edits and before commands that leave the sandbox. |
-| Accept edits | Edits run without asking; commands that leave the sandbox still ask. |
+| Ask | Asks before edits, before commands that leave the sandbox, and before the ones it can't contain (a push, a publish, discarded changes, rewritten history, a killed process, a changed system setting). |
+| Accept edits | Edits run without asking; commands that leave the sandbox, and the ones it can't contain, still ask. |
 | Yolo | Never asks. |
 
-Reading files, read-only commands and plain web reads never ask, in any mode. Neither does a command that runs inside the sandbox.
+Reading files, read-only commands and plain web reads never ask, in any mode. Neither does a command that runs inside the sandbox, except the ones below.
 
 ## Auto
 
@@ -19,7 +19,13 @@ In Auto, a step that would ask goes to a small model first, which judges it agai
 A step it lets run says why on its card.
 <!-- end -->
 
-When a command runs outside the sandbox, or the sandbox is off, some steps always ask, whatever the small model says: `sudo`, `git push`, discarding changes or rewriting history (`reset --hard`, `rebase`), piping a download into a shell, `rm -rf` outside the project, publishing, changing system settings, stopping processes, and writes outside the project.
+## What the sandbox can't contain
+
+Some commands are checked inside the sandbox or not, because their effect reaches past it: a push, a publish, discarding changes (`reset --hard`, `clean -f`, `checkout -- .`, `restore`), rewriting history (`rebase`, `commit --amend`), stopping a process (`kill`, `pkill`) and changing a system setting (`defaults write`, `launchctl`). In Auto the small model runs one only when your request plainly covers it, such as a push you asked for; otherwise it's denied with a note and the turn goes on. In Ask and Accept edits it asks on a card.
+
+`sudo` and deleting or changing files outside the project aren't on that list inside the sandbox, because the sandbox refuses them. Outside the sandbox, or with it off, they're checked the same way, as are piping a download into a shell and writes outside the project.
+
+The check matches the command's text, so a harmless `git restore --staged` or `git rebase --abort` is checked too.
 
 ## Cards
 
