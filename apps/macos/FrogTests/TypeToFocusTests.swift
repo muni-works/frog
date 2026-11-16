@@ -68,6 +68,15 @@ final class TypeToFocusTests: XCTestCase {
     func testEditingViews() {
         XCTAssertTrue(TypeToFocus.isEditing(NSTextView())) // the composer, every field editor
         XCTAssertTrue(TypeToFocus.isEditing(NSTextField())) // fields, before their editor starts
+        // A transcript message: selectable so it can be copied, but nothing can be typed
+        // into it. Clicking it used to leave typing dead until the composer was clicked.
+        let message = NSTextView()
+        message.isEditable = false
+        message.isSelectable = true
+        XCTAssertFalse(TypeToFocus.isEditing(message))
+        let label = NSTextField(labelWithString: "read only")
+        label.isSelectable = true
+        XCTAssertFalse(TypeToFocus.isEditing(label))
         XCTAssertTrue(TypeToFocus.isEditing(TerminalGridView())) // the shell owns its keys
         XCTAssertFalse(TypeToFocus.isEditing(NSView())) // a canvas or button holds nothing
         XCTAssertFalse(TypeToFocus.isEditing(nil)) // the window itself
