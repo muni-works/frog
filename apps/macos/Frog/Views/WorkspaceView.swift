@@ -59,7 +59,6 @@ struct WorkspaceView: View {
     }
 
     static let sessionsWidth: CGFloat = 250
-    static let changesWidth: CGFloat = 380
     static let button: CGFloat = 36
     /// Estimated width of the collapsed changes pill ("+42 −7").
     static let changesPill: CGFloat = 96

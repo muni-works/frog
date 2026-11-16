@@ -30,6 +30,15 @@ final class WindowState {
     func requestRace() { raceRequest += 1 }
     func toggleDictation() { dictationRequest += 1 }
 
+    /// A git action the inspector asks the composer to run (`draft_commit`, `open_pr`, `push`),
+    /// so its Commit and Open PR share the tray's handling: the same prompt, the same error slot.
+    struct GitRequest: Equatable {
+        let n: Int
+        let effect: String
+    }
+    private(set) var gitRequest: GitRequest?
+    func requestGit(_ effect: String) { gitRequest = GitRequest(n: (gitRequest?.n ?? 0) + 1, effect: effect) }
+
     /// The top-most turn on screen, as an index into `turns`.
     func topVisible(in turns: [TurnState]) -> Int? {
         turns.firstIndex { visibleTurns.contains($0.id) }

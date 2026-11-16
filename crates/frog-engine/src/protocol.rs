@@ -1624,9 +1624,10 @@ pub struct Status {
     /// longer than the request timeout is about to fail, not working.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub waiting: Option<Waiting>,
-    /// `[git] open_pr_when_done` as it applies here: "off" or "ask". Never "auto", which is
-    /// parsed but deliberately not wired (see `config::GitConfig`). The composer offers Open PR
-    /// when this is "ask" and its own `shouldOpenPR` holds.
+    /// `[git] open_pr_when_done` as the composer applies it: "off" or "ask". "auto" reads as
+    /// "ask" here: under it the engine opens the draft PR itself (see `open_pr`), and the
+    /// composer's offer is the fallback. The composer offers Open PR when this is "ask" and
+    /// its own `shouldOpenPR` holds.
     #[serde(default = "default_open_pr")]
     pub open_pr_when_done: String,
     /// This session only reads (a read-only child): it never opens a PR.

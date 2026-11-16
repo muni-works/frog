@@ -57,7 +57,7 @@ export interface State {
   openPr?: OpenPrInput
 }
 
-/** `[git] open_pr_when_done`: "auto" is parsed but deliberately not wired (see OpenPr.swift). */
+/** `[git] open_pr_when_done`. Under "auto" the engine opens the draft PR itself (see OpenPR.swift). */
 export type OpenPrSetting = 'off' | 'ask' | 'auto'
 
 /** The facts the Open PR predicate needs. Mirrors FrogKit's `OpenPR.Input`. */
@@ -177,7 +177,7 @@ export function shouldOpenPr(i: OpenPrInput): boolean {
   return i.worktree && i.ahead > 0 && !i.hasPR && !isManager(i) && !i.readOnly && !i.optedOut
 }
 
-/** `[git] open_pr_when_done` as it applies now: "auto" is not implemented and reads as "ask". */
+/** `[git] open_pr_when_done` as the composer applies it: "auto" offers what "ask" does (the engine opens the PR). */
 export function effectiveOpenPr(setting: OpenPrSetting | undefined): 'off' | 'ask' {
   return setting === 'off' ? 'off' : 'ask'
 }

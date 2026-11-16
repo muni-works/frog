@@ -127,11 +127,16 @@ max_tokens = 32000
 # chief_timeout_secs = 300              # then the card falls back to you
 # rollup = true                         # one approvals roll-up notice per day, at most
 
-# What the composer does about a pull request when a session's work is done
+# What happens about a pull request when a session's work is done
 # (docs/plans/2026-11-13-open-pr-when-done.md).
 #   "off"  — nothing is offered; the branch is yours to push.
 #   "ask"  — the git line's Open PR chip, when the work is done. The default.
-#   "auto" — NOT IMPLEMENTED YET: parsed, documented, and behaves as "ask".
+#   "auto" — frog opens a DRAFT PR itself when a turn completes: one plain push of the
+#            session's own branch, then `gh pr create --draft --fill` against the remote's
+#            default branch. A standing grant for those two commands only (never --force,
+#            never the base branch, never a merge). Not for sessions another session
+#            started (workers), and not under a restricted sandbox.network or egress list.
+#            A failure is said once (per commit) and the Open PR chip stays.
 # The offer only ever appears for a session with its own worktree, commits ahead of
 # its base, no PR yet, that isn't a manager (a top-level session with children) or
 # read-only, and didn't put `open-pr: off` in its first prompt.

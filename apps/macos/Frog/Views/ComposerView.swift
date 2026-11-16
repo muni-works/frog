@@ -100,13 +100,8 @@ struct ComposerView: View {
         ))
     }
 
-    /// The PRs bound to this session, from the listing the sidebar's rows read too: the engine
-    /// keeps them in the log, so both surfaces derive from one list (an open conversation's copy
-    /// is fresher by one event, so it wins when it has one).
-    var boundPrs: [PrBinding] {
-        if !conversation.prs.isEmpty { return conversation.prs }
-        return Library.shared.sessions.first { $0.id == conversation.sessionID }?.prs ?? []
-    }
+    /// The PRs bound to this session (`Conversation.boundPrs`).
+    var boundPrs: [PrBinding] { conversation.boundPrs }
 
     var trayModel: ComposerModel.Model {
         let spec = conversation.status?.model ?? UserDefaults.standard.string(forKey: "lastModel") ?? ""
@@ -289,6 +284,7 @@ struct ComposerView: View {
         }
         .onChange(of: window?.focusComposerRequest) { controller.focus() }
         .onChange(of: window?.dictationRequest) { toggleDictation() }
+        .onChange(of: window?.gitRequest) { _, r in if let r { run(.init(r.effect), tray) } }
         .onDisappear {
             dictation.cancel()
             saveDraftNow()
@@ -462,5 +458,15 @@ struct ComposerView: View {
         draftSave?.cancel()
         draftSave = nil
         drafts.clear(id: conversation.sessionID, folder: workspace.folder)
+    }
+}
+
+extension Conversation {
+    /// The PRs bound to this session, from the listing the sidebar's rows read too: the engine
+    /// keeps them in the log, so both surfaces derive from one list (an open conversation's copy
+    /// is fresher by one event, so it wins when it has one). The tray and the inspector read it.
+    var boundPrs: [PrBinding] {
+        if !prs.isEmpty { return prs }
+        return Library.shared.sessions.first { $0.id == sessionID }?.prs ?? []
     }
 }

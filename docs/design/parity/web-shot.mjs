@@ -4,6 +4,7 @@
 //
 //   node web-shot.mjs <url> <out.png> <width> <height> <light|dark>
 //   WEB_SHOT_SCROLL='.widget' scrolls an element into view before the shot.
+//   WEB_SHOT_STORAGE='{"frog.inspector":"1"}' seeds localStorage first (opens the inspector).
 import { spawn } from "node:child_process";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -35,6 +36,11 @@ const call = (method, params = {}) => new Promise((resolve) => {
 await call("Emulation.setDeviceMetricsOverride", { width: +w, height: +h, deviceScaleFactor: 2, mobile: false });
 await call("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: look }, { name: "prefers-reduced-motion", value: "reduce" }] });
 await call("Page.enable");
+// WEB_SHOT_STORAGE='{"frog.inspector":"1"}': localStorage set before the app loads (the inspector shots).
+if (process.env.WEB_SHOT_STORAGE) {
+  const kv = JSON.parse(process.env.WEB_SHOT_STORAGE);
+  await call("Page.addScriptToEvaluateOnNewDocument", { source: `try { for (const [k, v] of Object.entries(${JSON.stringify(kv)})) localStorage.setItem(k, v) } catch {}` });
+}
 await call("Page.navigate", { url });
 await new Promise((r) => setTimeout(r, Number(process.env.WEB_SHOT_WAIT ?? 6000)));
 // WEB_SHOT_SCROLL=<selector>: bring that element to the top first (the visuals shots).

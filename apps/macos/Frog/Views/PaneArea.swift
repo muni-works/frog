@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// The right side of the canvas as one card: tabs for Changes, the terminal and the preview,
-/// with the selected one below. Drag its leading edge to resize.
+/// with the selected one below. Drag its leading edge to resize. Frog draws everything inside
+/// it from `Tokens`, the same spec as the web's inspector (docs/design/frog-web/README.md).
 struct PaneArea: View {
     let conversation: Conversation
     let height: CGFloat
@@ -9,44 +10,86 @@ struct PaneArea: View {
     var collapse: (() -> Void)?
     /// Where a terminal opened from its tab starts.
     var folder: URL? = nil
+    /// Runs one of the composer tray's git actions (`draft_commit`, `open_pr`, `push`); nil
+    /// where there's no repo, so the Changes tab shows no Commit or Open PR.
+    var git: ((String) -> Void)? = nil
     @State private var dragStart: CGFloat?
+    /// Terminal or Preview picked while there's no pane to show (a chat has no folder to open
+    /// a shell in): the tab is still there, with its empty state.
+    @State private var placeholder: PaneKind?
 
-    static let minWidth: CGFloat = 420
+    static let minWidth: CGFloat = 360
     static let maxWidth: CGFloat = 560
+    static let defaultWidth: CGFloat = 420
+    static let widthKey = "inspectorWidth"
+    /// The width last dragged to, else the default.
+    static var savedWidth: CGFloat {
+        let w = UserDefaults.standard.double(forKey: widthKey)
+        return w > 0 ? min(maxWidth, max(minWidth, w)) : defaultWidth
+    }
 
     private var hub: PaneHub { conversation.panes }
     /// Any changed file at all. The count would walk every turn's diffs per body pass; the
     /// card's tab list only needs whether there are any (see `Conversation.changesVersion`).
     private var hasChanges: Bool { conversation.changesVersion > 0 && !conversation.sessionChanges.isEmpty }
 
-    /// Tabs in order: Changes, then panes as they opened (the inspector's strip always shows
-    /// Changes, Terminal and Preview; see `strip`).
+    /// One place in the strip: Changes, a pane, or Terminal / Preview with no pane yet.
+    enum Slot: Hashable {
+        case tab(PaneHub.Tab)
+        case open(PaneKind)
+    }
+
+    /// The strip, always Changes, Terminal, Preview in that order (the first pane of each kind,
+    /// or a tab that opens one), then any further panes as they opened.
+    var slots: [Slot] {
+        let terminal = hub.panes.first { $0.kind == .terminal }
+        let preview = hub.panes.first { $0.kind == .preview }
+        let rest = hub.panes.filter { $0.id != terminal?.id && $0.id != preview?.id }
+        return [.tab(.changes),
+                terminal.map { .tab(.pane($0.id)) } ?? .open(.terminal),
+                preview.map { .tab(.pane($0.id)) } ?? .open(.preview)]
+            + rest.map { .tab(.pane($0.id)) }
+    }
+
+    /// Tabs with something behind them: Changes, then panes as they opened.
     var tabs: [PaneHub.Tab] {
         [.changes] + hub.panes.map { .pane($0.id) }
     }
 
-    private var current: PaneHub.Tab? {
-        if let s = hub.selected, tabs.contains(s) { return s }
-        return tabs.first
+    private var current: Slot {
+        if let placeholder { return .open(placeholder) }
+        if let s = hub.selected, tabs.contains(s) { return .tab(s) }
+        return .tab(.changes)
     }
 
     var body: some View {
         VStack(spacing: 0) {
             strip
             ZStack {
-                if current == .changes {
+                switch current {
+                case .tab(.changes):
                     if hasChanges {
-                        ChangesInspector(conversation: conversation, maxHeight: height - 44)
+                        ChangesInspector(conversation: conversation, maxHeight: height - 44,
+                                         commit: git.map { git in { git("draft_commit") } },
+                                         pr: git.map { git in { git(conversation.boundPrs.isEmpty ? "open_pr" : "push") } },
+                                         hasPr: !conversation.boundPrs.isEmpty)
                             .frame(maxHeight: .infinity, alignment: .top)
                     } else {
-                        ContentUnavailableView("No Changes Yet", systemImage: "plusminus",
-                                               description: Text("Files Frog edits show up here."))
-                            .frame(maxHeight: .infinity, alignment: .top)
+                        InspectorEmpty(symbol: "plusminus", title: "No changes yet", detail: "Files Frog edits show up here.")
                     }
+                case .open(.terminal):
+                    InspectorEmpty(symbol: "terminal", title: "No terminal",
+                                   detail: "A chat has no folder to open a shell in.")
+                case .open(.preview):
+                    InspectorEmpty(symbol: "globe", title: "No preview",
+                                   detail: "Pages Frog opens show up here.")
+                case .tab(.pane):
+                    EmptyView()
                 }
                 // Panes stay mounted behind the front one: the engine keeps reading a preview
                 // (and a shell keeps its focus) while another tab is up.
                 ForEach(hub.panes) { pane in
+                    let front = current == .tab(.pane(pane.id))
                     Group {
                         switch pane.kind {
                         case .terminal: TerminalPane(pane: pane, hub: hub)
@@ -54,71 +97,87 @@ struct PaneArea: View {
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .opacity(current == .pane(pane.id) ? 1 : 0)
-                    .allowsHitTesting(current == .pane(pane.id))
-                    .accessibilityHidden(current != .pane(pane.id))
-                }
-                if current == nil {
-                    ContentUnavailableView("No Panes", systemImage: "rectangle.righthalf.inset.filled", description: Text("⇧⌘T opens a terminal, ⇧⌘P a preview."))
+                    .opacity(front ? 1 : 0)
+                    .allowsHitTesting(front)
+                    .accessibilityHidden(!front)
                 }
             }
         }
         .frame(width: width, height: height)
         .overlay(alignment: .leading) { handle }
+        // A pane frog (or a shortcut) brings to the front wins over a tab's empty state.
+        .onChange(of: hub.selected) { placeholder = nil }
     }
 
     private var strip: some View {
         HStack(spacing: 2) {
-            ForEach(tabs, id: \.self) { tab in
-                let paneID: String? = if case .pane(let id) = tab { id } else { nil }
+            ForEach(slots, id: \.self) { slot in
+                let paneID: String? = if case .tab(.pane(let id)) = slot { id } else { nil }
                 TabButton(
-                    title: title(tab), symbol: symbol(tab), selected: tab == current,
+                    title: title(slot), symbol: symbol(slot), selected: slot == current,
                     close: paneID.map { id in { hub.close(id) } }
                 ) {
-                    hub.selected = tab
-                }
-            }
-            // The inspector's fixed tabs: Terminal and Preview open their pane when there's none.
-            if !hub.panes.contains(where: { $0.kind == .terminal }), let folder {
-                TabButton(title: "Terminal", symbol: "terminal", selected: false, close: nil) {
-                    hub.openTerminal(cwd: folder)
-                }
-            }
-            if !hub.panes.contains(where: { $0.kind == .preview }) {
-                TabButton(title: "Preview", symbol: "globe", selected: false, close: nil) {
-                    hub.openPreview()
+                    select(slot)
                 }
             }
             Spacer(minLength: 0)
             if let collapse {
                 Button(action: collapse) {
-                    Image(systemName: "xmark").font(.caption.weight(.semibold)).frame(width: 22, height: 22)
+                    Image(systemName: "xmark").font(.system(size: 11, weight: .semibold)).frame(width: 22, height: 22)
+                        .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Tokens.textSecondary)
                 .help("Hide inspector (⌥⌘0)")
+                .accessibilityLabel("Hide inspector")
             }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
     }
 
-    private func title(_ tab: PaneHub.Tab) -> String {
-        switch tab {
-        case .changes: "Changes"
-        case .pane(let id):
+    private func select(_ slot: Slot) {
+        switch slot {
+        case .tab(let tab):
+            placeholder = nil
+            hub.selected = tab
+        case .open(.terminal):
+            // Terminal opens a shell where there's a folder for it; a chat shows the empty state.
+            if let folder {
+                placeholder = nil
+                hub.openTerminal(cwd: folder)
+            } else {
+                placeholder = .terminal
+            }
+        case .open(.preview):
+            placeholder = nil
+            hub.openPreview()
+        }
+    }
+
+    private func title(_ slot: Slot) -> String {
+        switch slot {
+        case .tab(.changes): "Changes"
+        case .open(.terminal): "Terminal"
+        case .open(.preview): "Preview"
+        case .tab(.pane(let id)):
             switch hub.pane(id)?.kind {
             case .terminal: "Terminal"
-            case .preview: hub.pane(id).map { $0.title.isEmpty || $0.title == "Preview" ? "Preview" : $0.title } ?? "Preview"
+            case .preview:
+                // The fixed Preview tab keeps its label; a further preview shows its page.
+                if slots.dropFirst(2).first == slot { "Preview" }
+                else { hub.pane(id).map { $0.title.isEmpty ? "Preview" : $0.title } ?? "Preview" }
             case nil: "Pane"
             }
         }
     }
 
-    private func symbol(_ tab: PaneHub.Tab) -> String {
-        switch tab {
-        case .changes: "plusminus"
-        case .pane(let id): hub.pane(id)?.kind == .preview ? "globe" : "terminal"
+    private func symbol(_ slot: Slot) -> String {
+        switch slot {
+        case .tab(.changes): "plusminus"
+        case .open(.terminal): "terminal"
+        case .open(.preview): "globe"
+        case .tab(.pane(let id)): hub.pane(id)?.kind == .preview ? "globe" : "terminal"
         }
     }
 
@@ -139,10 +198,13 @@ struct PaneArea: View {
                 }
                 .onEnded { _ in dragStart = nil }
             )
+            // Double-click puts the default width back, like the web's grip.
+            .onTapGesture(count: 2) { width = Self.defaultWidth }
     }
 }
 
-/// One tab: icon, title, and a close button that appears on hover for panes.
+/// One tab: icon and label, a pill behind the selected one, and a close button on hover for
+/// panes.
 private struct TabButton: View {
     let title: String
     let symbol: String
@@ -154,26 +216,29 @@ private struct TabButton: View {
     var body: some View {
         Button(action: select) {
             HStack(spacing: 5) {
-                Image(systemName: symbol).font(.frog(size: 10))
-                Text(title).font(.frog(size: 12)).lineLimit(1)
+                Image(systemName: symbol).font(.system(size: 10.5))
+                Text(title).font(.frog(size: 12, weight: selected ? .medium : .regular)).lineLimit(1)
                 if let close {
                     Button(action: close) {
-                        Image(systemName: "xmark").font(.caption2.weight(.semibold)).frame(width: 14, height: 14)
+                        Image(systemName: "xmark").font(.system(size: 8.5, weight: .semibold)).frame(width: 14, height: 14)
+                            .contentShape(.rect)
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                    .opacity(hovering || selected ? 1 : 0)
+                    .foregroundStyle(Tokens.textTertiary)
+                    .opacity(hovering ? 1 : 0)
                     .help("Close")
+                    .accessibilityLabel("Close \(title)")
                 }
             }
             .padding(.leading, 9)
             .padding(.trailing, close == nil ? 9 : 5)
             .padding(.vertical, 5)
-            .background(selected ? AnyShapeStyle(.primary.opacity(0.10)) : (hovering ? AnyShapeStyle(.quaternary.opacity(0.5)) : AnyShapeStyle(.clear)), in: .rect(cornerRadius: 7))
-            .contentShape(.rect)
+            .background(selected ? Tokens.hover : (hovering ? Tokens.hover.opacity(0.5) : .clear), in: .capsule)
+            .contentShape(.capsule)
         }
         .buttonStyle(.plain)
-        .foregroundStyle(selected ? .primary : .secondary)
+        .foregroundStyle(selected ? Tokens.text : Tokens.textSecondary)
         .onHover { hovering = $0 }
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }

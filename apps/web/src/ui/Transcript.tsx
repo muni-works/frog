@@ -5,6 +5,7 @@ import { type Model } from '../models'
 import { ElicitationCard, QuestionCard } from './AskCards'
 import { Markdown } from './Markdown'
 import { Hunks } from './Diff'
+import { ICON } from './icons'
 import { endError } from '../store'
 import { TurnFooter } from './TurnFooter'
 import { WidgetCard } from './Widget'
@@ -45,17 +46,17 @@ function clip(out: string) {
  * command shows its live output; a failure opens by itself. */
 // What each tool did, as a verb and an icon: "Ran git status", "Read src/a.ts".
 const TOOL_LOOK: Record<string, { verb: [string, string]; icon: string }> = {
-  bash: { verb: ['Running', 'Ran'], icon: 'M4 6l5 5-5 5M11 17h8' },
-  read: { verb: ['Reading', 'Read'], icon: 'M6 3h8l4 4v14H6zM14 3v4h4' },
+  bash: { verb: ['Running', 'Ran'], icon: ICON.terminal },
+  read: { verb: ['Reading', 'Read'], icon: ICON.doc },
   write: { verb: ['Writing', 'Wrote'], icon: 'M6 3h8l4 4v14H6zM14 3v4h4M9 13h6M9 17h4' },
   edit: { verb: ['Editing', 'Edited'], icon: 'M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4' },
   grep: { verb: ['Searching', 'Searched'], icon: 'M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-4-4' },
   glob: { verb: ['Finding', 'Found'], icon: 'M3 7h6l2 2h10v10H3z' },
-  webfetch: { verb: ['Fetching', 'Fetched'], icon: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18' },
-  websearch: { verb: ['Searching the web for', 'Searched the web for'], icon: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18' },
+  webfetch: { verb: ['Fetching', 'Fetched'], icon: ICON.globe },
+  websearch: { verb: ['Searching the web for', 'Searched the web for'], icon: ICON.globe },
   todowrite: { verb: ['Planning', 'Planned'], icon: 'M9 6h11M9 12h11M9 18h11M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2' },
   visualize: { verb: ['Making a visual', 'Made a visual'], icon: 'M4 19V5M4 19h16M8 15l3-4 3 2 5-6' },
-  visualguide: { verb: ['Reading the visual guide', 'Read the visual guide'], icon: 'M6 3h8l4 4v14H6zM14 3v4h4' },
+  visualguide: { verb: ['Reading the visual guide', 'Read the visual guide'], icon: ICON.doc },
   settitle: { verb: ['Naming', 'Named'], icon: 'M4 7V5h16v2M12 5v14M9 19h6' },
   // A child session, as on Mac (ActivityLine): "Ran an agent <what it was asked>".
   task: { verb: ['Running an agent', 'Ran an agent'], icon: 'M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM3 20c0-3 3-5 6-5s6 2 6 5M16 11a3 3 0 1 0 0-6M18 15c2 .6 3 2.4 3 5' },

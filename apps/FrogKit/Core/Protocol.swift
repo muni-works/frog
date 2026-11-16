@@ -354,8 +354,8 @@ struct Status: Decodable, Sendable, Equatable {
     var degraded: [Degraded]?
     /// Where the last call on a pooled (`node/…`) model ran. Absent for other providers.
     var ranOn: RanOn?
-    /// `[git] open_pr_when_done` as the engine resolved it: "off" or "ask". Never "auto",
-    /// which is parsed but deliberately not wired. Absent from older engines (read as "ask").
+    /// `[git] open_pr_when_done` as the composer applies it: "off" or "ask". "auto" arrives as
+    /// "ask": the engine opens that draft PR itself. Absent from older engines (read as "ask").
     var openPrWhenDone: String?
     /// This session only reads: it never opens a PR.
     var readOnly: Bool?

@@ -32,8 +32,11 @@ final class Pane: Identifiable {
     /// Something for the card at this pane's edge: changed files, or a terminal or preview.
     /// The inspector, opened by its toolbar toggle, shows even before there's anything in it.
     var hasTabs: Bool { changeCount > 0 || toolCount > 0 || (showChanges && conversation != nil) }
-    /// A preview needs room to be useful; changes alone read fine narrower.
-    var cardWidth: CGFloat { toolCount > 0 ? PaneArea.minWidth + 60 : WorkspaceView.changesWidth }
+    /// The inspector card's width: dragged from its leading edge (`PaneArea`), kept for the
+    /// next window.
+    var cardWidth: CGFloat = PaneArea.savedWidth {
+        didSet { if cardWidth != oldValue { UserDefaults.standard.set(Double(cardWidth), forKey: PaneArea.widthKey) } }
+    }
     var hasRail: Bool { conversation?.started ?? false }
 }
 

@@ -1,6 +1,6 @@
 # Open a PR when the work is done: the setting, and `ask` only
 
-Status: built 2026-11-13, **first half only**. `auto` is parsed and deliberately inert.
+Status: `ask` built 2026-11-13; `auto` built 2026-11-15 (see "`auto`, as decided" below).
 
 ## The gap
 
@@ -25,10 +25,9 @@ open_pr_when_done = "off" | "ask" | "auto"   # default: "ask"
 - **`ask`** — the git line's existing **Open PR** action, when the work is done. It is the same
   control in the same place; it is drawn as the line's one emphatic chip (accent fill, semibold,
   a tooltip) instead of a plain one. No new affordance.
-- **`auto`** — **parsed, documented, not wired.** It reads as `ask` in `config::OpenPr::effective`,
-  the engine reports `"ask"` in `Status.open_pr_when_done`, and it says so once at startup:
-  `[git] open_pr_when_done = "auto" is not implemented yet: it behaves as "ask"`. The single line
-  to change when the unattended path is built is `OpenPr::effective`.
+- **`auto`** — the engine opens a **draft** PR itself when the work is done (below). The composer
+  treats it as `ask` (`Status.open_pr_when_done` says `"ask"`), so the Open PR chip is the
+  fallback when the engine declined or failed.
 
 Parsing is strict: an unknown word is an error, never a guess.
 
@@ -80,9 +79,31 @@ out to git.
 - `testTheMarkerIsReadOffTheFirstPrompt`
 - `testTheSettingGatesTheOfferAndAutoIsAsk`
 
-## What `auto` and autofix still need decided
+## `auto`, as decided (Cam, 2026-11-15)
 
-Not built, on purpose. Before either can be written:
+- **A standing grant** for exactly two commands, run by the engine (not the model) when a turn
+  completes with nothing queued behind it: `git push --set-upstream origin
+  refs/heads/<branch>:refs/heads/<branch>` (no force, its own branch only, never the base) and
+  `gh pr create --draft --fill --base <default> --head <branch>`. The PR binds to the session.
+- **Draft** PRs.
+- **Workers are skipped**: `--worker`, or any session with a parent session. Managers (a
+  session that started sessions, or has engine-owned children), read-only sessions and
+  `open-pr: off` stay excluded, as for `ask`.
+
+Defaults this build picked where nothing was decided; each is one place in `open_pr.rs` or
+`Agent::auto_open_pr` to change:
+
+- **Base**: the remote's default branch (`origin/HEAD`, else `origin/main` / `origin/master`).
+  On the default branch itself, detached, or with no `origin`: nothing happens.
+- **Failure**: one warning notice with the reason and "Open PR is offered instead"; no retry
+  for the same head commit. A new commit gets one new attempt.
+- **Network policy**: a restricted `[sandbox] network` or an enforced egress list rules the
+  push out; one notice, and the chip stays.
+- **Rate**: no ceiling beyond one PR per session and the exclusions above.
+
+## What autofix (and anything left of `auto`) still needs decided
+
+The list as it stood before `auto` was built; 1 and 3 are answered above, 2 and 5 have defaults:
 
 1. **Who is excluded.** `--worker` sessions (started by an agent) are currently *not* excluded by
    the predicate, only managers are. A manager's worker with its own worktree and no children
@@ -100,4 +121,3 @@ Not built, on purpose. Before either can be written:
    what it does when it can't fix (escalate to whom). `docs/design/pr-lifecycle.md` §5 sketches
    this; none of it is decided.
 
-Until then `auto` is one enum case, one doc comment, and one line in `effective`.

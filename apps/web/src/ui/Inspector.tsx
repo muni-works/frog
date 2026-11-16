@@ -5,10 +5,32 @@ import type { Machine } from '../machines'
 import type { PreviewHub } from '../preview'
 import { DownloadAppChip } from './DownloadChip'
 import { FileRow } from './Diff'
+import { ICON, Icon } from './icons'
 import { PreviewPane, usePreviewHub } from './PreviewPane'
 import { TerminalPane } from './TerminalPane'
 
 type Tab = 'changes' | 'terminal' | 'preview'
+
+// Width: 420 by default, dragged between 360 and 560 (the Mac's PaneArea uses the same).
+const WIDTH = 420, MIN_WIDTH = 360, MAX_WIDTH = 560
+const clampWidth = (w: number) => Math.round(Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, w)))
+const TABS: readonly { id: Tab; label: string; icon: string }[] = [
+  { id: 'changes', label: 'Changes', icon: ICON.plusMinus },
+  { id: 'terminal', label: 'Terminal', icon: ICON.terminalBox },
+  { id: 'preview', label: 'Preview', icon: ICON.globe },
+]
+
+/** The one empty state for every tab: an icon, a title, a line, and an action if there is one. */
+export function InspectorEmpty({ icon, title, children, action }: { icon: string; title: string; children: React.ReactNode; action?: React.ReactNode }) {
+  return (
+    <div className="insp-empty">
+      <Icon d={icon} size={24} stroke={1.6} />
+      <b>{title}</b>
+      <span className="wrap">{children}</span>
+      {action}
+    </div>
+  )
+}
 
 interface InspectorProps {
   onClose: () => void
@@ -28,13 +50,13 @@ interface InspectorProps {
 
 export function Inspector({ thread, onCommit, onPr, hasPr, send, onClose, machines = [], preview, pane: initialPane }: InspectorProps) {
   // Width, dragged from the left edge and kept per browser.
-  const [width, setWidth] = useState(() => { try { return Number(localStorage.getItem('frog.inspectorWidth')) || 330 } catch { return 330 } })
+  const [width, setWidth] = useState(() => { try { return clampWidth(Number(localStorage.getItem('frog.inspectorWidth')) || WIDTH) } catch { return WIDTH } })
   const [dragging, setDragging] = useState(false)
   const grab = (e: React.PointerEvent) => {
     e.preventDefault()
     const x0 = e.clientX, w0 = width
     setDragging(true); document.body.classList.add('resizing')
-    const move = (ev: PointerEvent) => setWidth(Math.round(Math.min(Math.max(260, w0 + x0 - ev.clientX), Math.min(720, innerWidth * 0.6))))
+    const move = (ev: PointerEvent) => setWidth(clampWidth(w0 + x0 - ev.clientX))
     const up = () => {
       setDragging(false); document.body.classList.remove('resizing')
       removeEventListener('pointermove', move); removeEventListener('pointerup', up)
@@ -60,39 +82,38 @@ export function Inspector({ thread, onCommit, onPr, hasPr, send, onClose, machin
   const term = [...terms].reverse().find((p) => !p.closed) ?? terms[terms.length - 1]
   const resize = useCallback((cols: number, rows: number) => { if (term && !term.closed) send({ op: 'pane_resize', id: term.id, cols, rows }) }, [term?.id, term?.closed, send]) // eslint-disable-line react-hooks/exhaustive-deps
   return (
-    <section className="insp f-glass" aria-label="Inspector" style={{ width }}>
+    <section className="insp f-glass" aria-label="Inspector" style={{ '--insp-w': `${width}px` } as React.CSSProperties}>
       <div className={`insp-grip${dragging ? ' on' : ''}`} role="separator" aria-orientation="vertical" aria-label="Resize the inspector" onPointerDown={grab}
-        onDoubleClick={() => { setWidth(330); try { localStorage.removeItem('frog.inspectorWidth') } catch { /* private mode */ } }} />
+        onDoubleClick={() => { setWidth(WIDTH); try { localStorage.removeItem('frog.inspectorWidth') } catch { /* private mode */ } }} />
       <div className="insp-top">
-        <div className="seg" role="tablist" style={{ flex: 1 }}>
-          {(['changes', 'terminal', 'preview'] as const).map((p) => (
-            <button key={p} type="button" role="tab" aria-selected={pane === p} onClick={() => { setPane(p); try { localStorage.setItem('frog.inspectorTab', p) } catch { /* private mode */ } }}>
-              {{ changes: 'Changes', terminal: 'Terminal', preview: 'Preview' }[p]}
+        <div className="insp-tabs" role="tablist">
+          {TABS.map((t) => (
+            <button key={t.id} type="button" role="tab" className="insp-tab" aria-selected={pane === t.id} onClick={() => { setPane(t.id); try { localStorage.setItem('frog.inspectorTab', t.id) } catch { /* private mode */ } }}>
+              <Icon d={t.icon} size={13} stroke={2} />{t.label}
             </button>
           ))}
         </div>
         <button type="button" className="ic-btn insp-x" aria-label="Close the inspector" title="Close" onClick={onClose}>
-          <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+          <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
         </button>
       </div>
       {pane === 'changes' && (
         <div className="insp-body">
-          {thread.changes.length === 0 && <div className="insp-empty det wrap">Files Frog changes in this session show up here, ready to commit{onPr ? ' or open as a PR' : ''}.</div>}
+          {thread.changes.length === 0 && <InspectorEmpty icon={ICON.plusMinus} title="No changes yet">Files Frog edits show up here.</InspectorEmpty>}
           {thread.changes.length > 0 && (
             <div className="files-head">
-              <b>{thread.changes.length} file{thread.changes.length === 1 ? '' : 's'}</b>
+              <span className="files-count">{thread.changes.length} file{thread.changes.length === 1 ? '' : 's'}</span>
               <span className="file-add">+{thread.changes.reduce((n, c) => n + c.added, 0)}</span>
               <span className="file-del">−{thread.changes.reduce((n, c) => n + c.removed, 0)}</span>
               <span style={{ flex: 1 }} />
-              <button type="button" className="f-btn f-btn--plain" onClick={() => setOpen(open.size ? new Set() : new Set(thread.changes.map((c) => c.path)))}>{open.size ? 'Collapse all' : 'Expand all'}</button>
+              <button type="button" className="files-toggle" onClick={() => setOpen(open.size ? new Set() : new Set(thread.changes.map((c) => c.path)))}>{open.size ? 'Collapse all' : 'Expand all'}</button>
             </div>
           )}
-          <div className="files">
+          {thread.changes.length > 0 && <div className="files">
             {thread.changes.map((c) => (
               <FileRow key={c.path} diff={c} open={open.has(c.path)} onToggle={() => setOpen((o) => { const n = new Set(o); if (n.has(c.path)) n.delete(c.path); else n.add(c.path); return n })} />
             ))}
-          </div>
-          <span style={{ flex: 1 }} />
+          </div>}
           {thread.changes.length > 0 && (
             <div className="insp-acts">
               <button type="button" className="f-btn f-btn--bordered" onClick={onCommit}>Commit</button>
@@ -115,24 +136,19 @@ export function Inspector({ thread, onCommit, onPr, hasPr, send, onClose, machin
             </div>
             <TerminalPane pane={term} onInput={(data) => send({ op: 'pane_input', id: term.id, data })} onResize={resize} />
           </>) : (
-            <div className="term-empty">
-              <svg aria-hidden="true" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M7 9l3 3-3 3M12 15h5" /></svg>
-              <b>{term?.closed ? `The shell exited${term.exit != null ? ` (${term.exit})` : ''}` : 'A shell in the sandbox'}</b>
-              <span className="det wrap">Same machine Frog works in, at the repo. Nothing here touches your computer.</span>
-              <button type="button" className="f-btn f-btn--bordered" onClick={() => send({ op: 'pane_open', kind: 'terminal', cols: 80, rows: 24 })}>{term?.closed ? 'Open another' : 'Open a terminal'}</button>
-            </div>
+            <InspectorEmpty icon={ICON.terminalBox} title={term?.closed ? `The shell exited${term.exit != null ? ` (${term.exit})` : ''}` : 'A shell in the sandbox'}
+              action={<button type="button" className="f-btn f-btn--bordered" onClick={() => send({ op: 'pane_open', kind: 'terminal', cols: 80, rows: 24 })}>{term?.closed ? 'Open another' : 'Open a terminal'}</button>}>
+              Same machine Frog works in, at the repo. Nothing here touches your computer.
+            </InspectorEmpty>
           )}
         </div>
       )}
       {pane === 'preview' && preview && <PreviewPane hub={preview} pane={previews[previews.length - 1]} send={send} />}
       {pane === 'preview' && !preview && (
         <div className="insp-body">
-          <div className="term-empty">
-            <svg aria-hidden="true" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M3 9h18M7 6.5h.01M10 6.5h.01" /></svg>
-            <b>Preview isn't here yet</b>
-            <span className="det wrap">Open the session in the Mac app to preview it.</span>
-            <DownloadAppChip label="The Mac app has Preview" machines={machines} />
-          </div>
+          <InspectorEmpty icon={ICON.globe} title="Preview isn't here yet" action={<DownloadAppChip label="The Mac app has Preview" machines={machines} />}>
+            Open the session in the Mac app to preview it.
+          </InspectorEmpty>
         </div>
       )}
     </section>
