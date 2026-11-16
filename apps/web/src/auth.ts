@@ -101,8 +101,8 @@ export async function finishSignIn(): Promise<{ key: string; account: Account; a
 /** Subscriptions: an allowance each, then usage pricing from credit past it. */
 export const PLANS = [
   { id: 'pro', name: 'Pro', price: 20, blurb: 'For steady daily use' },
-  { id: 'max5', name: 'Max 5x', price: 100, blurb: '5× Pro, more at once' },
-  { id: 'max', name: 'Max 10x', price: 200, blurb: '10× Pro, for heavy use' },
+  { id: 'max5', name: 'Max', price: 100, blurb: '5× Pro, more at once' },
+  { id: 'max', name: 'Ultra', price: 200, blurb: '10× Pro, for heavy use' },
 ] as const
 
 /** Leaves for Stripe Checkout to start a plan. */

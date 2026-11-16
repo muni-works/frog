@@ -15,7 +15,7 @@ struct BillingSettings: View {
         Form {
             if !account.signedIn {
                 Section {
-                    Text("Sign in to see your plan and credit. Everything on this Mac works without an account; Frog Cloud adds sessions in their own sandbox and hosted models, with $5 free to start.")
+                    Text("Sign in to see your plan and credit. Everything on this Mac works without an account; Frog Cloud adds sessions in their own sandbox and hosted models, with $1 free to start.")
                         .foregroundStyle(.secondary)
                     if let task = signingIn {
                         LabeledContent("Signing In… Finish in your browser.") { Button("Cancel") { task.cancel() } }
