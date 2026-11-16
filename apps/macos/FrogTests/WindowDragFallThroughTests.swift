@@ -34,12 +34,15 @@ final class WindowDragFallThroughTests: XCTestCase {
             .contentShape(.rect)
             .gesture(WindowDragGesture())
             .allowsWindowActivationEvents(true)
-        let w = NSWindow(contentRect: CGRect(x: 80, y: 80, width: 1500, height: 900),
+        let w = NSWindow(contentRect: CGRect(x: -20_000, y: -20_000, width: 1500, height: 900),
                          styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         w.isReleasedWhenClosed = false
         w.contentView = NSHostingView(rootView: root)
+        // On screen for AppKit (ordered in, so it builds a key view loop) but never seen: far
+        // off the desktop, transparent, not key, and the app isn't activated.
+        w.setFrameOrigin(CGPoint(x: -20_000, y: -20_000))
+        w.alphaValue = 0
         w.orderFrontRegardless()
-        w.makeKey()
         pump(1.0)
         panes.items[0].showChanges = true
         pump(1.0)

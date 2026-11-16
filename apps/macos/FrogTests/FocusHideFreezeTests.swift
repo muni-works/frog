@@ -52,10 +52,14 @@ final class FocusHideFreezeTests: XCTestCase {
         panes.focus(panes.focused)
 
         let host = NSHostingView(rootView: WorkspaceView(panes: panes).frame(minWidth: 720, minHeight: 480))
-        let w = NSWindow(contentRect: CGRect(x: 80, y: 80, width: 1500, height: 900),
+        let w = NSWindow(contentRect: CGRect(x: -20_000, y: -20_000, width: 1500, height: 900),
                          styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         w.isReleasedWhenClosed = false
         w.contentView = host
+        // On screen for AppKit (ordered in, so it builds a key view loop) but never seen: far
+        // off the desktop, transparent, not key, and the app isn't activated.
+        w.setFrameOrigin(CGPoint(x: -20_000, y: -20_000))
+        w.alphaValue = 0
         w.orderFrontRegardless()
         pump(1.0)
         panes.focused.showChanges = true
