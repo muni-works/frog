@@ -435,7 +435,7 @@ export default function App() {
           <h1>What should we work on?</h1>
           <div className="home-sub">
             <p>Frog is a coding agent for your repos: open models, on your machines or in Frog Cloud.</p>
-            <p><b>$5 free to start.</b></p>
+            <p><b>$1 free to start.</b></p>
           </div>
           <HowItWorks />
           <Trust />
