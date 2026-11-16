@@ -1915,6 +1915,88 @@ async fn a_reply_cut_off_by_the_output_limit_is_continued() {
     assert_eq!(started, 1, "the continuation joins the same bubble");
 }
 
+/// Notices carrying `needle`, in order.
+fn notices_with(evs: &[Envelope], needle: &str) -> Vec<String> {
+    evs.iter()
+        .filter_map(|e| match &e.event {
+            Event::Notice { message, .. } if message.contains(needle) => Some(message.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn an_empty_reply_is_asked_again_instead_of_ending_the_turn() {
+    // The model says nothing at all (no text, no tool call): frog asks once more, with a
+    // steer that never joins the history, and the turn ends on the real answer.
+    let dir = tmp_store();
+    let (mut h, sent) = engine_sent(
+        vec![
+            reply(vec![], Stop::End),
+            reply(vec![text("done: wrote the file")], Stop::End),
+        ],
+        Some(dir.clone()),
+        None,
+        None,
+        std::env::temp_dir(),
+    );
+    let evs = run(&mut h, "do it").await;
+    let sid = evs[0].session.clone();
+    let msgs: Vec<String> = evs
+        .iter()
+        .filter_map(|e| match &e.event {
+            Event::ItemCompleted {
+                item: Item::Message { text },
+                ..
+            } => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(msgs, vec!["done: wrote the file".to_string()]);
+    assert_eq!(notices_with(&evs, "empty reply").len(), 1);
+    // The second request carried the steer as its last user message.
+    {
+        let sent = sent.lock().unwrap();
+        assert_eq!(sent.len(), 2);
+        let last = sent_messages(&sent[1]);
+        let tail = last.iter().rev().find(|m| m["role"] == "user").unwrap().to_string();
+        assert!(tail.contains("Your last reply was empty"), "{tail}");
+    }
+    shutdown(h).await;
+    // The empty reply never joined the history (a provider rejects an assistant message with
+    // no content), and neither did the steer.
+    let loaded = session::load(&dir, &sid).unwrap();
+    let assistants: Vec<String> = loaded
+        .messages
+        .iter()
+        .filter(|m| m.role == Role::Assistant)
+        .map(|m| m.text())
+        .collect();
+    assert_eq!(assistants, ["done: wrote the file"]);
+    assert!(!loaded.messages.iter().any(|m| m.text().contains("Your last reply was empty")));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn a_second_empty_reply_ends_the_turn_and_says_so() {
+    let mut h = engine(
+        vec![reply(vec![], Stop::End), reply(vec![], Stop::End)],
+        true,
+    );
+    let evs = run(&mut h, "do it").await;
+    assert!(evs.iter().any(|e| matches!(
+        e.event,
+        Event::TurnEnded {
+            reason: EndReason::Complete,
+            ..
+        }
+    )));
+    let said = notices_with(&evs, "empty reply");
+    assert_eq!(said.len(), 2, "{said:?}");
+    assert!(said[1].contains("ended without an answer"), "{said:?}");
+    shutdown(h).await;
+}
+
 #[tokio::test]
 async fn a_cut_off_reply_is_one_assistant_message_in_the_history() {
     // The continuation steers one call without joining the history: the reply it continues

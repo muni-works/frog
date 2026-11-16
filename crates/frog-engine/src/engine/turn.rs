@@ -414,6 +414,8 @@ impl Agent {
         // Set while this step's reply is the tail of a cut-off one: its blocks join that
         // message instead of starting another.
         let mut continuing = false;
+        // The model was already asked again after a reply with nothing in it.
+        let mut empty_asked = false;
         // A reply asking for files it could Read is nudged once, before any tool has run.
         let (mut nudged, mut used_tools) = (false, false);
         // Model calls since the last edit or passing check, and whether this stretch was
@@ -670,6 +672,24 @@ impl Agent {
             }
 
             let uses = msg.tool_uses();
+            // A reply with no answer and no tool call, and not cut off: nothing to show and
+            // nothing to run. Ending the turn here leaves the user looking at a transcript
+            // that just stops (a provider that hides its thinking can return exactly this).
+            // Ask once more; the empty message never joins the history, where a provider
+            // would reject it. A second empty reply ends the turn and says so.
+            if silent && uses.is_empty() && resp.stop != Stop::Length && !continuing {
+                if !empty_asked {
+                    empty_asked = true;
+                    self.notice(Level::Info, "the model returned an empty reply; asked it again");
+                    steer = Some(EMPTY_REPLY.into());
+                    continue;
+                }
+                self.notice(
+                    Level::Warn,
+                    "The model returned an empty reply twice, so the turn ended without an answer. Send a message to continue.",
+                );
+                break EndReason::Complete;
+            }
             // More of a cut-off reply joins the message it continues (one bubble, one history
             // message, via the log's Extend); anything else starts its own. Its thinking stays
             // out of the join: a provider wants thinking first in an assistant message, and the
@@ -865,6 +885,12 @@ pub(super) fn progressed(calls: &[(String, String, Value)], results: &[Block]) -
 const CUT_TOOL_CALL: &str = "Your last reply hit the output limit partway through a tool call, so \
 that call was dropped and nothing ran. Don't repeat it in one piece: split it into smaller calls. \
 For a long file, Write the first part, then add the rest with Edit, a section at a time.";
+
+/// Sent after a reply that had no answer and no tool call. With that one request only, like
+/// the others here.
+const EMPTY_REPLY: &str = "Your last reply was empty: no text and no tool call. If the work is \
+done, say what you did and what is left, in a few lines. If it isn't, continue with the next \
+tool call.";
 
 /// Steers the call that continues a reply cut off at the output limit. Sent with that one
 /// request only: the reply is one assistant message, so this never joins the history.
