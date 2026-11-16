@@ -106,7 +106,7 @@ final class LayoutStressTests: XCTestCase {
         let window = NSWindow(contentRect: host.frame, styleMask: [.titled, .resizable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = host
-        window.orderFront(nil)
+        window.orderInForTest()
         return (window, host)
     }
 

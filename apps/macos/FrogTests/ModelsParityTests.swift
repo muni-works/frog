@@ -69,7 +69,7 @@ final class ModelsParityTests: XCTestCase {
             window.isReleasedWhenClosed = false
             window.appearance = NSAppearance(named: look)
             window.contentView = host
-            window.orderFront(nil)
+            window.orderInForTest()
             defer { window.close() }
             RunLoop.main.run(until: Date().addingTimeInterval(0.6))
             host.layoutSubtreeIfNeeded()

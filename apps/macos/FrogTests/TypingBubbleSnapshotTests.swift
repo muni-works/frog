@@ -51,7 +51,7 @@ final class TypingBubbleSnapshotTests: XCTestCase {
         let window = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = host
-        window.orderFront(nil)
+        window.orderInForTest()
         defer { window.close() }
         pump(0.4)
         host.layoutSubtreeIfNeeded()

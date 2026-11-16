@@ -161,7 +161,7 @@ final class TranscriptSwitchBenchmarkTests: XCTestCase {
         window.isReleasedWhenClosed = false
         window.appearance = NSAppearance(named: .aqua)
         window.contentView = host
-        window.orderFront(nil)
+        window.orderInForTest()
     }
 
     override func tearDown() async throws {

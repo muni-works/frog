@@ -42,7 +42,7 @@ final class OpenFolderLayoutTests: XCTestCase {
                          backing: .buffered, defer: false)
         w.isReleasedWhenClosed = false
         w.contentView = host
-        w.orderFrontRegardless()
+        w.orderInForTest()
         return w
     }
 

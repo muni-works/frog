@@ -20,7 +20,7 @@ final class InkRevealTests: XCTestCase {
         let window = NSWindow(contentRect: v.frame, styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = v
-        window.orderFront(nil)
+        window.orderInForTest()
         return v
     }
 

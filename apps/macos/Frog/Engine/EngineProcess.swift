@@ -148,20 +148,45 @@ enum FrogError: LocalizedError {
     }
 }
 
-/// A scratch root for tests that touch real files under `$HOME` (the app's own Application
-/// Support, caches), with a restore for the value it swaps.
+/// A test host's home, and a scratch root for tests that touch real files under `$HOME`.
 enum TestHome {
-    /// Point `$HOME` (C, and every Foundation call that reads it) at a fresh temp dir for the
-    /// test's duration.
+    /// A test host gets an empty home of its own for the whole run, so the tests never read or
+    /// write the user's sessions, account, config or Application Support (the sidebar in a
+    /// snapshot used to be whoever ran the tests). `CFFIXED_USER_HOME` moves `NSHomeDirectory`,
+    /// `URL.homeDirectory` and the `FileManager` folders in-process, read at each call, so
+    /// setting it first thing in `FrogApp.init`, before any path is read, is early enough;
+    /// `HOME` takes it to the engine and every other child process. UserDefaults stay the
+    /// debug build's own domain (`toys.frog.dev`), never the installed app's. A test that reads
+    /// this Mac's real state on purpose (`FROG_LIVE_NODE`) keeps the real home.
+    static func isolate() {
+        guard SingleInstance.isTesting, ProcessInfo.processInfo.environment["FROG_LIVE_NODE"] == nil else { return }
+        let fm = FileManager.default
+        let real = URL.homeDirectory
+        let home = fm.temporaryDirectory.appending(path: "frog-test-home-\(getpid())")
+        try? fm.removeItem(at: home)
+        try? fm.createDirectory(at: home.appending(path: "Library"), withIntermediateDirectories: true)
+        // The login keychain stays reachable: the node-pairing tests store keys through
+        // `security`, under service names of their own, and remove them after.
+        try? fm.createSymbolicLink(at: home.appending(path: "Library/Keychains"),
+                                   withDestinationURL: real.appending(path: "Library/Keychains"))
+        setenv("CFFIXED_USER_HOME", home.path, 1)
+        setenv("HOME", home.path, 1)
+    }
+
+    /// Point the home (C's `$HOME`, and Foundation's) at a fresh temp dir for the test's
+    /// duration.
     static func scoped(_ body: () -> Void) {
         let fm = FileManager.default
         let home = fm.temporaryDirectory
             .appending(path: "frog-home-\(UUID().uuidString.prefix(6))").resolvingSymlinksInPath()
         try? fm.createDirectory(at: home, withIntermediateDirectories: true)
-        let original = getenv("HOME")
+        let original = getenv("HOME").map { String(cString: $0) }
+        let fixed = getenv("CFFIXED_USER_HOME").map { String(cString: $0) }
         setenv("HOME", home.path, 1)
+        setenv("CFFIXED_USER_HOME", home.path, 1)
         body()
         if let original { setenv("HOME", original, 1) } else { unsetenv("HOME") }
+        if let fixed { setenv("CFFIXED_USER_HOME", fixed, 1) } else { unsetenv("CFFIXED_USER_HOME") }
         try? fm.removeItem(at: home)
     }
 }

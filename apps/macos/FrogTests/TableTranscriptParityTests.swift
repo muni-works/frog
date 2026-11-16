@@ -79,7 +79,7 @@ final class TableTranscriptParityTests: XCTestCase {
         window = NSWindow(contentRect: host.frame, styleMask: [.titled, .resizable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = host
-        window.orderFront(nil)
+        window.orderInForTest()
         // The container asked for, laid out and settled: every mounted row has a real height and
         // the view has opened at the end. Waiting for the first row alone is not enough — a table
         // still measuring its rows answers `rect(ofRow:)` from estimates, so a jump taken then
