@@ -7540,6 +7540,83 @@ mod egress_tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    /// A sandboxed command the fence doesn't contain is carded, in a mode that asks: the
+    /// sandbox's free pass used to wave `git push` and `git reset --hard` through in every
+    /// mode. An ordinary sandboxed command in the same turn still runs without a card.
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn a_sandboxed_push_or_hard_reset_asks_and_an_ordinary_command_does_not() {
+        let (mut h, dir) = egress_engine(
+            vec![
+                bash_call("plain", json!({"command": "echo made > made.txt"})),
+                bash_call("push", json!({"command": "git push origin main"})),
+                bash_call("reset", json!({"command": "git reset --hard HEAD~1"})),
+                reply(vec![text("ok")], Stop::End),
+            ],
+            false,
+            Mode::Default,
+        );
+        submit(&mut h, "go").await;
+        let mut carded = Vec::new();
+        let mut evs = Vec::new();
+        loop {
+            let e = h.events.recv().await.unwrap();
+            match &e.event {
+                Event::PermissionRequest { id, arg, .. } => {
+                    carded.push(arg.clone());
+                    // Allowed once, so the turn goes on to the next call (a denial ends it).
+                    // Neither does anything here: the folder isn't a git repository.
+                    h.ops
+                        .send(Op::Permission {
+                            id: id.clone(),
+                            decision: Decision::Allow,
+                            note: None,
+                        })
+                        .unwrap();
+                }
+                Event::Idle => break,
+                _ => {}
+            }
+            evs.push(e);
+        }
+        assert!(
+            dir.join("made.txt").exists(),
+            "the ordinary sandboxed command ran"
+        );
+        assert_eq!(carded.len(), 2, "{carded:?}");
+        assert!(carded[0].contains("git push"), "{carded:?}");
+        assert!(carded[1].contains("git reset --hard"), "{carded:?}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Headless can't ask, so the same command is denied there rather than run.
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn headless_denies_a_sandboxed_push() {
+        let (mut h, dir) = egress_engine_asking(
+            vec![
+                bash_call("push", json!({"command": "git push origin main"})),
+                reply(vec![text("ok")], Stop::End),
+            ],
+            false,
+            Mode::Default,
+            false,
+        );
+        submit(&mut h, "go").await;
+        let evs = until_idle(&mut h).await;
+        assert!(
+            !evs.iter()
+                .any(|e| matches!(e.event, Event::PermissionRequest { .. })),
+            "headless never cards"
+        );
+        let out = tool_output(&evs, "push");
+        assert!(
+            out.contains("Not permitted in non-interactive mode"),
+            "{out}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     /// Headless (`can_ask = false`) can't ask, so yolo's egress shapes are denied, never
     /// carded and never widened: the same safe path as before.
     #[cfg(target_os = "macos")]
