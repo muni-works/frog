@@ -223,7 +223,7 @@ struct DocsPageView: View {
                         // A new page is a new text, not a stream: its own view, from the top.
                         .id(page.slug)
                     footer(docs.neighbors(of: page.slug))
-                        .padding(.top, 32)
+                        .padding(.top, 40)
                 }
                 .padding(.top, 56)
                 .padding(.bottom, 48)
@@ -237,12 +237,16 @@ struct DocsPageView: View {
         }
     }
 
-    /// Previous on the left, next on the right, each with its title.
+    /// Under a rule: previous on the left, next on the right, each a muted label over the
+    /// page's title, as on the web.
     private func footer(_ n: (previous: AppDocs.Page?, next: AppDocs.Page?)) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            if let p = n.previous { link(p, label: "Previous", trailing: false) }
-            Spacer(minLength: 0)
-            if let p = n.next { link(p, label: "Next", trailing: true) }
+        VStack(spacing: 16) {
+            Rectangle().fill(Tokens.line).frame(height: 1)
+            HStack(alignment: .top, spacing: 12) {
+                if let p = n.previous { link(p, label: "Previous", trailing: false) }
+                Spacer(minLength: 0)
+                if let p = n.next { link(p, label: "Next", trailing: true) }
+            }
         }
     }
 
@@ -252,13 +256,9 @@ struct DocsPageView: View {
                 Text(label)
                     .font(.frog(size: Tokens.Size.meta))
                     .foregroundStyle(Tokens.textTertiary)
-                HStack(spacing: 5) {
-                    if !trailing { Image(systemName: "arrow.left").font(.frog(size: 11)) }
-                    Text(page.title)
-                    if trailing { Image(systemName: "arrow.right").font(.frog(size: 11)) }
-                }
-                .font(.frog(size: Tokens.Size.secondary, weight: .medium))
-                .foregroundStyle(Tokens.text)
+                Text(page.title)
+                    .font(.frog(size: Tokens.Size.body))
+                    .foregroundStyle(Tokens.text)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
