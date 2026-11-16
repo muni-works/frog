@@ -9,6 +9,16 @@ cargo build
 cargo test -p frog-engine
 ```
 
+The Mac app's tests (needs Xcode and `brew install xcodegen`):
+
+```sh
+apps/macos/scripts/test.sh
+```
+
+It runs the suite with CI's per-test timeouts, so a test that hangs fails by name after five
+minutes rather than stalling the whole run, and writes the full log to `apps/macos/build/test.log`.
+Pass extra `xcodebuild` arguments through it, e.g. `-only-testing:FrogTests/TypeToFocusTests`.
+
 Keep changes small and focused, match the style of the code around them, and add a test when
 you fix a bug. Run `rustfmt` on the files you touch (please don't reformat whole crates).
 

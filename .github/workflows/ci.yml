@@ -92,7 +92,8 @@ jobs:
         # CI and give wall-clock budgets runner room (FrogTests TestRunner). A failing test gets
         # up to 2 more tries (the window benchmarks share a VM's frames); it must pass once.
         # A test past 5 minutes fails as "exceeded execution time allowance", by name; the
-        # whole step takes about 7.
+        # whole step takes about 7. -quiet keeps the log short but drops the assertion text, so
+        # the run writes a result bundle, and the next two steps read the failures back out.
         env:
           TEST_RUNNER_CI: "true"
         timeout-minutes: 30
@@ -100,9 +101,26 @@ jobs:
           cd apps/macos
           xcodebuild test -quiet -retry-tests-on-failure -test-iterations 3 \
             -test-timeouts-enabled YES -default-test-execution-time-allowance 300 \
+            -resultBundlePath build/ci/Test.xcresult \
             -project Frog.xcodeproj -scheme Frog -configuration Debug \
             -derivedDataPath build/ci -destination 'platform=macOS,arch=arm64' \
             CODE_SIGN_IDENTITY="-" DEVELOPMENT_TEAM="" CODE_SIGN_STYLE="Manual"
+      # Each failing test with its assertion message, in the log and as a check annotation.
+      # It lists every failed try, so a test that failed and then passed on a retry shows too.
+      - name: test failures
+        if: failure() && hashFiles('apps/macos/build/ci/Test.xcresult/Info.plist') != ''
+        run: |
+          xcrun xcresulttool get test-results summary \
+            --path apps/macos/build/ci/Test.xcresult --format json |
+            jq -r '.testFailures[] | "::error title=\(.testIdentifierString)::\(.failureText | gsub("\n"; "%0A"))"'
+      # The whole bundle (logs, attachments, timings) for anything the summary doesn't say.
+      - name: upload test results
+        if: failure() && hashFiles('apps/macos/build/ci/Test.xcresult/Info.plist') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-app-xcresult
+          path: apps/macos/build/ci/Test.xcresult
+          retention-days: 14
       # Release builds break differently from Debug (DEBUG-only symbols used
       # unconditionally, warnings as errors differences): the launch pipeline
       # (release.yml) builds Release, so CI guards it too.

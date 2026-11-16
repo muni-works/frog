@@ -39,7 +39,12 @@ final class PaneCardRenderTests: XCTestCase {
                          styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         w.isReleasedWhenClosed = false
         w.contentView = host
-        w.orderFrontRegardless()
+        // Laid out and drawn offscreen: never ordered in. On macOS 27 (Xcode 27.2), ordering a
+        // window in recalculates its key view loop (`-[NSWindow _setUpFirstResponder]`), and
+        // SwiftUI's walk of it (`FocusBridge.updateDefaultKeyViewLoop`) never returns while the
+        // inspector card carries `.glassEffectID`: the test spun at 100% CPU for over an hour.
+        // macOS 26 (CI) returns. The snapshot is the same either way: `cacheDisplay` doesn't
+        // need the window on screen.
         pump(1.5)
         host.layoutSubtreeIfNeeded()
         guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return XCTFail("no bitmap") }
