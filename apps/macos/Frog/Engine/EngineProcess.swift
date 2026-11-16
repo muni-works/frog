@@ -155,9 +155,10 @@ enum TestHome {
     /// snapshot used to be whoever ran the tests). `CFFIXED_USER_HOME` moves `NSHomeDirectory`,
     /// `URL.homeDirectory` and the `FileManager` folders in-process, read at each call, so
     /// setting it first thing in `FrogApp.init`, before any path is read, is early enough;
-    /// `HOME` takes it to the engine and every other child process. UserDefaults stay the
-    /// debug build's own domain (`toys.frog.dev`), never the installed app's. A test that reads
-    /// this Mac's real state on purpose (`FROG_LIVE_NODE`) keeps the real home.
+    /// `HOME` takes it to the engine and every other child process. UserDefaults don't follow
+    /// the home (`cfprefsd` serves them by bundle id), so they get their own suite
+    /// (`isolateDefaults`). A test that reads this Mac's real state on purpose
+    /// (`FROG_LIVE_NODE`) keeps the real home.
     ///
     /// Anything else, a normal launch above all, it leaves exactly as it was: no variable set,
     /// no folder made (`shouldIsolate`).
@@ -174,6 +175,29 @@ enum TestHome {
                                    withDestinationURL: real.appending(path: "Library/Keychains"))
         setenv("CFFIXED_USER_HOME", home.path, 1)
         setenv("HOME", home.path, 1)
+        isolateDefaults()
+    }
+
+    /// Where a test host's `UserDefaults.standard` reads and writes, emptied as each run starts.
+    static let defaultsSuite = "toys.frog.tests"
+
+    /// The test host's defaults are a suite of their own, not the debug app's domain
+    /// (`toys.frog.dev`), which is the developer's daily frog: its verbosity, density and
+    /// archived sessions changed what the tests built (the scroll-up benchmark ran expanded,
+    /// compact rows on one Mac and not another), and what tests set (a verbosity override,
+    /// window tinting) went back into the app. `standardUserDefaults` answers with the suite
+    /// from here on, and `@AppStorage` with it, since that reads `.standard`.
+    private static func isolateDefaults() {
+        guard let suite = UserDefaults(suiteName: defaultsSuite),
+              let standard = class_getClassMethod(UserDefaults.self, NSSelectorFromString("standardUserDefaults"))
+        else { return }
+        suite.removePersistentDomain(forName: defaultsSuite)
+        // Nothing to bring over from frog's old bundle ids (`LegacyKiln.migrate`): those are
+        // the developer's too.
+        suite.set(true, forKey: "importedEcoDefaults")
+        suite.set(true, forKey: "importedLegacyDefaults")
+        let answer: @convention(block) (AnyObject) -> UserDefaults = { _ in suite }
+        method_setImplementation(standard, imp_implementationWithBlock(answer))
     }
 
     /// Only an XCTest host: Xcode's test session variables (`XCTestConfigurationFilePath`,
