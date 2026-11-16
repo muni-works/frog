@@ -57,8 +57,8 @@ final class CloudAccount {
     /// The plans, as Settings → Billing offers them on the web.
     static let plans: [(id: String, name: String, price: Int, blurb: String)] = [
         ("pro", "Pro", 20, "For steady daily use"),
-        ("max5", "Max 5x", 100, "5× Pro, more at once"),
-        ("max", "Max 20x", 200, "20× Pro, for heavy use"),
+        ("max5", "Max", 100, "5× Pro, more at once"),
+        ("max", "Ultra", 200, "10× Pro, for heavy use"),
     ]
     static let topUps = [5, 10, 25, 50, 100]
 

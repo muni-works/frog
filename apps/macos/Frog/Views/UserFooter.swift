@@ -40,7 +40,7 @@ struct UserFooter: View {
                     Button("Continue with Google") { signIn("google") }
                 } label: {
                     row(avatar: nil, title: "Sign in to Frog Cloud",
-                        detail: failure ?? (account.signedIn ? "Access to more powerful models" : "Cloud sessions · $5 free to start"),
+                        detail: failure ?? (account.signedIn ? "Access to more powerful models" : "Cloud sessions · $1 free to start"),
                         warn: failure != nil)
                 }
                 .menuStyle(.borderlessButton)
