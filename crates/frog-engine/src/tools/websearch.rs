@@ -2,6 +2,10 @@
 //! a SearXNG instance (`searxng_url`, its JSON API), Brave, Exa or Tavily (keys from the
 //! Keychain via `frog --set-key <id>`, or their environment variables), or Frog Cloud's own
 //! search (`frog`, with Frog Cloud connected). With none configured the tool isn't offered.
+//!
+//! A backend that can't be reached (a SearXNG on a LAN you've left, a service that is down)
+//! doesn't leave the session without search: with Frog Cloud connected the search goes there
+//! instead, and the result says so.
 
 use super::{Ctx, Output, int_arg, str_arg};
 use crate::provider::ToolSpec;
@@ -58,6 +62,105 @@ impl Backend {
             &crate::providers::key,
             &crate::providers::cloud_base_url(),
         )
+    }
+
+    /// Where a search goes when `primary` can't be reached: Frog Cloud's search, when Frog
+    /// Cloud is connected and isn't the primary already. Never in a hermetic run.
+    pub fn fallback_from_config(
+        cfg: &crate::config::Config,
+        primary: Option<&Backend>,
+    ) -> Option<Self> {
+        if cfg.hermetic {
+            return None;
+        }
+        fallback(
+            primary,
+            &crate::providers::key,
+            &crate::providers::cloud_base_url(),
+        )
+    }
+}
+
+/// See [`Backend::fallback_from_config`].
+pub fn fallback(
+    primary: Option<&Backend>,
+    key: &dyn Fn(&str) -> Option<String>,
+    cloud_base: &str,
+) -> Option<Backend> {
+    if matches!(primary, None | Some(Backend::FrogCloud(..))) {
+        return None;
+    }
+    key(crate::providers::CLOUD)
+        .map(|k| Backend::FrogCloud(cloud_base.trim_end_matches('/').to_string(), k))
+}
+
+/// The backend answered, but with a server error: it is up and broken, which for the user is
+/// the same as down.
+#[derive(Debug)]
+struct Unavailable(String);
+
+impl std::fmt::Display for Unavailable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for Unavailable {}
+
+/// True when the search failed because the backend couldn't be reached or is broken (no
+/// connection, a timeout, a 5xx), not because it refused the request (a bad key, no credit):
+/// only the first is worth sending elsewhere.
+fn down(e: &anyhow::Error) -> bool {
+    e.is::<Unavailable>()
+        || e.downcast_ref::<reqwest::Error>()
+            .is_some_and(|e| e.is_connect() || e.is_timeout())
+}
+
+/// Search `primary`; if it is down and there is a `fallback`, search that. Returns the hits,
+/// the backend that answered, and, when it wasn't the primary, why.
+async fn search_or_fallback<'a>(
+    primary: &'a Backend,
+    fallback: Option<&'a Backend>,
+    query: &str,
+    count: usize,
+) -> Result<(Vec<Hit>, &'a Backend, Option<String>)> {
+    let e = match search(primary, query, count).await {
+        Ok(hits) => return Ok((hits, primary, None)),
+        Err(e) => e,
+    };
+    let Some(other) = fallback.filter(|_| down(&e)) else {
+        if down(&e) {
+            bail!(
+                "{} search couldn't be reached ({}). Check `web_search` and `searxng_url` in config.toml, or connect Frog Cloud for its search.",
+                primary.name(),
+                reason(&e)
+            );
+        }
+        return Err(e);
+    };
+    let hits = search(other, query, count).await.map_err(|e2| {
+        anyhow::anyhow!(
+            "{} search couldn't be reached ({}), and {} search failed too: {e2}",
+            primary.name(),
+            reason(&e),
+            other.name()
+        )
+    })?;
+    let note = format!(
+        "{} search couldn't be reached ({}); these results are from {} search.",
+        primary.name(),
+        reason(&e),
+        other.name()
+    );
+    Ok((hits, other, Some(note)))
+}
+
+/// A short reason for a search that was down, without the URL (it can hold a LAN address).
+fn reason(e: &anyhow::Error) -> &'static str {
+    match e.downcast_ref::<reqwest::Error>() {
+        Some(e) if e.is_timeout() => "timed out",
+        Some(_) => "no connection",
+        None => "server error",
     }
 }
 
@@ -172,6 +275,9 @@ async fn search(backend: &Backend, query: &str, count: usize) -> Result<Vec<Hit>
     let client = reqwest::Client::builder()
         .user_agent(super::web::USER_AGENT)
         .timeout(Duration::from_secs(20))
+        // A backend that isn't there (a SearXNG on another network) fails fast, so the
+        // fallback answers while the user is still waiting.
+        .connect_timeout(Duration::from_secs(4))
         .build()?;
     let n = count.to_string();
     let req = match backend {
@@ -223,7 +329,11 @@ async fn search(backend: &Backend, query: &str, count: usize) -> Result<Vec<Hit>
             .chars()
             .take(300)
             .collect();
-        bail!("{} search failed: HTTP {status} {body}", backend.name());
+        let msg = format!("{} search failed: HTTP {status} {body}", backend.name());
+        if status.is_server_error() {
+            return Err(Unavailable(msg).into());
+        }
+        bail!("{msg}");
     }
     let v: Value = resp.json().await?;
     let mut hits = parse(backend, &v);
@@ -237,7 +347,8 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         bail!("no web search backend is configured (set `web_search` in config.toml)");
     };
     let count = int_arg(input, "count").unwrap_or(5).clamp(1, 10) as usize;
-    let hits = search(&backend, query, count).await?;
+    let (hits, backend, note) =
+        search_or_fallback(&backend, ctx.web.search_fallback.as_ref(), query, count).await?;
     if hits.is_empty() {
         return Ok(Output {
             content: format!("No results for \"{query}\"."),
@@ -246,6 +357,9 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
         });
     }
     let mut out = String::new();
+    if let Some(note) = &note {
+        let _ = writeln!(out, "({note})");
+    }
     for (i, h) in hits.iter().enumerate() {
         let snippet: String = h.snippet.chars().take(400).collect();
         let _ = writeln!(out, "{}. {}\n   {}\n   {snippet}", i + 1, h.title, h.url);
@@ -456,6 +570,123 @@ mod tests {
             ),
             ("Tokio", "https://tokio.rs", "An async runtime")
         );
+    }
+
+    /// A base URL nothing listens on: the port was free a moment ago.
+    async fn dead_base() -> String {
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        format!("http://{}", l.local_addr().unwrap())
+    }
+
+    const FROG_HITS: &str =
+        r#"{"results":[{"title":"Tokio","url":"https://tokio.rs","snippet":"An async runtime"}]}"#;
+
+    #[tokio::test]
+    async fn an_unreachable_backend_falls_back_to_frog_cloud_and_says_so() {
+        let primary = Backend::Searxng(dead_base().await);
+        let (base, req) = one_shot("200 OK", FROG_HITS).await;
+        let other = Backend::FrogCloud(base, "fk".into());
+        let (hits, used, note) = search_or_fallback(&primary, Some(&other), "tokio", 3)
+            .await
+            .unwrap();
+        assert!(req.await.unwrap().starts_with("POST /v1/search "));
+        assert_eq!(used.name(), "frog");
+        assert_eq!(hits.len(), 1);
+        let note = note.unwrap();
+        assert_eq!(
+            note,
+            "searxng search couldn't be reached (no connection); these results are from frog search."
+        );
+        // The note never carries the address: it can be a LAN host.
+        assert!(!note.contains("127.0.0.1"), "{note}");
+    }
+
+    #[tokio::test]
+    async fn a_broken_backend_falls_back_too() {
+        let (down_base, _r) = one_shot("503 Service Unavailable", "{}").await;
+        // one_shot's base ends in /v1; SearXNG's doesn't care.
+        let primary = Backend::Searxng(down_base);
+        let (base, _req) = one_shot("200 OK", FROG_HITS).await;
+        let other = Backend::FrogCloud(base, "fk".into());
+        let (hits, used, note) = search_or_fallback(&primary, Some(&other), "q", 3)
+            .await
+            .unwrap();
+        assert_eq!((hits.len(), used.name()), (1, "frog"));
+        assert!(note.unwrap().contains("(server error)"));
+    }
+
+    #[tokio::test]
+    async fn a_backend_that_answers_is_used_and_nothing_else_is_asked() {
+        let (base, _req) = one_shot("200 OK", FROG_HITS).await;
+        let primary = Backend::FrogCloud(base, "fk".into());
+        // The fallback would fail the test if it were contacted: nothing listens there.
+        let other = Backend::Searxng(dead_base().await);
+        let (hits, used, note) = search_or_fallback(&primary, Some(&other), "q", 3)
+            .await
+            .unwrap();
+        assert_eq!((hits.len(), used.name(), note), (1, "frog", None));
+    }
+
+    #[tokio::test]
+    async fn a_refusal_is_not_sent_elsewhere() {
+        // A bad key or no credit is the backend's answer, not an outage.
+        let (base, _r) = one_shot("401 Unauthorized", "{}").await;
+        let primary = Backend::Searxng(base);
+        let other = Backend::Searxng(dead_base().await);
+        let e = search_or_fallback(&primary, Some(&other), "q", 3)
+            .await
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(e.contains("searxng search failed: HTTP 401"), "{e}");
+    }
+
+    #[tokio::test]
+    async fn with_nowhere_to_fall_back_the_error_says_what_to_do() {
+        let primary = Backend::Searxng(dead_base().await);
+        let e = search_or_fallback(&primary, None, "q", 3)
+            .await
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(
+            e.contains("searxng search couldn't be reached (no connection)"),
+            "{e}"
+        );
+        assert!(e.contains("connect Frog Cloud"), "{e}");
+        assert!(!e.contains("127.0.0.1"), "{e}");
+
+        let dead = Backend::FrogCloud(format!("{}/v1", dead_base().await), "fk".into());
+        let e = search_or_fallback(&primary, Some(&dead), "q", 3)
+            .await
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(e.contains("and frog search failed too"), "{e}");
+    }
+
+    #[test]
+    fn the_fallback_is_frog_cloud_when_connected_and_not_already_the_backend() {
+        const B: &str = "https://api.frog.toys/v1/";
+        let connected = |id: &str| (id == crate::providers::CLOUD).then(|| "fk".to_string());
+        let none = |_: &str| None;
+        let searxng = Backend::Searxng("http://localhost:8888".into());
+        let f = fallback(Some(&searxng), &connected, B).unwrap();
+        assert!(
+            matches!(&f, Backend::FrogCloud(base, k) if base == "https://api.frog.toys/v1" && k == "fk")
+        );
+        assert!(fallback(Some(&Backend::Brave("k".into())), &connected, B).is_some());
+        // Not connected, already Frog Cloud, or no search at all: nothing to fall back to.
+        assert!(fallback(Some(&searxng), &none, B).is_none());
+        assert!(
+            fallback(
+                Some(&Backend::FrogCloud(B.into(), "fk".into())),
+                &connected,
+                B
+            )
+            .is_none()
+        );
+        assert!(fallback(None, &connected, B).is_none());
     }
 
     #[tokio::test]
