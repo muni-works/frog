@@ -18,6 +18,12 @@ import XCTest
 final class FocusHideFreezeTests: XCTestCase {
     private let folder = URL(fileURLWithPath: "/tmp/demo")
 
+    /// CI (`TestRunner.isCI`): skipped, like the other display-driven tests. They run locally
+    /// through `apps/macos/scripts/test.sh`.
+    override func setUpWithError() throws {
+        try XCTSkipIf(TestRunner.isCI, "these need a live terminal and web view in an on-screen-capable window, and the hang they guard is macOS 27's; a CI runner is a macOS 26 VM with a virtual display, where the panes never come up")
+    }
+
     override func setUp() {
         super.setUp()
         executionTimeAllowance = 60

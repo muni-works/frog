@@ -14,6 +14,12 @@ import XCTest
 final class WindowDragFallThroughTests: XCTestCase {
     private let folder = URL(fileURLWithPath: "/tmp/demo")
 
+    /// CI (`TestRunner.isCI`): skipped, like the other display-driven tests. They run locally
+    /// through `apps/macos/scripts/test.sh`.
+    override func setUpWithError() throws {
+        try XCTSkipIf(TestRunner.isCI, "these post synthetic mouse drags at a window, which a CI runner's virtual display doesn't deliver")
+    }
+
     override func setUp() {
         super.setUp()
         executionTimeAllowance = 60
