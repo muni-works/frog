@@ -71,6 +71,10 @@ export interface ComposerProps {
   onUnqueue?: (i: number) => void
   /** False when the session's model can't read images (the engine's status.vision). */
   vision?: boolean | null
+  /** Text to put in at the caret: a mention picked in the preview. A new `n` inserts again. */
+  insert?: { text: string; n: number } | null
+  /** What's typed, as it changes (the preview's mention chip shows while its token is in it). */
+  onText?: (text: string) => void
   /** A message taken back out of the queue, for the field. */
   restore?: { text: string; images: Image[] } | null
   onStop?: () => void
@@ -176,6 +180,21 @@ export function Composer(p: ComposerProps) {
     setText((t) => (t ? `${p.restore!.text}\n${t}` : p.restore!.text))
     setImages((im) => [...p.restore!.images, ...im])
   }, [p.restore])
+  useEffect(() => {
+    if (!p.insert) return
+    const el = ref.current
+    const add = p.insert.text
+    setText((t) => {
+      const at = el && document.activeElement === el ? el.selectionStart : t.length
+      const before = t.slice(0, at), after = t.slice(at)
+      const pad = before && !/\s$/.test(before) ? ' ' : ''
+      const next = before + pad + add + after
+      requestAnimationFrame(() => { if (!el) return; el.focus(); const c = before.length + pad.length + add.length; el.setSelectionRange(c, c) })
+      return next
+    })
+  }, [p.insert?.n]) // eslint-disable-line react-hooks/exhaustive-deps
+  const onText = p.onText
+  useEffect(() => { onText?.(text) }, [text, onText])
   /** Images from paste, drop or the file picker, as base64 (Op::Submit images). Up to 8, 5 MB each. */
   const attach = async (files: Iterable<File>) => {
     const add: Image[] = []

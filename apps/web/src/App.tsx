@@ -14,6 +14,8 @@ import { useLayer, useMenu } from './ui/layers'
 import { Composer } from './ui/Composer'
 import { Pond, HowItWorks, Trust, Muni } from './ui/Pond'
 import { Inspector } from './ui/Inspector'
+import { usePreviewHub } from './ui/PreviewPane'
+import type { PreviewHub } from './preview'
 import { SessionList } from './ui/SessionList'
 import { Starting } from './ui/Starting'
 import { useMachines } from './machines'
@@ -136,6 +138,18 @@ export default function App() {
   const live = useMemo(() => (current && !current.id.startsWith(PENDING) ? [current.id] : []), [current])
   const { thread, threads } = useThreads(cloud, live)
   const ct = current ? thread(current.id) : null
+  // The open session's preview panes. When the engine asks one for something with the
+  // inspector closed, it opens on Preview, as the Mac brings its pane forward.
+  const preview = current && cloud && !current.id.startsWith(PENDING) ? cloud.preview(current.id) : undefined
+  usePreviewHub(preview)
+  const [inspectorTab, setInspectorTab] = useState<'preview' | undefined>()
+  const seenAttention = useRef<{ hub?: PreviewHub; n: number }>({ n: 0 })
+  useEffect(() => {
+    const last = seenAttention.current
+    const n = preview?.attention ?? 0
+    seenAttention.current = { hub: preview, n }
+    if (preview && last.hub === preview && n !== last.n && !inspector) { setInspectorTab('preview'); setInspector(true) }
+  }, [preview, preview?.attention]) // eslint-disable-line react-hooks/exhaustive-deps
   // Plan usage and credit, near-live: after each turn (billing lands a moment later, through
   // the usage queue), every 20s while the tab is visible, and when the ring is opened.
   const refreshAccount = useCallback(() => {
@@ -575,7 +589,7 @@ export default function App() {
               repo={current.repo} branch={current.branch} pr={current.pr} adds={adds} dels={dels}
               model={idOf(ct.model)} models={models} machines={machines} onManage={() => openSettings('Models')} onModel={(id) => cloud?.send(current.id, { op: 'set_model', spec: spec(id) })}
               mode={ct.mode ?? 'default'} onMode={(mode) => cloud?.send(current.id, { op: 'set_mode', mode })}
-              queued={queue[current.id]} restore={restore} vision={ct.vision}
+              queued={queue[current.id]} restore={restore} vision={ct.vision} insert={preview?.insert} onText={preview ? (t) => preview.noteDraft(t) : undefined}
               onUnqueue={(i) => { const q = queue[current.id] ?? []; setRestore(q[i]); setQueue({ ...queue, [current.id]: q.filter((_, j) => j !== i) }) }}
               onSend={(text, images) => (ct.running || opening[current.id]
                 ? setQueue((all) => ({ ...all, [current.id]: [...(all[current.id] ?? []), { text, images }] }))
@@ -604,7 +618,7 @@ export default function App() {
       </main>
 
       {view.kind === 'session' && current && ct && inspector && (
-        <Inspector onClose={() => setInspector(false)} thread={ct} branch={current.branch} hasPr={!!current.pr} onCommit={() => commit(current)} onPr={current.repo ? () => push(current) : undefined} machines={machines} send={(op) => cloud?.send(current.id, op)} />
+        <Inspector onClose={() => setInspector(false)} thread={ct} branch={current.branch} hasPr={!!current.pr} onCommit={() => commit(current)} onPr={current.repo ? () => push(current) : undefined} machines={machines} send={(op) => cloud?.send(current.id, op)} preview={preview} pane={inspectorTab} />
       )}
 
       {palette && <Palette commands={commands} sessions={sessions} onOpen={(id) => setView({ kind: 'session', id })} onClose={() => setPalette(false)}

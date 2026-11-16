@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Op } from '../cloud/protocol'
 import type { Thread } from '../engine/thread'
 import type { Machine } from '../machines'
+import type { PreviewHub } from '../preview'
 import { DownloadAppChip } from './DownloadChip'
 import { FileRow } from './Diff'
 import { ICON, Icon } from './icons'
+import { PreviewPane, usePreviewHub } from './PreviewPane'
 import { TerminalPane } from './TerminalPane'
 
 type Tab = 'changes' | 'terminal' | 'preview'
@@ -40,11 +42,13 @@ interface InspectorProps {
   onPr?: () => void
   send: (op: Op) => void
   machines?: readonly Machine[]
+  /** The session's preview panes (CloudEngine.preview). Absent: Preview points at the Mac app. */
+  preview?: PreviewHub
   /** Open on this tab (tests); default: the one remembered for this browser. */
   pane?: Tab
 }
 
-export function Inspector({ thread, onCommit, onPr, hasPr, send, onClose, machines = [], pane: initialPane }: InspectorProps) {
+export function Inspector({ thread, onCommit, onPr, hasPr, send, onClose, machines = [], preview, pane: initialPane }: InspectorProps) {
   // Width, dragged from the left edge and kept per browser.
   const [width, setWidth] = useState(() => { try { return clampWidth(Number(localStorage.getItem('frog.inspectorWidth')) || WIDTH) } catch { return WIDTH } })
   const [dragging, setDragging] = useState(false)
@@ -64,6 +68,12 @@ export function Inspector({ thread, onCommit, onPr, hasPr, send, onClose, machin
     if (initialPane) return initialPane
     try { const t = localStorage.getItem('frog.inspectorTab'); return t === 'terminal' || t === 'preview' ? t : 'changes' } catch { return 'changes' }
   })
+  // The engine is looking at the preview: bring it forward (the Mac's PaneHub.attention).
+  usePreviewHub(preview)
+  const attention = preview?.attention ?? 0
+  const seen = useRef(attention)
+  useEffect(() => { if (attention !== seen.current) { seen.current = attention; setPane('preview') } }, [attention])
+  const previews = Object.values(thread.panes).filter((p) => p.kind === 'preview' && !p.closed)
   // Which changed files are open to their hunks; the only one opens by itself.
   const [open, setOpen] = useState<Set<string>>(new Set())
   useEffect(() => { if (thread.changes.length === 1) setOpen(new Set([thread.changes[0].path])) }, [thread.changes.length === 1 ? thread.changes[0].path : '']) // eslint-disable-line react-hooks/exhaustive-deps
@@ -133,12 +143,11 @@ export function Inspector({ thread, onCommit, onPr, hasPr, send, onClose, machin
           )}
         </div>
       )}
-      {/* Sandbox ports aren't reachable from the browser yet, so Preview says so rather than
-       * pretending. The Mac app's Preview pane is the place for it today. */}
-      {pane === 'preview' && (
+      {pane === 'preview' && preview && <PreviewPane hub={preview} pane={previews[previews.length - 1]} send={send} />}
+      {pane === 'preview' && !preview && (
         <div className="insp-body">
-          <InspectorEmpty icon={ICON.globe} title="Preview isn't on the web yet" action={<DownloadAppChip label="The Mac app has Preview" machines={machines} />}>
-            Frog Cloud can't show a sandbox's dev server in the browser yet. Run it in Terminal for now, or open the session in the Mac app.
+          <InspectorEmpty icon={ICON.globe} title="Preview isn't here yet" action={<DownloadAppChip label="The Mac app has Preview" machines={machines} />}>
+            Open the session in the Mac app to preview it.
           </InspectorEmpty>
         </div>
       )}

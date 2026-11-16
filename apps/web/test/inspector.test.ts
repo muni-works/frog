@@ -63,7 +63,7 @@ test("every tab's empty state is the same component: icon, title, one line, its 
   assert.match(terminal[3], /Open a terminal/);
   const preview = empty(render([], { pane: "preview" }));
   assert.ok(preview, "Preview uses the empty state");
-  assert.equal(preview[1], "Preview isn&#x27;t on the web yet");
+  assert.equal(preview[1], "Preview isn&#x27;t here yet", "no hub: the Mac app fallback");
 });
 
 test("the width defaults to 420", () => {

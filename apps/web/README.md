@@ -71,8 +71,13 @@ Each of these needs an API that doesn't exist yet, so the UI leaves it out inste
 - Org repos in the repo menu. It lists your recent repos, the repos the Frog GitHub App can reach in your own account plus your public ones (`GET /v1/repos`), and takes `owner/name` or a URL.
 - PR checks. The PR number shows when the session summary has one.
 - MCP servers, routines and skills.
-- The Preview tab. It needs a sandbox port.
 - Email sign-in.
+
+## Preview
+
+The Inspector's Preview tab shows a dev server running in the session's sandbox, like the Mac app's pane. The gateway mints a URL of its own for a sandbox port (`POST /v1/sessions/:id/preview`, zest `sandbox/src/preview.ts`): a signed host per session and port, proxied to the container, with `public/preview.js` added to every HTML page. That script is a port of the Mac's WKWebView script: it posts console output, errors, failed requests, navigations and inspect-mode picks to the pane, and answers read, click, type and eval. `src/preview.ts` (`PreviewHub`) turns those into the engine's `pane_report` and `pane_mention` ops and answers its `pane_request`s, with the sandbox's own `localhost` URLs in everything the model sees. Screenshots aren't possible from a cross-origin iframe, so the engine gets an error saying so (and turns get no preview checkpoint); `file://` pages need a server (`npx serve`).
+
+With the mock, any port on this machine stands in for the sandbox: run a dev server, then enter its port in Preview.
 
 ## Frog Cloud transport
 
