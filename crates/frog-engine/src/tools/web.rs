@@ -63,6 +63,8 @@ struct Page {
 pub struct Web {
     pub allow_private: bool,
     pub search: Option<super::websearch::Backend>,
+    /// What WebSearch falls back to when `search` can't be reached (see `websearch::fallback`).
+    pub search_fallback: Option<super::websearch::Backend>,
     client: OnceLock<reqwest::Client>,
     cache: Mutex<HashMap<String, (Instant, Page)>>,
 }
@@ -78,16 +80,19 @@ impl Web {
         Self {
             allow_private,
             search,
+            search_fallback: None,
             client: OnceLock::new(),
             cache: Mutex::new(HashMap::new()),
         }
     }
 
     pub fn from_config(cfg: &crate::config::Config) -> Self {
-        Self::new(
-            cfg.web_allow_private,
-            super::websearch::Backend::from_config(cfg),
-        )
+        let search = super::websearch::Backend::from_config(cfg);
+        let search_fallback = super::websearch::Backend::fallback_from_config(cfg, search.as_ref());
+        Self {
+            search_fallback,
+            ..Self::new(cfg.web_allow_private, search)
+        }
     }
 
     fn client(&self) -> Result<&reqwest::Client> {
