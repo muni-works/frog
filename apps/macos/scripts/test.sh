@@ -26,9 +26,9 @@ xcodebuild test \
     -derivedDataPath build/test -destination 'platform=macOS,arch=arm64' \
     -test-timeouts-enabled YES -default-test-execution-time-allowance 300 \
     "$@" > "$log" 2>&1
-status=$?
+rc=$?
 
 grep -aE "^Test Case .*(failed|exceeded execution time)" "$log"
 grep -aE "^\s+Executed [0-9]+ tests?, with" "$log" | tail -1
 grep -aE "^\*\* (TEST|BUILD) [A-Z ]+ \*\*" "$log" | tail -1
-exit $status
+exit $rc
