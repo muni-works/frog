@@ -7540,6 +7540,83 @@ mod egress_tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    /// A sandboxed command the fence doesn't contain is carded, in a mode that asks: the
+    /// sandbox's free pass used to wave `git push` and `git reset --hard` through in every
+    /// mode. An ordinary sandboxed command in the same turn still runs without a card.
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn a_sandboxed_push_or_hard_reset_asks_and_an_ordinary_command_does_not() {
+        let (mut h, dir) = egress_engine(
+            vec![
+                bash_call("plain", json!({"command": "echo made > made.txt"})),
+                bash_call("push", json!({"command": "git push origin main"})),
+                bash_call("reset", json!({"command": "git reset --hard HEAD~1"})),
+                reply(vec![text("ok")], Stop::End),
+            ],
+            false,
+            Mode::Default,
+        );
+        submit(&mut h, "go").await;
+        let mut carded = Vec::new();
+        let mut evs = Vec::new();
+        loop {
+            let e = h.events.recv().await.unwrap();
+            match &e.event {
+                Event::PermissionRequest { id, arg, .. } => {
+                    carded.push(arg.clone());
+                    // Allowed once, so the turn goes on to the next call (a denial ends it).
+                    // Neither does anything here: the folder isn't a git repository.
+                    h.ops
+                        .send(Op::Permission {
+                            id: id.clone(),
+                            decision: Decision::Allow,
+                            note: None,
+                        })
+                        .unwrap();
+                }
+                Event::Idle => break,
+                _ => {}
+            }
+            evs.push(e);
+        }
+        assert!(
+            dir.join("made.txt").exists(),
+            "the ordinary sandboxed command ran"
+        );
+        assert_eq!(carded.len(), 2, "{carded:?}");
+        assert!(carded[0].contains("git push"), "{carded:?}");
+        assert!(carded[1].contains("git reset --hard"), "{carded:?}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Headless can't ask, so the same command is denied there rather than run.
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn headless_denies_a_sandboxed_push() {
+        let (mut h, dir) = egress_engine_asking(
+            vec![
+                bash_call("push", json!({"command": "git push origin main"})),
+                reply(vec![text("ok")], Stop::End),
+            ],
+            false,
+            Mode::Default,
+            false,
+        );
+        submit(&mut h, "go").await;
+        let evs = until_idle(&mut h).await;
+        assert!(
+            !evs.iter()
+                .any(|e| matches!(e.event, Event::PermissionRequest { .. })),
+            "headless never cards"
+        );
+        let out = tool_output(&evs, "push");
+        assert!(
+            out.contains("Not permitted in non-interactive mode"),
+            "{out}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     /// Headless (`can_ask = false`) can't ask, so yolo's egress shapes are denied, never
     /// carded and never widened: the same safe path as before.
     #[cfg(target_os = "macos")]
@@ -12758,6 +12835,73 @@ async fn a_failed_second_pass_cards() {
     });
     assert!(reason.as_deref().is_some_and(|r| r.contains("couldn't finish")), "{reason:?}");
     let out = tool_output(&evs, "rm").unwrap();
+    assert!(out.contains("auto mode denied"), "{out}");
+}
+
+/// Auto mode, sandbox on: a push no longer takes the sandbox's free pass. It goes to the
+/// second pass, which clears it when the request covers it (the user asked for the push) and
+/// otherwise denies it with a note, never a card.
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn auto_mode_judges_a_sandboxed_push_instead_of_waving_it_through() {
+    let layer_of = |evs: &[Envelope], id: &str| {
+        evs.iter().find_map(|e| match &e.event {
+            Event::PermissionDecision { item, layer, .. } if item == id => Some(layer.clone()),
+            _ => None,
+        })
+    };
+    // Cleared: the second pass says the request covers it, so it runs (and fails by itself:
+    // the folder isn't a git repository).
+    let wanted = format!("wanted-{}", new_id());
+    crate::auto::script_rejudge(
+        &wanted,
+        crate::auto::Verdict::Allow("the user asked for the push".into()),
+    );
+    let script = vec![
+        bash_call("push", &format!("git push origin {wanted}")),
+        reply(vec![text("done")], Stop::End),
+    ];
+    let mut h = engine_deleg(
+        script,
+        Some(Config {
+            hermetic: true,
+            ..Config::default()
+        }),
+    );
+    caps(&h, true);
+    let evs = loop_collect(&mut h, |_, _| {}).await;
+    shutdown(h).await;
+    assert_eq!(asked(&evs), 0, "auto mode never cards: {:?}", names(&evs));
+    assert_ne!(
+        layer_of(&evs, "push").as_deref(),
+        Some("sandbox"),
+        "the sandbox waved it through"
+    );
+    assert_ne!(outcome_of(&evs, "push"), Some(ToolOutcome::Denied));
+
+    // Still flagged: denied with a note.
+    let stray = format!("stray-{}", new_id());
+    crate::auto::script_rejudge(
+        &stray,
+        crate::auto::Verdict::Ask("nobody asked for a push".into()),
+    );
+    let script = vec![
+        bash_call("push", &format!("git push origin {stray}")),
+        reply(vec![text("done")], Stop::End),
+    ];
+    let mut h = engine_deleg(
+        script,
+        Some(Config {
+            hermetic: true,
+            ..Config::default()
+        }),
+    );
+    caps(&h, true);
+    let evs = loop_collect(&mut h, |_, _| {}).await;
+    shutdown(h).await;
+    assert_eq!(asked(&evs), 0, "auto mode never cards: {:?}", names(&evs));
+    assert_eq!(outcome_of(&evs, "push"), Some(ToolOutcome::Denied));
+    let out = tool_output(&evs, "push").unwrap();
     assert!(out.contains("auto mode denied"), "{out}");
 }
 

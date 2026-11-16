@@ -226,7 +226,12 @@ struct PaneView: View {
                                  collapse: { toggleChanges() },
                                  folder: pane.workspace.isChat ? nil : pane.workspace.folder,
                                  git: pane.workspace.isChat || pane.workspace.git == nil ? nil : { ui.requestGit($0) })
-                            .glassEffect(.regular, in: .rect(cornerRadius: 18))
+                            // The sidebar's panel, not glass (the spec's "sidebar and inspector
+                            // #0a0a0a"). On macOS 27 a glass card in this GlassEffectContainer,
+                            // holding views that take the keyboard (terminal, web view, buttons),
+                            // makes SwiftUI's focus walk endless: the app froze in it on a resize
+                            // (FocusHideFreezeTests).
+                            .background(Tokens.sidebar, in: .rect(cornerRadius: 18))
                             .glassEffectID("changes", in: glass)
                             .shadow(color: .black.opacity(pane.peekChanges && !changesDocked ? 0.35 : 0), radius: 24, y: 10)
                     } else {
