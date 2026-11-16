@@ -83,6 +83,11 @@ has the same four parts: the short answer, what you'll see, what to do, the sett
   `design`, `launch`) are never part of it.
 - A page can mark a block as Mac-only, web-only or terminal-only. Unmarked text shows
   everywhere.
+- The manifest is `docs/app/manifest.json`: `{"version": 1, "sections": [{"title", "pages":
+  [{"slug", "title", "file"}]}]}`, with `file` relative to `docs/app/`. A page's URL and id
+  is its `slug`, unique across sections.
+- A platform block is the lines between `<!-- only: mac -->` (or `web`, `terminal`; several
+  comma-separated) and `<!-- end -->`, each marker on its own line. Blocks don't nest.
 - Flags, tools and config keys are generated from the build (`frog --help`, the engine's
   tool list, the config struct) into their pages, with a test that fails when a generated
   page is stale.

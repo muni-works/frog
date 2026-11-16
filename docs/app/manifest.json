@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "sections": [
+    {
+      "title": "Start",
+      "pages": [
+        { "slug": "install", "title": "Install", "file": "start/install.md" }
+      ]
+    },
+    {
+      "title": "Use",
+      "pages": [
+        { "slug": "web-search-and-fetch", "title": "Web search and fetch", "file": "use/web-search-and-fetch.md" }
+      ]
+    }
+  ]
+}
