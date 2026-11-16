@@ -101,6 +101,8 @@ export default {
     if (REDIRECTS[pathname]) return Response.redirect(REDIRECTS[pathname], 302);
     // A conversation's own URL (/s/<id>) is the app: serve its page and let it route.
     if (/^\/s\/[\w-]+\/?$/.test(pathname) && env.ASSETS) return env.ASSETS.fetch(new URL("/", request.url));
+    // A documentation page's URL (/docs/<slug>) is the app's Documentation mode, likewise.
+    if (/^\/docs(\/[\w-]*)?\/?$/.test(pathname) && env.ASSETS) return env.ASSETS.fetch(new URL("/", request.url));
     return new Response("not found\n", { status: 404, headers: { "Content-Type": "text/plain" } });
   },
 };
