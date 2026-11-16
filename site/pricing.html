@@ -91,20 +91,20 @@
 
   <section>
     <h2>Frog Cloud models</h2>
-    <p>Models served through OpenRouter are billed at the provider's list price plus 10%. Prices per million tokens. Cached input is the part of the prompt the model has already seen, like earlier turns of the same conversation.</p>
+    <p>Models served through OpenRouter are billed at what each request cost there plus 10%. Prices per million tokens. Cached input is the part of the prompt the model has already seen, like earlier turns of the same conversation.</p>
     <div class="table">
       <table>
         <thead><tr><th>Model</th><th class="n">Input</th><th class="n">Cached input</th><th class="n">Output</th></tr></thead>
         <tbody>
-          <tr><td>Qwen3 Coder Next<span class="det">via OpenRouter</span></td><td class="n">$0.132</td><td class="n">$0.077</td><td class="n">$0.88</td></tr>
+          <tr data-model="qwen3-coder-next"><td>Qwen3 Coder Next<span class="det">via OpenRouter</span></td><td class="n">$0.132</td><td class="n">$0.077</td><td class="n">$0.88</td></tr>
           <tr><td>Qwen3 8B<span class="det">Frog Cloud GPUs</span></td><td class="n">$0.05</td><td class="n">$0.005</td><td class="n">$0.20</td></tr>
           <tr><td>Qwen3 VL 8B<span class="det">Frog Cloud GPUs · images</span></td><td class="n">$0.15</td><td class="n">$0.015</td><td class="n">$0.60</td></tr>
-          <tr><td>GLM-5.3 Flash<span class="det">via OpenRouter · images · 1M context</span></td><td class="n">$0.044</td><td class="n">$0.033</td><td class="n">$0.088</td></tr>
-          <tr><td>DeepSeek V4.1 Flash<span class="det">via OpenRouter · images · 1M context</span></td><td class="n">$0.165</td><td class="n">$0.0033</td><td class="n">$0.66</td></tr>
+          <tr data-model="glm-5.3-flash"><td>GLM-5.3 Flash<span class="det">via OpenRouter · images · 1M context</span></td><td class="n">$0.165</td><td class="n">$0.033</td><td class="n">$0.55</td></tr>
+          <tr data-model="deepseek-v4.1-flash"><td>DeepSeek V4.1 Flash<span class="det">via OpenRouter · images · 1M context</span></td><td class="n">$0.165</td><td class="n">$0.0033</td><td class="n">$0.66</td></tr>
         </tbody>
       </table>
     </div>
-    <p class="note">The same list the apps show, from <code>api.frog.toys/v1/models</code>. You pay the price in effect when the tokens are used. DeepSeek doubles its price on weekdays from 04:00 to 06:00 and 10:00 to 16:00 UTC, and so does ours.</p>
+    <p class="note">The same list the apps show, from <code>api.frog.toys/v1/models</code>. OpenRouter prices move, so this table loads its current list price plus 10%. A request can cost more than the table when OpenRouter routes it to another provider; you pay what that request cost plus 10%.</p>
   </section>
 
   <section>
@@ -157,5 +157,34 @@
     <span class="end">toys.frog</span>
   </footer>
 </main>
+<script>
+// The OpenRouter rows show the live list from api.frog.toys/v1/models; the numbers in the
+// page are what shows if that can't be reached.
+(function () {
+  var rows = document.querySelectorAll("tr[data-model]");
+  if (!rows.length || !window.fetch) return;
+  function usd(perToken) {
+    var n = Number(perToken) * 1e6;
+    if (!isFinite(n) || n <= 0) return null;
+    return "$" + n.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+  }
+  fetch("https://api.frog.toys/v1/models")
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (v) {
+      if (!v || !v.data) return;
+      var byId = {};
+      v.data.forEach(function (m) { byId[m.id] = m.pricing; });
+      rows.forEach(function (tr) {
+        var p = byId[tr.getAttribute("data-model")];
+        if (!p) return;
+        var cells = [usd(p.prompt), usd(p.input_cache_read), usd(p.completion)];
+        if (cells.indexOf(null) !== -1) return;
+        var tds = tr.querySelectorAll("td.n");
+        for (var i = 0; i < 3 && i < tds.length; i++) tds[i].textContent = cells[i];
+      });
+    })
+    .catch(function () {});
+})();
+</script>
 </body>
 </html>
