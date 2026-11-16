@@ -30,6 +30,12 @@ targets:
       # matches this file's name (the empty appiconset holds the folder open in Xcode).
       - path: Frog/AppIcon.icon
         buildPhase: resources
+      # The in-app documentation (docs/design/app-shell.md): docs/app as one folder,
+      # Resources/app, so its manifest's relative paths hold and new pages need no regen.
+      - path: ../../docs/app
+        type: folder
+        buildPhase: resources
+        group: Docs
       # Shared with the iOS app and its extensions (see FrogKit/README.md).
       - path: ../FrogKit
         excludes: ["README.md"]

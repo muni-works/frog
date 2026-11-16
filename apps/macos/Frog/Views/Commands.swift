@@ -23,6 +23,8 @@ struct FrogWindow {
     let sidebarOrder: [SessionInfo]
     /// Open one of `sidebarOrder` (the same click on the row would).
     let openSidebarSession: (SessionInfo) -> Void
+    /// Documentation mode in this window (Help › Frog Documentation).
+    let showDocs: () -> Void
 }
 
 extension FocusedValues {
@@ -198,6 +200,12 @@ struct FrogCommands: Commands {
                 .keyboardShortcut("k")
                 .disabled(window == nil)
             Divider()
+        }
+
+        // Help › Frog Documentation: the pages that ship with this build, in the window.
+        CommandGroup(replacing: .help) {
+            Button("Frog Documentation") { window?.showDocs() }
+                .disabled(window == nil)
         }
 
         CommandMenu("Session") {
