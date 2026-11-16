@@ -91,38 +91,38 @@
 
   <section>
     <h2>Frog Cloud models</h2>
-    <p>Prices per million tokens. Cached input is the part of the prompt the model has already seen, like earlier turns of the same conversation.</p>
+    <p>Models served through OpenRouter are billed at what each request cost there plus 10%. Prices per million tokens. Cached input is the part of the prompt the model has already seen, like earlier turns of the same conversation.</p>
     <div class="table">
       <table>
-        <thead><tr><th>Model</th><th class="n">Input</th><th class="n">Cached input</th><th class="n">Output</th></tr></thead>
+        <thead><tr><th>Model</th><th class="n">Input, from</th><th class="n">Cached input, from</th><th class="n">Output, from</th></tr></thead>
         <tbody>
-          <tr><td>Qwen3 Coder Next<span class="det">Frog Cloud GPUs; OpenRouter when ours are full</span></td><td class="n">$0.60</td><td class="n">$0.06</td><td class="n">$1.50</td></tr>
+          <tr data-model="qwen3-coder-next"><td>Qwen3 Coder Next<span class="det">via OpenRouter</span></td><td class="n">$0.132</td><td class="n">$0.077</td><td class="n">$0.88</td></tr>
           <tr><td>Qwen3 8B<span class="det">Frog Cloud GPUs</span></td><td class="n">$0.05</td><td class="n">$0.005</td><td class="n">$0.20</td></tr>
           <tr><td>Qwen3 VL 8B<span class="det">Frog Cloud GPUs · images</span></td><td class="n">$0.15</td><td class="n">$0.015</td><td class="n">$0.60</td></tr>
-          <tr><td>GLM-5.3 Flash<span class="det">via OpenRouter · images · 1M context</span></td><td class="n">$0.18</td><td class="n">$0.036</td><td class="n">$0.60</td></tr>
-          <tr><td>DeepSeek V4.1 Flash<span class="det">via OpenRouter · images · 1M context</span></td><td class="n">$0.36</td><td class="n">$0.0072</td><td class="n">$1.44</td></tr>
+          <tr data-model="glm-5.3-flash" data-max="0.165,,0.55"><td>GLM-5.3 Flash<span class="det">via OpenRouter · images · 1M context</span></td><td class="n">$0.165</td><td class="n">$0.033</td><td class="n">$0.55</td></tr>
+          <tr data-model="deepseek-v4.1-flash" data-max="0.165,,0.66"><td>DeepSeek V4.1 Flash<span class="det">via OpenRouter · images · 1M context</span></td><td class="n">$0.165</td><td class="n">$0.0033</td><td class="n">$0.66</td></tr>
         </tbody>
       </table>
     </div>
-    <p class="note">The same list the apps show, from <code>api.frog.toys/v1/models</code>. You pay the price in effect when the tokens are used.</p>
+    <p class="note">The same list the apps show, from <code>api.frog.toys/v1/models</code>. OpenRouter prices move, so this table loads where each model's price starts today: its lowest current list price plus 10%. A request costs more than that when OpenRouter routes it to a dearer provider; you pay what that request cost plus 10%. Where a cell shows a range, routing is capped at the model maker's own price, so a request never costs more than the higher figure.</p>
   </section>
 
   <section>
     <h2>What a turn costs</h2>
     <p>One turn on Qwen3 Coder Next, mid-conversation: 40,000 tokens of context, 30,000 of them cached from earlier turns, and a 2,000-token reply.</p>
     <div class="sum">
-      <div class="row"><span>10,000 input × $0.60/M</span><span>$0.0060</span></div>
-      <div class="row"><span>30,000 cached input × $0.06/M</span><span>$0.0018</span></div>
-      <div class="row"><span>2,000 output × $1.50/M</span><span>$0.0030</span></div>
-      <div class="row total"><span>About</span><span>$0.01</span></div>
+      <div class="row"><span>10,000 input × $0.132/M</span><span>$0.0013</span></div>
+      <div class="row"><span>30,000 cached input × $0.077/M</span><span>$0.0023</span></div>
+      <div class="row"><span>2,000 output × $0.88/M</span><span>$0.0018</span></div>
+      <div class="row total"><span>About</span><span>$0.005</span></div>
     </div>
   </section>
 
   <section>
     <h2>Credit</h2>
     <ul class="cards">
-      <li><b>$5</b><span>free credit when you sign up and connect GitHub, once per GitHub account</span></li>
-      <li><b>$5–$100</b><span>top-ups of $5, $10, $25, $50 or $100, through Stripe</span></li>
+      <li><b>$1</b><span>free credit when you sign up and connect GitHub, once per GitHub account</span></li>
+      <li><b>$5–$100</b><span>top-ups of $5, $10, $25, $50 or $100, through Stripe; the card fee (2.9% + $0.30) is added as its own line</span></li>
       <li><b>No expiry</b><span>no seats, no minimum; credit pays for tokens as you use them</span></li>
     </ul>
     <p class="note">Credit isn't refundable and has no cash value. See the <a href="/terms">terms</a>.</p>
@@ -130,14 +130,14 @@
 
   <section>
     <h2>Plans</h2>
-    <p>Optional. A plan includes an allowance of Frog Cloud usage every 5 hours and every week. Past it, turns keep going on credit at the prices above. Change or cancel any time from Settings › Billing.</p>
+    <p>Optional. A plan includes usage counted at the prices above: a weekly amount that resets every Monday, with a share of it available in any 5 hours. Over a month that is a little more than the plan costs. Past it, turns keep going on credit at the same prices. Change or cancel any time from Settings › Billing.</p>
     <div class="table">
       <table>
         <thead><tr><th>Plan</th><th>Allowance</th><th class="n">Concurrent streams</th><th class="n">Price</th></tr></thead>
         <tbody>
-          <tr><td><b>Pro</b><span class="det">For steady daily use</span></td><td>Every 5 hours and every week</td><td class="n">2</td><td class="n">$20/mo</td></tr>
-          <tr><td><b>Max 5x</b><span class="det">More at once</span></td><td>5× Pro</td><td class="n">4</td><td class="n">$100/mo</td></tr>
-          <tr><td><b>Max 20x</b><span class="det">For heavy use</span></td><td>20× Pro</td><td class="n">8</td><td class="n">$200/mo</td></tr>
+          <tr><td><b>Pro</b><span class="det">For steady daily use</span></td><td>$5 of usage a week</td><td class="n">2</td><td class="n">$20/mo</td></tr>
+          <tr><td><b>Max</b><span class="det">5× Pro, more at once</span></td><td>$25 of usage a week</td><td class="n">4</td><td class="n">$100/mo</td></tr>
+          <tr><td><b>Ultra</b><span class="det">10× Pro, for heavy use</span></td><td>$50 of usage a week</td><td class="n">8</td><td class="n">$200/mo</td></tr>
         </tbody>
       </table>
     </div>
@@ -157,5 +157,40 @@
     <span class="end">toys.frog</span>
   </footer>
 </main>
+<script>
+// The OpenRouter rows show the live list from api.frog.toys/v1/models; the numbers in the
+// page are what shows if that can't be reached.
+(function () {
+  var rows = document.querySelectorAll("tr[data-model]");
+  if (!rows.length || !window.fetch) return;
+  function usd(perToken) {
+    var n = Number(perToken) * 1e6;
+    if (!isFinite(n) || n <= 0) return null;
+    return "$" + n.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+  }
+  fetch("https://api.frog.toys/v1/models")
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (v) {
+      if (!v || !v.data) return;
+      var byId = {};
+      v.data.forEach(function (m) { byId[m.id] = m.pricing; });
+      rows.forEach(function (tr) {
+        var p = byId[tr.getAttribute("data-model")];
+        if (!p) return;
+        var cells = [usd(p.prompt), usd(p.input_cache_read), usd(p.completion)];
+        if (cells.indexOf(null) !== -1) return;
+        var tds = tr.querySelectorAll("td.n");
+        // A capped model's cell also says the most a request can cost ("$0.044 to $0.165").
+        var max = (tr.getAttribute("data-max") || "").split(",");
+        for (var i = 0; i < 3 && i < tds.length; i++) {
+          var top = Number(max[i]);
+          var from = Number(cells[i].slice(1));
+          tds[i].textContent = top > from ? cells[i] + " to $" + max[i] : cells[i];
+        }
+      });
+    })
+    .catch(function () {});
+})();
+</script>
 </body>
 </html>
