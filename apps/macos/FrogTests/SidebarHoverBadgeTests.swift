@@ -57,7 +57,7 @@ final class SidebarHoverBadgeTests: XCTestCase {
         host.frame = CGRect(origin: .zero, size: CGSize(width: 300, height: 32))
         let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
         window.contentView = host
-        window.orderFront(nil)
+        window.orderInForTest()
         host.layoutSubtreeIfNeeded()
         // The row's task needs the main loop to run: to fire, to sleep its 450 ms, and to set
         // expandTitle — the same path a real pointer takes.
@@ -90,7 +90,7 @@ final class SidebarHoverBadgeTests: XCTestCase {
         host.frame = CGRect(origin: .zero, size: CGSize(width: 300, height: 32))
         let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
         window.contentView = host
-        window.orderFront(nil)
+        window.orderInForTest()
         host.layoutSubtreeIfNeeded()
         RunLoop.main.run(until: Date().addingTimeInterval(after))
         // The frame must show the state its name claims: expanded only after the 450 ms.

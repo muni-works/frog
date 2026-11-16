@@ -444,6 +444,15 @@ final class TableTranscriptController: NSObject, NSTableViewDataSource, NSTableV
 
     func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { false }
 
+    /// A row that scrolled out leaves its cell empty in the reuse pool. Otherwise its SwiftUI
+    /// row stayed live off screen (still observing the conversation, still counted as on
+    /// screen) until the cell was next reused, which could be a screenful of scrolling later.
+    func tableView(_ tableView: NSTableView, didRemove rowView: NSTableRowView, forRow row: Int) {
+        guard let cell = rowView.view(atColumn: 0) as? TranscriptRowCell else { return }
+        cell.host.rootView = AnyView(EmptyView())
+        cell.entryID = nil
+    }
+
     /// A row's height before it has ever been shown: what rows of its kind have measured so
     /// far (a text row by its line count). It's corrected the first time the row is on screen,
     /// keeping the view still if it's above; the closer the guess, the fewer rows a scroll

@@ -43,7 +43,7 @@ final class WidgetViewTests: XCTestCase {
             window.backgroundColor = NSColor(white: 0.07, alpha: 1)
             web.frame = window.contentView!.bounds
             window.contentView!.addSubview(web)
-            window.orderBack(nil)
+            window.orderInForTest()
             for _ in 0..<80 where reported == 0 { try await Task.sleep(for: .milliseconds(100)) }
             XCTAssertGreaterThan(reported, 200, "\(name): the widget never reported its height")
             try await Task.sleep(for: .milliseconds(1200))
