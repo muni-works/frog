@@ -295,7 +295,9 @@ final class GitCardController {
         show(r, anchor: anchor)
         pinned = true
         panel?.allowKey = true
-        panel?.makeKey()
+        // A non-activating panel takes the keyboard without activating the app: a test host
+        // pinning a card took it from whoever was typing at the Mac.
+        if !SingleInstance.isTesting { panel?.makeKey() }
     }
 
     /// The row went away (scope change, collapse, scrolled out): its card goes too.

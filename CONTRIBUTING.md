@@ -19,6 +19,13 @@ It runs the suite with CI's per-test timeouts, so a test that hangs fails by nam
 minutes rather than stalling the whole run, and writes the full log to `apps/macos/build/test.log`.
 Pass extra `xcodebuild` arguments through it, e.g. `-only-testing:FrogTests/TypeToFocusTests`.
 
+The run stays in the background, so you can keep working while it goes: the test host has no
+Dock icon, never activates, and gets an empty home folder of its own (never your sessions or
+config). A test that needs a real window orders it in with `window.orderInForTest()`
+(transparent, click-through, never key), not `orderFront`; popovers and panels the app opens
+from such a window stay hidden with it. Any test that shows a window or activates the app
+fails, by name (`FrogTests/BackgroundHost.swift`).
+
 Keep changes small and focused, match the style of the code around them, and add a test when
 you fix a bug. Run `rustfmt` on the files you touch (please don't reformat whole crates).
 

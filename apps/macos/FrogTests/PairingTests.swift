@@ -285,7 +285,7 @@ final class PairingSnapshotTests: XCTestCase {
             window.isReleasedWhenClosed = false
             window.appearance = NSAppearance(named: look)
             window.contentView = host
-            window.orderFront(nil)
+            window.orderInForTest()
             defer { window.close() }
             RunLoop.main.run(until: Date().addingTimeInterval(0.3))
             host.layoutSubtreeIfNeeded()

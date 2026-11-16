@@ -24,7 +24,7 @@ final class StreamingTextTests: XCTestCase {
         let host = NSHostingView(rootView: TranscriptView(conversation: c, actions: TurnActions(fork: { _ in }, rewind: { _ in })))
         host.frame = CGRect(x: 0, y: 0, width: 800, height: 600)
         let w = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
-        w.isReleasedWhenClosed = false; w.contentView = host; w.orderFront(nil)
+        w.isReleasedWhenClosed = false; w.contentView = host; w.orderInForTest()
         defer { w.close() }
         send(c, #""turn_started","turn":1,"input":"hi""#)
         send(c, #""item_started","id":"m","kind":{"type":"message"}"#)

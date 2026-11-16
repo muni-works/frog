@@ -141,7 +141,7 @@ final class TranscriptStreamBenchmarkTests: XCTestCase {
         window.isReleasedWhenClosed = false
         window.appearance = NSAppearance(named: .aqua)
         window.contentView = host
-        window.orderFront(nil)
+        window.orderInForTest()
         defer { window.close() }
 
         send(c, #""turn_started","turn":1,"input":\#(Self.json("Refactor the parser, file by file, and run the tests as you go"))"#)
@@ -233,7 +233,7 @@ final class TranscriptStreamBenchmarkTests: XCTestCase {
         window.isReleasedWhenClosed = false
         window.appearance = NSAppearance(named: .aqua)
         window.contentView = host
-        window.orderFront(nil)
+        window.orderInForTest()
         defer { window.close() }
 
         send(c, #""turn_started","turn":1,"input":"Refactor the parser, file by file, and run the tests as you go""#)
