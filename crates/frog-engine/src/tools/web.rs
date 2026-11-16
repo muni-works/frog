@@ -410,6 +410,55 @@ pub fn plain_read(name: &str, input: &serde_json::Value) -> bool {
     }
 }
 
+/// Whether a WebFetch asks for a URL the conversation already holds: one the user wrote, or
+/// one that came back in an earlier WebSearch or WebFetch result. Such a fetch is a plain read
+/// whatever the URL looks like.
+///
+/// [`plain_read`] guards against the agent *composing* a URL that carries what it read out to
+/// a server (a secret in a path segment or a query). A URL it was handed can't do that: its
+/// text was fixed before the agent chose to fetch it. This is the rule Claude's web fetch tool
+/// uses ("can only fetch URLs that have previously appeared in the conversation"), turned
+/// around: here a URL that hasn't appeared isn't refused, it just keeps going through
+/// `plain_read`, the classifier or a card as before.
+///
+/// Only the user's words and web results count. Shell output and file contents don't: the
+/// agent can write those, so `echo https://x/$(cat secret)` must not launder a URL into one
+/// that was "seen". A prefix of a seen URL passes too (it carries less, not more).
+pub fn seen_fetch(input: &serde_json::Value, messages: &[crate::message::Message]) -> bool {
+    use crate::message::{Block, Role};
+    let raw = input["url"].as_str().unwrap_or("").trim();
+    // Long enough to be a real URL, short enough to be one; a public host, no credentials.
+    if raw.len() < 12 || raw.len() > 2000 || !public_host(raw) {
+        return false;
+    }
+    messages
+        .iter()
+        .filter(|m| m.role == Role::User)
+        .flat_map(|m| &m.content)
+        .any(|b| match b {
+            Block::Text { text } => text.contains(raw),
+            Block::ToolResult {
+                name,
+                content,
+                is_error,
+                ..
+            } => {
+                !is_error
+                    && matches!(name.as_str(), "WebSearch" | "WebFetch")
+                    && content.contains(raw)
+            }
+            _ => false,
+        })
+}
+
+/// The host a WebFetch names, for messages: lowercased, or empty when the URL doesn't parse.
+pub fn fetch_host(input: &serde_json::Value) -> String {
+    parse_url(input["url"].as_str().unwrap_or(""))
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_ascii_lowercase))
+        .unwrap_or_default()
+}
+
 /// Whether a URL piece looks like encoded data rather than a word, slug or version: letters
 /// and digits mixed through it (base32/base64/hex), or more than 4 bits of entropy per char.
 fn opaque(piece: &str) -> bool {
@@ -774,6 +823,104 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Fetches the classifier refused in a real session (2026-11-15): public pages straight
+    /// out of search results, with path segments too long for `plain_read`.
+    const PATENT: &str = "https://teslauniverse.com/nikola-tesla/patents/us-patent-1655114-apparatus-aerial-transportation";
+    const ARTICLE: &str = "http://teslacollection.com/tesla_articles/1919/reconstruction/nikola_tesla_m_frederick_kerby/tesla_tells_how_we_may_fly_8_miles_high_at_1000_miles_an_hour";
+    const WIKI: &str = "https://en.wikipedia.org/wiki/Tesla%27s_wireless_power_theories";
+
+    fn result(name: &str, content: &str, is_error: bool) -> crate::message::Message {
+        crate::message::Message {
+            role: crate::message::Role::User,
+            content: vec![crate::message::Block::ToolResult {
+                id: "c".into(),
+                name: name.into(),
+                content: content.into(),
+                is_error,
+            }],
+        }
+    }
+
+    #[test]
+    fn a_url_the_conversation_already_holds_is_a_read_whatever_it_looks_like() {
+        use crate::message::{Block, Message, Role};
+        let fetch = |u: &str, msgs: &[Message]| seen_fetch(&json!({ "url": u }), msgs);
+        // Neither passes the shape check: that is why they reached the classifier.
+        for u in [PATENT, ARTICLE] {
+            assert!(!plain_read("WebFetch", &json!({ "url": u })), "{u}");
+        }
+        // The third one refused that day, for its percent-encoded apostrophe.
+        let wiki = result("WebSearch", &format!("2. Wikipedia\n   {WIKI}"), false);
+        assert!(fetch(WIKI, &[wiki]));
+        // From a search result, a fetched page, or the user's own message: a read.
+        let search = result(
+            "WebSearch",
+            &format!("1. Patent\n   {PATENT}\n   snippet"),
+            false,
+        );
+        assert!(fetch(PATENT, &[search.clone()]));
+        let page = result(
+            "WebFetch",
+            &format!("see [the article]({ARTICLE}) for more"),
+            false,
+        );
+        assert!(fetch(ARTICLE, &[page]));
+        assert!(fetch(
+            ARTICLE,
+            &[Message::user(format!("read {ARTICLE} please"))]
+        ));
+        // A prefix of a seen URL carries less than the URL did.
+        assert!(fetch(
+            "https://teslauniverse.com/nikola-tesla/patents/",
+            &[search.clone()]
+        ));
+
+        // Not seen at all, or seen with anything added: back to the shape check.
+        assert!(!fetch(ARTICLE, &[search.clone()]));
+        assert!(!fetch(
+            &format!("{PATENT}?leak=c2VjcmV0LWtleS1oZXJl"),
+            &[search.clone()]
+        ));
+        // Only the user and the web count. The agent writes shell output, file contents and
+        // its own messages, so a URL from those could carry anything.
+        for name in ["Bash", "Read", "Terminal", "mcp__x__get"] {
+            assert!(!fetch(PATENT, &[result(name, PATENT, false)]), "{name}");
+        }
+        let own = Message {
+            role: Role::Assistant,
+            content: vec![Block::Text {
+                text: PATENT.into(),
+            }],
+        };
+        assert!(!fetch(PATENT, &[own]));
+        // A failed search or fetch returned an error, not results.
+        assert!(!fetch(PATENT, &[result("WebSearch", PATENT, true)]));
+        // Private hosts, credentials and non-URLs never pass, seen or not.
+        for bad in [
+            "http://localhost:8080/admin/panel",
+            "http://192.168.2.12:8888/search",
+            "https://user:pw@example.com/a/b",
+            "file:///etc/passwd",
+            "x",
+        ] {
+            assert!(!fetch(bad, &[Message::user(bad)]), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_fetch_names_its_host_for_messages() {
+        assert_eq!(
+            fetch_host(&json!({ "url": ARTICLE })),
+            "teslacollection.com"
+        );
+        assert_eq!(
+            fetch_host(&json!({ "url": "https://Docs.Example.COM/a" })),
+            "docs.example.com"
+        );
+        assert_eq!(fetch_host(&json!({ "url": "not a url" })), "");
+        assert_eq!(fetch_host(&json!({})), "");
+    }
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     /// Ordinary docs fetches and searches stay card-free; data-shaped ones don't.
