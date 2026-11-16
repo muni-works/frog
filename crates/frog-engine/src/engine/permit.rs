@@ -105,6 +105,23 @@ impl Agent {
             self.decision(item, "rule", "allow", "read-only web call", 0);
             return Decision::Allow;
         }
+        // A URL the user wrote or an earlier web result returned is a read too, whatever it
+        // looks like: the shape check above is about URLs the agent composes (see
+        // `web::seen_fetch`). Long archive paths from a search result used to fall through to
+        // the classifier, which refused public pages. Workers keep the stricter rule.
+        if name == "WebFetch"
+            && !self.cfg.worker
+            && crate::tools::web::seen_fetch(input, &self.conv.messages)
+        {
+            self.decision(
+                item,
+                "rule",
+                "allow",
+                "the URL came from the user or an earlier web result",
+                0,
+            );
+            return Decision::Allow;
+        }
         // MCP tools that only read (`list_*`, `get-*`, vcad's `inspect_*`, …) run without a
         // card in every mode: a manager in default mode stalled ten minutes on each one. Auto
         // mode keeps its slightly wider verb list on top.
@@ -416,7 +433,11 @@ impl Agent {
                     self.decision(
                         item,
                         layer,
-                        if self.mode == Mode::Auto { "deny" } else { "ask" },
+                        if self.mode == Mode::Auto {
+                            "deny"
+                        } else {
+                            "ask"
+                        },
                         &why,
                         took,
                     );
@@ -1197,11 +1218,17 @@ arrives as a <session-message from=\"parent\"> in this turn."
                 tool: crate::tools::sessions::TREE.into(),
                 input: serde_json::Value::Null,
             });
-            let reply = rx.await.unwrap_or_else(|_| Err("the app didn't answer".into()));
+            let reply = rx
+                .await
+                .unwrap_or_else(|_| Err("the app didn't answer".into()));
             if let Ok(v) = reply {
                 let ids: Vec<String> = v["sessions"]
                     .as_array()
-                    .map(|a| a.iter().filter_map(|s| s.as_str().map(String::from)).collect())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|s| s.as_str().map(String::from))
+                            .collect()
+                    })
                     .unwrap_or_default();
                 if !ids.is_empty() {
                     let names = v["names"]
@@ -1212,7 +1239,11 @@ arrives as a <session-message from=\"parent\"> in this turn."
                                 .collect()
                         })
                         .unwrap_or_default();
-                    let ids = if ids.contains(&me) { ids } else { [vec![me], ids].concat() };
+                    let ids = if ids.contains(&me) {
+                        ids
+                    } else {
+                        [vec![me], ids].concat()
+                    };
                     return (ids, names);
                 }
             }

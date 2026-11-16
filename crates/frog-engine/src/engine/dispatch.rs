@@ -93,7 +93,10 @@ impl Agent {
         if let Some(id) = self.shared.bg.long_wait.lock().unwrap().clone()
             && self.shared.bg.is_running(&id)
         {
-            self.shared.bg.long_wait_refusals.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.shared
+                .bg
+                .long_wait_refusals
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             anyhow::bail!(
                 "Not started: you're already waiting on {id}, and sleeping again doesn't make it come sooner. End your turn now; the <job-done id={id}> wake starts your next one."
             );
@@ -107,7 +110,10 @@ impl Agent {
             .map(|w| w.trim_end_matches([',', '.']).to_string())
             .unwrap_or_else(|| "a background job".into());
         *self.shared.bg.long_wait.lock().unwrap() = Some(id.clone());
-        self.shared.bg.long_wait_refusals.store(0, std::sync::atomic::Ordering::Relaxed);
+        self.shared
+            .bg
+            .long_wait_refusals
+            .store(0, std::sync::atomic::Ordering::Relaxed);
         self.notice(
             Level::Warn,
             format!("a {secs}s sleep moved to background job {id}; the turn goes on"),
@@ -633,7 +639,10 @@ Don't repeat it. {}",
                     // out) is direction, not a stop: the agent adjusts and carries on.
                     let (msg, stop) = match self.last_note.take() {
                     Some(note) => (
-                        format!("Not run: the call was denied with this note: {note}\nAdjust your approach accordingly and continue with the rest of the task."),
+                        format!(
+                            "Not run: the call was denied with this note: {note}\n{}Adjust your approach accordingly and continue with the rest of the task.",
+                            around(&name, &input)
+                        ),
                         false,
                     ),
                     None if self.can_ask => (
@@ -695,7 +704,11 @@ Don't repeat it. {}",
                 let mut made: HashSet<PathBuf> =
                     before.into_iter().filter(|p| p.exists()).collect();
                 let temp = crate::approval::normalize(&std::env::temp_dir());
-                let temp_alts = [temp.clone(), PathBuf::from("/tmp"), PathBuf::from("/private/tmp")];
+                let temp_alts = [
+                    temp.clone(),
+                    PathBuf::from("/tmp"),
+                    PathBuf::from("/private/tmp"),
+                ];
                 for p in made.clone() {
                     // All ancestors of a made path under the shared temp dir
                     // were made too (`mkdir -p a/b` creates both) — but stop
@@ -855,10 +868,25 @@ Don't repeat it. {}",
         // A model that keeps sleeping on a wait that already runs (refused twice) won't end its
         // turn: end it, as finished, and let the job's wake start the next one.
         let waiting = !looping
-            && self.shared.bg.long_wait_refusals.load(std::sync::atomic::Ordering::Relaxed) >= WAIT_REFUSALS_TO_END;
+            && self
+                .shared
+                .bg
+                .long_wait_refusals
+                .load(std::sync::atomic::Ordering::Relaxed)
+                >= WAIT_REFUSALS_TO_END;
         if waiting {
-            self.shared.bg.long_wait_refusals.store(0, std::sync::atomic::Ordering::Relaxed);
-            let id = self.shared.bg.long_wait.lock().unwrap().clone().unwrap_or_else(|| "the background job".into());
+            self.shared
+                .bg
+                .long_wait_refusals
+                .store(0, std::sync::atomic::Ordering::Relaxed);
+            let id = self
+                .shared
+                .bg
+                .long_wait
+                .lock()
+                .unwrap()
+                .clone()
+                .unwrap_or_else(|| "the background job".into());
             let why = format!(
                 "[frog] Turn ended to wait for {id}: sleeping again doesn't bring it sooner. Its <job-done id={id}> wake starts the next turn."
             );
@@ -1016,7 +1044,10 @@ fn split_own(system: &str) -> Option<(&str, &str)> {
 /// `messages` with `text` as the first user message's first block.
 fn lead_with(messages: &[Message], text: &str) -> Vec<Message> {
     let mut out = messages.to_vec();
-    if let Some(m) = out.iter_mut().find(|m| m.role == crate::message::Role::User) {
+    if let Some(m) = out
+        .iter_mut()
+        .find(|m| m.role == crate::message::Role::User)
+    {
         m.content.insert(
             0,
             Block::Text {
@@ -1034,17 +1065,64 @@ mod own_tests {
 
     #[test]
     fn the_session_tail_moves_to_the_first_user_message() {
-        let system = format!("head{}- Working directory: /wt/1\n\n# Repo map\nmain.rs\n", prompt::ENV_HEADER);
+        let system = format!(
+            "head{}- Working directory: /wt/1\n\n# Repo map\nmain.rs\n",
+            prompt::ENV_HEADER
+        );
         let (head, own) = split_own(&system).unwrap();
         assert_eq!(head, "head");
         assert!(own.starts_with("# Environment") && own.contains("Repo map"));
         let msgs = vec![Message {
             role: Role::User,
-            content: vec![Block::Text { text: "fix it".into() }],
+            content: vec![Block::Text {
+                text: "fix it".into(),
+            }],
         }];
         let out = lead_with(&msgs, own);
         assert_eq!(out[0].content.len(), 2);
         assert!(matches!(&out[0].content[0], Block::Text { text } if text.contains("/wt/1")));
         assert!(split_own("no env here").is_none());
+    }
+}
+
+/// What a denied web fetch adds to its denial: the refusal is about the site, so reaching it
+/// through the shell or another tool is the same request again. Empty for other tools.
+fn around(name: &str, input: &Value) -> String {
+    if name != "WebFetch" {
+        return String::new();
+    }
+    let host = crate::tools::web::fetch_host(input);
+    if host.is_empty() {
+        return String::new();
+    }
+    format!(
+        "This is about the site, not the tool: don't fetch {host} another way (curl, wget, a script, a different tool). If you need it, say what you wanted from it and let the user decide.\n"
+    )
+}
+
+#[cfg(test)]
+mod around_tests {
+    use super::around;
+    use serde_json::json;
+
+    #[test]
+    fn a_denied_fetch_says_not_to_reach_the_site_another_way() {
+        let said = around(
+            "WebFetch",
+            &json!({ "url": "http://teslacollection.com/a/b" }),
+        );
+        assert!(
+            said.contains("don't fetch teslacollection.com another way"),
+            "{said}"
+        );
+        assert!(said.contains("curl"), "{said}");
+        assert!(said.ends_with('\n'));
+        // Other tools, and a fetch with no host to name, add nothing.
+        assert_eq!(
+            around("Bash", &json!({ "command": "curl http://x.example" })),
+            ""
+        );
+        assert_eq!(around("WebFetch", &json!({ "url": "" })), "");
+        assert_eq!(around("WebFetch", &json!({})), "");
     }
 }
