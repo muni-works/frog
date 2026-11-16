@@ -1,0 +1,186 @@
+# One shell: threads, documentation, settings
+
+Frog's window has one shell: a left sidebar and a main area. Today the sidebar only lists
+threads. This spec makes the same shell carry two more things, documentation and settings,
+on the Mac and on the web, and makes docs.frog.toys that same documentation view served
+publicly.
+
+Decided with Cam on 2026-11-16. Not built. Not in 0.6.0.
+
+## The rule
+
+Inside the window, frog draws everything from one spec, and the Mac is native only at the
+edges (title bar, menus, system dialogs). The right sidebar already follows this
+(`docs/design/inspector`, #379 and #380). The Mac's separate Settings window is the
+largest piece of system styling left, and documentation doesn't exist in the apps at all.
+
+## The three modes
+
+The shell is always in one of three modes. The mode decides what the left sidebar lists
+and what the main area shows. Nothing else about the window changes: same sidebar width,
+same card, same type, same tokens.
+
+| Mode | Left sidebar | Main area |
+| --- | --- | --- |
+| Threads (today) | New thread, the thread list, the footer | The transcript and composer, with the right sidebar |
+| Documentation | "Back to app", search, the page list by section | One page |
+| Settings | "Back to app", the section list | One section |
+
+The right sidebar (Changes, Terminal, Preview) belongs to a thread. It is hidden in
+Documentation and Settings and comes back as it was.
+
+### Getting in
+
+- Two rows at the bottom of the left sidebar in Threads mode, above the user footer:
+  **Documentation** (book icon) and **Settings** (gear icon). Icon and label, the same row
+  style as a thread row, sentence case.
+- Mac: Cmd-comma opens Settings mode in the front window. Help › Frog Documentation opens
+  Documentation mode. The `Settings { }` scene in `FrogApp.swift` goes away.
+- Web: Cmd-comma already opens settings; it opens Settings mode. The settings overlay in
+  `ui/Overlays.tsx` goes away.
+- The command palette gets "Documentation" and "Settings", and one entry per page and per
+  section.
+
+### Getting out
+
+- **Back to app** is the first row of the sidebar in both modes: a left arrow and the
+  label. Escape does the same.
+- Going back returns to exactly where you were: the same thread, scroll position, composer
+  draft and right sidebar tab. Entering a mode never ends, pauses or hides a running turn;
+  the thread keeps working.
+- Each mode remembers its last page or section for the life of the window.
+
+## Documentation
+
+### Layout
+
+- Sidebar: Back to app; a search field ("Search docs"); then sections as muted 12px
+  labels with their pages as rows under them. The selected page has the selected-row
+  style the thread list uses.
+- Main area: one column, the reading width the transcript uses. A muted section label, the
+  page title, then the page. Previous and next page links at the bottom.
+- No right-hand "on this page" list, no version switcher, no platform switch. The app
+  knows whether it is the Mac or the web and shows that variant where a page has one.
+
+### Pages for the first version
+
+| Section | Pages |
+| --- | --- |
+| Start | Install · Your first session · Pick a model |
+| Use | Permissions and auto mode · Web search and fetch · Sessions and children · Memory and `FROG.md` · Skills and MCP |
+| Models | On your Mac · Your own nodes · Your own keys · Frog Cloud |
+| When something's off | No web results · A fetch was refused · A thread just stopped |
+| Reference | `config.toml` · Flags · Tools · Changelog |
+
+Sources: `docs/quickstart.md`, `docs/reference.md` (split by its headings), `docs/models.md`
+and `docs/releases/*.md`. The three "When something's off" pages are new and short; each
+has the same four parts: the short answer, what you'll see, what to do, the setting.
+
+### One source
+
+- Pages are markdown files in the repo under `docs/app/`, one file per page, with a small
+  manifest that gives the sections, order and titles. Internal docs (`plans`, `research`,
+  `design`, `launch`) are never part of it.
+- A page can mark a block as Mac-only, web-only or terminal-only. Unmarked text shows
+  everywhere.
+- Flags, tools and config keys are generated from the build (`frog --help`, the engine's
+  tool list, the config struct) into their pages, with a test that fails when a generated
+  page is stale.
+- The pages ship inside each build, so the docs in an app describe that app's version. The
+  version is shown at the bottom of the docs sidebar.
+- Search filters page titles and headings in the first version. Full text later.
+
+### docs.frog.toys
+
+- docs.frog.toys is the web app's Documentation mode, reachable without signing in. It is
+  not a separate site and has no theme of its own.
+- Every page has a stable URL: `docs.frog.toys/<section>/<page>`. Headings have anchors.
+- Signed out, "Back to app" reads "Open Frog" and goes to the sign-in page. Signed in, it
+  behaves as in the app.
+- Pages must render as real HTML for a first request (for search engines and for link
+  previews), not only after the app's script runs.
+- The Mac's pages have an "Open on the web" action that opens the same page's URL, for
+  sharing.
+
+## Settings
+
+### Layout
+
+- Sidebar: Back to app; then one row per section. No search in the first version.
+- Main area: the section title, then its settings as rows: label on the left, control on
+  the right, a hairline between rows, a muted one-line description under a label where one
+  is needed. Groups inside a section get a muted 12px label.
+- Controls are frog-drawn: the pill, the segmented capsule, the toggle and the text field
+  already in the tokens. No system `Form`, `TabView` or grouped-list styling on the Mac.
+
+### Sections
+
+The Mac has nine tabs today (General, Models, Billing, Energy, Lend, Permissions, MCP,
+Appearance, Shortcuts). The web has three (Account, Models, Billing). The shell has one
+list; a section that doesn't apply on a platform isn't shown there.
+
+| Section | Mac | Web | Today |
+| --- | --- | --- | --- |
+| General | yes | no | `GeneralSettings` |
+| Appearance | yes | yes | `AppearanceSettings`; new on web |
+| Models | yes | yes | `MachinesSettings`; web `ModelsSettings` |
+| Permissions | yes | no | `PermissionSettings` |
+| MCP | yes | no | `MCPSettings` |
+| Shortcuts | yes | no | `ShortcutSettings` |
+| Energy | yes | no | `EnergySettings` |
+| Lend | yes | no | `LendSettings` |
+| Account | yes | yes | web Account tab; on the Mac this is in `UserFooter` and Billing today |
+| Billing | yes | yes | `BillingSettings`; web Billing tab |
+
+- Links that open a settings tab keep working: `?settings=account|billing` on the web
+  (Stripe and api.frog.toys land there) opens Settings mode on that section.
+- A setting's row can link to its documentation page, and a documentation page can link to
+  the setting. Both are plain links between the two modes.
+
+## What stays the same
+
+- The sidebar's width, resize behaviour and collapse on a narrow window or a phone. In
+  Documentation and Settings the page list and section list collapse the way the thread
+  list does.
+- Tokens only. No new colours or type sizes.
+- Sentence case, no Title Case.
+
+## Out of scope for the first version
+
+- "Why?" links from transcript rows to a docs page, and frog citing a docs page in an
+  answer. Both were considered and set aside.
+- The agent loading the docs to answer questions.
+- Full-text search, versions other than the running build, translations.
+- A per-site allow setting for web fetch. The "A fetch was refused" page stops at "paste
+  the link" until that setting exists.
+
+## Order of work
+
+1. **Shell modes.** The mode switch, the two sidebar rows, Back to app and restoring state,
+   on both apps. Documentation mode with two placeholder pages proves it.
+2. **Documentation.** `docs/app/`, the manifest, the markdown reader on the Mac, the
+   route on the web, the pages above, the generated reference pages and their test.
+3. **docs.frog.toys.** Signed-out access, stable URLs, first-request HTML, the domain.
+4. **Settings.** Move sections into the shell one at a time, Billing and Account first
+   since both apps have them, then remove the Mac's Settings window and the web's overlay.
+
+Each step can ship by itself. Steps 2 and 4 don't depend on each other.
+
+## Done looks like
+
+- Mac and web screenshots of each mode, light and dark, match each other the way the right
+  sidebar's do (`docs/design/inspector`), and are checked into `docs/design/app-shell/`.
+- Entering and leaving a mode during a running turn loses nothing: a test holds the
+  thread, scroll position, draft and right sidebar tab.
+- docs.frog.toys serves a page to a signed-out request with the page's text in the HTML.
+- The Mac has no `Settings` scene and no `TabView` in settings; the web has no settings
+  overlay.
+- A stale generated reference page fails a test.
+
+## Open questions
+
+- **Where the web's signed-out docs are served from.** The web app's hosting isn't in this
+  repo; first-request HTML may need a build step that renders the pages.
+- **Whether Energy and Lend stay their own sections** or fold into Models on the Mac.
+- **Mac window size.** Settings as a mode uses the main window's size. A small window
+  makes for narrow settings rows; the minimum window width may need to rise.
