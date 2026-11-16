@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { FileDiff } from '../cloud/protocol'
+import { ICON, Icon } from './icons'
 
 // A file's changes as hunks: a line-number gutter (new side, old for removals), tinted rows
 // for added and removed lines, and a quiet gap between hunks. Used by the inspector's
@@ -25,18 +26,17 @@ export function Hunks({ diff, max }: { diff: FileDiff; max?: number }) {
   )
 }
 
-/** One changed file in a list: name, folder, counts; click to open its hunks. */
+/** One changed file in a list, on one line: a document icon (with a plus when new), the name,
+ * its folder (cut from the head, so the nearest folders show), counts; click to open its hunks. */
 export function FileRow({ diff, open, onToggle }: { diff: FileDiff; open: boolean; onToggle: () => void }) {
   const slash = diff.path.lastIndexOf('/')
   const name = diff.path.slice(slash + 1), dir = slash > 0 ? diff.path.slice(0, slash) : ''
   return (
     <div className={`file${open ? ' open' : ''}`}>
       <button type="button" className="file-row" aria-expanded={open} onClick={onToggle} title={diff.path}>
-        <span className="file-chev" aria-hidden="true">›</span>
-        <span className="file-name">{name}</span>
-        {dir && <span className="file-dir">{dir}</span>}
-        {diff.created && <span className="file-new">new</span>}
-        <span style={{ flex: 1 }} />
+        <Icon d={diff.created ? ICON.docPlus : ICON.doc} size={15} className={`file-ic${diff.created ? ' new' : ''}`} />
+        <span className="file-name">{name}{diff.created && <span className="sr-only"> (new)</span>}</span>
+        <span className="file-dir">{dir && <bdi>{dir}</bdi>}</span>
         <span className="file-add">+{diff.added}</span>
         <span className="file-del">−{diff.removed}</span>
       </button>

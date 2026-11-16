@@ -81,7 +81,9 @@ GATEWAY=http://127.0.0.1:$PORT VITE_DEV_KEY=parity npx vite --host 127.0.0.1 --p
 for i in {1..60}; do curl -sf "http://127.0.0.1:$VITE_PORT/" >/dev/null && break; sleep 0.5; done
 curl -sf "http://127.0.0.1:$VITE_PORT/" >/dev/null || { print -u2 "capture.sh: vite didn't start:"; cat "$WORK/vite.log" >&2; exit 1; }
 for look in $LOOKS; do
-    node "$HERE/web-shot.mjs" "http://127.0.0.1:$VITE_PORT/s/s_parity" "$HERE/web-$look.png" $W $H $look >/dev/null
+    node "$HERE/web-shot.mjs" "http://127.0.0.1:$VITE_PORT/s/s_parity" "$HERE/web-$look.png" $W $H $look >/dev/null    # The same session with the inspector open on Changes (web only: the Mac shot keeps it shut).
+    WEB_SHOT_STORAGE='{"frog.inspector":"1","frog.inspectorTab":"changes"}' \
+        node "$HERE/web-shot.mjs" "http://127.0.0.1:$VITE_PORT/s/s_parity" "$HERE/web-inspector-$look.png" $W $H $look >/dev/null
 done
 
 # --- Side by side ------------------------------------------------------------------------------
@@ -97,6 +99,7 @@ done
         if [[ -f $HERE/mac-$look.png ]]; then print "<figure><figcaption>Mac</figcaption><img src=mac-$look.png></figure>"
         else print "<figure><figcaption>Mac: not captured yet (run capture.sh)</figcaption></figure>"; fi
         print "<figure><figcaption>Web</figcaption><img src=web-$look.png></figure></div>"
+        [[ -f $HERE/web-inspector-$look.png ]] && print "<div class=row><figure><figcaption>Web, inspector open</figcaption><img src=web-inspector-$look.png></figure></div>"
     done
 } > "$HERE/index.html"
 print "$HERE/index.html"
