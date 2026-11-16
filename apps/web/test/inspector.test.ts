@@ -33,9 +33,10 @@ test("Changes: 'N files +a −d' and Expand all, no title; rows show icon, name,
   const html = render([diff("src/retry.rs", 3, 2), diff("crates/upload/src/client/retry_policy.rs", 4, 1), diff("tests/upload_retry.rs", 12, 0, true)]);
   const head = text(html.match(/<div class="files-head">.*?<\/div>/)![0]);
   assert.equal(head, "3 files +19 −3 Expand all");
+  assert.match(html, /<span class="files-count">3 files<\/span>/, "the count is its own (semibold) span");
   assert.ok(!/<b>|>Changes<\/h/.test(html.match(/<div class="insp-body">.*$/)![0]), "no Changes title or bold count in the body");
-  // Name over folder; a new file gets the document-with-plus icon instead of a "new" badge.
-  assert.match(html, /<span class="file-name">retry_policy\.rs<\/span><span class="file-dir"><bdi>crates\/upload\/src\/client<\/bdi><\/span>/);
+  // One line: icon, name, folder, counts; a new file gets the document-with-plus icon instead of a badge.
+  assert.match(html, /<button[^>]*class="file-row"[^>]*><svg[^>]*class="file-ic"[^>]*>.*?<\/svg><span class="file-name">retry_policy\.rs<\/span><span class="file-dir"><bdi>crates\/upload\/src\/client<\/bdi><\/span><span class="file-add">\+4<\/span><span class="file-del">−1<\/span><\/button>/);
   assert.equal((html.match(/class="file-ic new"/g) ?? []).length, 1);
   assert.equal((html.match(/class="file-ic"/g) ?? []).length, 2);
   assert.ok(!html.includes("file-new"), "no badge");
@@ -67,4 +68,10 @@ test("every tab's empty state is the same component: icon, title, one line, its 
 
 test("the width defaults to 420", () => {
   assert.match(render([]), /style="--insp-w:420px"/);
+});
+
+test("the Terminal tab is a terminal window (a box with a prompt), as on the Mac", () => {
+  const tab = render([]).match(/<button[^>]*role="tab"[^>]*>(<svg.*?<\/svg>)Terminal<\/button>/);
+  assert.ok(tab, "Terminal tab");
+  assert.match(tab[1], /a3 3 0 0 1 3 3v10/, "a rounded box, not a bare >_");
 });

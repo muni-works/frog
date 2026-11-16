@@ -26,8 +26,8 @@ export function Hunks({ diff, max }: { diff: FileDiff; max?: number }) {
   )
 }
 
-/** One changed file in a list: a document icon (with a plus when new), the name over its folder
- * (cut from the head, so the nearest folders show), counts; click to open its hunks. */
+/** One changed file in a list, on one line: a document icon (with a plus when new), the name,
+ * its folder (cut from the head, so the nearest folders show), counts; click to open its hunks. */
 export function FileRow({ diff, open, onToggle }: { diff: FileDiff; open: boolean; onToggle: () => void }) {
   const slash = diff.path.lastIndexOf('/')
   const name = diff.path.slice(slash + 1), dir = slash > 0 ? diff.path.slice(0, slash) : ''
@@ -35,10 +35,8 @@ export function FileRow({ diff, open, onToggle }: { diff: FileDiff; open: boolea
     <div className={`file${open ? ' open' : ''}`}>
       <button type="button" className="file-row" aria-expanded={open} onClick={onToggle} title={diff.path}>
         <Icon d={diff.created ? ICON.docPlus : ICON.doc} size={15} className={`file-ic${diff.created ? ' new' : ''}`} />
-        <span className="file-names">
-          <span className="file-name">{name}{diff.created && <span className="sr-only"> (new)</span>}</span>
-          {dir && <span className="file-dir"><bdi>{dir}</bdi></span>}
-        </span>
+        <span className="file-name">{name}{diff.created && <span className="sr-only"> (new)</span>}</span>
+        <span className="file-dir">{dir && <bdi>{dir}</bdi>}</span>
         <span className="file-add">+{diff.added}</span>
         <span className="file-del">−{diff.removed}</span>
       </button>

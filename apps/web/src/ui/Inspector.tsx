@@ -14,7 +14,7 @@ const WIDTH = 420, MIN_WIDTH = 360, MAX_WIDTH = 560
 const clampWidth = (w: number) => Math.round(Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, w)))
 const TABS: readonly { id: Tab; label: string; icon: string }[] = [
   { id: 'changes', label: 'Changes', icon: ICON.plusMinus },
-  { id: 'terminal', label: 'Terminal', icon: ICON.terminal },
+  { id: 'terminal', label: 'Terminal', icon: ICON.terminalBox },
   { id: 'preview', label: 'Preview', icon: ICON.globe },
 ]
 
@@ -92,7 +92,7 @@ export function Inspector({ thread, onCommit, onPr, hasPr, send, onClose, machin
           {thread.changes.length === 0 && <InspectorEmpty icon={ICON.plusMinus} title="No changes yet">Files Frog edits show up here.</InspectorEmpty>}
           {thread.changes.length > 0 && (
             <div className="files-head">
-              <span>{thread.changes.length} file{thread.changes.length === 1 ? '' : 's'}</span>
+              <span className="files-count">{thread.changes.length} file{thread.changes.length === 1 ? '' : 's'}</span>
               <span className="file-add">+{thread.changes.reduce((n, c) => n + c.added, 0)}</span>
               <span className="file-del">−{thread.changes.reduce((n, c) => n + c.removed, 0)}</span>
               <span style={{ flex: 1 }} />
@@ -126,7 +126,7 @@ export function Inspector({ thread, onCommit, onPr, hasPr, send, onClose, machin
             </div>
             <TerminalPane pane={term} onInput={(data) => send({ op: 'pane_input', id: term.id, data })} onResize={resize} />
           </>) : (
-            <InspectorEmpty icon={ICON.terminal} title={term?.closed ? `The shell exited${term.exit != null ? ` (${term.exit})` : ''}` : 'A shell in the sandbox'}
+            <InspectorEmpty icon={ICON.terminalBox} title={term?.closed ? `The shell exited${term.exit != null ? ` (${term.exit})` : ''}` : 'A shell in the sandbox'}
               action={<button type="button" className="f-btn f-btn--bordered" onClick={() => send({ op: 'pane_open', kind: 'terminal', cols: 80, rows: 24 })}>{term?.closed ? 'Open another' : 'Open a terminal'}</button>}>
               Same machine Frog works in, at the repo. Nothing here touches your computer.
             </InspectorEmpty>
