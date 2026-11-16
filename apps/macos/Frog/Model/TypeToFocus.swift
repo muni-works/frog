@@ -41,9 +41,9 @@ enum TypeToFocus {
     /// The decision list, in order:
     /// 1. The window isn't key — another app is in front, or a frog window sits behind: the
     ///    key belongs where it's headed.
-    /// 2. Something here already owns text keys — the composer or any field (every field
-    ///    editor is an `NSTextView`), the terminal, IME machinery, the web preview's page:
-    ///    the key is spoken for.
+    /// 2. Something here already owns text keys — the composer or any editable field (every
+    ///    field editor is an `NSTextView`), the terminal, IME machinery, the web preview's
+    ///    page: the key is spoken for. Read-only text (a transcript message) owns none.
     /// 3. Modifiers besides ⇧, caps-lock and the keypad's numeric flag: ⌘/⌃/⌥ mean a
     ///    shortcut or an ⌥-composition, not a character to type.
     /// 4. Not one visible character — flags-changed events (`characters` nil), F-keys (in
@@ -82,7 +82,10 @@ enum TypeToFocus {
         guard let responder else { return false }
         // The composer and every field's editor (search, rename, settings — SwiftUI fields
         // run on NSTextView field editors, the textfield itself covers unedited moments).
-        if responder is NSTextView || responder is NSTextField { return true }
+        // Only ones that take typing: the transcript's messages are selectable, read-only
+        // text views, and clicking one (to select or copy) must not swallow the next key.
+        if let text = responder as? NSTextView { return text.isEditable }
+        if let field = responder as? NSTextField { return field.isEditable }
         // The terminal's keys are the shell's.
         if responder is TerminalGridView { return true }
         // IME machinery (IMK…) and the web preview's page (WK…) hold keys of their own.
