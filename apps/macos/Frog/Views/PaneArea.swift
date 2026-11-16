@@ -14,6 +14,7 @@ struct PaneArea: View {
     /// where there's no repo, so the Changes tab shows no Commit or Open PR.
     var git: ((String) -> Void)? = nil
     @State private var dragStart: CGFloat?
+    @State private var gripHover = false
     /// Terminal or Preview picked while there's no pane to show (a chat has no folder to open
     /// a shell in): the tab is still there, with its empty state.
     @State private var placeholder: PaneKind?
@@ -21,6 +22,9 @@ struct PaneArea: View {
     static let minWidth: CGFloat = 360
     static let maxWidth: CGFloat = 560
     static let defaultWidth: CGFloat = 420
+    /// The grip's hit area: this far out over the gap beside the card, and this far in.
+    static let gripReach: CGFloat = 8
+    static let gripInside: CGFloat = 8
     static let widthKey = "inspectorWidth"
     /// The width last dragged to, else the default.
     static var savedWidth: CGFloat {
@@ -181,15 +185,25 @@ struct PaneArea: View {
         }
     }
 
-    /// The resize grip on the card's leading edge.
+    /// The resize grip on the card's leading edge: a bar shows on hover (the web's grip), and it
+    /// takes presses a little outside the card too. It was an invisible 8 pt strip inside the
+    /// edge, so a press just off it landed on the canvas, which drags the window; and its pushed
+    /// resize cursor could outlive the hover (the card moving away from under the pointer).
     private var handle: some View {
-        Rectangle()
-            .fill(.clear)
-            .frame(width: 8)
+        Color.clear
+            .frame(width: Self.gripReach + Self.gripInside)
             .contentShape(.rect)
-            .onHover { inside in
-                if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+            .overlay {
+                Capsule()
+                    .fill(Tokens.textTertiary)
+                    .frame(width: 3, height: 36)
+                    .opacity(gripHover || dragStart != nil ? 1 : 0)
+                    .allowsHitTesting(false)
             }
+            .offset(x: -Self.gripReach)
+            .pointerStyle(.columnResize)
+            .onHover { gripHover = $0 }
+            .animation(.easeOut(duration: 0.12), value: gripHover)
             .gesture(
                 DragGesture(minimumDistance: 1).onChanged { g in
                     let start = dragStart ?? width
