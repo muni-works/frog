@@ -222,9 +222,10 @@ struct PaneView: View {
                         // Changes, and any terminal or preview frog opened, as tabs of one card.
                         PaneArea(conversation: conversation,
                                  height: max(160, room - top - (pane.hasRail ? 160 : 0)),
-                                 width: .constant(pane.cardWidth),
+                                 width: Binding(get: { pane.cardWidth }, set: { pane.cardWidth = $0 }),
                                  collapse: { toggleChanges() },
-                                 folder: pane.workspace.isChat ? nil : pane.workspace.folder)
+                                 folder: pane.workspace.isChat ? nil : pane.workspace.folder,
+                                 git: pane.workspace.isChat || pane.workspace.git == nil ? nil : { ui.requestGit($0) })
                             .glassEffect(.regular, in: .rect(cornerRadius: 18))
                             .glassEffectID("changes", in: glass)
                             .shadow(color: .black.opacity(pane.peekChanges && !changesDocked ? 0.35 : 0), radius: 24, y: 10)
