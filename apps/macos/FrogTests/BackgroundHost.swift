@@ -132,6 +132,28 @@ final class TestHomeTests: XCTestCase {
         XCTAssertEqual(ProcessInfo.processInfo.environment["HOME"], NSHomeDirectory(), "child processes get it too")
     }
 
+    /// Its defaults are its own too: nothing set in the debug app (the developer's verbosity,
+    /// density, archived sessions) reaches a test, and nothing a test sets reaches the app.
+    /// The probe keys are written to the app's real domain for the moment it takes, and
+    /// removed.
+    func testHostHasItsOwnDefaults() {
+        let app = (Bundle.main.bundleIdentifier ?? "toys.frog.dev") as CFString
+        let key = "frogTestHomeProbe-\(getpid())"
+        defer {
+            CFPreferencesSetAppValue(key as CFString, nil, app)
+            CFPreferencesSetAppValue((key + "-test") as CFString, nil, app)
+            CFPreferencesAppSynchronize(app)
+            UserDefaults.standard.removeObject(forKey: key + "-test")
+        }
+        // Something the developer set in the app.
+        CFPreferencesSetAppValue(key as CFString, "user" as CFString, app)
+        XCTAssertNil(UserDefaults.standard.object(forKey: key), "the test host read the app's own defaults")
+        // Something a test sets.
+        UserDefaults.standard.set("test", forKey: key + "-test")
+        XCTAssertEqual(UserDefaults.standard.string(forKey: key + "-test"), "test")
+        XCTAssertNil(CFPreferencesCopyAppValue((key + "-test") as CFString, app), "a test wrote to the app's own defaults")
+    }
+
     /// A normal launch never isolates, whatever its environment says: the switch is XCTest's
     /// injection library loaded in the process, which no installed Frog has.
     func testOnlyAnXCTestHostIsolates() {
