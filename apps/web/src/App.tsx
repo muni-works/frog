@@ -24,6 +24,9 @@ import { Transcript } from './ui/Transcript'
 import { safeHref } from './ui/href'
 import { askLine } from './ui/ask'
 import { sessionMissing, viewAfterArchive } from './ui/guards'
+import { DocsPage, DocsRow, DocsSidebar, Shell, type ShellMode } from './ui/Docs'
+import { DOCS, VERSION } from './docs/bundle'
+import { docsPath, docsSlugOf } from './docs/docs'
 
 /** `pick`: open the composer's repo menu (back from sign-in, or ⌘K Connect a repo). */
 /** Placeholder session ids, shown while POST /v1/sessions is in flight. */
@@ -48,6 +51,20 @@ function viewOf(path: string): View {
   return m ? { kind: 'session', id: m[1] } : { kind: 'new' }
 }
 
+/** A view's own path, or null for a session still being created (it has no URL yet). */
+function pathOfView(view: View): string | null {
+  return view.kind === 'session' ? (view.id.startsWith(PENDING) ? null : `/s/${view.id}`) : '/'
+}
+
+/** Where "Back to app" goes from a docs URL: the thread it was opened from, kept in the history
+ *  entry so a refresh still knows it. */
+function backOf(state: unknown): string {
+  const back = (state as { back?: unknown } | null)?.back
+  return typeof back === 'string' && docsSlugOf(back) === null ? back : '/'
+}
+
+const FIRST_DOC = DOCS[0]?.slug ?? ''
+
 function Mark({ size = 22 }: { size?: number }) {
   return <span className="mark" style={{ width: size, height: size }} aria-hidden="true" />
 }
@@ -60,18 +77,45 @@ export default function App() {
   const [authError, setAuthError] = useState<string | null>(null)
   const [leaving, setLeavingFor] = useState<Provider | null>(null)
   // Each conversation has its own URL (/s/<id>), so refresh, back and links return to it.
-  const [view, setView] = useState<View>(() => viewOf(location.pathname))
+  // Documentation mode is the shell showing pages over the same view (/docs/<slug>): the view
+  // (and its thread, socket and draft) stays exactly as it was underneath.
+  const [view, setView] = useState<View>(() => viewOf(docsSlugOf(location.pathname) === null ? location.pathname : backOf(history.state)))
+  const [mode, setMode] = useState<ShellMode>(() => (docsSlugOf(location.pathname) === null ? 'threads' : 'docs'))
+  // The last page, for the life of the window.
+  const [docPage, setDocPage] = useState(() => docsSlugOf(location.pathname) || FIRST_DOC)
   useEffect(() => {
     // A session still being created (a placeholder id) waits for its real id.
-    const path = view.kind === 'session' ? (view.id.startsWith(PENDING) ? null : `/s/${view.id}`) : '/'
+    const viewPath = pathOfView(view)
+    const path = mode === 'docs' ? docsPath(docPage) : viewPath
     if (path === null || location.pathname === path) return
-    history.pushState(null, '', path)
-  }, [view])
+    const state = mode === 'docs' ? { back: viewPath ?? '/' } : null
+    // Bare /docs names the first page: replace it, so Back doesn't land on it again.
+    if (docsSlugOf(location.pathname) === '') history.replaceState(state, '', path)
+    else history.pushState(state, '', path)
+  }, [view, mode, docPage])
   useEffect(() => {
-    const back = () => setView(viewOf(location.pathname))
+    const back = () => {
+      const slug = docsSlugOf(location.pathname)
+      if (slug !== null) { setMode('docs'); setDocPage(slug || FIRST_DOC); return }
+      setMode('threads')
+      setView(viewOf(location.pathname))
+    }
     addEventListener('popstate', back)
     return () => removeEventListener('popstate', back)
   }, [])
+  // The transcript's scroll position, kept while Documentation mode hides it.
+  const threadScroll = useRef<HTMLDivElement | null>(null)
+  const savedScroll = useRef<number | null>(null)
+  const openDocs = (slug?: string) => {
+    if (mode === 'threads') savedScroll.current = threadScroll.current?.scrollTop ?? null
+    if (slug) setDocPage(slug)
+    setMode('docs')
+  }
+  const leaveDocs = () => setMode('threads')
+  /** Somewhere in Threads mode (a session, a new one): leaves Documentation mode on the way. */
+  const go = (v: View) => { setMode('threads'); setView(v) }
+  // Escape is Back to app, after any menu or palette open over the page has closed.
+  useLayer(mode === 'docs', leaveDocs)
   const [palette, setPalette] = useState(false)
   // api.frog.toys/account and /billing land here as ?settings=account|billing (as does Stripe).
   const [settingsTab, setSettingsTab] = useState<SettingsTab>(() => new URLSearchParams(location.search).get('settings') === 'billing' ? 'Billing' : 'Account')
@@ -190,9 +234,9 @@ export default function App() {
     return { id: s.id, title: keptTitle(s.id, t.title, s.title), waiting, finished: !t.running && t.ended?.type === 'complete' }
   }), [sessions, thread, threads])
   const signalKey = JSON.stringify(signals)
-  useAlerts(useMemo(() => signals, [signalKey]), useCallback((id: string) => setView({ kind: 'session', id }), [])) // eslint-disable-line react-hooks/exhaustive-deps
+  useAlerts(useMemo(() => signals, [signalKey]), useCallback((id: string) => { setMode('threads'); setView({ kind: 'session', id }) }, [])) // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => setDrawer(false), [view])
+  useEffect(() => setDrawer(false), [view, mode, docPage])
   // The sidebar folds away on wide screens (⌘\\), as on the Mac; remembered per browser.
   const [collapsed, setCollapsedState] = useState(() => { try { return localStorage.getItem('frog.sidebarCollapsed') === '1' } catch { return false } })
   const setCollapsed = (v: boolean) => { setCollapsedState(v); try { localStorage.setItem('frog.sidebarCollapsed', v ? '1' : '0') } catch { /* private mode */ } }
@@ -351,21 +395,25 @@ export default function App() {
       if (e.key === 'k') { e.preventDefault(); setPalette((p) => !p) }
       if (e.key === '\\') { e.preventDefault(); setCollapsedState((c) => { try { localStorage.setItem('frog.sidebarCollapsed', c ? '0' : '1') } catch { /* private mode */ } return !c }) }
       if (!key) return
-      if (e.key === 'n') { e.preventDefault(); setView({ kind: 'new' }) }
+      if (e.key === 'n') { e.preventDefault(); setMode('threads'); setView({ kind: 'new' }) }
       if (e.key === ',') { e.preventDefault(); setSettings(true) }
+      // A permission card hidden under Documentation mode isn't answered from there.
+      if (mode !== 'threads') return
       if (current && ct?.ask && e.key === 'Enter') { e.preventDefault(); decide(current.id, true) }
       if (current && ct?.ask && e.key === '.') { e.preventDefault(); decide(current.id, false) }
     }
     window.addEventListener('keydown', k)
     return () => window.removeEventListener('keydown', k)
-  }, [key, current, ct, decide])
+  }, [key, current, ct, decide, mode])
 
   const commands: Command[] = [
-    { id: 'c-new', label: 'New session', hint: '⌘N', run: () => key && setView({ kind: 'new' }) },
-    { id: 'c-repo', label: 'Connect a repo', run: () => key && setView({ kind: 'new', pick: true }) },
+    { id: 'c-new', label: 'New session', hint: '⌘N', run: () => key && go({ kind: 'new' }) },
+    { id: 'c-repo', label: 'Connect a repo', run: () => key && go({ kind: 'new', pick: true }) },
     { id: 'c-settings', label: 'Settings', hint: '⌘,', run: () => key && setSettings(true) },
+    { id: 'c-docs', label: 'Documentation', run: () => openDocs() },
+    ...DOCS.map((p) => ({ id: `d-${p.slug}`, label: p.title, hint: 'Documentation', run: () => openDocs(p.slug) })),
     ...(current ? [
-      { id: 'c-rename', label: 'Rename session', run: () => setRenaming(current.id) },
+      { id: 'c-rename', label: 'Rename session', run: () => { setMode('threads'); setRenaming(current.id) } },
       { id: 'c-compact', label: 'Compact the conversation', run: () => { setCompacting((c) => ({ ...c, [current.id]: (thread(current.id).marks ?? []).length + 1 })); cloud?.send(current.id, { op: 'compact' }) } },
       { id: 'c-archive', label: current.archived ? 'Unarchive session' : 'Archive session', run: () => archive(current, !current.archived) },
       { id: 'c-delete', label: 'Delete session', run: () => remove(current) },
@@ -463,14 +511,15 @@ export default function App() {
   const cs = current ? conn[current.id] : undefined
 
   return (
-    <div className={`win ${drawer ? 'drawer' : ''}${collapsed ? ' collapsed' : ''}`}>
-      <div className="side-scrim" onClick={() => setDrawer(false)} />
-      <aside className="side f-glass">
-        <div className="brand"><Mark /><b style={{ flex: 1 }}>Frog</b><span id="side-acts" className="side-acts" />{sideToggle(true)}</div>
+    <Shell mode={mode} className={`win ${drawer ? 'drawer' : ''}${collapsed ? ' collapsed' : ''}`}
+      before={<div className="side-scrim" onClick={() => setDrawer(false)} />}
+      brand={<div className="brand"><Mark /><b style={{ flex: 1 }}>Frog</b><span id="side-acts" className="side-acts" style={mode === 'threads' ? undefined : { display: 'none' }} />{sideToggle(true)}</div>}
+      side={{ threads: <>
         <Nav />
         <SessionList sessions={sessions} thread={thread} title={title} current={current?.id ?? null} error={listError}
           onOpen={(id) => { setView({ kind: 'session', id }); setDrawer(false) }} onClear={clear} onSearch={() => setPalette(true)}
           onRename={(s) => setRenaming(s.id)} onArchive={archive} onDelete={remove} />
+        <DocsRow onOpen={() => openDocs()} />
         <button type="button" className="row" onClick={() => setSettings(true)} title="Settings ⌘,">
           {account?.handle ? <img className="avatar" src={`https://github.com/${encodeURIComponent(account.handle)}.png?size=56`} alt="" width={28} height={28} />
               : account?.image ? <img className="avatar" src={account.image} alt="" width={28} height={28} referrerPolicy="no-referrer" /> : <Mark size={28} />}
@@ -479,8 +528,8 @@ export default function App() {
             <div className="det" style={{ color: account && account.credit_cents <= 0 ? 'var(--warn)' : undefined }}>{account ? creditLine(account) : DEV_KEY ? 'local gateway' : ''}</div>
           </div>
         </button>
-      </aside>
-
+      </>, docs: <DocsSidebar pages={DOCS} current={docPage} version={VERSION} onBack={leaveDocs} onOpen={openDocs} /> }}
+      main={{ docs: <DocsPage pages={DOCS} slug={docPage} onOpen={openDocs} bar={<><Burger />{collapsed && sideToggle(false)}</>} />, threads:
       <main className="main">
         {current ? (<div className="titlebar">
           <Burger />
@@ -527,7 +576,13 @@ export default function App() {
           </div>
         )}
         {view.kind === 'session' && current && ct && (<>
-          <div className="scroll" ref={(el) => { if (el) el.scrollTop = el.scrollHeight }}><div className="col">
+          <div className="scroll" ref={(el) => {
+            threadScroll.current = el
+            if (!el || mode !== 'threads') return
+            // Back from Documentation mode: where you were. Otherwise the newest message.
+            if (savedScroll.current !== null) { el.scrollTop = savedScroll.current; savedScroll.current = null; return }
+            el.scrollTop = el.scrollHeight
+          }}><div className="col">
             {cs?.state === 'refused' && <div role="status" className="banner warn"><span style={{ flex: 1 }}>Update Frog to continue. This sandbox speaks a different protocol than this page.</span>{safeHref(cs.refused.upgrade) ? <a className="f-btn f-btn--bordered f-btn--small" href={safeHref(cs.refused.upgrade)!.href} style={{ textDecoration: 'none' }}>Update</a> : <button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => location.reload()}>Reload</button>}</div>}
             {cs?.state === 'closed' && cs.code === 4004 && <div role="status" className="banner warn">This session was deleted.</div>}
             {ct.turns.length === 0 && !opening[current.id] && cs?.state !== 'refused' && current.state !== 'error' && (
@@ -615,16 +670,15 @@ export default function App() {
           </div>
         )}
 
-      </main>
-
-      {view.kind === 'session' && current && ct && inspector && (
+      </main> }}
+      inspector={view.kind === 'session' && current && ct && inspector && (
         <Inspector onClose={() => setInspector(false)} thread={ct} branch={current.branch} hasPr={!!current.pr} onCommit={() => commit(current)} onPr={current.repo ? () => push(current) : undefined} machines={machines} send={(op) => cloud?.send(current.id, op)} preview={preview} pane={inspectorTab} />
       )}
-
-      {palette && <Palette commands={commands} sessions={sessions} onOpen={(id) => setView({ kind: 'session', id })} onClose={() => setPalette(false)}
+      after={<>
+      {palette && <Palette commands={commands} sessions={sessions} onOpen={(id) => go({ kind: 'session', id })} onClose={() => setPalette(false)}
         text={(id) => thread(id).turns.flatMap((u) => [u.input, ...u.entries.filter((e) => e.kind === 'message').map((e) => e.text)]).join('\n')} />}
       {settings && <Settings account={account} apiKey={key && !DEV_KEY ? key : undefined} tab={settingsTab} models={models} machines={machines} onTopUp={key && !DEV_KEY ? (d) => topUp(key, d) : undefined} onSubscribe={key && !DEV_KEY ? (p) => subscribe(key, p) : undefined} onConnect={key && !DEV_KEY ? (p) => leave(null, p, key, false) : undefined} onSignOut={() => { if (key && !DEV_KEY) signOut(key); signedOut() }} onClose={() => setSettings(false)} />}
       {toast && <div className="toast" role="status">{toast}</div>}
-    </div>
+      </>} />
   )
 }
