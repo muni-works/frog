@@ -1,6 +1,10 @@
 # Frog Cloud
 
-Frog Cloud runs models for you, so a session doesn't need a fast machine. You pay for what you use: each model has a price in dollars per million tokens, for the tokens it reads and the tokens it writes. The model menu shows each model's price, and [frog.toys/pricing](https://frog.toys/pricing) lists them all.
+Frog Cloud runs models for you, so a session doesn't need a fast machine. You pay for what you use: each model has a price in dollars per million tokens, for the tokens it reads and the tokens it writes, and cached input (the part of the prompt the model has already seen, such as earlier turns) has its own lower price. [frog.toys/pricing](https://frog.toys/pricing) lists them all.
+
+Models served through OpenRouter cost what each request cost there plus 10%. The menu shows where each model's price starts; a request OpenRouter routes to a dearer provider costs more. For GLM-5.3 Flash and DeepSeek V4.1 Flash, that is capped at the model maker's own price plus 10%.
+
+Plans, Pro, Max and Ultra, include $5, $25 and $50 of usage a week. Past it, turns go on using credit at the same prices. Signing up and connecting GitHub gives $1 of credit, once per GitHub account.
 
 <!-- only: web -->
 On the web, every session runs in Frog Cloud: the model, and a sandbox with a copy of your repo where Frog runs commands and edits files.
@@ -17,7 +21,7 @@ frog login            # signs in with GitHub in your browser; --google for Googl
 
 `frog login` saves this machine's key in the Keychain. On Linux, with no Keychain, it prints an `export FROG_API_KEY=…` line instead. `frog logout` deletes the saved key. Signing in needs a browser on the same machine.
 
-Frog Cloud's models are `cloud/<model>`; `frog --models` lists them. `frog account` shows which model a new session starts on and whether it's billed, without using the network.
+Frog Cloud's models are `cloud/<model>`; `frog --models` lists them. `frog account` shows the default model you set (`FROG_MODEL`, then `default_model`) and whether it's billed, without using the network.
 <!-- end -->
 
 ## When Frog Cloud is busy

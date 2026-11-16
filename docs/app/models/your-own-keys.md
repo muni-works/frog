@@ -7,7 +7,7 @@ In the Mac app, a model that needs a key has Add Key… next to it.
 <!-- end -->
 
 <!-- only: web -->
-The web app uses Frog Cloud's models only. Your own keys work in the terminal.
+The web app uses Frog Cloud's models only. Your own keys work in the Mac app and the terminal.
 <!-- end -->
 
 <!-- only: terminal -->
@@ -18,11 +18,11 @@ The web app uses Frog Cloud's models only. Your own keys work in the terminal.
 | OpenRouter | `openrouter/<model>` | `OPENROUTER_API_KEY` |
 | Vercel AI Gateway | `vercel/<model>` | `AI_GATEWAY_API_KEY` |
 
-To store a key with Frog instead of in the environment:
+On macOS, to keep a key in the Keychain instead of the environment:
 
 ```sh
 echo "$KEY" | frog --set-key anthropic
 ```
 
-An empty key removes it. `frog --providers` shows which providers have a key.
+An empty key removes it. On Linux, use the environment variable. `frog --providers` shows which providers have a key.
 <!-- end -->

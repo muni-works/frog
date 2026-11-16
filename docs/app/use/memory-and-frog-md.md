@@ -10,10 +10,14 @@ Frog also reads `~/.config/frog/FROG.md` and `~/.claude/CLAUDE.md` for instructi
 
 ## Notes
 
-`/remember` followed by a note keeps it for this project. A sentence in a message that starts with "remember that" or "from now on" keeps a note too, and Frog says it did. `/memory` lists the notes and `/forget` deletes one, by its id or its text.
+`/remember` followed by a note keeps it. A sentence in a message that starts with "remember that" or "from now on" keeps a note too, and Frog says it did. `/memory` lists the notes and `/forget` deletes one, by its id or its text.
 
 Each session starts with a short index of your notes, marked as possibly out of date. Obvious secrets, such as API keys, tokens and passwords, are taken out before a note is saved.
 
+<!-- only: web -->
+Each web session runs in its own sandbox, so don't count on a note carrying over to another session.
+<!-- end -->
+
 <!-- only: mac, terminal -->
-Notes are markdown files under `~/.local/share/frog/memory/`, one folder for each project and one for notes that apply everywhere. `/remember --global` keeps a note for every project. You can edit the files by hand.
+Notes are kept for the project. They are markdown files under `~/.local/share/frog/memory/`, one folder for each project and one for notes that apply everywhere. `/remember --global` keeps a note for every project. You can edit the files by hand.
 <!-- end -->

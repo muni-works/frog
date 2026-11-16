@@ -3,7 +3,7 @@
 A model on your Mac is free to use, and your code doesn't leave the Mac.
 
 <!-- only: web -->
-Sessions on the web run in Frog Cloud, so they can't use a model on your Mac. The model menu lists your Mac's models under your machines; they run from the Mac app.
+Sessions on the web run in Frog Cloud, so they can't use a model on your Mac. Once your Mac is paired, the model menu lists its models; they run from the Mac app.
 <!-- end -->
 
 <!-- only: mac, terminal -->
@@ -22,7 +22,7 @@ On a Mac with Apple Intelligence turned on, Frog can use Apple's on-device model
 <!-- only: mac, terminal -->
 ## Ollama and LM Studio
 
-A model running in Ollama or LM Studio shows up in the model list while the app runs: `ollama/<model>` and `lmstudio/<model>`.
+Models installed in Ollama show up in the model list while Ollama runs, as `ollama/<model>`. A model in LM Studio is used as `lmstudio/<model>` when you name it, or when Frog picks a model on its own and LM Studio is running.
 <!-- end -->
 
 <!-- only: terminal -->
