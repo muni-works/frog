@@ -71,7 +71,7 @@ final class PillChurnBenchmarkTests: XCTestCase {
         window.isReleasedWhenClosed = false
         window.appearance = NSAppearance(named: .darkAqua)
         window.contentView = host
-        window.orderFront(nil)
+        window.orderInForTest()
         defer { window.close() }
 
         // The turn starts before counting: the window is the pill in a steady running turn,

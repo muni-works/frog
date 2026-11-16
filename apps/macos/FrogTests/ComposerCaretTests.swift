@@ -35,7 +35,7 @@ final class ComposerCaretTests: XCTestCase {
         let w = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
         w.isReleasedWhenClosed = false
         w.contentView = host
-        w.orderFront(nil)
+        w.orderInForTest()
         host.layoutSubtreeIfNeeded()
         pump(0.05)
         return (w, host)
@@ -190,7 +190,7 @@ final class ComposerCaretTests: XCTestCase {
         let w = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
         w.isReleasedWhenClosed = false
         w.contentView = host
-        w.orderFront(nil)
+        w.orderInForTest()
         defer { w.close() }
         host.layoutSubtreeIfNeeded()
         pump(0.05)

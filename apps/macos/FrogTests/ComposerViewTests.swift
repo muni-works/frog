@@ -16,7 +16,7 @@ final class ComposerViewTests: XCTestCase {
         let w = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
         w.isReleasedWhenClosed = false
         w.contentView = host
-        w.orderFront(nil)
+        w.orderInForTest()
         host.layoutSubtreeIfNeeded()
         pump(0.25)
         return (w, host)

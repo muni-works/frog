@@ -69,7 +69,7 @@ final class PerfProbeTests: XCTestCase {
         let view = TranscriptView(conversation: c, actions: TurnActions(fork: { _ in }, rewind: { _ in }), jump: .constant(nil), onVisibleTurns: { _ in })
         let host = NSHostingView(rootView: view); host.frame = CGRect(x: 0, y: 0, width: 900, height: 760)
         let w = NSWindow(contentRect: host.frame, styleMask: [.titled, .resizable], backing: .buffered, defer: false)
-        w.isReleasedWhenClosed = false; w.contentView = host; w.orderFront(nil); defer { w.close() }
+        w.isReleasedWhenClosed = false; w.contentView = host; w.orderInForTest(); defer { w.close() }
         pump(0.2); let mEmpty = mem()
         let ingest = ms { for t in 1...300 { turn(c, t) } }
         let firstLayout = ms { pump(0.001); host.layoutSubtreeIfNeeded(); w.displayIfNeeded() }
@@ -121,7 +121,7 @@ final class PerfProbeTests: XCTestCase {
             let host = NSHostingView(rootView: TranscriptView(conversation: c, actions: TurnActions(fork: { _ in }, rewind: { _ in }), jump: .constant(nil), onVisibleTurns: { _ in }))
             host.frame = CGRect(x: 0, y: 0, width: 900, height: 760)
             let w = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
-            w.isReleasedWhenClosed = false; w.contentView = host; w.orderFront(nil)
+            w.isReleasedWhenClosed = false; w.contentView = host; w.orderInForTest()
             if prior > 0 { for t in 1...prior { turn(c, t) } }
             pump(1.0)
             var c0 = cpu(); var t0 = Date(); pump(3.0)
@@ -149,7 +149,7 @@ final class PerfProbeTests: XCTestCase {
                 let host = NSHostingView(rootView: TranscriptView(conversation: c, actions: TurnActions(fork: { _ in }, rewind: { _ in }), jump: .constant(nil), onVisibleTurns: { _ in }))
                 host.frame = CGRect(x: 0, y: 0, width: 900, height: 760)
                 let w = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
-                w.isReleasedWhenClosed = false; w.contentView = host; w.orderFront(nil)
+                w.isReleasedWhenClosed = false; w.contentView = host; w.orderInForTest()
                 for t in 1...300 { turn(c, t) }
                 pump(1.0)
                 if round == 0, live { print("PROBE stream-begin"); fflush(stdout) }
@@ -209,7 +209,7 @@ final class PerfProbeTests: XCTestCase {
         let host = NSHostingView(rootView: TranscriptView(conversation: c, actions: TurnActions(fork: { _ in }, rewind: { _ in }), jump: .constant(nil), onVisibleTurns: { _ in }))
         host.frame = CGRect(x: 0, y: 0, width: 900, height: 760)
         let w = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
-        w.isReleasedWhenClosed = false; w.contentView = host; w.orderFront(nil); defer { w.close() }
+        w.isReleasedWhenClosed = false; w.contentView = host; w.orderInForTest(); defer { w.close() }
         for t in 1...300 { turn(c, t) }
         pump(1.0)
         send(c, #""turn_started","turn":900,"input":"go""#)
@@ -244,7 +244,7 @@ final class PerfProbeTests: XCTestCase {
             let controller = ComposerController()
             let host = NSHostingView(rootView: Box(text: "", controller: controller)); host.frame = CGRect(x: 0, y: 0, width: 700, height: 200)
             let w = NSWindow(contentRect: host.frame, styleMask: [.titled], backing: .buffered, defer: false)
-            w.isReleasedWhenClosed = false; w.contentView = host; w.orderFront(nil); pump(0.2)
+            w.isReleasedWhenClosed = false; w.contentView = host; w.orderInForTest(); pump(0.2)
             let line = "let value = compute(input, with: options) // a line of pasted code\n"
             let big = String(repeating: line, count: Int(mb * 1_048_576) / line.utf8.count)
             let m0 = mem()

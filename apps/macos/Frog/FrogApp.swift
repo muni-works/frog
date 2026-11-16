@@ -6,6 +6,8 @@ struct FrogApp: App {
     @NSApplicationDelegateAdaptor(QuitGuard.self) private var quitGuard
 
     init() {
+        // First, before anything reads a path: a test host gets a home of its own.
+        TestHome.isolate()
         // One frog per build: a second copy hands its folder or URL to the running one and
         // quits; a different build (debug vs the installed app) runs alongside.
         SingleInstance.handOff()

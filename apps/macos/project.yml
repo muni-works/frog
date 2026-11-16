@@ -93,6 +93,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: toys.frog.tests
         GENERATE_INFOPLIST_FILE: YES
+        # Fails any test that shows a window or activates the host (FrogTests/BackgroundHost.swift).
+        INFOPLIST_KEY_NSPrincipalClass: FrogTestsBackgroundGuard
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Frog.app/Contents/MacOS/Frog"
         BUNDLE_LOADER: "$(TEST_HOST)"
 schemes:

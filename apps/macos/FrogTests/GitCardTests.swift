@@ -19,7 +19,7 @@ final class GitCardTests: XCTestCase {
             box.view = v
             return box
         }
-        window.orderFront(nil)
+        window.orderInForTest()
     }
 
     override func tearDown() {
