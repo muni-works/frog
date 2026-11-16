@@ -441,15 +441,12 @@ final class TranscriptSwitchBenchmarkTests: XCTestCase {
             // The stack between fills: what's on screen and a little around it (13–18 rows with
             // the shipped verbosity and density, one line each).
             XCTAssertLessThanOrEqual(onScreen, Self.mountedBudget, "built more than the rows on screen")
-            // A fill builds two screens for a moment: when the older rows go in, the stack's
-            // first layout runs at the offset it had, at the top, and builds the new first
-            // screenful before the keep-scroll takes the view back to where it was
-            // (`showEarlier`). Measured 35–38 rows against 18 between fills (2026-11-16): 24 row
-            // bodies a fill step against 8 a step, 6 fills. Neither scrolling in the same
-            // update nor anchoring size changes at the bottom during the fill avoided it. The
-            // peak once read 22 against a flat 30 only because the developer's own verbose,
-            // compact rows were taller (the test host read the app's defaults until #392).
-            XCTAssertLessThanOrEqual(TranscriptProbe.peakMountedRows, 2 * onScreen + 4, "a fill built more than two screens of rows")
+            // Nor while older rows go in: the stack keeps the row at the top in place and lays
+            // the new rows out around it (`showEarlier`). Before, its first layout ran at the
+            // offset it had, at the top, and built the new first screenful nobody saw: 35–38
+            // rows at every fill against 18 between them, 24 row bodies a fill step against 8.
+            // Now 20 (the open's own peak) and 19 (2026-11-16).
+            XCTAssertLessThanOrEqual(TranscriptProbe.peakMountedRows, onScreen + 6, "a fill built rows nobody saw")
         }
     }
 
