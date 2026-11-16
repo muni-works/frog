@@ -258,6 +258,26 @@ final class Panes {
     /// Tells the window its first pane moved to another folder (restored on relaunch).
     @ObservationIgnored var onPrimaryFolder: ((URL) -> Void)?
 
+    /// What the window's shell shows (docs/design/app-shell.md): the threads, or the
+    /// documentation. Switching only flips this: the panes stay as they are underneath, so
+    /// coming back finds the same thread, scroll position, draft and inspector tab, and a
+    /// running turn never notices.
+    enum ShellMode: Equatable { case threads, docs }
+    private(set) var mode = ShellMode.threads
+    /// The documentation page last shown, for the life of the window.
+    private(set) var docsPage: String?
+
+    /// Documentation mode, on `slug` if given, else on the page last shown.
+    func showDocs(_ slug: String? = nil) {
+        if let slug { docsPage = slug }
+        mode = .docs
+    }
+
+    /// Back to the threads, exactly as they were left.
+    func backToApp() {
+        mode = .threads
+    }
+
     init(_ workspace: Workspace) {
         let first = Pane(workspace: workspace)
         items = [first]

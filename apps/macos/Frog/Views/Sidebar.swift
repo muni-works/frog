@@ -96,6 +96,7 @@ struct SessionList: View {
     @Environment(\.openSessionInSplit) private var openInSplit
     @Environment(\.paneNumbers) private var paneNumbers
     @Environment(\.switchFolder) private var switchFolder
+    @Environment(\.showDocs) private var showDocs
 
     /// Conversations shown per project before "Show more".
     static let groupLimit = 5
@@ -241,6 +242,13 @@ struct SessionList: View {
                 if abs(new - old) > 1 { GitCardController.shared.close() }
             }
             footer
+            if let showDocs {
+                Button(action: showDocs) { ShellRow(symbol: "book", title: "Documentation") }
+                    .buttonStyle(.plain)
+                    .help("Frog documentation")
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 2)
+            }
             UserFooter()
         }
         .frame(maxHeight: maxHeight)

@@ -88,3 +88,16 @@ test("platform and version parsing", () => {
   assert.equal(appVersionOf("Frog/0.3.0-rc1 Sparkle/2"), "0.3.0-rc1");
   assert.equal(appVersionOf("curl/8"), "unknown");
 });
+
+test("/docs/<slug> serves the app's page, like /s/<id>; other paths stay 404", async () => {
+  const seen = [];
+  const ASSETS = { fetch: async (u) => { seen.push(new URL(u).pathname); return new Response("<!doctype html>app"); } };
+  for (const path of ["/docs/install", "/docs/web-search-and-fetch/", "/docs"]) {
+    const r = await worker.fetch(new Request(`https://frog.toys${path}`), { ASSETS });
+    assert.equal(r.status, 200, path);
+    assert.equal(await r.text(), "<!doctype html>app");
+  }
+  assert.deepEqual(seen, ["/", "/", "/"]);
+  const miss = await worker.fetch(new Request("https://frog.toys/docs/a/b"), { ASSETS });
+  assert.equal(miss.status, 404);
+});
