@@ -25,7 +25,7 @@ struct ToolPane: Identifiable, Equatable {
     var pending: Bool { id.hasPrefix(PaneHub.pendingPrefix) }
 }
 
-/// What the timeline can show for a turn: the preview as it was when the turn ended.
+/// What the timeline can show for a turn: the preview as it was when the turn began.
 struct Checkpoint: Equatable {
     var turn: UInt64
     var image: PlatformImage
@@ -221,6 +221,20 @@ final class PaneHub {
     /// Keep a screenshot of the preview for `turn` (the engine asked with `for: checkpoint`).
     func checkpoint(_ image: PlatformImage, turn: UInt64) {
         checkpoints[turn] = Checkpoint(turn: turn, image: image)
+    }
+
+    /// Turns with a screenshot, oldest first.
+    var checkpointTurns: [UInt64] { checkpoints.keys.sorted() }
+
+    /// Compare the preview against `turn`'s screenshot, or by default the newest one up to the
+    /// current turn (taken as that turn began: the app as it was before the turn's changes).
+    /// With none saved it still opens, on the current turn, so the preview can say so.
+    func compare(_ turn: UInt64? = nil) {
+        comparing = turn
+            ?? checkpointTurns.last { $0 <= (currentTurn ?? .max) }
+            ?? checkpointTurns.last
+            ?? currentTurn
+            ?? 0
     }
 
     /// The image behind a checkpoint record, from the session folder.

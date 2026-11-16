@@ -262,6 +262,14 @@ struct PaneView: View {
                         conversation: conversation,
                         visible: ui.visibleTurns,
                         marked: ui.findShown ? Set(ui.matches(in: conversation.turns)) : [],
+                        checkpoints: Set(conversation.panes.checkpoints.keys),
+                        hasPreview: !conversation.panes.previews.isEmpty,
+                        compare: { turn in
+                            let hub = conversation.panes
+                            hub.compare(turn)
+                            if let p = hub.previews.first { hub.selected = .pane(p.id) }
+                            if !changesVisible { toggleChanges() }
+                        },
                         labelRoom: gutter,
                         actions: turnActions,
                         jump: { ui.jumpTo = $0 }

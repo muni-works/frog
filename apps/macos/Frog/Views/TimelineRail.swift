@@ -11,6 +11,10 @@ struct TimelineRail: View {
     var marked: Set<TurnState.ID> = []
     /// Turns with a preview screenshot: badged with a camera, and comparable in the preview.
     var checkpoints: Set<UInt64> = []
+    /// Whether a preview is open to compare a checkpoint against.
+    var hasPreview = false
+    /// Open the preview's then/now on a turn's screenshot; nil hides the menu item.
+    var compare: ((UInt64) -> Void)? = nil
     /// Free width beside the rail (between the transcript's column and it): chapter names
     /// show there when there's enough of it.
     var labelRoom: CGFloat = 0
@@ -277,6 +281,12 @@ struct TimelineRail: View {
                 Divider()
                 Button("Fork After This Turn", systemImage: "arrow.triangle.branch") { actions.fork?(n) }
                 Button("Rewind to Before This Turn…", systemImage: "arrow.uturn.backward") { confirmRewind = n }
+            }
+            if let n = t.number, let compare, hasPreview || checkpoints.contains(n) {
+                Divider()
+                Button(hasPreview ? "Compare with Now" : "Compare with Now (No Preview Open)",
+                       systemImage: "clock.arrow.circlepath") { compare(n) }
+                    .disabled(!hasPreview)
             }
         }
     }
