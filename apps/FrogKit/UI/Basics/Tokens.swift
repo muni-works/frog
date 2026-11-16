@@ -39,6 +39,8 @@ enum Tokens {
     static let textQuaternary = Color(light: (0.502, 0.502, 0.502, 1), dark: (0.502, 0.502, 0.502, 1))
     /// THE accent: running, selected, verified, send. The only decorative color.
     static let accent = Color(light: (0.18, 0.62, 0.31, 1), dark: (0.345, 0.8, 0.435, 1))
+    /// Glyphs on a frog-green fill.
+    static let onAccent = Color(light: (1.0, 1.0, 1.0, 1), dark: (0.051, 0.102, 0.063, 1))
     /// Needs-you on the Mac (amber). Deprecated; use notice instead.
     static let signal = Color(light: (0.8, 0.522, 0.122, 1), dark: (0.898, 0.647, 0.294, 1))
     /// Failed on the Mac. Deprecated; use warn instead.

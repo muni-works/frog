@@ -50,7 +50,7 @@ final class TokensTests: XCTestCase {
         // for everyone who ran the suite after it landed on main.
         "line": Tokens.line,
         "text": Tokens.text, "textSecondary": Tokens.textSecondary, "textTertiary": Tokens.textTertiary,
-        "textQuaternary": Tokens.textQuaternary, "accent": Tokens.accent, "signal": Tokens.signal, "fail": Tokens.fail,
+        "textQuaternary": Tokens.textQuaternary, "accent": Tokens.accent, "onAccent": Tokens.onAccent, "signal": Tokens.signal, "fail": Tokens.fail,
         "warn": Tokens.warn, "placeLocal": Tokens.placeLocal, "placeCloud": Tokens.placeCloud,
         "prFailing": Tokens.prFailing, "prChecks": Tokens.prChecks, "prDraft": Tokens.prDraft,
         "prApproved": Tokens.prApproved, "prClosed": Tokens.prClosed, "prMerged": Tokens.prMerged,
