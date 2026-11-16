@@ -176,11 +176,15 @@ impl Agent {
             return Decision::Allow;
         }
         // A sandboxed command can only write inside the project and can't read credentials,
-        // so it runs without asking; leaving the sandbox always asks.
+        // so it runs without asking; leaving the sandbox always asks. The exception is what
+        // the fence doesn't contain (a push, a publish, discarded changes, rewritten history,
+        // a killed process, a system setting: `auto::uncontained`): that is judged below like
+        // any other command, by the classifier in auto mode and on a card otherwise.
         if name == "Bash"
             && self.ctx.shell_sandbox.is_some()
             && !leaves_sandbox
             && egress_ask.is_none()
+            && crate::auto::uncontained(name, input, &self.ctx.root).is_none()
         {
             self.decision(item, "sandbox", "allow", "sandboxed", 0);
             return Decision::Allow;
