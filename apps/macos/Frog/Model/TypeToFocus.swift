@@ -130,6 +130,8 @@ enum TypeToFocus {
         guard let window = event.window, window.isKeyWindow,
               let panes = registered.first(where: { $0.value.window === window })?.value.panes
         else { return }
+        // Documentation mode: the composer is out of sight, so a key isn't for it.
+        guard panes.mode == .threads else { return }
         let ui = panes.focused.ui
         // The ⌘K palette and find bar hold the window's keys.
         guard !ui.paletteShown, !ui.findShown, let composer = ui.composer, composer.textView != nil

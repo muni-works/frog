@@ -326,7 +326,52 @@ struct WorkspaceView: View {
     }
 
     private func openInFocused(_ s: SessionInfo) {
+        panes.backToApp()
         panes.open(s, in: focused, window: window)
+    }
+
+    // MARK: Documentation
+
+    private var inDocs: Bool { panes.mode == .docs }
+    private var docs: AppDocs? { AppDocs.bundled }
+    /// The page on screen: the one last shown, else the first.
+    private var docsPage: AppDocs.Page? { docs?.page(panes.docsPage) ?? docs?.pages.first }
+
+    /// Documentation mode, on a page if given. The panes stay mounted underneath; only the
+    /// keyboard leaves the composer, so typing doesn't land in a draft you can't see.
+    private func showDocs(_ slug: String? = nil) {
+        if !inDocs { window?.makeFirstResponder(nil) }
+        panes.showDocs(slug ?? panes.docsPage ?? docs?.pages.first?.slug)
+    }
+
+    /// Back to the thread, the composer taking the keyboard back.
+    private func backToApp() {
+        guard inDocs else { return }
+        panes.backToApp()
+        focused.ui.focusComposer()
+    }
+
+    private var docsCommands: [PaletteCommand] {
+        guard let docs else { return [] }
+        var out = [PaletteCommand(id: "docs", title: "Documentation", subtitle: "Help", symbol: "book") { showDocs() }]
+        for page in docs.pages {
+            out.append(PaletteCommand(id: "docs-\(page.slug)", title: page.title, subtitle: "Documentation · \(page.section)", symbol: "book") {
+                showDocs(page.slug)
+            })
+        }
+        return out
+    }
+
+    /// The page, opaque over the panes right of the sidebar.
+    @ViewBuilder
+    private var docsLayer: some View {
+        if inDocs {
+            DocsPageView(docs: docs, page: docsPage) { showDocs($0) }
+                .padding(.leading, extent(sessions: docked.sessions))
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .background(FrogCanvas.color)
+                .transition(.opacity)
+        }
     }
 
     /// The phone offered the conversation you're reading here, and back: open it focused.
@@ -361,8 +406,14 @@ struct WorkspaceView: View {
                 .frame(width: max(0, place.frame.width), height: max(0, place.frame.height), alignment: .topLeading)
                 .clipped()
                 .offset(x: place.frame.minX, y: place.frame.minY)
+                // Under the documentation, still mounted: its turn keeps running and its
+                // scroll, draft and inspector are there when you come back.
+                .allowsHitTesting(!inDocs)
+                .accessibilityHidden(inDocs)
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
             }
+
+            docsLayer
 
             GeometryReader { geo in
                 let room = max(120, geo.size.height - Self.margin * 2)
@@ -376,8 +427,9 @@ struct WorkspaceView: View {
             .environment(\.switchFolder) { panes.switchFolder($0, in: focused) }
             .environment(\.startConversation) { panes.start($1, in: $0, pane: focused) }
             .environment(\.paneNumbers, numbers)
+            .environment(\.showDocs) { showDocs() }
 
-            ForEach(panes.layout.dividers(in: region(sessions: docked.sessions), maximizing: panes.maximized)) { d in
+            ForEach(inDocs ? [] : panes.layout.dividers(in: region(sessions: docked.sessions), maximizing: panes.maximized)) { d in
                 PaneDividerHandle(divider: d, resizing: $resizing) { t in
                     panes.moveDivider(d, to: t, minimum: panes.minimum(paneWidth: Self.minPane, forToolPanes: Self.minToolPane, beside: d))
                 } equalize: {
@@ -394,7 +446,7 @@ struct WorkspaceView: View {
                     CommandPalette(commands: workspace.commands(showChanges: Binding(
                         get: { focused.showChanges },
                         set: { _ in toggleChanges(focused) }
-                    ))) {
+                    )) + docsCommands) {
                         focused.ui.paletteShown = false
                     }
                     .padding(.top, 80)
@@ -443,7 +495,9 @@ struct WorkspaceView: View {
         .onChange(of: workspace.selection) { peekSessions = false }
         .onChange(of: panes.focusedID) { peekSessions = false }
         .onExitCommand {
-            if let maxed = panes.maximizedPane {
+            if inDocs {
+                backToApp()
+            } else if let maxed = panes.maximizedPane {
                 panes.toggleMaximized(maxed)
             } else if focused.ui.findShown {
                 focused.ui.findShown = false
@@ -458,6 +512,7 @@ struct WorkspaceView: View {
             showTerminal: showTerminal, showPreview: showPreview, toggleInspect: toggleInspect,
             sessionsShown: sessionsVisible, changesShown: changesVisible(focused),
             newChat: {
+                panes.backToApp()
                 panes.switchFolder(nil, in: focused)
                 focused.ui.focusComposer()
             },
@@ -465,8 +520,12 @@ struct WorkspaceView: View {
             closePane: panes.isSplit ? { panes.close(focused) } : nil,
             focusPane: panes.isSplit ? { panes.focus(step: $0) } : nil,
             sidebarOrder: sidebarOrder,
-            openSidebarSession: { openInFocused($0) }
+            openSidebarSession: { openInFocused($0) },
+            showDocs: { showDocs() }
         ))
+        // ⌘L and friends ask for the composer: that's a way back to the thread.
+        .onChange(of: focused.ui.focusComposerRequest) { if inDocs { panes.backToApp() } }
+        .animation(Motion.quick(reduced: reduceMotion), value: panes.mode)
         // The phone asked for a conversation: here if this pane is a blank chat, else beside it,
         // so nothing on screen is replaced.
         .onReceive(NotificationCenter.default.publisher(for: OpenRequest.name)) { note in
@@ -539,7 +598,7 @@ struct WorkspaceView: View {
                         Button("Split Down") { split(nil, .bottom) }
                     }
                     .help("Split pane (⌘\\)")
-                    .disabled(!panes.canSplit)
+                    .disabled(!panes.canSplit || inDocs)
             }
             ToolbarItem(placement: .primaryAction) {
                 Button("Commands", systemImage: "command") { focused.ui.paletteShown.toggle() }
@@ -549,7 +608,7 @@ struct WorkspaceView: View {
             ToolbarItem(placement: .primaryAction) {
                 Button("Inspector", systemImage: "sidebar.right") { toggleChanges(focused) }
                     .help("Inspector: changes, terminal, preview (⌥⌘0)")
-                    .disabled(focused.conversation == nil)
+                    .disabled(focused.conversation == nil || inDocs)
             }
         }
     }
@@ -559,7 +618,20 @@ struct WorkspaceView: View {
     /// The session list, or the rail it folds to.
     @ViewBuilder
     private func sessions(room: CGFloat) -> some View {
-        if sessionsVisible {
+        if inDocs {
+            if sessionsVisible {
+                DocsSidebar(docs: docs, selected: docsPage?.slug, maxHeight: room,
+                            open: { showDocs($0) }, back: backToApp, collapse: toggleSessions)
+                    .frame(width: Self.sessionsWidth)
+                    .background(Tokens.sidebar, in: .rect(cornerRadius: 12))
+                    .glassEffectID("sessions", in: glass)
+                    .shadow(color: .black.opacity(peekSessions ? 0.35 : 0), radius: 24, y: 10)
+            } else if !compact {
+                DocsRail(back: backToApp, expand: toggleSessions)
+                    .background(Tokens.sidebar, in: .rect(cornerRadius: 12))
+                    .glassEffectID("sessions", in: glass)
+            }
+        } else if sessionsVisible {
             SessionList(workspace: workspace, maxHeight: room) { toggleSessions() }
                 .frame(width: Self.sessionsWidth)
                 // One look: an opaque panel one step off the canvas (#0a0a0a, 12 pt radius), not
@@ -590,6 +662,7 @@ extension View {
 
 extension WorkspaceView {
     private var windowTitle: String {
+        if panes.mode == .docs { return "Documentation" }
         // The mirror (see `Workspace.currentTitle`), not the conversation: the root body
         // reading the streaming conversation re-evaluated per delta to redraw a title that
         // only changes when the engine names the session.
@@ -605,7 +678,16 @@ extension WorkspaceView {
 
     /// The title and its ⌄ menu. The menu's content builds when it opens; the label reads the
     /// mirror, not the streaming conversation.
+    @ViewBuilder
     private var titleBar: some View {
+        if panes.mode == .docs {
+            Text(windowTitle).font(.frog(size: 13, weight: .semibold)).lineLimit(1).fixedSize()
+        } else {
+            threadTitleBar
+        }
+    }
+
+    private var threadTitleBar: some View {
         Menu {
             if let c = workspace.conversation { titleMenu(c) }
         } label: {
