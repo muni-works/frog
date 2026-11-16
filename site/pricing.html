@@ -94,7 +94,7 @@
     <p>Models served through OpenRouter are billed at what each request cost there plus 10%. Prices per million tokens. Cached input is the part of the prompt the model has already seen, like earlier turns of the same conversation.</p>
     <div class="table">
       <table>
-        <thead><tr><th>Model</th><th class="n">Input</th><th class="n">Cached input</th><th class="n">Output</th></tr></thead>
+        <thead><tr><th>Model</th><th class="n">Input, from</th><th class="n">Cached input, from</th><th class="n">Output, from</th></tr></thead>
         <tbody>
           <tr data-model="qwen3-coder-next"><td>Qwen3 Coder Next<span class="det">via OpenRouter</span></td><td class="n">$0.132</td><td class="n">$0.077</td><td class="n">$0.88</td></tr>
           <tr><td>Qwen3 8B<span class="det">Frog Cloud GPUs</span></td><td class="n">$0.05</td><td class="n">$0.005</td><td class="n">$0.20</td></tr>
@@ -104,7 +104,7 @@
         </tbody>
       </table>
     </div>
-    <p class="note">The same list the apps show, from <code>api.frog.toys/v1/models</code>. OpenRouter prices move, so this table loads its current list price plus 10%. A request can cost more than the table when OpenRouter routes it to another provider; you pay what that request cost plus 10%.</p>
+    <p class="note">The same list the apps show, from <code>api.frog.toys/v1/models</code>. OpenRouter prices move, so this table loads where each model's price starts today: its lowest current list price plus 10%. A request costs more than that when OpenRouter routes it to a dearer provider; you pay what that request cost plus 10%.</p>
   </section>
 
   <section>
