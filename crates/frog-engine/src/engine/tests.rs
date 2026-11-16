@@ -12838,6 +12838,73 @@ async fn a_failed_second_pass_cards() {
     assert!(out.contains("auto mode denied"), "{out}");
 }
 
+/// Auto mode, sandbox on: a push no longer takes the sandbox's free pass. It goes to the
+/// second pass, which clears it when the request covers it (the user asked for the push) and
+/// otherwise denies it with a note, never a card.
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn auto_mode_judges_a_sandboxed_push_instead_of_waving_it_through() {
+    let layer_of = |evs: &[Envelope], id: &str| {
+        evs.iter().find_map(|e| match &e.event {
+            Event::PermissionDecision { item, layer, .. } if item == id => Some(layer.clone()),
+            _ => None,
+        })
+    };
+    // Cleared: the second pass says the request covers it, so it runs (and fails by itself:
+    // the folder isn't a git repository).
+    let wanted = format!("wanted-{}", new_id());
+    crate::auto::script_rejudge(
+        &wanted,
+        crate::auto::Verdict::Allow("the user asked for the push".into()),
+    );
+    let script = vec![
+        bash_call("push", &format!("git push origin {wanted}")),
+        reply(vec![text("done")], Stop::End),
+    ];
+    let mut h = engine_deleg(
+        script,
+        Some(Config {
+            hermetic: true,
+            ..Config::default()
+        }),
+    );
+    caps(&h, true);
+    let evs = loop_collect(&mut h, |_, _| {}).await;
+    shutdown(h).await;
+    assert_eq!(asked(&evs), 0, "auto mode never cards: {:?}", names(&evs));
+    assert_ne!(
+        layer_of(&evs, "push").as_deref(),
+        Some("sandbox"),
+        "the sandbox waved it through"
+    );
+    assert_ne!(outcome_of(&evs, "push"), Some(ToolOutcome::Denied));
+
+    // Still flagged: denied with a note.
+    let stray = format!("stray-{}", new_id());
+    crate::auto::script_rejudge(
+        &stray,
+        crate::auto::Verdict::Ask("nobody asked for a push".into()),
+    );
+    let script = vec![
+        bash_call("push", &format!("git push origin {stray}")),
+        reply(vec![text("done")], Stop::End),
+    ];
+    let mut h = engine_deleg(
+        script,
+        Some(Config {
+            hermetic: true,
+            ..Config::default()
+        }),
+    );
+    caps(&h, true);
+    let evs = loop_collect(&mut h, |_, _| {}).await;
+    shutdown(h).await;
+    assert_eq!(asked(&evs), 0, "auto mode never cards: {:?}", names(&evs));
+    assert_eq!(outcome_of(&evs, "push"), Some(ToolOutcome::Denied));
+    let out = tool_output(&evs, "push").unwrap();
+    assert!(out.contains("auto mode denied"), "{out}");
+}
+
 /// Still flagged and in the chief's grant list: the engine asks the client to
 /// delegate (`DelegateApproval` session request). The chief approves, so the
 /// call runs and the audit trail says `delegated`.

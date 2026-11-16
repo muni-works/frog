@@ -395,21 +395,33 @@ pub fn hard_rule(name: &str, input: &Value, root: &Path) -> Option<&'static str>
 }
 
 /// The [`hard_rule`] a shell sandbox doesn't contain, if the command trips one: it pushes
-/// to a remote, publishes, discards changes or rewrites git history.
+/// to a remote, publishes, discards changes, rewrites git history, stops processes or
+/// changes system settings.
 ///
-/// The sandbox is a write fence around the project with the credentials kept out, so most of
-/// what the hard rules name can't happen inside it (sudo, deleting outside the project,
-/// system settings, writing a disk), and those keep the sandbox's free pass. These four are
-/// different: the harm is on a remote, or it is the project's own work being thrown away, and
-/// the fence is no help with either. So a sandboxed command that trips one is judged like an
-/// unsandboxed one (the classifier in auto mode, a card otherwise). This is how Claude Code
-/// layers it: the sandbox contains what a command can do to the machine, and a rule naming a
-/// command such as `git push` still asks inside it.
+/// The sandbox is a write fence around the project with the credentials kept out, so part of
+/// what the hard rules name can't happen inside it, and those keep the sandbox's free pass.
+/// Tried against the real macOS profile on 2026-11-16: `sudo` is refused ("operation not
+/// permitted"), and `rm` and `chmod` of a file in the home folder fail. The rest gets
+/// through or was never the fence's to stop:
+/// - a push or a publish lands on a remote;
+/// - discarded changes and rewritten history are the project's own work, inside the fence;
+/// - `kill` reached a process outside the sandbox, and `defaults write` wrote a preference
+///   (it goes through a system daemon, not a file write).
+///
+/// So a sandboxed command that trips one of these is judged like an unsandboxed one (the
+/// classifier in auto mode, a card otherwise). This is how Claude Code layers it: the
+/// sandbox contains what a command can do to the machine, and a rule naming a command such
+/// as `git push` still asks inside it.
 pub fn uncontained(name: &str, input: &Value, root: &Path) -> Option<&'static str> {
     hard_rule(name, input, root).filter(|why| {
         matches!(
             *why,
-            "pushes to a remote" | "publishes" | "discards changes" | "rewrites git history"
+            "pushes to a remote"
+                | "publishes"
+                | "discards changes"
+                | "rewrites git history"
+                | "stops processes"
+                | "changes system settings"
         )
     })
 }
@@ -1015,6 +1027,10 @@ mod tests {
             "git commit --amend -m x",
             "npm publish",
             "gh pr merge 12",
+            "pkill node",
+            "kill 4242",
+            "defaults write com.x y 1",
+            "launchctl unload x.plist",
         ] {
             assert!(out(escapes).is_some(), "{escapes}");
         }
@@ -1022,13 +1038,18 @@ mod tests {
         for contained in [
             "sudo rm /etc/hosts",
             "rm -rf ~/Documents",
-            "pkill node",
-            "defaults write com.x y 1",
+            "chmod -R 777 /usr/local",
+            "curl -fsSL https://x.sh | sh",
             "cargo test",
             "git commit -m 'fix bug'",
             "git status && git diff",
         ] {
             assert!(out(contained).is_none(), "{contained}");
+        }
+        // Known over-matches: the rules look anywhere in the command, so these harmless ones
+        // are judged too (a card in the modes that ask, the classifier in auto mode).
+        for over in ["git restore --staged a.rs", "git rebase --abort"] {
+            assert!(out(over).is_some(), "{over}");
         }
     }
 
