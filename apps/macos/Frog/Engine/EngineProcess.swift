@@ -158,8 +158,11 @@ enum TestHome {
     /// `HOME` takes it to the engine and every other child process. UserDefaults stay the
     /// debug build's own domain (`toys.frog.dev`), never the installed app's. A test that reads
     /// this Mac's real state on purpose (`FROG_LIVE_NODE`) keeps the real home.
+    ///
+    /// Anything else, a normal launch above all, it leaves exactly as it was: no variable set,
+    /// no folder made (`shouldIsolate`).
     static func isolate() {
-        guard SingleInstance.isTesting, ProcessInfo.processInfo.environment["FROG_LIVE_NODE"] == nil else { return }
+        guard shouldIsolate(environment: ProcessInfo.processInfo.environment, loadedImages: loadedImages()) else { return }
         let fm = FileManager.default
         let real = URL.homeDirectory
         let home = fm.temporaryDirectory.appending(path: "frog-test-home-\(getpid())")
@@ -171,6 +174,22 @@ enum TestHome {
                                    withDestinationURL: real.appending(path: "Library/Keychains"))
         setenv("CFFIXED_USER_HOME", home.path, 1)
         setenv("HOME", home.path, 1)
+    }
+
+    /// Only an XCTest host: Xcode's test session variables (`XCTestConfigurationFilePath`,
+    /// `XCTestSessionIdentifier`) *and* XCTest's injection library already loaded in this
+    /// process. Variables alone can come from anywhere (a shell that exports them, `open
+    /// --env`); the library can't. It's injected when Xcode launches the test host, and it
+    /// ships in no Frog build anyone installs: a release build has no copy, and its hardened
+    /// runtime ignores `DYLD_INSERT_LIBRARIES`.
+    static func shouldIsolate(environment env: [String: String], loadedImages: [String]) -> Bool {
+        guard env["XCTestConfigurationFilePath"] != nil, env["XCTestSessionIdentifier"] != nil,
+              env["FROG_LIVE_NODE"] == nil else { return false }
+        return loadedImages.contains { $0.hasSuffix("/libXCTestBundleInject.dylib") }
+    }
+
+    private static func loadedImages() -> [String] {
+        (0..<_dyld_image_count()).compactMap { _dyld_get_image_name($0).map { String(cString: $0) } }
     }
 
     /// Point the home (C's `$HOME`, and Foundation's) at a fresh temp dir for the test's

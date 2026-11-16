@@ -132,6 +132,25 @@ final class TestHomeTests: XCTestCase {
         XCTAssertEqual(ProcessInfo.processInfo.environment["HOME"], NSHomeDirectory(), "child processes get it too")
     }
 
+    /// A normal launch never isolates, whatever its environment says: the switch is XCTest's
+    /// injection library loaded in the process, which no installed Frog has.
+    func testOnlyAnXCTestHostIsolates() {
+        let inject = "/Applications/Frog.app/Contents/Frameworks/libXCTestBundleInject.dylib"
+        let launched = ["/Applications/Frog.app/Contents/MacOS/Frog", "/usr/lib/libSystem.B.dylib"]
+        let session = ["XCTestConfigurationFilePath": "", "XCTestSessionIdentifier": "3BF534B8"]
+        // A normal launch.
+        XCTAssertFalse(TestHome.shouldIsolate(environment: ["HOME": "/Users/x"], loadedImages: launched))
+        // A shell that exports XCTest's variables, or a launch with them: still not a test host.
+        XCTAssertFalse(TestHome.shouldIsolate(environment: session, loadedImages: launched))
+        XCTAssertFalse(TestHome.shouldIsolate(environment: ["XCTestConfigurationFilePath": "/tmp/x.xctestconfiguration"], loadedImages: launched))
+        // The library without Xcode's session (loaded some other way): not either.
+        XCTAssertFalse(TestHome.shouldIsolate(environment: [:], loadedImages: launched + [inject]))
+        // A test host.
+        XCTAssertTrue(TestHome.shouldIsolate(environment: session, loadedImages: launched + [inject]))
+        // A test that reads this Mac's real state on purpose.
+        XCTAssertFalse(TestHome.shouldIsolate(environment: session.merging(["FROG_LIVE_NODE": "mew"]) { $1 }, loadedImages: launched + [inject]))
+    }
+
     /// No Dock icon, no menu bar, not frontmost (`FrogApp.init` under `SingleInstance.isTesting`).
     @MainActor func testHostIsABackgroundApp() {
         XCTAssertEqual(NSApp.activationPolicy(), .accessory)
