@@ -12,6 +12,8 @@ export const ICON = {
   plusMinus: 'M12 3v8M8 7h8M8 18h8',
   /** An open book (the sidebar's Documentation row; the Mac's book). */
   book: 'M12 6.5C10.5 5 8.2 4.5 4 4.5v13c4.2 0 6.5.5 8 2 1.5-1.5 3.8-2 8-2v-13c-4.2 0-6.5.5-8 2zM12 6.5v13',
+  /** Search (the Mac's magnifyingglass; the thread sidebar's Search row). */
+  search: 'M11 4a7 7 0 1 0 0 14a7 7 0 1 0 0-14M20 20l-4-4',
   /** Back to app (the Mac's arrow.left). */
   arrowLeft: 'M19 12H5M11 6l-6 6 6 6',
 } as const

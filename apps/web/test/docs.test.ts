@@ -121,8 +121,9 @@ test("previous and next run across sections; search filters titles and headings"
 test("the sidebar: Back to app, Search docs, sections with their pages, the version at the bottom", () => {
   const html = renderToStaticMarkup(h(DocsSidebar, { pages: WEB, current: "install", version: "0.6.0", onBack: noop, onOpen: noop }));
   const t = text(html);
-  assert.ok(t.startsWith("Back to app"));
-  assert.match(html, /placeholder="Search docs"/);
+  assert.ok(t.startsWith("Back to app esc Search docs"), "Back to app with its esc hint, then the Search docs row");
+  assert.match(html, /<button type="button" class="row big"><svg[^>]*><path d="M11 4[^"]*"><\/path><\/svg><span[^>]*>Search docs<\/span><\/button>/, "search is a row with the magnifier until clicked");
+  assert.ok(!html.includes("<input"), "no field until it's clicked");
   const heads = [...html.matchAll(/<div class="docs-h">([^<]*)<\/div>/g)].map((m) => m[1].replace(/&#x27;/g, "'"));
   assert.deepEqual(heads, manifest.sections.map((s) => s.title), "one label per section, in manifest order");
   assert.match(html, /<a class="srow on" href="\/docs\/install"><span class="stitle" aria-current="page">Install<\/span><\/a>/);

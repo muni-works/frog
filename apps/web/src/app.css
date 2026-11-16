@@ -747,14 +747,18 @@ button.tool:hover .tool-chev { opacity: 1; }
    shows one at the transcript's reading width. Existing tokens and sizes only. */
 .docs-row { margin-top: 4px; }
 .docs-side { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.docs-search { margin: 2px 0 6px; }
+.docs-search { cursor: text; }
+.docs-search:hover { background: transparent; }
+.docs-search input { flex: 1; min-width: 0; border: 0; background: transparent; outline: none; padding: 0; font: inherit; color: var(--fg); }
+.docs-search input::placeholder { color: var(--faint); }
+.docs-clear { width: 22px; height: 22px; }
 .docs-list { flex: 1; min-height: 0; overflow-y: auto; }
 .docs-list a.srow { text-decoration: none; }
 .docs-h { font-size: 12px; font-weight: 600; color: var(--muted); padding: 14px 10px 4px; }
 .docs-ver { padding: 10px 10px 2px; color: var(--faint); }
 .docs-page { gap: 0; padding-bottom: 40px; }
 .docs-sec { font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 4px; }
-.docs-title { margin: 0 0 14px; font-family: var(--font-display); font-size: 24px; letter-spacing: -0.02em; }
+.docs-title { margin: 0 0 14px; font-size: 17px; font-weight: 600; } /* the Mac's page title */
 .docs-pager { display: flex; justify-content: space-between; gap: 12px; margin-top: 28px; padding-top: 14px; border-top: 1px solid var(--line); }
 .docs-step { display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; border-radius: 8px; text-decoration: none; font-size: 13px; color: var(--fg); }
 .docs-step:hover { background: var(--hover); }

@@ -81,6 +81,8 @@ interface SidebarProps {
 /** Back to app, Search docs, then the pages under their sections, and the version at the bottom. */
 export function DocsSidebar({ pages, current, version, onBack, onOpen }: SidebarProps) {
   const [q, setQ] = useState('')
+  // Search docs is a row, like the thread sidebar's Search, until it's clicked; then it's a field.
+  const [searching, setSearching] = useState(false)
   const found = useMemo(() => search(pages, q), [pages, q])
   const sections = useMemo(() => {
     const out: { title: string; pages: Page[] }[] = []
@@ -94,11 +96,22 @@ export function DocsSidebar({ pages, current, version, onBack, onOpen }: Sidebar
   return (
     <div className="docs-side">
       <nav aria-label="Documentation" className="nav">
-        <button type="button" className="row big" onClick={onBack}><Icon d={ICON.arrowLeft} size={17} /><span style={{ flex: 1 }}>Back to app</span></button>
+        <button type="button" className="row big" onClick={onBack}><Icon d={ICON.arrowLeft} size={17} /><span style={{ flex: 1 }}>Back to app</span><span className="kb">esc</span></button>
+        {searching || q ? (
+          <div className="row big docs-search">
+            <Icon d={ICON.search} size={17} />
+            <input autoFocus value={q} placeholder="Search docs" aria-label="Search docs"
+              onChange={(e) => setQ(e.target.value)}
+              onBlur={() => setSearching(false)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && found[0]) onOpen(found[0].slug) }} />
+            {q && <button type="button" className="ic-btn docs-clear" aria-label="Clear the search" onMouseDown={(e) => e.preventDefault()} onClick={() => setQ('')}>
+              <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+            </button>}
+          </div>
+        ) : (
+          <button type="button" className="row big" onClick={() => setSearching(true)}><Icon d={ICON.search} size={17} /><span style={{ flex: 1 }}>Search docs</span></button>
+        )}
       </nav>
-      <input className="f-field docs-search" type="search" value={q} placeholder="Search docs" aria-label="Search docs"
-        onChange={(e) => setQ(e.target.value)}
-        onKeyDown={(e) => { if (e.key === 'Enter' && found[0]) onOpen(found[0].slug) }} />
       <div className="docs-list">
         {sections.length === 0 && <div className="det wrap" style={{ padding: '10px 8px' }}>No page matches.</div>}
         {sections.map((s) => (
