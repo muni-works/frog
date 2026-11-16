@@ -4,13 +4,42 @@
     {
       "title": "Start",
       "pages": [
-        { "slug": "install", "title": "Install", "file": "start/install.md" }
+        { "slug": "install", "title": "Install", "file": "start/install.md" },
+        { "slug": "your-first-session", "title": "Your first session", "file": "start/first-session.md" },
+        { "slug": "pick-a-model", "title": "Pick a model", "file": "start/pick-a-model.md" }
       ]
     },
     {
       "title": "Use",
       "pages": [
-        { "slug": "web-search-and-fetch", "title": "Web search and fetch", "file": "use/web-search-and-fetch.md" }
+        { "slug": "permissions-and-auto-mode", "title": "Permissions and auto mode", "file": "use/permissions.md" },
+        { "slug": "web-search-and-fetch", "title": "Web search and fetch", "file": "use/web-search-and-fetch.md" },
+        { "slug": "sessions-and-children", "title": "Sessions and children", "file": "use/sessions-and-children.md" },
+        { "slug": "memory-and-frog-md", "title": "Memory and FROG.md", "file": "use/memory-and-frog-md.md" },
+        { "slug": "skills-and-mcp", "title": "Skills and MCP", "file": "use/skills-and-mcp.md" }
+      ]
+    },
+    {
+      "title": "Models",
+      "pages": [
+        { "slug": "on-your-mac", "title": "On your Mac", "file": "models/on-your-mac.md" },
+        { "slug": "your-own-nodes", "title": "Your own nodes", "file": "models/your-own-nodes.md" },
+        { "slug": "your-own-keys", "title": "Your own keys", "file": "models/your-own-keys.md" },
+        { "slug": "frog-cloud", "title": "Frog Cloud", "file": "models/frog-cloud.md" }
+      ]
+    },
+    {
+      "title": "When something's off",
+      "pages": [
+        { "slug": "no-web-results", "title": "No web results", "file": "trouble/no-web-results.md" },
+        { "slug": "a-fetch-was-refused", "title": "A fetch was refused", "file": "trouble/fetch-refused.md" },
+        { "slug": "a-thread-just-stopped", "title": "A thread just stopped", "file": "trouble/thread-stopped.md" }
+      ]
+    },
+    {
+      "title": "Reference",
+      "pages": [
+        { "slug": "changelog", "title": "Changelog", "file": "reference/changelog.md" }
       ]
     }
   ]

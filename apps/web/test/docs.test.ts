@@ -123,7 +123,8 @@ test("the sidebar: Back to app, Search docs, sections with their pages, the vers
   const t = text(html);
   assert.ok(t.startsWith("Back to app"));
   assert.match(html, /placeholder="Search docs"/);
-  for (const s of manifest.sections) assert.ok(html.includes(`<div class="docs-h">${s.title}</div>`), s.title);
+  const heads = [...html.matchAll(/<div class="docs-h">([^<]*)<\/div>/g)].map((m) => m[1].replace(/&#x27;/g, "'"));
+  assert.deepEqual(heads, manifest.sections.map((s) => s.title), "one label per section, in manifest order");
   assert.match(html, /<a class="srow on" href="\/docs\/install"><span class="stitle" aria-current="page">Install<\/span><\/a>/);
   assert.ok(t.endsWith("Frog 0.6.0"));
 });
