@@ -544,7 +544,9 @@ export function Composer(p: ComposerProps) {
             </div>
             {!typed && list.length === 0 && q && <div className="cz-menu-note">No match. Type owner/name or paste a GitHub URL.</div>}
             {p.onConnectGithub && <button type="button" role="menuitem" className="cz-dim" onClick={() => p.onConnectGithub!(text)}>{gh(14)}Connect GitHub to see your repos</button>}
-            {safeHref(p.install) && <a className="cz-dim cz-row" role="menuitem" href={safeHref(p.install)!.href} target="_blank" rel="noreferrer"><I d={P.plus} />Give Frog access to more repos</a>}
+            {/* No repos yet: say why, and make giving access the way on. Before GitHub is connected there's nothing to give access to. */}
+            {!q && list.length === 0 && !p.onConnectGithub && <div className="cz-menu-note">Frog sees only the repos you give it access to.</div>}
+            {safeHref(p.install) && !p.onConnectGithub && <a className={`${!q && list.length === 0 ? '' : 'cz-dim '}cz-row`} role="menuitem" href={safeHref(p.install)!.href} target="_blank" rel="noreferrer"><I d={P.plus} />{!q && list.length === 0 ? 'Pick repos on GitHub' : 'Give Frog access to more repos'}</a>}
             {p.repo && (<>
               <div className="cz-menu-sep" />
               <button type="button" role="menuitem" onClick={() => { setQ(''); setMenu('branch') }}>Branch<span className="cz-r">{where?.branch ?? 'main'}</span><I d={P.chevronRight} className="cz-dim" /></button>
