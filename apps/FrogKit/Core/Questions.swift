@@ -9,7 +9,7 @@ extension PermissionRequest {
 
     /// Where the step runs, under the card's answers: a Frog Cloud session's sandbox, or this
     /// Mac, and whether the sandbox holds it (a request with a reason is to leave it).
-    static func place(cloud: Bool, outsideSandbox: Bool) -> String {
+    static func runsWhere(inCloud cloud: Bool, outsideSandbox: Bool) -> String {
         if cloud { return "Runs in your Frog Cloud sandbox" }
         return outsideSandbox ? "Runs on this Mac · outside the sandbox" : "Runs on this Mac · sandboxed"
     }
