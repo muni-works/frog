@@ -16,6 +16,8 @@ enum ComposerMetrics {
     static let maxWidth: CGFloat = 720
     /// Under this the model chip drops its name and the where chip truncates in the middle.
     static let narrow: CGFloat = 420
+    /// Between an open menu's bottom and the card's top edge, as the web's `.cz-menu` sits.
+    static let menuGap: CGFloat = 2
     static let plate = Color.primary.opacity(0.08)
 }
 
@@ -161,7 +163,8 @@ struct StatusDismiss: View {
 
 /// The card: fill, a 1px control stroke (muted when focused), radius 16. The status line on top
 /// when there is something to say, then what waits above the field (queued follow-ups and
-/// attachments), the field, and the controls.
+/// attachments), the field, and the controls. Its owner adds `composerMenuHost()` so the chips' menus
+/// open above it.
 struct ComposerCard<Status: View, Above: View, Field: View, Controls: View>: View {
     var showStatus = false
     var showAbove = false
@@ -429,19 +432,27 @@ struct ModeMenu: View {
 
 // MARK: - The menu shell
 
-/// A frog-drawn menu: the card's fill and stroke, radius 12, 4 inside. It opens upward from its
-/// chip (`composerMenu`).
+/// A frog-drawn menu: the card's fill and stroke, radius 12, 4 inside. It opens above the card,
+/// at its chip (`composerMenu`), and scrolls when the room above is shorter than it.
 struct ComposerMenuPanel<Content: View>: View {
     var width: CGFloat = 300
     @ViewBuilder let content: Content
 
     var body: some View {
+        ViewThatFits(in: .vertical) {
+            column
+            ScrollView { column }.scrollIndicators(.automatic)
+        }
+        .frame(width: width, alignment: .leading)
+        .background(Tokens.raised, in: .rect(cornerRadius: Tokens.Radius.card, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Tokens.Radius.card, style: .continuous).strokeBorder(Tokens.lineStrong, lineWidth: 1))
+    }
+
+    private var column: some View {
         VStack(alignment: .leading, spacing: 0) { content }
             .font(.frog(size: 13))
             .padding(4)
             .frame(width: width, alignment: .leading)
-            .background(Tokens.raised, in: .rect(cornerRadius: Tokens.Radius.card, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: Tokens.Radius.card, style: .continuous).strokeBorder(Tokens.lineStrong, lineWidth: 1))
     }
 }
 
@@ -569,23 +580,54 @@ struct ComposerSwitch: View {
     }
 }
 
+/// An open menu, asked for by its chip and placed by the card around it.
+struct ComposerMenuRequest {
+    let anchor: Anchor<CGRect>
+    let trailing: Bool
+    let close: () -> Void
+    let panel: AnyView
+}
+
+struct ComposerMenuKey: PreferenceKey {
+    static var defaultValue: ComposerMenuRequest? { nil }
+    static func reduce(value: inout ComposerMenuRequest?, nextValue: () -> ComposerMenuRequest?) {
+        value = value ?? nextValue()
+    }
+}
+
 extension View {
-    /// Shows `panel` above this view while `open`, its leading or trailing edge on this view's,
-    /// 6 above it. A click outside or Esc calls `close`.
+    /// Asks the card around this chip to show `panel` while `open`: wholly above the card (its
+    /// status line included), its bottom `ComposerMetrics.menuGap` over the card's top edge, and
+    /// its leading or trailing edge on this chip's. A click outside or Esc calls `close`.
     func composerMenu<Panel: View>(_ open: Bool, trailing: Bool = false, close: @escaping () -> Void,
                                    @ViewBuilder panel: () -> Panel) -> some View {
-        overlay(alignment: trailing ? .topTrailing : .topLeading) {
-            if open {
-                panel()
-                    .fixedSize()
-                    #if os(macOS)
-                    .background(MenuDismissal(close: close))
-                    #endif
-                    .padding(.bottom, 6)
-                    // A zero-height frame at the anchor's top, the panel's bottom on it: it
-                    // grows upward whatever its size.
-                    .frame(height: 0, alignment: trailing ? .bottomTrailing : .bottomLeading)
-                    .transition(.opacity)
+        let view = open ? AnyView(panel()) : nil
+        return anchorPreference(key: ComposerMenuKey.self, value: .bounds) { anchor in
+            view.map { ComposerMenuRequest(anchor: anchor, trailing: trailing, close: close, panel: $0) }
+        }
+    }
+
+    /// Places the open menu a chip inside asked for (`composerMenu`) above this view, the card.
+    func composerMenuHost() -> some View {
+        overlayPreferenceValue(ComposerMenuKey.self, alignment: .topLeading) { request in
+            if let request {
+                GeometryReader { proxy in
+                    let chip = proxy[request.anchor]
+                    let gap = ComposerMetrics.menuGap
+                    // Never taller than the room above the card; a longer list scrolls.
+                    let room = max(proxy.frame(in: .global).minY - gap - 8, 120)
+                    request.panel
+                        #if os(macOS)
+                        .background(MenuDismissal(close: request.close))
+                        #endif
+                        .fixedSize(horizontal: true, vertical: false)
+                        .padding(request.trailing ? .trailing : .leading,
+                                 request.trailing ? max(proxy.size.width - chip.maxX, 0) : max(chip.minX, 0))
+                        .frame(width: proxy.size.width, height: room,
+                               alignment: request.trailing ? .bottomTrailing : .bottomLeading)
+                        .offset(y: -(room + gap))
+                        .transition(.opacity)
+                }
             }
         }
     }

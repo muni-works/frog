@@ -206,6 +206,8 @@ struct ComposerView: View {
                 }
                 .contentShape(.rect)
                 .onTapGesture { controller.focus() }
+                // After the card's content shape, so a menu above the card still takes clicks.
+                .composerMenuHost()
                 .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
             }
             .padding(.horizontal, TurnSpace.gutter)

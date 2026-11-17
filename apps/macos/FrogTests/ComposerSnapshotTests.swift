@@ -99,6 +99,83 @@ final class ComposerSnapshotTests: XCTestCase {
         })
     }
 
+    /// Draws `view` offscreen at `size` and returns its pixels (top row first).
+    private func pixels<V: View>(_ view: V, _ size: CGSize) throws -> NSBitmapImageRep {
+        let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height).background(Tokens.canvas))
+        host.frame = CGRect(origin: .zero, size: size)
+        let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.contentView = host
+        defer { window.close() }
+        host.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+        host.layoutSubtreeIfNeeded()
+        let rep = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: rep)
+        return rep
+    }
+
+    /// Every composer menu sits wholly above the card, the status line included, with a small
+    /// gap: the card (everything above its controls row) and the gap draw the same with the menu
+    /// open as closed, and the menu does draw above it.
+    func testMenusSitAboveTheCard() throws {
+        try menusSitAbove(height: 560)
+    }
+
+    /// In a short window the menu is capped to the room above the card and scrolls; it still
+    /// never covers the field.
+    func testShortWindowMenuScrollsAboveTheCard() throws {
+        try menusSitAbove(height: 240)
+    }
+
+    private func menusSitAbove(height: CGFloat) throws {
+        let width: CGFloat = 720, pad: CGFloat = 24
+        let size = CGSize(width: width + pad * 2, height: height)
+        let git = state {
+            $0.where = session(prs: [.init(repo: "muni-works/frog", number: 412, title: "Flush sidebars", state: .checks, checks: .init(ok: 4, total: 9)),
+                                     .init(repo: "muni-works/frog", number: 413, title: "Ink", state: .checks, checks: .init(ok: 1, total: 1))])
+        }
+        var stacked = git
+        stacked.stackOpen = true
+        let cases: [(String, M.State, M.State, ComposerMenuID?)] = [
+            ("where", state(), state(), .place),
+            ("attach", state(), state(), .attach),
+            ("mode", state(), state(), .mode),
+            ("pr stack", git, stacked, nil),
+        ]
+        for (name, closedState, openState, menu) in cases {
+            func draw(_ s: M.State, _ m: ComposerMenuID?) throws -> NSBitmapImageRep {
+                try pixels(TrayPreview(state: s, lists: lists, menu: m).frame(width: width).padding(pad)
+                    .frame(width: size.width, height: size.height, alignment: .bottom), size)
+            }
+            let closed = try draw(closedState, nil), open = try draw(openState, menu)
+            let scale = CGFloat(closed.pixelsHigh) / size.height
+            let cardHeight = NSHostingView(rootView: TrayPreview(state: closedState).frame(width: width)).fittingSize.height
+            let cardTop = size.height - pad - cardHeight
+            // The controls row starts 1 + 12 + 16 + 4 below the field's top; the chip that opened
+            // the menu may light up there, so stop above it.
+            let controls = size.height - pad - (ComposerMetrics.action + 6 + 8 + 1)
+            func row(_ r: NSBitmapImageRep, _ y: Int) -> [UInt32] {
+                (Int(pad * scale)..<Int((pad + width) * scale)).map { x in
+                    let c = r.colorAt(x: x, y: y) ?? .clear
+                    return UInt32(c.redComponent * 255) << 16 | UInt32(c.greenComponent * 255) << 8 | UInt32(c.blueComponent * 255)
+                }
+            }
+            var covered: [Int] = []
+            for y in Int((cardTop - 2) * scale)..<Int(controls * scale) where row(closed, y) != row(open, y) {
+                covered.append(y)
+            }
+            XCTAssert(covered.isEmpty, "\(name): the open menu covers the card or its gap at \(covered.count) pixel rows, from y=\(covered.first.map { CGFloat($0) / scale } ?? 0) (card top \(cardTop))")
+            var drawnAbove = false
+            for y in 0..<Int((cardTop - 2) * scale) where row(closed, y) != row(open, y) {
+                drawnAbove = true
+                break
+            }
+            XCTAssert(drawnAbove, "\(name): the menu should draw above the card")
+        }
+    }
+
     /// The card's resting height: two rows (field and controls), and a third with a status line.
     /// The board's CSS sums to 76 and 108: 1 + (12 + 16 + 4) + (6 + 28 + 8) + 1, plus 32.
     func testRestingHeights() {

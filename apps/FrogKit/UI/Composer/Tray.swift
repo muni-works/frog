@@ -217,6 +217,7 @@ struct TrayPreview: View {
                 ComposerAction(state: state, send: send).padding(.leading, 4)
             }
         }
+        .composerMenuHost()
     }
 
     /// The where chip shows only before a session starts.
