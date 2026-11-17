@@ -268,6 +268,45 @@ extension SnapshotTests {
             size: CGSize(width: 340, height: 520), to: "model-menu")
     }
 
+    /// The model menu in three fixed states (Cam, 2026-11-17: local models are back in it):
+    /// a fresh Mac with only Apple Intelligence (`model-menu-fresh.png`), a Mac with downloaded
+    /// models on one of them (`model-menu-local.png`), and signed out of Frog Cloud
+    /// (`model-menu-signed-out.png`).
+    func testRenderModelMenuStates() async throws {
+        func m(_ spec: String, _ name: String, _ place: ModelIdentity.Place, _ state: ModelIdentity.State = .ready) -> ModelIdentity {
+            var m = ModelIdentity(spec: spec, name: name, variant: nil, place: place, abilities: [.usesTools], paramsB: nil, context: nil, price: nil)
+            m.state = state
+            return m
+        }
+        let apple = m("apple/on-device", "Apple Intelligence", .apple)
+        let get = m("local/mlx-community/Qwen3-32B-4bit", "Qwen3 32B", .mac, .notDownloaded(gb: 18))
+        let q32 = m("local/mlx-community/Qwen3-32B-4bit", "Qwen3 32B", .mac)
+        let q8 = m("local/mlx-community/Qwen3-8B-4bit", "Qwen3 8B", .mac)
+        func cloud(_ state: ModelIdentity.State) -> [ModelIdentity] {
+            [m("cloud/qwen3-coder-next", "Qwen3 Coder Next", .frogCloud, state),
+             m("cloud/glm-5.3-flash", "GLM-5.3 Flash", .frogCloud, state),
+             m("cloud/deepseek-v4.1-flash", "DeepSeek V4.1 Flash", .frogCloud, state)]
+        }
+        let prices = ["cloud/qwen3-coder-next": 0.88, "cloud/glm-5.3-flash": 0.55, "cloud/deepseek-v4.1-flash": 0.55]
+        let dir = FileManager.default.temporaryDirectory.appending(path: "frog-menu-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let w = Workspace(folder: dir, fresh: true)
+        defer { w.stop() }
+        let states: [(String, String, ModelMenu.Preset)] = [
+            ("model-menu-fresh", apple.spec, .init(listed: [apple] + cloud(.ready), suggestion: get, prices: prices)),
+            ("model-menu-local", q32.spec, .init(listed: [apple, q32, q8] + cloud(.ready), suggestion: nil, prices: prices)),
+            ("model-menu-signed-out", apple.spec,
+             .init(listed: [apple] + cloud(.needsKey(provider: ProviderID.cloudName)), suggestion: get, prices: prices)),
+        ]
+        for (name, current, preset) in states {
+            try render(
+                ModelMenu(workspace: w, current: current, pick: { _ in }, close: {}, preset: preset)
+                    .background(Color(nsColor: .windowBackgroundColor))
+                    .contentMargins(.leading, 200, for: .scrollContent),
+                size: CGSize(width: 340, height: 420), to: name)
+        }
+    }
+
     /// Settings > Models as it is on this Mac: `settings-models.png`.
     func testRenderModelSettings() async throws {
         await ProviderStore.shared.load()
