@@ -7,7 +7,7 @@ usage: comp.py <out_dir> [frame,frame,...]
 Footage: footage/ (web frames from capture/run.sh, 2560x1440) and the Mac app's checked-in
 snapshots under docs/design/. Look: Frog's own tokens (design/tokens.json, dark): true black,
 #ececec text, the frog green #58cc6f as the one accent, IBM Plex Sans and Mono."""
-import os, sys
+import json, os, sys
 from functools import lru_cache
 from multiprocessing import Pool
 from pathlib import Path
@@ -290,13 +290,23 @@ def _laptop(d, x, y, color):
     d.rounded_rectangle([x, y - 13, x + 34, y + 9], radius=4, outline=color, width=3)
     d.line([(x - 6, y + 14), (x + 40, y + 14)], fill=color, width=3)
 
-MENU = [("h", "Your machines"), ("r", "Qwen3 32B", "this Mac", True), ("r", "Qwen3 Coder 30B", "this Mac", True),
-        ("h", "Frog Cloud"), ("r", "Qwen3 Coder Next", "", False), ("r", "GLM-5.3 Flash", "", False), ("r", "DeepSeek V4.1 Flash", "", False)]
+def _cloud(d, x, y, color):
+    d.arc([x - 4, y - 3, x + 12, y + 13], 90, 270, fill=color, width=3)
+    d.arc([x + 4, y - 13, x + 24, y + 7], 180, 360, fill=color, width=3)
+    d.arc([x + 20, y - 5, x + 38, y + 13], 270, 90, fill=color, width=3)
+    d.line([(x + 4, y + 12), (x + 29, y + 12)], fill=color, width=3)
 
-def composer(img, x0, y0, x1, y1, model, local, open_menu=False, hover=None, picked=2):
+# the Mac app's model menu with a model downloaded (docs/design/first-run/after-mac-model-menu-local.png):
+# "This Mac" first, each row "$0 a token", then Frog Cloud A to Z with its output price
+_OUT = {r["name"]: r["out"] for r in json.loads((HERE / "prices.json").read_text())["rows"]}
+MENU = [("h", "This Mac"), ("r", "Apple Intelligence", "$0 a token", True), ("r", "Qwen3 32B", "$0 a token", True), ("h", "Frog Cloud")] + \
+       [("r", n, f"${_OUT[n]:.2f}/M out", False) for n in ("DeepSeek V4.1 Flash", "GLM-5.3 Flash", "Qwen3 Coder Next")]
+LOCAL_ROW, CLOUD_ROW = 1, 4  # Qwen3 32B; Qwen3 Coder Next, where the chip starts
+
+def composer(img, x0, y0, x1, y1, model, local, open_menu=False, hover=None, picked=CLOUD_ROW):
     """Frog's composer, redrawn from the app's tokens (card fill, field radius, Plex): the
     placeholder, the where chip, the mode, the model chip and the mic. With open_menu, the model
-    menu above it: your machines first, then Frog Cloud. Returns the points a pointer needs:
+    menu above it: this Mac first, then Frog Cloud, as the Mac app lists them. Returns the points a pointer needs:
     "chip", and each menu row by index."""
     d = ImageDraw.Draw(img)
     d.rounded_rectangle([x0, y0, x1, y1], radius=30, fill=CARD, outline=LINE, width=2)
@@ -319,7 +329,7 @@ def composer(img, x0, y0, x1, y1, model, local, open_menu=False, hover=None, pic
     d.text((cx0 + 52, yb), model, font=f, fill=FG if local else MUTED, anchor="lm")
     d.text((cx0 - 44, yb), "Auto", font=f, fill=MUTED, anchor="rm")
     pts = {"chip": ((cx0 + cx1) / 2, yb)}
-    mw = 620; mh = 20 + sum(54 if r[0] == "h" else 68 for r in MENU) + 16
+    mw = 720; mh = 20 + sum(54 if r[0] == "h" else 68 for r in MENU) + 16
     mx1 = x1; mx0 = mx1 - mw; my1 = y0 - 16; my0 = my1 - mh
     if open_menu: d.rounded_rectangle([mx0, my0, mx1, my1], radius=24, fill=CARD, outline=LINE, width=2)
     y = my0 + 20; ri = 0
@@ -329,10 +339,10 @@ def composer(img, x0, y0, x1, y1, model, local, open_menu=False, hover=None, pic
             y += 54; continue
         if open_menu:
             if hover == ri: d.rounded_rectangle([mx0 + 12, y + 2, mx1 - 12, y + 66], radius=14, fill=(0x1f, 0x1f, 0x1f))
-            d.ellipse([mx0 + 34, y + 25, mx0 + 52, y + 43], fill=LOCAL if r[3] else FROG)
-            d.text((mx0 + 72, y + 34), r[1], font=sans(36), fill=FG, anchor="lm")
+            (_laptop if r[3] else _cloud)(d, mx0 + 34, y + 34, LOCAL if r[3] else FROG)
+            d.text((mx0 + 92, y + 34), r[1], font=sans(36), fill=FG, anchor="lm")
+            d.text((mx0 + 110 + d.textlength(r[1], font=sans(36)), y + 36), r[2], font=sans(30, False), fill=FAINT, anchor="lm")
             if picked == ri: d.line([(mx1 - 62, y + 34), (mx1 - 52, y + 45), (mx1 - 34, y + 22)], fill=FG, width=4, joint="curve")
-            elif r[2]: d.text((mx1 - 34, y + 34), r[2], font=sans(32, False), fill=MUTED, anchor="rm")
         pts[ri] = (mx0 + 240, y + 34); ri += 1; y += 68
     return pts
 
@@ -347,9 +357,9 @@ def s_mine(t, lt):
     opened, chosen = B(b + 3), B(b + 5)  # the two clicks, each on a beat
     is_open, local = opened <= t < chosen, t >= chosen
     box = (col(5), 770, col(12), 960)
-    pts = composer(img, *box, "Qwen3 32B" if local else "Qwen3 Coder Next", local, open_menu=is_open, hover=0 if t >= B(b + 4.6) else None)
+    pts = composer(img, *box, "Qwen3 32B" if local else "Qwen3 Coder Next", local, open_menu=is_open, hover=LOCAL_ROW if t >= B(b + 4.6) else None)
     chip = composer(Image.new("RGB", (8, 8)), *box, "Qwen3 Coder Next", False)["chip"]
-    row = pts[0]
+    row = pts[LOCAL_ROW]
     if B(b + 1.5) <= t < B(b + 6.5):
         if t < opened:
             k = ease(seg(t, B(b + 1.5), opened - 0.05)); x, y, press = lerp(col(8), chip[0], k), lerp(600, chip[1] + 6, k), 0
