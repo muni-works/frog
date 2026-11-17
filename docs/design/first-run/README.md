@@ -33,9 +33,10 @@ same harness once the fixes were in.
    done in this PR.** The menu now opens on "This Mac": Apple Intelligence, what's downloaded, and
    the model that suits this Mac to get ("Qwen3 32B · 18 GB · Get"), each "$0 a token", then your
    other machines, then Frog Cloud ([after](after-mac-model-menu.png)). Gap 2 below.
-2. **Ship `frog-apple` with the CLI (or let the CLI find it inside Frog.app)?** Without it, a
-   new CLI user's first `frog` is an error. With it, a Mac on macOS 26 answers at once, as
-   `docs/onboarding.md` promises. It adds to the tarball and the release job. Gap 1.
+2. ~~**Ship `frog-apple` with the CLI?**~~ **Decided 2026-11-17: yes, and done in this PR.**
+   The darwin tarball carries `frog-apple` (230 KB, signed and notarized with `frog`), and
+   `install.sh` puts it next to `frog`, where the CLI looks. A Mac on macOS 26 with Apple
+   Intelligence answers its first `frog` at once. Unverified until the next tagged release. Gap 1.
 3. **A place field per session in the gateway's listing (zest)?** Without it, no web row (and
    no unloaded Mac row) can say which machine or place a session runs on, the reel's "six working,
    each on its machine". It's a protocol change across two repos. Gap 4.
@@ -120,9 +121,8 @@ Stills: [signed out](web-signed-out.png), [new session](web-new-session.png), [r
 ## The ten gaps that most hurt the first five minutes
 
 1. **The CLI's first run ends in an error.** Bare `frog` exits 1 with a menu of commands, and a
-   Mac with Apple Intelligence can't answer because `frog-apple` isn't in the tarball. *Fix:* ship
-   `frog-apple` in the darwin tarball (`release.yml` copies only `frog` + README), or let
-   `sidecar::binary` find it in `/Applications/Frog.app/Contents/MacOS/`. When nothing is found on
+   Mac with Apple Intelligence couldn't answer because `frog-apple` wasn't in the tarball (now
+   shipped, done in this PR). *Left:* when nothing is found on
    a TTY, ask once: "Frog Cloud (sign in) / This Mac (2.2 GB) / I have a key", then run
    `login` or `setup` inline and start. **M.**
 2. **The Mac's model menu on a fresh Mac had nothing local and no checkmark** (done in this

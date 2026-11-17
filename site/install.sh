@@ -137,14 +137,19 @@ main() {
 
   mkdir -p "$dir" || err "can't create $dir"
   [ -w "$dir" ] || err "$dir isn't writable; set FROG_INSTALL_DIR to a directory you own"
-  { cp "$tmp/$name/frog" "$dir/frog.tmp" && chmod 755 "$dir/frog.tmp" && mv "$dir/frog.tmp" "$dir/frog"; } \
-    || err "failed to install to $dir"
-  # Unsigned builds: curl sets no quarantine flag, but clear it anyway, and ad-hoc sign if
-  # needed (Apple silicon won't run unsigned code). Signed builds pass codesign -v untouched.
-  if [ "$(uname -s)" = Darwin ]; then
-    xattr -d com.apple.quarantine "$dir/frog" 2>/dev/null || true
-    codesign -v "$dir/frog" 2>/dev/null || codesign -s - -f "$dir/frog" 2>/dev/null || true
-  fi
+  # frog, and on the Mac frog-apple (Apple's on-device model), which frog finds next to itself.
+  bins=frog
+  [ -f "$tmp/$name/frog-apple" ] && bins="frog frog-apple"
+  for b in $bins; do
+    { cp "$tmp/$name/$b" "$dir/$b.tmp" && chmod 755 "$dir/$b.tmp" && mv "$dir/$b.tmp" "$dir/$b"; } \
+      || err "failed to install to $dir"
+    # Unsigned builds: curl sets no quarantine flag, but clear it anyway, and ad-hoc sign if
+    # needed (Apple silicon won't run unsigned code). Signed builds pass codesign -v untouched.
+    if [ "$(uname -s)" = Darwin ]; then
+      xattr -d com.apple.quarantine "$dir/$b" 2>/dev/null || true
+      codesign -v "$dir/$b" 2>/dev/null || codesign -s - -f "$dir/$b" 2>/dev/null || true
+    fi
+  done
   info "installed frog $version to $dir/frog"
   info "next: run frog in a project. frog login signs in to Frog Cloud"
 
