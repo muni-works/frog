@@ -260,7 +260,7 @@ function AskCard({ ask, onDecide }: { ask: Ask; onDecide: Decide }) {
             <button type="button" role="menuitem" onClick={() => setNoting(true)}>Deny with a note…</button>
           </div>
         </details>
-        <span className="det ask-where">Runs in your cloud sandbox</span>
+        <span className="det ask-where">Runs in your Frog Cloud sandbox</span>
         <span style={{ flex: 1 }} />
         <button type="button" className="f-btn f-btn--bordered" title="Deny (⌘.)" onClick={() => onDecide(false)}>Deny</button>
         <button type="button" className="f-btn f-btn--prominent" title="Allow (⌘↩)" onClick={() => onDecide(true)}>Allow</button>
@@ -392,7 +392,7 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
         if (diff && e.outcome !== 'denied' && !asking) return <EditLine key={e.id} diff={diff} />
         if (diff && e.outcome !== 'denied') return (
           <DiffCard key={e.id} diff={diff} ask={asking} onDecide={cb.onDecide}
-            note="Runs in your cloud sandbox. Nothing is pushed until you say so." />
+            note="Runs in your Frog Cloud sandbox. Nothing is pushed until you say so." />
         )
         if (asking) return <AskCard key={e.id} ask={asking} onDecide={cb.onDecide} />
         if (e.widget && e.outcome === 'ok') return <WidgetCard key={e.id} widget={e.widget} onPrompt={cb.onPrompt} />

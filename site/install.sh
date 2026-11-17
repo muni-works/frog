@@ -146,7 +146,7 @@ main() {
     codesign -v "$dir/frog" 2>/dev/null || codesign -s - -f "$dir/frog" 2>/dev/null || true
   fi
   info "installed frog $version to $dir/frog"
-  info "next: run frog in a project. frog login signs in to Frog Cloud; frog setup puts a model on this Mac"
+  info "next: run frog in a project. frog login signs in to Frog Cloud"
 
   case ":$PATH:" in
     *":$dir:"*) ;;

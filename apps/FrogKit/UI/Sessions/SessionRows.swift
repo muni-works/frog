@@ -207,7 +207,7 @@ struct ConversationRowLabel: View {
                     .font(.frog(size: Tokens.Size.meta, weight: live == .waiting ? .medium : .regular))
                     .foregroundStyle(detailTint)
                     .lineLimit(1)
-            } else if live == .running {
+            } else if showPlace, live == .running {
                 // A running session nobody has open has no live step to show: say it's working,
                 // in words, not only the breathing dot.
                 Text("Working…")

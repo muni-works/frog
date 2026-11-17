@@ -21,6 +21,29 @@ How it was walked, without touching anyone's machine:
   path was driven in headless Chrome with a throwaway profile. (Avatars are blocked in the stills;
   the broken image comes from the harness, not the product.)
 
+Not measured: time to a first answer. The weights download was stopped after about 4 s, and
+nothing signed in to Frog Cloud. So the CLI's local path is "a 2.2 GB download, minutes on
+typical broadband", and the Frog Cloud path was never timed end to end. The `before` stills on
+every surface were taken before this PR's fixes. The `after-web-*` stills were re-shot on the
+same harness once the fixes were in.
+
+## Decide first
+
+1. **Put this Mac's models back in the Mac's model menu?** The reel's opening beat is a menu
+   with local models first at $0. The app left them out on purpose (`ModelList.swift:8-11`,
+   2026-10-30). On a fresh Mac today, the chip says Apple Intelligence and the menu doesn't list
+   it. Gap 2 below.
+2. **Ship `frog-apple` with the CLI (or let the CLI find it inside Frog.app)?** Without it, a
+   new CLI user's first `frog` is an error. With it, a Mac on macOS 26 answers at once, as
+   `docs/onboarding.md` promises. It adds to the tarball and the release job. Gap 1.
+3. **A place field per session in the gateway's listing (zest)?** Without it, no web row (and
+   no unloaded Mac row) can say which machine or place a session runs on, the reel's "six working,
+   each on its machine". It's a protocol change across two repos. Gap 4.
+
+Smaller calls: the Mac picker's price unit ("$0.55/M out", output only) vs the web's new "$0.0396
+in · $0.55 out /M"; whether `s.state === 'running'` on the gateway means a turn is running (then
+the web list can say "Working…" today).
+
 Sizes: **S** is copy, a label, an empty state or a number (an hour or so). **M** is a component
 or a reducer case, a day or two. **L** needs a protocol field, a gateway change or a product
 decision.
@@ -33,7 +56,7 @@ decision.
 | "Pair a machine…" turns into six code boxes; the row joins as the code lands | **Partly.** | Pairing exists and the code really is typed on the Mac (`PairSheet.swift`). But it goes sheet → second sheet (titled "Use mew"; now "Pair mew"), and the row appears only once the sheet closes, 1.2 s after success (`PairSheet.swift:187`). One action has three names: "Pair a machine…", "Pair…", "Use mew". |
 | Six sessions working, each "Working…" and its machine | **No.** | **Mac:** a breathing dot. A running session nobody has open fell back to "repo · N turns · model" (now "Working…"). No row names a machine, though `Status.ranOn` is on the wire. **Web:** only the open session streams, and `look()` ignores `s.state`, so background sessions never show work. Their titles stay the repo name. `SessionSummary` has no place or machine field at all (`protocol.ts:174-193`; the gateway list is id/title/repo/branch/state/updated). |
 | A call on a machine that dropped out says so in one line, then where it reran | **Partly.** | The engine's line is **"mew stopped answering; finishing on this Mac"** (`crates/frog-engine/src/provider/node.rs:43`, a warn notice after `ItemsDiscarded`). If no node is left: "mew stopped answering and no other node has this model right now". **Mac:** draws it as a loose notice between rows, not on the rerun call. Info-level retries and Frog Cloud's stand-in ("… is answering for now") went only to the log (now shown). **Web:** no `items_discarded` case, so a retried call leaves the partial and the retry stacked (a duplicated reply). `ran_on` isn't parsed. The stand-in line was rewritten to "Frog Cloud is busy right now." (now kept). **CLI:** labels every retry "busy, retrying…". It doesn't handle `ItemsDiscarded`, so the dead node's half-reply stays above the rerun. |
-| Frog Cloud's models with their prices | **Yes, roughly.** | Live prices reach both pickers. The static `site/pricing.html` had DeepSeek V4.1 Flash at $0.165 / $0.0033 / $0.66; live is $0.0396 / $0.011 / $0.55 (fixed; the $0.165 is the cap, which `data-max` already carries). The web rounded $0.165 to "$0.17" and showed input only (fixed). The Mac shows output only, "$0.55/M out" (left; see decisions). |
+| Frog Cloud's models with their prices | **Yes, roughly.** | Live prices reach both pickers. The static `site/pricing.html` had DeepSeek V4.1 Flash at $0.165 / $0.0033 / $0.66; live is $0.0396 / $0.011 / $0.55 (fixed; the $0.165 is the cap, which `data-max` already carries). The web rounded $0.165 to "$0.17" and showed input only (fixed). The Mac shows output only, "$0.55/M out" (left; see "Decide first"). |
 | Finds `CLAUDE.md`, skills and MCP servers; nothing to set up twice | **Used, not said.** | The engine reads `AGENTS.md` / `FROG.md` / `CLAUDE.md` up the tree, `~/.claude/CLAUDE.md`, skills in `.claude/skills` (cwd only) and `~/.claude/skills`, and `.mcp.json`. `~/.claude.json` MCP only after an opt-in. Claude Desktop's config, `.claude/CLAUDE.md` and `CLAUDE.local.md` are not read. **Mac:** the setup line ("Using your Claude Code setup: CLAUDE.md, 14 skills. Found 2 MCP servers. Use them") shows only while MCP servers are left to add, and once closed it never returns. **CLI:** says nothing; `frog --setup` prints a Rust `Debug` dump. **Web:** nothing. |
 | `curl -fsSL https://frog.toys/install.sh \| sh`, frog.toys | **Yes.** | 12.6 MB, a few seconds. It ended without a next step (fixed). Without minisign, which is most Macs, it prints a loud uppercase WARNING. The tarball has no `frog-apple`, so the CLI can't give the instant Apple Intelligence answer `docs/onboarding.md` promises. |
 
@@ -60,7 +83,7 @@ Stills: [new chat](mac-new-chat.png), [project](mac-new-project.png), [composer]
 [found](mac-pair-found.png), [code](mac-pair-code.png), [wrong code](mac-pair-wrong.png),
 [setup line](mac-setup-line.png), [first card](mac-permission-first.png),
 [outside the sandbox](mac-permission-outside.png), [card in a Frog Cloud session](mac-permission-card-cloud.png),
-[a session](mac-session.png). (The parity stills these come from predate the composer rework, so their composer copy is old.)
+[a session](mac-session.png). All taken before this PR's fixes. The parity stills some of these come from predate the composer rework, so their composer copy is old; `composer.sh` and `fuzz.sh` weren't re-run here.
 
 | Step | What happens today | What the reel implies | Gap | Size |
 |---|---|---|---|---|
@@ -68,8 +91,8 @@ Stills: [new chat](mac-new-chat.png), [project](mac-new-project.png), [composer]
 | Model menu | "Your machines: No models on your machines yet.", then Frog Cloud A→Z at "$X/M out", "Manage…" | this Mac first, $0, Frog Cloud below | See the beat table. The 8B helpers are **fixed** (left out, as on the web). | L (decision) |
 | Settings › Models | This Mac "not running" / "Engine not running"; Frog Cloud "Not signed in" with no button; "Pair a machine…" | a place to finish setup | It reads as broken on a fresh Mac. It's a dead end for the menu's "Manage…". | S |
 | Pairing | sheet "Pair a machine" → sheet "Use mew" with 3+3 boxes → "mew joined your machines." → closes after 1.2 s, then the row appears | inline boxes, the row joins as the last digit lands | Sheet on sheet, delayed row. Three names (**fixed**: "Pair mew"). Error copy said "frog" and "a newer tang" (**fixed**). | M |
-| Session rows | title and a breathing dot; line 2 is the live step only for loaded sessions, else "repo · N turns · model" | "Working…" and the machine | **Fixed:** "Working…" on running rows with no step. No machine (needs `ranOn` in the listing). | S done, M left |
-| First permission card | "Allow this command?", the command, "Runs on this Mac · sandboxed", Deny, Allow | says where | The footer was hard-coded: wrong in a Frog Cloud session and under "outside the sandbox" (**fixed**). Title-case buttons "Allow Once", "Deny with a Note…" (**fixed**, with three in the cloud-consent sheet and "Use them"). | S |
+| Session rows | title and a breathing dot; line 2 is the live step only for loaded sessions, else "repo · N turns · model" | "Working…" and the machine | **Fixed:** "Working…" on running rows with no step (two-line rows only; rows inside a project group stay one line). No machine (needs `ranOn` in the listing). | S done, M left |
+| First permission card | "Allow this command?", the command, "Runs on this Mac · sandboxed", Deny, Allow | says where | The footer was hard-coded: wrong in a Frog Cloud session and under "outside the sandbox" (**fixed**; it now matches the web card's "Runs in your Frog Cloud sandbox"). Still wrong when Settings › Permissions turns the shell sandbox off. Title-case buttons "Allow Once", "Deny with a Note…" (**fixed**, with three in the cloud-consent sheet and "Use them"). | S |
 | Tool rows | "Read …", "Ran …", "Edited …"; no machine | each call tagged | Tools run where the session runs; only model calls go to nodes. No turn footer says where the model ran. | M |
 | Found setup | the setup line, only while MCP servers are left to add | always named | Users with CLAUDE.md and skills but no MCP servers to add are told nothing. | S |
 
@@ -78,7 +101,9 @@ Stills: [new chat](mac-new-chat.png), [project](mac-new-project.png), [composer]
 Stills: [signed out](web-signed-out.png), [new session](web-new-session.png), [repo menu](web-repo-menu.png),
 [model menu](web-model-menu.png), [first turn](web-first-turn.png),
 [out of credit, today](web-out-of-credit-today.png), [the card it should show](web-out-of-credit-legacy.png),
-[session list](web-session-list.png). Taken before this PR's fixes.
+[session list](web-session-list.png). Taken before this PR's fixes. After:
+[model menu](after-web-model-menu.png), [empty repo menu](after-web-repo-menu-empty.png),
+[out of credit on today's engine](after-web-out-of-credit-today.png).
 
 | Step | What happens today | What the reel implies | Gap | Size |
 |---|---|---|---|---|

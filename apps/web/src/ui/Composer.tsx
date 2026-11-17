@@ -484,7 +484,7 @@ export function Composer(p: ComposerProps) {
         const match = (s: string) => s.toLowerCase().includes(q.trim().toLowerCase())
         const cloud = (p.models ?? []).filter((m) => match(modelName(m.id)))
         return (
-          <div className="cz-menu cz-models" role="menu" aria-label="Model" style={{ ...at, width: 320 }} {...nav}>
+          <div className="cz-menu cz-models" role="menu" aria-label="Model" style={{ ...at, width: 'min(400px, calc(100vw - 32px))' }} {...nav}>
             <label className="cz-filter"><I d={P.search} /><input autoFocus value={q} placeholder="Search models" aria-label="Search models" onChange={(e) => setQ(e.target.value)} /></label>
             {/* The web runs sessions in Frog Cloud, so a machine's model can't be picked here: it
              * runs from the Mac app. Where there's an app to send them to, one hint; on a phone, or

@@ -338,7 +338,9 @@ async fn login(args: &[String]) -> Result<bool> {
     if std::env::var("FROG_API_KEY").is_ok() {
         println!("  FROG_API_KEY is set in this shell and wins over the saved key");
     }
-    println!("  run frog in a project to start (Frog Cloud is billed per token; local models stay free)");
+    println!(
+        "  run frog in a project to start (Frog Cloud is billed per token; local models stay free)"
+    );
     Ok(true)
 }
 
@@ -376,7 +378,9 @@ async fn run() -> Result<bool> {
     let args: Vec<String> = std::env::args().collect();
     if args.get(1).map(String::as_str) == Some("setup") {
         if matches!(args.get(2).map(String::as_str), Some("-h" | "--help")) {
-            println!("frog setup [MODEL]: install frog's own engine and download a model's weights (default Qwen3 4B, about 2.2 GB)");
+            println!(
+                "frog setup [MODEL]: install frog's own engine and download a model's weights, on Apple silicon (default Qwen3 4B, about 2.2 GB)"
+            );
             return Ok(true);
         }
         let model = args.get(2).map(|m| {
@@ -940,7 +944,7 @@ const NO_MODEL: &str = "\
 frog needs a model. Any one of these works:
 
   frog login                       Frog Cloud, signed in from your browser; billed per token
-  frog setup                       frog's own engine and Qwen3 4B on this Mac (a 2.2 GB download)
+  frog setup                       frog's own engine and Qwen3 4B, on Apple silicon (a 2.2 GB download)
   ollama pull qwen3-coder:30b      then run frog again
   LM Studio                        load a model and start its server
   export ANTHROPIC_API_KEY=…       use Claude
