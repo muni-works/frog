@@ -1,6 +1,6 @@
 # Frog hype reel
 
-A 42.6 second, 1920x1080, 30 fps reel telling the "no caps" story, rendered entirely from code.
+A 36.5 second, 1920x1080, 30 fps reel telling the "no caps" story, rendered entirely from code.
 It uses real frames of the web app (captured from a mock gateway in headless Chrome) and the Mac
 app's checked-in snapshots. A compositor moves them, with every animation a pure function of time,
 cut to the beat grid of the track it is timed to (see Music). No screen recording, no generative models, no paid
@@ -14,7 +14,7 @@ compositor, contact sheets, ffmpeg encode. The footage step is new.
 ## Re-render
 
 ```bash
-TRACK=~/Downloads/"Lackvill - No Jumper.mp3" video/hype-reel/render.sh
+TRACK=~/Downloads/"Jack Harlow - WHATS POPPIN (Lyrics).mp3" video/hype-reel/render.sh
 ```
 
 It composites `build/frames/`, prepares `build/music.wav` (the track, or the synthesized
@@ -66,24 +66,25 @@ The story is the site's own line, "No caps. Your machines. One agent.": another 
 Frog doesn't, because it runs open models on machines you own. The frog is the lead: machines
 are lily pads, agents are frogs, the pool is the pond (the web app's own new-session imagery).
 
-Cut to Lackvill, "No Jumper": 129.98 BPM, first kick at 0.098 s, so beat i is at
-0.098 + i × 0.4616 s (`beats.py`). The frog's first hop is timed to the words "no jumper"
-(2.50 to 2.98 s, from whisper word timings): it leaves the ground on "no" and lands as "jumper" ends.
+Cut to Jack Harlow, "WHATS POPPIN": 144.99 BPM, first beat at 0.034 s, so beat i is at
+0.034 + i × 0.4138 s (`beats.py`). The track's bass-free intro (beats 0–16) carries the open, the
+bass drops on "Open models", and the reel ends in the breakdown at beat 80. Three lyrics are
+answered on screen (whisper word timings): "What's poppin'?" (1.10 s) is the message sent to the
+other agent, the frog hops in on "just hopped in" (2.76 to 3.28 s), and "I got options" (4.00 s)
+turns the title.
 
 | beats | time | shot | on screen | source of the claim |
 |---|---|---|---|---|
-| 0–8 | 0.1–3.8 s | an unnamed agent's task card streams, then stops on the track's dip: "Usage limit reached. Resets in 4 h 12 min", then "Buy extra usage $$$". The frog peeks over the bottom edge and hops in on "no jumper" | Your agent ran out. | a drawn, generic card: no product is named or copied |
-| 8–12 | 3.8–5.6 s | the frog hops onto a lily pad, "this Mac"; the Mac composer's model chip (Qwen3 8B on this Mac) | Open models, on the Mac you have. / $0 a token. | `README.md:29`, `site/pricing.html` ("On your own machines: $0") |
-| 12–20 | 5.6–9.3 s | the node install line; a second pad drifts in and settles on beat 16 with a ripple; Settings › Machines shows studio (M4 Max) and mew (RTX 3090) | Add a machine. / It joins the pool. | `README.md:13,59`, `site/index.html` (6-digit pairing code) |
-| 20–28 | 9.3–13.0 s | a frog lands on a pad each beat, a counter runs to 6 | As many agents as they can hold. | `README.md:6-7` |
-| 28–36 | 13.0–16.7 s | three agent frogs above two pads; from the drop at beat 32, calls travel to a pad every half beat | Each call goes where it finishes first. | `README.md:59` ("A scheduler sends each call to the machine that will finish it first") |
-| 36–40 | 16.7–18.6 s | the PC's pad empties to a dashed outline; a call in flight turns round and lands on the Mac | A machine drops out. The turn survives. | `README.md:14` ("if a machine drops out mid-turn, the turn finishes on another one") |
-| 40–44 | 18.6–20.4 s | 41, 21, 0, a beat apart, the reel's only glow | More machines, more done. / 41 tasks passed on Mac + PC / 21 on the PC alone / 0 rate-limit errors / the bench's setup line | `docs/no-caps-bench.md`, `site/index.html`, `README.md:15-17` |
-| 44–52 | 20.4–24.1 s | bars: Frog Cloud's three models land on beats 44–46, then three other providers' bars grow at the same dollars per beat while the frog watches the tip | Need more? Frog Cloud. / the six prices / List price per million output tokens, 17 Nov 2026. Different models: this compares price only. | `prices.json` (each row's source URL) |
-| 52–60 | 24.1–27.8 s | `CLAUDE.md` flies in and the frog catches it; `skills` and `MCP servers` land stacked on its head | It brings your setup. / Nothing to set up twice. | `site/index.html` "Brings your setup" |
-| 60–72 | 27.8–33.3 s | the frog on its own pad inside a ring; the limit notice from the open flies in, meets the ring on beat 64 and tumbles away; the frog waves | Nobody can cap what you own. / Free and open source. Local models keep your code on your Mac. | `README.md:55` ("Your code and prompts stay on your machine unless you pick a cloud model"), License |
-| 72–80 | 33.3–37.0 s | the breakdown: a ripple a beat, then the frog hops up through them | | |
-| 80–92 | 37.0–42.6 s | the drop: the frog lands, the line, the install line, frog.toys; it winks on beat 88; fade | No caps. Your machines. One agent. / `curl -fsSL https://frog.toys/install.sh \| sh` / frog.toys | `README.md:3,10` |
+| 0–16 | 0.0–6.7 s | an unnamed agent's task card: two steps done, "Writing the fix" under way. "What's poppin'?" is asked; on beat 4 it stops: "Usage limit reached. Resets in 4 h 12 min", then "Buy extra usage $$$". The frog peeks, then hops in | Your agent ran out. / You've got options. | a drawn, generic card: no product is named or copied |
+| 16–24 | 6.7–10.0 s | the bass drops; the frog hops onto a lily pad, "this Mac"; the Mac composer's model chip (Qwen3 8B on this Mac) | Open models, on the Mac you have. / $0 a token. | `README.md:29`, `site/pricing.html` ("On your own machines: $0") |
+| 24–32 | 10.0–13.3 s | the node install line; a second pad drifts in and settles on beat 28; Settings › Machines shows studio (M4 Max) and mew (RTX 3090) | Add a machine. / It joins the pool. | `README.md:13,59`, `site/index.html` (6-digit pairing code) |
+| 32–40 | 13.3–16.6 s | a frog lands on a pad each beat, a counter runs to 6 | As many agents as they can hold. | `README.md:6-7` |
+| 40–48 | 16.6–19.9 s | three agent frogs above two pads; calls travel to a pad every half beat | Each call goes where it finishes first. | `README.md:59` ("A scheduler sends each call to the machine that will finish it first") |
+| 48–52 | 19.9–21.6 s | the PC's pad empties to a dashed outline; a call in flight turns round and lands on the Mac | A machine drops out. The turn survives. | `README.md:14` |
+| 52–64 | 21.6–26.5 s | bars: Frog Cloud's three models land on beats 52–54, then three other providers' bars grow at the same dollars per beat while the frog watches the tip | Need more? Frog Cloud. / the six prices / List price per million output tokens, 17 Nov 2026. Different models: this compares price only. | `prices.json` (each row's source URL) |
+| 64–72 | 26.5–29.8 s | `CLAUDE.md` flies in and the frog catches it; `skills` and `MCP servers` land stacked on its head | It brings your setup. / Nothing to set up twice. | `site/index.html` "Brings your setup" |
+| 72–80 | 29.8–33.1 s | the frog on its own pad inside a ring; the limit notice from the open flies in, meets the ring on beat 76 and tumbles away; the frog waves | Nobody can cap what you own. / Free and open source. Local models keep your code on your Mac. | `README.md:55`, License |
+| 80–88 | 33.1–36.5 s | the breakdown: the frog hops in and lands with a ripple; the line, the install line, frog.toys; it winks on beat 86; fade | No caps. Your machines. One agent. / `curl -fsSL https://frog.toys/install.sh \| sh` / frog.toys | `README.md:3,10` |
 
 The frog (`frog.py`) is drawn in code. Its head is the mark's own shapes and colours, read from
 `apps/web/public/frog-mark.svg`; the body (belly, arms, hind legs) is new for this reel and is
@@ -93,19 +94,19 @@ looks at things and squashes when it lands.
 The pricing shot names other providers. Its numbers live in `prices.json` with a source per row
 and a date; re-read the sources before publishing. Cheaper tiers exist at those providers (for
 example $0.50 output models) and are not on the chart, and Frog Cloud's OpenRouter-served prices
-are "from" prices. The bench shot leaves out the site's caveat that one task got slower with the
-second machine (`docs/no-caps-bench.md`).
+are "from" prices.
 
 Editing rules, from the board video's notes: text lands whole, motion steps on beats, the frame
-changes completely on the drops, glow is on the bench numbers only, and push-ins alternate with holds.
+changes completely on the drop, and nothing glows.
 
 ## Music
 
-The cut is timed to **Lackvill, "No Jumper"** (Cam's mp3, not in the repo). It is a commercial
-release: fine for a private cut, but publishing the reel needs a licence for it, or the stand-in
-below. Its lyrics are explicit (profanity, a racial slur, guns), which matters for a product video. `TRACK=<path to the mp3> render.sh` uses it from its start, cut to 42.6 s, 1.5 dB down,
-2 s fade. Measured on the encoded mp4: −12.6 LUFS integrated, true peak −1.3 dBFS. The grid was
-fitted, not heard: nobody has checked the sync by ear.
+The cut is timed to **Jack Harlow, "WHATS POPPIN"** (Cam's mp3, not in the repo). It is a
+commercial release: fine for a private cut, but publishing the reel needs a licence for it, or
+the stand-in below. Its lyrics are explicit in places (profanity in the part the reel uses; the
+reel ends at 36.5 s, before the most explicit lines). `TRACK=<path to the mp3> render.sh` uses it
+from its start, cut to 36.5 s, 3.5 dB down, 2 s fade. The grid was fitted, not heard: nobody has
+checked the sync by ear.
 
 Without `TRACK`, `music.py` synthesizes an original stand-in on the same grid (Am F C G, sine,
 saw and noise, fixed seed, no samples), safe to publish but plainer.

@@ -13,7 +13,7 @@ from multiprocessing import Pool
 from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
-from beats import B, BEAT, CUT, DUR, FPS, JUMP, NFRAMES, W, H
+from beats import ASK, B, BEAT, CUT, DUR, FPS, JUMP, NFRAMES, OPTIONS, W, H
 from frog import sprite, place
 
 HERE = Path(__file__).resolve().parent
@@ -224,34 +224,56 @@ def chip(img, cx, cy, text, alpha=1.0, rot=0.0, size=40, kind="well"):
 
 # ---- shots. Each draws the frame at time t; lt = seconds into the shot.
 def s_open(t, lt):
-    """another agent, mid-task, hits its usage limit. The frog hops in on "no jumper"."""
+    """the intro: you ask another agent what's up, and it has hit its usage limit. The frog hops
+    in on "just hopped in", and on "I got options" the title turns."""
     img = Image.new("RGB", (W, H), CANVAS); d = ImageDraw.Draw(img)
-    x0, y0, x1, y1 = 360, 230, 1300, 800
-    d.rounded_rectangle([x0, y0, x1, y1], radius=26, fill=CARD)
-    d.text((x0 + 48, y0 + 62), "Refactoring the upload retry", font=sans(38), fill=FG, anchor="ls")
-    widths = [620, 760, 540, 700, 480, 660, 580, 420][:6]
-    n = min(6, on_beat(t, 0, 8, 0.5)) if t < B(4) else 6  # the work streams, a line every half beat, until it stops
-    for i in range(n):
-        d.rounded_rectangle([x0 + 48, y0 + 104 + i * 34, x0 + 48 + widths[i], y0 + 118 + i * 34], radius=7, fill=LINE)
-    if t >= B(4):  # the track's dip: it stops
-        k = ease(seg(t, B(4), B(4) + 0.18))
-        bx0, by0, bx1, by1 = x0 + 40, y1 - 250 + (1 - k) * 20, x1 - 40, y1 - 40 + (1 - k) * 20
-        d.rounded_rectangle([bx0, by0, bx1, by1], radius=18, fill=NOTICE_BG, outline=NOTICE, width=2)
-        d.text((bx0 + 36, by0 + 66), "Usage limit reached", font=sans(46), fill=NOTICE, anchor="ls")
-        d.text((bx0 + 36, by0 + 116), "Resets in 4 h 12 min", font=sans(34, False), fill=MUTED, anchor="ls")
-        if t >= B(6):
-            f = sans(34); label = "Buy extra usage  $$$"
-            tw = d.textlength(label, font=f)
-            d.rounded_rectangle([bx0 + 36, by0 + 136, bx0 + 36 + tw + 48, by0 + 194], radius=29, fill=NOTICE)
-            d.text((bx0 + 60, by0 + 165), label, font=f, fill=(0x1a, 0x12, 0x02), anchor="lm")
-        words(img, t, B(4), [("Your agent ", False), ("ran out.", True)], where="top")
-    # the frog: peeks over the bottom edge when the work stops, then hops in on "no jumper"
-    fx, fy, size = 1600, 900, 200
+    x0, y0, x1, y1 = 200, 250, 1240, 860
+    d.rounded_rectangle([x0, y0, x1, y1], radius=28, fill=CARD)
+    # frame 0 already reads: a task, two steps done, a third under way
+    d.text((x0 + 56, y0 + 84), "Fix the flaky upload test", font=sans(52), fill=FG, anchor="ls")
+    stopped = t >= B(4)
+    rows = [("Read the code", True), ("Found the bug", True), ("Writing the fix", False)]
+    for i, (label, done) in enumerate(rows):
+        ry = y0 + 170 + i * 76
+        if done:
+            d.ellipse([x0 + 56, ry - 22, x0 + 100, ry + 22], fill=FG)
+            d.line([(x0 + 67, ry), (x0 + 75, ry + 9), (x0 + 90, ry - 9)], fill=CARD, width=5, joint="curve")
+            d.text((x0 + 124, ry), label, font=sans(42, False), fill=MUTED, anchor="lm")
+        else:
+            col = NOTICE if stopped else FG
+            d.ellipse([x0 + 56, ry - 22, x0 + 100, ry + 22], outline=col, width=4)
+            d.text((x0 + 124, ry), label, font=sans(42), fill=col, anchor="lm")
+            bx, bw = x0 + 520, 440
+            fill = min(0.62, 0.30 + 0.08 * on_beat(t, 0, 4))  # it creeps forward a beat at a time, then stops
+            d.rounded_rectangle([bx, ry - 8, bx + bw, ry + 8], radius=8, fill=LINE)
+            d.rounded_rectangle([bx, ry - 8, bx + bw * fill, ry + 8], radius=8, fill=col)
+    if t >= ASK:  # "What's poppin'?": your message, on the lyric
+        k = ease(seg(t, ASK, ASK + 0.15)); f = sans(42); msg = "What's poppin'?"
+        tw = d.textlength(msg, font=f)
+        bx1, by0 = x1 - 56, y0 + 410 + (1 - k) * 16
+        d.rounded_rectangle([bx1 - tw - 64, by0, bx1, by0 + 84], radius=42, fill=WELL)
+        d.text((bx1 - 32 - tw / 2, by0 + 42), msg, font=f, fill=FG, anchor="mm")
+    if stopped:  # beat 4: the answer
+        k = ease(seg(t, B(4), B(4) + 0.15))
+        ax0, ay0, ax1, ay1 = x0 + 56, y1 - 104 + (1 - k) * 16, x1 - 56, y1 - 16 + (1 - k) * 16
+        d.rounded_rectangle([ax0, ay0, ax1, ay1], radius=18, fill=NOTICE_BG, outline=NOTICE, width=2)
+        d.text((ax0 + 30, ay0 + 44), "Usage limit reached", font=sans(40), fill=NOTICE, anchor="lm")
+        if t < B(6):
+            d.text((ax1 - 30, ay0 + 44), "Resets in 4 h 12 min", font=sans(34, False), fill=MUTED, anchor="rm")
+        else:
+            f = sans(32); label = "Buy extra usage  $$$"; tw = d.textlength(label, font=f)
+            d.rounded_rectangle([ax1 - tw - 70, ay0 + 14, ax1 - 22, ay0 + 74], radius=30, fill=NOTICE)
+            d.text((ax1 - 46 - tw / 2, ay0 + 44), label, font=f, fill=(0x1a, 0x12, 0x02), anchor="mm")
+    if stopped and t < OPTIONS: words(img, t, B(4), [("Your agent ", False), ("ran out.", True)], where="top")
+    if t >= OPTIONS: words(img, t, OPTIONS, [("You've got ", False), ("options.", True)], where="top")
+    # the frog: peeks over the bottom edge when the work stops, then hops in on "just hopped in"
+    fx, fy, size = 1570, 900, 220
     if t < JUMP[0]:
-        k = ease(seg(t, B(4), B(4) + 0.3))
-        if k > 0: frog_at(img, t, fx, H + 190 - 175 * k, size, "head", look=(-0.7, -0.6), blink=False)
+        k = ease(seg(t, B(4), B(4) + 0.25))
+        if k > 0: frog_at(img, t, fx, H + 200 - 185 * k, size, "head", look=(-0.7, -0.6), blink=False)
     else:
-        hop(img, t, JUMP[0], JUMP[1], (fx, H + 260), (fx, fy), size, height=330, look=(-0.8, -0.3))
+        look = (-0.8, -0.3) if t < OPTIONS else (0, 0)
+        hop(img, t, JUMP[0], JUMP[1], (fx, H + 280), (fx, fy), size, height=340, look=look)
     return img
 
 @lru_cache(1)
@@ -335,29 +357,15 @@ def s_swarm(t, lt):
 def s_how(t, lt):
     b = CUT["how"]
     img = Image.new("RGB", (W, H), CANVAS); d = ImageDraw.Draw(img)
-    if t >= B(b + 12):  # the bench: what that added up to
-        words(img, t, B(b + 12), [("More machines, ", False), ("more done.", True)], where="top", size=84)
-        lay = Image.new("RGBA", (W, H), (0, 0, 0, 0)); dl = ImageDraw.Draw(lay)
-        stats = [(41, "tasks passed on Mac + PC", FROG, b + 12), (21, "on the PC alone", FG, b + 13), (0, "rate-limit errors", FROG, b + 14)]
-        for j, (n, label, col, sb) in enumerate(stats):
-            if t < B(sb): continue
-            k = ease(seg(t, B(sb), B(sb) + 0.18)); cx = W / 2 + (j - 1) * 560
-            dl.text((cx, 610 - (1 - k) * 30), str(n), font=sans(260), fill=col + (int(255 * k),), anchor="ms")
-            dl.text((cx, 690), label, font=sans(40, False), fill=MUTED + (int(255 * k),), anchor="ms")
-        glow(img, lay, 22)
-        if t >= B(b + 15):
-            ImageDraw.Draw(img).text((W / 2, 930), "Six agents for 15 minutes on Qwen3-8B: an M4 Max Mac added to a PC with an RTX 3090.",
-                                     font=sans(34, False), fill=FAINT, anchor="ms")
-        return img
-    out = t >= B(b + 8)  # beat 36: the PC drops out
+    out = t >= B(b + 8)  # the PC drops out
     agents = [(520, 470), (960, 470), (1400, 470)]
     mac, pc = (600, 900), (1320, 900)
     pond = Pond(); pond.pad(*mac, 280); pond.pad(*pc, 280, out=out)
-    # calls: from the drop (beat 32) each agent sends one a beat, to the machine that is free
+    # calls: once the agents are in, one leaves every half beat for the machine that is free
     calls = []
-    for i in range(0, 16):
-        cb = b + 4 + i * 0.5
-        if cb >= b + 12: break
+    for i in range(0, 24):
+        cb = b + 2 + i * 0.5
+        if cb + 1 > b + 12: break
         src = agents[i % 3]; to_pc = (i % 2 == 1)
         calls.append((cb, src, to_pc))
     for cb, src, to_pc in calls:
@@ -463,46 +471,33 @@ def s_own(t, lt):
     frog_at(img, t, cx, cy - 6, 200, "wave" if wave else "sit", look=(0.9, -0.1) if t < B(b + 8) else (0, 0))
     # the limit notice from the open flies in, meets the edge of the frog's pond on the beat, and bounces off
     edge = (cx + 610, cy - 60)
-    if B(b + 2) <= t < hit:
-        k = ease(seg(t, B(b + 2), hit))
+    if B(b + 1) <= t < hit:
+        k = ease(seg(t, B(b + 1), hit))
         chip(img, lerp(W + 400, edge[0] + 150, k), lerp(540, edge[1], k), "Usage limit reached", size=40, kind="notice", rot=lerp(-8, 6, k))
     elif hit <= t < B(b + 8):
         k = seg(t, hit, B(b + 8))
         chip(img, edge[0] + 150 + 700 * k, edge[1] - 900 * k + 500 * k * k, "Usage limit reached", size=40, kind="notice", rot=6 - 300 * k, alpha=1 - k * k)
     words(img, t, B(b), [("Nobody can cap ", False), ("what you own.", True)], where="top",
-          sub="Free and open source. Local models keep your code on your Mac." if t >= B(b + 6) else None)
+          sub="Free and open source. Local models keep your code on your Mac." if t >= hit else None)
     return img
 
 END_FROG = (W // 2, 440, 170)  # where the frog sits on the end card: x, y, head size
 
-def s_morph(t, lt):
-    """the breakdown: a ripple a beat, then the frog comes up through the last one."""
-    b = CUT["morph"]
-    img = Image.new("RGB", (W, H), CANVAS)
-    cx, cy = W / 2, 640
-    pond = Pond()
-    for i in range(4):
-        k = seg(t, B(b + i), B(b + i + 3))
-        if 0 < k < 1: pond.ring(cx, cy, 80 + 620 * ease(k), alpha=1 - k, width=4)
-    pond.onto(img)
-    ex, ey, size = END_FROG
-    if t >= B(b + 4):
-        hop(img, t, B(b + 4), B(b + 6), (cx, H + 300), (ex, ey), size, height=420)
-    return img
-
 def s_end(t, lt):
     b = CUT["end"]
     img = Image.new("RGB", (W, H), CANVAS)
-    d = ImageDraw.Draw(img)
     ex, ey, size = END_FROG
-    frog_at(img, t, ex, ey, size, land=B(b), wink=B(b + 8) <= t < B(b + 9), blink=False)
+    pond = Pond(); splash(pond, t, B(b + 1), ex, ey, 260); pond.onto(img)
+    hop(img, t, B(b), B(b + 1), (ex, H + 300), (ex, ey), size, height=380) if t < B(b + 1) else \
+        frog_at(img, t, ex, ey, size, land=B(b + 1), wink=B(b + 6) <= t < B(b + 7), blink=False)
     d = ImageDraw.Draw(img)
-    k1 = ease(seg(t, B(b), B(b) + 0.2))
+    k1 = ease(seg(t, B(b + 1), B(b + 1) + 0.2))
     f = sans(88); parts = [("No caps. ", True), ("Your machines. One agent.", False)]
     x = W / 2 - sum(d.textlength(p, font=f) for p, _ in parts) / 2
     for p, g in parts:
-        d.text((x, 590 - (1 - k1) * 18), p, font=f, fill=tuple(int(c * k1) for c in (FROG if g else FG)), anchor="ls"); x += d.textlength(p, font=f)
-    k3 = ease(seg(t, B(b + 2), B(b + 2) + 0.25))
+        if k1 > 0: d.text((x, 590 - (1 - k1) * 18), p, font=f, fill=tuple(int(c * k1) for c in (FROG if g else FG)), anchor="ls")
+        x += d.textlength(p, font=f)
+    k3 = ease(seg(t, B(b + 3), B(b + 3) + 0.2))
     if k3 > 0:
         line = "curl -fsSL https://frog.toys/install.sh | sh"
         f = mono(40); tw = d.textlength("$ " + line, font=f)
@@ -510,20 +505,19 @@ def s_end(t, lt):
         d.rounded_rectangle([bx0, by0, W - bx0, by0 + 96], radius=16, fill=tuple(int(c * k3) for c in CARD))
         d.text((bx0 + 40, by0 + 62), "$ ", font=f, fill=tuple(int(c * k3) for c in FROG), anchor="ls")
         d.text((bx0 + 40 + d.textlength("$ ", font=f), by0 + 62), line, font=f, fill=tuple(int(c * k3) for c in FG), anchor="ls")
-    k4 = ease(seg(t, B(b + 4), B(b + 4) + 0.25))
+    k4 = ease(seg(t, B(b + 5), B(b + 5) + 0.2))
     if k4 > 0:
         d.text((W / 2, 900 - (1 - k4) * 16), "frog.toys", font=sans(96), fill=tuple(int(c * k4) for c in FG), anchor="ms")
-    fo = seg(t, DUR - 1.0, DUR)
+    fo = seg(t, DUR - 0.7, DUR)
     return dim(img, fo) if fo > 0 else img
 
 SHOTS = {"open": s_open, "mine": s_mine, "pair": s_pair, "swarm": s_swarm, "how": s_how,
-         "price": s_price, "setup": s_setup, "own": s_own, "morph": s_morph, "end": s_end}
+         "price": s_price, "setup": s_setup, "own": s_own, "end": s_end}
 
 def frame(f):
     t = f / FPS
     name = shot_of(t)
     img = SHOTS[name](t, t - B(CUT[name]))
-    hud(img, name)
     img.save(OUT / f"{f:04d}.png", compress_level=1)
     return f
 
