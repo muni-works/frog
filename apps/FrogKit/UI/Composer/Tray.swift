@@ -449,6 +449,8 @@ struct TrayActionButton: View {
                     } else {
                         Image(systemName: "stop.fill").font(.frog(size: 10)).foregroundStyle(Tokens.text)
                     }
+                case .listening:
+                    Image(systemName: "waveform").font(.frog(size: 14, weight: .medium)).foregroundStyle(Tokens.text)
                 case .queue:
                     Circle().fill(Color.primary.opacity(0.14))
                     Image(systemName: "text.append").font(.frog(size: 11, weight: .semibold)).foregroundStyle(Tokens.text)
@@ -459,8 +461,8 @@ struct TrayActionButton: View {
                 if state.error?.control == "action" { Circle().strokeBorder(Tokens.fail, lineWidth: 1.5) }
             }
             .overlay(alignment: .topTrailing) {
-                if state.queued > 0 {
-                    Text("\(state.queued)")
+                if !state.queued.isEmpty {
+                    Text("\(state.queued.count)")
                         .font(.frog(size: 9, weight: .bold))
                         .foregroundStyle(.white)
                         .frame(minWidth: 13, minHeight: 13)
@@ -479,6 +481,7 @@ struct TrayActionButton: View {
     private func help(_ a: ComposerModel.Action) -> String {
         switch a {
         case .dictate: "Dictate (⌥⌘V)"
+        case .listening: "Stop dictating"
         case .send: "Send (↩)"
         case .stop: state.busy == .loading_model ? "Stop loading the model (Esc)" : "Stop (Esc)"
         case .queue: "Queue a follow-up (↩)"

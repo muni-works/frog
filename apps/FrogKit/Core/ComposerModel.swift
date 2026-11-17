@@ -9,12 +9,16 @@ enum ComposerModel {
     enum Place: String, Codable, Sendable { case local, cloud }
     enum Busy: String, Codable, Sendable { case idle, working, sending, loading_model }
     enum PrState: String, Codable, CaseIterable, Sendable { case draft, checks, failing, approved, merged, closed }
-    enum Action: String, Codable, Sendable { case dictate, send, stop, queue }
+    enum Action: String, Codable, Sendable { case dictate, listening, send, stop, queue }
     enum GitAction: String, Codable, Sendable { case commit, open_pr, push, fix, merge, archive, reopen }
     enum Pending: String, Codable, Sendable { case draft, aside }
     enum Confirm: String, Codable, Sendable { case yolo, merge, archive }
+    /// What the status line shows: the first that applies, in this order.
+    enum Status: String, Codable, Sendable { case error, confirm, notice, git, none }
 
     struct Attachment: Codable, Equatable, Sendable { var name: String; var size: Int; var type: String }
+    /// A follow-up sent while Frog works: it waits above the field until the turn ends.
+    struct Queued: Codable, Equatable, Sendable { var text: String; var attachments: [Attachment] = [] }
     struct Model: Codable, Equatable, Sendable { var id: String; var name: String; var place: Place; var node: String? }
     struct Checks: Codable, Equatable, Sendable { var ok: Int; var total: Int }
     struct Pr: Codable, Equatable, Sendable {
@@ -74,7 +78,9 @@ enum ComposerModel {
         var busy: Busy = .idle
         /// What the send in flight carries: the draft (cleared on ack) or a git action's own text.
         var pending: Pending?
-        var queued = 0
+        var queued: [Queued] = []
+        /// Dictation is in progress: the action shows `listening`.
+        var dictating = false
         var error: Failure?
         var notice: String?
         var confirm: Confirm?
@@ -99,6 +105,8 @@ enum ComposerModel {
         /// The Open PR action is the predicate's (the work is done, and opening one is
         /// wanted): the git line draws it as the line's one emphatic control.
         var openPr: Bool
+        /// Which of error, question, notice or git state the status line shows.
+        var status: Status
     }
 
     enum Intent: Equatable, Sendable {
@@ -109,6 +117,8 @@ enum ComposerModel {
         case recall, send, action, ack
         case sendFailed(code: String, retryIn: Int?)
         case turnDone, stop, esc, modelLoading, modelReady, micDenied
+        case dictationStarted, dictationEnded
+        case removeQueued(Int)
         case setMode(Mode)
         case cycleMode, confirm, cancelConfirm
         case pickModel(Model)
@@ -146,7 +156,7 @@ enum ComposerModel {
         "signed_out": ("Signed out of Frog Cloud", ["sign_in"], nil),
         "no_credit": ("Out of credit", ["add_credit", "use_local"], nil),
         "cloud_busy": ("Frog Cloud is busy", ["retry"], nil),
-        "mic_denied": ("Allow microphone in System Settings", ["open_settings"], "action"),
+        "mic_denied": ("Needs mic access to take dictation", ["open_settings"], "action"),
         "worktree_failed": ("Couldn't make a worktree", ["use_checkout"], "worktree"),
         "clone_failed": ("Couldn't clone the repo", ["retry"], "where"),
         "hook_failed": ("A commit hook failed", ["show_output"], "git_action"),
@@ -194,20 +204,23 @@ enum ComposerModel {
 
     static func derive(_ s: State) -> Derived {
         let content = hasContent(s)
-        let action: Action = switch s.busy {
+        let face: Action = switch s.busy {
         case .working: content ? .queue : .stop
         case .loading_model: .stop
         case .sending: .send
         case .idle: content ? .send : .dictate
         }
+        let action: Action = s.dictating ? .listening : face
         var git: GitAction?
         var summary: Derived.Summary?
         var canSwitch = true
+        var gitState = false
         // `[git] open_pr_when_done`: "off" means the branch is yours to push, so the Open PR
         // action isn't offered at all. Unset (an older engine) reads as the default, "ask".
         let setting = s.openPrWhenDone ?? .ask
         if case .session(let w) = s.where {
             canSwitch = !w.dirty
+            gitState = w.repo != nil && (w.dirty || w.ahead > 0 || !w.prs.isEmpty)
             let top = worst(w.prs)
             if top?.state == .merged { git = .archive }
             else if w.dirty { git = .commit }
@@ -227,8 +240,9 @@ enum ComposerModel {
         // it has always been.
         let wanted = git == .open_pr && (s.openPr.map { OpenPR.offers(setting, $0) } ?? false)
         let disabled = s.busy == .sending || (s.busy == .idle && !content)
+        let status: Status = s.error != nil ? .error : s.confirm != nil ? .confirm : s.notice != nil ? .notice : gitState ? .git : .none
         return Derived(action: action, sendDisabled: disabled, gitAction: git, prSummary: summary,
-                       canSwitchBranch: canSwitch, openPr: wanted)
+                       canSwitchBranch: canSwitch, openPr: wanted, status: status)
     }
 
     /// The key a model is remembered under: the folder, the cloud repo, or chat.
@@ -256,7 +270,7 @@ enum ComposerModel {
         case .working:
             n.draft = Draft()
             n.lastSent = text
-            n.queued += 1
+            n.queued.append(Queued(text: text, attachments: s.draft.attachments))
             return (n, [Effect("queued", ["text": .string(text), "attachments": files])])
         case .idle:
             n.busy = .sending
@@ -272,7 +286,7 @@ enum ComposerModel {
         var n = s
         let effect = ["text": JSON.string(text), "attachments": .array([])]
         if s.busy == .working {
-            n.queued += 1
+            n.queued.append(Queued(text: text))
             return (n, [Effect("queued", effect)])
         }
         n.busy = .sending
@@ -344,6 +358,7 @@ enum ComposerModel {
         case .action:
             switch derive(s).action {
             case .dictate: return (s, [Effect("start_dictation")])
+            case .listening: return (s, [Effect("stop_dictation")])
             case .stop: return reduce(s, .stop)
             default: return send(s)
             }
@@ -364,7 +379,7 @@ enum ComposerModel {
             return (n, [])
         case .turnDone:
             n.busy = .idle
-            n.queued = 0
+            n.queued = []
             return (n, [])
         case .stop:
             if s.busy == .working { return (s, [Effect("interrupt")]) }
@@ -389,8 +404,19 @@ enum ComposerModel {
             n.pending = nil
             return send(n)
         case .micDenied:
+            n.dictating = false
             n.error = failure(s, "mic_denied")
             return (n, [])
+        case .dictationStarted:
+            n.dictating = true
+            return (n, [])
+        case .dictationEnded:
+            n.dictating = false
+            return (n, [])
+        case .removeQueued(let i):
+            guard s.queued.indices.contains(i) else { return (s, []) }
+            n.queued.remove(at: i)
+            return (n, [Effect("remove_queued", ["index": .number(Double(i))])])
         case .setMode(let m):
             return setMode(s, m)
         case .cycleMode:
@@ -633,6 +659,9 @@ extension ComposerModel.Intent: Decodable {
         case "model_loading": self = .modelLoading
         case "model_ready": self = .modelReady
         case "mic_denied": self = .micDenied
+        case "dictation_started": self = .dictationStarted
+        case "dictation_ended": self = .dictationEnded
+        case "remove_queued": self = .removeQueued(r.index ?? 0)
         case "set_mode": self = .setMode(r.mode ?? .auto)
         case "cycle_mode": self = .cycleMode
         case "confirm": self = .confirm

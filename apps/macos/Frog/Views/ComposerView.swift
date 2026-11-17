@@ -117,7 +117,8 @@ struct ComposerView: View {
         s.yoloConfirmed = local.yoloConfirmed
         s.signedIn = CloudSessions.shared.available
         s.busy = waitingForModel ? .loading_model : conversation.busy ? .working : .idle
-        s.queued = conversation.queue.count
+        s.queued = conversation.queue.map { .init(text: $0.text, attachments: $0.images.map { _ in .init(name: "image", size: 0, type: "image/png") }) }
+        s.dictating = dictation.isActive
         s.error = local.error
         s.notice = local.notice
         s.confirm = local.confirm
