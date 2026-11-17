@@ -413,7 +413,7 @@ def s_pair(t, lt):
     px = lerp(W + 320, PC_PAD[0], k)
     pond = Pond(); pond.pad(*MAC_PAD, 250); pond.pad(px, PC_PAD[1], 250); splash(pond, t, B(b + 4), *PC_PAD, 250); pond.onto(img)
     pad_label(img, MAC_PAD[0], MAC_PAD[1] + 84, "this Mac")
-    pad_label(img, px, PC_PAD[1] + 84, "a PC with an RTX 3090")
+    pad_label(img, px, PC_PAD[1] + 84, "my gaming PC")
     frog_at(img, t, MAC_PAD[0], MAC_PAD[1] - 6, 180, look=(0.9, 0.0))
     if not joined:  # the code the new machine printed, riding in on its pad
         f = mono(44, True); txt = CODE[:3] + " " + CODE[3:]; tw = d.textlength(txt, font=f)
@@ -422,7 +422,7 @@ def s_pair(t, lt):
     click = B(b + 1)
     typed = 0 if t < click else min(6, int((t - B(b + 1.5)) / (BEAT * 0.4)) + 1) if t >= B(b + 1.5) else 0
     rows = [("studio", "This Mac", "M4 Max · 64 GB unified", "idle")]
-    if joined: rows.append(("mew", "", "RTX 3090 · 24 GB VRAM", "idle"))
+    if joined: rows.append(("gaming-pc", "", "RTX 3090 · 24 GB VRAM", "idle"))
     mode = "button" if (t < click or joined) else "code"
     flash = float(np.exp(-(t - B(b + 4)) * 2.2)) if joined else 0.0
     pts = machines_panel(img, col(5), 420, col(12), rows, mode=mode, typed=typed, flash=flash)
@@ -433,22 +433,51 @@ def s_pair(t, lt):
     else: words(img, t, B(b + 4), [("It joins the", False), ("pool.", True)])
     return img
 
+SESSIONS = ["Fix the flaky upload test", "Docs search filters page titles", "Check every page against the code",
+            "Warm the prompt cache on start", "Count stalls in the swarm bench", "Parse byte ranges in uploads"]
+
+def sessions_panel(img, t, x0, y0, x1, rows):
+    """the session list, redrawn from the app's tokens: a row per session, its title, "Working…"
+    in the accent with a turning spinner, and the machine it runs on. rows = [(title, machine, since)]."""
+    d = ImageDraw.Draw(img)
+    d.text((x0, y0), "Sessions", font=sans(40), fill=FG, anchor="ls")
+    if rows: d.text((x1, y0), f"{len(rows)} working", font=sans(34, False), fill=MUTED, anchor="rs")
+    top = y0 + 30; rh = 92
+    if rows: d.rounded_rectangle([x0, top, x1, top + rh * len(rows)], radius=24, fill=CARD)
+    for i, (title, machine, since) in enumerate(rows):
+        y = top + i * rh
+        if i: d.line([(x0 + 32, y), (x1 - 32, y)], fill=LINE, width=2)
+        k = ease(seg(t, since, since + 0.2)); f_col = lambda c: tuple(int(c[j] * k + CARD[j] * (1 - k)) for j in range(3))
+        cx, cy = x0 + 54, y + rh / 2
+        a0 = (t * 420 + i * 60) % 360
+        d.arc([cx - 16, cy - 16, cx + 16, cy + 16], 0, 360, fill=f_col(LINE), width=4)
+        d.arc([cx - 16, cy - 16, cx + 16, cy + 16], a0, a0 + 100, fill=f_col(FROG), width=4)
+        d.text((x0 + 96, y + 32), title, font=sans(34), fill=f_col(FG), anchor="lm")
+        fw = sans(28, False); ww = d.textlength("Working…", font=fw)
+        d.text((x0 + 96, y + 66), "Working…", font=fw, fill=f_col(FROG), anchor="lm")
+        d.ellipse([x0 + 96 + ww + 20, y + 59, x0 + 96 + ww + 34, y + 73], fill=f_col(LOCAL))
+        d.text((x0 + 96 + ww + 46, y + 66), machine, font=fw, fill=f_col(MUTED), anchor="lm")
+
 def s_swarm(t, lt):
+    """a frog lands on a pad each beat, and with each one a session appears in the list, working,
+    on the machine it landed on."""
     b = CUT["swarm"]
-    img = Image.new("RGB", (W, H), CANVAS); d = ImageDraw.Draw(img)
-    pads = ((col(2) + 70, 900), (col(7) + 60, 900))
+    img = Image.new("RGB", (W, H), CANVAS)
+    pads = ((col(2) + 100, 650), (col(2) + 100, 950))  # this Mac above, the PC below
+    names = ("this Mac", "gaming PC")
     spots = [(pads[i % 2][0] + dx, pads[i % 2][1] - 8) for i, dx in enumerate((-185, -185, 0, 0, 185, 185))]
     pond = Pond()
     for p in pads: pond.pad(*p, 330)
     for i, sp in enumerate(spots): splash(pond, t, B(b + i + 1), sp[0], sp[1] + 8, 90)
     pond.onto(img)
-    pad_label(img, pads[0][0], pads[0][1] + 96, "this Mac"); pad_label(img, pads[1][0], pads[1][1] + 96, "the PC")
-    for i, sp in enumerate(spots):  # a frog lands on each beat
-        hop(img, t, B(b + i), B(b + i + 1), (sp[0] + (-500 if i % 2 == 0 else 500), -200), sp, 100, height=120, look=(0, 0.3))
-    n = on_beat(t, b + 1, 6)
-    d.text((col(12), 400), str(n), font=sans(300), fill=FROG if n else LINE, anchor="rs")
-    d.text((col(12), 400 + SUB_GAP), "agents, working at once", font=sans(SUB, False), fill=MUTED, anchor="rs")
-    words(img, t, B(b), [("As many agents as ", False), ("they can hold.", True)])
+    d = ImageDraw.Draw(img)
+    for p, label in zip(pads, ("this Mac", "my gaming PC")):
+        d.text((p[0] + 360, p[1]), label, font=mono(LABEL), fill=MUTED, anchor="lm")
+    for i, sp in enumerate(spots):
+        hop(img, t, B(b + i), B(b + i + 1), (-160, sp[1] - 60), sp, 100, height=170, look=(0.6, 0.0))
+    rows = [(SESSIONS[i], names[i % 2], B(b + i + 1)) for i in range(6) if t >= B(b + i + 1)]
+    sessions_panel(img, t, col(7), 420, col(12), rows)
+    words(img, t, B(b), [("As many agents as", False), ("they can hold.", True)])
     return img
 
 def s_how(t, lt):
@@ -469,7 +498,7 @@ def s_how(t, lt):
         splash(pond, t, B(cb + 1), *(pc if to_pc and cb + 1 <= b + 8 else mac), 120)
     pond.onto(img)
     pad_label(img, mac[0], mac[1] + 90, "this Mac")
-    pad_label(img, pc[0], pc[1] + 90, "the PC dropped out" if out else "the PC", WARN if out else MUTED)
+    pad_label(img, pc[0], pc[1] + 90, "my gaming PC dropped out" if out else "my gaming PC", WARN if out else MUTED)
     for i, a in enumerate(agents):
         if t >= B(b + i): frog_at(img, t, a[0], a[1], 105, land=B(b + i), look=(0, 0.8))
     for cb, src, to_pc in calls:
