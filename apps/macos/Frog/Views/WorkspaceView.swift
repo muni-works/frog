@@ -5,7 +5,9 @@ import SwiftUI
 /// window's full height (up under the title bar) with a hairline on its inner edge. The window
 /// holds one to three panes side by side, each a conversation with its own composer, inspector
 /// and timeline rail. The session list folds into a rail of status tiles. Each pane's column is
-/// centered in the space the columns leave.
+/// centered in the space the columns leave. Collapsed, the session list is gone: its toggle
+/// waits beside the traffic lights (with a dot when something needs you), and the list peeks
+/// over the page from the left edge on hover.
 struct WorkspaceView: View {
     let panes: Panes
     /// What the user asked for, per window. Whether the list actually docks also depends on the
@@ -18,11 +20,12 @@ struct WorkspaceView: View {
     /// A divider being dragged: layout changes follow the pointer, unanimated.
     @State private var resizing = false
     @State private var docked = Docked()
-    /// Too narrow for even the session rail: sessions live behind a toolbar button.
-    @State private var compact = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// The session list floated over the conversation because the window is too narrow to dock it.
     @State private var peekSessions = false
+    /// The peek came from the pointer at the window's left edge: it goes when the pointer
+    /// moves out over the page.
+    @State private var peekByHover = false
     /// This view's window, so the sidebar can bring an already-open conversation forward.
     @State private var window: NSWindow?
     @State private var renamingTitle = false
@@ -62,15 +65,15 @@ struct WorkspaceView: View {
     /// Room between the timeline rail and the inspector's hairline (or the pane's edge), and
     /// above the rail and a split pane's header.
     static let inset = Tokens.Space.row
-    /// Where the traffic lights end, from the window's leading edge: the title in the toolbar
-    /// starts past the docked sidebar's hairline, not beside the lights.
+    /// Where the traffic lights end, from the window's leading edge: the sidebar's header in
+    /// the title row fills from there to its hairline, so the title starts past it.
     static let trafficLights: CGFloat = 84
+    /// The strip at the window's left edge that peeks the collapsed sidebar on hover.
+    static let peekEdge: CGFloat = 6
     /// Narrowest a column may get; a card that would squeeze it further stays folded.
     static let minColumn: CGFloat = 520
     /// Split panes accept narrower columns: that's the point of splitting.
     static let minSplitColumn: CGFloat = 460
-    /// Below this the session rail folds away too.
-    static let compactWidth: CGFloat = 760
     /// Hysteresis: a card that's docked stays docked until the column would lose this much more,
     /// so dragging a window edge near a threshold doesn't flicker the layout.
     static let slack: CGFloat = 40
@@ -106,10 +109,10 @@ struct WorkspaceView: View {
     // folds away, and opening it floats it over the conversation instead ("peek"). The session
     // list comes first: inspectors dock in what's left.
 
-    /// The session list's width, its hairline included: where the panes start.
+    /// The session list's width, its hairline included: where the panes start. Collapsed, it's
+    /// gone.
     private func extent(sessions open: Bool) -> CGFloat {
-        if !open && compact { return 0 }
-        return open ? Self.sessionsWidth : SessionRail.width
+        open ? Self.sessionsWidth : 0
     }
 
     /// What a pane's right edge keeps from its conversation: the inspector when docked, and the
@@ -169,7 +172,6 @@ struct WorkspaceView: View {
     }
 
     private func relayout() {
-        compact = canvasSize.width < Self.compactWidth + (compact ? Self.slack : 0)
         let sessions = showSessions && panes.items.allSatisfy {
             fits(column($0, sessions: true, changes: false), keeping: docked.sessions)
         }
@@ -379,6 +381,13 @@ struct WorkspaceView: View {
         openInFocused(s)
     }
 
+    /// A new chat in the focused pane, the composer taking the keyboard (⌘N).
+    private func newSession() {
+        panes.backToApp()
+        panes.switchFolder(nil, in: focused)
+        focused.ui.focusComposer()
+    }
+
     private func split(_ s: SessionInfo? = nil, _ edge: PaneEdge = .right) {
         Haptics.settle()
         panes.split(s, on: edge, window: window)
@@ -426,6 +435,19 @@ struct WorkspaceView: View {
             .environment(\.paneNumbers, numbers)
             .environment(\.showDocs) { showDocs() }
 
+            // Collapsed: the pointer at the left edge brings the list out over the page.
+            if !sessionsVisible {
+                Color.clear
+                    .frame(width: Self.peekEdge)
+                    .frame(maxHeight: .infinity)
+                    .contentShape(.rect)
+                    .onHover { inside in
+                        guard inside else { return }
+                        peekByHover = true
+                        peekSessions = true
+                    }
+            }
+
             ForEach(inDocs ? [] : panes.layout.dividers(in: region(sessions: docked.sessions), maximizing: panes.maximized)) { d in
                 PaneDividerHandle(divider: d, resizing: $resizing) { t in
                     panes.moveDivider(d, to: t, minimum: panes.minimum(paneWidth: Self.minPane, forToolPanes: Self.minToolPane, beside: d))
@@ -456,6 +478,13 @@ struct WorkspaceView: View {
         // sized from this, so it mustn't be sized from them.
         .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .topLeading)
         .coordinateSpace(.named(Self.canvasSpace))
+        // A hover peek goes when the pointer moves out over the page.
+        .onContinuousHover(coordinateSpace: .named(Self.canvasSpace)) { phase in
+            guard peekByHover, peekSessions, case .active(let p) = phase,
+                  p.x > Self.sessionsWidth + Tokens.Space.row * 3 else { return }
+            peekSessions = false
+        }
+        .onChange(of: peekSessions) { if !peekSessions { peekByHover = false } }
         .onGeometryChange(for: CGSize.self, of: \.size) { canvasSize = $0 }
         .onGeometryChange(for: CGPoint.self, of: { $0.frame(in: .global).origin }) { canvasOrigin = $0 }
         .environment(\.paneDragger, dragger)
@@ -508,11 +537,7 @@ struct WorkspaceView: View {
             toggleSessions: toggleSessions, toggleChanges: { toggleChanges(focused) },
             showTerminal: showTerminal, showPreview: showPreview, toggleInspect: toggleInspect,
             sessionsShown: sessionsVisible, changesShown: changesVisible(focused),
-            newChat: {
-                panes.backToApp()
-                panes.switchFolder(nil, in: focused)
-                focused.ui.focusComposer()
-            },
+            newChat: newSession,
             split: panes.canSplit ? { split(nil, $0 == .vertical ? .bottom : .right) } : nil,
             closePane: panes.isSplit ? { panes.close(focused) } : nil,
             focusPane: panes.isSplit ? { panes.focus(step: $0) } : nil,
@@ -578,21 +603,37 @@ struct WorkspaceView: View {
             Button("Cancel", role: .cancel) {}
         }
         .toolbar {
-            // As on the web: a plain title (no glass pill) at the left, the controls at the right,
-            // both over the conversation: past the docked sidebar, short of a docked inspector.
-            if titleInset > 0 {
-                ToolbarItem(placement: .navigation) { Color.clear.frame(width: titleInset, height: 1) }
+            // Beside the traffic lights: the sidebar's header over the sidebar (docked or
+            // peeking), else its toggle and New session. Then, as on the web, a plain title (no
+            // glass pill) over the conversation, and the controls at the right, short of a docked
+            // inspector.
+            if sessionsVisible {
+                ToolbarItem(placement: .navigation) {
+                    SidebarTitleRow(docs: inDocs, peeking: peekSessions, toggle: toggleSessions)
+                        .frame(width: Self.sessionsWidth - Self.trafficLights)
+                }
+                .sharedBackgroundVisibility(.hidden)
+            } else {
+                ToolbarItem(placement: .navigation) {
+                    SidebarToggle(toggle: toggleSessions, open: openInFocused)
+                }
+                .sharedBackgroundVisibility(.hidden)
+                if !inDocs {
+                    ToolbarItem(placement: .navigation) {
+                        Button(action: newSession) {
+                            Image(systemName: "square.and.pencil").frame(width: 28, height: 24).contentShape(.rect)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Tokens.textSecondary)
+                        .help("New session (⌘N)")
+                        .accessibilityLabel("New session")
+                    }
                     .sharedBackgroundVisibility(.hidden)
+                }
             }
             ToolbarItem(placement: .navigation) { titleBar }
                 .sharedBackgroundVisibility(.hidden)
             ToolbarSpacer(.flexible)
-            if compact && !sessionsVisible {
-                ToolbarItem(placement: .navigation) {
-                    Button("Show Conversations", systemImage: "sidebar.left", action: toggleSessions)
-                        .help("Show conversations (⌃⌘S)")
-                }
-            }
             ToolbarItem(placement: .primaryAction) {
                 Button("Split", systemImage: "rectangle.split.2x1") { split() }
                     .contextMenu {
@@ -619,12 +660,6 @@ struct WorkspaceView: View {
         }
     }
 
-    /// Room the title leaves after the traffic lights, so it starts past the docked sidebar.
-    private var titleInset: CGFloat {
-        guard docked.sessions, !compact else { return 0 }
-        return max(0, Self.sessionsWidth - Self.trafficLights)
-    }
-
     /// Room the controls leave at the right, so they sit left of a docked inspector at the
     /// window's top-right.
     private var controlsInset: CGFloat {
@@ -639,29 +674,24 @@ struct WorkspaceView: View {
 
     // MARK: Columns
 
-    /// The session list, or the rail it folds to: a flush column at the window's left edge.
+    /// The session list: a flush column at the window's left edge, docked or peeking over the
+    /// page. Collapsed, nothing (its toggle is in the title row). Its header is the title row's.
     @ViewBuilder
     private func sessions(room: CGFloat) -> some View {
-        if inDocs {
-            if sessionsVisible {
-                DocsSidebar(docs: docs, selected: docsPage?.slug, maxHeight: room,
-                            open: { showDocs($0) }, back: backToApp, collapse: toggleSessions)
-                    .frame(width: Self.sessionsWidth)
-                    .flushColumn(trailing: true, floating: peekSessions)
-            } else if !compact {
-                DocsRail(back: backToApp, expand: toggleSessions)
-                    .flushColumn(trailing: true)
+        if sessionsVisible {
+            Group {
+                if inDocs {
+                    DocsSidebar(docs: docs, selected: docsPage?.slug, maxHeight: room, titleRow: false,
+                                open: { showDocs($0) }, back: backToApp, collapse: toggleSessions)
+                } else {
+                    // One look: an opaque column one step off the canvas (#0a0a0a), not glass. It
+                    // also draws in -FrogSnapshot, which glass doesn't.
+                    SessionList(workspace: workspace, maxHeight: room, titleRow: false) { toggleSessions() }
+                }
             }
-        } else if sessionsVisible {
-            SessionList(workspace: workspace, maxHeight: room) { toggleSessions() }
-                .frame(width: Self.sessionsWidth)
-                // One look: an opaque column one step off the canvas (#0a0a0a), not glass. It
-                // also draws in -FrogSnapshot, which glass doesn't.
-                .flushColumn(trailing: true, floating: peekSessions)
-        } else if !compact {
-            // Folded, it's a rail of status tiles.
-            SessionRail(workspace: workspace, maxHeight: room, expand: toggleSessions)
-                .flushColumn(trailing: true)
+            .frame(width: Self.sessionsWidth)
+            .flushColumn(trailing: true, floating: peekSessions)
+            .transition(.move(edge: .leading))
         }
     }
 }

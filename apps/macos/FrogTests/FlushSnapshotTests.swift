@@ -39,7 +39,7 @@ final class FlushSnapshotTests: XCTestCase {
             s("c", "Composer status line", ago: 90),
             s("d", "Timeline rail labels", ago: 600, repo: "web"),
             s("e", "Docs search", ago: 1500, repo: "web"),
-        ], live: ["b": .running])
+        ], live: ["b": .waiting, "d": .running])
         CloudAccount.shared.stage(CloudAccount.Me(name: "Sam Frog", handle: nil, image: nil, google: nil, email: nil,
                                                   credit_cents: 1250, subscription: nil))
         Devices.shared.hideOffer = true
@@ -104,7 +104,8 @@ final class FlushSnapshotTests: XCTestCase {
         try render("inspector") { try show($0.items[0], inspector: true) }
     }
 
-    /// The sidebar folded to its rail, the inspector docked.
+    /// The sidebar collapsed, so gone: its toggle (with the dot for the waiting conversation)
+    /// and New session beside the traffic lights, the inspector docked.
     func testCollapsed() throws {
         try render("collapsed", sessionsOpen: false) { try show($0.items[0], inspector: true) }
     }

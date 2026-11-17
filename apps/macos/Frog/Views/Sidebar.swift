@@ -13,13 +13,18 @@ struct SessionList: View {
     @Bindable var workspace: Workspace
     let maxHeight: CGFloat
     var collapse: (() -> Void)?
+    /// Its own title row (the frog, the view options, collapse). In the window that row is the
+    /// title bar's, over the sidebar (`SidebarTitleRow`), so the list starts with New session.
+    var titleRow = true
     @State private var library = Library.shared
     @State private var cloud = CloudSessions.shared
     @State private var query: String
 
-    init(workspace: Workspace, maxHeight: CGFloat, query: String = "", collapse: (() -> Void)? = nil) {
+    init(workspace: Workspace, maxHeight: CGFloat, query: String = "", titleRow: Bool = true,
+         collapse: (() -> Void)? = nil) {
         self.workspace = workspace
         self.maxHeight = maxHeight
+        self.titleRow = titleRow
         self.collapse = collapse
         _query = State(initialValue: query)
     }
@@ -32,7 +37,8 @@ struct SessionList: View {
     var body: some View { listBody }
     #endif
 
-    @State private var showArchived = false
+    /// Shared with the view options in the title row (`SidebarViewOptions`), per window.
+    @SceneStorage("sidebarArchived") private var showArchived = false
     @State private var showTree = false
     @State private var renaming: SessionInfo?
     @State private var newTitle = ""
@@ -985,33 +991,6 @@ struct SessionList: View {
         }
     }
 
-    /// How the list is grouped, sorted and filtered, like Finder's View menu.
-    private var viewOptions: some View {
-        Menu {
-            Toggle("Compact", isOn: $compactSidebar)
-                .disabled(grouping == .org)
-            Divider()
-            Picker("Show", selection: $showArchived) {
-                Text("Active").tag(false)
-                Text("Archived").tag(true)
-            }
-            Divider()
-            Picker("Group By", selection: $grouping) {
-                ForEach(Grouping.allCases, id: \.self) { Text($0.title).tag($0) }
-            }
-            Picker("Sort By", selection: $sort) {
-                ForEach(Sort.allCases, id: \.self) { Text($0.title).tag($0) }
-            }
-        } label: {
-            Image(systemName: "line.3.horizontal.decrease").frame(width: 24, height: 24)
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .foregroundStyle(.secondary)
-        .help("Group and sort conversations")
-    }
-
     // MARK: Pieces
 
     private func row(_ s: SessionInfo, showPlace: Bool, nested: Bool = false, summary: String? = nil) -> some View {
@@ -1091,22 +1070,24 @@ struct SessionList: View {
     /// New session and Search as rows of their own.
     private var header: some View {
         VStack(spacing: 2) {
-            HStack(spacing: 6) {
-                FrogFace(mood: .waiting, size: 20)
-                Text("Frog").font(.frog(size: 13.5, weight: .semibold))
-                Spacer(minLength: 4)
-                viewOptions
-                if let collapse {
-                    Button(action: collapse) {
-                        Image(systemName: "sidebar.left").frame(width: 24, height: 24)
+            if titleRow {
+                HStack(spacing: 6) {
+                    FrogFace(mood: .waiting, size: 20)
+                    Text("Frog").font(.frog(size: 13.5, weight: .semibold))
+                    Spacer(minLength: 4)
+                    SidebarViewOptions()
+                    if let collapse {
+                        Button(action: collapse) {
+                            Image(systemName: "sidebar.left").frame(width: 24, height: 24)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                        .help("Collapse conversations (⌃⌘S)")
                     }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                    .help("Collapse conversations (⌃⌘S)")
                 }
+                .padding(.horizontal, 8)
+                .padding(.bottom, 6)
             }
-            .padding(.horizontal, 8)
-            .padding(.bottom, 6)
             Button { switchFolder?(nil) } label: {
                 navRow("square.and.pencil", "New session", key: "⌘N")
             }
@@ -1128,7 +1109,7 @@ struct SessionList: View {
             .frame(height: 30)
         }
         .padding(.horizontal, 6)
-        .padding(.top, 10)
+        .padding(.top, titleRow ? 10 : 4)
         .padding(.bottom, 8)
     }
 
@@ -1547,77 +1528,6 @@ struct CompactSessionRow<Menu: View>: View {
                     .foregroundStyle(.green.opacity(0.6)).help("done")
             }
         }
-    }
-}
-
-/// The conversation list folded to a strip: new, pins, and whatever is live or on screen, as
-/// tiles with their status. Enough to watch every running agent without giving up the width.
-struct SessionRail: View {
-    @Bindable var workspace: Workspace
-    let maxHeight: CGFloat
-    let expand: () -> Void
-    @State private var library = Library.shared
-    @Environment(\.openSession) private var openSession
-    @Environment(\.openSessionInSplit) private var openInSplit
-    @Environment(\.switchFolder) private var switchFolder
-
-    static let width: CGFloat = 52
-
-    private var current: String? { workspace.opening ?? workspace.conversation?.cloudSession ?? workspace.conversation?.sessionID }
-
-    private var pins: [SessionInfo] {
-        library.sessions.filter { library.pinned.contains($0.id) && !library.archived.contains($0.id) }
-    }
-
-    /// Live conversations and the one on screen, newest first.
-    private var hot: [SessionInfo] {
-        library.sessions.filter { s in
-            !library.pinned.contains(s.id) && !library.archived.contains(s.id)
-                && (library.live[s.id] != nil || s.id == current)
-        }
-    }
-
-    var body: some View {
-        VStack(spacing: 8) {
-            icon("sidebar.left", help: "Expand conversations (⌃⌘S)", action: expand)
-            icon("square.and.pencil", help: "New conversation") { switchFolder?(nil) }
-            HuggingScroll(maxHeight: max(40, maxHeight - 100)) {
-                VStack(spacing: 8) {
-                    if !pins.isEmpty {
-                        Divider().padding(.horizontal, 8)
-                        ForEach(pins) { tile($0) }
-                    }
-                    if !hot.isEmpty {
-                        Divider().padding(.horizontal, 8)
-                        ForEach(hot) { tile($0) }
-                    }
-                }
-            }
-            .scrollIndicators(.never)
-        }
-        .padding(.vertical, 10)
-        .frame(width: Self.width)
-        .onAppear { library.refresh() }
-    }
-
-    private func tile(_ s: SessionInfo) -> some View {
-        Button {
-            if NSEvent.modifierFlags.contains(.command), let openInSplit { openInSplit(s) } else { openSession?(s) }
-        } label: {
-            Monogram(session: s, size: 34, selected: s.id == current, live: library.live[s.id])
-        }
-        .buttonStyle(.plain)
-        .paneDraggable(.session(s), title: s.displayTitle)
-        .help(s.displayTitle)
-    }
-
-    private func icon(_ name: String, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: name).frame(width: 30, height: 26).contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
-        .help(help)
     }
 }
 

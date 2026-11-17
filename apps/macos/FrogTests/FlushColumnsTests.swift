@@ -92,11 +92,12 @@ final class FlushColumnsTests: XCTestCase {
         XCTAssertTrue(ok, "\(what) at (\(x), \(y)): \(got), want \(want)", file: file, line: line)
     }
 
-    private func shoot(_ setup: (Panes) throws -> Void, width: CGFloat? = nil, name: String = #function) throws -> (Shot, Panes) {
+    private func shoot(_ setup: (Panes) throws -> Void, width: CGFloat? = nil, sessionsOpen: Bool = true,
+                       name: String = #function) throws -> (Shot, Panes) {
         let panes = Panes(Workspace(folder: folder, fresh: true))
         try setup(panes)
         let size = CGSize(width: width ?? self.size.width, height: self.size.height)
-        let host = NSHostingView(rootView: WorkspaceView(panes: panes).frame(minWidth: 720, minHeight: 480))
+        let host = NSHostingView(rootView: WorkspaceView(panes: panes, sessionsOpen: sessionsOpen).frame(minWidth: 720, minHeight: 480))
         let w = NSWindow(contentRect: CGRect(origin: .zero, size: size),
                          styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         w.isReleasedWhenClosed = false
@@ -202,5 +203,35 @@ final class FlushColumnsTests: XCTestCase {
         for y in stride(from: CGFloat(1), to: shot.size.height - 1, by: 23) {
             assertGray(shot, W - 0.5, y, canvas, "the window's trailing edge with the inspector folded")
         }
+    }
+
+    /// Collapsed, the sidebar is gone: nothing at the window's left edge but the page, top to
+    /// bottom, and the panes start at x = 0. (Before, a 52 pt rail stood there.)
+    func testCollapsedSidebarLeavesNothing() throws {
+        let (shot, panes) = try shoot({ try showConversation($0, inspector: false) }, sessionsOpen: false)
+        defer { panes.stopAll() }
+        let h = shot.size.height
+        for x: CGFloat in [0.5, 26, 51] {
+            for y in stride(from: CGFloat(1), to: h - 1, by: 29) {
+                assertGray(shot, x, y, canvas, "the window's left edge with the sidebar collapsed")
+            }
+        }
+    }
+
+    /// The collapsed sidebar's toggle carries a dot only while a conversation waits on you, and
+    /// lists the live ones waiting first.
+    func testToggleShowsWhatNeedsYou() {
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        func s(_ id: String, ago: Int64) -> SessionInfo {
+            SessionInfo(id: id, modified: now - ago, created: now - ago - 1, model: "m", firstInput: nil, title: id,
+                        end: nil, forkedFrom: nil, cwd: "/tmp/demo")
+        }
+        let sessions = [s("a", ago: 10), s("b", ago: 20), s("c", ago: 30), s("d", ago: 40)]
+        let toggle = SidebarToggle(toggle: {}, open: { _ in })
+        Library.shared.stage(sessions: sessions, live: ["a": .running, "b": .unread])
+        XCTAssertFalse(toggle.needsYou, "running and unread don't need you")
+        Library.shared.stage(sessions: sessions, live: ["a": .running, "b": .unread, "c": .waiting, "d": .running])
+        XCTAssertTrue(toggle.needsYou)
+        XCTAssertEqual(toggle.live.map(\.session.id), ["c", "a", "d", "b"], "waiting, then running (newest first), then unread")
     }
 }
