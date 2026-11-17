@@ -4,8 +4,9 @@ beat grid as the picture (beats.py). No samples, no recordings.
 
 usage: music.py <out.wav>
 
-Sections follow the cuts: intro (pad and pluck), drop 1 at the where-it-runs shot, a break under
-the sandbox beat, drop 2 from the parallel-sessions beat to the price, then the end card rings out.
+Sections follow the cuts: intro (pad and pluck) under the opening line, drop 1 when a second
+machine joins, a break under the bench numbers, drop 2 from Frog Cloud to the free beat, then the
+end card rings out.
 Am - F - C - G, one chord per bar (4 beats)."""
 import sys, wave
 import numpy as np
@@ -105,7 +106,7 @@ def riser(dur):
 
 
 K, H, HO, C = kick(), hat(), hat(True), clap()
-DROP1, BREAK, DROP2, END = CUT["mac"], CUT["sandbox"], CUT["parallel"], CUT["end"]
+DROP1, BREAK, DROP2, END = CUT["pair"], CUT["proof"], CUT["cloud"], CUT["end"]
 LAST = int(DUR / BEAT)
 
 for b in range(LAST):

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // The reel's gateway: the web app (vite dev, proxying /v1 here) sees an account, the Frog Cloud
-// model list, a few repos and four sessions. One of them (s_live) plays the parity fixture
+// model list, a few repos and six sessions. One of them (s_live) plays the parity fixture
 // (docs/design/parity/fixture.jsonl) one step at a time, driven by the capture script:
 //
 //   node video/hype-reel/capture/gateway.mjs [--port 8811]
@@ -48,13 +48,15 @@ const repos = { repos: [
   { name: "muni-works/frog", private: false, pushed_at: new Date(now - 45 * min).toISOString() },
   { name: "muni-works/tang", private: false, pushed_at: new Date(now - 3 * 60 * min).toISOString() },
 ] };
+// Six sessions. The web app streams only the open one (s_live); the rest show their listed state.
 const sessions = [
   { id: "s_live", title, repo: "muni-works/lilypad", branch: "frog/lilypad-parity", state: "running", created: now - 6 * min, updated: now - 1 * min },
   { id: "s_docs", title: "Docs search filters page titles", repo: "muni-works/frog", branch: "frog/docs-search", state: "running", created: now - 14 * min, updated: now - 2 * min },
   { id: "s_docs_child", title: "Check every page against the code", repo: "muni-works/frog", branch: "frog/docs-check", state: "running", parent: "s_docs", created: now - 12 * min, updated: now - 3 * min },
-  { id: "s_prefill", title: "Warm the prompt cache on node start", repo: "muni-works/tang", branch: "frog/warm-cache", state: "idle", pr: "#412", created: now - 50 * min, updated: now - 9 * min, last_turn: now - 9 * min },
+  { id: "s_cache", title: "Warm the prompt cache on node start", repo: "muni-works/tang", branch: "frog/warm-cache", state: "running", pr: "#412", created: now - 50 * min, updated: now - 4 * min },
+  { id: "s_bench", title: "Count stalls in the swarm bench", repo: "muni-works/frog", branch: "frog/bench-stalls", state: "running", created: now - 20 * min, updated: now - 5 * min },
+  { id: "s_ranges", title: "Parse byte ranges in uploads", repo: "muni-works/lilypad", branch: "frog/upload-ranges", state: "running", created: now - 25 * min, updated: now - 6 * min },
 ];
-
 let sent = 0;
 const peers = new Set();
 const env = (i) => JSON.stringify({ seq: i + 1, session: "s_live", created: now - 5 * min + i * 300, ...steps[i] });
