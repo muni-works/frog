@@ -68,7 +68,12 @@
      "prs": []
     },
     "busy": "working",
-    "queued": 1,
+    "queued": [
+     {
+      "text": "then update the changelog",
+      "attachments": []
+     }
+    ],
     "draft": {
      "text": "also run the linter",
      "attachments": [],

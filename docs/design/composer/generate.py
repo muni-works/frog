@@ -14,7 +14,7 @@ base={
  "defaults":{"local":LOCAL,"cloud":CLOUD},
  "signedIn":True,
  "where":{"kind":"folder","folder":"/Users/cam/frog","branch":"main","worktree":True,"git":True,"dirty":False},
- "busy":"idle","pending":None,"queued":0,"error":None,"notice":None,"confirm":None,"stackOpen":False,
+ "busy":"idle","pending":None,"queued":[],"dictating":False,"error":None,"notice":None,"confirm":None,"stackOpen":False,
  "memory":{"modelByPlace":{},"worktreeByRepo":{},"branchByRepo":{}}
 }
 def pr(n,state,repo="muni-works/frog",title=None,ok=3,total=3):
@@ -23,6 +23,9 @@ def sess(**kw):
     w={"kind":"session","repo":"muni-works/frog","branch":"claude/tray","worktree":True,"worktreePath":"/Users/cam/frog/.claude/worktrees/tray","diff":{"add":0,"del":0,"files":0},"dirty":False,"ahead":0,"prs":[]}
     w.update(kw); return w
 TEXT={"draft":{"text":"add a test","attachments":[],"caret":10}}
+Q1={"text":"then update the changelog","attachments":[]}
+Q2={"text":"look at this","attachments":[{"name":"shot.png","size":2000,"type":"image/png"}]}
+ERR={"code":"cloud_busy","message":"Frog Cloud is busy","actions":["retry"],"control":None,"detail":None,"retryIn":None}
 cases=[]
 def c(name,row,given,intent,expect=None,effects=None):
     cases.append({"name":name,"row":row,"given":given,"intent":intent,"expect":expect or {},"effects":effects or []})
@@ -38,8 +41,24 @@ c("a second send while sending is ignored","Send · 2",{**TEXT,"busy":"sending",
 c("attachments alone can be sent","Send · 1",{"draft":{"text":"","attachments":[{"name":"shot.png","size":2000,"type":"image/png"}],"caret":0},"where":sess()},{"type":"send"},{"busy":"sending"},[{"type":"submit","text":"","attachments":[{"name":"shot.png"}]}])
 c("working with an empty draft shows stop","Rail · Action, working",{"busy":"working","where":sess()},{"type":"action"},{"derived":{"action":"stop"}},[{"type":"interrupt"}])
 c("text typed while working turns return into queue","Rail · Action, working",{"busy":"working","where":sess()},{"type":"type","text":"also lint"},{"derived":{"action":"queue"}})
-c("queue sends a follow-up and counts it","Rail · Action, working",{"busy":"working","draft":{"text":"also lint","attachments":[],"caret":9},"where":sess()},{"type":"send"},{"busy":"working","queued":1,"draft":{"text":""},"lastSent":"also lint"},[{"type":"queue","text":"also lint","attachments":[]}])
-c("turn done clears the queued count","Rail · Action, working",{"busy":"working","queued":2,"where":sess()},{"type":"turn_done"},{"busy":"idle","queued":0,"derived":{"action":"dictate"}})
+c("queue sends a follow-up and counts it","Rail · Action, working",{"busy":"working","draft":{"text":"also lint","attachments":[],"caret":9},"where":sess()},{"type":"send"},{"busy":"working","queued":[{"text":"also lint","attachments":[]}],"draft":{"text":""},"lastSent":"also lint"},[{"type":"queued","text":"also lint","attachments":[]}])
+c("an image queues with its text while working","Rail · Action, working",{"busy":"working","draft":{"text":"look at this","attachments":[{"name":"image","size":160000,"type":"image/png"}],"caret":12},"where":sess()},{"type":"send"},{"busy":"working","queued":[{"text":"look at this","attachments":[{"name":"image","size":160000,"type":"image/png"}]}],"draft":{"text":"","attachments":[]},"lastSent":"look at this"},[{"type":"queued","text":"look at this","attachments":[{"name":"image","size":160000,"type":"image/png"}]}])
+c("turn done clears the queued count","Rail · Action, working",{"busy":"working","queued":[Q1,Q2],"where":sess()},{"type":"turn_done"},{"busy":"idle","queued":[],"derived":{"action":"dictate"}})
+# --- Queued follow-ups (spec.md, "Changes to the shared logic"): a list, each removable
+c("a second follow-up queues after the first","Queued · list",{"busy":"working","queued":[Q1],"draft":{"text":"bump the version","attachments":[],"caret":16},"where":sess()},{"type":"send"},{"queued":[Q1,{"text":"bump the version","attachments":[]}],"draft":{"text":""}},[{"type":"queued","text":"bump the version","attachments":[]}])
+c("a queued follow-up can be removed","Queued · remove",{"busy":"working","queued":[Q1,Q2],"where":sess()},{"type":"remove_queued","index":0},{"busy":"working","queued":[Q2]},[{"type":"remove_queued","index":0}])
+c("removing the last queued follow-up empties the list","Queued · remove",{"busy":"working","queued":[Q1],"where":sess()},{"type":"remove_queued","index":0},{"queued":[]},[{"type":"remove_queued","index":0}])
+c("removing a follow-up that isn't there does nothing","Queued · remove",{"busy":"working","queued":[Q1],"where":sess()},{"type":"remove_queued","index":3},{"queued":[Q1]},[])
+c("removing a follow-up keeps the draft","Queued · remove",{"busy":"working","queued":[Q1,Q2],"draft":{"text":"and the docs","attachments":[],"caret":12},"where":sess()},{"type":"remove_queued","index":1},{"queued":[Q1],"draft":{"text":"and the docs"}},[{"type":"remove_queued","index":1}])
+c("fix while working queues its turn and keeps the draft","Queued · list",{**TEXT,"busy":"working","where":sess(prs=[pr(297,"failing",ok=2,total=3)])},{"type":"git_action"},{"busy":"working","queued":[{"text":"Fix the failing checks on #297","attachments":[]}],"draft":{"text":"add a test"}},[{"type":"queued","text":"Fix the failing checks on #297","attachments":[]}])
+# --- Dictation: the listening face
+c("dictation started shows listening","Action · Listening",{},{"type":"dictation_started"},{"dictating":True,"derived":{"action":"listening"}})
+c("dictation ended goes back to dictate","Action · Listening",{"dictating":True},{"type":"dictation_ended"},{"dictating":False,"derived":{"action":"dictate"}})
+c("dictated text keeps the listening face","Action · Listening",{"dictating":True},{"type":"type","text":"make the tests"},{"dictating":True,"derived":{"action":"listening","sendDisabled":False}})
+c("dictation ended with text offers send","Action · Listening",{"dictating":True,"draft":{"text":"make the tests faster","attachments":[],"caret":21}},{"type":"dictation_ended"},{"dictating":False,"derived":{"action":"send"}})
+c("listening while working","Action · Listening",{"dictating":True,"busy":"working","where":sess()},{"type":"type","text":"and lint"},{"derived":{"action":"listening"}})
+c("a refused mic ends dictation","Action · Listening",{"dictating":True},{"type":"mic_denied"},{"dictating":False,"error":{"code":"mic_denied"},"derived":{"action":"dictate"}})
+c("the action while listening stops dictation","Action · Listening",{"dictating":True},{"type":"action"},{"dictating":True,"busy":"idle"},[{"type":"stop_dictation"}])
 c("esc stops a turn","Keyboard · Esc",{"busy":"working","where":sess()},{"type":"esc"},{"busy":"working"},[{"type":"interrupt"}])
 c("esc clears an error when nothing runs","Keyboard · Esc",{"error":{"code":"cloud_busy","message":"Frog Cloud is busy","actions":["retry"],"control":None,"detail":None,"retryIn":4}},{"type":"esc"},{"error":None})
 c("up in an empty composer recalls the last message","Keyboard · ↑",{"lastSent":"run the tests"},{"type":"recall"},{"draft":{"text":"run the tests","caret":13}})
@@ -63,8 +82,8 @@ c("dismiss clears the error slot","Error display · ×",{"error":{"code":"pr_not
 c("attaching an image adds it","Rail · ＋",{},{"type":"attach","files":[{"name":"a.png","size":1200,"type":"image/png"}]},{"draft":{"attachments":[{"name":"a.png"}]},"error":None})
 c("too-large and wrong-type files are refused, the rest attach","Rail · ＋",{},{"type":"attach","files":[{"name":"ok.txt","size":10,"type":"text/plain"},{"name":"huge.png","size":30000000,"type":"image/png"},{"name":"app.zip","size":100,"type":"application/zip"}]},{"draft":{"attachments":[{"name":"ok.txt"}]},"error":{"code":"attach_refused","message":"Couldn't attach huge.png (over 20 MB), app.zip (not a supported type)","actions":[]}})
 c("removing an attachment","Rail · ＋",{"draft":{"text":"","attachments":[{"name":"a.png","size":1,"type":"image/png"},{"name":"b.png","size":1,"type":"image/png"}],"caret":0}},{"type":"remove_attachment","index":0},{"draft":{"attachments":[{"name":"b.png"}]}})
-c("mic denied outlines the action button","Rail · Action, empty",{},{"type":"mic_denied"},{"error":{"code":"mic_denied","message":"Allow microphone in System Settings","actions":["open_settings"],"control":"action"}})
-c("open settings from the mic error","Rail · Action, empty",{"error":{"code":"mic_denied","message":"Allow microphone in System Settings","actions":["open_settings"],"control":"action","detail":None,"retryIn":None}},{"type":"error_action","action":"open_settings"},{"error":None},[{"type":"open_mic_settings"}])
+c("mic denied outlines the action button","Rail · Action, empty",{},{"type":"mic_denied"},{"error":{"code":"mic_denied","message":"Needs mic access to take dictation","actions":["open_settings"],"control":"action"}})
+c("open settings from the mic error","Rail · Action, empty",{"error":{"code":"mic_denied","message":"Needs mic access to take dictation","actions":["open_settings"],"control":"action","detail":None,"retryIn":None}},{"type":"error_action","action":"open_settings"},{"error":None},[{"type":"open_mic_settings"}])
 # --- Mode
 c("mode defaults to auto","Rail · Mode",{},{"type":"type","text":""},{"mode":"auto"})
 c("picking a mode applies it","Rail · Mode",{},{"type":"set_mode","mode":"accept_edits"},{"mode":"accept_edits"},[{"type":"set_mode","mode":"accept_edits"}])
@@ -144,6 +163,23 @@ c("a PR you can't access stays bound","Top line · Stack pill",{"where":sess()},
 c("switching branch on a dirty tree does nothing","Top line · branch",{"where":sess(dirty=True)},{"type":"switch_branch","branch":"main"},{"derived":{"canSwitchBranch":False}},[])
 c("switching branch on a clean tree","Top line · branch",{"where":sess()},{"type":"switch_branch","branch":"main"},{},[{"type":"switch_branch","branch":"main"}])
 
+# --- The status line (spec.md, "The status line"): error, then question, then notice, then git
+NOP={"type":"type","text":""}
+c("status: nothing to say on a new session","Status · none",{},NOP,{"derived":{"status":"none"}})
+c("status: an error","Status · error",{"error":ERR},NOP,{"derived":{"status":"error"}})
+c("status: an error beats a question, a notice and git","Status · order",{"error":ERR,"confirm":"merge","notice":"Swaps after this turn","where":sess(dirty=True,prs=[pr(297,"approved")])},NOP,{"derived":{"status":"error"}})
+c("status: a question beats a notice and git","Status · order",{"confirm":"merge","notice":"Swaps after this turn","where":sess(prs=[pr(297,"approved")])},NOP,{"derived":{"status":"confirm"}})
+c("status: the yolo question","Status · confirm",{},{"type":"set_mode","mode":"yolo"},{"confirm":"yolo","derived":{"status":"confirm"}})
+c("status: a notice beats git","Status · order",{"notice":"Swaps after this turn","where":sess(dirty=True)},NOP,{"derived":{"status":"notice"}})
+c("status: switching place says so","Status · notice",{},{"type":"choose_cloud","repo":"muni-works/frog","branch":"main"},{"derived":{"status":"notice"}},[{"type":"set_model","model":CLOUD}])
+c("status: git with uncommitted changes","Status · git",{"where":sess(dirty=True,diff={"add":12,"del":3,"files":2})},NOP,{"derived":{"status":"git","gitAction":"commit"}})
+c("status: git with commits ahead","Status · git",{"where":sess(ahead=2)},NOP,{"derived":{"status":"git"}})
+c("status: git with a draft PR and no action","Status · git",{"where":sess(prs=[pr(297,"draft")])},NOP,{"derived":{"status":"git","gitAction":None}})
+c("status: a clean session has no line","Status · none",{"where":sess()},NOP,{"derived":{"status":"none"}})
+c("status: a session without a repo has no line","Status · none",{"where":sess(repo=None,dirty=True,diff={"add":4,"del":0,"files":1})},NOP,{"derived":{"status":"none"}})
+c("status: dismissing the error falls back to git","Status · order",{"error":ERR,"where":sess(ahead=1,prs=[pr(297,"checks")])},{"type":"dismiss_error"},{"error":None,"derived":{"status":"git"}})
+c("status: esc clears a question","Status · confirm",{"confirm":"merge","where":sess(prs=[pr(297,"approved")])},{"type":"esc"},{"confirm":None,"derived":{"status":"git"}})
+
 doc={"about":"Shared test vectors for the composer reducer (docs/plans/2026-11-12-composer-tray.md). Each case deep-merges `given` onto `base` (objects merge, arrays and scalars replace), applies `intent`, and checks `expect` against the new state plus `derived` (a partial match: objects match the keys listed, arrays match length and each element partially) and `effects` (same length, each partial). Run by apps/web/test/composer.test.ts and FrogTests/ComposerReducerTests.swift. A behaviour change is a new case here; both fail until they agree.","base":base,"cases":cases}
 open("cases.json","w").write(json.dumps(doc,indent=1,ensure_ascii=False)+"\n")
 print(len(cases))
@@ -153,7 +189,7 @@ three=[pr(297,"approved",title="Composer: the tray"),pr(41,"failing",repo="muni-
 states=[
  ("idle","In a session, nothing typed",{"where":sess()}),
  ("typing","Typing: the action is Send",{"where":sess(),"draft":{"text":"add a test for the stack pill","attachments":[],"caret":29}}),
- ("working","Working, a follow-up queued",{"where":sess(),"busy":"working","queued":1,"draft":{"text":"also run the linter","attachments":[],"caret":19}}),
+ ("working","Working, a follow-up queued",{"where":sess(),"busy":"working","queued":[Q1],"draft":{"text":"also run the linter","attachments":[],"caret":19}}),
  ("no-repo","A folder outside git",{"where":{"kind":"folder","folder":"/Users/cam/notes","branch":"","worktree":False,"git":False,"dirty":False}}),
  ("worktree","A worktree with changes: Commit",{"where":sess(dirty=True,diff={"add":48,"del":12,"files":3})}),
  ("pr-draft","PR: draft",{"where":sess(prs=[pr(297,"draft",title="Composer: the tray")])}),

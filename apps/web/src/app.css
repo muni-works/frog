@@ -84,38 +84,7 @@ a { color: var(--frog); }
 @keyframes blink { 50% { background: transparent; color: inherit; } }
 
 /* composer */
-.cz { position: relative; width: 100%; box-sizing: border-box; padding: 6px 0; }
-.cz-box { border-radius: 22px; padding: 8px 8px 8px 8px; display: flex; flex-direction: column; gap: 8px; border: 0; box-shadow: 0 8px 24px -14px rgba(0,0,0,.35); }
-.cz-box:focus-within { border-color: var(--line-strong); }
-.cz-box textarea { flex: 1; min-width: 0; border: 0; background: transparent; resize: none; outline: none; font: 15px/21px var(--font-sans); color: var(--fg); padding: 5px 2px; max-height: 220px; box-sizing: border-box; line-height: 21px; height: 31px; }
-.cz-box textarea::placeholder { color: var(--faint); }
-.cz-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.cz-row > .cz-ic, .cz-row > .cz-send, .cz-row > .cz-signin { margin-bottom: 0; }
-.cz-row > span { align-self: center; }
-.cz-under { display: flex; align-items: center; gap: 4px; padding: 6px 10px 0; min-width: 0; }
-.cz-ic { display: inline-flex; align-items: center; justify-content: center; border: 0; background: transparent; color: var(--muted); cursor: pointer; border-radius: 50%; }
-.cz-ic:hover { background: var(--hover); color: var(--fg); }
-.cz-chip { display: inline-flex; align-items: center; gap: 6px; border: 0; border-radius: var(--radius-pill); padding: 3px 10px; font: 12px/16px var(--font-sans); color: var(--muted); background: transparent; cursor: pointer; white-space: nowrap; }
-.cz-signin { height: 32px; flex: none; display: flex; align-items: center; gap: 7px; padding: 0 14px; border: 0; border-radius: 999px; background: var(--frog); color: var(--on-frog); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
-.cz-signin:hover { filter: brightness(1.06); }
-.cz-send { width: 32px; height: 32px; border-radius: 50%; border: 0; color: var(--on-frog); display: flex; align-items: center; justify-content: center; cursor: pointer; flex: none; }
-.cz-menu { position: absolute; bottom: calc(100% - 8px); z-index: 5; width: 230px; padding: 6px; box-shadow: var(--shadow-float); }
-.cz-menu button { display: flex; gap: 10px; align-items: center; width: 100%; border: 0; background: transparent; padding: 7px 10px; border-radius: var(--radius-plate); font: 13px/18px var(--font-sans); color: var(--fg); cursor: pointer; text-align: left; }
-.cz-menu button:hover { background: var(--hover); }
 .cz-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; display: inline-block; }
-.cz-model { color: var(--fg); }
-.cz-pill-place { color: var(--muted); }
-.cz-models button { gap: 8px; }
-.cz-models button:disabled { cursor: default; }
-.cz-models button:disabled:hover { background: transparent; }
-.cz-mname { white-space: nowrap; }
-.cz-mdetail { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cz-mtag { font-size: 11px; color: var(--muted); }
-.cz-menu-note { padding: 4px 10px 6px; }
-.cz-menu-sep { height: 1px; background: var(--line); margin: 6px 4px; }
-.cz-menu-h { padding: 4px 10px 6px; font-size: 12px; font-weight: 600; color: var(--muted); }
-.cz-bar { display: flex; align-items: center; gap: 12px; height: 38px; margin: 0 8px 6px; padding: 0 7px 0 14px; border-radius: 12px; background: var(--canvas); box-shadow: inset 0 0 0 100px rgba(127,127,127,.09); font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; }
-.cz-plate { display: inline-flex; align-items: center; gap: 8px; height: 26px; padding: 0 10px; border-radius: 7px; border: 0; background: rgba(127,127,127,.12); color: var(--fg); text-decoration: none; font: 13px var(--font-sans); cursor: pointer; }
 
 /* overlays */
 .row.pick { border-radius: 0; border-top: 0; padding: 9px 14px; }
@@ -140,16 +109,7 @@ a { color: var(--frog); }
 .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--fg); color: var(--bg); padding: 8px 14px; border-radius: 999px; box-shadow: var(--shadow-toast); z-index: 30; }
 .f-pill:disabled { cursor: default; }
 .f-pill:disabled:hover { background: transparent; }
-.cz-search { width: 100%; box-sizing: border-box; border: 0; border-bottom: 0; background: transparent; padding: 8px 10px 10px; margin-bottom: 4px; font: 13px var(--font-sans); color: var(--fg); outline: none; }
-.cz-search::placeholder { color: var(--faint); }
-.cz-chip:disabled { cursor: default; }
 .f-pill { white-space: nowrap; }
-/* A narrow composer (inspector open, small window): the row never wraps; the model name
-   truncates before the send button is pushed out. */
-.cz-box { container-type: inline-size; }
-.cz-row > :not(textarea) { flex-shrink: 0; }
-.cz-list { max-height: 260px; overflow-y: auto; }
-.cz-more { display: block; padding: 8px 10px 4px; margin-top: 4px; border-top: 0; font-size: 12px; }
 .turn { position: relative; }
 .turn-foot { position: relative; display: flex; align-items: center; gap: 10px; min-height: 22px; font-size: 11.5px; color: var(--faint); font-variant-numeric: tabular-nums; opacity: 0; transition: opacity .15s; }
 .reply-block:hover .turn-foot, .turn-foot.pinned, .turn-foot:focus-within { opacity: 1; }
@@ -205,21 +165,6 @@ button.tool:hover { color: var(--fg); }
 .title-edit { font-size: 14px; font-weight: 600; padding: 2px 6px; max-width: 420px; }
 /* The queue above the tray: one small-caps QUEUED · n label, then quiet raised rows —
    separation by fill, no lines. An entry's images show as small chips beside its text. */
-.cz-queue { margin: 0 8px 6px; display: flex; flex-direction: column; gap: 4px; }
-.cz-qhead { display: flex; align-items: baseline; gap: 8px; margin: 0 2px 3px; }
-.cz-qtitle { font-size: var(--size-label); font-weight: 600; letter-spacing: 0.6px; text-transform: uppercase; color: var(--muted); }
-.cz-qwhen { font-size: var(--size-label); color: var(--faint); }
-.cz-queued { display: flex; align-items: center; gap: 9px; padding: 7px 8px 7px 11px; border-radius: var(--radius-nested); background: var(--card); font-size: 13px; min-width: 0; }
-.cz-queued .ellip { flex: 1; min-width: 0; }
-.cz-qclip { width: 13px; height: 13px; flex: none; color: var(--muted); }
-.cz-qimgs { display: flex; gap: 4px; flex: none; }
-.cz-qimg { width: 22px; height: 22px; border-radius: 6px; object-fit: cover; display: block; background: var(--well); }
-.cz-qx { flex: none; border: 0; background: transparent; color: var(--faint); width: 20px; height: 20px; border-radius: var(--radius-pill); cursor: pointer; font: 600 12px/20px var(--font-sans); text-align: center; }
-.cz-qx:hover { background: var(--hover); color: var(--fg); }
-.cz-imgs { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.cz-img { position: relative; width: 56px; height: 56px; border-radius: 8px; overflow: hidden; border: 0; }
-.cz-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.cz-img button { position: absolute; top: 2px; right: 2px; width: 18px; height: 18px; border-radius: 50%; border: 0; background: rgba(0,0,0,.6); color: #fff; font-size: 10px; cursor: pointer; }
 .me-imgs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
 .me-imgs img { max-width: 220px; max-height: 160px; border-radius: 8px; display: block; }
 .term-bar { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 0; }
@@ -251,10 +196,6 @@ button.tool:hover { color: var(--fg); }
   .main.home h1 { font-size: 24px; text-align: center; }
   .starters { gap: 6px; }
   .insp { position: fixed; z-index: 30; inset: 48px 0 0 0; width: auto; border-left: 0; }
-  .cz-box { padding: 6px; border-radius: 20px; }
-  .cz-box textarea { font-size: 16px; } /* 16px keeps iOS from zooming the page on focus */
-  .cz-menu { left: 4px !important; right: 4px; width: auto !important; max-width: none; }
-  .cz-bar { margin: 0 4px 6px; gap: 8px; }
   .settings { flex-direction: column; height: auto; max-height: calc(100dvh - 32px); }
   .set-nav { width: auto; flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 0; padding: 8px; }
   .set-nav b { display: none; }
@@ -404,7 +345,6 @@ button.sgroup:hover .chev2, button.sgroup:focus-visible .chev2, button.sgroup[ar
 .ctx-h { display: flex; justify-content: space-between; font-size: 13px; }
 .ctx-bar { height: 4px; border-radius: 2px; background: var(--well); overflow: hidden; }
 .ctx-bar span { display: block; height: 100%; border-radius: 2px; }
-.cz-row > .cz-ic { width: 32px; height: 32px; border-radius: 50%; }
 .sview { position: absolute; right: 0; top: calc(100% + 6px); z-index: 8; width: 200px; padding: 6px; box-shadow: var(--shadow-float); }
 .sview button { display: flex; align-items: center; width: 100%; border: 0; background: transparent; padding: 6px 10px; border-radius: var(--radius-plate); font: 13px/18px var(--font-sans); color: var(--fg); cursor: pointer; text-align: left; }
 .sview button:hover { background: var(--hover); }
@@ -455,8 +395,6 @@ body.resizing { cursor: col-resize; user-select: none; }
 .slist.compact .srow { padding-top: 7px; padding-bottom: 7px; }
 
 /* No borders (see docs/design/frog-web/README.md): things that were outlined now sit on a fill. */
-.cz-chip { background: var(--hover); }
-.cz-chip:hover:not(:disabled) { background: color-mix(in srgb, var(--hover) 160%, transparent); }
 .cz-sug { background: var(--hover); }
 .how li, .beta-pill { background: color-mix(in srgb, var(--card) 80%, transparent); }
 .md-code { background: var(--well); }
@@ -464,8 +402,6 @@ body.resizing { cursor: col-resize; user-select: none; }
 .md tr:nth-child(even) td { background: color-mix(in srgb, var(--well) 50%, transparent); }
 .ask-option, .set-row, .plan { background: var(--card); }
 .stag, .ssearch kbd { background: var(--hover); }
-.cz-box { background: var(--card); }
-.cz-box:focus-within { box-shadow: 0 0 0 1px var(--frog-pad), 0 8px 24px -14px rgba(0,0,0,.35); }
 /* The title, then its menu chevron right beside it, as in Claude. */
 .title-wrap { display: flex; align-items: center; gap: 2px; min-width: 0; }
 .title-wrap > b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -557,7 +493,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 /* A hairline between the sidebar and the page, so the two never run together on a flat screen. */
 @media (min-width: 761px) { .side { border-right: 1px solid var(--line); } }
 /* The composer is where you type: a hairline keeps it findable on any screen. */
-.f-composer, .cz-box { box-shadow: inset 0 0 0 1px var(--line); }
+.f-composer { box-shadow: inset 0 0 0 1px var(--line); }
 .slist { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; margin: 0 -10px; padding: 0 10px 8px;
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 10px, #000 calc(100% - 18px), transparent 100%);
   mask-image: linear-gradient(to bottom, transparent 0, #000 10px, #000 calc(100% - 18px), transparent 100%); }
@@ -629,10 +565,6 @@ button.tool[aria-expanded="true"] .tool-chev { transform: rotate(90deg); }
 button.tool:hover .tool-chev { opacity: 1; }
 /* "Decided" is one quiet line, like Thinking: no rail, no bold, ellipsized. */
 .decided { border-left: 0; padding-left: 0; font-size: 13px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* Where it runs, in the device-chip style: dot, icon, label. */
-.cz-device { display: inline-flex; align-items: center; gap: 6px; border-radius: var(--radius-pill); padding: 3px 10px; font: 12px/16px var(--font-sans); color: var(--muted); background: var(--hover); white-space: nowrap; flex: none; }
-.cz-device-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-.cz-under > .cz-model { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
 /* The ask card (one design with the Mac's): title, the command in a well, where it runs, answers. */
 .ask-h { padding: 12px 14px 8px; }
 .ask-where { padding: 10px 14px 0; font-size: 12px; }
@@ -679,48 +611,8 @@ button.tool:hover .tool-chev { opacity: 1; }
 .widget-full-body .widget-src { max-height: none; }
 @media (max-width: 600px) { .widget-full { padding: 0; } .widget-full-card { border-radius: 0; border: 0; } }
 
-/* The tray (docs/plans/2026-11-12-composer-tray.md): one surface, a top line, the field, a rail. */
-.cz-tray { gap: 6px; padding: 0 8px 8px; background: var(--card); border: 1px solid var(--line); box-shadow: none; }
-.cz-tray textarea { padding: 4px 6px; }
-.cz-top { display: flex; align-items: center; gap: 10px; height: 36px; margin: 0 -8px; padding: 0 12px 0 14px; border-bottom: 1px solid var(--line); font-size: 12.5px; color: var(--muted); white-space: nowrap; min-width: 0; }
-.cz-top > * { flex-shrink: 0; }
-.cz-repo { color: var(--muted); text-decoration: none; }
-.cz-repo:hover { color: var(--fg); }
-.cz-branch { color: var(--faint); overflow: hidden; text-overflow: ellipsis; flex-shrink: 1; min-width: 0; }
-.cz-diff, .cz-where { border: 0; background: transparent; font: inherit; color: inherit; cursor: pointer; padding: 2px 4px; border-radius: 6px; display: inline-flex; align-items: center; gap: 5px; }
-.cz-where { color: var(--fg); }
-.cz-diff:hover, .cz-where:hover { background: var(--hover); }
-.cz-pill, .cz-act { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 9px; border: 0; border-radius: 7px; background: var(--hover); color: var(--fg); font: 12.5px/1 var(--font-sans); cursor: pointer; }
-.cz-act { font-weight: 600; background: color-mix(in srgb, var(--fg) 10%, transparent); }
 /* Open PR when the work is done: the line's one emphatic control (the Mac's accent chip).
    State color goes on the text and a hairline, never on a fill. */
-.cz-act--go { background: color-mix(in srgb, var(--fg) 14%, transparent); color: var(--frog); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--frog) 55%, transparent); }
-.cz-act--go:disabled { background: color-mix(in srgb, var(--fg) 10%, transparent); color: var(--fg); box-shadow: none; }
-.cz-act:disabled { opacity: .5; cursor: default; }
-.cz-pill:hover, .cz-act:hover { filter: brightness(1.08); }
-.cz-prdot { width: 7px; height: 7px; border-radius: 50%; flex: none; display: inline-block; }
-.cz-stackwrap { position: relative; }
-.cz-stack { position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 6; width: 380px; padding: 6px; box-shadow: var(--shadow-float); white-space: nowrap; }
-.cz-stack button { display: flex; gap: 8px; align-items: center; width: 100%; border: 0; background: transparent; padding: 6px 8px; border-radius: var(--radius-plate); font: 12.5px/18px var(--font-sans); color: var(--fg); cursor: pointer; text-align: left; }
-.cz-stack button:hover { background: var(--hover); }
-.cz-stack .cz-search { width: 100%; box-sizing: border-box; }
-.cz-bad { box-shadow: inset 0 0 0 1px var(--warn); }
-.cz-send.cz-bad { box-shadow: 0 0 0 1.5px var(--warn); }
-.cz-notice { padding: 0 6px; font-size: 12px; }
-.cz-err { display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 10px; border-radius: 10px; background: color-mix(in srgb, var(--warn) 9%, transparent); font-size: 12.5px; color: var(--fg); }
-.cz-erricon { width: 16px; height: 16px; border-radius: 50%; background: var(--warn); color: #fff; font: 700 11px/16px var(--font-sans); text-align: center; flex: none; }
-.cz-errbtn { height: 24px; padding: 0 9px; border: 0; border-radius: 7px; background: var(--hover); color: var(--fg); font: 600 12px/1 var(--font-sans); cursor: pointer; }
-.cz-errx { border: 0; background: transparent; color: var(--faint); cursor: pointer; padding: 2px 4px; }
-.cz-rail { display: flex; align-items: center; gap: 4px; min-width: 0; }
-.cz-rail > * { flex-shrink: 0; }
-.cz-rail > .cz-ic { width: 30px; height: 30px; border-radius: 50%; }
-.cz-send { position: relative; }
-.cz-action-send { background: var(--frog); }
-.cz-action-send:disabled { background: var(--line-strong); cursor: default; }
-.cz-action-dictate { background: transparent; color: var(--muted); }
-.cz-action-dictate:hover { background: var(--hover); }
-.cz-action-stop, .cz-action-queue { background: var(--fg); color: var(--bg); }
-.cz-qcount { position: absolute; top: -4px; right: -4px; min-width: 14px; height: 14px; padding: 0 3px; box-sizing: border-box; border-radius: 7px; background: var(--muted); color: var(--bg); font: 700 9px/14px var(--font-sans); }
 
 /* Preview pane (ui/PreviewPane.tsx): toolbar over an iframe onto the sandbox's dev server. */
 .pv { container-type: inline-size; }
@@ -763,3 +655,124 @@ button.tool:hover .tool-chev { opacity: 1; }
 .docs-step { display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; border-radius: 8px; text-decoration: none; font-size: 13px; color: var(--fg); }
 .docs-step:hover { background: var(--hover); }
 .docs-step.next { align-items: flex-end; text-align: right; }
+
+/* The composer (docs/design/composer/spec.md, boards in docs/design/composer/canvas/): one card,
+   two rows at rest (field, controls), the status line above them only when there's something to
+   say. No shadow, no glass. Only the action is filled, and only Send is green. */
+.cz { position: relative; width: 100%; box-sizing: border-box; padding: 6px 0; }
+.cz-card { container-type: inline-size; display: flex; flex-direction: column; background: var(--card); border: 1px solid var(--line-strong); border-radius: var(--radius-field); box-shadow: none; transition: border-color .12s; }
+.cz-card:focus-within { border-color: var(--muted); }
+.cz-card textarea { display: block; width: 100%; box-sizing: border-box; border: 0; background: transparent; resize: none; outline: none; padding: 12px 14px 4px; font: 15px/21px var(--font-sans); color: var(--fg); caret-color: var(--frog); height: 37px; max-height: 226px; overflow-y: auto; }
+.cz-card textarea::placeholder { color: var(--faint); }
+.cz-sending textarea { color: var(--muted); }
+.cz-i { width: 14px; height: 14px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.cz-sp { flex: 1; min-width: 0; }
+
+/* The status line: 32 tall, one line, a hairline below. Text in fg, detail in muted. Never red. */
+.cz-status { display: flex; align-items: center; gap: 8px; height: 32px; box-sizing: border-box; padding: 0 8px 0 14px; border-bottom: 1px solid var(--line); font: 12px/15px var(--font-sans); color: var(--muted); white-space: nowrap; min-width: 0; animation: cz-open .22s ease-out; }
+.cz-status > * { flex-shrink: 0; }
+.cz-st-text { color: var(--fg); font-weight: 400; overflow: hidden; text-overflow: ellipsis; flex-shrink: 1; min-width: 0; }
+.cz-warn { color: var(--notice); }
+.cz-tb { height: 22px; padding: 0 9px; border: 0; border-radius: var(--radius-pill); background: var(--hover); color: var(--fg); font: 12px/15px var(--font-sans); cursor: pointer; white-space: nowrap; }
+.cz-tb:hover { background: color-mix(in srgb, var(--hover) 170%, transparent); }
+.cz-tb--quiet, .cz-tb--quiet:hover { background: transparent; color: var(--muted); }
+.cz-tb--quiet:hover { color: var(--fg); }
+.cz-tb--go { background: var(--frog); color: var(--on-frog); font-weight: 600; }
+.cz-tb:disabled { opacity: .5; cursor: default; }
+.cz-x { display: inline-flex; border: 0; background: transparent; color: var(--muted); padding: 4px; border-radius: var(--radius-pill); cursor: pointer; }
+.cz-x:hover { color: var(--fg); background: var(--hover); }
+.cz-git .cz-i { color: var(--muted); }
+.cz-st-repo { color: var(--fg); text-decoration: none; }
+.cz-st-repo:hover { text-decoration: underline; }
+.cz-st-branch { overflow: hidden; text-overflow: ellipsis; flex-shrink: 1 !important; min-width: 0; }
+.cz-st-diff { border: 0; background: transparent; padding: 0; font: 11px/15px var(--font-mono); cursor: pointer; }
+.cz-add { color: var(--frog); }
+.cz-del { color: var(--warn); }
+.cz-st-pr { display: inline-flex; align-items: center; gap: 6px; border: 0; background: transparent; padding: 0 2px; font: inherit; color: var(--muted); cursor: pointer; }
+.cz-st-pr:hover { color: var(--fg); }
+.cz-prdot { width: 7px; height: 7px; border-radius: 50%; flex: none; display: inline-block; }
+@keyframes cz-open { from { opacity: 0; height: 0; } to { opacity: 1; height: 32px; } }
+@media (prefers-reduced-motion: reduce) { .cz-status { animation: cz-fade .12s; } @keyframes cz-fade { from { opacity: 0; } } }
+
+/* Queued follow-ups and attachments: chips above the field, each removable. */
+.cz-q { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 12px 0; min-width: 0; }
+.cz-qi { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; box-sizing: border-box; padding: 4px 4px 4px 8px; border-radius: var(--radius-nested); background: var(--hover); font: 12px/15px var(--font-sans); color: var(--fg); }
+.cz-qi--queued { color: var(--muted); }
+.cz-qi-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; max-width: 360px; }
+.cz-qi-meta { color: var(--muted); font: 12px/15px var(--font-sans); }
+.cz-qx { display: inline-flex; border: 0; background: transparent; color: var(--muted); padding: 1px; border-radius: var(--radius-pill); cursor: pointer; }
+.cz-qx:hover { color: var(--fg); background: var(--hover); }
+
+/* Controls: attach and where on the left, mode, model and the action on the right. */
+.cz-controls { display: flex; align-items: center; gap: 2px; height: 28px; padding: 6px 8px 8px; font: 12px/15px var(--font-sans); color: var(--muted); min-width: 0; }
+.cz-controls > * { flex-shrink: 0; }
+.cz-chip { display: inline-flex; align-items: center; gap: 4px; height: 24px; box-sizing: border-box; padding: 0 8px; border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--muted); font: inherit; white-space: nowrap; cursor: pointer; min-width: 0; }
+.cz-chip:hover:not(:disabled), .cz-chip.open { background: var(--hover); color: var(--fg); }
+.cz-chip:disabled { cursor: default; }
+.cz-chip b { color: var(--fg); font-weight: 400; }
+.cz-attach { padding: 0 5px; }
+.cz-where { flex-shrink: 1 !important; max-width: 60%; }
+.cz-where-name { display: inline-flex; min-width: 0; overflow: hidden; }
+.cz-where-head { overflow: hidden; text-overflow: ellipsis; white-space: pre; min-width: 0; flex-shrink: 1; }
+.cz-where-tail { flex: none; white-space: pre; }
+.cz-where-branch { overflow: hidden; text-overflow: ellipsis; min-width: 0; flex-shrink: 2; }
+.cz-bolt { color: var(--notice); }
+.cz-meta { padding: 0 6px; color: var(--muted); white-space: nowrap; }
+.cz-marked { box-shadow: 0 0 0 1.5px var(--notice); }
+
+/* The action: a 28 circle, 4 from the last chip; the glyph cross-fades in place. */
+.cz-act { position: relative; width: 28px; height: 28px; margin-left: 4px; box-sizing: border-box; border: 0; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: var(--hover); color: var(--fg); cursor: pointer; flex: none; transition: background-color .12s; }
+.cz-act:hover:not(:disabled) { background: color-mix(in srgb, var(--hover) 200%, transparent); }
+.cz-act:disabled { opacity: .5; cursor: default; }
+.cz-act--send, .cz-act--send:hover { background: var(--frog); color: var(--on-frog); }
+.cz-act--listening { box-shadow: 0 0 0 2px var(--frog); }
+.cz-act--sending { background: transparent; border: 2px solid var(--line-strong); border-top-color: var(--fg); animation: cz-spin .8s linear infinite; cursor: default; }
+.cz-act.cz-marked { box-shadow: 0 0 0 1.5px var(--notice); }
+.cz-glyph { display: inline-flex; animation: cz-fade-in .12s; }
+@keyframes cz-fade-in { from { opacity: 0; } }
+@keyframes cz-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .cz-act--sending { animation-duration: 2.4s; } }
+.cz-signin { height: 28px; margin-left: 4px; padding: 0 12px; border: 0; border-radius: var(--radius-pill); background: var(--frog); color: var(--on-frog); font: 600 12px/15px var(--font-sans); cursor: pointer; flex: none; }
+.cz-signin:hover { filter: brightness(1.06); }
+
+/* Menus open upward from their chip: rows 28 tall, a 7-radius hover plate, a check on the right. */
+.cz-menu { position: absolute; bottom: calc(100% - 4px); z-index: 6; box-sizing: border-box; max-width: calc(100% - 8px); padding: 4px; display: flex; flex-direction: column; background: var(--card); border: 1px solid var(--line-strong); border-radius: var(--radius-card); box-shadow: var(--shadow-float); font: 13px/16px var(--font-sans); color: var(--fg); }
+.cz-menu > button, .cz-menu .cz-list > button, .cz-menu > a { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 28px; box-sizing: border-box; padding: 0 8px; border: 0; border-radius: var(--radius-plate); background: transparent; color: var(--fg); font: inherit; text-align: left; text-decoration: none; cursor: pointer; white-space: nowrap; }
+.cz-menu > button:hover:not(:disabled), .cz-menu .cz-list > button:hover, .cz-menu > a:hover, .cz-menu button:focus-visible { background: var(--hover); outline: none; }
+.cz-menu button:disabled { cursor: default; }
+.cz-menu .cz-dim, .cz-menu > button.cz-dim { color: var(--muted); }
+.cz-menu .cz-r { margin-left: auto; color: var(--muted); font-size: 12px; }
+.cz-menu .cz-k { margin-left: auto; color: var(--muted); font: 11px/15px var(--font-mono); }
+.cz-mname { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.cz-check { margin-left: auto; color: var(--fg); }
+.cz-r + .cz-check { margin-left: 4px; }
+.cz-check.off { visibility: hidden; }
+.cz-filter { display: flex; align-items: center; gap: 8px; padding: 6px 8px 7px; margin-bottom: 2px; border-bottom: 1px solid var(--line); color: var(--faint); }
+.cz-filter input, .cz-bind { flex: 1; min-width: 0; border: 0; background: transparent; outline: none; font: inherit; color: var(--fg); padding: 0; }
+.cz-filter input::placeholder, .cz-bind::placeholder { color: var(--faint); }
+.cz-bind { min-height: 28px; padding: 0 8px; }
+.cz-menu-h { padding: 8px 8px 2px; font-size: 10.5px; line-height: 13px; color: var(--muted); }
+.cz-menu-sep { height: 1px; background: var(--line); margin: 4px 0; }
+.cz-menu-note { padding: 4px 8px 6px; font-size: 12px; color: var(--muted); white-space: normal; }
+.cz-list { max-height: 260px; overflow-y: auto; }
+.cz-modes > button { padding: 6px 8px; align-items: center; }
+.cz-m2 { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.cz-m2-name { display: inline-flex; align-items: center; gap: 6px; }
+.cz-m2-note { font-size: 12px; line-height: 15px; color: var(--muted); white-space: normal; }
+.cz-stack { font-size: 12px; line-height: 15px; }
+
+/* Narrow (under 420): the model keeps its icon and drops its name; the where chip truncates in
+   the middle and drops its branch; the working timer goes. Nothing wraps. */
+@container (max-width: 419px) {
+  .cz-model-name, .cz-where-branch, .cz-meta { display: none; }
+  .cz-where { max-width: 52%; }
+}
+/* Touch: each control keeps its look inside a 44 tap area. */
+@media (pointer: coarse) {
+  .cz-chip, .cz-act, .cz-signin { position: relative; }
+  .cz-chip::after, .cz-act::after, .cz-signin::after { content: ''; position: absolute; inset: -10px -4px; }
+}
+@media (max-width: 760px) {
+  .cz-card textarea { font-size: 16px; } /* 16px keeps iOS from zooming the page on focus */
+  .cz-menu { left: 4px !important; right: 4px !important; width: auto !important; max-width: none; }
+}
