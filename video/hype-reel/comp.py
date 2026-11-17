@@ -84,22 +84,29 @@ def scrim(img, where, depth=420, strength=1.0):
 def dim(img, k):
     return Image.fromarray((np.asarray(img, np.float32) * (1 - k)).astype(np.uint8))
 
-def words(img, t, t0, parts, where="bottom", size=92, x=120, sub=None, t1=None):
-    """the on-screen words: a sentence, one phrase in frog green, rising into place on its beat.
-    parts = [(text, green?), ...]."""
+# ---- the grid and the type scale: one system for every scene.
+# A 12-column grid, 120 px margins, 140 px columns. Everything is flush left on a column edge.
+# Type: IBM Plex Sans. Title 88 semibold, two lines (the claim, then its point in green), set
+# solid; sub 42 regular, one line below; labels in Plex Mono 30. Nothing is centred.
+MARGIN, COL = 120, 140
+def col(i): return MARGIN + i * COL
+TITLE, SUB, LABEL = 88, 42, 30
+TITLE_Y, TITLE_LEAD, SUB_GAP = 176, 96, 76  # first baseline, line step, last line to sub baseline
+
+def words(img, t, t0, parts, where="top", size=TITLE, x=MARGIN, sub=None, t1=None):
+    """the title: each part is a line, flush left, landing whole on its beat; green marks the
+    point. The sub sits one fixed step below the last line."""
     if t < t0 or (t1 is not None and t >= t1): return
-    k = ease(seg(t, t0, t0 + 0.35))
-    out = 1.0 if t1 is None else 1 - seg(t, t1 - 0.12, t1)
+    k = ease(seg(t, t0, t0 + 0.2))
     f = sans(size)
-    y = (H - 150 - (70 if sub else 0) if where == "bottom" else 110) + (1 - k) * 28
     lay = Image.new("RGBA", (W, H), (0, 0, 0, 0)); d = ImageDraw.Draw(lay)
-    cx = x
+    y = TITLE_Y + (1 - k) * 20
     for text, green in parts:
-        d.text((cx, y), text, font=f, fill=(FROG if green else FG) + (255,), anchor="ls")
-        cx += d.textlength(text, font=f)
+        d.text((x, y), text.strip(), font=f, fill=(FROG if green else FG) + (255,), anchor="ls")
+        y += TITLE_LEAD
     if sub:
-        d.text((x + 2, y + 56), sub, font=sans(40, False), fill=MUTED + (255,), anchor="ls")
-    a = np.asarray(lay).copy(); a[..., 3] = (a[..., 3] * k * out).astype(np.uint8)
+        d.text((x, y - TITLE_LEAD + SUB_GAP), sub, font=sans(SUB, False), fill=MUTED + (255,), anchor="ls")
+    a = np.asarray(lay).copy(); a[..., 3] = (a[..., 3] * k).astype(np.uint8)
     img.paste(Image.fromarray(a), (0, 0), Image.fromarray(a))
 
 def ring(img, box, t, t0, color=FROG):
@@ -227,35 +234,35 @@ def s_open(t, lt):
     """the intro: you ask another agent what's up, and it has hit its usage limit. The frog hops
     in on "just hopped in", and on "I got options" the title turns."""
     img = Image.new("RGB", (W, H), CANVAS); d = ImageDraw.Draw(img)
-    x0, y0, x1, y1 = 200, 250, 1240, 860
+    x0, y0, x1, y1 = col(0), 380, col(7), 960
     d.rounded_rectangle([x0, y0, x1, y1], radius=28, fill=CARD)
     # frame 0 already reads: a task, two steps done, a third under way
     d.text((x0 + 56, y0 + 84), "Fix the flaky upload test", font=sans(52), fill=FG, anchor="ls")
     stopped = t >= B(4)
     rows = [("Read the code", True), ("Found the bug", True), ("Writing the fix", False)]
     for i, (label, done) in enumerate(rows):
-        ry = y0 + 170 + i * 76
+        ry = y0 + 164 + i * 70
         if done:
             d.ellipse([x0 + 56, ry - 22, x0 + 100, ry + 22], fill=FG)
             d.line([(x0 + 67, ry), (x0 + 75, ry + 9), (x0 + 90, ry - 9)], fill=CARD, width=5, joint="curve")
             d.text((x0 + 124, ry), label, font=sans(42, False), fill=MUTED, anchor="lm")
         else:
-            col = NOTICE if stopped else FG
-            d.ellipse([x0 + 56, ry - 22, x0 + 100, ry + 22], outline=col, width=4)
-            d.text((x0 + 124, ry), label, font=sans(42), fill=col, anchor="lm")
-            bx, bw = x0 + 520, 440
+            tint = NOTICE if stopped else FG
+            d.ellipse([x0 + 56, ry - 22, x0 + 100, ry + 22], outline=tint, width=4)
+            d.text((x0 + 124, ry), label, font=sans(42), fill=tint, anchor="lm")
+            bx, bw = x0 + 520, 400
             fill = min(0.62, 0.30 + 0.08 * on_beat(t, 0, 4))  # it creeps forward a beat at a time, then stops
             d.rounded_rectangle([bx, ry - 8, bx + bw, ry + 8], radius=8, fill=LINE)
-            d.rounded_rectangle([bx, ry - 8, bx + bw * fill, ry + 8], radius=8, fill=col)
+            d.rounded_rectangle([bx, ry - 8, bx + bw * fill, ry + 8], radius=8, fill=tint)
     if t >= ASK:  # "What's poppin'?": your message, on the lyric
         k = ease(seg(t, ASK, ASK + 0.15)); f = sans(42); msg = "What's poppin'?"
         tw = d.textlength(msg, font=f)
-        bx1, by0 = x1 - 56, y0 + 410 + (1 - k) * 16
+        bx1, by0 = x1 - 56, y0 + 366 + (1 - k) * 16
         d.rounded_rectangle([bx1 - tw - 64, by0, bx1, by0 + 84], radius=42, fill=WELL)
         d.text((bx1 - 32 - tw / 2, by0 + 42), msg, font=f, fill=FG, anchor="mm")
     if stopped:  # beat 4: the answer
         k = ease(seg(t, B(4), B(4) + 0.15))
-        ax0, ay0, ax1, ay1 = x0 + 56, y1 - 104 + (1 - k) * 16, x1 - 56, y1 - 16 + (1 - k) * 16
+        ax0, ay0, ax1, ay1 = x0 + 56, y1 - 120 + (1 - k) * 16, x1 - 56, y1 - 32 + (1 - k) * 16
         d.rounded_rectangle([ax0, ay0, ax1, ay1], radius=18, fill=NOTICE_BG, outline=NOTICE, width=2)
         d.text((ax0 + 30, ay0 + 44), "Usage limit reached", font=sans(40), fill=NOTICE, anchor="lm")
         if t < B(6):
@@ -264,10 +271,10 @@ def s_open(t, lt):
             f = sans(32); label = "Buy extra usage  $$$"; tw = d.textlength(label, font=f)
             d.rounded_rectangle([ax1 - tw - 70, ay0 + 14, ax1 - 22, ay0 + 74], radius=30, fill=NOTICE)
             d.text((ax1 - 46 - tw / 2, ay0 + 44), label, font=f, fill=(0x1a, 0x12, 0x02), anchor="mm")
-    if stopped and t < OPTIONS: words(img, t, B(4), [("Your agent ", False), ("ran out.", True)], where="top")
-    if t >= OPTIONS: words(img, t, OPTIONS, [("You've got ", False), ("options.", True)], where="top")
+    if stopped and t < OPTIONS: words(img, t, B(4), [("Your agent ", False), ("ran out.", True)])
+    if t >= OPTIONS: words(img, t, OPTIONS, [("You've got ", False), ("options.", True)])
     # the frog: peeks over the bottom edge when the work stops, then hops in on "just hopped in"
-    fx, fy, size = 1570, 900, 220
+    fx, fy, size = col(10), 960, 220
     if t < JUMP[0]:
         k = ease(seg(t, B(4), B(4) + 0.25))
         if k > 0: frog_at(img, t, fx, H + 200 - 185 * k, size, "head", look=(-0.7, -0.6), blink=False)
@@ -276,31 +283,83 @@ def s_open(t, lt):
         hop(img, t, JUMP[0], JUMP[1], (fx, H + 280), (fx, fy), size, height=340, look=look)
     return img
 
-@lru_cache(1)
-def mac_model_chip():
-    """the Mac composer's own right-hand end: Auto, and Qwen3 8B running on this Mac."""
-    g = load("docs/design/composer/mac-new-folder-dark.png").crop((1100, 200, 1490, 292))
-    return g.resize((int(g.width * 1.9), int(g.height * 1.9)), Image.LANCZOS)
+LOCAL = _hex("#64a4ff")  # the place-local token: a model on your own machine
+MAC_PAD, PC_PAD = (col(2) + 30, 900), (col(8) + 70, 900)
 
-def ui_card(img, im, cx, cy, pad=26):
+def _laptop(d, x, y, color):
+    d.rounded_rectangle([x, y - 13, x + 34, y + 9], radius=4, outline=color, width=3)
+    d.line([(x - 6, y + 14), (x + 40, y + 14)], fill=color, width=3)
+
+MENU = [("h", "Your machines"), ("r", "Qwen3 8B", "this Mac", True), ("r", "Qwen3 4B", "this Mac", True),
+        ("h", "Frog Cloud"), ("r", "Qwen3 Coder Next", "", False), ("r", "GLM-5.3 Flash", "", False), ("r", "DeepSeek V4.1 Flash", "", False)]
+
+def composer(img, x0, y0, x1, y1, model, local, open_menu=False, hover=None, picked=2):
+    """Frog's composer, redrawn from the app's tokens (card fill, field radius, Plex): the
+    placeholder, the where chip, the mode, the model chip and the mic. With open_menu, the model
+    menu above it: your machines first, then Frog Cloud. Returns the points a pointer needs:
+    "chip", and each menu row by index."""
     d = ImageDraw.Draw(img)
-    x0, y0 = cx - im.width / 2 - pad, cy - im.height / 2 - pad
-    d.rounded_rectangle([x0, y0, x0 + im.width + 2 * pad, y0 + im.height + 2 * pad], radius=22, fill=CARD, outline=LINE, width=2)
-    img.paste(im, (int(cx - im.width / 2), int(cy - im.height / 2)))
-
-MAC_PAD, PC_PAD = (520, 860), (1340, 860)
+    d.rounded_rectangle([x0, y0, x1, y1], radius=30, fill=CARD, outline=LINE, width=2)
+    d.text((x0 + 44, y0 + 62), "What should we work on?", font=sans(40, False), fill=FAINT, anchor="lm")
+    yb = y1 - 58
+    d.line([(x0 + 44, yb), (x0 + 72, yb)], fill=MUTED, width=3); d.line([(x0 + 58, yb - 14), (x0 + 58, yb + 14)], fill=MUTED, width=3)
+    fx = x0 + 120  # the where chip: folder, repo, branch
+    d.rounded_rectangle([fx, yb - 12, fx + 34, yb + 12], radius=4, outline=MUTED, width=3)
+    d.text((fx + 48, yb), "frog", font=sans(36), fill=FG, anchor="lm")
+    d.text((fx + 62 + d.textlength("frog", font=sans(36)), yb), "main", font=sans(36, False), fill=MUTED, anchor="lm")
+    mx = x1 - 64  # right to left: mic, model chip, mode
+    d.ellipse([mx - 34, yb - 34, mx + 34, yb + 34], fill=WELL)
+    d.rounded_rectangle([mx - 7, yb - 18, mx + 7, yb + 4], radius=7, outline=FG, width=3)
+    d.arc([mx - 14, yb - 10, mx + 14, yb + 12], 0, 180, fill=FG, width=3); d.line([(mx, yb + 12), (mx, yb + 20)], fill=FG, width=3)
+    f = sans(36, False); tw = d.textlength(model, font=f)
+    cx1 = mx - 60; cx0 = cx1 - tw - 58
+    if open_menu: d.rounded_rectangle([cx0 - 18, yb - 30, cx1 + 14, yb + 30], radius=14, fill=WELL)
+    if local: _laptop(d, cx0, yb, LOCAL)
+    else: d.ellipse([cx0 + 6, yb - 11, cx0 + 28, yb + 11], fill=FROG)
+    d.text((cx0 + 52, yb), model, font=f, fill=FG if local else MUTED, anchor="lm")
+    d.text((cx0 - 44, yb), "Auto", font=f, fill=MUTED, anchor="rm")
+    pts = {"chip": ((cx0 + cx1) / 2, yb)}
+    mw = 620; mh = 20 + sum(54 if r[0] == "h" else 68 for r in MENU) + 16
+    mx1 = x1; mx0 = mx1 - mw; my1 = y0 - 16; my0 = my1 - mh
+    if open_menu: d.rounded_rectangle([mx0, my0, mx1, my1], radius=24, fill=CARD, outline=LINE, width=2)
+    y = my0 + 20; ri = 0
+    for r in MENU:
+        if r[0] == "h":
+            if open_menu: d.text((mx0 + 32, y + 30), r[1], font=sans(28, False), fill=FAINT, anchor="lm")
+            y += 54; continue
+        if open_menu:
+            if hover == ri: d.rounded_rectangle([mx0 + 12, y + 2, mx1 - 12, y + 66], radius=14, fill=(0x1f, 0x1f, 0x1f))
+            d.ellipse([mx0 + 34, y + 25, mx0 + 52, y + 43], fill=LOCAL if r[3] else FROG)
+            d.text((mx0 + 72, y + 34), r[1], font=sans(36), fill=FG, anchor="lm")
+            if picked == ri: d.line([(mx1 - 62, y + 34), (mx1 - 52, y + 45), (mx1 - 34, y + 22)], fill=FG, width=4, joint="curve")
+            elif r[2]: d.text((mx1 - 34, y + 34), r[2], font=sans(32, False), fill=MUTED, anchor="rm")
+        pts[ri] = (mx0 + 240, y + 34); ri += 1; y += 68
+    return pts
 
 def s_mine(t, lt):
+    """the bass drops. The frog lands on its pad; in the composer, the model menu opens and a
+    model on this Mac is picked."""
     b = CUT["mine"]
     img = Image.new("RGB", (W, H), CANVAS)
     pond = Pond(); pond.pad(*MAC_PAD, 250); splash(pond, t, B(b + 1), *MAC_PAD, 250); pond.onto(img)
     pad_label(img, MAC_PAD[0], MAC_PAD[1] + 84, "this Mac")
-    hop(img, t, B(b), B(b + 1), (-160, 760), (MAC_PAD[0], MAC_PAD[1] - 6), 190, height=300, look=(0.7, -0.2))
-    if t >= B(b + 1):
-        k = ease(seg(t, B(b + 1), B(b + 1) + 0.2))
-        ui_card(img, mac_model_chip(), 1340, 560 + (1 - k) * 20)
-    words(img, t, B(b), [("Open models, on the ", False), ("Mac you have.", True)], where="top",
-          sub="$0 a token." if t >= B(b + 2) else None)
+    hop(img, t, B(b), B(b + 1), (-160, 760), (MAC_PAD[0], MAC_PAD[1] - 6), 180, height=300, look=(0.8, 0.1))
+    opened, chosen = B(b + 3), B(b + 5)  # the two clicks, each on a beat
+    is_open, local = opened <= t < chosen, t >= chosen
+    box = (col(5), 770, col(12), 960)
+    pts = composer(img, *box, "Qwen3 8B" if local else "Qwen3 Coder Next", local, open_menu=is_open, hover=0 if t >= B(b + 4.6) else None)
+    chip = composer(Image.new("RGB", (8, 8)), *box, "Qwen3 Coder Next", False)["chip"]
+    row = pts[0]
+    if B(b + 1.5) <= t < B(b + 6.5):
+        if t < opened:
+            k = ease(seg(t, B(b + 1.5), opened - 0.05)); x, y, press = lerp(col(8), chip[0], k), lerp(600, chip[1] + 6, k), 0
+        elif t < chosen:
+            k = ease(seg(t, opened + 0.1, chosen - 0.08)); x, y = lerp(chip[0], row[0], k), lerp(chip[1] + 6, row[1] + 6, k)
+            press = seg(t, opened, opened + 0.25) if t < opened + 0.25 else 0
+        else:
+            x, y = row[0], row[1] + 6; press = seg(t, chosen, chosen + 0.25) if t < chosen + 0.25 else 0
+        cursor(img, x, y, press)
+    words(img, t, B(b), [("Open models, on the", False), ("Mac you have.", True)], sub="$0 a token." if local else None)
     return img
 
 @lru_cache(1)
@@ -308,7 +367,7 @@ def machines_card():
     """the Mac's Settings › Models › Machines: this Mac and the paired RTX 3090. The account and
     credit rows below it are left out."""
     m = load("docs/design/parity/models-settings-mac-dark.png").crop((40, 0, 1240, 312))
-    m = m.resize((int(m.width * 0.82), int(m.height * 0.82)), Image.LANCZOS)
+    m = m.resize((int(m.width * 0.92), int(m.height * 0.92)), Image.LANCZOS)
     mask = Image.new("L", m.size, 0); ImageDraw.Draw(mask).rounded_rectangle([0, 0, m.width - 1, m.height - 1], radius=20, fill=255)
     c = Image.new("RGB", m.size, CANVAS); c.paste(m, (0, 0), mask)
     return c
@@ -321,25 +380,25 @@ def s_pair(t, lt):
     pond = Pond(); pond.pad(*MAC_PAD, 250); pond.pad(px, PC_PAD[1], 250); splash(pond, t, B(b + 4), *PC_PAD, 250); pond.onto(img)
     pad_label(img, MAC_PAD[0], MAC_PAD[1] + 84, "this Mac")
     pad_label(img, px, PC_PAD[1] + 84, "a PC with an RTX 3090")
-    frog_at(img, t, MAC_PAD[0], MAC_PAD[1] - 6, 190, look=(0.9, 0.0))
+    frog_at(img, t, MAC_PAD[0], MAC_PAD[1] - 6, 180, look=(0.9, 0.0))
     if t < B(b + 4):
         f = mono(38); cmd = "curl -fsSL https://frog.toys/node | sh"
-        tw = d.textlength("$ " + cmd, font=f); x0, y0 = 1340 - tw / 2 - 36, 400
+        tw = d.textlength("$ " + cmd, font=f); x0, y0 = col(12) - tw - 72, 420
         d.rounded_rectangle([x0, y0, x0 + tw + 72, y0 + 92], radius=16, fill=CARD)
         d.text((x0 + 36, y0 + 60), "$ ", font=f, fill=FROG, anchor="ls")
         d.text((x0 + 36 + d.textlength("$ ", font=f), y0 + 60), cmd, font=f, fill=FG, anchor="ls")
-        if t >= B(b + 2): d.text((1340, y0 + 150), "prints a 6-digit pairing code", font=sans(34, False), fill=MUTED, anchor="ms")
-        words(img, t, B(b), [("Add a machine.", False)], where="top")
+        if t >= B(b + 2): d.text((x0, y0 + 150), "It prints a 6-digit pairing code.", font=sans(SUB, False), fill=MUTED, anchor="ls")
+        words(img, t, B(b), [("Add a machine.", False)])
     else:
         m = machines_card(); kk = ease(seg(t, B(b + 4), B(b + 4) + 0.2))
-        img.paste(m, (int(1310 - m.width / 2), int(300 + (1 - kk) * 20)))
-        words(img, t, B(b + 4), [("It joins the ", False), ("pool.", True)], where="top")
+        img.paste(m, (int(col(12) - m.width), int(400 + (1 - kk) * 20)))
+        words(img, t, B(b + 4), [("It joins the ", False), ("pool.", True)])
     return img
 
 def s_swarm(t, lt):
     b = CUT["swarm"]
     img = Image.new("RGB", (W, H), CANVAS); d = ImageDraw.Draw(img)
-    pads = ((470, 880), (1160, 880))
+    pads = ((col(2) + 70, 900), (col(7) + 60, 900))
     spots = [(pads[i % 2][0] + dx, pads[i % 2][1] - 8) for i, dx in enumerate((-185, -185, 0, 0, 185, 185))]
     pond = Pond()
     for p in pads: pond.pad(*p, 330)
@@ -349,17 +408,17 @@ def s_swarm(t, lt):
     for i, sp in enumerate(spots):  # a frog lands on each beat
         hop(img, t, B(b + i), B(b + i + 1), (sp[0] + (-500 if i % 2 == 0 else 500), -200), sp, 100, height=120, look=(0, 0.3))
     n = on_beat(t, b + 1, 6)
-    d.text((1800, 420), str(n), font=sans(300), fill=FROG if n else LINE, anchor="rs")
-    d.text((1800, 480), "agents, working at once", font=sans(36, False), fill=MUTED, anchor="rs")
-    words(img, t, B(b), [("As many agents as ", False), ("they can hold.", True)], where="top")
+    d.text((col(12), 400), str(n), font=sans(300), fill=FROG if n else LINE, anchor="rs")
+    d.text((col(12), 400 + SUB_GAP), "agents, working at once", font=sans(SUB, False), fill=MUTED, anchor="rs")
+    words(img, t, B(b), [("As many agents as ", False), ("they can hold.", True)])
     return img
 
 def s_how(t, lt):
     b = CUT["how"]
     img = Image.new("RGB", (W, H), CANVAS); d = ImageDraw.Draw(img)
     out = t >= B(b + 8)  # the PC drops out
-    agents = [(520, 470), (960, 470), (1400, 470)]
-    mac, pc = (600, 900), (1320, 900)
+    agents = [(col(3), 610), (col(6), 610), (col(9), 610)]
+    mac, pc = (col(3) + 70, 910), (col(8) + 70, 910)
     pond = Pond(); pond.pad(*mac, 280); pond.pad(*pc, 280, out=out)
     # calls: once the agents are in, one leaves every half beat for the machine that is free
     calls = []
@@ -374,7 +433,7 @@ def s_how(t, lt):
     pad_label(img, mac[0], mac[1] + 90, "this Mac")
     pad_label(img, pc[0], pc[1] + 90, "the PC dropped out" if out else "the PC", WARN if out else MUTED)
     for i, a in enumerate(agents):
-        if t >= B(b + i): frog_at(img, t, a[0], a[1], 120, land=B(b + i), look=(0, 0.8))
+        if t >= B(b + i): frog_at(img, t, a[0], a[1], 105, land=B(b + i), look=(0, 0.8))
     for cb, src, to_pc in calls:
         k = seg(t, B(cb), B(cb + 1))
         if not (0 < k < 1): continue
@@ -390,9 +449,9 @@ def s_how(t, lt):
             x, y = lerp(start[0], dest[0], ease(k)), lerp(start[1], dest[1], ease(k))
         d.ellipse([x - 13, y - 13, x + 13, y + 13], fill=FROG)
     if not out:
-        words(img, t, B(b), [("Each call goes where it ", False), ("finishes first.", True)], where="top", size=84)
+        words(img, t, B(b), [("Each call goes where it ", False), ("finishes first.", True)])
     else:
-        words(img, t, B(b + 8), [("A machine drops out. ", False), ("The turn survives.", True)], where="top", size=84)
+        words(img, t, B(b + 8), [("A machine drops out. ", False), ("The turn survives.", True)])
     return img
 
 @lru_cache(1)
@@ -404,38 +463,38 @@ def s_price(t, lt):
     b = CUT["price"]
     img = Image.new("RGB", (W, H), CANVAS); d = ImageDraw.Draw(img)
     P = prices(); rows = P["rows"]
-    x_label, x_bar, per = 120, 640, 50.0  # 50 px per dollar: $20 is 1000 px
-    ys = [300, 386, 472, 610, 696, 782]
+    x_label, x_bar, per = col(0), col(4), 50.0  # 50 px per dollar: $20 is 1000 px
+    ys = [400, 480, 560, 680, 760, 840]
     tip = None
     for i, r in enumerate(rows):
         y = ys[i]
         if r["frog"]:
             if t < B(b + i): continue
-            k = ease(seg(t, B(b + i), B(b + i) + 0.2)); col = FROG
+            k = ease(seg(t, B(b + i), B(b + i) + 0.2)); tint = FROG
         else:  # the others start on beat 47 and keep growing, at the same dollars per beat
             t0 = B(b + 3)
             if t < t0: continue
-            k = min(1.0, (t - t0) / (BEAT * r["out"] / 5.0)); col = _hex("#383838")
+            k = min(1.0, (t - t0) / (BEAT * r["out"] / 5.0)); tint = _hex("#383838")
         w = max(8, r["out"] * per * k)
         d.text((x_label, y + 30), r["name"], font=sans(40, r["frog"]), fill=FROG if r["frog"] else MUTED, anchor="lm")
-        d.rounded_rectangle([x_bar, y + 6, x_bar + w, y + 54], radius=8, fill=col)
+        d.rounded_rectangle([x_bar, y + 6, x_bar + w, y + 54], radius=8, fill=tint)
         shown = r["out"] * k
         txt = f"${r['out']:.2f}" if r["frog"] else (f"${r['out']:g}" if k >= 1 else f"${shown:.0f}")
         d.text((x_bar + w + 20, y + 30), txt, font=sans(40), fill=FROG if r["frog"] else (FG if k >= 1 else MUTED), anchor="lm")
         if not r["frog"] and k < 1: tip = (x_bar + w, y + 30)
-    d.text((x_label, 900), f"List price per million output tokens, {P['date']}. Different models: this compares price only.",
-           font=sans(30, False), fill=FAINT, anchor="lm")
-    fx, fy = 1500, 540
+    d.text((x_label, 968), f"List price per million output tokens, {P['date']}. Different models: this compares price only.",
+           font=sans(LABEL, False), fill=FAINT, anchor="lm")
+    fx, fy = col(11), 640
     look = (0.0, 0.2)
     if tip: look = (max(-1, min(1, (tip[0] - fx) / 500)), 0.9)
-    frog_at(img, t, fx, fy, 120, land=B(b), look=look)
-    words(img, t, B(b), [("Need more? ", False), ("Frog Cloud.", True)], where="top")
+    frog_at(img, t, fx, fy, 105, land=B(b), look=look)
+    words(img, t, B(b), [("Need more? ", False), ("Frog Cloud.", True)])
     return img
 
 def s_setup(t, lt):
     b = CUT["setup"]
     img = Image.new("RGB", (W, H), CANVAS)
-    fx, fy, size = 1180, 900, 230
+    fx, fy, size = col(8) + 70, 960, 220
     got = t >= B(b + 1)
     lands = [B(b + 1), B(b + 3), B(b + 5)]
     last = max([l for l in lands if t >= l], default=None)
@@ -452,62 +511,62 @@ def s_setup(t, lt):
             ty = head_top - 34 - stack * 88
             if k < 1: chip(img, lerp(-200, fx, ease(k)), lerp(300, ty, ease(k)) - 120 * 4 * k * (1 - k), text, rot=lerp(-20, 0, k))
             else: chip(img, fx, ty + 10 * np.exp(-(t - B(cb + 1)) * 13), text)
-    words(img, t, B(b), [("It brings ", False), ("your setup.", True)], where="top",
+    words(img, t, B(b), [("It brings ", False), ("your setup.", True)],
           sub="Nothing to set up twice." if t >= B(b + 6) else None)
     return img
 
 def s_own(t, lt):
     b = CUT["own"]
     img = Image.new("RGB", (W, H), CANVAS)
-    cx, cy = 760, 860
-    pond = Pond(); pond.ring(cx, cy - 10, 560, alpha=0.9, width=3, ry=190); pond.pad(cx, cy, 250)
+    cx, cy = col(5), 880
+    pond = Pond(); pond.ring(cx, cy - 10, 480, alpha=0.9, width=3, ry=170); pond.pad(cx, cy, 250)
     hit = B(b + 4)
     if t >= hit:
         k = seg(t, hit, hit + BEAT)
-        if k < 1: pond.ring(cx, cy - 10, 560 + 60 * ease(k), alpha=1 - k, width=3, ry=190 + 20 * ease(k))
+        if k < 1: pond.ring(cx, cy - 10, 480 + 60 * ease(k), alpha=1 - k, width=3, ry=170 + 20 * ease(k))
     pond.onto(img)
     pad_label(img, cx, cy + 84, "yours")
     wave = hit <= t < B(b + 9)
     frog_at(img, t, cx, cy - 6, 200, "wave" if wave else "sit", look=(0.9, -0.1) if t < B(b + 8) else (0, 0))
     # the limit notice from the open flies in, meets the edge of the frog's pond on the beat, and bounces off
-    edge = (cx + 610, cy - 60)
+    edge = (cx + 560, cy - 60)
     if B(b + 1) <= t < hit:
         k = ease(seg(t, B(b + 1), hit))
         chip(img, lerp(W + 400, edge[0] + 150, k), lerp(540, edge[1], k), "Usage limit reached", size=40, kind="notice", rot=lerp(-8, 6, k))
     elif hit <= t < B(b + 8):
         k = seg(t, hit, B(b + 8))
         chip(img, edge[0] + 150 + 700 * k, edge[1] - 900 * k + 500 * k * k, "Usage limit reached", size=40, kind="notice", rot=6 - 300 * k, alpha=1 - k * k)
-    words(img, t, B(b), [("Nobody can cap ", False), ("what you own.", True)], where="top",
+    words(img, t, B(b), [("Nobody can cap ", False), ("what you own.", True)],
           sub="Free and open source. Local models keep your code on your Mac." if t >= hit else None)
     return img
 
-END_FROG = (W // 2, 440, 170)  # where the frog sits on the end card: x, y, head size
-
 def s_end(t, lt):
+    """the breakdown. Flush left on the grid like everything else: the line set as three lines,
+    the install line, the address; the frog lands on the right and winks."""
     b = CUT["end"]
     img = Image.new("RGB", (W, H), CANVAS)
-    ex, ey, size = END_FROG
-    pond = Pond(); splash(pond, t, B(b + 1), ex, ey, 260); pond.onto(img)
-    hop(img, t, B(b), B(b + 1), (ex, H + 300), (ex, ey), size, height=380) if t < B(b + 1) else \
-        frog_at(img, t, ex, ey, size, land=B(b + 1), wink=B(b + 6) <= t < B(b + 7), blink=False)
+    ex, ey, size = col(10), 900, 300
+    pond = Pond(); splash(pond, t, B(b + 1), ex, ey, 300); pond.onto(img)
+    if t < B(b + 1): hop(img, t, B(b), B(b + 1), (ex, H + 400), (ex, ey), size, height=420)
+    else: frog_at(img, t, ex, ey, size, land=B(b + 1), wink=B(b + 6) <= t < B(b + 7), blink=False)
     d = ImageDraw.Draw(img)
-    k1 = ease(seg(t, B(b + 1), B(b + 1) + 0.2))
-    f = sans(88); parts = [("No caps. ", True), ("Your machines. One agent.", False)]
-    x = W / 2 - sum(d.textlength(p, font=f) for p, _ in parts) / 2
-    for p, g in parts:
-        if k1 > 0: d.text((x, 590 - (1 - k1) * 18), p, font=f, fill=tuple(int(c * k1) for c in (FROG if g else FG)), anchor="ls")
-        x += d.textlength(p, font=f)
-    k3 = ease(seg(t, B(b + 3), B(b + 3) + 0.2))
-    if k3 > 0:
+    f = sans(132)
+    for i, (line, green) in enumerate((("No caps.", True), ("Your machines.", False), ("One agent.", False))):
+        tb = B(b + 1 + i * 0.5)  # a line every half beat
+        if t < tb: continue
+        k = ease(seg(t, tb, tb + 0.15))
+        d.text((MARGIN, 250 + i * 140 - (1 - k) * 18), line, font=f, fill=tuple(int(c * k) for c in (FROG if green else FG)), anchor="ls")
+    if t >= B(b + 3):
+        k = ease(seg(t, B(b + 3), B(b + 3) + 0.2))
         line = "curl -fsSL https://frog.toys/install.sh | sh"
-        f = mono(40); tw = d.textlength("$ " + line, font=f)
-        bx0, by0 = W / 2 - tw / 2 - 40, 670
-        d.rounded_rectangle([bx0, by0, W - bx0, by0 + 96], radius=16, fill=tuple(int(c * k3) for c in CARD))
-        d.text((bx0 + 40, by0 + 62), "$ ", font=f, fill=tuple(int(c * k3) for c in FROG), anchor="ls")
-        d.text((bx0 + 40 + d.textlength("$ ", font=f), by0 + 62), line, font=f, fill=tuple(int(c * k3) for c in FG), anchor="ls")
-    k4 = ease(seg(t, B(b + 5), B(b + 5) + 0.2))
-    if k4 > 0:
-        d.text((W / 2, 900 - (1 - k4) * 16), "frog.toys", font=sans(96), fill=tuple(int(c * k4) for c in FG), anchor="ms")
+        fm = mono(40); tw = d.textlength("$ " + line, font=fm)
+        x0, y0 = MARGIN, 690
+        d.rounded_rectangle([x0, y0, x0 + tw + 80, y0 + 96], radius=16, fill=tuple(int(c * k) for c in CARD))
+        d.text((x0 + 40, y0 + 62), "$ ", font=fm, fill=tuple(int(c * k) for c in FROG), anchor="ls")
+        d.text((x0 + 40 + d.textlength("$ ", font=fm), y0 + 62), line, font=fm, fill=tuple(int(c * k) for c in FG), anchor="ls")
+    if t >= B(b + 5):
+        k = ease(seg(t, B(b + 5), B(b + 5) + 0.2))
+        d.text((MARGIN, 930 - (1 - k) * 16), "frog.toys", font=sans(TITLE), fill=tuple(int(c * k) for c in FG), anchor="ls")
     fo = seg(t, DUR - 0.7, DUR)
     return dim(img, fo) if fo > 0 else img
 

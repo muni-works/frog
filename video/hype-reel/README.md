@@ -41,8 +41,9 @@ vite dev against it (port 5211) and `capture/capture.mjs`, which drives the app 
   suggestion chips are random per load, so those differ.
 - Shots: `type`, `stream`, `inspector`, `models`, `docs`. The current cut uses none of the web
   frames (it leans on the frog and two Mac snapshots); they stay for the next cut. `run.sh probe` writes two stills for checking selectors.
-- Mac footage is the checked-in offscreen snapshots, not a capture: `docs/design/composer/mac-new-folder-dark.png`
-  (`ComposerSnapshotTests`) and `docs/design/parity/models-settings-mac-dark.png`. Re-run those
+- The only product pixels left are the Mac's Settings › Machines rows, from the checked-in
+  snapshot `docs/design/parity/models-settings-mac-dark.png`. The composer and its model menu
+  are redrawn in `comp.py`, not captured. Re-run those
   harnesses to refresh them; they build their own copy of the app.
 - The mark is `apps/web/public/frog-mark.svg`, rasterized by `run.sh`.
 
@@ -76,7 +77,7 @@ turns the title.
 | beats | time | shot | on screen | source of the claim |
 |---|---|---|---|---|
 | 0–16 | 0.0–6.7 s | an unnamed agent's task card: two steps done, "Writing the fix" under way. "What's poppin'?" is asked; on beat 4 it stops: "Usage limit reached. Resets in 4 h 12 min", then "Buy extra usage $$$". The frog peeks, then hops in | Your agent ran out. / You've got options. | a drawn, generic card: no product is named or copied |
-| 16–24 | 6.7–10.0 s | the bass drops; the frog hops onto a lily pad, "this Mac"; the Mac composer's model chip (Qwen3 8B on this Mac) | Open models, on the Mac you have. / $0 a token. | `README.md:29`, `site/pricing.html` ("On your own machines: $0") |
+| 16–24 | 6.7–10.0 s | the bass drops; the frog hops onto a lily pad, "this Mac". In the composer (redrawn from the app's tokens) the model menu opens on beat 19 and Qwen3 8B, on this Mac, is picked on beat 21 | Open models, on the Mac you have. / $0 a token. | `README.md:29`, `site/pricing.html` ("On your own machines: $0") |
 | 24–32 | 10.0–13.3 s | the node install line; a second pad drifts in and settles on beat 28; Settings › Machines shows studio (M4 Max) and mew (RTX 3090) | Add a machine. / It joins the pool. | `README.md:13,59`, `site/index.html` (6-digit pairing code) |
 | 32–40 | 13.3–16.6 s | a frog lands on a pad each beat, a counter runs to 6 | As many agents as they can hold. | `README.md:6-7` |
 | 40–48 | 16.6–19.9 s | three agent frogs above two pads; calls travel to a pad every half beat | Each call goes where it finishes first. | `README.md:59` ("A scheduler sends each call to the machine that will finish it first") |
@@ -95,6 +96,12 @@ The pricing shot names other providers. Its numbers live in `prices.json` with a
 and a date; re-read the sources before publishing. Cheaper tiers exist at those providers (for
 example $0.50 output models) and are not on the chart, and Frog Cloud's OpenRouter-served prices
 are "from" prices.
+
+Layout, the same in every scene (`comp.py`, "the grid and the type scale"): a 12-column grid with
+120 px margins; everything flush left on a column edge, nothing centred. Titles are IBM Plex Sans
+88 semibold on two lines (the claim, then its point in green), the sub is 42 regular one fixed
+step below, labels are Plex Mono 30. One accent, true black, no rules or boxes that don't hold
+content.
 
 Editing rules, from the board video's notes: text lands whole, motion steps on beats, the frame
 changes completely on the drop, and nothing glows.
