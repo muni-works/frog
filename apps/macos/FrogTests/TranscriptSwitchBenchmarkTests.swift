@@ -413,10 +413,13 @@ final class TranscriptSwitchBenchmarkTests: XCTestCase {
         // measures, no more. Both build the same ~4.3 row bodies a step.
         // - The table (this test's container since 2026-11-11): 22.9–26.0 ms p50, ~31 ms p95
         //   over ~35 runs (2026-11-16), each row built and laid out in its own hosting view.
-        // - The lazy stack: 23.0–27.1 ms p50, 31–35 ms p95 over 22 runs (2026-11-16). It was
-        //   ~17 ms on 2026-10-25; the ~17 ms seen once on 2026-11-16 came from the two runs
-        //   above that built no rows at all. Held to 25 ms it failed about half its runs.
-        let frameBudget = 0.030
+        // - The lazy stack: ~17 ms p50 on 2026-10-25. On 2026-11-16, 23.0–27.1 ms p50 over 22
+        //   runs, all on a Mac busy with other builds (load average 9–11), so it fails 25 ms
+        //   about half its runs there. Kept at 25 ms: that measurement doesn't show the budget
+        //   was wrong, only that a loaded Mac misses it; measure an idle Mac before moving it.
+        //   (The ~17 ms seen once on 2026-11-16 came from the two runs above that built no
+        //   rows at all.)
+        let frameBudget = TranscriptContainer.table ? 0.030 : 0.025
         XCTAssertLessThan(p50, frameBudget, "scrolling well under 60 fps")
         XCTAssertGreaterThan(TranscriptBench.ink(scroll, in: host), 0.002, "blank at the top")
         // The lazy stack builds older rows above as you near its top ("fills"); the table has
