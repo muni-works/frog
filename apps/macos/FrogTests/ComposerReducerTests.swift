@@ -173,7 +173,7 @@ final class ComposerSpecTests: XCTestCase {
         XCTAssertEqual(M.derive(state { $0.where = session(ahead: 1) }).status, .git)
         var diffOnly = session()
         if case .session(var w) = diffOnly { w.diff = .init(add: 3, del: 0, files: 1); diffOnly = .session(w) }
-        XCTAssertEqual(M.derive(state { $0.where = diffOnly }).status, .git, "lines changed, as the web counts them")
+        XCTAssertEqual(M.derive(state { $0.where = diffOnly }).status, .none, "changed lines alone, not dirty: no line (as the web)")
         XCTAssertEqual(M.derive(state { $0.where = session(prs: [pr(.draft)]) }).status, .git, "a PR with no action still shows")
     }
 

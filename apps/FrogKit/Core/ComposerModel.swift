@@ -220,7 +220,7 @@ enum ComposerModel {
         let setting = s.openPrWhenDone ?? .ask
         if case .session(let w) = s.where {
             canSwitch = !w.dirty
-            gitState = w.repo != nil && (w.dirty || w.ahead > 0 || !w.prs.isEmpty || w.diff.add + w.diff.del > 0)
+            gitState = w.repo != nil && (w.dirty || w.ahead > 0 || !w.prs.isEmpty)
             let top = worst(w.prs)
             if top?.state == .merged { git = .archive }
             else if w.dirty { git = .commit }
