@@ -34,8 +34,9 @@ for (const e of fixture.slice(0, ask + 1)) {
 }
 const title = fixture.find((e) => e.event === "titled")?.title ?? "Fix flaky upload retry";
 
-// What the account edge would say. No name or picture: the sidebar reads "Signed in" and the credit.
-const account = { plan: "usage", name: null, handle: null, image: null, google: null, email: null, credit_cents: 742, resets_at: null, subscription: null };
+// What the account edge would say. No name or picture: the sidebar reads "Signed in" and the
+// sign-up credit ($1, site/pricing.html).
+const account = { plan: "usage", name: null, handle: null, image: null, google: null, email: null, credit_cents: 100, resets_at: null, subscription: null };
 // The pricing page's models (site/pricing.html, the static table), USD per token.
 const models = { data: [
   { id: "qwen3-coder-next", context_length: 262144, pricing: { prompt: "0.000000132", completion: "0.00000088", input_cache_read: "0.000000077" } },

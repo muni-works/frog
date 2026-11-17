@@ -164,11 +164,19 @@ def s_type(t, lt):
     words(img, t, B(5), [("A free, ", False), ("open-source", True), (" coding agent.", False)], where="top")
     return img
 
+@lru_cache(1)
+def mac_menu():
+    """the Mac composer's where menu (This Mac, then Frog Cloud) on a black margin, so the
+    words above clear it."""
+    m = load("docs/design/composer/mac-where-menu-dark.png")
+    c = Image.new("RGB", (2300, 1500), CANVAS); c.paste(m, (382, 380))
+    return c
+
 def s_mac(t, lt):
-    src = load("docs/design/parity/mac-dark.png")  # the Mac app, a model running on this Mac
-    z = lerp(1.32, 1.45, seg(lt, 0, 4 * BEAT)) * punch(t, B(CUT["mac"]))
-    img, cam = view(src, 1380, 1080, z)
-    img = scrim(img, "top", 400)
+    src = mac_menu()
+    z = lerp(1.0, 1.06, seg(lt, 0, 4 * BEAT)) * punch(t, B(CUT["mac"]))
+    img, cam = view(src, 1150, 1500, z)
+    img = scrim(img, "top", 300)
     words(img, t, B(CUT["mac"]) + 0.05, [("On your ", False), ("Mac.", True)], where="top")
     return img
 
@@ -222,7 +230,7 @@ def s_pr(t, lt):
         k = ease(seg(t, B(CUT["pr"] + 5.5), B(CUT["pr"] + 6.2)))
         s = lerp(1.14, 1.24, seg(t, B(CUT["pr"] + 5.5), B(CUT["price"])))
         paste_center(img, g.resize((int(g.width * s), int(g.height * s)), Image.LANCZOS), W / 2, H / 2 + 40, k)
-        words(img, t, B(CUT["pr"] + 5.5), [("It opens the ", False), ("pull request.", True)], where="top")
+        words(img, t, t0 + 0.05, [("It opens the ", False), ("pull request.", True)], where="top")
         return img
     src = web("inspector", 0)
     k = ease(seg(t, t0 + BEAT, B(CUT["pr"] + 4)))
@@ -238,7 +246,7 @@ def s_pr(t, lt):
 def s_price(t, lt):
     src = web("models", 1)
     img, cam = view(src, 1880, 920, 2.2)
-    img = dim(img.filter(ImageFilter.GaussianBlur(2)), 0.55)
+    img = scrim(scrim(dim(img.filter(ImageFilter.GaussianBlur(2)), 0.55), "bottom", 380), "top", 300)
     words(img, t, B(CUT["price"]) + 0.05, [("Pay per ", False), ("token.", True)], where="bottom", size=120, sub=None)
     words(img, t, B(CUT["price"] + 2), [("At cost, ", False), ("plus 10%.", True)], where="top", size=64)
     return img
@@ -269,7 +277,7 @@ def s_end(t, lt):
         d.rounded_rectangle([bx0, by0, W - bx0, by0 + 96], radius=16, fill=tuple(int(c * k3) for c in CARD))
         d.text((bx0 + 40, by0 + 62), "$ ", font=f, fill=tuple(int(c * k3) for c in FROG), anchor="ls")
         d.text((bx0 + 40 + d.textlength("$ ", font=f), by0 + 62), line, font=f, fill=tuple(int(c * k3) for c in FG), anchor="ls")
-        d.text((W / 2, by0 + 170), "Mac app, CLI and Frog Cloud. Free and open source.", font=sans(40, False), fill=tuple(int(c * k3) for c in MUTED), anchor="ms")
+        d.text((W / 2, by0 + 170), "Free and open source. Frog Cloud when you want more.", font=sans(40, False), fill=tuple(int(c * k3) for c in MUTED), anchor="ms")
     fo = seg(t, DUR - 1.0, DUR)
     return dim(img, fo) if fo > 0 else img
 

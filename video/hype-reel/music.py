@@ -141,11 +141,11 @@ add(bass(33, DUR - B(END)) * np.exp(-np.arange(int((DUR - B(END)) * SR)) / SR * 
 # a little stereo room: a 23 ms slap on the right, 31 ms on the left
 for ch, ms in ((0, 31), (1, 23)):
     d = int(ms / 1000 * SR); mix[d:, ch] += 0.18 * mix[:-d, 1 - ch]
-# fades, then normalise to -1 dBFS peak with a soft clip
+# fades, then normalise to -2 dBFS peak with a soft clip (headroom for the aac encode)
 fade_in = int(0.05 * SR); mix[:fade_in] *= np.linspace(0, 1, fade_in)[:, None]
 fo = int(2.0 * SR); mix[-fo:] *= np.linspace(1, 0, fo)[:, None] ** 1.5
 mix = np.tanh(mix * 1.3)
-mix *= 10 ** (-1 / 20) / np.max(np.abs(mix))
+mix *= 10 ** (-2 / 20) / np.max(np.abs(mix))
 with wave.open(sys.argv[1], "wb") as w:
     w.setnchannels(2); w.setsampwidth(2); w.setframerate(SR)
     w.writeframes((mix * 32767).astype("<i2").tobytes())
