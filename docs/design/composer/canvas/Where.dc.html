@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Composer: where it runs</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.b{box-sizing:border-box;background:#1c1c1c;color:#ececec;font:13px/16px -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;padding:40px;display:flex;flex-direction:column;gap:28px}
+.h{font-size:22px;line-height:26px;font-weight:600;margin:0}
+.sub{color:#9b9b9b;margin:6px 0 0;max-width:820px}
+.g{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px 20px}
+.cell{display:flex;flex-direction:column;gap:8px}
+.cap{color:#9b9b9b;font-size:12px;line-height:15px}
+.cap b{color:#ececec;font-weight:600}
+.tag{display:inline-block;font-size:10px;line-height:13px;font-weight:600;padding:1px 6px;border-radius:999px;background:#2a2a2a;color:#b0b0b0;margin-left:6px}
+.c{background:#232323;border:1px solid #3e3e3e;border-radius:16px;display:flex;flex-direction:column}
+.s{display:flex;align-items:center;gap:8px;height:32px;box-sizing:border-box;padding:0 8px 0 14px;border-bottom:1px solid #2e2e2e;font-size:12px;line-height:15px;color:#9b9b9b}
+.s b{color:#ececec;font-weight:400}
+.tx{padding:12px 14px 4px;min-height:16px}
+.ph{color:#8a8a8a}
+.bar{display:flex;align-items:center;gap:2px;height:28px;padding:6px 8px 8px 8px;font-size:12px;line-height:15px;color:#9b9b9b}
+.chip{display:inline-flex;align-items:center;gap:4px;height:24px;box-sizing:border-box;padding:0 8px;border-radius:999px;border:0;background:transparent;color:#9b9b9b;font:inherit;white-space:nowrap}
+.chip b{color:#ececec;font-weight:400}
+.chip.o{background:rgba(255,255,255,.08);color:#ececec}
+.sp{flex:1}
+.act{width:28px;height:28px;border-radius:50%;border:0;display:inline-flex;align-items:center;justify-content:center;background:rgba(255,255,255,.08);color:#ececec;flex:none;margin-left:4px}
+.i{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.menu{box-sizing:border-box;background:#232323;border:1px solid #3e3e3e;border-radius:12px;padding:4px;display:flex;flex-direction:column}
+.f{display:flex;align-items:center;gap:8px;padding:6px 8px 7px;color:#8a8a8a;border-bottom:1px solid #2e2e2e;margin-bottom:2px}
+.ml{color:#9b9b9b;font-size:10px;line-height:13px;padding:8px 8px 2px}
+.mi{display:flex;align-items:center;gap:8px;height:28px;box-sizing:border-box;padding:0 8px;border-radius:7px;color:#ececec}
+.mi.on{background:rgba(255,255,255,.08)}
+.mi .r{margin-left:auto;color:#9b9b9b;font-size:12px}
+.mi.d{color:#9b9b9b}
+.hr{height:1px;background:#2e2e2e;margin:4px 0}
+.sw{width:22px;height:13px;border-radius:999px;background:#58cc6f;display:inline-flex;align-items:center;justify-content:flex-end;padding:1.5px;box-sizing:border-box;margin-left:auto}
+.sw i{width:10px;height:10px;border-radius:50%;background:#0d1a10;display:block}
+.row{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center}
+.rule{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px 22px;background:#232323;border-radius:12px;padding:16px 18px;color:#9b9b9b;font-size:12px;line-height:17px}
+.rule b{color:#ececec;font-weight:600;display:block}
+</style>
+</helmet>
+<div class="b" style="width: 1180px; height: 1240px">
+<div>
+<h1 class="h">2. Where it runs</h1>
+<p class="sub">One chip at the left of the controls names where the work will happen, with its branch. It opens one menu, the same on both apps. The web has no local folders, so it shows only the Frog Cloud part. Once the session starts the chip is gone: the choice is made.</p>
+</div>
+<div class="cell">
+<div class="cap"><b>The chip, in each place.</b> An icon for the place, the name in the normal text colour, the branch in muted.</div>
+<div class="row">
+<span class="chip"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.5h4l1.5 1.5H14v6.5H2z"/></svg><b>frog</b>main<svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 6.5 8 10l3.5-3.5"/></svg></span><span class="cap">A folder on this Mac<span class="tag">Mac</span></span>
+<span class="chip"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 12a2.5 2.5 0 0 1 .3-5 3.5 3.5 0 0 1 6.7 1A2 2 0 0 1 11.5 12z"/></svg><b>ecto/pond</b>main<svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 6.5 8 10l3.5-3.5"/></svg></span><span class="cap">A repo in Frog Cloud</span>
+<span class="chip"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 12a2.5 2.5 0 0 1 .3-5 3.5 3.5 0 0 1 6.7 1A2 2 0 0 1 11.5 12z"/></svg><b>No repo</b><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 6.5 8 10l3.5-3.5"/></svg></span><span class="cap">An empty cloud sandbox</span>
+<span class="chip"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.5h4l1.5 1.5H14v6.5H2z"/></svg><b>notes</b><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 6.5 8 10l3.5-3.5"/></svg></span><span class="cap">A folder outside git: no branch<span class="tag">Mac</span></span>
+<span class="chip"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4h10v6.5H7.5L5 12.5v-2H3z"/></svg><b>Just chat</b><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 6.5 8 10l3.5-3.5"/></svg></span><span class="cap">No files, no shell<span class="tag">Mac</span></span>
+</div>
+</div>
+<div class="g" style="align-items: end">
+<div class="cell">
+<div class="cap"><b>The menu on the Mac.</b> It opens upward from the chip. Type to filter folders and repos together. Picking keeps the draft, attachments and mode.<span class="tag">Mac</span></div>
+<div class="menu" style="width: 340px">
+<div class="f"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="3.5"/><path d="M10 10l3 3"/></svg>Search folders and repos</div>
+<div class="ml">This Mac</div>
+<div class="mi on"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.5h4l1.5 1.5H14v6.5H2z"/></svg>frog<span class="r">~/Developer</span><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5 7 12l5.5-7"/></svg></div>
+<div class="mi"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.5h4l1.5 1.5H14v6.5H2z"/></svg>zest<span class="r">~/Developer</span></div>
+<div class="mi d"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>Choose a folder…</div>
+<div class="ml">Frog Cloud</div>
+<div class="mi"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 12a2.5 2.5 0 0 1 .3-5 3.5 3.5 0 0 1 6.7 1A2 2 0 0 1 11.5 12z"/></svg>ecto/pond</div>
+<div class="mi"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 12a2.5 2.5 0 0 1 .3-5 3.5 3.5 0 0 1 6.7 1A2 2 0 0 1 11.5 12z"/></svg>ecto/loon</div>
+<div class="mi"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 12a2.5 2.5 0 0 1 .3-5 3.5 3.5 0 0 1 6.7 1A2 2 0 0 1 11.5 12z"/></svg>No repo</div>
+<div class="hr"></div>
+<div class="mi"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4h10v6.5H7.5L5 12.5v-2H3z"/></svg>Just chat</div>
+<div class="hr"></div>
+<div class="mi">Branch<span class="r">main</span><svg class="i" viewBox="0 0 16 16" aria-hidden="true" style="color: #9b9b9b"><path d="M6.5 4.5 10 8l-3.5 3.5"/></svg></div>
+<div class="mi">New worktree<span class="sw"><i></i></span></div>
+</div>
+<div class="c"><div class="tx ph">What should we work on?</div><div class="bar"><button class="chip" aria-label="Attach"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg></button><button class="chip o"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.5h4l1.5 1.5H14v6.5H2z"/></svg><b>frog</b>main<svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 6.5 8 10l3.5-3.5"/></svg></button><span class="sp"></span><button class="chip">Auto</button><button class="chip"><svg class="i" viewBox="0 0 16 16" aria-hidden="true" style="color: #0a84ff"><path d="M3.5 4h9v6h-9zM2 12h12"/></svg>Qwen3 8B</button><button class="act" aria-label="Dictate"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5a1.8 1.8 0 0 1 1.8 1.8v3.4a1.8 1.8 0 0 1-3.6 0V4.3A1.8 1.8 0 0 1 8 2.5zM4.5 7.5a3.5 3.5 0 0 0 7 0M8 11v2.5"/></svg></button></div></div>
+</div>
+<div class="cell">
+<div class="cap"><b>The menu on the web.</b> The same menu without the This Mac group. Pasting a GitHub URL into the filter picks that repo.<span class="tag">Web</span></div>
+<div class="menu" style="width: 340px">
+<div class="f"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="3.5"/><path d="M10 10l3 3"/></svg>Search repos, or paste a GitHub URL</div>
+<div class="mi"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 12a2.5 2.5 0 0 1 .3-5 3.5 3.5 0 0 1 6.7 1A2 2 0 0 1 11.5 12z"/></svg>No repo</div>
+<div class="ml">Your repos</div>
+<div class="mi on"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 12a2.5 2.5 0 0 1 .3-5 3.5 3.5 0 0 1 6.7 1A2 2 0 0 1 11.5 12z"/></svg>ecto/pond<svg class="i" viewBox="0 0 16 16" aria-hidden="true" style="margin-left: auto"><path d="M3.5 8.5 7 12l5.5-7"/></svg></div>
+<div class="mi"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 12a2.5 2.5 0 0 1 .3-5 3.5 3.5 0 0 1 6.7 1A2 2 0 0 1 11.5 12z"/></svg>ecto/loon</div>
+<div class="mi"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 12a2.5 2.5 0 0 1 .3-5 3.5 3.5 0 0 1 6.7 1A2 2 0 0 1 11.5 12z"/></svg>ecto/slamwich</div>
+<div class="mi d"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>Give Frog access to more repos</div>
+<div class="hr"></div>
+<div class="mi">Branch<span class="r">main</span><svg class="i" viewBox="0 0 16 16" aria-hidden="true" style="color: #9b9b9b"><path d="M6.5 4.5 10 8l-3.5 3.5"/></svg></div>
+</div>
+<div class="c"><div class="tx ph">What should we work on?</div><div class="bar"><button class="chip" aria-label="Attach"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg></button><button class="chip o"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 12a2.5 2.5 0 0 1 .3-5 3.5 3.5 0 0 1 6.7 1A2 2 0 0 1 11.5 12z"/></svg><b>ecto/pond</b>main<svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 6.5 8 10l3.5-3.5"/></svg></button><span class="sp"></span><button class="chip">Auto</button><button class="chip"><svg class="i" viewBox="0 0 16 16" aria-hidden="true" style="color: #30d158"><path d="M4.5 12a2.5 2.5 0 0 1 .3-5 3.5 3.5 0 0 1 6.7 1A2 2 0 0 1 11.5 12z"/></svg>GLM-5.3 Flash</button><button class="act" aria-label="Dictate"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5a1.8 1.8 0 0 1 1.8 1.8v3.4a1.8 1.8 0 0 1-3.6 0V4.3A1.8 1.8 0 0 1 8 2.5zM4.5 7.5a3.5 3.5 0 0 0 7 0M8 11v2.5"/></svg></button></div></div>
+</div>
+</div>
+<div class="g" style="align-items: start">
+<div class="cell">
+<div class="cap"><b>Branch.</b> A second level of the same menu. A tree with uncommitted changes can't switch, and says why.</div>
+<div class="menu" style="width: 300px">
+<div class="f"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="3.5"/><path d="M10 10l3 3"/></svg>Search branches</div>
+<div class="mi on">main<svg class="i" viewBox="0 0 16 16" aria-hidden="true" style="margin-left: auto"><path d="M3.5 8.5 7 12l5.5-7"/></svg></div>
+<div class="mi">release/v0.6.2</div>
+<div class="mi">frog/sidebar-polish</div>
+</div>
+<div class="menu" style="width: 300px">
+<div class="mi d">Branch<span class="r">main</span></div>
+<div class="mi d" style="height: auto; padding: 0 8px 6px; font-size: 12px; line-height: 15px">Commit your changes to switch branches</div>
+</div>
+</div>
+<div class="cell">
+<div class="cap"><b>Signed out of Frog Cloud.</b> The cloud group is one row that opens sign-in.<span class="tag">Mac</span></div>
+<div class="menu" style="width: 300px">
+<div class="ml">Frog Cloud</div>
+<div class="mi d"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 12a2.5 2.5 0 0 1 .3-5 3.5 3.5 0 0 1 6.7 1A2 2 0 0 1 11.5 12z"/></svg>Sign in to use Frog Cloud</div>
+</div>
+<div class="cap" style="margin-top: 10px"><b>New worktree off, on a tree with changes.</b> The status line says once that Frog will share your checkout.<span class="tag">Mac</span></div>
+<div class="c"><div class="s"><b>Frog will work in your checkout, alongside your changes</b></div><div class="tx ph">What should we work on?</div><div class="bar"><button class="chip" aria-label="Attach"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg></button><button class="chip"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.5h4l1.5 1.5H14v6.5H2z"/></svg><b>frog</b>main<svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 6.5 8 10l3.5-3.5"/></svg></button><span class="sp"></span><button class="chip">Auto</button><button class="chip"><svg class="i" viewBox="0 0 16 16" aria-hidden="true" style="color: #0a84ff"><path d="M3.5 4h9v6h-9zM2 12h12"/></svg>Qwen3 8B</button><button class="act" aria-label="Dictate"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5a1.8 1.8 0 0 1 1.8 1.8v3.4a1.8 1.8 0 0 1-3.6 0V4.3A1.8 1.8 0 0 1 8 2.5zM4.5 7.5a3.5 3.5 0 0 0 7 0M8 11v2.5"/></svg></button></div></div>
+</div>
+</div>
+<div class="rule">
+<span><b>One chip, not three.</b>Place, branch and worktree were three controls on their own row. They are one chip and one menu now.</span>
+<span><b>Switching place changes the model.</b>A cloud repo takes the cloud model you used last; a folder takes that folder's. The status line says so once.</span>
+<span><b>What goes away.</b>The Mac's separate Frog Cloud tray and its folder-only chip. The web's "No repo" chip already works this way.</span>
+<span><b>Menu rows.</b>28 tall, 7 radius hover plate, a check at the right for the current choice, detail text right-aligned in muted.</span>
+<span><b>Filter first.</b>The field at the top takes focus when the menu opens. Arrow keys move, Return picks, Esc closes.</span>
+<span><b>After the session starts</b> the place and branch show in the status line with the git state, and only when there is git state to show.</span>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1180,"height":1240}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

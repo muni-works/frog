@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Composer status line: errors, questions, notices</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.b{box-sizing:border-box;background:#1c1c1c;color:#ececec;font:13px/16px -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;padding:40px;display:flex;flex-direction:column;gap:26px}
+.h{font-size:22px;line-height:26px;font-weight:600;margin:0}
+.h2{font-size:13px;line-height:16px;font-weight:600;margin:0}
+.sub{color:#9b9b9b;margin:6px 0 0;max-width:820px}
+.g{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px 20px}
+.cell{display:flex;flex-direction:column;gap:6px}
+.cap{color:#9b9b9b;font-size:12px;line-height:15px}
+.cap b{color:#ececec;font-weight:600}
+.tag{display:inline-block;font-size:10px;line-height:13px;font-weight:600;padding:1px 6px;border-radius:999px;background:#2a2a2a;color:#b0b0b0;margin-left:6px}
+.c{background:#232323;border:1px solid #3e3e3e;border-radius:16px;display:flex;flex-direction:column}
+.s{display:flex;align-items:center;gap:8px;height:32px;box-sizing:border-box;padding:0 8px 0 14px;border-bottom:1px solid #2e2e2e;font-size:12px;line-height:15px;color:#9b9b9b}
+.s b{color:#ececec;font-weight:400}
+.sl{display:flex;align-items:center;gap:8px;height:34px;box-sizing:border-box;padding:0 8px 0 14px;background:#232323;border:1px solid #3e3e3e;border-radius:16px 16px 5px 5px;font-size:12px;line-height:15px;color:#9b9b9b}
+.sl b{color:#ececec;font-weight:400}
+.tx{padding:12px 14px 4px;min-height:16px}
+.bar{display:flex;align-items:center;gap:2px;height:28px;padding:6px 8px 8px 8px;font-size:12px;line-height:15px;color:#9b9b9b}
+.chip{display:inline-flex;align-items:center;gap:4px;height:24px;box-sizing:border-box;padding:0 8px;border-radius:999px;border:0;background:transparent;color:#9b9b9b;font:inherit;white-space:nowrap}
+.sp{flex:1}
+.act{width:28px;height:28px;border-radius:50%;border:0;display:inline-flex;align-items:center;justify-content:center;background:#58cc6f;color:#0d1a10;flex:none;margin-left:4px}
+.i{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.w{width:14px;height:14px;fill:none;stroke:#ff9f0a;stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.tb{border:0;border-radius:999px;height:22px;padding:0 9px;background:rgba(255,255,255,.08);color:#ececec;font:inherit;white-space:nowrap}
+.tb.q{background:transparent;color:#9b9b9b}
+.x{border:0;background:transparent;color:#9b9b9b;display:inline-flex;padding:4px}
+.ord{display:flex;align-items:center;gap:10px;color:#9b9b9b;font-size:12px;line-height:15px;flex-wrap:wrap}
+.ord span{display:inline-flex;align-items:center;gap:6px;background:#232323;border-radius:999px;padding:5px 12px;color:#ececec}
+.rule{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px 22px;background:#232323;border-radius:12px;padding:16px 18px;color:#9b9b9b;font-size:12px;line-height:17px}
+.rule b{color:#ececec;font-weight:600;display:block}
+</style>
+</helmet>
+<div class="b" style="width: 1180px; height: 1070px">
+<div>
+<h1 class="h">5. The status line: errors, questions, notices</h1>
+<p class="sub">The optional top row. One line: what happened, then what to do, as buttons at the right. The words come from one list both apps share. Text stays in the normal colour; an error adds a small orange triangle and nothing else. Esc clears it.</p>
+</div>
+<div class="ord"><b style="color: #ececec; font-weight: 600">It shows the first of these that applies:</b><span><svg class="w" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5 14 13H2zM8 6.5v3M8 11.2v.1"/></svg>An error</span>then<span>A question</span>then<span>A notice</span>then<span>Git state</span></div>
+<div class="g" style="align-items: start">
+<div class="cell">
+<div class="cap"><b>In place.</b> It shares the card, with a hairline below. The draft is never lost to an error.</div>
+<div class="c"><div class="s"><svg class="w" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5 14 13H2zM8 6.5v3M8 11.2v.1"/></svg><b>Out of credit</b><span class="sp"></span><button class="tb q">Use local model</button><button class="tb">Add credit</button></div><div class="tx">Make the tests faster</div><div class="bar"><button class="chip" aria-label="Attach"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg></button><span class="sp"></span><button class="chip">Auto</button><button class="chip"><svg class="i" viewBox="0 0 16 16" aria-hidden="true" style="color: #30d158"><path d="M4.5 12a2.5 2.5 0 0 1 .3-5 3.5 3.5 0 0 1 6.7 1A2 2 0 0 1 11.5 12z"/></svg>GLM-5.3 Flash</button><button class="act" aria-label="Send"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 13V3.5M4 7l4-4 4 4"/></svg></button></div></div>
+</div>
+<div class="cell">
+<div class="cap"><b>A question.</b> Yolo the first time, Merge, Archive. Cancel is quiet text; the confirming button has the plate. No triangle.</div>
+<div class="sl"><b>Merge #412 into main?</b><span class="sp"></span><button class="tb q">Cancel</button><button class="tb">Merge</button></div>
+<div class="cap" style="margin-top: 8px"><b>A notice.</b> Something Frog did for you. It clears on the next send.</div>
+<div class="sl"><b>Switched to GLM-5.3 Flash in Frog Cloud</b><span class="sp"></span><button class="x" aria-label="Dismiss"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/></svg></button></div>
+</div>
+</div>
+<div><h2 class="h2">Every error, in the words both apps use</h2></div>
+<div class="g">
+<sc-for list="{{errs}}" as="e" hint-placeholder-count="6">
+<div class="cell">
+<div class="cap"><b>{{e.name}}</b> {{e.note}}<sc-if value="{{e.mac}}" hint-placeholder-val="{{false}}"><span class="tag">Mac</span></sc-if></div>
+<div class="sl"><svg class="w" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5 14 13H2zM8 6.5v3M8 11.2v.1"/></svg><b>{{e.msg}}</b><span class="sp"></span><sc-if value="{{e.hasB}}" hint-placeholder-val="{{false}}"><button class="tb q">{{e.b}}</button></sc-if><sc-if value="{{e.hasA}}" hint-placeholder-val="{{true}}"><button class="tb">{{e.a}}</button></sc-if><sc-if value="{{e.bare}}" hint-placeholder-val="{{false}}"><button class="x" aria-label="Dismiss"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/></svg></button></sc-if></div>
+</div>
+</sc-for>
+</div>
+<div class="rule">
+<span><b>One at a time.</b>A new error replaces the old one. When it concerns one control, that control also takes the orange stroke.</span>
+<span><b>Buttons.</b>Two at most, both quiet. The one that fixes it most directly is last and has the plate. Nothing here is filled or green: that belongs to the action.</span>
+<span><b>Voice.</b>Say what happened, never blame, no red. A button is a verb in three words or fewer.</span>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1180,"height":1070}}'>
+class Component extends DCLogic {
+renderVals() {
+const rows = [
+['Engine stopped.', 'The draft is kept.', "Frog's engine stopped", 'Restart engine', '', true],
+['Signed out.', '', 'Signed out of Frog Cloud', 'Sign in', '', false],
+['Out of credit, no local model.', 'Only one way forward is offered.', 'Out of credit', 'Add credit', '', false],
+['Frog Cloud is busy.', 'The button counts down, then retries with the kept draft.', 'Frog Cloud is busy', 'Retry in 12s', '', false],
+["Couldn't clone.", 'Marks the where chip.', "Couldn't clone the repo", 'Retry', '', false],
+["Couldn't make a worktree.", 'Offers the checkout.', "Couldn't make a worktree", 'Use checkout', '', true],
+['Microphone refused.', 'Marks the action.', 'Needs mic access to take dictation', 'Open Settings', '', true],
+['A commit hook failed.', 'Marks the git action.', 'A commit hook failed', 'Show output', '', false],
+['GitHub not connected.', '', 'Connect GitHub to open a PR', 'Connect GitHub', '', false],
+['Push rejected.', '', 'Branch moved on GitHub', 'Pull and retry', '', false],
+['Merge conflict.', 'The button starts a turn; the draft stays put.', 'This PR has conflicts', 'Resolve conflicts', '', false],
+['Branch protection.', "GitHub's own words, and nothing to press.", 'Branch protection blocks the merge', '', '', false],
+['PR not found.', 'After binding a PR by number or URL.', "Couldn't find that PR", '', '', false],
+['Out of credit, with a local model.', 'Two ways forward.', 'Out of credit', 'Add credit', 'Use local model', false]
+];
+return {
+errs: rows.map((r) => ({ name: r[0], note: r[1], msg: r[2], a: r[3], b: r[4], mac: r[5], hasA: r[3] !== '', hasB: r[4] !== '', bare: r[3] === '' }))
+};
+}
+}
+</script>
+</body>
+</html>

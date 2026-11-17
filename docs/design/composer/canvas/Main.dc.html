@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Composer anatomy and principles</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.b{box-sizing:border-box;background:#1c1c1c;color:#ececec;font:13px/16px -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;padding:40px;display:flex;flex-direction:column;gap:28px}
+.h{font-size:22px;line-height:26px;font-weight:600;margin:0}
+.h2{font-size:13px;line-height:16px;font-weight:600;margin:0}
+.sub{color:#9b9b9b;margin:6px 0 0;max-width:820px}
+.g{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px 20px}
+.cell{display:flex;flex-direction:column;gap:8px}
+.cap{color:#9b9b9b;font-size:12px;line-height:15px}
+.cap b{color:#ececec;font-weight:600}
+.tag{display:inline-block;font-size:10px;line-height:13px;font-weight:600;padding:1px 6px;border-radius:999px;background:#2a2a2a;color:#b0b0b0;margin-left:6px}
+.c{background:#232323;border:1px solid #3e3e3e;border-radius:16px;display:flex;flex-direction:column}
+.s{display:flex;align-items:center;gap:8px;height:32px;box-sizing:border-box;padding:0 8px 0 14px;border-bottom:1px solid #2e2e2e;font-size:12px;line-height:15px;color:#9b9b9b}
+.s b{color:#ececec;font-weight:400}
+.tx{padding:12px 14px 4px;min-height:16px}
+.ph{color:#8a8a8a}
+.bar{display:flex;align-items:center;gap:2px;height:28px;padding:6px 8px 8px 8px;font-size:12px;line-height:15px;color:#9b9b9b}
+.chip{display:inline-flex;align-items:center;gap:4px;height:24px;box-sizing:border-box;padding:0 8px;border-radius:999px;border:0;background:transparent;color:#9b9b9b;font:inherit;white-space:nowrap}
+.chip b{color:#ececec;font-weight:400}
+.chip.o{background:rgba(255,255,255,.08);color:#ececec}
+.sp{flex:1}
+.act{width:28px;height:28px;border-radius:50%;border:0;display:inline-flex;align-items:center;justify-content:center;background:rgba(255,255,255,.08);color:#ececec;flex:none;margin-left:4px}
+.act.go{background:#58cc6f;color:#0d1a10}
+.i{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.tb{border:0;border-radius:999px;height:22px;padding:0 9px;background:rgba(255,255,255,.08);color:#ececec;font:inherit;white-space:nowrap}
+.add{color:#30d158}
+.del{color:#e5775f}
+.mono{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:11px}
+.st{width:7px;height:7px;border-radius:50%;display:inline-block}
+.n{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:#58cc6f;color:#0d1a10;font-size:11px;font-weight:600;flex:none}
+.leg{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px 22px;color:#9b9b9b;font-size:12px;line-height:16px;align-content:start}
+.leg div{display:flex;gap:8px;align-items:flex-start}
+.leg b{color:#ececec;font-weight:600}
+.rule{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px 22px;background:#232323;border-radius:12px;padding:16px 18px;color:#9b9b9b;font-size:12px;line-height:17px}
+.rule b{color:#ececec;font-weight:600;display:block}
+.lt{background:#f4f4f4;border-radius:12px;padding:18px}
+.lt .c{background:#ffffff;border-color:#d2d2d2}
+.lt .tx{color:#1b1d1a}
+.lt .bar,.lt .chip{color:#6b6f68}
+.lt .chip b{color:#1b1d1a}
+.lt .act.go{background:#2e9e4f;color:#ffffff}
+</style>
+</helmet>
+<div class="b" style="width: 1180px; height: 1240px">
+<div>
+<h1 class="h">1. Anatomy and principles</h1>
+<p class="sub">One composer on the Mac and on the web. Two rows at rest: the field and its controls. A third row, the status line, appears above them only when there is something to say. One control asks for attention: the action.</p>
+</div>
+<div style="display: grid; grid-template-columns: 600px minmax(0, 1fr); gap: 32px; align-items: start">
+<div style="display: flex; flex-direction: column; gap: 14px">
+<div class="c">
+<div class="s"><span class="n">1</span><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.5h4l1.5 1.5H14v6.5H2z"/></svg><b>frog</b><span>frog/sidebar-polish</span><span class="mono"><span class="add">+48</span> <span class="del">−12</span></span><span class="sp"></span><span class="st" style="background: #ff9f0a"></span><span>#412 checking</span><button class="tb">Push</button></div>
+<div class="tx" style="display: flex; gap: 8px; align-items: center"><span class="n">2</span><span class="ph">Reply to Frog</span></div>
+<div class="bar"><span class="n" style="margin-right: 4px">3</span><button class="chip" aria-label="Attach"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg></button><span class="sp"></span><span class="n" style="margin-right: 4px">4</span><button class="chip">Auto</button><button class="chip"><svg class="i" viewBox="0 0 16 16" aria-hidden="true" style="color: #0a84ff"><path d="M3.5 4h9v6h-9zM2 12h12"/></svg>Qwen3 8B</button><span class="n" style="margin-left: 6px">5</span><button class="act" aria-label="Dictate"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5a1.8 1.8 0 0 1 1.8 1.8v3.4a1.8 1.8 0 0 1-3.6 0V4.3A1.8 1.8 0 0 1 8 2.5zM4.5 7.5a3.5 3.5 0 0 0 7 0M8 11v2.5"/></svg></button></div>
+</div>
+<div class="cap"><b>Before a session starts</b> there is no status line, and where it runs sits at the left of the controls:</div>
+<div class="c">
+<div class="tx ph">What should we work on?</div>
+<div class="bar"><button class="chip" aria-label="Attach"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg></button><button class="chip"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.5h4l1.5 1.5H14v6.5H2z"/></svg><b>frog</b>main<svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 6.5 8 10l3.5-3.5"/></svg></button><span class="sp"></span><button class="chip">Auto</button><button class="chip"><svg class="i" viewBox="0 0 16 16" aria-hidden="true" style="color: #0a84ff"><path d="M3.5 4h9v6h-9zM2 12h12"/></svg>Qwen3 8B</button><button class="act" aria-label="Dictate"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5a1.8 1.8 0 0 1 1.8 1.8v3.4a1.8 1.8 0 0 1-3.6 0V4.3A1.8 1.8 0 0 1 8 2.5zM4.5 7.5a3.5 3.5 0 0 0 7 0M8 11v2.5"/></svg></button></div>
+</div>
+</div>
+<div class="leg">
+<div><span class="n">1</span><span><b>Status line.</b> One line, 32 tall, only when needed. It shows the first of: an error, a question, a notice, the session's git state. Boards 5 and 6.</span></div>
+<div><span class="n">2</span><span><b>Field.</b> 12 above, 14 at the sides, 4 below. One line at rest, ten at most, then it scrolls.</span></div>
+<div><span class="n">3</span><span><b>What.</b> Left of the controls: attach, and before a session, where it runs with its branch. Board 2.</span></div>
+<div><span class="n">4</span><span><b>How.</b> Right of the controls, beside the action: mode, then model. Board 4.</span></div>
+<div><span class="n">5</span><span><b>Action.</b> A 28 circle, 8 from the edges. The only filled control. Board 3.</span></div>
+<div><span><b>Card.</b> Fill card, 1px control stroke, radius 16, no shadow. 78 tall at rest, 110 with a status line.</span></div>
+<div><span><b>Chips.</b> 24 tall, 8 padding, 4 between icon and label, 14 icons, callout text 12/15. No fill until hovered or open.</span></div>
+<div><span><b>Width.</b> The transcript column: 720 at most, centred. It does not grow when a sidebar closes.</span></div>
+</div>
+</div>
+<div><h2 class="h2">At rest</h2></div>
+<div class="g">
+<div class="cell">
+<div class="cap"><b>New session, a folder.</b><span class="tag">Mac</span></div>
+<div class="c"><div class="tx ph">What should we work on?</div><div class="bar"><button class="chip" aria-label="Attach"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg></button><button class="chip"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.5h4l1.5 1.5H14v6.5H2z"/></svg><b>frog</b>main<svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 6.5 8 10l3.5-3.5"/></svg></button><span class="sp"></span><button class="chip">Auto</button><button class="chip"><svg class="i" viewBox="0 0 16 16" aria-hidden="true" style="color: #0a84ff"><path d="M3.5 4h9v6h-9zM2 12h12"/></svg>Qwen3 8B</button><button class="act" aria-label="Dictate"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5a1.8 1.8 0 0 1 1.8 1.8v3.4a1.8 1.8 0 0 1-3.6 0V4.3A1.8 1.8 0 0 1 8 2.5zM4.5 7.5a3.5 3.5 0 0 0 7 0M8 11v2.5"/></svg></button></div></div>
+</div>
+<div class="cell">
+<div class="cap"><b>New session, Frog Cloud.</b><span class="tag">Mac</span><span class="tag">Web</span></div>
+<div class="c"><div class="tx ph">What should we work on?</div><div class="bar"><button class="chip" aria-label="Attach"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg></button><button class="chip"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 12a2.5 2.5 0 0 1 .3-5 3.5 3.5 0 0 1 6.7 1A2 2 0 0 1 11.5 12z"/></svg><b>ecto/pond</b>main<svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 6.5 8 10l3.5-3.5"/></svg></button><span class="sp"></span><button class="chip">Auto</button><button class="chip"><svg class="i" viewBox="0 0 16 16" aria-hidden="true" style="color: #30d158"><path d="M4.5 12a2.5 2.5 0 0 1 .3-5 3.5 3.5 0 0 1 6.7 1A2 2 0 0 1 11.5 12z"/></svg>GLM-5.3 Flash</button><button class="act" aria-label="Dictate"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5a1.8 1.8 0 0 1 1.8 1.8v3.4a1.8 1.8 0 0 1-3.6 0V4.3A1.8 1.8 0 0 1 8 2.5zM4.5 7.5a3.5 3.5 0 0 0 7 0M8 11v2.5"/></svg></button></div></div>
+</div>
+<div class="cell">
+<div class="cap"><b>In a session with nothing to report.</b> No repo, or a clean one: two rows.</div>
+<div class="c"><div class="tx ph">Reply to Frog</div><div class="bar"><button class="chip" aria-label="Attach"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg></button><span class="sp"></span><button class="chip">Auto</button><button class="chip"><svg class="i" viewBox="0 0 16 16" aria-hidden="true" style="color: #30d158"><path d="M4.5 12a2.5 2.5 0 0 1 .3-5 3.5 3.5 0 0 1 6.7 1A2 2 0 0 1 11.5 12z"/></svg>GLM-5.3 Flash</button><button class="act" aria-label="Dictate"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5a1.8 1.8 0 0 1 1.8 1.8v3.4a1.8 1.8 0 0 1-3.6 0V4.3A1.8 1.8 0 0 1 8 2.5zM4.5 7.5a3.5 3.5 0 0 0 7 0M8 11v2.5"/></svg></button></div></div>
+</div>
+<div class="cell">
+<div class="cap"><b>Focused.</b> The stroke goes to the muted text colour and the caret is green. No glow, no ring.</div>
+<div class="c" style="border-color: #9b9b9b"><div class="tx">Make the tests faster<span style="display: inline-block; width: 1px; height: 14px; background: #58cc6f; vertical-align: -2px; margin-left: 1px"></span></div><div class="bar"><button class="chip" aria-label="Attach"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg></button><span class="sp"></span><button class="chip">Auto</button><button class="chip"><svg class="i" viewBox="0 0 16 16" aria-hidden="true" style="color: #30d158"><path d="M4.5 12a2.5 2.5 0 0 1 .3-5 3.5 3.5 0 0 1 6.7 1A2 2 0 0 1 11.5 12z"/></svg>GLM-5.3 Flash</button><button class="act go" aria-label="Send"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 13V3.5M4 7l4-4 4 4"/></svg></button></div></div>
+</div>
+<div class="cell">
+<div class="cap"><b>Hover and open.</b> A chip gets the hover plate and normal text under the pointer, and keeps it while its menu is open.</div>
+<div class="c"><div class="tx ph">Reply to Frog</div><div class="bar"><button class="chip" aria-label="Attach"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg></button><span class="sp"></span><button class="chip o">Auto</button><button class="chip"><svg class="i" viewBox="0 0 16 16" aria-hidden="true" style="color: #30d158"><path d="M4.5 12a2.5 2.5 0 0 1 .3-5 3.5 3.5 0 0 1 6.7 1A2 2 0 0 1 11.5 12z"/></svg>GLM-5.3 Flash</button><button class="act" aria-label="Dictate"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5a1.8 1.8 0 0 1 1.8 1.8v3.4a1.8 1.8 0 0 1-3.6 0V4.3A1.8 1.8 0 0 1 8 2.5zM4.5 7.5a3.5 3.5 0 0 0 7 0M8 11v2.5"/></svg></button></div></div>
+</div>
+<div class="cell">
+<div class="cap"><b>Many lines.</b> The field grows upward to ten lines; the controls stay put at the bottom.</div>
+<div class="c"><div class="tx" style="line-height: 16px">Make the tests faster.<br>Start with the engine suite: it takes 32 seconds and most of that is three sandbox tests.<br>Then look at the Mac benchmarks.</div><div class="bar"><button class="chip" aria-label="Attach"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg></button><span class="sp"></span><button class="chip">Auto</button><button class="chip"><svg class="i" viewBox="0 0 16 16" aria-hidden="true" style="color: #30d158"><path d="M4.5 12a2.5 2.5 0 0 1 .3-5 3.5 3.5 0 0 1 6.7 1A2 2 0 0 1 11.5 12z"/></svg>GLM-5.3 Flash</button><button class="act go" aria-label="Send"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 13V3.5M4 7l4-4 4 4"/></svg></button></div></div>
+</div>
+<div class="cell">
+<div class="cap"><b>Narrow, 360 wide.</b> The model keeps its icon and drops its name; the where chip truncates in the middle. Nothing wraps.</div>
+<div class="c" style="width: 360px"><div class="tx ph">What should we work on?</div><div class="bar"><button class="chip" aria-label="Attach"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg></button><button class="chip"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 12a2.5 2.5 0 0 1 .3-5 3.5 3.5 0 0 1 6.7 1A2 2 0 0 1 11.5 12z"/></svg><b>ecto/sl…wich</b><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 6.5 8 10l3.5-3.5"/></svg></button><span class="sp"></span><button class="chip">Auto</button><button class="chip" aria-label="Model: GLM-5.3 Flash"><svg class="i" viewBox="0 0 16 16" aria-hidden="true" style="color: #30d158"><path d="M4.5 12a2.5 2.5 0 0 1 .3-5 3.5 3.5 0 0 1 6.7 1A2 2 0 0 1 11.5 12z"/></svg></button><button class="act" aria-label="Dictate"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5a1.8 1.8 0 0 1 1.8 1.8v3.4a1.8 1.8 0 0 1-3.6 0V4.3A1.8 1.8 0 0 1 8 2.5zM4.5 7.5a3.5 3.5 0 0 0 7 0M8 11v2.5"/></svg></button></div></div>
+</div>
+<div class="cell">
+<div class="cap"><b>Light.</b> The same card on the light canvas.</div>
+<div class="lt"><div class="c"><div class="tx">Make the tests faster</div><div class="bar"><button class="chip" aria-label="Attach"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg></button><button class="chip"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.5h4l1.5 1.5H14v6.5H2z"/></svg><b>frog</b>main<svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 6.5 8 10l3.5-3.5"/></svg></button><span class="sp"></span><button class="chip">Auto</button><button class="chip"><svg class="i" viewBox="0 0 16 16" aria-hidden="true" style="color: #007aff"><path d="M3.5 4h9v6h-9zM2 12h12"/></svg>Qwen3 8B</button><button class="act go" aria-label="Send"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 13V3.5M4 7l4-4 4 4"/></svg></button></div></div></div>
+</div>
+</div>
+<div class="rule">
+<span><b>One loud thing.</b>Only the action is filled, and only Send is green. Every other control is text until you point at it.</span>
+<span><b>What on the left, how on the right.</b>Attach and where describe the task. Mode and model describe how Frog does it, so they sit by the button that starts it.</span>
+<span><b>Three rows at most.</b>Status, field, controls. An error replaces the git state while it shows; nothing adds a fourth row.</span>
+<span><b>Short words.</b>"What should we work on?", "Reply to Frog", "Add a follow-up". Hints live in menus, not where your words go.</span>
+<span><b>Rows slide, the button morphs.</b>The status line opens over 0.22s. The action changes glyph in place and never jumps or resizes.</span>
+<span><b>The same on both apps.</b>Every state here comes from the composer logic the Mac and the web share. A state only one app can reach carries its tag.</span>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1180,"height":1240}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>
