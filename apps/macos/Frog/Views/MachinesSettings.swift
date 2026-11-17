@@ -242,7 +242,7 @@ struct PairMachineSheet: View {
                     Button("Pair…") { pairing = d }.disabled(!d.keyed)
                 }
             }
-            Text("Run `curl -fsSL https://frog.toys/node | sh` on a Linux GPU box on your network, or turn on Share with my other machines on another Mac, and it shows here.")
+            Text("Run `curl -fsSL https://frog.toys/node | sh` on a Linux GPU box on your network, or turn on “Share with my other machines” in Settings › Models on another Mac. It shows up here.")
                 .font(.frog(size: 12))
                 .foregroundStyle(Tokens.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)

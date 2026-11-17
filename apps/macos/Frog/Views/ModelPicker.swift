@@ -99,6 +99,15 @@ struct ModelMenu: View {
 
     static let showCloudKey = "showCloudModels"
 
+    /// Frog Cloud also lists the small models the engine uses for side jobs (titles, images),
+    /// which can't hold an agent's system prompt and tools: 14B and under stays out of the
+    /// picker, as on the web (`agentModels`).
+    static func sideJobHelper(_ spec: String) -> Bool {
+        let id = spec.split(separator: "/").last.map(String.init) ?? spec
+        guard let m = id.range(of: #"-(\d+(\.\d+)?)b$"#, options: [.regularExpression, .caseInsensitive]) else { return false }
+        return (Double(id[m].dropFirst().dropLast()) ?? .infinity) <= 14
+    }
+
     private enum Row: Identifiable {
         case machine(MachineModel)
         case cloud(ModelIdentity)
@@ -118,7 +127,7 @@ struct ModelMenu: View {
         if let current, current.hasPrefix("cloud/"), !list.contains(where: { $0.spec == current }) {
             list.insert(workspace.identity(current), at: 0)
         }
-        return list.filter { matches($0.name) }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }.map(Row.cloud)
+        return list.filter { matches($0.name) && ($0.spec == current || !Self.sideJobHelper($0.spec)) }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }.map(Row.cloud)
     }
 
     private var flat: [Row] { machineRows + cloudRows }
@@ -336,12 +345,12 @@ struct CloudPermissionSheet: View {
                 .font(.frog(size: 12))
                 .foregroundStyle(.tertiary)
             HStack {
-                Button("Keep It on Your Devices") {
+                Button("Keep it on your devices") {
                     Task { await workspace.setCloud(.deny) }
                     done(false)
                 }
                 Spacer()
-                Button("Just This Conversation") {
+                Button("Just this conversation") {
                     Task {
                         // Enforced by frog: a folder that said no has to be asked again.
                         if workspace.cloud == .deny { await workspace.setCloud(.ask) }
@@ -349,7 +358,7 @@ struct CloudPermissionSheet: View {
                         done(true)
                     }
                 }
-                Button("Always Allow") {
+                Button("Always allow") {
                     Task {
                         await workspace.setCloud(.allow)
                         done(true)

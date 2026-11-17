@@ -11,6 +11,12 @@ struct SuggestedModel: Identifiable, Hashable {
     var id: String { repo }
     var spec: String { "\(ProviderID.local)/\(repo)" }
 
+    /// A download's size as Settings › Models writes a machine's memory: whole gigabytes from 10
+    /// up ("18 GB"), one decimal below ("4.6 GB").
+    static func gbText(_ g: Double) -> String {
+        g >= 10 ? "\(Int(g.rounded())) GB" : String(format: "%.1f GB", g)
+    }
+
     static let all: [SuggestedModel] = [
         SuggestedModel(repo: "mlx-community/Qwen3-4B-4bit", title: "Qwen3 4B",
                        detail: "Best balance for coding on most Macs", approxGB: 2.3),

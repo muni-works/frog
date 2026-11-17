@@ -83,7 +83,7 @@ struct PairSheet: View {
             HStack(spacing: 8) {
                 Image(systemName: device.kind == "metal" ? "desktopcomputer" : "server.rack")
                     .foregroundStyle(Tokens.textSecondary)
-                Text("Use \(device.name)")
+                Text("Pair \(device.name)")
                     .font(.frog(size: 15, weight: .semibold))
             }
             Group {
