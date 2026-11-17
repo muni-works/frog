@@ -1,62 +1,57 @@
 import SwiftUI
 
-/// The composer's model control: one pill, `Qwen3-8B · mew`, with a dot in the place's color
-/// (your machines blue, Frog Cloud green). What you pick is what runs: picking a model on one of
-/// your machines puts it there, and the pill spins until the machine says it's ready.
+/// The composer's model chip (docs/design/composer/spec.md): a place icon then the name — a
+/// laptop for this Mac, a server for your own nodes, a cloud for Frog Cloud, in the place
+/// colours. What you pick is what runs: picking a model on one of your machines puts it there,
+/// and the chip says "Loading" until the machine says it's ready. Its menu opens upward,
+/// frog-drawn.
 struct ModelPicker: View {
     let workspace: Workspace
     let conversation: Conversation
-    @State private var open = false
+    var open = false
+    var narrow = false
+    /// A local model is downloading or starting: the chip says so.
+    var loading = false
+    var toggle: () -> Void = {}
+    var close: () -> Void = {}
     @State private var devices = Devices.shared
 
     var body: some View {
-        Button { open.toggle() } label: {
-            ModelPill(pill: ModelPill.of(workspace.selectedModel, workspace: workspace, devices: devices))
-                .hoverPlate()
+        let pill = ModelPill.of(workspace.selectedModel, workspace: workspace, devices: devices)
+        ComposerChip(open: open, help: pill.help, action: toggle) {
+            ModelChipLabel(name: pill.model, place: pill.icon, narrow: narrow && !(loading || pill.waiting != nil),
+                           loading: loading || pill.waiting == "loading")
         }
-        .buttonStyle(.plain)
         .fixedSize()
-        .help(workspace.selectedModel.map { workspace.identity($0).spoken } ?? "Choose a model")
-        .popover(isPresented: $open, arrowEdge: .top) {
+        .accessibilityLabel("Model: \(pill.model)")
+        .composerMenu(open, trailing: true, close: close) {
             ModelMenu(workspace: workspace, current: workspace.selectedModel, conversationID: conversation.sessionID) { spec in
                 workspace.use(spec)
-                open = false
+                close()
             } close: {
-                open = false
+                close()
             }
+            .background(Tokens.raised, in: .rect(cornerRadius: Tokens.Radius.card, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Tokens.Radius.card, style: .continuous).strokeBorder(Tokens.lineStrong, lineWidth: 1))
         }
         .onAppear { devices.start() }
         .onDisappear { devices.stop() }
     }
 }
 
-/// What the pill says: the model, where it runs, its place's color, and whether it's on its way.
-struct ModelPill: View {
+/// What the chip says: the model, where it runs, and whether it's on its way.
+enum ModelPill {
     struct State: Equatable {
         var model: String
         var place: String?
         var cloud: Bool
         /// "loading", or "swaps after this turn": the machine isn't serving it yet.
         var waiting: String?
-    }
-    let pill: State
+        /// One of your own nodes (not this Mac).
+        var node = false
 
-    var body: some View {
-        HStack(spacing: 5) {
-            if pill.waiting != nil {
-                ProgressView().controlSize(.mini).frame(width: 7, height: 7)
-            } else {
-                Circle().fill((pill.cloud ? Tokens.placeCloud : Tokens.placeLocal)).frame(width: 7, height: 7)
-            }
-            Text(pill.model).foregroundStyle(Tokens.text).lineLimit(1)
-            if let place = pill.place {
-                Text("· " + place).foregroundStyle(Tokens.textSecondary).lineLimit(1)
-            }
-            if let w = pill.waiting {
-                Text("· " + w).foregroundStyle(Tokens.textTertiary).lineLimit(1)
-            }
-            Image(systemName: "chevron.down").font(.frog(size: 9, weight: .semibold)).foregroundStyle(Tokens.textTertiary)
-        }
+        var icon: ModelPlaceIcon { cloud ? .cloud : node ? .node : .mac }
+        var help: String { [model, place, waiting].compactMap { $0 }.joined(separator: " · ") }
     }
 
     @MainActor
@@ -69,15 +64,14 @@ struct ModelPill: View {
             let waiting: String? = devices.waitingSwap[spec] != nil ? "swaps after this turn"
                 : devices.asked[spec] != nil ? "loading" : nil
             let place = running.isEmpty ? (devices.waitingSwap[spec] ?? devices.asked[spec] ?? row?.holds.first?.name) : running.joined(separator: ", ")
-            return State(model: name, place: place, cloud: false, waiting: waiting)
+            return State(model: name, place: place, cloud: false, waiting: waiting, node: true)
         }
         let m = workspace.identity(spec)
-        let place: String = switch m.place {
-        case .mac, .apple: "This Mac"
-        case .server(let n): n
-        case .cloud(let n): n
+        switch m.place {
+        case .mac, .apple: return State(model: m.name, place: "This Mac", cloud: false)
+        case .server(let n): return State(model: m.name, place: n, cloud: false, node: true)
+        case .cloud(let n): return State(model: m.name, place: n, cloud: m.place.isCloud)
         }
-        return State(model: m.name, place: place, cloud: m.place.isCloud)
     }
 }
 
@@ -101,7 +95,7 @@ struct ModelMenu: View {
     @AppStorage(ModelMenu.showCloudKey) private var showCloud = true
     @AppStorage("settingsTab") private var settingsTab = "general"
     @Environment(\.openSettings) private var openSettings
-    @FocusState private var listFocused: Bool
+    @State private var filter = ""
 
     static let showCloudKey = "showCloudModels"
 
@@ -111,7 +105,12 @@ struct ModelMenu: View {
         var id: String { switch self { case .machine(let m): m.spec; case .cloud(let m): m.spec } }
     }
 
-    private var machineRows: [Row] { devices.machineModels().map(Row.machine) }
+    private func matches(_ name: String) -> Bool {
+        let q = filter.trimmingCharacters(in: .whitespaces)
+        return q.isEmpty || name.localizedCaseInsensitiveContains(q)
+    }
+
+    private var machineRows: [Row] { devices.machineModels().filter { matches($0.name) }.map(Row.machine) }
 
     private var cloudRows: [Row] {
         guard showCloud else { return [] }
@@ -119,7 +118,7 @@ struct ModelMenu: View {
         if let current, current.hasPrefix("cloud/"), !list.contains(where: { $0.spec == current }) {
             list.insert(workspace.identity(current), at: 0)
         }
-        return list.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }.map(Row.cloud)
+        return list.filter { matches($0.name) }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }.map(Row.cloud)
     }
 
     private var flat: [Row] { machineRows + cloudRows }
@@ -153,9 +152,22 @@ struct ModelMenu: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            ComposerMenuFilter(
+                placeholder: "Search models",
+                text: $filter,
+                move: { d in
+                    selected = min(max(selected + d, 0), max(flat.count - 1, 0))
+                    hovered = nil
+                },
+                pick: { if let r = flat[safe: selected] { choose(r) } },
+                close: close
+            )
+            .padding(.horizontal, 4)
+            .padding(.top, 4)
             HuggingScroll(maxHeight: 440) {
                 VStack(alignment: .leading, spacing: 0) {
                     header("Your machines")
+                        .onChange(of: filter) { selected = 0 }
                     if machineRows.isEmpty {
                         Text("No models on your machines yet.")
                             .font(.frog(size: 12)).foregroundStyle(.secondary)
@@ -173,7 +185,7 @@ struct ModelMenu: View {
                 }
                 .padding(6)
             }
-            Divider()
+            Rectangle().fill(Tokens.line).frame(height: 1)
             Button {
                 settingsTab = "models"
                 close()
@@ -194,15 +206,8 @@ struct ModelMenu: View {
                 if allowed { pick(a.model.spec) }
             }
         }
-        .focusable()
-        .focusEffectDisabled()
-        .focused($listFocused)
-        .onKeyPress(.return) { if let r = flat[safe: selected] { choose(r) }; return .handled }
-        .onKeyPress(.downArrow) { selected = min(selected + 1, max(flat.count - 1, 0)); hovered = nil; return .handled }
-        .onKeyPress(.upArrow) { selected = max(selected - 1, 0); hovered = nil; return .handled }
         .onAppear {
             devices.start()
-            listFocused = true
             selected = flat.firstIndex { $0.id == current } ?? 0
         }
         .task {
@@ -214,8 +219,8 @@ struct ModelMenu: View {
 
     private func header(_ title: String) -> some View {
         Text(title)
-            .font(.caption.weight(.medium))
-            .foregroundStyle(.secondary)
+            .font(.frog(size: Tokens.Size.label))
+            .foregroundStyle(Tokens.textSecondary)
             .padding(.horizontal, 8)
             .padding(.top, 10)
             .padding(.bottom, 4)
@@ -226,6 +231,7 @@ struct ModelMenu: View {
         return MachineMenuRow(content: content(r), current: r.id == current)
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
+            .frame(minHeight: 28)
             .background(Color.primary.opacity(lit ? 0.08 : 0), in: .rect(cornerRadius: 7, style: .continuous))
             .contentShape(.rect)
             .onTapGesture { choose(r) }
@@ -238,7 +244,7 @@ struct ModelMenu: View {
         switch r {
         case .machine(let m):
             let tag = devices.waitingSwap[m.spec] != nil ? "swaps after this turn" : devices.asked[m.spec] != nil ? "loading" : m.tag
-            return .init(name: m.name, detail: m.places, tag: tag, cloud: false, spinning: devices.asked[m.spec] != nil)
+            return .init(name: m.name, detail: m.places, tag: tag, cloud: false, spinning: devices.asked[m.spec] != nil, node: m.spec.hasPrefix("node/"))
         case .cloud(let m):
             return .init(name: m.name, detail: ModelMenu.outputPrice(m.spec), tag: nil, cloud: true, spinning: false)
         }
@@ -273,13 +279,16 @@ struct MachineMenuRow: View {
         var tag: String?
         var cloud: Bool
         var spinning: Bool
+        /// One of your nodes rather than this Mac (the server icon).
+        var node = false
     }
     let content: Content
     var current = false
 
     var body: some View {
         HStack(spacing: 8) {
-            Circle().fill((content.cloud ? Tokens.placeCloud : Tokens.placeLocal)).frame(width: 7, height: 7)
+            let place: ModelPlaceIcon = content.cloud ? .cloud : content.node ? .node : .mac
+            ComposerIcon(place.symbol, color: place.color)
             Text(content.name).font(.frog(size: 13)).foregroundStyle(Tokens.text).lineLimit(1)
             if let d = content.detail {
                 Text(d).font(.frog(size: 12)).foregroundStyle(Tokens.textTertiary).lineLimit(1).truncationMode(.middle)

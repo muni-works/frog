@@ -183,6 +183,8 @@ struct ComposerTextView: NSViewRepresentable {
     var onPasteImages: (([ToolImage]) -> Void)?
     var minHeight: CGFloat = 22
     var maxHeight: CGFloat = 180
+    /// The field took or gave up the keyboard: the card's stroke follows it.
+    var onFocus: (Bool) -> Void = { _ in }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -205,6 +207,7 @@ struct ComposerTextView: NSViewRepresentable {
             coordinator?.parent.onPasteImages?(images)
         }
         tv.acceptsImages = { [weak coordinator = context.coordinator] in coordinator?.parent.onPasteImages != nil }
+        tv.onFocus = { [weak coordinator = context.coordinator] in coordinator?.parent.onFocus($0) }
         scroll.documentView = tv
         tv.delegate = context.coordinator
         tv.drawsBackground = false
@@ -212,8 +215,10 @@ struct ComposerTextView: NSViewRepresentable {
         tv.allowsUndo = true
         tv.font = .preferredFont(forTextStyle: .body)
         tv.textColor = .labelColor
-        tv.textContainerInset = NSSize(width: 0, height: 2)
-        tv.textContainer?.lineFragmentPadding = 5
+        // The card's own padding places the text (12 above, 14 at the sides); the caret is frog.
+        tv.textContainerInset = NSSize(width: 0, height: 0)
+        tv.textContainer?.lineFragmentPadding = 0
+        tv.insertionPointColor = NSColor(Color.frog)
         tv.isAutomaticQuoteSubstitutionEnabled = false
         tv.isAutomaticDashSubstitutionEnabled = false
         tv.isAutomaticTextReplacementEnabled = false
@@ -431,6 +436,19 @@ struct ComposerTextView: NSViewRepresentable {
 final class PastingTextView: NSTextView {
     var pasteImages: (([ToolImage]) -> Void)?
     var acceptsImages: () -> Bool = { false }
+    var onFocus: (Bool) -> Void = { _ in }
+
+    override func becomeFirstResponder() -> Bool {
+        let took = super.becomeFirstResponder()
+        if took { onFocus(true) }
+        return took
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let gave = super.resignFirstResponder()
+        if gave { onFocus(false) }
+        return gave
+    }
 
     /// A plain-text view only reads strings, so it greys out Paste when the clipboard holds just
     /// an image (a screenshot copied with ⌃⇧⌘4) and ⌘V never reaches `paste`.

@@ -65,6 +65,7 @@ extension ComposerView {
         let dir = workspace.folder
         switch e.type {
         case "submit", "queue":
+            local.notice = nil
             // A git action's own turn carries text the field doesn't hold: the draft stays.
             // The draft itself goes through sendDraft, which clears it (on ack for a submit).
             if case .string(let t) = e.fields["text"], t != s.draft.text.trimmingCharacters(in: .whitespacesAndNewlines) {
@@ -88,8 +89,14 @@ extension ComposerView {
                 drafts.clear(id: conversation.sessionID, folder: workspace.folder)
             }
         case "start_session":
+            local.notice = nil
+            // The branch picked in the where menu, when it isn't the checkout's own.
+            var picked: String?
+            if case .folder(_, let b, _, true, _) = s.where, !b.isEmpty, b != workspace.git?.branch { picked = b }
             if case .folder(_, _, true, true, _) = s.where {
-                makeWorktreeAndSend()
+                makeWorktreeAndSend(base: picked)
+            } else if let picked {
+                switchAndSend(to: picked)
             } else {
                 sendDraft()
                 dispatch(.ack)
@@ -97,6 +104,16 @@ extension ComposerView {
         case "interrupt": conversation.interrupt()
         case "cancel_load": if let repo = workspace.pendingDownloadModel?.repo { downloads.cancel(repo) }
         case "start_dictation": toggleDictation()
+        case "stop_dictation": dictation.stop()
+        case "remove_queued":
+            // The Mac's queue is the app's own: a removed follow-up goes back to the field (as
+            // its × always did), never lost.
+            if case .number(let i) = e.fields["index"] { conversation.unqueue(at: Int(i)) }
+        case "open_login":
+            Task { _ = try? await CloudAccount.signInAndSave(provider: "github"); await loadCloudRepos() }
+        case "open_billing":
+            UserDefaults.standard.set("billing", forKey: "settingsTab")
+            openSettings()
         case "set_mode": if case .string(let m) = e.fields["mode"], let mode = ComposerModel.Mode(rawValue: m) { conversation.setMode(Self.mode(mode)) }
         case "open_mic_settings":
             NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)
@@ -136,7 +153,7 @@ extension ComposerView {
                 alert.informativeText = d
                 alert.runModal()
             }
-        default: break  // open_login, open_billing, set_model: the model picker and Settings own these
+        default: break  // set_model: the model picker owns it
         }
     }
 
@@ -169,11 +186,11 @@ extension ComposerView {
     }
 
     /// New worktree on: make it off the main thread, then send from there with the draft.
-    func makeWorktreeAndSend() {
+    func makeWorktreeAndSend(base: String? = nil) {
         let folder = workspace.folder
         let name = String(text.lowercased().filter { $0.isLetter || $0 == " " }.split(separator: " ").prefix(3).joined(separator: "-")).nonEmpty ?? "session"
         Task {
-            let made = await Task.detached { Result { try SessionBroker.makeWorktree(from: folder, name: name) } }.value
+            let made = await Task.detached { Result { try SessionBroker.makeWorktree(from: folder, name: name, base: base) } }.value
             switch made {
             case .success(let (url, _, _)):
                 dispatch(.ack)
@@ -184,9 +201,36 @@ extension ComposerView {
         }
     }
 
+    /// New worktree off, another branch picked: switch the checkout (it's clean, or the
+    /// Branch row wouldn't have opened), then send.
+    func switchAndSend(to branch: String) {
+        let folder = workspace.folder
+        Task {
+            let switched = await Task.detached { Result { try SessionBroker.git(["switch", branch], in: folder) } }.value
+            switch switched {
+            case .success:
+                sendDraft()
+                dispatch(.ack)
+            case .failure(let error):
+                dispatch(.failed(code: "switch_failed", detail: error.localizedDescription))
+            }
+        }
+    }
+
     func readRepo() async {
         guard !workspace.isChat, workspace.git != nil else { return }
         (slug, ahead) = await GitActions.slugAndAhead(workspace.folder)
+    }
+
+    /// The folder's local branches, for the where menu's Branch level. Frog Cloud repos list
+    /// only the current branch: the gateway has no branch listing.
+    func loadBranches() async {
+        guard case .folder(let folder, _, _, true, _) = trayWhere else { return branches = [] }
+        let url = URL(fileURLWithPath: folder)
+        branches = await Task.detached {
+            (try? SessionBroker.git(["branch", "--format=%(refname:short)"], in: url))?
+                .split(separator: "\n").map(String.init).filter { !$0.hasPrefix("frog/") } ?? []
+        }.value
     }
 
     func loadCloudRepos() async {
@@ -205,33 +249,6 @@ extension ComposerView {
             return
         }
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: s.hasPrefix("/") ? s : workspace.folder.path)])
-    }
-
-    var confirmTitle: String {
-        switch local.confirm {
-        case .yolo: "Turn on Yolo?"
-        case .merge: "Merge this pull request?"
-        case .archive: "Archive and delete the worktree?"
-        case nil: ""
-        }
-    }
-
-    var confirmButton: String {
-        switch local.confirm {
-        case .yolo: "Turn On Yolo"
-        case .merge: "Merge"
-        case .archive: "Archive Anyway"
-        case nil: "OK"
-        }
-    }
-
-    var confirmMessage: String {
-        switch local.confirm {
-        case .yolo: "Frog will never ask before acting. The sandbox still applies."
-        case .merge: "Merges with the repository's default method."
-        case .archive: "The worktree has uncommitted changes. They'll be deleted."
-        case nil: ""
-        }
     }
 
     // MARK: Drafts
