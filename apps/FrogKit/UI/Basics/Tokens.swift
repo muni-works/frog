@@ -27,7 +27,7 @@ enum Tokens {
     static let hairline = Color(light: (0.0, 0.0, 0.0, 0), dark: (1.0, 1.0, 1.0, 0))
     /// Field strokes: a faint wash, for the few controls that still need an edge.
     static let hairlineStrong = Color(light: (0.0, 0.0, 0.0, 0.05), dark: (1.0, 1.0, 1.0, 0.06))
-    /// Rails that nest content (quotes, tool output, the sidebar's started-by tree). Never a border.
+    /// Rails that nest content (quotes, tool output, the sidebar's started-by tree), and the hairline on each column's inner edge (the sidebar's right, the inspector's left). No other borders.
     static let line = Color(light: (0.89, 0.89, 0.89, 1), dark: (0.165, 0.165, 0.165, 1))
     /// The rare control edge.
     static let lineStrong = Color(light: (0.824, 0.824, 0.824, 1), dark: (0.22, 0.22, 0.22, 1))
@@ -85,7 +85,7 @@ enum Tokens {
     enum Radius {
         /// Controls: rows, pills, selection.
         static let control: CGFloat = 7
-        /// Cards, and the inset sidebar panel.
+        /// Cards.
         static let card: CGFloat = 12
         /// Window chrome.
         static let chrome: CGFloat = 14
@@ -96,7 +96,7 @@ enum Tokens {
     }
 
     enum Space {
-        /// Row padding, and the inset sidebar panel's margin.
+        /// Row padding.
         static let row: CGFloat = 8
     }
 

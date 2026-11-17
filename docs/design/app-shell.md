@@ -18,7 +18,7 @@ largest piece of system styling left, and documentation doesn't exist in the app
 
 The shell is always in one of three modes. The mode decides what the left sidebar lists
 and what the main area shows. Nothing else about the window changes: same sidebar width,
-same card, same type, same tokens.
+same flush column, same type, same tokens.
 
 | Mode | Left sidebar | Main area |
 | --- | --- | --- |
