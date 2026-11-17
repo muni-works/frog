@@ -559,36 +559,57 @@ def prices():
     import json
     return json.loads((HERE / "prices.json").read_text())
 
+def cloud_perch(pond, x, y):
+    """Frog Cloud as somewhere to sit: a cloud drawn like the pads, same fill and edge."""
+    parts = [(-150, 6, 112, 62), (0, -40, 150, 96), (150, 6, 112, 62), (0, 30, 232, 56)]
+    for grow, fill in ((5, _hex("#36b347")), (0, PAD)):
+        for dx, dy, rx, ry in parts:
+            pond.d.ellipse([2 * (x + dx - rx - grow), 2 * (y + dy - ry - grow), 2 * (x + dx + rx + grow), 2 * (y + dy + ry + grow)], fill=fill + (255,))
+
 def s_price(t, lt):
+    """Frog Cloud, priced. The frog lands on a cloud; a model list drawn from the app's tokens
+    gives Frog Cloud's three models with their output prices, then three other providers' list
+    prices grow past them at the same dollars per beat."""
     b = CUT["price"]
-    img = Image.new("RGB", (W, H), CANVAS); d = ImageDraw.Draw(img)
+    img = Image.new("RGB", (W, H), CANVAS)
     P = prices(); rows = P["rows"]
-    x_label, x_bar, per = col(0), col(4), 50.0  # 50 px per dollar: $20 is 1000 px
-    ys = [400, 480, 560, 680, 760, 840]
-    tip = None
-    for i, r in enumerate(rows):
-        y = ys[i]
-        if r["frog"]:
-            if t < B(b + i): continue
-            k = ease(seg(t, B(b + i), B(b + i) + 0.2)); tint = FROG
-        else:  # the others start on beat 47 and keep growing, at the same dollars per beat
-            t0 = B(b + 3)
-            if t < t0: continue
-            k = min(1.0, (t - t0) / (BEAT * r["out"] / 5.0)); tint = _hex("#383838")
-        w = max(8, r["out"] * per * k)
-        d.text((x_label, y + 30), r["name"], font=sans(40, r["frog"]), fill=FROG if r["frog"] else MUTED, anchor="lm")
-        d.rounded_rectangle([x_bar, y + 6, x_bar + w, y + 54], radius=8, fill=tint)
-        shown = r["out"] * k
-        txt = f"${r['out']:.2f}" if r["frog"] else (f"${r['out']:g}" if k >= 1 else f"${shown:.0f}")
-        d.text((x_bar + w + 20, y + 30), txt, font=sans(40), fill=FROG if r["frog"] else (FG if k >= 1 else MUTED), anchor="lm")
-        if not r["frog"] and k < 1: tip = (x_bar + w, y + 30)
-    d.text((x_label, 968), f"List price per million output tokens, {P['date']}. Different models: this compares price only.",
-           font=sans(LABEL, False), fill=FAINT, anchor="lm")
-    fx, fy = col(11), 640
-    look = (0.0, 0.2)
-    if tip: look = (max(-1, min(1, (tip[0] - fx) / 500)), 0.9)
-    frog_at(img, t, fx, fy, 105, land=B(b), look=look)
-    words(img, t, B(b), [("Need more? ", False), ("Frog Cloud.", True)])
+    perch = (col(2) + 30, 900)
+    pond = Pond(); cloud_perch(pond, *perch); pond.onto(img)
+    pad_label(img, perch[0], perch[1] + 104, "Frog Cloud")
+    d = ImageDraw.Draw(img)
+    x0, y0, x1 = col(5), 420, col(12)
+    d.text((x0, y0), "Models", font=sans(40), fill=FG, anchor="ls")
+    d.text((x1, y0), "output, per million tokens", font=sans(34, False), fill=MUTED, anchor="rs")
+    top = y0 + 30; hh, rh = 56, 76
+    d.rounded_rectangle([x0, top, x1, top + 2 * hh + 6 * rh + 12], radius=24, fill=CARD)
+    bar0, per = x0 + 460, 18.0  # bars start on one edge; 18 px per dollar, so $20 is 360 px
+    tip = None; y = top
+    for sect, (head, frog) in enumerate((("Frog Cloud", True), ("Other providers, different models", False))):
+        t_head = B(b) if frog else B(b + 3)
+        if t >= t_head: d.text((x0 + 32, y + hh / 2 + 4), head, font=sans(28, False), fill=FAINT, anchor="lm")
+        y += hh
+        for i, r in enumerate([r for r in rows if r["frog"] == frog]):
+            cy = y + rh / 2
+            if frog:
+                show = t >= B(b + i); k = ease(seg(t, B(b + i), B(b + i) + 0.2)); tint = FROG
+            else:  # they start together on beat 55 and grow at five dollars a beat
+                show = t >= B(b + 3); k = min(1.0, max(0.0, (t - B(b + 3)) / (BEAT * r["out"] / 5.0))); tint = _hex("#4a4a4a")
+            if show:
+                d.ellipse([x0 + 34, cy - 9, x0 + 52, cy + 9], fill=tint)
+                d.text((x0 + 72, cy), r["name"], font=sans(36), fill=FG if frog else MUTED, anchor="lm")
+                w = max(6, r["out"] * per * k)
+                d.rounded_rectangle([bar0, cy - 12, bar0 + w, cy + 12], radius=6, fill=tint)
+                txt = f"${r['out']:.2f}" if frog else (f"${r['out']:g}" if k >= 1 else f"${r['out'] * k:.0f}")
+                d.text((x1 - 32, cy), txt, font=sans(36), fill=FROG if frog else (FG if k >= 1 else MUTED), anchor="rm")
+                if not frog and k < 1: tip = (bar0 + w, cy)
+            y += rh
+        y += 6
+    fx, fy = perch[0], perch[1] - 62
+    look = (0.7, 0.0)
+    if tip: look = (0.9, max(-1.0, min(1.0, (tip[1] - (fy - 230)) / 300)))
+    hop(img, t, B(b), B(b + 1), (-160, fy - 40), (fx, fy), 180, height=280, look=look)
+    words(img, t, B(b), [("Need more?", False), ("Frog Cloud.", True)],
+          sub=f"List prices, {P['date']}." if t >= B(b + 3) else None)
     return img
 
 def s_setup(t, lt):
