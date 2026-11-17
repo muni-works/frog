@@ -48,7 +48,7 @@ final class TokensTests: XCTestCase {
         // Rails that nest content (quotes, tool output, the started-by tree): `ed91d93a` added
         // the token and its JSON entry but not this line, so the set comparison below failed
         // for everyone who ran the suite after it landed on main.
-        "line": Tokens.line,
+        "line": Tokens.line, "lineStrong": Tokens.lineStrong, "notice": Tokens.notice,
         "text": Tokens.text, "textSecondary": Tokens.textSecondary, "textTertiary": Tokens.textTertiary,
         "textQuaternary": Tokens.textQuaternary, "accent": Tokens.accent, "onAccent": Tokens.onAccent, "signal": Tokens.signal, "fail": Tokens.fail,
         "warn": Tokens.warn, "placeLocal": Tokens.placeLocal, "placeCloud": Tokens.placeCloud,
