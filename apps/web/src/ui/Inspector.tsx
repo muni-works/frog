@@ -82,7 +82,7 @@ export function Inspector({ thread, onCommit, onPr, hasPr, send, onClose, machin
   const term = [...terms].reverse().find((p) => !p.closed) ?? terms[terms.length - 1]
   const resize = useCallback((cols: number, rows: number) => { if (term && !term.closed) send({ op: 'pane_resize', id: term.id, cols, rows }) }, [term?.id, term?.closed, send]) // eslint-disable-line react-hooks/exhaustive-deps
   return (
-    <section className="insp f-glass" aria-label="Inspector" style={{ '--insp-w': `${width}px` } as React.CSSProperties}>
+    <section className="insp" aria-label="Inspector" style={{ '--insp-w': `${width}px` } as React.CSSProperties}>
       <div className={`insp-grip${dragging ? ' on' : ''}`} role="separator" aria-orientation="vertical" aria-label="Resize the inspector" onPointerDown={grab}
         onDoubleClick={() => { setWidth(WIDTH); try { localStorage.removeItem('frog.inspectorWidth') } catch { /* private mode */ } }} />
       <div className="insp-top">

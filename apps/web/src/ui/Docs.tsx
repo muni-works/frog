@@ -36,7 +36,7 @@ export function Shell({ mode, className, before, brand, side, main, inspector, a
   return (
     <div className={className}>
       {before}
-      <aside className="side f-glass">
+      <aside className="side">
         {brand}
         <Keep on={threads}>{side.threads}</Keep>
         {mode === 'docs' && side.docs}
