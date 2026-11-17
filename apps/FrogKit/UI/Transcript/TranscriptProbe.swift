@@ -28,6 +28,18 @@ enum TranscriptProbe {
     static var kept = ""
     /// Why the last `showEarlier` did nothing (the guard it stopped at), or "" when it ran.
     static var fillBlocked = ""
+    /// The stack has been at its end once since it opened (`ScrollTrack.openedAtEnd`): until
+    /// then, nearing its top builds nothing above.
+    static var openedAtEnd = false
+    /// What the stack's fill trigger saw, newest last: the view nearing or leaving the top of
+    /// what's built, each fill, each guard that stopped one. The scroll-up benchmark prints it
+    /// when no fill came, so an intermittent failure says where it stopped. The last 32 only
+    /// (the app's own debug build runs this too).
+    private(set) static var fillLog: [String] = []
+    static func noteFill(_ what: String) {
+        fillLog.append(what)
+        if fillLog.count > 32 { fillLog.removeFirst(fillLog.count - 32) }
+    }
     private static var mounted: Set<String> = []
 
     static func reset() {
@@ -41,6 +53,8 @@ enum TranscriptProbe {
         earlier = 0
         fillSettles = 0
         fillBlocked = ""
+        openedAtEnd = false
+        fillLog = []
         sidebarBodies = 0
     }
 

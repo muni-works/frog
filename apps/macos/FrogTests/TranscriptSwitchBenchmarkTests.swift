@@ -360,11 +360,15 @@ final class TranscriptSwitchBenchmarkTests: XCTestCase {
         var heights: [CGFloat] = [], kept: [Double] = [], frames: [TimeInterval] = []
         // The table's rows on screen at once (its rows are one per segment, as short as a line).
         var maxVisible = 0
+        // The stack's rows built between fills (what's on screen, and what it keeps ready around
+        // it), and the row bodies each step built, fill steps apart from the rest.
+        var onScreen = 0, fillBodies: [Int] = [], stepBodies: [Int] = []
         for _ in 0..<500 {
             guard let doc = scroll.documentView else { break }
             if TranscriptProbe.isMounted(suffix: "-msg-0") { break }
             // Up a screen, as scrolling does, and let rows go in above if it's near the top.
             let built = TranscriptProbe.earlier
+            let bodies = TranscriptProbe.rowBodies
             let frame = Date()
             clip.scroll(to: NSPoint(x: 0, y: max(0, clip.bounds.minY - 250)))
             scroll.reflectScrolledClipView(clip)
@@ -376,6 +380,7 @@ final class TranscriptSwitchBenchmarkTests: XCTestCase {
             if let table = doc as? NSTableView { maxVisible = max(maxVisible, table.rows(in: table.visibleRect).length) }
             pump(0.05)
             heights.append(doc.bounds.height)
+            if TranscriptProbe.earlier == built { onScreen = max(onScreen, TranscriptProbe.mountedRows) }
             // Rows went in above: the row that was at the top is still on screen. A fill's
             // rows land and are held in place over a few run-loop turns, the last keep-scroll
             // 50 ms after the rest; `fillSettles` counts a fill once that ran, so it reaches
@@ -395,20 +400,33 @@ final class TranscriptSwitchBenchmarkTests: XCTestCase {
                 if !keptNow { print("switch: a fill settled without its kept row \(keepRow) on screen (fills \(TranscriptProbe.fillSettles)/\(TranscriptProbe.earlier))") }
                 kept.append(keptNow ? 1 : 0)
             }
+            if TranscriptProbe.earlier > built { fillBodies.append(TranscriptProbe.rowBodies - bodies) } else { stepBodies.append(TranscriptProbe.rowBodies - bodies) }
         }
         print("switch: scroll-up \(heights.count) steps, document \(Int(heights.first ?? 0)) → \(Int(heights.last ?? 0)) pt, \(kept.count) fills, the top row still on screen after \(Int(kept.reduce(0, +))), built above \(TranscriptProbe.earlier) times, last fill blocked by \(TranscriptProbe.fillBlocked.isEmpty ? "nothing" : "'\(TranscriptProbe.fillBlocked)'"), follows \(TranscriptProbe.follows), peak mounted \(TranscriptProbe.peakMountedRows)")
         let sorted = frames.sorted()
         let p50 = sorted.isEmpty ? 0 : sorted[sorted.count / 2], p95 = sorted.isEmpty ? 0 : sorted[sorted.count * 95 / 100]
+        let median = { (a: [Int]) in a.isEmpty ? 0 : a.sorted()[a.count / 2] }
+        print("switch: scroll-up rows built between fills \(onScreen), row bodies a step \(median(stepBodies)), a fill step \(median(fillBodies))")
         print("switch: scroll-up frames p50 \(String(format: "%.1f", p50 * 1000)) ms, p95 \(String(format: "%.1f", p95 * 1000)) ms, max \(String(format: "%.1f", (sorted.last ?? 0) * 1000)) ms")
+        // On the stack, twice on 2026-11-16 (a loaded Mac, not reproduced in 22 runs since,
+        // under load too): no fill at all, the first row never reached, ~17 ms steps — the loop
+        // sat at the top of the last rows, building nothing. If it comes back, this says where
+        // the fill trigger stopped.
+        if !TranscriptContainer.table, kept.isEmpty || !TranscriptProbe.isMounted(suffix: "-msg-0") {
+            print("switch: no fills: \(heights.count) steps, top at \(Int(clip.bounds.minY)) pt, opened at end \(TranscriptProbe.openedAtEnd), window visible \(window.occlusionState.contains(.visible)), trigger \(TranscriptProbe.fillLog)")
+        }
         XCTAssertTrue(TranscriptProbe.isMounted(suffix: "-msg-0"), "never reached the first row")
         // 60 fps is 16.7 ms a frame. Debug build, the pump's own overhead in it (release not
         // measured here), a step being 250 pt of new rows: room for what each container
-        // measures, no more.
-        // - The lazy stack: ~17 ms p50, ~24 ms p95 (2026-10-25, and again 2026-11-16).
+        // measures, no more. Both build the same ~4.3 row bodies a step.
         // - The table (this test's container since 2026-11-11): 22.9–26.0 ms p50, ~31 ms p95
-        //   over ~35 runs (2026-11-16). The same ~4.3 row bodies a step as the stack, each
-        //   built and laid out in its own row's hosting view: ~17 ms of the frame. Held to the
-        //   stack's 25 ms it failed about half its runs.
+        //   over ~35 runs (2026-11-16), each row built and laid out in its own hosting view.
+        // - The lazy stack: ~17 ms p50 on 2026-10-25. On 2026-11-16, 23.0–27.1 ms p50 over 22
+        //   runs, all on a Mac busy with other builds (load average 9–11), so it fails 25 ms
+        //   about half its runs there. Kept at 25 ms: that measurement doesn't show the budget
+        //   was wrong, only that a loaded Mac misses it; measure an idle Mac before moving it.
+        //   (The ~17 ms seen once on 2026-11-16 came from the two runs above that built no
+        //   rows at all.)
         let frameBudget = TranscriptContainer.table ? 0.030 : 0.025
         XCTAssertLessThan(p50, frameBudget, "scrolling well under 60 fps")
         XCTAssertGreaterThan(TranscriptBench.ink(scroll, in: host), 0.002, "blank at the top")
@@ -420,8 +438,19 @@ final class TranscriptSwitchBenchmarkTests: XCTestCase {
         }
         // The table builds exactly the rows on screen (a few more while one scrolls out and the
         // next in); a 1,200-row session of short rows fits ~30 of them in the window.
-        let budget = TranscriptContainer.table ? maxVisible + 6 : Self.mountedBudget
-        XCTAssertLessThanOrEqual(TranscriptProbe.peakMountedRows, budget, "built more than the rows on screen")
+        if TranscriptContainer.table {
+            XCTAssertLessThanOrEqual(TranscriptProbe.peakMountedRows, maxVisible + 6, "built more than the rows on screen")
+        } else {
+            // The stack between fills: what's on screen and a little around it (13–18 rows with
+            // the shipped verbosity and density, one line each).
+            XCTAssertLessThanOrEqual(onScreen, Self.mountedBudget, "built more than the rows on screen")
+            // Nor while older rows go in: the stack keeps the row at the top in place and lays
+            // the new rows out around it (`showEarlier`). Before, its first layout ran at the
+            // offset it had, at the top, and built the new first screenful nobody saw: 35–38
+            // rows at every fill against 18 between them, 24 row bodies a fill step against 8.
+            // Now 20 (the open's own peak) and 19 (2026-11-16).
+            XCTAssertLessThanOrEqual(TranscriptProbe.peakMountedRows, onScreen + 6, "a fill built rows nobody saw")
+        }
     }
 
     /// Going back to a session opened a moment ago reads nothing until its log grows; a new event

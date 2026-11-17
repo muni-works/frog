@@ -29,6 +29,9 @@ struct TranscriptView: View {
     @State private var shownFrom: TurnState.ID?
     /// Rows are going in above the view (see `showEarlier`).
     @State private var growingAbove = false
+    /// Holds the row at the top in place while older rows go in above it (see `showEarlier`).
+    /// Only set there: the rest of the scrolling goes through the `ScrollViewReader`.
+    @State private var position = ScrollPosition(idType: TranscriptRow.ID.self)
     /// Finished turns' flows, so the rows aren't re-derived for every turn on every chunk.
     @State private var flows = FlowCache()
     @AppStorage(Verbosity.key) private var defaultVerbosity = Verbosity.standard.rawValue
@@ -146,10 +149,21 @@ struct TranscriptView: View {
                     // A row in the lazy stack can't be the trigger: the stack estimates the rows
                     // it hasn't built from the ones it has, and a small one at the top made it
                     // land short of the end on open, over nothing.
-                    if new.atBottom { track.openedAtEnd = true }
+                    if new.atBottom, !track.openedAtEnd {
+                        track.openedAtEnd = true
+                        #if DEBUG
+                        TranscriptProbe.openedAtEnd = true
+                        #endif
+                    }
                     let atTop = track.openedAtEnd && new.contentHeight > 0 && new.visibleTop < Self.nearTop
+                    #if DEBUG
+                    if !track.openedAtEnd, new.contentHeight > 0, new.visibleTop < Self.nearTop { TranscriptProbe.fillBlocked = "not opened at end" }
+                    #endif
                     if atTop != track.atTop {
                         track.atTop = atTop
+                        #if DEBUG
+                        TranscriptProbe.noteFill("atTop \(atTop) top \(Int(new.visibleTop)) h \(Int(new.contentHeight))")
+                        #endif
                         if atTop { DispatchQueue.main.async { showEarlier(proxy) } }
                     }
                     let growth = new.contentHeight - old.contentHeight
@@ -292,16 +306,24 @@ struct TranscriptView: View {
               let id = Self.start(of: conversation.turns, rows: Self.earlierRows, before: first) else {
             #if DEBUG
             TranscriptProbe.fillBlocked = first == 0 ? "at first turn" : (growingAbove ? "growing" : "no turns above")
+            TranscriptProbe.noteFill("blocked " + TranscriptProbe.fillBlocked)
             #endif
             return
         }
         let keep = firstRow(of: conversation.turns[first])
         #if DEBUG
         TranscriptProbe.earlier += 1
+        TranscriptProbe.noteFill("fill from \(first)")
         // The row under it (prompts aren't counted as mounted, segments are).
         TranscriptProbe.kept = flows.segments(of: conversation.turns[first], showThinking: verbosity.showsThinking).first?.id ?? keep.part
         #endif
         growingAbove = true
+        // Pinned to the row at the top, in the same update as the rows go in, so the stack
+        // lays the new content out around that row. Without it, the stack's first layout ran
+        // at the offset it had, at the top, and built the new first screenful (a window of rows
+        // nobody saw: twice the rows on screen at every fill) before the scroll below took the
+        // view back.
+        position.scrollTo(id: keep, anchor: .top)
         shownFrom = id
         // Again as the rows around it measure (each changes the estimate of the rest).
         DispatchQueue.main.async {
@@ -309,6 +331,8 @@ struct TranscriptView: View {
             DispatchQueue.main.async { proxy.scrollTo(keep, anchor: .top) }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                 proxy.scrollTo(keep, anchor: .top)
+                // Let go: held, it pulls the view back to that row as you scroll on.
+                position = ScrollPosition(idType: TranscriptRow.ID.self)
                 growingAbove = false
                 #if DEBUG
                 // The fill is settled (its last keep-scroll ran): this is the signal the
@@ -414,6 +438,7 @@ struct TranscriptView: View {
             .contentMargins(0, for: .scrollContent)
         }
         .scrollContentBackground(.hidden)
+        .scrollPosition($position, anchor: .top)
         // The system's scroll-edge blur is hidden (see ScrollBackdropClear), so fade the
         // content out under the toolbar instead of letting it run into the title.
         .onGeometryChange(for: CGFloat.self, of: { $0.safeAreaInsets.top }) { topInset = $0 }
