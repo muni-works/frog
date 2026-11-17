@@ -58,9 +58,9 @@ final class OneLookTests: XCTestCase {
 
     /// The permission card says where the step runs: a Frog Cloud session's card said "this Mac".
     func testPermissionCardSaysWhereItRuns() {
-        XCTAssertEqual(PermissionRequest.place(cloud: false, outsideSandbox: false), "Runs on this Mac · sandboxed")
-        XCTAssertEqual(PermissionRequest.place(cloud: false, outsideSandbox: true), "Runs on this Mac · outside the sandbox")
-        XCTAssertEqual(PermissionRequest.place(cloud: true, outsideSandbox: false), "Runs in your Frog Cloud sandbox")
+        XCTAssertEqual(PermissionRequest.runsWhere(inCloud: false, outsideSandbox: false), "Runs on this Mac · sandboxed")
+        XCTAssertEqual(PermissionRequest.runsWhere(inCloud: false, outsideSandbox: true), "Runs on this Mac · outside the sandbox")
+        XCTAssertEqual(PermissionRequest.runsWhere(inCloud: true, outsideSandbox: false), "Runs in your Frog Cloud sandbox")
     }
 
     func testThePickerLeavesOutSideJobHelpers() {

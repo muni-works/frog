@@ -573,7 +573,7 @@ struct PermissionCard: View {
                 .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
                 .foregroundStyle(Tokens.textSecondary)
                 .help("More choices")
-                Text(PermissionRequest.place(cloud: conversation.cloudSession != nil, outsideSandbox: request.name == "Bash" && request.reason != nil))
+                Text(PermissionRequest.runsWhere(inCloud: conversation.cloudSession != nil, outsideSandbox: request.name == "Bash" && request.reason != nil))
                     .font(.frog(size: Tokens.Size.meta))
                     .foregroundStyle(Tokens.textTertiary)
                     .lineLimit(1)
