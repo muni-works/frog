@@ -1,9 +1,9 @@
 import AppKit
 import SwiftUI
 
-/// Above the tray: the one-line toasts and strips that belong to the conversation, not the
-/// composer (a toast, the cloud fallback, a model download, what flushes next, the queue, an
-/// outward next step).
+/// Above the composer: the one-line toasts and strips that belong to the conversation, not the
+/// composer (a toast, the cloud fallback, a model download, what flushes next, an outward next
+/// step). Queued follow-ups sit inside the card, above the field.
 struct ComposerNotices: View {
     let workspace: Workspace
     let conversation: Conversation
@@ -42,7 +42,6 @@ struct ComposerNotices: View {
             if !pending.isEmpty {
                 PendingEventsStrip(pending: pending, busy: conversation.busy) { conversation.dismissWakes() }
             }
-            if !conversation.queue.isEmpty { QueuedMessages(conversation: conversation, streaming: conversation.busy) }
             if let next = conversation.next, next.act, !conversation.busy {
                 Button { conversation.act(Present.Choice(label: next.text, send: nil)) } label: {
                     Label(next.text, systemImage: "arrow.up.forward")
@@ -87,7 +86,7 @@ struct SkillList: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
-                    .background(i == picked ? AnyShapeStyle(.tint.opacity(0.22)) : AnyShapeStyle(.clear), in: .rect(cornerRadius: 7))
+                    .background(i == picked ? ComposerMetrics.plate : .clear, in: .rect(cornerRadius: Tokens.Radius.control, style: .continuous))
                     .hoverPlate(h: 0, v: 0)
                 }
                 .buttonStyle(.plain)
@@ -95,7 +94,8 @@ struct SkillList: View {
         }
         .padding(6)
         .frame(width: 480, alignment: .leading)
-        .glassEffect(.regular, in: .rect(cornerRadius: 12))
+        .background(Tokens.raised, in: .rect(cornerRadius: Tokens.Radius.card, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Tokens.Radius.card, style: .continuous).strokeBorder(Tokens.lineStrong, lineWidth: 1))
     }
 }
 
@@ -120,7 +120,7 @@ struct MentionList: View {
                     .font(.frog(size: 12))
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
-                    .background(i == picked ? AnyShapeStyle(.tint.opacity(0.22)) : AnyShapeStyle(.clear), in: .rect(cornerRadius: 7))
+                    .background(i == picked ? ComposerMetrics.plate : .clear, in: .rect(cornerRadius: Tokens.Radius.control, style: .continuous))
                     .hoverPlate(h: 0, v: 0)
                 }
                 .buttonStyle(.plain)
@@ -128,7 +128,8 @@ struct MentionList: View {
         }
         .padding(6)
         .frame(width: 420, alignment: .leading)
-        .glassEffect(.regular, in: .rect(cornerRadius: 12))
+        .background(Tokens.raised, in: .rect(cornerRadius: Tokens.Radius.card, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: Tokens.Radius.card, style: .continuous).strokeBorder(Tokens.lineStrong, lineWidth: 1))
     }
 }
 

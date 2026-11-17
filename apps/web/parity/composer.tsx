@@ -43,7 +43,7 @@ createRoot(document.getElementById('root')!).render(
       ahead={w.kind === 'session' ? w.ahead : 0}
       draft={s.draft.text}
       state={s.busy === 'working' ? 'working' : 'idle'}
-      queued={Array.from({ length: s.queued }, () => ({ text: 'also run the linter', images: [] }))}
+      queued={s.queued.map((q) => ({ text: q.text, images: [] }))}
       model="glm-5.3-flash" models={models} onModel={() => {}}
       mode={s.mode === 'accept_edits' ? 'accept-edits' : s.mode} onMode={() => {}}
       onRepo={session ? undefined : () => {}}

@@ -7,10 +7,14 @@ export type Mode = 'auto' | 'default' | 'accept_edits' | 'yolo'
 export type Place = 'local' | 'cloud'
 export type Busy = 'idle' | 'working' | 'sending' | 'loading_model'
 export type PrState = 'draft' | 'checks' | 'failing' | 'approved' | 'merged' | 'closed'
-export type Action = 'dictate' | 'send' | 'stop' | 'queue'
+export type Action = 'dictate' | 'listening' | 'send' | 'stop' | 'queue'
+/** What the status line shows, first that applies (docs/design/composer/spec.md, "The status line"). */
+export type Status = 'error' | 'confirm' | 'notice' | 'git' | 'none'
 export type GitAction = 'commit' | 'open_pr' | 'push' | 'fix' | 'merge' | 'archive' | 'reopen'
 
 export interface Attachment { name: string; size: number; type: string }
+/** A follow-up sent while Frog works: it goes in with the next turn, and can be taken out until then. */
+export interface Queued { text: string; attachments: Attachment[] }
 export interface Model { id: string; name: string; place: Place; node?: string | null }
 export interface Pr { repo: string; number: number; title: string; state: PrState; checks: { ok: number; total: number }; access?: boolean }
 
@@ -41,7 +45,9 @@ export interface State {
   busy: Busy
   /** What the send in flight carries: the draft (cleared on ack) or a git action's own text. */
   pending: 'draft' | 'aside' | null
-  queued: number
+  queued: Queued[]
+  /** Dictation is running: the action shows the listening face. */
+  dictating: boolean
   error: ComposerError | null
   notice: string | null
   confirm: 'yolo' | 'merge' | 'archive' | null
@@ -87,6 +93,9 @@ export type Intent =
   | { type: 'model_loading' }
   | { type: 'model_ready' }
   | { type: 'mic_denied' }
+  | { type: 'dictation_started' }
+  | { type: 'dictation_ended' }
+  | { type: 'remove_queued'; index: number }
   | { type: 'set_mode'; mode: Mode }
   | { type: 'cycle_mode' }
   | { type: 'confirm' }
@@ -118,6 +127,8 @@ export interface Derived {
   canSwitchBranch: boolean
   /** Open PR is the predicate's (the work is done, and opening one is wanted). */
   openPr: boolean
+  /** Which one thing the status line shows. */
+  status: Status
 }
 
 export const MAX_ATTACHMENT = 20_000_000
@@ -132,7 +143,7 @@ const ERRORS: Record<string, [string, string[], string | null]> = {
   signed_out: ['Signed out of Frog Cloud', ['sign_in'], null],
   no_credit: ['Out of credit', ['add_credit', 'use_local'], null],
   cloud_busy: ['Frog Cloud is busy', ['retry'], null],
-  mic_denied: ['Allow microphone in System Settings', ['open_settings'], 'action'],
+  mic_denied: ['Needs mic access to take dictation', ['open_settings'], 'action'],
   worktree_failed: ["Couldn't make a worktree", ['use_checkout'], 'worktree'],
   clone_failed: ["Couldn't clone the repo", ['retry'], 'where'],
   hook_failed: ['A commit hook failed', ['show_output'], 'git_action'],
@@ -201,7 +212,9 @@ export function optedOutOfOpenPr(firstPrompt: string | null | undefined): boolea
 export function derive(s: State): Derived {
   const content = hasContent(s)
   const action: Action =
-    s.busy === 'working' ? (content ? 'queue' : 'stop')
+    // Dictation writes into the field as it listens, so the face holds until it ends.
+    s.dictating ? 'listening'
+    : s.busy === 'working' ? (content ? 'queue' : 'stop')
     : s.busy === 'loading_model' ? 'stop'
     : s.busy === 'sending' ? 'send'
     : content ? 'send' : 'dictate'
@@ -233,7 +246,20 @@ export function derive(s: State): Derived {
   // open a PR by hand, it just isn't urged to. Facts the composer doesn't have earn nothing,
   // so an absent `openPr` leaves the chip as plain as it has always been.
   const openPr = gitAction === 'open_pr' && s.openPr !== undefined && offersOpenPr(setting, s.openPr)
-  return { action, sendDisabled: s.busy === 'sending' || (s.busy === 'idle' && !content), gitAction, prSummary, canSwitchBranch, openPr }
+  return { action, sendDisabled: s.busy === 'sending' || (s.busy === 'idle' && !content), gitAction, prSummary, canSwitchBranch, openPr, status: status(s) }
+}
+
+/**
+ * The status line's one line: an error, then a question, then a notice, then the session's git
+ * state. Git shows only with a repo and something to report: uncommitted changes, commits ahead, or a PR.
+ */
+function status(s: State): Status {
+  if (s.error) return 'error'
+  if (s.confirm) return 'confirm'
+  if (s.notice) return 'notice'
+  const w = s.where
+  if (w.kind === 'session' && w.repo && (w.dirty || w.ahead > 0 || w.prs.length > 0)) return 'git'
+  return 'none'
 }
 
 /** The key a model is remembered under: the folder, the cloud repo, or chat. */
@@ -255,7 +281,7 @@ function send(s: State): Out {
   if (s.busy === 'sending') return [s, []]
   if (s.busy === 'loading_model') return [{ ...s, pending: 'draft' }, []]
   if (s.busy === 'working') {
-    return [{ ...s, draft: { text: '', attachments: [], caret: 0 }, lastSent: text, queued: s.queued + 1 }, [{ type: 'queued', text, attachments }]]
+    return [{ ...s, draft: { text: '', attachments: [], caret: 0 }, lastSent: text, queued: [...s.queued, { text, attachments }] }, [{ type: 'queued', text, attachments }]]
   }
   const next: State = { ...s, busy: 'sending', pending: 'draft', error: null }
   if (s.where.kind === 'session') return [next, [{ type: 'submit', text, attachments }]]
@@ -264,7 +290,7 @@ function send(s: State): Out {
 
 /** A turn a git action asks for (Fix, Resolve conflicts): the draft stays put. */
 function sendAside(s: State, text: string): Out {
-  if (s.busy === 'working') return [{ ...s, queued: s.queued + 1 }, [{ type: 'queued', text, attachments: [] }]]
+  if (s.busy === 'working') return [{ ...s, queued: [...s.queued, { text, attachments: [] }] }, [{ type: 'queued', text, attachments: [] }]]
   return [{ ...s, busy: 'sending', pending: 'aside', error: null }, [{ type: 'submit', text, attachments: [] }]]
 }
 
@@ -306,6 +332,7 @@ export function reduce(s: State, i: Intent): Out {
     case 'action': {
       const a = derive(s).action
       if (a === 'dictate') return [s, [{ type: 'start_dictation' }]]
+      if (a === 'listening') return [s, [{ type: 'stop_dictation' }]]
       if (a === 'stop') return reduce(s, { type: 'stop' })
       return send(s)
     }
@@ -323,7 +350,10 @@ export function reduce(s: State, i: Intent): Out {
     case 'send_failed':
       return [{ ...s, busy: 'idle', pending: null, error: error(s, i.code, null, i.retryIn ?? null) }, []]
     case 'turn_done':
-      return [{ ...s, busy: 'idle', queued: 0 }, []]
+      return [{ ...s, busy: 'idle', queued: [] }, []]
+    case 'remove_queued':
+      if (i.index < 0 || i.index >= s.queued.length) return [s, []]
+      return [{ ...s, queued: s.queued.filter((_, n) => n !== i.index) }, [{ type: 'remove_queued', index: i.index }]]
     case 'stop':
       if (s.busy === 'working') return [s, [{ type: 'interrupt' }]]
       if (s.busy === 'loading_model') return [{ ...s, busy: 'idle', pending: null }, [{ type: 'cancel_load' }]]
@@ -341,7 +371,12 @@ export function reduce(s: State, i: Intent): Out {
       return s.pending === 'draft' ? send({ ...ready, pending: null }) : [ready, []]
     }
     case 'mic_denied':
-      return [{ ...s, error: error(s, 'mic_denied') }, []]
+      // A refused mic never started: dictation is over.
+      return [{ ...s, dictating: false, error: error(s, 'mic_denied') }, []]
+    case 'dictation_started':
+      return [{ ...s, dictating: true }, []]
+    case 'dictation_ended':
+      return [{ ...s, dictating: false }, []]
     case 'set_mode':
       return setMode(s, i.mode)
     case 'cycle_mode':

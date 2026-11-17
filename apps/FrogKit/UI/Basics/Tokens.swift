@@ -29,6 +29,8 @@ enum Tokens {
     static let hairlineStrong = Color(light: (0.0, 0.0, 0.0, 0.05), dark: (1.0, 1.0, 1.0, 0.06))
     /// Rails that nest content (quotes, tool output, the sidebar's started-by tree). Never a border.
     static let line = Color(light: (0.89, 0.89, 0.89, 1), dark: (0.165, 0.165, 0.165, 1))
+    /// The rare control edge.
+    static let lineStrong = Color(light: (0.824, 0.824, 0.824, 1), dark: (0.22, 0.22, 0.22, 1))
     /// Primary text on the Mac (solid, same as fg).
     static let text = Color(light: (0.106, 0.114, 0.102, 1), dark: (0.925, 0.925, 0.925, 1))
     /// Secondary text on the Mac (solid, same as muted).
@@ -47,6 +49,8 @@ enum Tokens {
     static let fail = Color(light: (0.851, 0.251, 0.231, 1), dark: (1.0, 0.412, 0.38, 1))
     /// Failed, removed, over a limit (reddish-orange). The Mac's failure rows move here from fail.
     static let warn = Color(light: (0.769, 0.318, 0.239, 1), dark: (0.898, 0.467, 0.373, 1))
+    /// Needs-you and nearing a limit on the web (orange).
+    static let notice = Color(light: (1.0, 0.584, 0.0, 1), dark: (1.0, 0.624, 0.039, 1))
     /// Where a model runs: local (this Mac or a paired node). Blue, the same lightness as the green beside it; 4.3:1 on white, 8.3:1 on black (the green is 3.4:1 and 10:1). Only through placeColor / Color.place(_:).
     static let placeLocal = Color(light: (0.204, 0.471, 0.878, 1), dark: (0.392, 0.643, 1.0, 1))
     /// Where a model runs: any cloud (Frog Cloud, Anthropic, OpenAI). Frog green, the accent. Only through placeColor / Color.place(_:).

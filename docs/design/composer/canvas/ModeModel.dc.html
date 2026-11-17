@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Composer: mode, model and attachments</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.b{box-sizing:border-box;background:#1c1c1c;color:#ececec;font:13px/16px -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;padding:40px;display:flex;flex-direction:column;gap:26px}
+.h{font-size:22px;line-height:26px;font-weight:600;margin:0}
+.sub{color:#9b9b9b;margin:6px 0 0;max-width:820px}
+.g3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px}
+.g{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px 20px}
+.cell{display:flex;flex-direction:column;gap:8px}
+.cap{color:#9b9b9b;font-size:12px;line-height:15px}
+.cap b{color:#ececec;font-weight:600}
+.tag{display:inline-block;font-size:10px;line-height:13px;font-weight:600;padding:1px 6px;border-radius:999px;background:#2a2a2a;color:#b0b0b0;margin-left:6px}
+.c{background:#232323;border:1px solid #3e3e3e;border-radius:16px;display:flex;flex-direction:column}
+.s{display:flex;align-items:center;gap:8px;height:32px;box-sizing:border-box;padding:0 8px 0 14px;border-bottom:1px solid #2e2e2e;font-size:12px;line-height:15px;color:#9b9b9b}
+.s b{color:#ececec;font-weight:400}
+.tx{padding:12px 14px 4px;min-height:16px}
+.ph{color:#8a8a8a}
+.bar{display:flex;align-items:center;gap:2px;height:28px;padding:6px 8px 8px 8px;font-size:12px;line-height:15px;color:#9b9b9b}
+.chip{display:inline-flex;align-items:center;gap:4px;height:24px;box-sizing:border-box;padding:0 8px;border-radius:999px;border:0;background:transparent;color:#9b9b9b;font:inherit;white-space:nowrap}
+.chip.o{background:rgba(255,255,255,.08);color:#ececec}
+.sp{flex:1}
+.act{width:28px;height:28px;border-radius:50%;border:0;display:inline-flex;align-items:center;justify-content:center;background:rgba(255,255,255,.08);color:#ececec;flex:none;margin-left:4px}
+.act.go{background:#58cc6f;color:#0d1a10}
+.i{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.w{width:14px;height:14px;fill:none;stroke:#ff9f0a;stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.tb{border:0;border-radius:999px;height:22px;padding:0 9px;background:rgba(255,255,255,.08);color:#ececec;font:inherit;white-space:nowrap}
+.tb.q{background:transparent;color:#9b9b9b}
+.menu{box-sizing:border-box;background:#232323;border:1px solid #3e3e3e;border-radius:12px;padding:4px;display:flex;flex-direction:column}
+.f{display:flex;align-items:center;gap:8px;padding:6px 8px 7px;color:#8a8a8a;border-bottom:1px solid #2e2e2e;margin-bottom:2px}
+.ml{color:#9b9b9b;font-size:10px;line-height:13px;padding:8px 8px 2px}
+.m2{display:flex;flex-direction:column;gap:1px;padding:6px 8px;border-radius:7px}
+.m2.on{background:rgba(255,255,255,.08)}
+.m2 span{color:#9b9b9b;font-size:12px;line-height:15px}
+.m2 div{display:flex;align-items:center;gap:6px}
+.mi{display:flex;align-items:center;gap:8px;height:28px;box-sizing:border-box;padding:0 8px;border-radius:7px;color:#ececec}
+.mi.on{background:rgba(255,255,255,.08)}
+.mi .r{margin-left:auto;color:#9b9b9b;font-size:12px}
+.mi.d{color:#9b9b9b}
+.k{margin-left:auto;color:#9b9b9b;font-size:11px}
+.q{display:flex;flex-wrap:wrap;gap:6px;padding:10px 12px 0}
+.qi{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border-radius:8px;background:rgba(255,255,255,.06);font-size:12px;line-height:15px;color:#ececec}
+.qi span{color:#9b9b9b}
+.rule{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px 22px;background:#232323;border-radius:12px;padding:16px 18px;color:#9b9b9b;font-size:12px;line-height:17px}
+.rule b{color:#ececec;font-weight:600;display:block}
+</style>
+</helmet>
+<div class="b" style="width: 1180px; height: 900px">
+<div>
+<h1 class="h">4. Mode, model and attachments</h1>
+<p class="sub">Mode and model sit at the right, beside the action, because they decide how Frog does the work. Attach sits at the left with the task. All three are plain text until you point at them, and each opens a menu upward.</p>
+</div>
+<div class="g3" style="align-items: start">
+<div class="cell">
+<div class="cap"><b>Mode.</b> New sessions start in Auto. The tick is on the current one; each row says what it does in one line.</div>
+<div class="menu">
+<div class="ml">When Frog asks</div>
+<div class="m2"><div>Ask</div><span>Asks before edits and commands</span></div>
+<div class="m2"><div>Accept edits</div><span>Edits run; commands still ask</span></div>
+<div class="m2 on"><div>Auto<svg class="i" viewBox="0 0 16 16" aria-hidden="true" style="margin-left: auto"><path d="M3.5 8.5 7 12l5.5-7"/></svg></div><span>Runs what plainly serves the task</span></div>
+<div class="m2"><div><svg class="i" viewBox="0 0 16 16" aria-hidden="true" style="color: #ff9f0a"><path d="M9 2 4 9h3.5L7 14l5-7H8.5z"/></svg>Yolo</div><span>Runs every step without asking</span></div>
+</div>
+<div style="display: flex; gap: 2px; flex-wrap: wrap"><span class="chip">Ask</span><span class="chip">Accept edits</span><span class="chip o">Auto</span><span class="chip"><svg class="i" viewBox="0 0 16 16" aria-hidden="true" style="color: #ff9f0a"><path d="M9 2 4 9h3.5L7 14l5-7H8.5z"/></svg>Yolo</span></div>
+</div>
+<div class="cell">
+<div class="cap"><b>Model.</b> An icon says where it runs: a laptop in blue for your own hardware, a cloud in green for Frog Cloud. Prices sit at the right.</div>
+<div class="menu">
+<div class="f"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="3.5"/><path d="M10 10l3 3"/></svg>Search models</div>
+<div class="ml">This Mac</div>
+<div class="mi on"><svg class="i" viewBox="0 0 16 16" aria-hidden="true" style="color: #0a84ff"><path d="M3.5 4h9v6h-9zM2 12h12"/></svg>Qwen3 8B<span class="r">free</span></div>
+<div class="ml">mew</div>
+<div class="mi"><svg class="i" viewBox="0 0 16 16" aria-hidden="true" style="color: #0a84ff"><path d="M3 3.5h10v3.5H3zM3 9h10v3.5H3zM5 5.2v.1M5 10.7v.1"/></svg>Qwen3 Coder Next<span class="r">free</span></div>
+<div class="ml">Frog Cloud</div>
+<div class="mi"><svg class="i" viewBox="0 0 16 16" aria-hidden="true" style="color: #30d158"><path d="M4.5 12a2.5 2.5 0 0 1 .3-5 3.5 3.5 0 0 1 6.7 1A2 2 0 0 1 11.5 12z"/></svg>GLM-5.3 Flash<span class="r">from $0.04/M</span></div>
+<div class="mi"><svg class="i" viewBox="0 0 16 16" aria-hidden="true" style="color: #30d158"><path d="M4.5 12a2.5 2.5 0 0 1 .3-5 3.5 3.5 0 0 1 6.7 1A2 2 0 0 1 11.5 12z"/></svg>DeepSeek V4.1 Flash<span class="r">from $0.17/M</span></div>
+</div>
+</div>
+<div class="cell">
+<div class="cap"><b>Attach.</b> The plus opens the ways to add something. This is where the @ and ! shortcuts are taught, not in the placeholder.</div>
+<div class="menu">
+<div class="mi"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M10.5 4.5 5.8 9.2a1.6 1.6 0 0 0 2.3 2.3l5-5a2.8 2.8 0 0 0-4-4l-5 5"/></svg>Attach a file…</div>
+<div class="mi"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="3.5" width="11" height="9" rx="1.5"/><path d="M2.5 10l3-3 3 3 2-2 3 3"/></svg>Paste a screenshot</div>
+<div class="mi">Mention a file<span class="k">@</span></div>
+<div class="mi">Run a command<span class="k">!</span></div>
+</div>
+<div class="cap" style="margin-top: 6px"><b>Accepted:</b> images, text, PDF and JSON, up to 20 MB each.</div>
+</div>
+</div>
+<div class="g">
+<div class="cell">
+<div class="cap"><b>Yolo asks once.</b> The first time, the status line confirms it. After that it switches straight away.</div>
+<div class="c"><div class="s"><b>Yolo runs every step without asking</b><span class="sp"></span><button class="tb q">Cancel</button><button class="tb">Use Yolo</button></div><div class="tx ph">Reply to Frog</div><div class="bar"><button class="chip" aria-label="Attach"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg></button><span class="sp"></span><button class="chip">Auto</button><button class="chip"><svg class="i" viewBox="0 0 16 16" aria-hidden="true" style="color: #0a84ff"><path d="M3.5 4h9v6h-9zM2 12h12"/></svg>Qwen3 8B</button><button class="act" aria-label="Dictate"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5a1.8 1.8 0 0 1 1.8 1.8v3.4a1.8 1.8 0 0 1-3.6 0V4.3A1.8 1.8 0 0 1 8 2.5zM4.5 7.5a3.5 3.5 0 0 0 7 0M8 11v2.5"/></svg></button></div></div>
+</div>
+<div class="cell">
+<div class="cap"><b>The model changed for you.</b> Switching place, or choosing local when out of credit, says so once. It clears on the next send.</div>
+<div class="c"><div class="s"><b>Switched to GLM-5.3 Flash in Frog Cloud</b><span class="sp"></span><button class="chip" aria-label="Dismiss"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/></svg></button></div><div class="tx">Make the tests faster</div><div class="bar"><button class="chip" aria-label="Attach"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg></button><span class="sp"></span><button class="chip">Auto</button><button class="chip"><svg class="i" viewBox="0 0 16 16" aria-hidden="true" style="color: #30d158"><path d="M4.5 12a2.5 2.5 0 0 1 .3-5 3.5 3.5 0 0 1 6.7 1A2 2 0 0 1 11.5 12z"/></svg>GLM-5.3 Flash</button><button class="act go" aria-label="Send"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 13V3.5M4 7l4-4 4 4"/></svg></button></div></div>
+</div>
+<div class="cell">
+<div class="cap"><b>Attachments.</b> They sit above the field, name first, size in muted, and can be sent with no text.</div>
+<div class="c"><div class="q"><span class="qi">screenshot.png <span>412 KB</span><svg class="i" viewBox="0 0 16 16" aria-hidden="true" style="color: #9b9b9b"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/></svg></span><span class="qi">trace.json <span>18 KB</span><svg class="i" viewBox="0 0 16 16" aria-hidden="true" style="color: #9b9b9b"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/></svg></span></div><div class="tx">Why does this crash on launch?</div><div class="bar"><button class="chip" aria-label="Attach"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg></button><span class="sp"></span><button class="chip">Auto</button><button class="chip"><svg class="i" viewBox="0 0 16 16" aria-hidden="true" style="color: #30d158"><path d="M4.5 12a2.5 2.5 0 0 1 .3-5 3.5 3.5 0 0 1 6.7 1A2 2 0 0 1 11.5 12z"/></svg>GLM-5.3 Flash</button><button class="act go" aria-label="Send"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 13V3.5M4 7l4-4 4 4"/></svg></button></div></div>
+</div>
+<div class="cell">
+<div class="cap"><b>A file that can't be attached.</b> The rest attach. The status line names the one that didn't and why.</div>
+<div class="c"><div class="s"><svg class="w" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5 14 13H2zM8 6.5v3M8 11.2v.1"/></svg><b>build.zip isn't a type Frog can read</b><span class="sp"></span><button class="chip" aria-label="Dismiss"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/></svg></button></div><div class="q"><span class="qi">screenshot.png <span>412 KB</span><svg class="i" viewBox="0 0 16 16" aria-hidden="true" style="color: #9b9b9b"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/></svg></span></div><div class="tx ph">Reply to Frog</div><div class="bar"><button class="chip" aria-label="Attach"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg></button><span class="sp"></span><button class="chip">Auto</button><button class="chip"><svg class="i" viewBox="0 0 16 16" aria-hidden="true" style="color: #30d158"><path d="M4.5 12a2.5 2.5 0 0 1 .3-5 3.5 3.5 0 0 1 6.7 1A2 2 0 0 1 11.5 12z"/></svg>GLM-5.3 Flash</button><button class="act go" aria-label="Send"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 13V3.5M4 7l4-4 4 4"/></svg></button></div></div>
+</div>
+</div>
+<div class="rule">
+<span><b>Changed mid-turn.</b>A new mode applies from the next step that would ask. A node's model swapped mid-turn takes over when the turn ends. Only the chip changes.</span>
+<span><b>A cloud model while signed out</b> opens sign-in and keeps the draft.</span>
+<span><b>Colour.</b>The place colours appear only on the model's icon. The Yolo bolt is the only other colour in the controls.</span>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1180,"height":900}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

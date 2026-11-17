@@ -32,7 +32,7 @@ import { docsPath, docsSlugOf } from './docs/docs'
 /** Placeholder session ids, shown while POST /v1/sessions is in flight. */
 const PENDING = 'pending-'
 
-type View = { kind: 'session'; id: string } | { kind: 'new'; repo?: string; pick?: boolean }
+type View = { kind: 'session'; id: string } | { kind: 'new'; repo?: string; pick?: boolean; base?: string }
 
 /** Dev only: a key for the mock gateway (any non-empty key is an account there). Skips sign-in. */
 const DEV_KEY = import.meta.env.DEV ? (import.meta.env.VITE_DEV_KEY as string | undefined) : undefined
@@ -303,7 +303,7 @@ export default function App() {
 
   const [pending, setPending] = useState<string | null>(null)
   const starterChips = useMemo(() => pickStarters(3, !key).map((text) => ({ text })), [key])
-  const start = useCallback(async (text: string, repo?: string, images: Image[] = []) => {
+  const start = useCallback(async (text: string, repo?: string, images: Image[] = [], base?: string) => {
     if (!cloud) return
     // Open the session at once, as a placeholder, and swap in the real one when the gateway
     // answers: starting a conversation should feel instant, not wait on a round trip.
@@ -312,7 +312,7 @@ export default function App() {
     setSessions((all) => [{ id: temp, title: text.length > 60 ? text.slice(0, 57) + '…' : text, repo: repo ?? '', branch: '', state: 'starting', updated: Date.now() }, ...all])
     setView({ kind: 'session', id: temp })
     try {
-      const s0 = await cloud.gateway.create({ ...(repo ? { repo } : {}), ...(chosenModel ? { model: spec(chosenModel) } : {}) })
+      const s0 = await cloud.gateway.create({ ...(repo ? { repo } : {}), ...(repo && base ? { base } : {}), ...(chosenModel ? { model: spec(chosenModel) } : {}) })
       // A session without a repo comes back titled "New session" until the engine names it.
       const s = { ...s0, title: s0.repo ? s0.title : text.length > 60 ? text.slice(0, 57) + '…' : text }
       setSessions((all) => [s, ...all.filter((x) => x.id !== s.id && x.id !== temp)])
@@ -489,7 +489,7 @@ export default function App() {
           <Trust />
         </div>
         <div className="dock"><div>
-          <Composer repo="Connect a repo" onSend={() => {}} onSignIn={(provider, text) => leave(text || null, provider)} autoFocus chips={starterChips}
+          <Composer onSend={() => {}} onSignIn={(provider, text) => leave(text || null, provider)} autoFocus chips={starterChips}
             model={chosenModel} models={models} machines={machines} onManage={() => openSettings('Models')} onModel={setNewModel} mode={newMode} onMode={setNewMode} />
           {leaving && <div className="det" style={{ textAlign: 'center' }}>Opening {leaving === 'google' ? 'Google' : 'GitHub'}… your message is saved.</div>}
         </div></div>
@@ -645,7 +645,8 @@ export default function App() {
               model={idOf(ct.model)} models={models} machines={machines} onManage={() => openSettings('Models')} onModel={(id) => cloud?.send(current.id, { op: 'set_model', spec: spec(id) })}
               mode={ct.mode ?? 'default'} onMode={(mode) => cloud?.send(current.id, { op: 'set_mode', mode })}
               queued={queue[current.id]} restore={restore} vision={ct.vision} insert={preview?.insert} onText={preview ? (t) => preview.noteDraft(t) : undefined}
-              onUnqueue={(i) => { const q = queue[current.id] ?? []; setRestore(q[i]); setQueue({ ...queue, [current.id]: q.filter((_, j) => j !== i) }) }}
+              onUnqueue={(i) => setQueue((all) => ({ ...all, [current.id]: (all[current.id] ?? []).filter((_, j) => j !== i) }))}
+              asking={mode === 'threads' && !!ct.ask}
               onSend={(text, images) => (ct.running || opening[current.id]
                 ? setQueue((all) => ({ ...all, [current.id]: [...(all[current.id] ?? []), { text, images }] }))
                 : send(current.id, text, images))} onStop={() => cloud?.send(current.id, { op: 'interrupt' })} onGit={() => push(current)} />
@@ -662,10 +663,10 @@ export default function App() {
             </div>
             <div className="dock">
               <Composer usage={account ? { sub: account.subscription ?? null, credit: creditLine(account).replace(/ credit$/, ''), onBilling: () => openSettings('Billing'), onOpen: refreshAccount } : undefined} repo={view.repo} draft={draft} autoFocus pickRepo={view.pick} chips={starterChips}
-                recent={[...new Set(sessions.map((s) => s.repo).filter(Boolean))]} repos={repoList.repos.map((r) => r.name)} install={repoList.install} onRepo={(repo) => setView({ kind: 'new', repo })}
+                recent={[...new Set(sessions.map((s) => s.repo).filter(Boolean))]} repos={repoList.repos.map((r) => r.name)} install={repoList.install} onRepo={(repo) => setView({ kind: 'new', repo })} base={view.base} onBase={(base) => setView((v) => (v.kind === 'new' ? { ...v, base } : v))}
                 onConnectGithub={key && account && !account.handle && !DEV_KEY ? (text) => leave(text || null, 'github', key) : undefined}
                 model={chosenModel} models={models} machines={machines} onManage={() => openSettings('Models')} onModel={setNewModel} mode={newMode} onMode={setNewMode}
-                onSend={(text, images) => { setDraft(undefined); start(text, view.repo, images) }} />
+                onSend={(text, images) => { setDraft(undefined); start(text, view.repo, images, view.base) }} />
             </div>
           </div>
         )}

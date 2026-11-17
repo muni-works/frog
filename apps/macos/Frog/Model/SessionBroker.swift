@@ -1471,11 +1471,12 @@ final class SessionBroker {
     /// A git worktree for a new session: `<repo>/.frog/worktrees/<name>` on a new branch
     /// `frog/<name>` from the remote default branch (a numbered name if taken). Returns its
     /// folder, branch, and the base ref it started from.
-    nonisolated static func makeWorktree(from folder: URL, name: String) throws -> (URL, String, String) {
+    nonisolated static func makeWorktree(from folder: URL, name: String, base branch: String? = nil) throws -> (URL, String, String) {
         let top = try git(["rev-parse", "--show-toplevel"], in: folder).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !top.isEmpty else { throw BrokerError("\(folder.path) isn't in a git repository") }
         let repo = URL(fileURLWithPath: top)
-        let (baseRef, fallback) = try worktreeBase(in: repo)
+        // A branch picked in the composer's where menu is the base; otherwise the remote default.
+        let (baseRef, fallback) = try branch.map { ($0, false) } ?? worktreeBase(in: repo)
         let base = slug(name)
         let branches = Set(try git(["branch", "--format=%(refname:short)"], in: repo).split(separator: "\n").map(String.init))
         var n = 1

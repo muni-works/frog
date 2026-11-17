@@ -13,9 +13,13 @@ final class ComposerReducerTests: XCTestCase {
     }
 
     private func doc() throws -> Doc {
-        let url = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("docs/design/composer/cases.json")
+        // FROG_COMPOSER_DOCS: another docs/design folder (another branch's regenerated cases),
+        // so a reducer can be run against them without touching the checked-in file.
+        let design = ProcessInfo.processInfo.environment["FROG_COMPOSER_DOCS"].map { URL(fileURLWithPath: $0) }
+            ?? URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+                .appendingPathComponent("docs/design")
+        let url = design.appendingPathComponent("composer/cases.json")
         return try JSONDecoder().decode(Doc.self, from: Data(contentsOf: url))
     }
 
@@ -71,5 +75,115 @@ final class ComposerReducerTests: XCTestCase {
             }
         }
         XCTAssert(failures.isEmpty, failures.joined(separator: "\n"))
+    }
+}
+
+/// The spec's logic changes (docs/design/composer/spec.md, "Changes to the shared logic"), from
+/// Swift-built states, so they hold whatever the shared file says.
+final class ComposerSpecTests: XCTestCase {
+    private typealias M = ComposerModel
+    private let model = M.Model(id: "local/qwen3-8b", name: "Qwen3 8B", place: .local, node: nil)
+
+    private func state(_ edit: (inout M.State) -> Void = { _ in }) -> M.State {
+        var s = M.State(model: model, where: .folder(folder: "/tmp/frog", branch: "main", worktree: true, git: true, dirty: false))
+        edit(&s)
+        return s
+    }
+
+    private func session(dirty: Bool = false, ahead: Int = 0, prs: [M.Pr] = [], repo: String? = "muni-works/frog") -> M.Where {
+        .session(.init(repo: repo, branch: "frog/x", worktree: true, worktreePath: nil, diff: .init(add: 0, del: 0, files: 0),
+                       dirty: dirty, ahead: ahead, prs: prs))
+    }
+
+    private func pr(_ state: M.PrState) -> M.Pr {
+        .init(repo: "muni-works/frog", number: 412, title: "PR", state: state, checks: .init(ok: 1, total: 1))
+    }
+
+    func testQueueingKeepsTheTextAndItsAttachments() {
+        let shot = M.Attachment(name: "shot.png", size: 10, type: "image/png")
+        let s = state {
+            $0.where = session()
+            $0.busy = .working
+            $0.draft = .init(text: "look at this", attachments: [shot], caret: 12)
+        }
+        let (n, fx) = M.reduce(s, .send)
+        XCTAssertEqual(n.queued, [M.Queued(text: "look at this", attachments: [shot])])
+        XCTAssertEqual(fx.map(\.type), ["queued"])
+        XCTAssertEqual(n.draft, M.Draft())
+    }
+
+    func testRemoveQueuedTakesThatOneAndSaysSo() {
+        let a = M.Queued(text: "a"), b = M.Queued(text: "b")
+        let s = state { $0.busy = .working; $0.queued = [a, b] }
+        let (n, fx) = M.reduce(s, .removeQueued(0))
+        XCTAssertEqual(n.queued, [b])
+        XCTAssertEqual(fx, [M.Effect("remove_queued", ["index": .number(0)])])
+        let (same, none) = M.reduce(s, .removeQueued(5))
+        XCTAssertEqual(same, s)
+        XCTAssertTrue(none.isEmpty)
+    }
+
+    func testTurnDoneEmptiesTheQueue() {
+        let s = state { $0.busy = .working; $0.queued = [.init(text: "a")] }
+        XCTAssertEqual(M.reduce(s, .turnDone).0.queued, [])
+    }
+
+    func testDictationShowsListeningOverEveryFace() {
+        var s = M.reduce(state(), .dictationStarted).0
+        XCTAssertTrue(s.dictating)
+        XCTAssertEqual(M.derive(s).action, .listening)
+        s.draft.text = "make it"
+        s.busy = .working
+        XCTAssertEqual(M.derive(s).action, .listening, "listening wins over queue")
+        XCTAssertEqual(M.reduce(s, .action).1, [M.Effect("stop_dictation")])
+        s = M.reduce(s, .dictationEnded).0
+        XCTAssertFalse(s.dictating)
+        XCTAssertEqual(M.derive(s).action, .queue)
+    }
+
+    func testMicDeniedEndsDictationWithTheNewWords() {
+        let (n, _) = M.reduce(state { $0.dictating = true }, .micDenied)
+        XCTAssertFalse(n.dictating)
+        XCTAssertEqual(n.error?.message, "Needs mic access to take dictation")
+        XCTAssertEqual(n.error?.actions, ["open_settings"])
+        XCTAssertEqual(n.error?.control, "action")
+    }
+
+    func testStatusFollowsThePriority() {
+        let err = M.Failure(code: "cloud_busy", message: "Frog Cloud is busy", actions: ["retry"])
+        var s = state {
+            $0.where = session(dirty: true, prs: [pr(.approved)])
+            $0.error = err
+            $0.confirm = .merge
+            $0.notice = "Switched"
+        }
+        XCTAssertEqual(M.derive(s).status, .error)
+        s.error = nil
+        XCTAssertEqual(M.derive(s).status, .confirm)
+        s.confirm = nil
+        XCTAssertEqual(M.derive(s).status, .notice)
+        s.notice = nil
+        XCTAssertEqual(M.derive(s).status, .git)
+    }
+
+    func testGitStatusOnlyWithSomethingToReport() {
+        XCTAssertEqual(M.derive(state()).status, .none, "a new session has no line")
+        XCTAssertEqual(M.derive(state { $0.where = session() }).status, .none, "clean, nothing ahead, no PR")
+        XCTAssertEqual(M.derive(state { $0.where = session(dirty: true, repo: nil) }).status, .none, "no repo")
+        XCTAssertEqual(M.derive(state { $0.where = session(ahead: 1) }).status, .git)
+        var diffOnly = session()
+        if case .session(var w) = diffOnly { w.diff = .init(add: 3, del: 0, files: 1); diffOnly = .session(w) }
+        XCTAssertEqual(M.derive(state { $0.where = diffOnly }).status, .none, "changed lines alone, not dirty: no line (as the web)")
+        XCTAssertEqual(M.derive(state { $0.where = session(prs: [pr(.draft)]) }).status, .git, "a PR with no action still shows")
+    }
+
+    func testStateDecodesTheNewShape() throws {
+        var s = state()
+        s.queued = [.init(text: "a")]
+        s.dictating = true
+        let round = try JSONDecoder().decode(M.State.self, from: JSONEncoder().encode(s))
+        XCTAssertEqual(round, s)
+        let intent = try JSONDecoder().decode(M.Intent.self, from: Data(#"{"type":"remove_queued","index":2}"#.utf8))
+        XCTAssertEqual(intent, .removeQueued(2))
     }
 }

@@ -1,10 +1,11 @@
 import AppKit
 import SwiftUI
 
-/// The composer: one tray (docs/plans/2026-11-12-composer-tray.md). A top line (the git line in
-/// a session, the "where" line before the first message), the field, and a rail of ＋, mode,
-/// model and one action button. What it does is `ComposerModel` (shared with the web through
-/// docs/design/composer/cases.json); this view feeds it the live state and runs its effects.
+/// The composer (docs/design/composer/spec.md): one card, two rows at rest — the field and its
+/// controls (attach, where before a session, then mode, model and the action) — with a status
+/// line on top when there is something to say. What it does is `ComposerModel` (shared with the
+/// web through docs/design/composer/cases.json); this view feeds it the live state and runs its
+/// effects. Frog-drawn from the tokens: no glass, no system menus.
 struct ComposerView: View {
     @Environment(\.paneWidth) var paneWidth
     let workspace: Workspace
@@ -13,7 +14,7 @@ struct ComposerView: View {
     /// Opens the changes card (the git line's +a −d).
     var openDiff: () -> Void = {}
     @State var text = ""
-    @State var height: CGFloat = 22
+    @State var height: CGFloat = 16
     @State var controller = ComposerController()
     @State var mention: String?
     @State var picked = 0
@@ -33,8 +34,17 @@ struct ComposerView: View {
     @State var slug: String?
     @State var ahead = 0
     @State var cloudRepos: [String] = []
+    /// The current place's branches, for the where menu's Branch level.
+    @State var branches: [String] = []
+    /// The one composer menu that's open.
+    @State var menu: ComposerMenuID?
+    /// The composer's own width: under 420 the controls go narrow.
+    @State var width: CGFloat = ComposerMetrics.maxWidth
+    /// The field has the keyboard: the card's stroke goes to muted.
+    @State var focused = false
     @State var gitIndex = GitIndex.shared
     @Environment(\.switchFolder) var switchFolder
+    @Environment(\.openSettings) var openSettings
 
     /// What `ComposerModel.State` keeps that nothing else here does.
     struct TrayLocal {
@@ -94,7 +104,8 @@ struct ComposerView: View {
         let path = workspace.folder.path
         let inTree = path.contains("/worktrees/")
         return .session(.init(
-            repo: slug, branch: git.branch, worktree: inTree, worktreePath: inTree ? path : nil,
+            // A local-only repo still has git state to show: its folder stands in for the slug.
+            repo: slug ?? workspace.repoRoot?.lastPathComponent ?? workspace.folder.lastPathComponent, branch: git.branch, worktree: inTree, worktreePath: inTree ? path : nil,
             diff: .init(add: git.added, del: git.removed, files: git.changed), dirty: git.changed > 0,
             ahead: ahead, prs: gitIndex.prs(boundPrs)
         ))
@@ -117,7 +128,8 @@ struct ComposerView: View {
         s.yoloConfirmed = local.yoloConfirmed
         s.signedIn = CloudSessions.shared.available
         s.busy = waitingForModel ? .loading_model : conversation.busy ? .working : .idle
-        s.queued = conversation.queue.count
+        s.queued = conversation.queue.map { .init(text: $0.text, attachments: $0.images.map { _ in .init(name: "image", size: 0, type: "image/png") }) }
+        s.dictating = dictation.isActive
         s.error = local.error
         s.notice = local.notice
         s.confirm = local.confirm
@@ -167,22 +179,36 @@ struct ComposerView: View {
 
     // MARK: View
 
+    var narrow: Bool { width < ComposerMetrics.narrow }
+
     var body: some View {
         let s = tray
+        let d = ComposerModel.derive(s)
         return draftHooks(
             VStack(alignment: .leading, spacing: 8) {
-                if conversation.cloudSession == nil { NodeOffer() }
+                if conversation.cloudSession == nil {
+                    NodeOffer()
+                    SwitchNotice(conversation: conversation).font(.frog(size: 12))
+                }
                 ComposerNotices(workspace: workspace, conversation: conversation, downloads: downloads)
-                TraySurface(showTop: !workspace.isChat || isNew && workspace.cloudTarget != nil, error: s.error, notice: s.notice,
-                            localModel: nil, send: dispatch) {
-                    topLine(s)
+                ComposerCard(
+                    showStatus: d.status != .none,
+                    showAbove: !s.queued.isEmpty || !attachments.isEmpty,
+                    focused: focused
+                ) {
+                    ComposerStatusLine(state: s, send: dispatch, dismissNotice: { local.notice = nil }, openDiff: openDiff)
+                } above: {
+                    pending(s)
                 } field: {
                     field
-                } rail: {
-                    rail(s)
+                } controls: {
+                    controls(s)
                 }
                 .contentShape(.rect)
                 .onTapGesture { controller.focus() }
+                // After the card's content shape, so a menu above the card still takes clicks.
+                .composerMenuHost()
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
             }
             .padding(.horizontal, TurnSpace.gutter)
             .padding(.top, TurnSpace.top)
@@ -198,12 +224,6 @@ struct ComposerView: View {
             .ignoresSafeArea()
             .allowsHitTesting(false)
         }
-        .confirmationDialog(confirmTitle, isPresented: Binding(get: { local.confirm != nil }, set: { if !$0 { dispatch(.cancelConfirm) } })) {
-            Button(confirmButton, role: local.confirm == .archive ? .destructive : nil) { dispatch(.confirm) }
-            Button("Cancel", role: .cancel) { dispatch(.cancelConfirm) }
-        } message: {
-            Text(confirmMessage)
-        }
         .task(id: workspace.folder) { await readRepo() }
         .onChange(of: workspace.git) { Task { await readRepo() } }
         .task(id: conversation.prs) {
@@ -217,70 +237,163 @@ struct ComposerView: View {
         }
     }
 
-    @ViewBuilder
-    func topLine(_ s: ComposerModel.State) -> some View {
-        switch s.where {
-        case .session(let session):
-            TrayGitLine(
-                state: s, session: session, send: dispatch,
-                openDiff: openDiff,
-                reveal: reveal,
-                copy: { NSPasteboard.general.clearContents(); NSPasteboard.general.setString($0, forType: .string) }
-            )
-        case .folder, .cloud:
-            TrayWhereLine(
-                state: s, send: dispatch,
-                recent: Recents.all.map(\.path).filter { $0 != workspace.folder.path },
-                cloudRepos: cloudRepos,
-                choose: { switchFolder?(nil) }
-            )
-        case .chat:
-            EmptyView()
+    /// Queued follow-ups, then the images to send, above the field.
+    func pending(_ s: ComposerModel.State) -> some View {
+        let images = attachments.map { img in
+            ComposerModel.Attachment(name: img.mime.hasSuffix("png") ? "Image.png" : "Image", size: img.data.utf8.count * 3 / 4, type: img.mime)
+        }
+        return ComposerPending(queued: s.queued, attachments: images) { intent in
+            if case .removeAttachment(let i) = intent {
+                if attachments.indices.contains(i) { attachments.remove(at: i) }
+            } else {
+                dispatch(intent)
+            }
+        }
+        .help(conversation.status?.vision == false ? "\(conversation.status?.model ?? "This model") can't see images; pick a vision model to include them." : "")
+    }
+
+    /// Attach and where (before a session) at the left; mode, model and the action at the right.
+    func controls(_ s: ComposerModel.State) -> some View {
+        HStack(spacing: 2) {
+            ComposerChip(open: menu == .attach, help: "Attach a file, mention a file or run a command", action: { toggle(.attach) }) {
+                ComposerIcon("plus")
+            }
+            .accessibilityLabel("Attach")
+            .composerMenu(menu == .attach, close: closeMenu) { attachMenu }
+            .popover(isPresented: $racing, arrowEdge: .top) {
+                RaceSetup(workspace: workspace, prompt: text) { models, check in
+                    racing = false
+                    dictation.cancel()
+                    workspace.startRace(prompt: text, models: models, check: check)
+                    text = ""
+                }
+            }
+            if isNew {
+                ComposerChip(open: menu == .place, marked: ["where", "worktree"].contains(s.error?.control ?? ""),
+                             help: "Where this session works", action: { toggle(.place) }) {
+                    WhereChipLabel(place: s.where, narrow: narrow)
+                }
+                .layoutPriority(-1)
+                .composerMenu(menu == .place, close: closeMenu) {
+                    WhereMenu(
+                        state: s, lists: whereLists, send: dispatch,
+                        chooseFolder: { switchFolder?(nil) },
+                        signIn: { run(.init("open_login"), s) },
+                        close: closeMenu
+                    )
+                }
+            }
+            Spacer(minLength: 4)
+            if let status = conversation.status, !narrow {
+                ContextButton(conversation: conversation, status: status)
+            }
+            ComposerChip(open: menu == .mode, help: "When Frog asks (⌘.)", action: { toggle(.mode) }) {
+                ModeChipLabel(mode: s.mode)
+            }
+            .fixedSize()
+            .composerMenu(menu == .mode, trailing: true, close: closeMenu) {
+                ModeMenu(mode: s.mode, send: dispatch, close: closeMenu)
+            }
+            ModelPicker(workspace: workspace, conversation: conversation, open: menu == .model, narrow: narrow,
+                        loading: s.busy == .loading_model, toggle: { toggle(.model) }, close: closeMenu)
+            ComposerAction(state: s, send: dispatch).padding(.leading, 4)
         }
     }
 
+    var whereLists: WhereLists {
+        WhereLists(
+            recents: Recents.all.map(\.path),
+            cloudRepos: cloudRepos,
+            signedIn: CloudSessions.shared.available,
+            branches: branches
+        )
+    }
+
+    var attachMenu: some View {
+        AttachMenu(
+            chat: workspace.isChat,
+            attachFile: { attachFromPanel(images: false) },
+            pasteScreenshot: {
+                controller.focus()
+                NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: nil)
+            },
+            mention: {
+                controller.focus()
+                controller.insert("@")
+            },
+            command: {
+                controller.focus()
+                if text.isEmpty { controller.replaceAll("!") } else { controller.insert("!") }
+            },
+            skill: workspace.skills.isEmpty || !text.isEmpty ? nil : {
+                controller.focus()
+                controller.replaceAll("/")
+            },
+            race: workspace.isChat || !Self.hasWords(text) || conversation.busy ? nil : { racing = true },
+            close: closeMenu
+        )
+    }
+
+    /// Open a menu, or close it if it's the open one. A click outside that just closed this
+    /// one doesn't reopen it.
+    func toggle(_ m: ComposerMenuID) {
+        if menu == m { return closeMenu() }
+        guard !ComposerMenus.justClosed else { return }
+        menu = m
+        if m == .place { Task { await loadBranches() } }
+    }
+
+    /// Close the open menu; the field takes the keyboard back.
+    func closeMenu() {
+        guard menu != nil else { return }
+        menu = nil
+        controller.focus()
+    }
+
     var field: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if !attachments.isEmpty {
-                AttachmentStrip(images: $attachments, blind: conversation.status?.vision == false ? conversation.status?.model : nil)
-            }
-            ZStack(alignment: .topLeading) {
-                if text.isEmpty {
-                    Group {
-                        if let ghost { Text(ghost) + Text("  ⇥").foregroundStyle(.quaternary) } else { Text(placeholder) }
-                    }
-                    .foregroundStyle(ghost == nil ? .tertiary : .secondary)
-                    .lineLimit(1)
-                    .padding(.leading, 5)
-                    .padding(.top, 1)
-                    .allowsHitTesting(false)
+        ZStack(alignment: .topLeading) {
+            if text.isEmpty {
+                Group {
+                    if let ghost { Text(ghost) + Text("  ⇥").foregroundStyle(.quaternary) } else { Text(placeholder) }
                 }
-                ComposerTextView(
-                    text: $text, height: $height, controller: controller,
-                    onPush: noteDraft, onSubmit: { dispatch(.send) },
-                    onEscape: {
-                        if dictation.isActive { dictation.stop(); return true }
-                        let s = tray
-                        guard s.busy != .idle || s.error != nil || s.stackOpen || s.confirm != nil else { return false }
-                        dispatch(.esc)
-                        return true
-                    },
-                    onMention: { query in
-                        if query != nil { workspace.loadFiles() }
-                        if query != mention { picked = 0 }
-                        mention = query
-                        suggestions = query.map { FileIndex.search(workspace.files, $0) } ?? []
-                    },
-                    onMentionKey: handleMentionKey,
-                    onTab: {
-                        guard text.isEmpty, let ghost else { return false }
-                        text = ghost
-                        return true
-                    },
-                    onPasteImages: { attachments += $0 }
-                )
-                .frame(height: height)
+                .font(.system(size: 13))
+                .foregroundStyle(ghost == nil ? Tokens.textTertiary : Tokens.textSecondary)
+                .lineLimit(1)
+                .allowsHitTesting(false)
             }
+            ComposerTextView(
+                text: $text, height: $height, controller: controller,
+                onPush: noteDraft, onSubmit: { dispatch(.send) },
+                onEscape: {
+                    if menu != nil { closeMenu(); return true }
+                    if dictation.isActive { dictation.stop(); return true }
+                    let s = tray
+                    if s.busy == .idle, s.error == nil, s.confirm == nil, !s.stackOpen, local.notice != nil {
+                        local.notice = nil
+                        return true
+                    }
+                    guard s.busy != .idle || s.error != nil || s.stackOpen || s.confirm != nil else { return false }
+                    dispatch(.esc)
+                    return true
+                },
+                onMention: { query in
+                    if query != nil { workspace.loadFiles() }
+                    if query != mention { picked = 0 }
+                    mention = query
+                    suggestions = query.map { FileIndex.search(workspace.files, $0) } ?? []
+                },
+                onMentionKey: handleMentionKey,
+                onTab: {
+                    guard text.isEmpty, let ghost else { return false }
+                    text = ghost
+                    return true
+                },
+                onPasteImages: { attachments += $0 },
+                minHeight: 16,
+                maxHeight: 160,
+                onFocus: { focused = $0 }
+            )
+            .frame(height: height)
         }
         .onChange(of: window?.focusComposerRequest) { controller.focus() }
         .onChange(of: window?.dictationRequest) { toggleDictation() }
@@ -310,7 +423,7 @@ struct ComposerView: View {
                 }
             }
             .fixedSize()
-            .alignmentGuide(.top) { $0[.bottom] + 52 }
+            .alignmentGuide(.top) { $0[.bottom] + 22 }
             .transition(.opacity.combined(with: .move(edge: .bottom)))
         }
         .onChange(of: conversation.dropped) { _, urls in
@@ -337,22 +450,6 @@ struct ComposerView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in warm(again: true) }
     }
 
-    func rail(_ s: ComposerModel.State) -> some View {
-        HStack(spacing: 8) {
-            plusMenu
-            TrayModeMenu(mode: s.mode, send: dispatch)
-            ModelPicker(workspace: workspace, conversation: conversation)
-            if let status = conversation.status, paneWidth > .narrow {
-                ContextButton(conversation: conversation, status: status)
-            }
-            if conversation.cloudSession == nil { SwitchNotice(conversation: conversation) }
-            Spacer(minLength: 0)
-            TrayActionButton(state: s, send: dispatch, listening: dictation.isActive)
-        }
-        .font(.frog(size: 12))
-        .foregroundStyle(.secondary)
-    }
-
     func warm(again: Bool = false) {
         guard !conversation.busy else { return }
         let first = text.first { !$0.isWhitespace }
@@ -370,58 +467,8 @@ struct ComposerView: View {
         return next.text
     }
 
-    var placeholder: String {
-        if let model = workspace.pendingDownloadModel {
-            return "Downloading \(model.name)… messages send when it’s ready"
-        }
-        if conversation.busy { return "Working… Esc interrupts · Return queues a follow-up" }
-        if workspace.isChat { return "Reply to Frog" }
-        return "Reply to Frog, @ a file, ! a command"
-    }
-
-    var plusMenu: some View {
-        Menu {
-            Button("Add Files…", systemImage: "doc") { attachFromPanel(images: false) }
-            Button("Add Image…", systemImage: "photo") { attachFromPanel(images: true) }
-            Button("Paste Screenshot", systemImage: "camera.viewfinder") { controller.focus(); NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: nil) }
-            if !workspace.isChat {
-                Button("Mention a File", systemImage: "at") {
-                    controller.focus()
-                    controller.insert("@")
-                }
-            }
-            if !workspace.skills.isEmpty {
-                Button("Use a Skill", systemImage: "wand.and.stars") {
-                    controller.focus()
-                    controller.replaceAll("/")
-                }
-                .disabled(!text.isEmpty)
-            }
-            if !workspace.isChat {
-                Divider()
-                Button("Race Attempts…", systemImage: "square.stack.3d.up") { racing = true }
-                    .disabled(!Self.hasWords(text) || conversation.busy)
-            }
-        } label: {
-            Image(systemName: "plus")
-                .font(.frog(size: 15, weight: .medium))
-                .frame(width: 22, height: 22)
-                .hoverPlate(h: 3, v: 3)
-        }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("Add files or images, mention a file, use a skill, or race attempts")
-        .popover(isPresented: $racing, arrowEdge: .top) {
-            RaceSetup(workspace: workspace, prompt: text) { models, check in
-                racing = false
-                dictation.cancel()
-                workspace.startRace(prompt: text, models: models, check: check)
-                text = ""
-            }
-        }
-    }
+    /// The three placeholders: a new session, a reply, a follow-up while Frog works.
+    var placeholder: String { TrayWords.placeholder(tray) }
 
     /// Images attach; other files become `@` mentions, relative to the project when inside it.
     func accept(_ urls: [URL]) {

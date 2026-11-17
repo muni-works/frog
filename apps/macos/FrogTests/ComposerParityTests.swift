@@ -15,7 +15,8 @@ final class ComposerParityTests: XCTestCase {
     private struct Cases: Decodable { let base: JSON }
 
     private var docs: URL {
-        URL(fileURLWithPath: #filePath)
+        if let d = ProcessInfo.processInfo.environment["FROG_COMPOSER_DOCS"] { return URL(fileURLWithPath: d) }
+        return URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("docs/design")
     }
