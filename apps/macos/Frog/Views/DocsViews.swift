@@ -62,14 +62,17 @@ struct DocsSidebar: View {
     let open: (String) -> Void
     let back: () -> Void
     var collapse: (() -> Void)?
+    /// Its own title row (the frog, collapse); in the window it's the title bar's.
+    var titleRow = true
     @State private var query: String
     @FocusState private var searching: Bool
 
-    init(docs: AppDocs?, selected: String?, maxHeight: CGFloat, query: String = "",
+    init(docs: AppDocs?, selected: String?, maxHeight: CGFloat, query: String = "", titleRow: Bool = true,
          open: @escaping (String) -> Void, back: @escaping () -> Void, collapse: (() -> Void)? = nil) {
         self.docs = docs
         self.selected = selected
         self.maxHeight = maxHeight
+        self.titleRow = titleRow
         self.open = open
         self.back = back
         self.collapse = collapse
@@ -121,21 +124,23 @@ struct DocsSidebar: View {
 
     private var header: some View {
         VStack(spacing: 2) {
-            HStack(spacing: 6) {
-                FrogFace(mood: .waiting, size: 20)
-                Text("Frog").font(.frog(size: 13.5, weight: .semibold))
-                Spacer(minLength: 4)
-                if let collapse {
-                    Button(action: collapse) {
-                        Image(systemName: "sidebar.left").frame(width: 24, height: 24)
+            if titleRow {
+                HStack(spacing: 6) {
+                    FrogFace(mood: .waiting, size: 20)
+                    Text("Frog").font(.frog(size: 13.5, weight: .semibold))
+                    Spacer(minLength: 4)
+                    if let collapse {
+                        Button(action: collapse) {
+                            Image(systemName: "sidebar.left").frame(width: 24, height: 24)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Tokens.textSecondary)
+                        .help("Collapse sidebar (⌃⌘S)")
                     }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Tokens.textSecondary)
-                    .help("Collapse sidebar (⌃⌘S)")
                 }
+                .padding(.horizontal, 8)
+                .padding(.bottom, 6)
             }
-            .padding(.horizontal, 8)
-            .padding(.bottom, 6)
             Button(action: back) {
                 ShellRow(symbol: "arrow.left", title: "Back to app", key: "esc")
             }
@@ -160,34 +165,11 @@ struct DocsSidebar: View {
             .frame(height: 30)
         }
         .padding(.horizontal, 6)
-        .padding(.top, 10)
+        .padding(.top, titleRow ? 10 : 4)
         .padding(.bottom, 8)
     }
 }
 
-/// The docs sidebar folded: Back to app and a way to unfold, in the session rail's width.
-struct DocsRail: View {
-    let back: () -> Void
-    let expand: () -> Void
-
-    var body: some View {
-        VStack(spacing: 8) {
-            icon("sidebar.left", help: "Expand sidebar (⌃⌘S)", action: expand)
-            icon("arrow.left", help: "Back to app (Esc)", action: back)
-        }
-        .padding(.vertical, 10)
-        .frame(width: SessionRail.width)
-    }
-
-    private func icon(_ name: String, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: name).frame(width: 30, height: 26).contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(Tokens.textSecondary)
-        .help(help)
-    }
-}
 
 /// One page in the main area: on the transcript's column, a muted section label, the title,
 /// the page as the transcript renders markdown, then previous and next.

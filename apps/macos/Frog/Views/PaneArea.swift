@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// The right side of the canvas as one card: tabs for Changes, the terminal and the preview,
-/// with the selected one below. Drag its leading edge to resize. Frog draws everything inside
+/// The inspector, the right side of a pane as one flush column: tabs for Changes, the terminal
+/// and the preview, with the selected one below. Drag its leading edge (its hairline) to resize. Frog draws everything inside
 /// it from `Tokens`, the same spec as the web's inspector (docs/design/frog-web/README.md).
 struct PaneArea: View {
     let conversation: Conversation
@@ -22,9 +22,10 @@ struct PaneArea: View {
     static let minWidth: CGFloat = 360
     static let maxWidth: CGFloat = 560
     static let defaultWidth: CGFloat = 420
-    /// The grip's hit area: this far out over the gap beside the card, and this far in.
-    static let gripReach: CGFloat = 8
-    static let gripInside: CGFloat = 8
+    /// The grip's hit area straddles the column's hairline: this far out over the page, and
+    /// this far in.
+    static let gripReach: CGFloat = 4
+    static let gripInside: CGFloat = 4
     static let widthKey = "inspectorWidth"
     /// The width last dragged to, else the default.
     static var savedWidth: CGFloat {
@@ -185,10 +186,11 @@ struct PaneArea: View {
         }
     }
 
-    /// The resize grip on the card's leading edge: a bar shows on hover (the web's grip), and it
-    /// takes presses a little outside the card too. It was an invisible 8 pt strip inside the
-    /// edge, so a press just off it landed on the canvas, which drags the window; and its pushed
-    /// resize cursor could outlive the hover (the card moving away from under the pointer).
+    /// The resize grip on the column's leading edge, straddling its hairline: a bar shows on
+    /// hover (the web's grip), and it takes presses a little out over the page too. It was an
+    /// invisible strip inside the edge, so a press just off it landed on the canvas, which drags
+    /// the window; and its pushed resize cursor could outlive the hover (the column moving away
+    /// from under the pointer).
     private var handle: some View {
         Color.clear
             .frame(width: Self.gripReach + Self.gripInside)

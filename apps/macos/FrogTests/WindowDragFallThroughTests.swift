@@ -73,7 +73,8 @@ final class WindowDragFallThroughTests: XCTestCase {
         pump(0.3)
     }
 
-    /// Drags the grip `offset` points right of the card's leading edge; returns (before, after).
+    /// Drags the grip `offset` points right of the inspector's leading edge (its hairline);
+    /// returns (before, after).
     private func dragGrip(at offset: CGFloat) -> (CGFloat, CGFloat) {
         let (panes, w) = rig()
         defer { panes.stopAll(); w.close() }
@@ -82,21 +83,22 @@ final class WindowDragFallThroughTests: XCTestCase {
         defer { UserDefaults.standard.set(saved, forKey: PaneArea.widthKey) }
         let pane = panes.items[0]
         let before = pane.cardWidth
-        let edge = w.contentView!.bounds.width - WorkspaceView.margin - before
+        // The inspector is a flush column: its trailing edge is the window's.
+        let edge = w.contentView!.bounds.width - before
         drag(w, from: CGPoint(x: edge + offset, y: 300))
         return (before, pane.cardWidth)
     }
 
-    func testGripTakesDragOnCardEdge() {
-        let (before, after) = dragGrip(at: 4)
-        XCTAssertGreaterThan(after, before, "dragging the grip left should widen the card")
+    func testGripTakesDragOnHairline() {
+        let (before, after) = dragGrip(at: 2)
+        XCTAssertGreaterThan(after, before, "dragging the grip left should widen the inspector")
     }
 
-    /// A press just outside the card's edge is the grip's, not the canvas's (which drags the
-    /// window).
-    func testGripTakesDragJustOutsideCard() {
-        let (before, after) = dragGrip(at: -5)
-        XCTAssertGreaterThan(after, before, "a press 5 pt outside the card's edge should still resize it")
+    /// A press just outside the hairline, over the page, is the grip's, not the canvas's (which
+    /// drags the window).
+    func testGripTakesDragJustOutsideHairline() {
+        let (before, after) = dragGrip(at: -3)
+        XCTAssertGreaterThan(after, before, "a press just outside the hairline, over the page, should still resize the inspector")
     }
 
     /// The divider between split panes takes its drag.
@@ -105,8 +107,8 @@ final class WindowDragFallThroughTests: XCTestCase {
         defer { panes.stopAll(); w.close() }
         XCTAssertEqual(panes.items.count, 2)
         let before = panes.layout
-        // Two equal panes right of the docked session list.
-        let ext = WorkspaceView.margin + WorkspaceView.sessionsWidth + WorkspaceView.gap
+        // Two equal panes right of the docked session list's hairline.
+        let ext = WorkspaceView.sessionsWidth
         drag(w, from: CGPoint(x: ext + (w.contentView!.bounds.width - ext) / 2, y: 450))
         XCTAssertNotEqual(panes.layout, before, "dragging the divider should resize the panes")
     }

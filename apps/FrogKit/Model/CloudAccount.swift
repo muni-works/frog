@@ -72,6 +72,25 @@ final class CloudAccount {
     private var keyLoaded = false
     var signedIn: Bool { key != nil }
 
+    #if DEBUG
+    private var unstaged: (me: Me?, key: String?, loaded: Bool)?
+
+    /// Snapshots: show this account (nil: signed out) instead of whoever's signed in on this Mac,
+    /// so no checked-in image carries a real name, picture or credit.
+    func stage(_ me: Me?) {
+        if unstaged == nil { unstaged = (self.me, key, keyLoaded) }
+        self.me = me
+        key = me == nil ? nil : "staged"
+        keyLoaded = true
+    }
+
+    func unstage() {
+        guard let u = unstaged else { return }
+        (me, key, keyLoaded) = (u.me, u.key, u.loaded)
+        unstaged = nil
+    }
+    #endif
+
     func ensureKey() async { if !keyLoaded { await reloadKey() } }
 
     /// Read the key again (at launch, and after signing in or out).

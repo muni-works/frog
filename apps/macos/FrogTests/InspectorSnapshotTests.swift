@@ -57,12 +57,13 @@ final class InspectorSnapshotTests: XCTestCase {
         try XCTUnwrap(rep.representation(using: .png, properties: [:])).write(to: outDir.appending(path: "\(name).png"))
     }
 
-    /// The card as the window draws it: the inspector on the canvas, in a rounded card.
+    /// The inspector as the window draws it: a flush column with its hairline, beside a strip
+    /// of the page.
     private func card(_ c: Conversation, git: ((String) -> Void)? = { _ in }) -> some View {
-        PaneArea(conversation: c, height: 560, width: .constant(PaneArea.defaultWidth), collapse: {},
+        PaneArea(conversation: c, height: 584, width: .constant(PaneArea.defaultWidth), collapse: {},
                  folder: URL(fileURLWithPath: "/tmp/demo"), git: git)
-            .background(Tokens.sidebar, in: .rect(cornerRadius: 18))
-            .padding(12)
+            .flushColumn(leading: true, underTitleBar: false)
+            .padding(.leading, 24)
             .background(Tokens.canvas)
     }
 

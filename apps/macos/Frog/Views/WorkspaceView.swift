@@ -1,11 +1,13 @@
 import SwiftUI
 
-/// The conversation is the canvas: it fills the window, and everything else floats over it as
-/// Liquid Glass. The window holds one to three panes side by side, each a conversation with its
-/// own composer and its own instruments (changes and the timeline rail) at its right edge. The
-/// session list (left) floats over the first pane and folds into a rail of status tiles. Each
-/// pane's column is centered in the space its cards leave, and the toolbar's activity capsule
-/// sits over the focused pane's column.
+/// The conversation is the canvas, between two flush columns (docs/design/flush): the session
+/// list at the window's left edge and, per pane, the inspector at the pane's right edge, each the
+/// window's full height (up under the title bar) with a hairline on its inner edge. The window
+/// holds one to three panes side by side, each a conversation with its own composer, inspector
+/// and timeline rail. The session list folds into a rail of status tiles. Each pane's column is
+/// centered in the space the columns leave. Collapsed, the session list is gone: its toggle
+/// waits beside the traffic lights (with a dot when something needs you), and the list peeks
+/// over the page from the left edge on hover.
 struct WorkspaceView: View {
     let panes: Panes
     /// What the user asked for, per window. Whether the list actually docks also depends on the
@@ -18,12 +20,12 @@ struct WorkspaceView: View {
     /// A divider being dragged: layout changes follow the pointer, unanimated.
     @State private var resizing = false
     @State private var docked = Docked()
-    /// Too narrow for even the session rail: sessions live behind a toolbar button.
-    @State private var compact = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// The session list floated over the conversation because the window is too narrow to dock it.
     @State private var peekSessions = false
-    @Namespace private var glass
+    /// The peek came from the pointer at the window's left edge: it goes when the pointer
+    /// moves out over the page.
+    @State private var peekByHover = false
     /// This view's window, so the sidebar can bring an already-open conversation forward.
     @State private var window: NSWindow?
     @State private var renamingTitle = false
@@ -60,22 +62,29 @@ struct WorkspaceView: View {
 
     static let sessionsWidth: CGFloat = 250
     static let button: CGFloat = 36
-    /// Estimated width of the collapsed changes pill ("+42 −7").
-    static let changesPill: CGFloat = 96
-    static let margin: CGFloat = 12
-    /// Clearance between a card and the conversation.
-    static let gap: CGFloat = 16
+    /// Room between the timeline rail and the inspector's hairline (or the pane's edge), and
+    /// above the rail and a split pane's header.
+    static let inset = Tokens.Space.row
+    /// Where the traffic lights end, from the window's leading edge: the sidebar's header in
+    /// the title row fills from there to its hairline, so the title starts past it.
+    static let trafficLights: CGFloat = 84
+    /// The strip at the window's left edge that peeks the collapsed sidebar on hover.
+    static let peekEdge: CGFloat = 6
     /// Narrowest a column may get; a card that would squeeze it further stays folded.
     static let minColumn: CGFloat = 520
     /// Split panes accept narrower columns: that's the point of splitting.
     static let minSplitColumn: CGFloat = 460
-    /// Below this the session rail folds away too.
-    static let compactWidth: CGFloat = 760
     /// Hysteresis: a card that's docked stays docked until the column would lose this much more,
     /// so dragging a window edge near a threshold doesn't flicker the layout.
     static let slack: CGFloat = 40
     /// Room a split pane's instruments leave for its header.
     static let headerClearance: CGFloat = PaneView.headerHeight + 8
+
+    init(panes: Panes, sessionsOpen: Bool = true) {
+        self.panes = panes
+        // The scene's stored choice wins; this is the default (and a test's, with no scene).
+        _showSessions = SceneStorage(wrappedValue: sessionsOpen, "showSessions")
+    }
 
     private var focused: Pane { panes.focused }
 
@@ -93,24 +102,27 @@ struct WorkspaceView: View {
     private var workspace: Workspace { focused.workspace }
     private var minColumn: CGFloat { panes.isSplit ? Self.minSplitColumn : Self.minColumn }
 
-    // Layout. Panes fill the window right of the session list in rows and columns
-    // (`PaneLayout`); panes against the left edge extend under the list, so their transcripts
-    // scroll beneath its glass. Within a pane the column is centered between its cards. A card
-    // docks only if every column still gets `minColumn`; otherwise it folds to its rail or pill,
-    // and that floats it over the conversation instead ("peek"). The session list comes first:
-    // changes dock in what's left.
+    // Layout. Panes fill the window right of the session list's hairline in rows and columns
+    // (`PaneLayout`). Within a pane the column is centered between the inspector (with the rail
+    // beside it) and the pane's leading edge; the transcript and composer bring their own gutter.
+    // A column docks only if every conversation column still gets `minColumn`; otherwise it
+    // folds away, and opening it floats it over the conversation instead ("peek"). The session
+    // list comes first: inspectors dock in what's left.
 
+    /// The session list's width, its hairline included: where the panes start. Collapsed, it's
+    /// gone.
     private func extent(sessions open: Bool) -> CGFloat {
-        if !open && compact { return Self.gap }
-        return Self.margin + (open ? Self.sessionsWidth : SessionRail.width) + Self.gap
+        open ? Self.sessionsWidth : 0
     }
 
+    /// What a pane's right edge keeps from its conversation: the inspector when docked, and the
+    /// timeline rail beside it.
     private func extent(changes open: Bool, _ pane: Pane, paneWidth: CGFloat = .infinity) -> CGFloat {
-        guard pane.hasTabs || pane.hasRail else { return Self.gap }
+        let card = open && pane.hasTabs ? pane.cardWidth : 0
+        guard pane.hasRail else { return card }
         // A narrow split pane's rail is its slim strip (see `PaneWidth`): it reserves only that.
         let rail = panes.isSplit && PaneWidth(paneWidth) == .narrow ? TimelineRail.slimWidth : TimelineRail.width
-        let width = open ? pane.cardWidth : (pane.hasTabs ? Self.changesPill : rail)
-        return Self.margin + width + Self.gap
+        return card + Self.inset + rail
     }
 
     /// The area panes share: the window right of the session list.
@@ -132,17 +144,11 @@ struct WorkspaceView: View {
     /// A maximized pane takes the whole canvas region; the others are empty (their contents
     /// step aside, cut to nothing), and the layout comes back exactly on restore.
     private func placement(_ pane: Pane, sessions open: Bool, changes: Bool) -> (frame: CGRect, insets: EdgeInsets) {
-        let ext = extent(sessions: open)
-        var r = panes.layout.frames(in: region(sessions: open), maximizing: panes.maximized)[pane.id] ?? .zero
+        let r = panes.layout.frames(in: region(sessions: open), maximizing: panes.maximized)[pane.id] ?? .zero
         if r == .zero { return (r, EdgeInsets()) }
-        let leftmost = r.minX <= ext + 0.5
-        if leftmost {
-            r.size.width += r.minX
-            r.origin.x = 0
-        }
         // Split panes have a header to keep clear of.
-        let top = panes.isSplit ? Self.headerClearance + Self.margin : 0
-        return (r, EdgeInsets(top: top, leading: leftmost ? ext : Self.gap, bottom: 0, trailing: extent(changes: changes, pane, paneWidth: r.width)))
+        let top = panes.isSplit ? Self.headerClearance + Self.inset : 0
+        return (r, EdgeInsets(top: top, leading: 0, bottom: 0, trailing: extent(changes: changes, pane, paneWidth: r.width)))
     }
 
     private func placement(_ pane: Pane) -> (frame: CGRect, insets: EdgeInsets) {
@@ -166,7 +172,6 @@ struct WorkspaceView: View {
     }
 
     private func relayout() {
-        compact = canvasSize.width < Self.compactWidth + (compact ? Self.slack : 0)
         let sessions = showSessions && panes.items.allSatisfy {
             fits(column($0, sessions: true, changes: false), keeping: docked.sessions)
         }
@@ -240,21 +245,15 @@ struct WorkspaceView: View {
     // MARK: Dragging
 
     /// Where a drag at this (global) point would land: a pane and a zone of it. Nothing over
-    /// the session list or rail, or for a pane over itself. A pane under the list only splits
-    /// in the part that's its own.
+    /// the session list or rail, or for a pane over itself.
     private func dropTarget(_ payload: PaneDragger.Payload?, at global: CGPoint) -> (pane: Pane, drop: PaneDrop, frame: CGRect)? {
         guard let payload else { return nil }
         let p = CGPoint(x: global.x - canvasOrigin.x, y: global.y - canvasOrigin.y)
-        let ext = extent(sessions: docked.sessions) - Self.gap
-        guard p.x >= ext else { return nil }
+        guard p.x >= extent(sessions: docked.sessions) else { return nil }
         for pane in panes.items {
-            var f = placement(pane).frame
+            let f = placement(pane).frame
             guard f.contains(p) else { continue }
             if case .pane(let id) = payload, id == pane.id { return nil }
-            if f.minX == 0 {
-                f.size.width -= ext
-                f.origin.x = ext
-            }
             return (pane, PaneDrop(at: p, in: f), f)
         }
         return nil
@@ -382,6 +381,13 @@ struct WorkspaceView: View {
         openInFocused(s)
     }
 
+    /// A new chat in the focused pane, the composer taking the keyboard (⌘N).
+    private func newSession() {
+        panes.backToApp()
+        panes.switchFolder(nil, in: focused)
+        focused.ui.focusComposer()
+    }
+
     private func split(_ s: SessionInfo? = nil, _ edge: PaneEdge = .right) {
         Haptics.settle()
         panes.split(s, on: edge, window: window)
@@ -397,14 +403,18 @@ struct WorkspaceView: View {
                     panes: panes,
                     number: panes.isSplit ? i + 1 : nil,
                     insets: place.insets,
+                    underTitleBar: place.frame.minY < 0.5,
+                    trailingEdge: place.frame.maxX >= canvasSize.width - 0.5,
                     changesDocked: docked.changes.contains(pane.id),
                     toggleChanges: { toggleChanges(pane) },
                     window: window
                 )
                 // Exactly its frame: content that wants more is cut at the pane's own edge, never
                 // centered out over its neighbors (the rail and text of one pane over the next).
+                // Open at the top for a pane under the title bar: its inspector's column runs up
+                // under it.
                 .frame(width: max(0, place.frame.width), height: max(0, place.frame.height), alignment: .topLeading)
-                .clipped()
+                .clipShape(TitleBarClip(open: place.frame.minY < 0.5))
                 .offset(x: place.frame.minX, y: place.frame.minY)
                 // Under the documentation, still mounted: its turn keeps running and its
                 // scroll, draft and inspector are there when you come back.
@@ -416,11 +426,7 @@ struct WorkspaceView: View {
             docsLayer
 
             GeometryReader { geo in
-                let room = max(120, geo.size.height - Self.margin * 2)
-                GlassEffectContainer(spacing: 20) {
-                    sessions(room: room)
-                }
-                .padding(Self.margin)
+                sessions(room: max(120, geo.size.height))
             }
             .environment(\.openSession) { openInFocused($0) }
             .environment(\.openSessionInSplit) { split($0) }
@@ -428,6 +434,19 @@ struct WorkspaceView: View {
             .environment(\.startConversation) { panes.start($1, in: $0, pane: focused) }
             .environment(\.paneNumbers, numbers)
             .environment(\.showDocs) { showDocs() }
+
+            // Collapsed: the pointer at the left edge brings the list out over the page.
+            if !sessionsVisible {
+                Color.clear
+                    .frame(width: Self.peekEdge)
+                    .frame(maxHeight: .infinity)
+                    .contentShape(.rect)
+                    .onHover { inside in
+                        guard inside else { return }
+                        peekByHover = true
+                        peekSessions = true
+                    }
+            }
 
             ForEach(inDocs ? [] : panes.layout.dividers(in: region(sessions: docked.sessions), maximizing: panes.maximized)) { d in
                 PaneDividerHandle(divider: d, resizing: $resizing) { t in
@@ -459,6 +478,13 @@ struct WorkspaceView: View {
         // sized from this, so it mustn't be sized from them.
         .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .topLeading)
         .coordinateSpace(.named(Self.canvasSpace))
+        // A hover peek goes when the pointer moves out over the page.
+        .onContinuousHover(coordinateSpace: .named(Self.canvasSpace)) { phase in
+            guard peekByHover, peekSessions, case .active(let p) = phase,
+                  p.x > Self.sessionsWidth + Tokens.Space.row * 3 else { return }
+            peekSessions = false
+        }
+        .onChange(of: peekSessions) { if !peekSessions { peekByHover = false } }
         .onGeometryChange(for: CGSize.self, of: \.size) { canvasSize = $0 }
         .onGeometryChange(for: CGPoint.self, of: { $0.frame(in: .global).origin }) { canvasOrigin = $0 }
         .environment(\.paneDragger, dragger)
@@ -511,11 +537,7 @@ struct WorkspaceView: View {
             toggleSessions: toggleSessions, toggleChanges: { toggleChanges(focused) },
             showTerminal: showTerminal, showPreview: showPreview, toggleInspect: toggleInspect,
             sessionsShown: sessionsVisible, changesShown: changesVisible(focused),
-            newChat: {
-                panes.backToApp()
-                panes.switchFolder(nil, in: focused)
-                focused.ui.focusComposer()
-            },
+            newChat: newSession,
             split: panes.canSplit ? { split(nil, $0 == .vertical ? .bottom : .right) } : nil,
             closePane: panes.isSplit ? { panes.close(focused) } : nil,
             focusPane: panes.isSplit ? { panes.focus(step: $0) } : nil,
@@ -581,16 +603,37 @@ struct WorkspaceView: View {
             Button("Cancel", role: .cancel) {}
         }
         .toolbar {
-            // As on the web: a plain title (no glass pill) at the left, the controls at the right.
+            // Beside the traffic lights: the sidebar's header over the sidebar (docked or
+            // peeking), else its toggle and New session. Then, as on the web, a plain title (no
+            // glass pill) over the conversation, and the controls at the right, short of a docked
+            // inspector.
+            if sessionsVisible {
+                ToolbarItem(placement: .navigation) {
+                    SidebarTitleRow(docs: inDocs, peeking: peekSessions, toggle: toggleSessions)
+                        .frame(width: Self.sessionsWidth - Self.trafficLights)
+                }
+                .sharedBackgroundVisibility(.hidden)
+            } else {
+                ToolbarItem(placement: .navigation) {
+                    SidebarToggle(toggle: toggleSessions, open: openInFocused)
+                }
+                .sharedBackgroundVisibility(.hidden)
+                if !inDocs {
+                    ToolbarItem(placement: .navigation) {
+                        Button(action: newSession) {
+                            Image(systemName: "square.and.pencil").frame(width: 28, height: 24).contentShape(.rect)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Tokens.textSecondary)
+                        .help("New session (⌘N)")
+                        .accessibilityLabel("New session")
+                    }
+                    .sharedBackgroundVisibility(.hidden)
+                }
+            }
             ToolbarItem(placement: .navigation) { titleBar }
                 .sharedBackgroundVisibility(.hidden)
             ToolbarSpacer(.flexible)
-            if compact && !sessionsVisible {
-                ToolbarItem(placement: .navigation) {
-                    Button("Show Conversations", systemImage: "sidebar.left", action: toggleSessions)
-                        .help("Show conversations (⌃⌘S)")
-                }
-            }
             ToolbarItem(placement: .primaryAction) {
                 Button("Split", systemImage: "rectangle.split.2x1") { split() }
                     .contextMenu {
@@ -610,53 +653,77 @@ struct WorkspaceView: View {
                     .help("Inspector: changes, terminal, preview (⌥⌘0)")
                     .disabled(focused.conversation == nil || inDocs)
             }
+            if controlsInset > 0 {
+                ToolbarItem(placement: .primaryAction) { Color.clear.frame(width: controlsInset, height: 1) }
+                    .sharedBackgroundVisibility(.hidden)
+            }
         }
     }
 
-    // MARK: Glass
+    /// Room the controls leave at the right, so they sit left of a docked inspector at the
+    /// window's top-right.
+    private var controlsInset: CGFloat {
+        guard !inDocs else { return 0 }
+        let corner = panes.items.first { pane in
+            let f = placement(pane).frame
+            return f.minY < 0.5 && f.maxX >= canvasSize.width - 0.5
+        }
+        guard let corner, docked.changes.contains(corner.id), corner.hasTabs else { return 0 }
+        return corner.cardWidth
+    }
 
-    /// The session list, or the rail it folds to.
+    // MARK: Columns
+
+    /// The session list: a flush column at the window's left edge, docked or peeking over the
+    /// page. Collapsed, nothing (its toggle is in the title row). Its header is the title row's.
     @ViewBuilder
     private func sessions(room: CGFloat) -> some View {
-        if inDocs {
-            if sessionsVisible {
-                DocsSidebar(docs: docs, selected: docsPage?.slug, maxHeight: room,
-                            open: { showDocs($0) }, back: backToApp, collapse: toggleSessions)
-                    .frame(width: Self.sessionsWidth)
-                    .background(Tokens.sidebar, in: .rect(cornerRadius: 12))
-                    .glassEffectID("sessions", in: glass)
-                    .shadow(color: .black.opacity(peekSessions ? 0.35 : 0), radius: 24, y: 10)
-            } else if !compact {
-                DocsRail(back: backToApp, expand: toggleSessions)
-                    .background(Tokens.sidebar, in: .rect(cornerRadius: 12))
-                    .glassEffectID("sessions", in: glass)
+        if sessionsVisible {
+            Group {
+                if inDocs {
+                    DocsSidebar(docs: docs, selected: docsPage?.slug, maxHeight: room, titleRow: false,
+                                open: { showDocs($0) }, back: backToApp, collapse: toggleSessions)
+                } else {
+                    // One look: an opaque column one step off the canvas (#0a0a0a), not glass. It
+                    // also draws in -FrogSnapshot, which glass doesn't.
+                    SessionList(workspace: workspace, maxHeight: room, titleRow: false) { toggleSessions() }
+                }
             }
-        } else if sessionsVisible {
-            SessionList(workspace: workspace, maxHeight: room) { toggleSessions() }
-                .frame(width: Self.sessionsWidth)
-                // One look: an opaque panel one step off the canvas (#0a0a0a, 12 pt radius), not
-                // glass. It also draws in -FrogSnapshot, which glass doesn't.
-                .background(Tokens.sidebar, in: .rect(cornerRadius: 12))
-                .glassEffectID("sessions", in: glass)
-                .shadow(color: .black.opacity(peekSessions ? 0.35 : 0), radius: 24, y: 10)
-        } else if !compact {
-            // Folded, it's a rail of status tiles that morphs back out.
-            SessionRail(workspace: workspace, maxHeight: room, expand: toggleSessions)
-                .background(Tokens.sidebar, in: .rect(cornerRadius: 12))
-                .glassEffectID("sessions", in: glass)
+            .frame(width: Self.sessionsWidth)
+            .flushColumn(trailing: true, floating: peekSessions)
+            .transition(.move(edge: .leading))
         }
     }
-}
-
-extension EnvironmentValues {
-    /// Horizontal space the floating cards take from the canvas, for content positioned outside
-    /// scroll views (which get it as content margins).
 }
 
 extension View {
-    /// A floating Liquid Glass card.
-    func floatingPanel(radius: CGFloat = 18) -> some View {
-        glassEffect(.regular, in: .rect(cornerRadius: radius))
+    /// A flush column (docs/design/flush): the sidebar's fill, square, from the top of the space
+    /// it's given to the bottom, running up under the title bar when `underTitleBar`, with a
+    /// `Tokens.line` hairline on the edges it shares with the page. Floating (a peek, or an
+    /// inspector the window is too narrow to dock) it keeps its shadow.
+    func flushColumn(leading: Bool = false, trailing: Bool = false, floating: Bool = false,
+                     underTitleBar: Bool = true) -> some View {
+        let up: Edge.Set = underTitleBar ? .top : []
+        return frame(maxHeight: .infinity, alignment: .top)
+            .background { Tokens.sidebar.ignoresSafeArea(edges: up) }
+            .overlay(alignment: .leading) {
+                if leading { Tokens.line.frame(width: 1).ignoresSafeArea(edges: up).allowsHitTesting(false) }
+            }
+            .overlay(alignment: .trailing) {
+                if trailing { Tokens.line.frame(width: 1).ignoresSafeArea(edges: up).allowsHitTesting(false) }
+            }
+            .shadow(color: .black.opacity(floating ? 0.35 : 0), radius: 24, y: 10)
+    }
+}
+
+/// A pane's clip: its frame, open at the top for a pane under the title bar so its inspector's
+/// column can run up under it.
+struct TitleBarClip: Shape {
+    let open: Bool
+
+    func path(in r: CGRect) -> Path {
+        let up: CGFloat = open ? 400 : 0
+        return Path(CGRect(x: r.minX, y: r.minY - up, width: r.width, height: r.height + up))
     }
 }
 
