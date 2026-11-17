@@ -86,6 +86,8 @@ struct ModelMenu: View {
     var conversationID: String? = nil
     let pick: (String) -> Void
     let close: () -> Void
+    /// Fixed inputs in place of the engine's list, the disk and the pool, for snapshot tests.
+    var preset: Preset? = nil
     @State private var hovered: String?
     @State private var selected = 0
     @State private var store = ProviderStore.shared
@@ -144,23 +146,42 @@ struct ModelMenu: View {
         return q.isEmpty || name.localizedCaseInsensitiveContains(q)
     }
 
+    struct Preset {
+        /// The engine's list, as identities (this Mac's and Frog Cloud's).
+        var listed: [ModelIdentity]
+        /// The model this Mac would get, unless it's here already.
+        var suggestion: ModelIdentity?
+        /// Dollars per million output tokens, by spec, in place of the learned prices.
+        var prices: [String: Double] = [:]
+    }
+
+    private var listed: [ModelIdentity] { preset?.listed ?? workspace.models.map(ModelIdentity.init) }
+
     private var localRows: [Row] {
-        let listed = workspace.models.map(ModelIdentity.init)
-        let mine = current.map(workspace.identity).flatMap { m in m.place == .apple && !AppleIntelligence.available ? nil : m }
-        let suggested = SuggestedModel.forThisMac
-        let suggestion = ModelDownloads.isInstalled(suggested.repo) ? nil : ModelIdentity(suggested)
+        let listed = listed
+        let mine: ModelIdentity?
+        let suggestion: ModelIdentity?
+        if let preset {
+            mine = current.flatMap { c in listed.first { $0.spec == c } }
+            suggestion = preset.suggestion
+        } else {
+            mine = current.map(workspace.identity).flatMap { m in m.place == .apple && !AppleIntelligence.available ? nil : m }
+            let suggested = SuggestedModel.forThisMac
+            suggestion = ModelDownloads.isInstalled(suggested.repo) ? nil : ModelIdentity(suggested)
+        }
         return Self.thisMacModels(listed: listed, current: mine, suggestion: suggestion).filter { matches($0.name) }.map(Row.local)
     }
 
     /// Your other machines' models. One only this Mac holds is already in "This Mac".
     private var machineRows: [Row] {
-        devices.machineModels().filter { m in matches(m.name) && m.holds.contains { $0.name != "This Mac" } }.map(Row.machine)
+        guard preset == nil else { return [] }
+        return devices.machineModels().filter { m in matches(m.name) && m.holds.contains { $0.name != "This Mac" } }.map(Row.machine)
     }
 
     private var cloudRows: [Row] {
         guard showCloud else { return [] }
-        var list = workspace.models.map { workspace.allowing(ModelIdentity($0)) }.filter(\.place.isFrogCloud)
-        if let current, current.hasPrefix("cloud/"), !list.contains(where: { $0.spec == current }) {
+        var list = listed.map(workspace.allowing).filter(\.place.isFrogCloud)
+        if preset == nil, let current, current.hasPrefix("cloud/"), !list.contains(where: { $0.spec == current }) {
             list.insert(workspace.identity(current), at: 0)
         }
         return list.filter { matches($0.name) && ($0.spec == current || !Self.sideJobHelper($0.spec)) }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }.map(Row.cloud)
@@ -199,6 +220,13 @@ struct ModelMenu: View {
                 settingsTab = "billing"
                 close()
                 openSettings()
+            // Signed out: sign in (GitHub, in the browser), then the chat moves to it.
+            case .needsKey(ProviderID.cloudName):
+                let pick = pick
+                close()
+                Task {
+                    do { try await CloudAccount.signInAndSave(); pick(m.spec) } catch {}
+                }
             default: pick(m.spec)
             }
         }
@@ -313,8 +341,15 @@ struct ModelMenu: View {
             let tag = devices.waitingSwap[m.spec] != nil ? "swaps after this turn" : devices.asked[m.spec] != nil ? "loading" : m.tag
             return .init(name: m.name, detail: m.places, tag: tag, cloud: false, spinning: devices.asked[m.spec] != nil, node: m.spec.hasPrefix("node/"))
         case .cloud(let m):
-            return .init(name: m.name, detail: ModelMenu.outputPrice(m.spec), tag: nil, cloud: true, spinning: false)
+            return .init(name: m.name, detail: preset?.prices[m.spec].flatMap(Self.priceLine) ?? ModelMenu.outputPrice(m.spec), tag: Self.cloudTag(m.state), cloud: true, spinning: false)
         }
+    }
+
+    /// What a cloud row asks for before it can run: "Sign in" when signed out of Frog Cloud.
+    static func cloudTag(_ state: ModelIdentity.State) -> String? {
+        if case .needsKey(ProviderID.cloudName) = state { return "Sign in" }
+        if case .needsKey = state { return "Add key" }
+        return nil
     }
 
     /// "$0.80/M out": a cloud model's price per million output tokens.
