@@ -203,6 +203,8 @@ export function Composer(p: ComposerProps) {
   useEffect(() => { if (ref.current) grow(ref.current) }, [text])
   useEffect(() => { if (p.autoFocus) ref.current?.focus() }, [p.autoFocus])
   useEffect(() => { if (p.pickRepo) setMenu('repo') }, [p.pickRepo])
+  // The menus share one filter: each opens with it empty.
+  useEffect(() => { setQ('') }, [menu])
   // A menu closes on any click outside it (its own chip toggles it), or Escape.
   const root = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -276,7 +278,8 @@ export function Composer(p: ComposerProps) {
   const send = () => {
     const t = text.trim()
     if (p.onSignIn) { setMenu('signin'); return }
-    if ((!t && !images.length) || p.busy) return
+    // Out of credit the turn can't run: the draft stays, and the status line says why.
+    if ((!t && !images.length) || p.busy || paused) return
     // "/compact [what to keep]" asks the engine to summarize rather than sending a message.
     const c = t.match(/^\/compact\b\s*(.*)$/s)
     // While a turn runs it stays typed; compacting mid-turn isn't possible.
@@ -327,8 +330,10 @@ export function Composer(p: ComposerProps) {
       for (let i = e.resultIndex; i < e.results.length; i++) if (e.results[i].isFinal) said += e.results[i][0].transcript
       setText(start && said ? `${start.replace(/\s*$/, ' ')}${said.trim()}` : said.trim() || start)
     }
-    r.onerror = (e) => { if (e.error === 'not-allowed' || e.error === 'service-not-allowed') dispatch({ type: 'mic_denied' }) }
-    r.onend = () => { recog.current = null; dispatch({ type: 'dictation_ended' }) }
+    // The browser calls these renders later: they go through the latest dispatch, so they reduce
+    // the state as it is then (a refused mic fires error, then end).
+    r.onerror = (e) => { if (e.error === 'not-allowed' || e.error === 'service-not-allowed') latest.current({ type: 'mic_denied' }) }
+    r.onend = () => { recog.current = null; latest.current({ type: 'dictation_ended' }) }
     recog.current = r
     try { r.start(); dispatch({ type: 'dictation_started' }) } catch { recog.current = null }
   }
@@ -363,11 +368,15 @@ export function Composer(p: ComposerProps) {
     if ((i.type === 'recall' || i.type === 'suggestion') && next.draft.text !== text) setText(next.draft.text)
     for (const e of effects) run(e, next)
   }
+  const latest = useRef(dispatch)
+  latest.current = dispatch
   const marked = (control: string) => (tray.error?.control === control ? ' cz-marked' : '')
   const toggle = (m: MenuName) => setMenu(menu === m ? null : m)
 
+  // The session summary's bound PR (a string, with no state yet) is git state to show too.
+  const status = d.status === 'none' && tray.where.kind === 'session' && tray.where.repo && p.pr && !d.prSummary ? 'git' : d.status
   const statusLine = (() => {
-    switch (d.status) {
+    switch (status) {
       case 'error': {
         const e = tray.error!
         // The button that fixes it most directly is last and has the plate (board 5).
@@ -669,7 +678,7 @@ export function Composer(p: ComposerProps) {
           ) : tray.busy === 'sending' ? (
             <span className="cz-act cz-act--sending" role="img" aria-label="Sending" />
           ) : (
-            <button type="button" className={`cz-act cz-act--${d.action}${marked('action')}`}
+            <button type="button" className={`cz-act cz-act--${d.action}${marked('action')}`} disabled={d.action === 'send' && paused}
               aria-label={d.action === 'dictate' ? 'Dictate' : d.action === 'listening' ? 'Stop dictation' : d.action === 'stop' ? 'Stop (Esc)' : d.action === 'queue' ? 'Queue a follow-up' : 'Send'}
               onClick={() => (d.action === 'send' || d.action === 'queue' ? send() : dispatch({ type: 'action' }))}>
               <span className="cz-glyph" key={d.action}>

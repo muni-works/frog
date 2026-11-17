@@ -165,3 +165,45 @@ test("⌘. with no permission card cycles the mode", () => {
   assert.equal(k.prevented(), true);
   act(() => r.unmount());
 });
+
+test("a bound PR shows the git line on a clean session", () => {
+  const s = html({ session: true, repo: "muni-works/frog", branch: "claude/x", pr: "#412" });
+  assert.equal(statusLines(s).length, 1, s);
+  assert.match(s, /#412/);
+});
+
+test("out of credit: the status line says so and Return keeps the draft", () => {
+  const sent: string[] = [];
+  let r!: TestRenderer.ReactTestRenderer;
+  act(() => { r = TestRenderer.create(h(Composer, { ...base, session: true, state: "paused", draft: "add a test", onSend: (t) => sent.push(t) })); });
+  const ta = r.root.findByType("textarea");
+  act(() => ta.props.onKeyDown({ key: "Enter", shiftKey: false, metaKey: false, nativeEvent: { isComposing: false }, preventDefault: noop }));
+  assert.deepEqual(sent, []);
+  assert.equal(r.root.findByType("textarea").props.value, "add a test");
+  assert.ok(r.root.findAll((n) => n.props.className === "cz-st-text" && n.children.includes("Out of credit")).length === 1);
+  act(() => r.unmount());
+});
+
+test("a refused mic keeps its message when dictation then ends", () => {
+  // The browser fires error, then end, on callbacks made renders earlier.
+  const made: { onerror: ((e: { error: string }) => void) | null; onend: (() => void) | null }[] = [];
+  class FakeRecognition { continuous = false; interimResults = false; onresult = null; onerror: ((e: { error: string }) => void) | null = null; onend: (() => void) | null = null; start() { made.push(this); } stop() {} }
+  const g2 = globalThis as { window?: unknown };
+  const had = "window" in g2;
+  g2.window = { webkitSpeechRecognition: FakeRecognition };
+  let r!: TestRenderer.ReactTestRenderer;
+  try {
+    act(() => { r = TestRenderer.create(h(Composer, { ...base, session: true })); });
+    act(() => r.root.find((n) => n.type === "button" && n.props["aria-label"] === "Dictate").props.onClick());
+    assert.equal(made.length, 1);
+    assert.ok(r.root.find((n) => n.type === "button" && n.props["aria-label"] === "Stop dictation"), "listening face");
+    act(() => made[0].onerror!({ error: "not-allowed" }));
+    act(() => made[0].onend!());
+    const text = JSON.stringify(r.toJSON());
+    assert.match(text, /Needs mic access to take dictation/);
+    assert.ok(r.root.find((n) => n.type === "button" && n.props["aria-label"] === "Dictate").props.className.includes("cz-marked"));
+  } finally {
+    act(() => r?.unmount());
+    if (!had) delete g2.window;
+  }
+});

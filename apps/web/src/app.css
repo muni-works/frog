@@ -722,7 +722,8 @@ button.tool:hover .tool-chev { opacity: 1; }
 
 /* The action: a 28 circle, 4 from the last chip; the glyph cross-fades in place. */
 .cz-act { position: relative; width: 28px; height: 28px; margin-left: 4px; box-sizing: border-box; border: 0; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: var(--hover); color: var(--fg); cursor: pointer; flex: none; transition: background-color .12s; }
-.cz-act:hover { background: color-mix(in srgb, var(--hover) 200%, transparent); }
+.cz-act:hover:not(:disabled) { background: color-mix(in srgb, var(--hover) 200%, transparent); }
+.cz-act:disabled { opacity: .5; cursor: default; }
 .cz-act--send, .cz-act--send:hover { background: var(--frog); color: var(--on-frog); }
 .cz-act--listening { box-shadow: 0 0 0 2px var(--frog); }
 .cz-act--sending { background: transparent; border: 2px solid var(--line-strong); border-top-color: var(--fg); animation: cz-spin .8s linear infinite; cursor: default; }
