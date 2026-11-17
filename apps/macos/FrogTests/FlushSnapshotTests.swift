@@ -23,6 +23,14 @@ final class FlushSnapshotTests: XCTestCase {
         return FileManager.default.temporaryDirectory.appending(path: "frog-snapshots/flush")
     }
 
+    /// CI (`TestRunner.isCI`): skipped, like the other display-driven tests. These order real
+    /// windows in, with toolbars, and assert nothing: they draw the checked-in images. After they
+    /// began running on CI's macOS 26 VM, a later transcript test there stopped drawing and timed
+    /// out. They run locally through `apps/macos/scripts/test.sh`.
+    override func setUpWithError() throws {
+        try XCTSkipIf(TestRunner.isCI, "display-driven snapshots for docs/design/flush; run locally")
+    }
+
     override func setUp() {
         super.setUp()
         executionTimeAllowance = 120
