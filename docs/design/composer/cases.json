@@ -998,6 +998,26 @@
    "effects": []
   },
   {
+   "name": "a refused mic ends dictation",
+   "row": "Action · Listening",
+   "given": {
+    "dictating": true
+   },
+   "intent": {
+    "type": "mic_denied"
+   },
+   "expect": {
+    "dictating": false,
+    "error": {
+     "code": "mic_denied"
+    },
+    "derived": {
+     "action": "dictate"
+    }
+   },
+   "effects": []
+  },
+  {
    "name": "the action while listening stops dictation",
    "row": "Action · Listening",
    "given": {

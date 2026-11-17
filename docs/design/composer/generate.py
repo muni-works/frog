@@ -57,6 +57,7 @@ c("dictation ended goes back to dictate","Action · Listening",{"dictating":True
 c("dictated text keeps the listening face","Action · Listening",{"dictating":True},{"type":"type","text":"make the tests"},{"dictating":True,"derived":{"action":"listening","sendDisabled":False}})
 c("dictation ended with text offers send","Action · Listening",{"dictating":True,"draft":{"text":"make the tests faster","attachments":[],"caret":21}},{"type":"dictation_ended"},{"dictating":False,"derived":{"action":"send"}})
 c("listening while working","Action · Listening",{"dictating":True,"busy":"working","where":sess()},{"type":"type","text":"and lint"},{"derived":{"action":"listening"}})
+c("a refused mic ends dictation","Action · Listening",{"dictating":True},{"type":"mic_denied"},{"dictating":False,"error":{"code":"mic_denied"},"derived":{"action":"dictate"}})
 c("the action while listening stops dictation","Action · Listening",{"dictating":True},{"type":"action"},{"dictating":True,"busy":"idle"},[{"type":"stop_dictation"}])
 c("esc stops a turn","Keyboard · Esc",{"busy":"working","where":sess()},{"type":"esc"},{"busy":"working"},[{"type":"interrupt"}])
 c("esc clears an error when nothing runs","Keyboard · Esc",{"error":{"code":"cloud_busy","message":"Frog Cloud is busy","actions":["retry"],"control":None,"detail":None,"retryIn":4}},{"type":"esc"},{"error":None})

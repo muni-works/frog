@@ -251,14 +251,14 @@ export function derive(s: State): Derived {
 
 /**
  * The status line's one line: an error, then a question, then a notice, then the session's git
- * state. Git shows only with a repo and something to report: changes, commits ahead, or a PR.
+ * state. Git shows only with a repo and something to report: uncommitted changes, commits ahead, or a PR.
  */
 function status(s: State): Status {
   if (s.error) return 'error'
   if (s.confirm) return 'confirm'
   if (s.notice) return 'notice'
   const w = s.where
-  if (w.kind === 'session' && w.repo && (w.dirty || w.ahead > 0 || w.prs.length > 0 || w.diff.add + w.diff.del > 0)) return 'git'
+  if (w.kind === 'session' && w.repo && (w.dirty || w.ahead > 0 || w.prs.length > 0)) return 'git'
   return 'none'
 }
 
@@ -371,7 +371,8 @@ export function reduce(s: State, i: Intent): Out {
       return s.pending === 'draft' ? send({ ...ready, pending: null }) : [ready, []]
     }
     case 'mic_denied':
-      return [{ ...s, error: error(s, 'mic_denied') }, []]
+      // A refused mic never started: dictation is over.
+      return [{ ...s, dictating: false, error: error(s, 'mic_denied') }, []]
     case 'dictation_started':
       return [{ ...s, dictating: true }, []]
     case 'dictation_ended':
