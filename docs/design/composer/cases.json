@@ -54,7 +54,7 @@
  "cases": [
   {
    "name": "empty composer offers dictation",
-   "row": "Rail \u00b7 Action, empty",
+   "row": "Rail · Action, empty",
    "given": {},
    "intent": {
     "type": "action"
@@ -73,7 +73,7 @@
   },
   {
    "name": "typing turns the action into send",
-   "row": "Rail \u00b7 Action, text",
+   "row": "Rail · Action, text",
    "given": {},
    "intent": {
     "type": "type",
@@ -93,7 +93,7 @@
   },
   {
    "name": "whitespace alone sends nothing",
-   "row": "Send \u00b7 1",
+   "row": "Send · 1",
    "given": {
     "draft": {
      "text": "   \n"
@@ -112,7 +112,7 @@
   },
   {
    "name": "send in a session submits and keeps the draft until ack",
-   "row": "Send \u00b7 2",
+   "row": "Send · 2",
    "given": {
     "draft": {
      "text": "add a test",
@@ -158,7 +158,7 @@
   },
   {
    "name": "send trims the text",
-   "row": "Send \u00b7 1",
+   "row": "Send · 1",
    "given": {
     "draft": {
      "text": "  fix it \n",
@@ -196,7 +196,7 @@
   },
   {
    "name": "acknowledgement clears the draft and attachments",
-   "row": "Send \u00b7 3",
+   "row": "Send · 3",
    "given": {
     "draft": {
      "text": "add a test",
@@ -246,7 +246,7 @@
   },
   {
    "name": "a second send while sending is ignored",
-   "row": "Send \u00b7 2",
+   "row": "Send · 2",
    "given": {
     "draft": {
      "text": "add a test",
@@ -281,7 +281,7 @@
   },
   {
    "name": "attachments alone can be sent",
-   "row": "Send \u00b7 1",
+   "row": "Send · 1",
    "given": {
     "draft": {
      "text": "",
@@ -330,7 +330,7 @@
   },
   {
    "name": "working with an empty draft shows stop",
-   "row": "Rail \u00b7 Action, working",
+   "row": "Rail · Action, working",
    "given": {
     "busy": "working",
     "where": {
@@ -365,7 +365,7 @@
   },
   {
    "name": "text typed while working turns return into queue",
-   "row": "Rail \u00b7 Action, working",
+   "row": "Rail · Action, working",
    "given": {
     "busy": "working",
     "where": {
@@ -397,7 +397,7 @@
   },
   {
    "name": "queue sends a follow-up and counts it",
-   "row": "Rail \u00b7 Action, working",
+   "row": "Rail · Action, working",
    "given": {
     "busy": "working",
     "draft": {
@@ -442,7 +442,7 @@
   },
   {
    "name": "an image queues with its text while working",
-   "row": "Rail \u00b7 Action, working",
+   "row": "Rail · Action, working",
    "given": {
     "busy": "working",
     "draft": {
@@ -500,7 +500,7 @@
   },
   {
    "name": "turn done clears the queued count",
-   "row": "Rail \u00b7 Action, working",
+   "row": "Rail · Action, working",
    "given": {
     "busy": "working",
     "queued": 2,
@@ -534,7 +534,7 @@
   },
   {
    "name": "esc stops a turn",
-   "row": "Keyboard \u00b7 Esc",
+   "row": "Keyboard · Esc",
    "given": {
     "busy": "working",
     "where": {
@@ -567,7 +567,7 @@
   },
   {
    "name": "esc clears an error when nothing runs",
-   "row": "Keyboard \u00b7 Esc",
+   "row": "Keyboard · Esc",
    "given": {
     "error": {
      "code": "cloud_busy",
@@ -590,7 +590,7 @@
   },
   {
    "name": "up in an empty composer recalls the last message",
-   "row": "Keyboard \u00b7 \u2191",
+   "row": "Keyboard · ↑",
    "given": {
     "lastSent": "run the tests"
    },
@@ -607,7 +607,7 @@
   },
   {
    "name": "up with text typed does nothing",
-   "row": "Keyboard \u00b7 \u2191",
+   "row": "Keyboard · ↑",
    "given": {
     "lastSent": "run the tests",
     "draft": {
@@ -628,7 +628,7 @@
   },
   {
    "name": "model loading: send waits",
-   "row": "Send \u00b7 Model loading",
+   "row": "Send · Model loading",
    "given": {
     "draft": {
      "text": "add a test",
@@ -666,7 +666,7 @@
   },
   {
    "name": "model ready sends what waited",
-   "row": "Send \u00b7 Model loading",
+   "row": "Send · Model loading",
    "given": {
     "draft": {
      "text": "add a test",
@@ -707,7 +707,7 @@
   },
   {
    "name": "stop cancels a model load and keeps the draft",
-   "row": "Send \u00b7 Model loading",
+   "row": "Send · Model loading",
    "given": {
     "draft": {
      "text": "add a test",
@@ -750,7 +750,7 @@
   },
   {
    "name": "engine stopped keeps the draft",
-   "row": "Send \u00b7 Engine not running",
+   "row": "Send · Engine not running",
    "given": {
     "draft": {
      "text": "add a test",
@@ -797,7 +797,7 @@
   },
   {
    "name": "restart engine clears the error, draft kept",
-   "row": "Send \u00b7 Engine not running",
+   "row": "Send · Engine not running",
    "given": {
     "draft": {
      "text": "add a test",
@@ -833,7 +833,7 @@
   },
   {
    "name": "signed out of Frog Cloud",
-   "row": "Send \u00b7 Gateway 401",
+   "row": "Send · Gateway 401",
    "given": {
     "draft": {
      "text": "add a test",
@@ -870,7 +870,7 @@
   },
   {
    "name": "sign in from the error opens login",
-   "row": "Send \u00b7 Gateway 401",
+   "row": "Send · Gateway 401",
    "given": {
     "draft": {
      "text": "add a test",
@@ -906,7 +906,7 @@
   },
   {
    "name": "out of credit offers the local model",
-   "row": "Send \u00b7 402",
+   "row": "Send · 402",
    "given": {
     "draft": {
      "text": "add a test",
@@ -940,7 +940,7 @@
   },
   {
    "name": "out of credit with no local model offers only credit",
-   "row": "Send \u00b7 402",
+   "row": "Send · 402",
    "given": {
     "draft": {
      "text": "add a test",
@@ -981,7 +981,7 @@
   },
   {
    "name": "use local switches the model and clears the error",
-   "row": "Send \u00b7 402",
+   "row": "Send · 402",
    "given": {
     "draft": {
      "text": "add a test",
@@ -1033,7 +1033,7 @@
   },
   {
    "name": "add credit opens billing",
-   "row": "Send \u00b7 402",
+   "row": "Send · 402",
    "given": {
     "error": {
      "code": "no_credit",
@@ -1061,7 +1061,7 @@
   },
   {
    "name": "cloud busy shows the backoff",
-   "row": "Send \u00b7 429 / 5xx",
+   "row": "Send · 429 / 5xx",
    "given": {
     "draft": {
      "text": "add a test",
@@ -1105,7 +1105,7 @@
   },
   {
    "name": "retry sends the kept draft again",
-   "row": "Send \u00b7 429 / 5xx",
+   "row": "Send · 429 / 5xx",
    "given": {
     "draft": {
      "text": "add a test",
@@ -1155,7 +1155,7 @@
   },
   {
    "name": "dismiss clears the error slot",
-   "row": "Error display \u00b7 \u00d7",
+   "row": "Error display · ×",
    "given": {
     "error": {
      "code": "pr_not_found",
@@ -1176,7 +1176,7 @@
   },
   {
    "name": "attaching an image adds it",
-   "row": "Rail \u00b7 \uff0b",
+   "row": "Rail · ＋",
    "given": {},
    "intent": {
     "type": "attach",
@@ -1202,7 +1202,7 @@
   },
   {
    "name": "too-large and wrong-type files are refused, the rest attach",
-   "row": "Rail \u00b7 \uff0b",
+   "row": "Rail · ＋",
    "given": {},
    "intent": {
     "type": "attach",
@@ -1242,7 +1242,7 @@
   },
   {
    "name": "removing an attachment",
-   "row": "Rail \u00b7 \uff0b",
+   "row": "Rail · ＋",
    "given": {
     "draft": {
      "text": "",
@@ -1278,7 +1278,7 @@
   },
   {
    "name": "mic denied outlines the action button",
-   "row": "Rail \u00b7 Action, empty",
+   "row": "Rail · Action, empty",
    "given": {},
    "intent": {
     "type": "mic_denied"
@@ -1297,7 +1297,7 @@
   },
   {
    "name": "open settings from the mic error",
-   "row": "Rail \u00b7 Action, empty",
+   "row": "Rail · Action, empty",
    "given": {
     "error": {
      "code": "mic_denied",
@@ -1325,7 +1325,7 @@
   },
   {
    "name": "mode defaults to auto",
-   "row": "Rail \u00b7 Mode",
+   "row": "Rail · Mode",
    "given": {},
    "intent": {
     "type": "type",
@@ -1338,7 +1338,7 @@
   },
   {
    "name": "picking a mode applies it",
-   "row": "Rail \u00b7 Mode",
+   "row": "Rail · Mode",
    "given": {},
    "intent": {
     "type": "set_mode",
@@ -1356,7 +1356,7 @@
   },
   {
    "name": "picking yolo asks once",
-   "row": "Rail \u00b7 Mode",
+   "row": "Rail · Mode",
    "given": {},
    "intent": {
     "type": "set_mode",
@@ -1370,7 +1370,7 @@
   },
   {
    "name": "confirming yolo applies it and remembers",
-   "row": "Rail \u00b7 Mode",
+   "row": "Rail · Mode",
    "given": {
     "confirm": "yolo"
    },
@@ -1391,7 +1391,7 @@
   },
   {
    "name": "yolo after confirming once doesn't ask again",
-   "row": "Rail \u00b7 Mode",
+   "row": "Rail · Mode",
    "given": {
     "yoloConfirmed": true,
     "mode": "default"
@@ -1413,7 +1413,7 @@
   },
   {
    "name": "cancelling the yolo confirmation keeps the mode",
-   "row": "Rail \u00b7 Mode",
+   "row": "Rail · Mode",
    "given": {
     "confirm": "yolo"
    },
@@ -1428,7 +1428,7 @@
   },
   {
    "name": "cmd-period cycles auto to ask",
-   "row": "Keyboard \u00b7 \u2318.",
+   "row": "Keyboard · ⌘.",
    "given": {},
    "intent": {
     "type": "cycle_mode"
@@ -1445,7 +1445,7 @@
   },
   {
    "name": "cmd-period from accept edits asks for yolo",
-   "row": "Keyboard \u00b7 \u2318.",
+   "row": "Keyboard · ⌘.",
    "given": {
     "mode": "accept_edits"
    },
@@ -1460,7 +1460,7 @@
   },
   {
    "name": "changing mode mid-turn applies to the next permission",
-   "row": "Rail \u00b7 Mode",
+   "row": "Rail · Mode",
    "given": {
     "busy": "working",
     "where": {
@@ -1496,7 +1496,7 @@
   },
   {
    "name": "picking a model sets it and remembers it for the folder",
-   "row": "Rail \u00b7 Model",
+   "row": "Rail · Model",
    "given": {},
    "intent": {
     "type": "pick_model",
@@ -1539,7 +1539,7 @@
   },
   {
    "name": "a cloud model while signed out opens login and keeps the draft",
-   "row": "Rail \u00b7 Model",
+   "row": "Rail · Model",
    "given": {
     "draft": {
      "text": "add a test",
@@ -1576,7 +1576,7 @@
   },
   {
    "name": "swapping a node's model mid-turn swaps after the turn",
-   "row": "Rail \u00b7 Model",
+   "row": "Rail · Model",
    "given": {
     "busy": "working",
     "where": {
@@ -1633,7 +1633,7 @@
   },
   {
    "name": "changing the folder keeps draft, attachments and mode",
-   "row": "New \u00b7 folder",
+   "row": "New · folder",
    "given": {
     "draft": {
      "text": "add a test",
@@ -1676,7 +1676,7 @@
   },
   {
    "name": "changing the folder takes its remembered model",
-   "row": "New \u00b7 folder",
+   "row": "New · folder",
    "given": {
     "memory": {
      "modelByPlace": {
@@ -1720,7 +1720,7 @@
   },
   {
    "name": "changing the folder takes its remembered worktree switch",
-   "row": "New \u00b7 folder",
+   "row": "New · folder",
    "given": {
     "memory": {
      "modelByPlace": {},
@@ -1746,7 +1746,7 @@
   },
   {
    "name": "a folder outside git has no worktree",
-   "row": "New \u00b7 New worktree",
+   "row": "New · New worktree",
    "given": {},
    "intent": {
     "type": "choose_folder",
@@ -1766,7 +1766,7 @@
   },
   {
    "name": "switching to cloud keeps the draft and says the model changed",
-   "row": "New \u00b7 cloud",
+   "row": "New · cloud",
    "given": {
     "draft": {
      "text": "add a test",
@@ -1810,7 +1810,7 @@
   },
   {
    "name": "switching from cloud back to a folder takes a local model",
-   "row": "New \u00b7 folder",
+   "row": "New · folder",
    "given": {
     "draft": {
      "text": "add a test",
@@ -1862,7 +1862,7 @@
   },
   {
    "name": "just chat keeps the draft and drops the top line's repo",
-   "row": "New \u00b7 folder",
+   "row": "New · folder",
    "given": {
     "draft": {
      "text": "add a test",
@@ -1885,7 +1885,7 @@
   },
   {
    "name": "a branch choice is kept when you switch away and back",
-   "row": "New \u00b7 branch",
+   "row": "New · branch",
    "given": {
     "memory": {
      "modelByPlace": {},
@@ -1911,7 +1911,7 @@
   },
   {
    "name": "picking a branch remembers it for the repo",
-   "row": "New \u00b7 branch",
+   "row": "New · branch",
    "given": {},
    "intent": {
     "type": "pick_branch",
@@ -1931,7 +1931,7 @@
   },
   {
    "name": "worktree off on a dirty tree notes the checkout",
-   "row": "New \u00b7 New worktree",
+   "row": "New · New worktree",
    "given": {
     "where": {
      "dirty": true
@@ -1955,7 +1955,7 @@
   },
   {
    "name": "worktree on clears the note",
-   "row": "New \u00b7 New worktree",
+   "row": "New · New worktree",
    "given": {
     "where": {
      "dirty": true,
@@ -1976,7 +1976,7 @@
   },
   {
    "name": "send on a new session creates it with the where",
-   "row": "New \u00b7 Send",
+   "row": "New · Send",
    "given": {
     "draft": {
      "text": "add a test",
@@ -2008,7 +2008,7 @@
   },
   {
    "name": "worktree creation fails: draft kept, offer the checkout",
-   "row": "New \u00b7 Send",
+   "row": "New · Send",
    "given": {
     "draft": {
      "text": "add a test",
@@ -2042,7 +2042,7 @@
   },
   {
    "name": "use checkout turns the worktree off and sends",
-   "row": "New \u00b7 Send",
+   "row": "New · Send",
    "given": {
     "draft": {
      "text": "add a test",
@@ -2083,7 +2083,7 @@
   },
   {
    "name": "clone fails: draft kept",
-   "row": "New \u00b7 Send",
+   "row": "New · Send",
    "given": {
     "draft": {
      "text": "add a test",
@@ -2117,7 +2117,7 @@
   },
   {
    "name": "a suggestion fills the draft without sending",
-   "row": "New \u00b7 suggestions",
+   "row": "New · suggestions",
    "given": {},
    "intent": {
     "type": "suggestion",
@@ -2133,7 +2133,7 @@
   },
   {
    "name": "suggestions don't replace typed text",
-   "row": "New \u00b7 suggestions",
+   "row": "New · suggestions",
    "given": {
     "draft": {
      "text": "add a test",
@@ -2154,7 +2154,7 @@
   },
   {
    "name": "no changes, nothing ahead: no action",
-   "row": "Top line \u00b7 Action",
+   "row": "Top line · Action",
    "given": {
     "where": {
      "kind": "session",
@@ -2186,7 +2186,7 @@
   },
   {
    "name": "dirty with no PR: commit",
-   "row": "Top line \u00b7 Commit",
+   "row": "Top line · Commit",
    "given": {
     "where": {
      "kind": "session",
@@ -2221,7 +2221,7 @@
   },
   {
    "name": "commit hook failure keeps the message and shows output",
-   "row": "Top line \u00b7 Commit",
+   "row": "Top line · Commit",
    "given": {
     "where": {
      "kind": "session",
@@ -2259,7 +2259,7 @@
   },
   {
    "name": "show output from the hook error",
-   "row": "Top line \u00b7 Commit",
+   "row": "Top line · Commit",
    "given": {
     "where": {
      "kind": "session",
@@ -2305,7 +2305,7 @@
   },
   {
    "name": "committed with no PR: open PR",
-   "row": "Top line \u00b7 Open PR",
+   "row": "Top line · Open PR",
    "given": {
     "where": {
      "kind": "session",
@@ -2339,7 +2339,7 @@
   },
   {
    "name": "open PR when the work is done is urged",
-   "row": "Top line \u00b7 Open PR",
+   "row": "Top line · Open PR",
    "given": {
     "where": {
      "kind": "session",
@@ -2374,8 +2374,40 @@
    "effects": []
   },
   {
+   "name": "no predicate facts: open PR stays plain",
+   "row": "Top line · Open PR",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 2,
+     "prs": []
+    }
+   },
+   "intent": {
+    "type": "type",
+    "text": ""
+   },
+   "expect": {
+    "derived": {
+     "gitAction": "open_pr",
+     "openPr": false
+    }
+   },
+   "effects": []
+  },
+  {
    "name": "off: open PR is not offered at all",
-   "row": "Top line \u00b7 Open PR",
+   "row": "Top line · Open PR",
    "given": {
     "where": {
      "kind": "session",
@@ -2412,7 +2444,7 @@
   },
   {
    "name": "ask offers it; auto is parsed and offers the same",
-   "row": "Top line \u00b7 Open PR",
+   "row": "Top line · Open PR",
    "given": {
     "where": {
      "kind": "session",
@@ -2449,7 +2481,7 @@
   },
   {
    "name": "a manager is not urged, but may still open one",
-   "row": "Top line \u00b7 Open PR",
+   "row": "Top line · Open PR",
    "given": {
     "where": {
      "kind": "session",
@@ -2487,7 +2519,7 @@
   },
   {
    "name": "read-only is not urged",
-   "row": "Top line \u00b7 Open PR",
+   "row": "Top line · Open PR",
    "given": {
     "where": {
      "kind": "session",
@@ -2524,7 +2556,7 @@
   },
   {
    "name": "opted out is not urged",
-   "row": "Top line \u00b7 Open PR",
+   "row": "Top line · Open PR",
    "given": {
     "where": {
      "kind": "session",
@@ -2561,7 +2593,7 @@
   },
   {
    "name": "no worktree is not urged",
-   "row": "Top line \u00b7 Open PR",
+   "row": "Top line · Open PR",
    "given": {
     "where": {
      "kind": "session",
@@ -2597,7 +2629,7 @@
   },
   {
    "name": "open PR without gh auth: connect GitHub",
-   "row": "Top line \u00b7 Open PR",
+   "row": "Top line · Open PR",
    "given": {
     "where": {
      "kind": "session",
@@ -2633,7 +2665,7 @@
   },
   {
    "name": "connect GitHub runs gh auth login",
-   "row": "Top line \u00b7 Open PR",
+   "row": "Top line · Open PR",
    "given": {
     "where": {
      "kind": "session",
@@ -2676,7 +2708,7 @@
   },
   {
    "name": "ahead of the PR: push",
-   "row": "Top line \u00b7 Push",
+   "row": "Top line · Push",
    "given": {
     "where": {
      "kind": "session",
@@ -2726,7 +2758,7 @@
   },
   {
    "name": "push rejected: branch moved on GitHub",
-   "row": "Top line \u00b7 Push",
+   "row": "Top line · Push",
    "given": {
     "where": {
      "kind": "session",
@@ -2773,7 +2805,7 @@
   },
   {
    "name": "pull and retry never force-pushes",
-   "row": "Top line \u00b7 Push",
+   "row": "Top line · Push",
    "given": {
     "where": {
      "kind": "session",
@@ -2827,7 +2859,7 @@
   },
   {
    "name": "checks failing: fix sends a turn and keeps the draft",
-   "row": "Top line \u00b7 Fix",
+   "row": "Top line · Fix",
    "given": {
     "draft": {
      "text": "add a test",
@@ -2884,7 +2916,7 @@
   },
   {
    "name": "acknowledging a fix leaves the draft alone",
-   "row": "Top line \u00b7 Fix",
+   "row": "Top line · Fix",
    "given": {
     "draft": {
      "text": "add a test",
@@ -2933,7 +2965,7 @@
   },
   {
    "name": "approved: merge asks first",
-   "row": "Top line \u00b7 Merge",
+   "row": "Top line · Merge",
    "given": {
     "where": {
      "kind": "session",
@@ -2975,7 +3007,7 @@
   },
   {
    "name": "confirming the merge merges that PR",
-   "row": "Top line \u00b7 Merge",
+   "row": "Top line · Merge",
    "given": {
     "confirm": "merge",
     "where": {
@@ -3021,7 +3053,7 @@
   },
   {
    "name": "merge conflicts: resolve is a turn",
-   "row": "Top line \u00b7 Merge",
+   "row": "Top line · Merge",
    "given": {
     "where": {
      "kind": "session",
@@ -3078,7 +3110,7 @@
   },
   {
    "name": "branch protection shows its reason",
-   "row": "Top line \u00b7 Merge",
+   "row": "Top line · Merge",
    "given": {
     "where": {
      "kind": "session",
@@ -3123,7 +3155,7 @@
   },
   {
    "name": "merged: archive",
-   "row": "Top line \u00b7 Archive",
+   "row": "Top line · Archive",
    "given": {
     "where": {
      "kind": "session",
@@ -3173,7 +3205,7 @@
   },
   {
    "name": "merged with a dirty worktree asks before deleting",
-   "row": "Top line \u00b7 Archive",
+   "row": "Top line · Archive",
    "given": {
     "where": {
      "kind": "session",
@@ -3215,7 +3247,7 @@
   },
   {
    "name": "closed: reopen",
-   "row": "Top line \u00b7 Reopen",
+   "row": "Top line · Reopen",
    "given": {
     "where": {
      "kind": "session",
@@ -3262,7 +3294,7 @@
   },
   {
    "name": "draft PR, up to date: no action",
-   "row": "Top line \u00b7 Action",
+   "row": "Top line · Action",
    "given": {
     "where": {
      "kind": "session",
@@ -3306,7 +3338,7 @@
   },
   {
    "name": "PR pill opens the PR",
-   "row": "Top line \u00b7 PR pill",
+   "row": "Top line · PR pill",
    "given": {
     "where": {
      "kind": "session",
@@ -3349,7 +3381,7 @@
   },
   {
    "name": "option-click copies the URL",
-   "row": "Top line \u00b7 PR pill",
+   "row": "Top line · PR pill",
    "given": {
     "where": {
      "kind": "session",
@@ -3393,7 +3425,7 @@
   },
   {
    "name": "stack pill names the worst state",
-   "row": "Top line \u00b7 Stack pill",
+   "row": "Top line · Stack pill",
    "given": {
     "where": {
      "kind": "session",
@@ -3460,7 +3492,7 @@
   },
   {
    "name": "all merged stack",
-   "row": "Top line \u00b7 Stack pill",
+   "row": "Top line · Stack pill",
    "given": {
     "where": {
      "kind": "session",
@@ -3515,7 +3547,7 @@
   },
   {
    "name": "the stack opens only with two or more",
-   "row": "Top line \u00b7 Stack pill",
+   "row": "Top line · Stack pill",
    "given": {
     "where": {
      "kind": "session",
@@ -3554,7 +3586,7 @@
   },
   {
    "name": "esc closes the stack",
-   "row": "Top line \u00b7 Stack pill",
+   "row": "Top line · Stack pill",
    "given": {
     "stackOpen": true,
     "where": {
@@ -3604,7 +3636,7 @@
   },
   {
    "name": "bind a PR by URL or number",
-   "row": "Top line \u00b7 Bind a PR\u2026",
+   "row": "Top line · Bind a PR…",
    "given": {
     "where": {
      "kind": "session",
@@ -3636,7 +3668,7 @@
   },
   {
    "name": "a PR that can't be found is inline",
-   "row": "Top line \u00b7 Bind a PR\u2026",
+   "row": "Top line · Bind a PR…",
    "given": {
     "where": {
      "kind": "session",
@@ -3668,7 +3700,7 @@
   },
   {
    "name": "bound PR state arrives from the feed",
-   "row": "Top line \u00b7 PR state source",
+   "row": "Top line · PR state source",
    "given": {
     "where": {
      "kind": "session",
@@ -3720,7 +3752,7 @@
   },
   {
    "name": "a PR you can't access stays bound",
-   "row": "Top line \u00b7 Stack pill",
+   "row": "Top line · Stack pill",
    "given": {
     "where": {
      "kind": "session",
@@ -3786,7 +3818,7 @@
   },
   {
    "name": "switching branch on a dirty tree does nothing",
-   "row": "Top line \u00b7 branch",
+   "row": "Top line · branch",
    "given": {
     "where": {
      "kind": "session",
@@ -3817,7 +3849,7 @@
   },
   {
    "name": "switching branch on a clean tree",
-   "row": "Top line \u00b7 branch",
+   "row": "Top line · branch",
    "given": {
     "where": {
      "kind": "session",
