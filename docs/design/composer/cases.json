@@ -40,7 +40,8 @@
   },
   "busy": "idle",
   "pending": null,
-  "queued": 0,
+  "queued": [],
+  "dictating": false,
   "error": null,
   "notice": null,
   "confirm": null,
@@ -426,7 +427,12 @@
    },
    "expect": {
     "busy": "working",
-    "queued": 1,
+    "queued": [
+     {
+      "text": "also lint",
+      "attachments": []
+     }
+    ],
     "draft": {
      "text": ""
     },
@@ -477,7 +483,18 @@
    },
    "expect": {
     "busy": "working",
-    "queued": 1,
+    "queued": [
+     {
+      "text": "look at this",
+      "attachments": [
+       {
+        "name": "image",
+        "size": 160000,
+        "type": "image/png"
+       }
+      ]
+     }
+    ],
     "draft": {
      "text": "",
      "attachments": []
@@ -503,7 +520,22 @@
    "row": "Rail · Action, working",
    "given": {
     "busy": "working",
-    "queued": 2,
+    "queued": [
+     {
+      "text": "then update the changelog",
+      "attachments": []
+     },
+     {
+      "text": "look at this",
+      "attachments": [
+       {
+        "name": "shot.png",
+        "size": 2000,
+        "type": "image/png"
+       }
+      ]
+     }
+    ],
     "where": {
      "kind": "session",
      "repo": "muni-works/frog",
@@ -525,12 +557,464 @@
    },
    "expect": {
     "busy": "idle",
-    "queued": 0,
+    "queued": [],
     "derived": {
      "action": "dictate"
     }
    },
    "effects": []
+  },
+  {
+   "name": "a second follow-up queues after the first",
+   "row": "Queued · list",
+   "given": {
+    "busy": "working",
+    "queued": [
+     {
+      "text": "then update the changelog",
+      "attachments": []
+     }
+    ],
+    "draft": {
+     "text": "bump the version",
+     "attachments": [],
+     "caret": 16
+    },
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": []
+    }
+   },
+   "intent": {
+    "type": "send"
+   },
+   "expect": {
+    "queued": [
+     {
+      "text": "then update the changelog",
+      "attachments": []
+     },
+     {
+      "text": "bump the version",
+      "attachments": []
+     }
+    ],
+    "draft": {
+     "text": ""
+    }
+   },
+   "effects": [
+    {
+     "type": "queued",
+     "text": "bump the version",
+     "attachments": []
+    }
+   ]
+  },
+  {
+   "name": "a queued follow-up can be removed",
+   "row": "Queued · remove",
+   "given": {
+    "busy": "working",
+    "queued": [
+     {
+      "text": "then update the changelog",
+      "attachments": []
+     },
+     {
+      "text": "look at this",
+      "attachments": [
+       {
+        "name": "shot.png",
+        "size": 2000,
+        "type": "image/png"
+       }
+      ]
+     }
+    ],
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": []
+    }
+   },
+   "intent": {
+    "type": "remove_queued",
+    "index": 0
+   },
+   "expect": {
+    "busy": "working",
+    "queued": [
+     {
+      "text": "look at this",
+      "attachments": [
+       {
+        "name": "shot.png",
+        "size": 2000,
+        "type": "image/png"
+       }
+      ]
+     }
+    ]
+   },
+   "effects": [
+    {
+     "type": "remove_queued",
+     "index": 0
+    }
+   ]
+  },
+  {
+   "name": "removing the last queued follow-up empties the list",
+   "row": "Queued · remove",
+   "given": {
+    "busy": "working",
+    "queued": [
+     {
+      "text": "then update the changelog",
+      "attachments": []
+     }
+    ],
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": []
+    }
+   },
+   "intent": {
+    "type": "remove_queued",
+    "index": 0
+   },
+   "expect": {
+    "queued": []
+   },
+   "effects": [
+    {
+     "type": "remove_queued",
+     "index": 0
+    }
+   ]
+  },
+  {
+   "name": "removing a follow-up that isn't there does nothing",
+   "row": "Queued · remove",
+   "given": {
+    "busy": "working",
+    "queued": [
+     {
+      "text": "then update the changelog",
+      "attachments": []
+     }
+    ],
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": []
+    }
+   },
+   "intent": {
+    "type": "remove_queued",
+    "index": 3
+   },
+   "expect": {
+    "queued": [
+     {
+      "text": "then update the changelog",
+      "attachments": []
+     }
+    ]
+   },
+   "effects": []
+  },
+  {
+   "name": "removing a follow-up keeps the draft",
+   "row": "Queued · remove",
+   "given": {
+    "busy": "working",
+    "queued": [
+     {
+      "text": "then update the changelog",
+      "attachments": []
+     },
+     {
+      "text": "look at this",
+      "attachments": [
+       {
+        "name": "shot.png",
+        "size": 2000,
+        "type": "image/png"
+       }
+      ]
+     }
+    ],
+    "draft": {
+     "text": "and the docs",
+     "attachments": [],
+     "caret": 12
+    },
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": []
+    }
+   },
+   "intent": {
+    "type": "remove_queued",
+    "index": 1
+   },
+   "expect": {
+    "queued": [
+     {
+      "text": "then update the changelog",
+      "attachments": []
+     }
+    ],
+    "draft": {
+     "text": "and the docs"
+    }
+   },
+   "effects": [
+    {
+     "type": "remove_queued",
+     "index": 1
+    }
+   ]
+  },
+  {
+   "name": "fix while working queues its turn and keeps the draft",
+   "row": "Queued · list",
+   "given": {
+    "draft": {
+     "text": "add a test",
+     "attachments": [],
+     "caret": 10
+    },
+    "busy": "working",
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": [
+      {
+       "repo": "muni-works/frog",
+       "number": 297,
+       "title": "PR 297",
+       "state": "failing",
+       "checks": {
+        "ok": 2,
+        "total": 3
+       }
+      }
+     ]
+    }
+   },
+   "intent": {
+    "type": "git_action"
+   },
+   "expect": {
+    "busy": "working",
+    "queued": [
+     {
+      "text": "Fix the failing checks on #297",
+      "attachments": []
+     }
+    ],
+    "draft": {
+     "text": "add a test"
+    }
+   },
+   "effects": [
+    {
+     "type": "queued",
+     "text": "Fix the failing checks on #297",
+     "attachments": []
+    }
+   ]
+  },
+  {
+   "name": "dictation started shows listening",
+   "row": "Action · Listening",
+   "given": {},
+   "intent": {
+    "type": "dictation_started"
+   },
+   "expect": {
+    "dictating": true,
+    "derived": {
+     "action": "listening"
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "dictation ended goes back to dictate",
+   "row": "Action · Listening",
+   "given": {
+    "dictating": true
+   },
+   "intent": {
+    "type": "dictation_ended"
+   },
+   "expect": {
+    "dictating": false,
+    "derived": {
+     "action": "dictate"
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "dictated text keeps the listening face",
+   "row": "Action · Listening",
+   "given": {
+    "dictating": true
+   },
+   "intent": {
+    "type": "type",
+    "text": "make the tests"
+   },
+   "expect": {
+    "dictating": true,
+    "derived": {
+     "action": "listening",
+     "sendDisabled": false
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "dictation ended with text offers send",
+   "row": "Action · Listening",
+   "given": {
+    "dictating": true,
+    "draft": {
+     "text": "make the tests faster",
+     "attachments": [],
+     "caret": 21
+    }
+   },
+   "intent": {
+    "type": "dictation_ended"
+   },
+   "expect": {
+    "dictating": false,
+    "derived": {
+     "action": "send"
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "listening while working",
+   "row": "Action · Listening",
+   "given": {
+    "dictating": true,
+    "busy": "working",
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": []
+    }
+   },
+   "intent": {
+    "type": "type",
+    "text": "and lint"
+   },
+   "expect": {
+    "derived": {
+     "action": "listening"
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "the action while listening stops dictation",
+   "row": "Action · Listening",
+   "given": {
+    "dictating": true
+   },
+   "intent": {
+    "type": "action"
+   },
+   "expect": {
+    "dictating": true,
+    "busy": "idle"
+   },
+   "effects": [
+    {
+     "type": "stop_dictation"
+    }
+   ]
   },
   {
    "name": "esc stops a turn",
@@ -1286,7 +1770,7 @@
    "expect": {
     "error": {
      "code": "mic_denied",
-     "message": "Allow microphone in System Settings",
+     "message": "Needs mic access to take dictation",
      "actions": [
       "open_settings"
      ],
@@ -1301,7 +1785,7 @@
    "given": {
     "error": {
      "code": "mic_denied",
-     "message": "Allow microphone in System Settings",
+     "message": "Needs mic access to take dictation",
      "actions": [
       "open_settings"
      ],
@@ -3878,6 +4362,482 @@
      "branch": "main"
     }
    ]
+  },
+  {
+   "name": "status: nothing to say on a new session",
+   "row": "Status · none",
+   "given": {},
+   "intent": {
+    "type": "type",
+    "text": ""
+   },
+   "expect": {
+    "derived": {
+     "status": "none"
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "status: an error",
+   "row": "Status · error",
+   "given": {
+    "error": {
+     "code": "cloud_busy",
+     "message": "Frog Cloud is busy",
+     "actions": [
+      "retry"
+     ],
+     "control": null,
+     "detail": null,
+     "retryIn": null
+    }
+   },
+   "intent": {
+    "type": "type",
+    "text": ""
+   },
+   "expect": {
+    "derived": {
+     "status": "error"
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "status: an error beats a question, a notice and git",
+   "row": "Status · order",
+   "given": {
+    "error": {
+     "code": "cloud_busy",
+     "message": "Frog Cloud is busy",
+     "actions": [
+      "retry"
+     ],
+     "control": null,
+     "detail": null,
+     "retryIn": null
+    },
+    "confirm": "merge",
+    "notice": "Swaps after this turn",
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": true,
+     "ahead": 0,
+     "prs": [
+      {
+       "repo": "muni-works/frog",
+       "number": 297,
+       "title": "PR 297",
+       "state": "approved",
+       "checks": {
+        "ok": 3,
+        "total": 3
+       }
+      }
+     ]
+    }
+   },
+   "intent": {
+    "type": "type",
+    "text": ""
+   },
+   "expect": {
+    "derived": {
+     "status": "error"
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "status: a question beats a notice and git",
+   "row": "Status · order",
+   "given": {
+    "confirm": "merge",
+    "notice": "Swaps after this turn",
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": [
+      {
+       "repo": "muni-works/frog",
+       "number": 297,
+       "title": "PR 297",
+       "state": "approved",
+       "checks": {
+        "ok": 3,
+        "total": 3
+       }
+      }
+     ]
+    }
+   },
+   "intent": {
+    "type": "type",
+    "text": ""
+   },
+   "expect": {
+    "derived": {
+     "status": "confirm"
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "status: the yolo question",
+   "row": "Status · confirm",
+   "given": {},
+   "intent": {
+    "type": "set_mode",
+    "mode": "yolo"
+   },
+   "expect": {
+    "confirm": "yolo",
+    "derived": {
+     "status": "confirm"
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "status: a notice beats git",
+   "row": "Status · order",
+   "given": {
+    "notice": "Swaps after this turn",
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": true,
+     "ahead": 0,
+     "prs": []
+    }
+   },
+   "intent": {
+    "type": "type",
+    "text": ""
+   },
+   "expect": {
+    "derived": {
+     "status": "notice"
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "status: switching place says so",
+   "row": "Status · notice",
+   "given": {},
+   "intent": {
+    "type": "choose_cloud",
+    "repo": "muni-works/frog",
+    "branch": "main"
+   },
+   "expect": {
+    "derived": {
+     "status": "notice"
+    }
+   },
+   "effects": [
+    {
+     "type": "set_model",
+     "model": {
+      "id": "cloud/glm-5.3-flash",
+      "name": "GLM-5.3 Flash",
+      "place": "cloud",
+      "node": null
+     }
+    }
+   ]
+  },
+  {
+   "name": "status: git with uncommitted changes",
+   "row": "Status · git",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 12,
+      "del": 3,
+      "files": 2
+     },
+     "dirty": true,
+     "ahead": 0,
+     "prs": []
+    }
+   },
+   "intent": {
+    "type": "type",
+    "text": ""
+   },
+   "expect": {
+    "derived": {
+     "status": "git",
+     "gitAction": "commit"
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "status: git with commits ahead",
+   "row": "Status · git",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 2,
+     "prs": []
+    }
+   },
+   "intent": {
+    "type": "type",
+    "text": ""
+   },
+   "expect": {
+    "derived": {
+     "status": "git"
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "status: git with a draft PR and no action",
+   "row": "Status · git",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": [
+      {
+       "repo": "muni-works/frog",
+       "number": 297,
+       "title": "PR 297",
+       "state": "draft",
+       "checks": {
+        "ok": 3,
+        "total": 3
+       }
+      }
+     ]
+    }
+   },
+   "intent": {
+    "type": "type",
+    "text": ""
+   },
+   "expect": {
+    "derived": {
+     "status": "git",
+     "gitAction": null
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "status: a clean session has no line",
+   "row": "Status · none",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": []
+    }
+   },
+   "intent": {
+    "type": "type",
+    "text": ""
+   },
+   "expect": {
+    "derived": {
+     "status": "none"
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "status: a session without a repo has no line",
+   "row": "Status · none",
+   "given": {
+    "where": {
+     "kind": "session",
+     "repo": null,
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 4,
+      "del": 0,
+      "files": 1
+     },
+     "dirty": true,
+     "ahead": 0,
+     "prs": []
+    }
+   },
+   "intent": {
+    "type": "type",
+    "text": ""
+   },
+   "expect": {
+    "derived": {
+     "status": "none"
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "status: dismissing the error falls back to git",
+   "row": "Status · order",
+   "given": {
+    "error": {
+     "code": "cloud_busy",
+     "message": "Frog Cloud is busy",
+     "actions": [
+      "retry"
+     ],
+     "control": null,
+     "detail": null,
+     "retryIn": null
+    },
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 1,
+     "prs": [
+      {
+       "repo": "muni-works/frog",
+       "number": 297,
+       "title": "PR 297",
+       "state": "checks",
+       "checks": {
+        "ok": 3,
+        "total": 3
+       }
+      }
+     ]
+    }
+   },
+   "intent": {
+    "type": "dismiss_error"
+   },
+   "expect": {
+    "error": null,
+    "derived": {
+     "status": "git"
+    }
+   },
+   "effects": []
+  },
+  {
+   "name": "status: esc clears a question",
+   "row": "Status · confirm",
+   "given": {
+    "confirm": "merge",
+    "where": {
+     "kind": "session",
+     "repo": "muni-works/frog",
+     "branch": "claude/tray",
+     "worktree": true,
+     "worktreePath": "/Users/cam/frog/.claude/worktrees/tray",
+     "diff": {
+      "add": 0,
+      "del": 0,
+      "files": 0
+     },
+     "dirty": false,
+     "ahead": 0,
+     "prs": [
+      {
+       "repo": "muni-works/frog",
+       "number": 297,
+       "title": "PR 297",
+       "state": "approved",
+       "checks": {
+        "ok": 3,
+        "total": 3
+       }
+      }
+     ]
+    }
+   },
+   "intent": {
+    "type": "esc"
+   },
+   "expect": {
+    "confirm": null,
+    "derived": {
+     "status": "git"
+    }
+   },
+   "effects": []
   }
  ]
 }

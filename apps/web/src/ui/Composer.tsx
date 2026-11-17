@@ -245,7 +245,8 @@ export function Composer(p: ComposerProps) {
       : { kind: 'cloud', repo: p.repo ?? 'No repo', branch: 'main' },
     busy: p.busy ? 'sending' : working ? 'working' : 'idle',
     pending: null,
-    queued: p.queued?.length ?? 0,
+    queued: (p.queued ?? []).map((q) => ({ text: q.text, attachments: q.images.map((im) => ({ name: 'image', size: Math.floor(im.data.length * 0.75), type: im.mime })) })),
+    dictating: false,
     error: local.error,
     notice: local.notice,
     confirm: local.confirm,
@@ -547,7 +548,6 @@ export function Composer(p: ComposerProps) {
               {d.action === 'stop' && <svg aria-hidden="true" width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2" /></svg>}
               {d.action === 'queue' && <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M4 6h16M4 12h10M4 18h7M17 15v6M14 18h6" /></svg>}
               {d.action === 'send' && <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V5M5 12l7-7 7 7" /></svg>}
-              {tray.queued > 0 && <span className="cz-qcount">{tray.queued}</span>}
             </button>
           )}
         </div>
