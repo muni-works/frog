@@ -400,15 +400,25 @@ final class TranscriptSwitchBenchmarkTests: XCTestCase {
         let sorted = frames.sorted()
         let p50 = sorted.isEmpty ? 0 : sorted[sorted.count / 2], p95 = sorted.isEmpty ? 0 : sorted[sorted.count * 95 / 100]
         print("switch: scroll-up frames p50 \(String(format: "%.1f", p50 * 1000)) ms, p95 \(String(format: "%.1f", p95 * 1000)) ms, max \(String(format: "%.1f", (sorted.last ?? 0) * 1000)) ms")
+        // On the stack, twice on 2026-11-16 (a loaded Mac, not reproduced in 22 runs since,
+        // under load too): no fill at all, the first row never reached, ~17 ms steps — the loop
+        // sat at the top of the last rows, building nothing. If it comes back, this says where
+        // the fill trigger stopped.
+        if !TranscriptContainer.table, kept.isEmpty || !TranscriptProbe.isMounted(suffix: "-msg-0") {
+            print("switch: no fills: \(heights.count) steps, top at \(Int(clip.bounds.minY)) pt, opened at end \(TranscriptProbe.openedAtEnd), window visible \(window.occlusionState.contains(.visible)), trigger \(TranscriptProbe.fillLog)")
+        }
         XCTAssertTrue(TranscriptProbe.isMounted(suffix: "-msg-0"), "never reached the first row")
         // 60 fps is 16.7 ms a frame. Debug build, the pump's own overhead in it (release not
         // measured here), a step being 250 pt of new rows: room for what each container
-        // measures, no more.
-        // - The lazy stack: ~17 ms p50, ~24 ms p95 (2026-10-25, and again 2026-11-16).
+        // measures, no more. Both build the same ~4.3 row bodies a step.
         // - The table (this test's container since 2026-11-11): 22.9–26.0 ms p50, ~31 ms p95
-        //   over ~35 runs (2026-11-16). The same ~4.3 row bodies a step as the stack, each
-        //   built and laid out in its own row's hosting view: ~17 ms of the frame. Held to the
-        //   stack's 25 ms it failed about half its runs.
+        //   over ~35 runs (2026-11-16), each row built and laid out in its own hosting view.
+        // - The lazy stack: ~17 ms p50 on 2026-10-25. On 2026-11-16, 23.0–27.1 ms p50 over 22
+        //   runs, all on a Mac busy with other builds (load average 9–11), so it fails 25 ms
+        //   about half its runs there. Kept at 25 ms: that measurement doesn't show the budget
+        //   was wrong, only that a loaded Mac misses it; measure an idle Mac before moving it.
+        //   (The ~17 ms seen once on 2026-11-16 came from the two runs above that built no
+        //   rows at all.)
         let frameBudget = TranscriptContainer.table ? 0.030 : 0.025
         XCTAssertLessThan(p50, frameBudget, "scrolling well under 60 fps")
         XCTAssertGreaterThan(TranscriptBench.ink(scroll, in: host), 0.002, "blank at the top")

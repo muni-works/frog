@@ -146,10 +146,21 @@ struct TranscriptView: View {
                     // A row in the lazy stack can't be the trigger: the stack estimates the rows
                     // it hasn't built from the ones it has, and a small one at the top made it
                     // land short of the end on open, over nothing.
-                    if new.atBottom { track.openedAtEnd = true }
+                    if new.atBottom, !track.openedAtEnd {
+                        track.openedAtEnd = true
+                        #if DEBUG
+                        TranscriptProbe.openedAtEnd = true
+                        #endif
+                    }
                     let atTop = track.openedAtEnd && new.contentHeight > 0 && new.visibleTop < Self.nearTop
+                    #if DEBUG
+                    if !track.openedAtEnd, new.contentHeight > 0, new.visibleTop < Self.nearTop { TranscriptProbe.fillBlocked = "not opened at end" }
+                    #endif
                     if atTop != track.atTop {
                         track.atTop = atTop
+                        #if DEBUG
+                        TranscriptProbe.noteFill("atTop \(atTop) top \(Int(new.visibleTop)) h \(Int(new.contentHeight))")
+                        #endif
                         if atTop { DispatchQueue.main.async { showEarlier(proxy) } }
                     }
                     let growth = new.contentHeight - old.contentHeight
@@ -292,12 +303,14 @@ struct TranscriptView: View {
               let id = Self.start(of: conversation.turns, rows: Self.earlierRows, before: first) else {
             #if DEBUG
             TranscriptProbe.fillBlocked = first == 0 ? "at first turn" : (growingAbove ? "growing" : "no turns above")
+            TranscriptProbe.noteFill("blocked " + TranscriptProbe.fillBlocked)
             #endif
             return
         }
         let keep = firstRow(of: conversation.turns[first])
         #if DEBUG
         TranscriptProbe.earlier += 1
+        TranscriptProbe.noteFill("fill from \(first)")
         // The row under it (prompts aren't counted as mounted, segments are).
         TranscriptProbe.kept = flows.segments(of: conversation.turns[first], showThinking: verbosity.showsThinking).first?.id ?? keep.part
         #endif
