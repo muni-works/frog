@@ -29,10 +29,10 @@ same harness once the fixes were in.
 
 ## Decide first
 
-1. **Put this Mac's models back in the Mac's model menu?** The reel's opening beat is a menu
-   with local models first at $0. The app left them out on purpose (`ModelList.swift:8-11`,
-   2026-10-30). On a fresh Mac today, the chip says Apple Intelligence and the menu doesn't list
-   it. Gap 2 below.
+1. ~~**Put this Mac's models back in the Mac's model menu?**~~ **Decided 2026-11-17: yes, and
+   done in this PR.** The menu now opens on "This Mac": Apple Intelligence, what's downloaded, and
+   the model that suits this Mac to get ("Qwen3 32B · 18 GB · Get"), each "$0 a token", then your
+   other machines, then Frog Cloud ([after](after-mac-model-menu.png)). Gap 2 below.
 2. **Ship `frog-apple` with the CLI (or let the CLI find it inside Frog.app)?** Without it, a
    new CLI user's first `frog` is an error. With it, a Mac on macOS 26 answers at once, as
    `docs/onboarding.md` promises. It adds to the tarball and the release job. Gap 1.
@@ -125,12 +125,13 @@ Stills: [signed out](web-signed-out.png), [new session](web-new-session.png), [r
    `sidecar::binary` find it in `/Applications/Frog.app/Contents/MacOS/`. When nothing is found on
    a TTY, ask once: "Frog Cloud (sign in) / This Mac (2.2 GB) / I have a key", then run
    `login` or `setup` inline and start. **M.**
-2. **The Mac's model menu on a fresh Mac has nothing local and no checkmark.** The reel's
-   opening beat is the menu. *Fix:* list This Mac's models first: Apple Intelligence (ready), the
-   RAM-suited Qwen3 as a "Get · 18 GB" row, and Qwen3 Coder 30B if it's meant to be the coding
-   pick. Each gets "$0" where a price would be and tok/s once measured; Frog Cloud below. The
-   rows exist in the unmounted `ModelSettings`. **L, and it reverses the 2026-10-30 call, so it's
-   Cam's.**
+2. **The Mac's model menu on a fresh Mac had nothing local and no checkmark** (done in this
+   PR, on Cam's call). It now lists This Mac first: Apple Intelligence, downloaded models, and
+   the RAM-suited Qwen3 as a "Get" row that downloads and moves the chat over when it's ready
+   (`Workspace.useWhenReady`). Each says "$0 a token", plus tok/s once measured. *Left:* Qwen3
+   Coder 30B, which the reel shows, is a mixture-of-experts model; frog's engine runs dense Qwen3
+   only (`local_checkpoints`), so it isn't offered until tang runs it. The unmounted Models
+   settings list (`ModelSections.frogCloudOnly`) is unchanged.
 3. **Out of credit on the web showed a dead end** (fixed here). The card never appeared on
    today's engine, and Continue spent another refused call. *Left:* the mock should end turns
    with `billing_limit` so this can't regress unseen. **M (zest).**
@@ -185,7 +186,9 @@ claiming a model that isn't there, `--providers` saying "connected" with nothing
 - **CLI:** the no-model message leads with `frog login`; login waits out loud and points at
   `frog`; `frog setup` ends usefully and has `--help`; `frog --help` lists the commands; "Frog Cloud"
   capitalised in `--providers`, `frog account` and its errors.
-- **Mac:** the permission card says where the step runs (this Mac, outside the sandbox, or
+- **Mac:** the model menu lists This Mac's models first (Apple Intelligence, downloads, a model
+  to get, "$0 a token"), with your other machines and Frog Cloud below (`ModelMenuTests`). The
+  permission card says where the step runs (this Mac, outside the sandbox, or
   your Frog Cloud sandbox). Running rows say "Working…". Retry and Frog Cloud stand-in notices
   show. The 8B helpers are out of the picker. "Pair mew", and error copy that says "Frog" and "tang-llm". The
   pair hint names the toggle. Sentence-case buttons. "18 GB", not "18.0 GB". Tests in `OneLookTests`.
