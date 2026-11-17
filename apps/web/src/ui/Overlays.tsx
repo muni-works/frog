@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { notifyOn, notifySupported, setNotify } from '../alerts'
 import { billingHistory, billingPortal, createKey, firstName, listKeys, portalErrorMessage, revokeKey, type Account, type KeyInfo, type Provider } from '../auth'
 import { friendly } from '../cloud/client'
-import { modelName, placeColor, type Model } from '../models'
+import { modelName, placeColor, usdPerM, type Model } from '../models'
 import { canPull, displayName, memoryLine, runningLine, type Machine } from '../machines'
 import type { SessionSummary } from '../cloud/protocol'
 import { DownloadAppChip } from './DownloadChip'
@@ -273,7 +273,7 @@ function Notify() {
 
 /** A per-token price as dollars per million tokens: "$0.20". */
 function perM(p: number | null) {
-  return p == null ? '—' : `$${(p * 1e6).toFixed(2)}`
+  return p == null ? '—' : usdPerM(p)
 }
 
 /** Settings › Models, as on the Mac: your machines (every node, This Mac included, the same

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { composing } from './guards'
 import type { Image, Mode } from '../cloud/protocol'
-import { modelName, outputPrice, placeColor, placeOf, spec, type Model } from '../models'
+import { inOutPrice, modelName, placeColor, placeOf, spec, type Model } from '../models'
 import { machineModels, places, tag, type Machine } from '../machines'
 import { barTone, canCompact, ringLabel, ringTone } from '../usage'
 import { parseRepo } from '../store'
@@ -125,7 +125,6 @@ const ACTION_WORD: Record<string, string> = { restart_engine: 'Restart engine', 
 const prDot = (s: Pr['state']) => `var(--pr-${s === 'closed' ? 'draft' : s})`
 const PLACEHOLDER = { new: 'What should we work on?', session: 'Reply to Frog', working: 'Add a follow-up' } as const
 const kb = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1e3))} KB`)
-const fromPrice = (m: Model) => (m.input != null ? `from $${(m.input * 1e6).toFixed(2)}/M` : outputPrice(m))
 
 /** 16-box stroke icons, drawn at 14 with a 1.4 stroke (spec: Chip). */
 const P = {
@@ -504,7 +503,7 @@ export function Composer(p: ComposerProps) {
             {cloud.map((m) => (
               <button key={m.id} type="button" role="menuitemradio" aria-checked={m.id === p.model} onClick={() => { p.onModel?.(m.id); setMenu(null); setQ('') }}>
                 <I d={P.cloud} style={{ color: placeColor('cloud') }} />
-                <span className="cz-mname">{modelName(m.id)}</span><span className="cz-r">{fromPrice(m)}</span>
+                <span className="cz-mname">{modelName(m.id)}</span><span className="cz-r">{inOutPrice(m)}</span>
                 <I d={P.check} className={`cz-check${m.id === p.model ? '' : ' off'}`} />
               </button>
             ))}

@@ -409,7 +409,8 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
       {/* A denied step ends the turn: say so in words (the engine's own sentence when it sends one). */}
       {endNote(turn.reason) && <div className="det wrap turn-note">{endNote(turn.reason)}</div>}
       {/* Any other ending that isn't a finished answer says so, never silence. */}
-      {turn.reason && !['complete', 'cancelled', 'error', 'denied'].includes(turn.reason.type) && (
+      {/* Out of credit has its own card and composer strip; Continue would only be refused again. */}
+      {turn.reason && !['complete', 'cancelled', 'error', 'denied', 'billing_limit'].includes(turn.reason.type) && (
         <div role="status" className="banner warn">
           <span style={{ flex: 1 }}>{ending(turn.reason.type, turn.usage)}</span>
           {live && !running && hasContinue && <button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={cb.onContinue}>Continue</button>}

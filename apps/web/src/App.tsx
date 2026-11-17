@@ -483,7 +483,7 @@ export default function App() {
           <h1>What should we work on?</h1>
           <div className="home-sub">
             <p>Frog is a coding agent for your repos: open models, on your machines or in Frog Cloud.</p>
-            <p><b>$1 free to start.</b></p>
+            <p><b>$1 of Frog Cloud credit free when you connect GitHub.</b></p>
           </div>
           <HowItWorks />
           <Trust />
@@ -614,11 +614,11 @@ export default function App() {
             {/* A sandbox that couldn't start says so here, by the composer, not above the conversation. */}
             {current.state === 'error' && <div role="status" className="banner warn"><span style={{ flex: 1 }}>{current.error ? plainError(current.error) : "The sandbox couldn't start."}</span><button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => remove(current)}>Delete</button></div>}
             {paused && (
-              <section className="cardx outs" aria-label="Out of credits">
-                <b style={{ fontSize: 15 }}>You're out of cloud credits</b>
+              <section className="cardx outs" aria-label="Out of credit">
+                <b style={{ fontSize: 15 }}>You're out of Frog Cloud credit</b>
                 <div className="det wrap" style={{ marginTop: -4 }}>Nothing is lost. The sandbox, the changes and this conversation stay put.</div>
                 <div className="out" style={{ borderColor: 'var(--frog)' }}>
-                  <div style={{ flex: 1 }}><b>Add credit</b><div className="det wrap">Pay as you go, or go Pro for cloud usage every month. Then keep going here.</div></div>
+                  <div style={{ flex: 1 }}><b>Add credit</b><div className="det wrap">Top up and pay per token, or pick a plan with a weekly allowance. Then keep going here.</div></div>
                   <button type="button" className="f-btn f-btn--prominent" onClick={() => openSettings('Billing')}>Billing</button>
                 </div>
                 <div className="out" style={{ borderColor: 'var(--line)' }}>
