@@ -28,6 +28,10 @@ final class Devices {
     private(set) var paired: [PairedNode] = []
     /// Fingerprints the user said "Not now" to, this launch.
     private var dismissed: Set<String> = []
+    #if DEBUG
+    /// Snapshots: no "… is on your network" notice for whatever machine this Mac can see.
+    var hideOffer = false
+    #endif
     /// Why a paired node isn't being polled, by node id (its identity changed, it dropped us).
     private var refused: [String: String] = [:]
 
@@ -182,7 +186,10 @@ final class Devices {
 
     /// The first unpaired node on the network the user hasn't waved off: the notice's subject.
     var offer: Device? {
-        list.first { d in
+        #if DEBUG
+        if hideOffer { return nil }
+        #endif
+        return list.first { d in
             d.role == .node && d.keyed && !d.paired && d.fingerprint != nil && !dismissed.contains(d.fingerprint!)
         }
     }

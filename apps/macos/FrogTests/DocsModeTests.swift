@@ -107,9 +107,9 @@ final class DocsModeTests: XCTestCase {
             // The sidebar searching, on its own at the sidebar's size.
             let sidebar = DocsSidebar(docs: docs, selected: first.slug, maxHeight: 560, query: "web",
                                       open: { _ in }, back: {})
-                .frame(width: WorkspaceView.sessionsWidth, height: 560)
-                .background(Tokens.sidebar, in: .rect(cornerRadius: 12))
-                .padding(12)
+                .frame(width: WorkspaceView.sessionsWidth, height: 584)
+                .flushColumn(trailing: true, underTitleBar: false)
+                .padding(.trailing, 24)
                 .background(Tokens.canvas)
             try render(sidebar, size: CGSize(width: WorkspaceView.sessionsWidth + 24, height: 584),
                        to: "docs-search-\(name)", appearance: look)

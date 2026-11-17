@@ -1,15 +1,20 @@
 import SwiftUI
 
 /// One conversation on the canvas: the transcript, full-bleed within the pane, with the composer
-/// under it, and the pane's own instruments floating at its right edge (changes as a card or
-/// pill, over the timeline rail). When the window is split, a glass header names the pane and
-/// shows whether it's the one menus and the sidebar act on.
+/// under it; the pane's inspector as a flush, full-height column at its right edge (gone when
+/// folded), and the timeline rail at the transcript's right edge, beside it. When the window is
+/// split, a glass header names the pane and shows whether it's the one menus and the sidebar
+/// act on.
 struct PaneView: View {
     let pane: Pane
     let panes: Panes
     /// 1-based, when the window is split.
     let number: Int?
     let insets: EdgeInsets
+    /// The pane's top is the window's: its inspector runs up under the title bar.
+    var underTitleBar = true
+    /// The pane's right edge is the window's: no hairline after its inspector.
+    var trailingEdge = true
     let changesDocked: Bool
     let toggleChanges: () -> Void
     let window: NSWindow?
@@ -27,11 +32,12 @@ struct PaneView: View {
     private var conversation: Conversation? { pane.conversation }
     private var focused: Bool { panes.focusedID == pane.id }
     private var changesVisible: Bool { changesDocked || (pane.peekChanges && pane.hasTabs) }
-    private var margin: CGFloat { WorkspaceView.margin }
+    private var inset: CGFloat { WorkspaceView.inset }
 
-    /// Room right of the centered 820 pt column, short of the rail (the rail's labels use it).
+    /// Room right of the centered 820 pt column, short of the rail (the rail's labels use it):
+    /// the rail stands inside the pane's trailing inset, so it's what the column leaves.
     private func gutter(_ w: CGFloat) -> CGFloat {
-        max(0, (w - insets.leading - insets.trailing - 820) / 2 + insets.trailing - TimelineRail.width - margin - 12)
+        max(0, (w - insets.leading - insets.trailing - 820) / 2 - 12)
     }
 
     var body: some View {
@@ -53,21 +59,23 @@ struct PaneView: View {
                 .clipped()
                 .contentMargins(.leading, insets.leading, for: .scrollContent)
                 .contentMargins(.trailing, insets.trailing, for: .scrollContent)
-                .contentMargins(.top, number == nil ? 0 : Self.headerHeight + margin, for: .scrollContent)
+                .contentMargins(.top, number == nil ? 0 : Self.headerHeight + inset, for: .scrollContent)
 
             GeometryReader { geo in
-                let room = max(120, geo.size.height - margin * 2)
-                // The transcript is a centered 820 pt column: what's right of it, short of the rail.
-                let gutter = gutter(geo.size.width)
-                GlassEffectContainer(spacing: 20) {
-                    HStack(alignment: .top, spacing: 0) {
-                        Spacer(minLength: 0)
-                        instruments(room: room, gutter: gutter)
+                let room = max(120, geo.size.height)
+                ZStack(alignment: .topTrailing) {
+                    // The rail at the transcript's right edge, beside the inspector's hairline
+                    // (or the pane's edge). The transcript is a centered 820 pt column: the rail's
+                    // labels get what's right of it.
+                    GlassEffectContainer(spacing: 20) {
+                        rail(room: room - inset, gutter: gutter(geo.size.width))
                     }
+                    .padding(.top, inset)
+                    .padding(.trailing, (changesDocked && pane.hasTabs ? pane.cardWidth : 0) + inset)
+                    inspector(room: room)
                 }
-                .padding(margin)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
             }
-
         }
         // Overlays, not stack members: a wide pill or find bar can't widen the pane (a split
         // pane's fixed-size pill did, spilling its rail and text over the next pane).
@@ -76,7 +84,7 @@ struct PaneView: View {
                 header(number)
                     .padding(.leading, insets.leading)
                     .padding(.trailing, insets.trailing)
-                    .padding(.top, margin)
+                    .padding(.top, inset)
             }
         }
         .overlay(alignment: .top) {
@@ -84,12 +92,13 @@ struct PaneView: View {
                 FindBar(state: ui, turns: conversation.turns)
                     .padding(.leading, insets.leading)
                     .padding(.trailing, insets.trailing)
-                    .padding(.top, margin + (number == nil ? 0 : Self.headerHeight + 8))
+                    .padding(.top, inset + (number == nil ? 0 : Self.headerHeight + 8))
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
-        // Nothing (pill, rail, changes) draws into the pane beside it.
-        .clipped()
+        // Nothing (rail, inspector) draws into the pane beside it; open at the top for the
+        // inspector's run up under the title bar.
+        .clipShape(TitleBarClip(open: underTitleBar))
         .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width = $0 }
         .environment(\.paneWidth, number == nil ? .wide : PaneWidth(width))
         .environment(\.canvasInsets, insets)
@@ -211,83 +220,55 @@ struct PaneView: View {
         .opacity(focused ? 1 : 0.8)
     }
 
-    /// Changes (card or pill) above the timeline rail.
+    /// The inspector: Changes, and any terminal or preview frog opened, as tabs of one flush,
+    /// full-height column at the pane's right edge. Folded, nothing: the toolbar's Inspector
+    /// button and ⌥⌘0 bring it back, and the composer's status line carries the counts.
     @ViewBuilder
-    private func instruments(room: CGFloat, gutter: CGFloat = 0) -> some View {
+    private func inspector(room: CGFloat) -> some View {
+        if let conversation, pane.hasTabs, changesVisible {
+            PaneArea(conversation: conversation,
+                     height: room,
+                     width: Binding(get: { pane.cardWidth }, set: { pane.cardWidth = $0 }),
+                     collapse: { toggleChanges() },
+                     folder: pane.workspace.isChat ? nil : pane.workspace.folder,
+                     git: pane.workspace.isChat || pane.workspace.git == nil ? nil : { ui.requestGit($0) })
+                // The sidebar's column, not glass, and outside any GlassEffectContainer: on
+                // macOS 27 glass around views that take the keyboard (terminal, web view,
+                // buttons) made SwiftUI's focus walk endless, and the app froze in it on a resize
+                // (FocusHideFreezeTests). A hairline on its leading edge, and on its trailing one
+                // when a pane follows it.
+                .flushColumn(leading: true, trailing: !trailingEdge,
+                             floating: pane.peekChanges && !changesDocked, underTitleBar: underTitleBar)
+        }
+    }
+
+    /// The timeline rail, once the conversation has started.
+    @ViewBuilder
+    private func rail(room: CGFloat, gutter: CGFloat = 0) -> some View {
         let top = number == nil ? 0 : WorkspaceView.headerClearance
-        if let conversation, pane.hasTabs || pane.hasRail {
-            VStack(alignment: .trailing, spacing: 8) {
-                if pane.hasTabs {
-                    if changesVisible {
-                        // Changes, and any terminal or preview frog opened, as tabs of one card.
-                        PaneArea(conversation: conversation,
-                                 height: max(160, room - top - (pane.hasRail ? 160 : 0)),
-                                 width: Binding(get: { pane.cardWidth }, set: { pane.cardWidth = $0 }),
-                                 collapse: { toggleChanges() },
-                                 folder: pane.workspace.isChat ? nil : pane.workspace.folder,
-                                 git: pane.workspace.isChat || pane.workspace.git == nil ? nil : { ui.requestGit($0) })
-                            // The sidebar's panel, not glass (the spec's "sidebar and inspector
-                            // #0a0a0a"). On macOS 27 a glass card in this GlassEffectContainer,
-                            // holding views that take the keyboard (terminal, web view, buttons),
-                            // makes SwiftUI's focus walk endless: the app froze in it on a resize
-                            // (FocusHideFreezeTests).
-                            .background(Tokens.sidebar, in: .rect(cornerRadius: 18))
-                            .glassEffectID("changes", in: glass)
-                            .shadow(color: .black.opacity(pane.peekChanges && !changesDocked ? 0.35 : 0), radius: 24, y: 10)
-                    } else {
-                        Button(action: toggleChanges) {
-                            let changes = conversation.sessionChanges
-                            HStack(spacing: 6) {
-                                if !changes.isEmpty {
-                                    Text("+\(changes.reduce(0) { $0 + $1.added })").foregroundStyle(.green)
-                                    Text("−\(changes.reduce(0) { $0 + $1.removed })").foregroundStyle(.red)
-                                }
-                                if pane.toolCount > 0 {
-                                    Image(systemName: conversation.panes.panes.contains { $0.kind == .preview } ? "globe" : "terminal")
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                            .monospacedDigit()
-                            .contentTransition(.numericText())
-                            .font(.callout.weight(.medium))
-                            .padding(.horizontal, 12)
-                            .frame(height: WorkspaceView.button)
-                            .contentShape(.capsule)
-                        }
-                        .buttonStyle(.plain)
-                        .glassEffect(.regular.interactive(), in: .capsule)
-                        .glassEffectID("changes", in: glass)
-                        .help(pane.changeCount > 0
-                              ? "Files changed (⌥⌘0)"
-                              : "Terminal and preview (⌥⌘0)")
-                    }
-                }
-                if pane.hasRail {
-                    TimelineRail(
-                        conversation: conversation,
-                        visible: ui.visibleTurns,
-                        marked: ui.findShown ? Set(ui.matches(in: conversation.turns)) : [],
-                        checkpoints: Set(conversation.panes.checkpoints.keys),
-                        hasPreview: !conversation.panes.previews.isEmpty,
-                        compare: { turn in
-                            let hub = conversation.panes
-                            hub.compare(turn)
-                            if let p = hub.previews.first { hub.selected = .pane(p.id) }
-                            if !changesVisible { toggleChanges() }
-                        },
-                        labelRoom: gutter,
-                        actions: turnActions,
-                        jump: { ui.jumpTo = $0 }
-                    )
-                    // Grows with the conversation instead of standing full height from turn one.
-                    .frame(height: TimelineRail.height(for: conversation.turns, room: room - top))
-                    .glassEffect(.regular, in: .capsule)
-                    .glassEffectID("timeline", in: glass)
-                    .transition(.opacity)
-                }
-            }
+        if let conversation, pane.hasRail {
+            TimelineRail(
+                conversation: conversation,
+                visible: ui.visibleTurns,
+                marked: ui.findShown ? Set(ui.matches(in: conversation.turns)) : [],
+                checkpoints: Set(conversation.panes.checkpoints.keys),
+                hasPreview: !conversation.panes.previews.isEmpty,
+                compare: { turn in
+                    let hub = conversation.panes
+                    hub.compare(turn)
+                    if let p = hub.previews.first { hub.selected = .pane(p.id) }
+                    if !changesVisible { toggleChanges() }
+                },
+                labelRoom: gutter,
+                actions: turnActions,
+                jump: { ui.jumpTo = $0 }
+            )
+            // Grows with the conversation instead of standing full height from turn one.
+            .frame(height: TimelineRail.height(for: conversation.turns, room: room - top))
+            .glassEffect(.regular, in: .capsule)
+            .glassEffectID("timeline", in: glass)
+            .transition(.opacity)
             .padding(.top, top)
-            .frame(maxHeight: room, alignment: .top)
         }
     }
 
