@@ -1317,6 +1317,9 @@ final class Conversation {
         let m = message.trimmingCharacters(in: .whitespacesAndNewlines)
         if m.hasPrefix("Network allow-list:") { return m }
         if m == "started a new conversation" { return "Started a new conversation" }
+        // A model call being retried, and Frog Cloud's stand-in answering for a busy model:
+        // already words (model_policy.rs `retrying_line`, call.rs), and worth seeing.
+        if m.hasSuffix(" — retrying") || m.contains(" is answering for now.") { return m }
         return nil
     }
 

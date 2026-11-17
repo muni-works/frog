@@ -74,7 +74,12 @@ export type Delta =
   | { type: "output"; text: string }
   | { type: "image_preview" };
 
-export type EndReason = { type: "complete" | "max_tokens" | "denied" | "looping" | "step_limit" | "cancelled" } | { type: "error"; error: unknown };
+export type EndReason =
+  | { type: "complete" | "max_tokens" | "denied" | "looping" | "step_limit" | "cancelled" }
+  | { type: "error"; error: unknown }
+  /** protocol.rs `EndReason::BillingLimit`: the wallet is empty (`credit`), or a plan window
+   *  (`5h`, `weekly`) refused and nothing admitted going on. */
+  | { type: "billing_limit"; window: string; reason?: string; balance_micro?: number };
 
 /** protocol.rs `Image`: base64 data with its mime type. */
 export interface Image { mime: string; data: string }

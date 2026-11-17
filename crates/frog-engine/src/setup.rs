@@ -75,7 +75,7 @@ pub async fn run(model: Option<&str>) -> Result<()> {
     } else {
         download_model(repo).await?;
     }
-    println!("ready. try: frog -p \"reply with just: ok\"");
+    println!("ready. run frog in a project to start.");
     Ok(())
 }
 

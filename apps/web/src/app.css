@@ -67,7 +67,10 @@ a { color: var(--frog); }
 .outs { padding: 16px; display: flex; flex-direction: column; gap: 10px; }
 .out { display: flex; gap: 12px; align-items: center; padding: 12px 14px; border: 0; border-radius: 12px; }
 
-.insp { width: var(--insp-w, 420px); flex: none; border-radius: 0; box-shadow: none; display: flex; flex-direction: column; }
+.insp { position: relative; width: var(--insp-w, 420px); flex: none; box-sizing: border-box; border-radius: 0; box-shadow: none; display: flex; flex-direction: column; }
+/* Both columns are filled with --sidebar, opaque, at every width: flush on desktop, floating
+ * (the drawer, the inspector overlay) on phones. */
+.side, .insp { background: var(--sidebar); }
 /* The inspector's top: Changes, Terminal, Preview as icon-and-label tabs (the selected one on a
  * pill), the close button at the end. The same strip as the Mac's PaneArea. */
 .insp-top { flex: none; display: flex; align-items: center; padding: 6px 8px; }
@@ -184,7 +187,7 @@ button.tool:hover { color: var(--fg); }
   .phone-bar { display: flex; align-items: center; gap: 8px; height: 48px; padding: 0 12px; border-bottom: 0; flex: none; font-size: 15px; }
   .phone-bar.floating { position: absolute; top: 0; left: 0; right: 0; border-bottom: 0; }
   .main { position: relative; }
-  .side { position: fixed; z-index: 40; top: 0; bottom: 0; left: 0; width: min(300px, 86vw); transform: translateX(-100%); transition: transform .2s ease; background: var(--glass-fallback); }
+  .side { position: fixed; z-index: 40; top: 0; bottom: 0; left: 0; width: min(300px, 86vw); transform: translateX(-100%); transition: transform .2s ease; }
   .win.drawer .side { transform: none; box-shadow: var(--shadow-float); }
   .win.drawer .side-scrim { display: block; position: fixed; inset: 0; z-index: 39; background: rgba(0,0,0,.35); }
   .titlebar { height: 48px; padding: 0 10px; gap: 6px; }
@@ -195,7 +198,7 @@ button.tool:hover { color: var(--fg); }
   .main.home .home-hero { padding: 12px 16px 44px; }
   .main.home h1 { font-size: 24px; text-align: center; }
   .starters { gap: 6px; }
-  .insp { position: fixed; z-index: 30; inset: 48px 0 0 0; width: auto; border-left: 0; }
+  .insp { position: fixed; z-index: 30; inset: 48px 0 0 0; width: auto; border-left: 0; box-shadow: var(--shadow-float); }
   .settings { flex-direction: column; height: auto; max-height: calc(100dvh - 32px); }
   .set-nav { width: auto; flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 0; padding: 8px; }
   .set-nav b { display: none; }
@@ -382,9 +385,9 @@ button.sgroup:hover .chev2, button.sgroup:focus-visible .chev2, button.sgroup[ar
 @media (prefers-reduced-motion: reduce) { .term .cursor { animation: none; } }
 .t-path { color: var(--frog); font-weight: 600; }
 .t-sigil { color: var(--faint); }
-/* Drag the inspector's left edge to resize it; the bar shows on hover. */
-.insp { position: relative; }
-.insp-grip { position: absolute; left: -4px; top: 0; bottom: 0; width: 9px; cursor: col-resize; z-index: 5; }
+/* Drag the inspector's left edge to resize it; the bar shows on hover. The grip straddles the
+ * hairline (x = -1…0 of the padding box), 4px either side of it. */
+.insp-grip { position: absolute; left: -5px; top: 0; bottom: 0; width: 9px; cursor: col-resize; z-index: 5; }
 .insp-grip::after { content: ''; position: absolute; left: 3px; top: 50%; width: 3px; height: 40px; margin-top: -20px; border-radius: 2px; background: var(--line-strong); opacity: 0; transition: opacity .15s, background .15s, height .15s, margin .15s; }
 .insp:hover .insp-grip::after { opacity: 1; }
 .insp-grip:hover::after, .insp-grip.on::after { background: var(--frog); height: 64px; margin-top: -32px; opacity: 1; }
@@ -394,7 +397,8 @@ body.resizing { cursor: col-resize; user-select: none; }
 .sdetail.fail { color: var(--warn); }
 .slist.compact .srow { padding-top: 7px; padding-bottom: 7px; }
 
-/* No borders (see docs/design/frog-web/README.md): things that were outlined now sit on a fill. */
+/* No outlines (see docs/design/frog-web/README.md): things that were outlined now sit on a fill. The
+ * only borders are the two columns' hairlines. */
 .cz-sug { background: var(--hover); }
 .how li, .beta-pill { background: color-mix(in srgb, var(--card) 80%, transparent); }
 .md-code { background: var(--well); }
@@ -490,8 +494,8 @@ body.resizing { cursor: col-resize; user-select: none; }
 /* The sidebar's header (wordmark, New session, Search) and footer stay put; only the list
  * scrolls, fading softly at its edges. */
 .side { overflow: hidden; }
-/* A hairline between the sidebar and the page, so the two never run together on a flat screen. */
-@media (min-width: 761px) { .side { border-right: 1px solid var(--line); } }
+/* A hairline between each column and the page, on its inner edge (the flush columns, below). */
+@media (min-width: 761px) { .side { border-right: 1px solid var(--line); } .insp { border-left: 1px solid var(--line); } }
 /* The composer is where you type: a hairline keeps it findable on any screen. */
 .f-composer { box-shadow: inset 0 0 0 1px var(--line); }
 .slist { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; margin: 0 -10px; padding: 0 10px 8px;
@@ -548,18 +552,10 @@ button.tool[aria-expanded="true"] .tool-chev { transform: rotate(90deg); }
 [role="menu"] [role^="menuitem"]:focus-visible { outline: 2px solid var(--frog-pad); outline-offset: -2px; }
 .ctx-ring:focus-visible { outline: 2px solid var(--frog); outline-offset: 2px; border-radius: 50%; }
 
-/* One look (2026-11-11), the Mac and the web as one layout. The sidebar and the inspector are
- * inset rounded panels floating on the page, 8px from the window's edges, like the Mac app.
- * The panel colour is --sidebar from tokens.css (#0a0a0a dark). */
-@media (min-width: 761px) {
-  .win { padding: 8px; gap: 8px; box-sizing: border-box; }
-  .side, .insp { background: var(--sidebar); border-radius: var(--radius-card); border: 0; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
-  .side { border-right: 0; }
-  .insp-grip { left: -8px; width: 8px; }
-  .insp-grip::after { left: 2px; }
-  .titlebar { padding: 0 8px; }
-  .side-float { top: 19px; left: 20px; }
-}
+/* Flush columns (2026-11-17, replacing One look's inset panels): the sidebar and the inspector
+ * are full-height columns touching the window's edges, filled with --sidebar, with a --line
+ * hairline on the inner edge (above) and no margin, radius, shadow or blur. Phones keep the
+ * drawer and the inspector overlay floating with their shadow. See docs/design/frog-web/README.md. */
 /* Activity lines: the › disclosure always on the right, turning down when open. */
 .tool-chev { opacity: .7; font-size: 16px; padding: 0 2px; }
 button.tool:hover .tool-chev { opacity: 1; }

@@ -1,0 +1,12 @@
+{
+  "about": "The pricing shot's numbers: list price in US dollars per million output tokens, standard tier. Re-read each source and update the date before re-rendering for publication.",
+  "date": "17 Nov 2026",
+  "rows": [
+    {"name": "Qwen3 Coder Next", "out": 0.88, "frog": true, "source": "https://api.frog.toys/v1/models (qwen3-coder-next; OpenRouter lists $0.80, plus 10%)"},
+    {"name": "GLM-5.3 Flash", "out": 0.55, "frog": true, "source": "https://api.frog.toys/v1/models (glm-5.3-flash)"},
+    {"name": "DeepSeek V4.1 Flash", "out": 0.55, "frog": true, "source": "https://api.frog.toys/v1/models (deepseek-v4.1-flash)"},
+    {"name": "Claude Sonnet 5.5", "out": 10, "frog": false, "source": "https://platform.claude.com/docs/en/about-claude/pricing"},
+    {"name": "gpt-6.1-sol", "out": 10, "frog": false, "source": "https://developers.openai.com/api/docs/pricing"},
+    {"name": "Claude Opus 5.5", "out": 20, "frog": false, "source": "https://platform.claude.com/docs/en/about-claude/pricing"}
+  ]
+}

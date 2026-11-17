@@ -660,7 +660,7 @@ mod tests {
         assert!(fix_line("vercel/x", Failure::Transient).is_none());
         // frog cloud's own key page.
         let cloud = fix_line("cloud/deepseek-v4.1-flash", Failure::Credits).unwrap();
-        assert!(cloud.starts_with("frog cloud credits are out"), "{cloud}");
+        assert!(cloud.starts_with("Frog Cloud credits are out"), "{cloud}");
     }
 
     #[test]

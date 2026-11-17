@@ -61,12 +61,19 @@ export function price(m: Model) {
   return `${f(m.input)} in · ${f(m.output)} out per M tokens`
 }
 
+/** A per-token price as dollars per million tokens: three significant figures, at least cents,
+ *  as site/pricing.html prints it ("$0.20", "$0.165", "$0.0396"), so $0.165 never reads $0.17. */
+export function usdPerM(p: number) {
+  const [i, d = ''] = String(Number((p * 1e6).toPrecision(3))).split('.')
+  return `$${i}.${d.padEnd(2, '0')}`
+}
+
 /** "$0.80/M out": a cloud model's price per million output tokens, as the picker shows it. */
-export const outputPrice = (m: Model) => (m.output == null ? '' : `$${(m.output * 1e6).toFixed(2)}/M out`)
+export const outputPrice = (m: Model) => (m.output == null ? '' : `${usdPerM(m.output)}/M out`)
 
 /** "$0.20 in · $0.80 out /M": both per-million prices, as the picker shows them. */
 export const inOutPrice = (m: Model) =>
-  m.input == null || m.output == null ? outputPrice(m) : `$${(m.input * 1e6).toFixed(2)} in · $${(m.output * 1e6).toFixed(2)} out /M`
+  m.input == null || m.output == null ? outputPrice(m) : `${usdPerM(m.input)} in · ${usdPerM(m.output)} out /M`
 
 /** The model a new session starts on: DeepSeek V4.1 Flash while Frog Cloud lists it, else the
  *  first it lists. Nothing is built in: no list, no default. Same pick as the engine's
@@ -75,6 +82,17 @@ export const defaultModel = (models: Model[]) => (models.find((m) => currentId(m
 
 /** The smallest context window worth offering for agent sessions. */
 const MIN_AGENT_CONTEXT = 64_000
+
+/** The models worth offering for agent sessions, the default first. Agent work needs room (the
+ *  system prompt and tools alone take ~9k tokens), so a small window is left out. The gateway
+ *  doesn't always state the window (2026-11-17: not for qwen3-coder-next or the 8B helpers the
+ *  engine uses for side jobs), so a model without one is judged by its size: 14B and under out. */
+export function agentModels(models: Model[]) {
+  const small = (id: string) => Number(id.match(/-(\d+(?:\.\d+)?)b$/i)?.[1] ?? Infinity) <= 14
+  const fit = models.filter((m) => (m.context == null ? !small(currentId(m.id)) : m.context >= MIN_AGENT_CONTEXT))
+  const first = defaultModel(fit)
+  return [...fit.filter((m) => m.id === first), ...fit.filter((m) => m.id !== first)]
+}
 
 export function useModels(key: string | null) {
   const [models, setModels] = useState<Model[]>([])
@@ -87,15 +105,13 @@ export function useModels(key: string | null) {
       .then((r) => (r.ok ? r.json() : { data: [] }))
       .then((v: { data?: { id: string; context_length?: number; pricing?: { prompt?: string; completion?: string; input_cache_read?: string } }[] }) => {
         if (!live) return
-        // Agent work needs room: the system prompt and tools alone take ~9k tokens, so models
-        // with a small window (the 8B helpers the engine uses for side jobs) aren't offered.
-        setModels((v.data ?? []).filter((m) => (m.context_length ?? MIN_AGENT_CONTEXT) >= MIN_AGENT_CONTEXT).map((m) => ({
+        setModels(agentModels((v.data ?? []).map((m) => ({
           id: m.id,
           context: m.context_length ?? null,
           input: m.pricing?.prompt != null ? Number(m.pricing.prompt) : null,
           output: m.pricing?.completion != null ? Number(m.pricing.completion) : null,
           cached: m.pricing?.input_cache_read != null ? Number(m.pricing.input_cache_read) : null,
-        })))
+        }))))
       })
       .catch(() => live && setModels([]))
     return () => { live = false }

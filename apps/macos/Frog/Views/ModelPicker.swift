@@ -75,9 +75,10 @@ enum ModelPill {
     }
 }
 
-/// The model list: "Your machines" (each model once, with the machines that hold it and what
-/// picking it does there), then "Frog Cloud" (with its price per million output tokens) unless
-/// Settings turned cloud models off. The footer only opens Settings › Models.
+/// The model list: "This Mac" (Apple Intelligence, the models downloaded here, and the one that
+/// suits this Mac to get, each $0 a token), then "Your machines" (each model your other machines
+/// hold, once, with what picking it does there), then "Frog Cloud" (with its price per million
+/// output tokens) unless Settings turned cloud models off. The footer only opens Settings › Models.
 /// Shared by the composer and the toolbar readout.
 struct ModelMenu: View {
     let workspace: Workspace
@@ -99,10 +100,43 @@ struct ModelMenu: View {
 
     static let showCloudKey = "showCloudModels"
 
+    /// Frog Cloud also lists the small models the engine uses for side jobs (titles, images),
+    /// which can't hold an agent's system prompt and tools: 14B and under stays out of the
+    /// picker, as on the web (`agentModels`).
+    static func sideJobHelper(_ spec: String) -> Bool {
+        let id = spec.split(separator: "/").last.map(String.init) ?? spec
+        guard let m = id.range(of: #"-(\d+(\.\d+)?)b$"#, options: [.regularExpression, .caseInsensitive]) else { return false }
+        return (Double(id[m].dropFirst().dropLast()) ?? .infinity) <= 14
+    }
+
     private enum Row: Identifiable {
+        case local(ModelIdentity)
         case machine(MachineModel)
         case cloud(ModelIdentity)
-        var id: String { switch self { case .machine(let m): m.spec; case .cloud(let m): m.spec } }
+        var id: String { switch self { case .local(let m): m.spec; case .machine(let m): m.spec; case .cloud(let m): m.spec } }
+    }
+
+    /// This Mac's models, in the menu's order: Apple's, then frog's own engine, then Ollama and
+    /// LM Studio; ready ones first. `listed` is what the engine listed on this Mac. The current
+    /// model always has its row (a new Mac starts on Apple Intelligence before the engine has
+    /// listed anything), and the model that suits this Mac is offered until it's downloaded.
+    static func thisMacModels(listed: [ModelIdentity], current: ModelIdentity?, suggestion: ModelIdentity?) -> [ModelIdentity] {
+        var list = listed.filter { $0.place == .mac || $0.place == .apple }
+        let have = { (m: ModelIdentity) in list.contains { ProviderID.canonicalSpec($0.spec) == ProviderID.canonicalSpec(m.spec) } }
+        if let current, current.place == .mac || current.place == .apple, !have(current) { list.append(current) }
+        if let suggestion, !have(suggestion) { list.append(suggestion) }
+        return list.enumerated().sorted {
+            ($0.element.runtimeRank, $0.element.state.isReady ? 0 : 1, $0.offset) < ($1.element.runtimeRank, $1.element.state.isReady ? 0 : 1, $1.offset)
+        }.map(\.element)
+    }
+
+    /// A model on this Mac costs nothing a token; a measured speed follows it.
+    static func thisMacDetail(_ m: ModelIdentity, tokensPerSecond: Double?) -> String? {
+        switch m.state {
+        case .ready: ["$0 a token", tokensPerSecond.map(ModelStats.speedText)].compactMap { $0 }.joined(separator: " · ")
+        case .notDownloaded(let gb): SuggestedModel.gbText(gb)
+        default: m.stateLine
+        }
     }
 
     private func matches(_ name: String) -> Bool {
@@ -110,7 +144,18 @@ struct ModelMenu: View {
         return q.isEmpty || name.localizedCaseInsensitiveContains(q)
     }
 
-    private var machineRows: [Row] { devices.machineModels().filter { matches($0.name) }.map(Row.machine) }
+    private var localRows: [Row] {
+        let listed = workspace.models.map(ModelIdentity.init)
+        let mine = current.map(workspace.identity).flatMap { m in m.place == .apple && !AppleIntelligence.available ? nil : m }
+        let suggested = SuggestedModel.forThisMac
+        let suggestion = ModelDownloads.isInstalled(suggested.repo) ? nil : ModelIdentity(suggested)
+        return Self.thisMacModels(listed: listed, current: mine, suggestion: suggestion).filter { matches($0.name) }.map(Row.local)
+    }
+
+    /// Your other machines' models. One only this Mac holds is already in "This Mac".
+    private var machineRows: [Row] {
+        devices.machineModels().filter { m in matches(m.name) && m.holds.contains { $0.name != "This Mac" } }.map(Row.machine)
+    }
 
     private var cloudRows: [Row] {
         guard showCloud else { return [] }
@@ -118,13 +163,22 @@ struct ModelMenu: View {
         if let current, current.hasPrefix("cloud/"), !list.contains(where: { $0.spec == current }) {
             list.insert(workspace.identity(current), at: 0)
         }
-        return list.filter { matches($0.name) }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }.map(Row.cloud)
+        return list.filter { matches($0.name) && ($0.spec == current || !Self.sideJobHelper($0.spec)) }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }.map(Row.cloud)
     }
 
-    private var flat: [Row] { machineRows + cloudRows }
+    private var flat: [Row] { localRows + machineRows + cloudRows }
 
     private func choose(_ row: Row) {
         switch row {
+        case .local(let m):
+            // A model to get downloads, and the chat moves to it once it's here.
+            if m.repo != nil, !m.state.isReady {
+                if case .downloading = m.state { return }
+                workspace.useWhenReady(m)
+                close()
+            } else {
+                pick(m.spec)
+            }
         case .machine(let m):
             let pick = pick
             let by = conversationID
@@ -166,14 +220,18 @@ struct ModelMenu: View {
             .padding(.top, 4)
             HuggingScroll(maxHeight: 440) {
                 VStack(alignment: .leading, spacing: 0) {
-                    header("Your machines")
+                    header(ProviderID.localName)
                         .onChange(of: filter) { selected = 0 }
-                    if machineRows.isEmpty {
-                        Text("No models on your machines yet.")
+                    if localRows.isEmpty {
+                        Text("No models on this Mac yet.")
                             .font(.frog(size: 12)).foregroundStyle(.secondary)
                             .padding(.horizontal, 8).padding(.vertical, 6)
                     }
-                    ForEach(machineRows) { row($0) }
+                    ForEach(localRows) { row($0) }
+                    if !machineRows.isEmpty {
+                        header("Your machines")
+                        ForEach(machineRows) { row($0) }
+                    }
                     if !cloudRows.isEmpty {
                         header(ProviderID.cloudName)
                         ForEach(cloudRows) { row($0) }
@@ -242,6 +300,15 @@ struct ModelMenu: View {
 
     private func content(_ r: Row) -> MachineMenuRow.Content {
         switch r {
+        case .local(let m):
+            let tag: String? = switch m.state {
+            case .notDownloaded: "Get"
+            case .downloadFailed: "Retry"
+            default: nil
+            }
+            var spinning = false
+            if case .downloading = m.state { spinning = true }
+            return .init(name: m.name, detail: Self.thisMacDetail(m, tokensPerSecond: ModelStats.shared.speed(m.spec)), tag: tag, cloud: false, spinning: spinning)
         case .machine(let m):
             let tag = devices.waitingSwap[m.spec] != nil ? "swaps after this turn" : devices.asked[m.spec] != nil ? "loading" : m.tag
             return .init(name: m.name, detail: m.places, tag: tag, cloud: false, spinning: devices.asked[m.spec] != nil, node: m.spec.hasPrefix("node/"))
@@ -336,12 +403,12 @@ struct CloudPermissionSheet: View {
                 .font(.frog(size: 12))
                 .foregroundStyle(.tertiary)
             HStack {
-                Button("Keep It on Your Devices") {
+                Button("Keep it on your devices") {
                     Task { await workspace.setCloud(.deny) }
                     done(false)
                 }
                 Spacer()
-                Button("Just This Conversation") {
+                Button("Just this conversation") {
                     Task {
                         // Enforced by frog: a folder that said no has to be asked again.
                         if workspace.cloud == .deny { await workspace.setCloud(.ask) }
@@ -349,7 +416,7 @@ struct CloudPermissionSheet: View {
                         done(true)
                     }
                 }
-                Button("Always Allow") {
+                Button("Always allow") {
                     Task {
                         await workspace.setCloud(.allow)
                         done(true)

@@ -5,9 +5,10 @@ import SwiftUI
 /// don't: This Mac, then your servers, then frog cloud, then each other cloud provider. A model
 /// you'd download is just a model on this Mac in the Not downloaded state.
 enum ModelSections {
-    /// Launch: every picker lists Frog Cloud's models and nothing else: no models on this Mac,
-    /// your servers or other providers, and no Models settings page (Cam, 2026-10-30). The
-    /// engine still lists them all; turning this off brings the full list back.
+    /// Launch: every picker listed Frog Cloud's models and nothing else, and there was no Models
+    /// settings page (Cam, 2026-10-30). Cam, 2026-11-17: the composer's menu (`ModelMenu`, which
+    /// doesn't use this list) shows this Mac's models first again. This list only feeds the
+    /// unmounted Models settings page; turning this off brings the full list back there.
     static let frogCloudOnly = true
 
     /// Cam, 2026-11-12: "everything remote will go through frog cloud, let's not worry about the

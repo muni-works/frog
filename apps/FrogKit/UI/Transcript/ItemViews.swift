@@ -562,7 +562,7 @@ struct PermissionCard: View {
                     if !request.always.isEmpty {
                         Button(alwaysLabel) { conversation.answer(request.card == nil ? .allowAlways : .allowPrefix) }
                     }
-                    Button("Deny with a Note…") { noting = true }
+                    Button("Deny with a note…") { noting = true }
                 } label: {
                     Image(systemName: "ellipsis")
                         .font(.frog(size: Tokens.Size.secondary, weight: .semibold))
@@ -573,7 +573,7 @@ struct PermissionCard: View {
                 .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
                 .foregroundStyle(Tokens.textSecondary)
                 .help("More choices")
-                Text("Runs on this Mac · sandboxed")
+                Text(PermissionRequest.place(cloud: conversation.cloudSession != nil, outsideSandbox: request.name == "Bash" && request.reason != nil))
                     .font(.frog(size: Tokens.Size.meta))
                     .foregroundStyle(Tokens.textTertiary)
                     .lineLimit(1)
@@ -582,7 +582,7 @@ struct PermissionCard: View {
                     .buttonStyle(CardButtonStyle())
                     .keyboardShortcut(".", modifiers: .command)
                     .help("Deny (⌘.)")
-                Button(request.card == nil ? "Allow" : "Allow Once") { conversation.answer(.allow) }
+                Button(request.card == nil ? "Allow" : "Allow once") { conversation.answer(.allow) }
                     .buttonStyle(CardButtonStyle(primary: true))
                     .keyboardShortcut(.return, modifiers: .command)
                     .help("Allow (⌘↩)")
