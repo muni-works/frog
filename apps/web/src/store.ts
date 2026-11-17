@@ -203,8 +203,10 @@ export function useThreads(cloud: CloudEngine | null, ids: string[]) {
   return { thread, threads }
 }
 
-/** The edge answers 402 `insufficient_credit` on inference; the engine ends the turn with that error. */
+/** The turn ended on money: since 2026-11-01 the engine says so as `billing_limit`; before
+ *  that it ended on the edge's 402 `insufficient_credit` error, which old logs still hold. */
 export function outOfCredits(t: Thread) {
+  if (t.ended?.type === 'billing_limit') return true
   if (t.ended?.type !== 'error') return false
   return /insufficient_credit|out_of_credits|402/.test(JSON.stringify(t.ended.error ?? ''))
 }

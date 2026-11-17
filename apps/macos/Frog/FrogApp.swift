@@ -529,7 +529,7 @@ struct ModelSuggestion: View {
                         Button("Get \(m.name)") { downloads.download(recommended.repo) }
                             .buttonStyle(.link)
                             .foregroundStyle(.tint)
-                        Text("for bigger tasks · \(String(format: "%.1f GB", recommended.approxGB))")
+                        Text("for bigger tasks · \(SuggestedModel.gbText(recommended.approxGB))")
                     }
                     Button {
                         closed = true

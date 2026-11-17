@@ -89,6 +89,18 @@ test("the where menu, signed in: filter, No repo, your repos, more access, Branc
   assert.ok(!s.includes("This Mac") && !s.includes("Choose a folder") && !s.includes("Just chat"), s);
 });
 
+// First-run audit: with the GitHub App not installed the menu was "No repo" and "Give Frog
+// access to more repos", with no why; and before GitHub was connected it offered the install too.
+test("the where menu with no repos yet says why and leads to GitHub", () => {
+  const s = html({ pickRepo: true, onRepo: noop, repos: [], install: "https://github.com/apps/frog/installations/new" });
+  assert.match(s, /Frog sees only the repos you give it access to\./);
+  assert.match(s, />Pick repos on GitHub</);
+  assert.ok(!s.includes("more repos"), s);
+  const google = html({ pickRepo: true, onRepo: noop, repos: [], onConnectGithub: noop, install: "https://github.com/apps/frog/installations/new" });
+  assert.match(google, /Connect GitHub to see your repos/);
+  assert.ok(!google.includes("Pick repos on GitHub") && !google.includes("more repos"), google);
+});
+
 test("the where menu, signed out: one row that opens sign-in", () => {
   const s = html({ pickRepo: true, onSignIn: noop });
   const menu = s.slice(s.indexOf('aria-label="Where it runs"'));

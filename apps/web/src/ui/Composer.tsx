@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { composing } from './guards'
 import type { Image, Mode } from '../cloud/protocol'
-import { modelName, outputPrice, placeColor, placeOf, spec, type Model } from '../models'
+import { inOutPrice, modelName, placeColor, placeOf, spec, type Model } from '../models'
 import { machineModels, places, tag, type Machine } from '../machines'
 import { barTone, canCompact, ringLabel, ringTone } from '../usage'
 import { parseRepo } from '../store'
@@ -125,7 +125,6 @@ const ACTION_WORD: Record<string, string> = { restart_engine: 'Restart engine', 
 const prDot = (s: Pr['state']) => `var(--pr-${s === 'closed' ? 'draft' : s})`
 const PLACEHOLDER = { new: 'What should we work on?', session: 'Reply to Frog', working: 'Add a follow-up' } as const
 const kb = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1e3))} KB`)
-const fromPrice = (m: Model) => (m.input != null ? `from $${(m.input * 1e6).toFixed(2)}/M` : outputPrice(m))
 
 /** 16-box stroke icons, drawn at 14 with a 1.4 stroke (spec: Chip). */
 const P = {
@@ -485,7 +484,7 @@ export function Composer(p: ComposerProps) {
         const match = (s: string) => s.toLowerCase().includes(q.trim().toLowerCase())
         const cloud = (p.models ?? []).filter((m) => match(modelName(m.id)))
         return (
-          <div className="cz-menu cz-models" role="menu" aria-label="Model" style={{ ...at, width: 320 }} {...nav}>
+          <div className="cz-menu cz-models" role="menu" aria-label="Model" style={{ ...at, width: 'min(400px, calc(100vw - 32px))' }} {...nav}>
             <label className="cz-filter"><I d={P.search} /><input autoFocus value={q} placeholder="Search models" aria-label="Search models" onChange={(e) => setQ(e.target.value)} /></label>
             {/* The web runs sessions in Frog Cloud, so a machine's model can't be picked here: it
              * runs from the Mac app. Where there's an app to send them to, one hint; on a phone, or
@@ -504,7 +503,7 @@ export function Composer(p: ComposerProps) {
             {cloud.map((m) => (
               <button key={m.id} type="button" role="menuitemradio" aria-checked={m.id === p.model} onClick={() => { p.onModel?.(m.id); setMenu(null); setQ('') }}>
                 <I d={P.cloud} style={{ color: placeColor('cloud') }} />
-                <span className="cz-mname">{modelName(m.id)}</span><span className="cz-r">{fromPrice(m)}</span>
+                <span className="cz-mname">{modelName(m.id)}</span><span className="cz-r">{inOutPrice(m)}</span>
                 <I d={P.check} className={`cz-check${m.id === p.model ? '' : ' off'}`} />
               </button>
             ))}
@@ -545,7 +544,9 @@ export function Composer(p: ComposerProps) {
             </div>
             {!typed && list.length === 0 && q && <div className="cz-menu-note">No match. Type owner/name or paste a GitHub URL.</div>}
             {p.onConnectGithub && <button type="button" role="menuitem" className="cz-dim" onClick={() => p.onConnectGithub!(text)}>{gh(14)}Connect GitHub to see your repos</button>}
-            {safeHref(p.install) && <a className="cz-dim cz-row" role="menuitem" href={safeHref(p.install)!.href} target="_blank" rel="noreferrer"><I d={P.plus} />Give Frog access to more repos</a>}
+            {/* No repos yet: say why, and make giving access the way on. Before GitHub is connected there's nothing to give access to. */}
+            {!q && list.length === 0 && !p.onConnectGithub && <div className="cz-menu-note">Frog sees only the repos you give it access to.</div>}
+            {safeHref(p.install) && !p.onConnectGithub && <a className={`${!q && list.length === 0 ? '' : 'cz-dim '}cz-row`} role="menuitem" href={safeHref(p.install)!.href} target="_blank" rel="noreferrer"><I d={P.plus} />{!q && list.length === 0 ? 'Pick repos on GitHub' : 'Give Frog access to more repos'}</a>}
             {p.repo && (<>
               <div className="cz-menu-sep" />
               <button type="button" role="menuitem" onClick={() => { setQ(''); setMenu('branch') }}>Branch<span className="cz-r">{where?.branch ?? 'main'}</span><I d={P.chevronRight} className="cz-dim" /></button>

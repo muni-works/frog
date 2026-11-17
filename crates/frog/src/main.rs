@@ -22,7 +22,8 @@ use std::io::Read;
 #[command(
     name = "frog",
     version,
-    about = "A local-first coding agent for your terminal"
+    about = "A local-first coding agent for your terminal",
+    after_help = "Commands: frog login · frog logout · frog account · frog setup [MODEL] · frog memory · frog approvals"
 )]
 struct Cli {
     /// Initial prompt. With -p, run it non-interactively and exit.
@@ -316,6 +317,7 @@ async fn login(args: &[String]) -> Result<bool> {
         }
     });
     eprintln!("signing in to Frog Cloud with {provider} in your browser…");
+    eprintln!("waiting for the browser (up to 3 minutes; ctrl-c to cancel)");
     let http = reqwest::Client::new();
     let device = cloud_login::device_name();
     let key = cloud_login::sign_in(
@@ -336,7 +338,9 @@ async fn login(args: &[String]) -> Result<bool> {
     if std::env::var("FROG_API_KEY").is_ok() {
         println!("  FROG_API_KEY is set in this shell and wins over the saved key");
     }
-    println!("  use it: frog -m cloud/qwen3-coder-next (billed per token; local models stay free)");
+    println!(
+        "  run frog in a project to start (Frog Cloud is billed per token; local models stay free)"
+    );
     Ok(true)
 }
 
@@ -373,6 +377,12 @@ async fn run() -> Result<bool> {
     // `frog setup [MODEL]`: install tang-llm and download the default model's weights.
     let args: Vec<String> = std::env::args().collect();
     if args.get(1).map(String::as_str) == Some("setup") {
+        if matches!(args.get(2).map(String::as_str), Some("-h" | "--help")) {
+            println!(
+                "frog setup [MODEL]: install frog's own engine and download a model's weights, on Apple silicon (default Qwen3 4B, about 2.2 GB)"
+            );
+            return Ok(true);
+        }
         let model = args.get(2).map(|m| {
             let m = m.strip_prefix("local/").unwrap_or(m);
             frog_engine::providers::local_repo(m)
@@ -931,12 +941,12 @@ async fn manage_providers(cli: &Cli) -> Result<Option<bool>> {
 }
 
 const NO_MODEL: &str = "\
-frog didn't find a model to talk to. Any one of these works:
+frog needs a model. Any one of these works:
 
-  frog setup                       install frog's own engine and Qwen3 4B (Apple silicon)
+  frog login                       Frog Cloud, signed in from your browser; billed per token
+  frog setup                       frog's own engine and Qwen3 4B, on Apple silicon (a 2.2 GB download)
   ollama pull qwen3-coder:30b      then run frog again
   LM Studio                        load a model and start its server
-  export FROG_API_KEY=…            use Frog Cloud (key at https://api.frog.toys/beta)
   export ANTHROPIC_API_KEY=…       use Claude
   frog -m provider/model           anything else (frog --models lists what's here)";
 

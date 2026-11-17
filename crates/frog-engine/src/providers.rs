@@ -139,7 +139,7 @@ pub const PRESETS: &[Preset] = &[
     // FROG_BASE_URL (or the old TANG_CLOUD_BASE_URL, TANG_BASE_URL) overrides it.
     Preset {
         id: CLOUD,
-        name: "frog cloud",
+        name: "Frog Cloud",
         kind: ProviderKind::Openai,
         base_url: "https://api.frog.toys/v1",
         key_env: &[
@@ -496,7 +496,7 @@ impl Account {
     pub fn render(&self) -> String {
         if !self.connected {
             let mut s = format!(
-                "frog cloud: not connected: run `frog login` (or set FROG_API_KEY; keys at {})\n",
+                "Frog Cloud: not connected: run `frog login` (or set FROG_API_KEY; keys at {})\n",
                 self.key_url
             );
             if self.keychain_withheld {
@@ -512,7 +512,7 @@ impl Account {
             (Some("env"), None) => "environment".into(),
             _ => "Keychain".into(),
         };
-        let mut s = format!("frog cloud: connected\n  key       {source}\n");
+        let mut s = format!("Frog Cloud: connected\n  key       {source}\n");
         if self.keychain_ignored {
             s.push_str(
                 "            (using the environment's key; your saved key is ignored here)\n",
@@ -588,7 +588,7 @@ pub fn removable(id: &str) -> Result<()> {
     let c = canonical(id);
     if c == CLOUD {
         bail!(
-            "frog cloud is built in and can't be removed; to disconnect it, unset FROG_API_KEY or clear its key: `printf '' | frog --set-key cloud`"
+            "Frog Cloud is built in and can't be removed; to disconnect it, unset FROG_API_KEY or clear its key: `printf '' | frog --set-key cloud`"
         );
     }
     if preset(c).is_some() || RESERVED.contains(&c) {
@@ -904,14 +904,14 @@ mod tests {
         assert!(!a.connected);
         assert_eq!(
             a.render(),
-            "frog cloud: not connected: run `frog login` (or set FROG_API_KEY; keys at https://api.frog.toys/beta)\n"
+            "Frog Cloud: not connected: run `frog login` (or set FROG_API_KEY; keys at https://api.frog.toys/beta)\n"
         );
         let kc = |id: &str| (id == CLOUD).then(|| "k".to_string());
         let env = env_of(&[("FROG_API_KEY", "e")]);
         let a = Account::from(&env, &kc);
         assert_eq!(
             a.render(),
-            "frog cloud: connected\n  key       FROG_API_KEY\n            (using the environment's key; your saved key is ignored here)\n  base url  https://api.frog.toys/v1\n  pinned    yes: a saved key only goes to https://api.frog.toys\n"
+            "Frog Cloud: connected\n  key       FROG_API_KEY\n            (using the environment's key; your saved key is ignored here)\n  base url  https://api.frog.toys/v1\n  pinned    yes: a saved key only goes to https://api.frog.toys\n"
         );
         let moved = env_of(&[("FROG_BASE_URL", "http://localhost:1/v1")]);
         let a = Account::from(&moved, &kc);

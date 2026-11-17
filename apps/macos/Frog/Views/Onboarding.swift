@@ -207,7 +207,7 @@ struct SetupLine: View {
                         }
                         Text("Found \(r.toAdd.count) MCP server\(r.toAdd.count == 1 ? "" : "s").")
                             .help(r.toAdd.joined(separator: ", "))
-                        Button("Use Them") { use(r) }
+                        Button("Use them") { use(r) }
                             .buttonStyle(.link)
                             .foregroundStyle(.tint)
                     }
@@ -309,7 +309,7 @@ struct BiggerModelLine: View {
                     .buttonStyle(.link)
                     .foregroundStyle(local.place.color)
                 if !local.state.isReady, let gb = local.downloadGB {
-                    Text("(\(String(format: "%.1f GB", gb)))")
+                    Text("(\(SuggestedModel.gbText(gb)))")
                 }
                 Text("or")
                 if let cloud = inCloud {

@@ -86,8 +86,8 @@ enum PairError: Error, Equatable {
         case .expired: "That code expired. Run tang-llm pair on \(name) for a new one."
         case .busy: "\(name) is pairing with something else. Try again in a moment."
         case .noWindow: "\(name) isn't showing a code. Run tang-llm pair on it first."
-        case .notThatNode: "This isn't the \(name) frog found on your network. Nothing was saved."
-        case .badReply: "\(name) answered in a way frog doesn't understand. It may need a newer tang."
+        case .notThatNode: "This isn't the \(name) Frog found on your network. Nothing was saved."
+        case .badReply: "\(name) answered in a way Frog doesn't understand. Update tang-llm on \(name) and try again."
         case .network(let why): "Couldn't reach \(name): \(why)"
         }
     }

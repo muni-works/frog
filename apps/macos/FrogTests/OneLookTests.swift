@@ -50,6 +50,30 @@ final class OneLookTests: XCTestCase {
         XCTAssertNil(Conversation.plainNotice("repo map limited to 20,000 files or 2 seconds"))
         XCTAssertEqual(Conversation.plainNotice("started a new conversation"), "Started a new conversation")
         XCTAssertNotNil(Conversation.plainNotice("Network allow-list: pypi.org allowed for the rest of this session."))
+        // First-run audit: retries and Frog Cloud's stand-in went only to the log.
+        XCTAssertEqual(Conversation.plainNotice("Frog Cloud is busy — retrying"), "Frog Cloud is busy — retrying")
+        let standIn = "Frog Cloud: GLM-5.3 Flash is still busy, so DeepSeek V4.1 Flash is answering for now. The session's model hasn't changed."
+        XCTAssertEqual(Conversation.plainNotice(standIn), standIn)
+    }
+
+    /// The permission card says where the step runs: a Frog Cloud session's card said "this Mac".
+    func testPermissionCardSaysWhereItRuns() {
+        XCTAssertEqual(PermissionRequest.place(cloud: false, outsideSandbox: false), "Runs on this Mac · sandboxed")
+        XCTAssertEqual(PermissionRequest.place(cloud: false, outsideSandbox: true), "Runs on this Mac · outside the sandbox")
+        XCTAssertEqual(PermissionRequest.place(cloud: true, outsideSandbox: false), "Runs in your Frog Cloud sandbox")
+    }
+
+    func testThePickerLeavesOutSideJobHelpers() {
+        XCTAssertTrue(ModelMenu.sideJobHelper("cloud/qwen3-8b"))
+        XCTAssertTrue(ModelMenu.sideJobHelper("cloud/qwen3-vl-8b"))
+        XCTAssertFalse(ModelMenu.sideJobHelper("cloud/qwen3-coder-next"))
+        XCTAssertFalse(ModelMenu.sideJobHelper("cloud/deepseek-v4.1-flash"))
+        XCTAssertFalse(ModelMenu.sideJobHelper("cloud/qwen3-32b"))
+    }
+
+    func testDownloadSizesReadAsSettingsWritesThem() {
+        XCTAssertEqual(SuggestedModel.gbText(18.0), "18 GB")
+        XCTAssertEqual(SuggestedModel.gbText(4.6), "4.6 GB")
     }
 
     /// A tool the switch doesn't know (an MCP call) must never read "Used X": the raw

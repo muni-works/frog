@@ -91,6 +91,11 @@ jobs:
           else
             cargo build --release -p frog --target "$TARGET"
           fi
+          # Apple's on-device model, for the darwin tarball: frog finds frog-apple next to
+          # itself and starts new conversations on Apple Intelligence where the Mac has it.
+          if [ "$TARGET" = aarch64-apple-darwin ]; then
+            swift build -c release --package-path sidecars/frog-apple
+          fi
       - name: package
         shell: bash
         env:
@@ -112,9 +117,15 @@ jobs:
           # host strip can't read the aarch64 cross output
           if [ "$TARGET" != aarch64-unknown-linux-gnu ]; then strip "dist/$name/frog"; fi
           cp README.md "dist/$name/"
+          bins=(frog)
+          if [ "$TARGET" = aarch64-apple-darwin ]; then
+            cp sidecars/frog-apple/.build/release/frog-apple "dist/$name/"
+            strip "dist/$name/frog-apple"
+            bins+=(frog-apple)
+          fi
           # Developer ID sign + notarize the darwin CLI when the Apple secrets are set
           # (after strip, which would invalidate the signature). Without them the
-          # binary ships unsigned and install.sh ad-hoc signs it.
+          # binaries ship unsigned and install.sh ad-hoc signs them.
           if [ "$TARGET" = aarch64-apple-darwin ] && [ -n "$APPLE_CERT_P12" ]; then
             kc="$RUNNER_TEMP/frog-sign.keychain-db"
             kcpw=$(openssl rand -hex 16)
@@ -127,12 +138,14 @@ jobs:
             # shellcheck disable=SC2046 # one arg per existing keychain
             security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
             rm -f "$RUNNER_TEMP/cert.p12"
-            codesign --force --options runtime --timestamp --keychain "$kc" \
-              --sign "Developer ID Application" "dist/$name/frog"
-            codesign --verify --strict --verbose=2 "dist/$name/frog"
+            for b in "${bins[@]}"; do
+              codesign --force --options runtime --timestamp --keychain "$kc" \
+                --sign "Developer ID Application" "dist/$name/$b"
+              codesign --verify --strict --verbose=2 "dist/$name/$b"
+            done
             if [ -n "$APPLE_ID" ] && [ -n "$APPLE_TEAM_ID" ] && [ -n "$APPLE_APP_PASSWORD" ]; then
               # a bare binary can't be stapled; Gatekeeper checks the ticket online
-              ditto -c -k "dist/$name/frog" "$RUNNER_TEMP/frog-notarize.zip"
+              (cd "dist/$name" && zip -q "$RUNNER_TEMP/frog-notarize.zip" "${bins[@]}")
               xcrun notarytool submit "$RUNNER_TEMP/frog-notarize.zip" --wait \
                 --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD"
             else

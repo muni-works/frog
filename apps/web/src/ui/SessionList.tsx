@@ -18,7 +18,7 @@ function look(s: SessionSummary, t: Thread, unread: boolean): { glyph: Glyph; de
   if (t.ask) return { glyph: 'ask', detail: askLine(t.ask.name, t.ask.arg) }
   if (t.question) return { glyph: 'ask', detail: t.question.question }
   if (t.elicitation) return { glyph: 'ask', detail: `${t.elicitation.server} needs your input` }
-  if (outOfCredits(t)) return { glyph: 'paused', detail: 'Paused · out of credits' }
+  if (outOfCredits(t)) return { glyph: 'paused', detail: 'Paused · out of credit' }
   if (t.running) return { glyph: 'run', detail: t.activity?.text ?? 'Working…' }
   if (s.state === 'starting') return { glyph: 'run', detail: 'Starting a sandbox…' }
   if (s.state === 'error') return { glyph: 'fail', detail: null }
