@@ -42,7 +42,7 @@ vite dev against it (port 5211) and `capture/capture.mjs`, which drives the app 
 - Shots: `type`, `stream`, `inspector`, `models`, `docs`. The current cut uses none of the web
   frames (it leans on the frog and two Mac snapshots); they stay for the next cut. `run.sh probe` writes two stills for checking selectors.
 - No captured product pixels are left in the current cut. The composer, its model menu,
-  Settings › Machines and the session list are redrawn in `comp.py` from the app's tokens, so check them against the
+  Settings › Machines, the session list and the call list are redrawn in `comp.py` from the app's tokens, so check them against the
   apps when those screens change.
 - The mark is `apps/web/public/frog-mark.svg`, rasterized by `run.sh`.
 
@@ -76,15 +76,15 @@ turns the title.
 | beats | time | shot | on screen | source of the claim |
 |---|---|---|---|---|
 | 0–16 | 0.0–6.7 s | an unnamed agent's task card: two steps done, "Writing the fix" under way. "What's poppin'?" is asked; on beat 4 it stops: "Usage limit reached. Resets in 4 h 12 min", then "Buy extra usage $$$". The frog peeks, then hops in | Your agent ran out. / You've got options. | a drawn, generic card: no product is named or copied |
-| 16–24 | 6.7–10.0 s | the bass drops; the frog hops onto a lily pad, "this Mac". In the composer (redrawn from the app's tokens) the model menu opens on beat 19 and Qwen3 8B, on this Mac, is picked on beat 21 | Open models, on the Mac you have. / $0 a token. | `README.md:29`, `site/pricing.html` ("On your own machines: $0") |
+| 16–24 | 6.7–10.0 s | the bass drops; the frog hops onto a lily pad, "this Mac". In the composer (redrawn from the app's tokens) the model menu opens on beat 19 (Qwen3 32B and Qwen3 Coder 30B on this Mac, then Frog Cloud's three) and Qwen3 32B is picked on beat 21 | Open models, on the Mac you have. / $0 a token. | `README.md:29`, `site/pricing.html` ("On your own machines: $0") |
 | 24–32 | 10.0–13.3 s | a second pad drifts in carrying a pairing code. In Settings › Machines (redrawn from the app's tokens) "Pair a machine…" is clicked on beat 25, the six digits are typed, and on beat 28 the pad settles and the PC's row ("gaming-pc") joins | Add a machine. / Type its 6-digit code once. / It joins the pool. | `README.md:13,59`, `docs/app/models/your-own-nodes.md:13-16` |
 | 32–40 | 13.3–16.6 s | two pads, this Mac above and "my gaming PC" below; a frog lands on one each beat, and with each a row appears in the session list (redrawn from the app's tokens): its title, "Working…" with a turning spinner, and the machine it runs on; the header counts to "6 working" | As many agents as they can hold. | `README.md:6-7` |
-| 40–48 | 16.6–19.9 s | three agent frogs above two pads; calls travel to a pad every half beat | Each call goes where it finishes first. | `README.md:59` ("A scheduler sends each call to the machine that will finish it first") |
-| 48–52 | 19.9–21.6 s | the PC's pad empties to a dashed outline; a call in flight turns round and lands on the Mac | A machine drops out. The turn survives. | `README.md:14` |
+| 40–48 | 16.6–19.9 s | three agent frogs above two pads; a call leaves every beat for a machine, and each one lands as a row in a call list (redrawn from the app's tokens): the step, a spinner then a tick, and the machine it ran on | Each call goes where it / finishes first. | `README.md:59` ("A scheduler sends each call to the machine that will finish it first") |
+| 48–52 | 19.9–21.6 s | on beat 48 the gaming PC's pad empties to a dashed outline and the list's header goes from "2 machines" to "1 machine"; the call in flight turns round, lands on the Mac, and its row reads "gaming PC dropped out", then "reran on this Mac" | A machine drops out. / The turn survives. | `README.md:14`, `site/index.html` ("the turn reruns on the next node with that model, with one line saying so"); the row's wording is this reel's, not the app's |
 | 52–64 | 21.6–26.5 s | bars: Frog Cloud's three models land on beats 52–54, then three other providers' bars grow at the same dollars per beat while the frog watches the tip | Need more? Frog Cloud. / the six prices / List price per million output tokens, 17 Nov 2026. Different models: this compares price only. | `prices.json` (each row's source URL) |
 | 64–72 | 26.5–29.8 s | `CLAUDE.md` flies in and the frog catches it; `skills` and `MCP servers` land stacked on its head | It brings your setup. / Nothing to set up twice. | `site/index.html` "Brings your setup" |
 | 72–80 | 29.8–33.1 s | the frog on its own pad inside a ring; the limit notice from the open flies in, meets the ring on beat 76 and tumbles away; the frog waves | Nobody can cap what you own. / Free and open source. Local models keep your code on your Mac. | `README.md:55`, License |
-| 80–88 | 33.1–36.5 s | the breakdown: the frog hops in and lands with a ripple; the line, the install line, frog.toys; it winks on beat 86; fade | No caps. Your machines. One agent. / `curl -fsSL https://frog.toys/install.sh \| sh` / frog.toys | `README.md:3,10` |
+| 80–88 | 33.1–36.5 s | the breakdown: the frog hops in and lands with a ripple; the line, the install line, frog.toys; it winks on beat 86; no fade, picture and music stop on the last beat | No caps. Your machines. One agent. / `curl -fsSL https://frog.toys/install.sh \| sh` / frog.toys | `README.md:3,10` |
 
 The frog (`frog.py`) is drawn in code. Its head is the mark's own shapes and colours, read from
 `apps/web/public/frog-mark.svg`; the body (belly, arms, hind legs) is new for this reel and is
@@ -111,7 +111,7 @@ The cut is timed to **Jack Harlow, "WHATS POPPIN"** (Cam's mp3, not in the repo)
 commercial release: fine for a private cut, but publishing the reel needs a licence for it, or
 the stand-in below. Its lyrics are explicit in places (profanity in the part the reel uses; the
 reel ends at 36.5 s, before the most explicit lines). `TRACK=<path to the mp3> render.sh` uses it
-from its start, cut to 36.5 s, 3.5 dB down, 2 s fade. The grid was fitted, not heard: nobody has
+from its start, cut to 36.5 s, 3.5 dB down, with no fade: it stops on the last beat. The grid was fitted, not heard: nobody has
 checked the sync by ear.
 
 Without `TRACK`, `music.py` synthesizes an original stand-in on the same grid (Am F C G, sine,

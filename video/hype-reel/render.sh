@@ -12,8 +12,8 @@ rm -rf build/frames && mkdir -p build
 NPROC=${NPROC:-6} nice $PY comp.py build/frames
 DUR=$($PY -c "from beats import DUR; print(f'{DUR:.3f}')")
 if [[ -n ${TRACK:-} ]]; then
-  # the track from its start, cut at the reel's length, 2 s fade out
-  ffmpeg -loglevel error -y -i "$TRACK" -af "atrim=0:$DUR,volume=-3.5dB,afade=t=out:st=$(( DUR - 2 )):d=2" -ar 48000 -ac 2 build/music.wav
+  # the track from its start, cut at the reel's length: no fade, it stops on the last beat
+  ffmpeg -loglevel error -y -i "$TRACK" -af "atrim=0:$DUR,volume=-3.5dB" -ar 48000 -ac 2 build/music.wav
 else
   $PY music.py build/music.wav
 fi

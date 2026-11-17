@@ -290,7 +290,7 @@ def _laptop(d, x, y, color):
     d.rounded_rectangle([x, y - 13, x + 34, y + 9], radius=4, outline=color, width=3)
     d.line([(x - 6, y + 14), (x + 40, y + 14)], fill=color, width=3)
 
-MENU = [("h", "Your machines"), ("r", "Qwen3 8B", "this Mac", True), ("r", "Qwen3 4B", "this Mac", True),
+MENU = [("h", "Your machines"), ("r", "Qwen3 32B", "this Mac", True), ("r", "Qwen3 Coder 30B", "this Mac", True),
         ("h", "Frog Cloud"), ("r", "Qwen3 Coder Next", "", False), ("r", "GLM-5.3 Flash", "", False), ("r", "DeepSeek V4.1 Flash", "", False)]
 
 def composer(img, x0, y0, x1, y1, model, local, open_menu=False, hover=None, picked=2):
@@ -347,7 +347,7 @@ def s_mine(t, lt):
     opened, chosen = B(b + 3), B(b + 5)  # the two clicks, each on a beat
     is_open, local = opened <= t < chosen, t >= chosen
     box = (col(5), 770, col(12), 960)
-    pts = composer(img, *box, "Qwen3 8B" if local else "Qwen3 Coder Next", local, open_menu=is_open, hover=0 if t >= B(b + 4.6) else None)
+    pts = composer(img, *box, "Qwen3 32B" if local else "Qwen3 Coder Next", local, open_menu=is_open, hover=0 if t >= B(b + 4.6) else None)
     chip = composer(Image.new("RGB", (8, 8)), *box, "Qwen3 Coder Next", False)["chip"]
     row = pts[0]
     if B(b + 1.5) <= t < B(b + 6.5):
@@ -480,45 +480,78 @@ def s_swarm(t, lt):
     words(img, t, B(b), [("As many agents as", False), ("they can hold.", True)])
     return img
 
+STEPS = ["Read src/retry.rs", "Search for thread_rng", "Run cargo test", "Read tests/upload.rs", "Edit src/retry.rs",
+         "Run cargo test", "Read src/backoff.rs", "Edit tests/upload.rs", "Run cargo test", "Write the summary"]
+
+def calls_panel(img, t, x0, y0, x1, rows, machines):
+    """where each call ran, redrawn from the app's tokens: a row per call with its step, a
+    spinner until it lands and a tick after, and the machine it ran on. A call caught on a machine
+    that dropped out says so in one line, then where it reran.
+    rows = [(label, state, machine_text, tint)], state "run" or "done"."""
+    d = ImageDraw.Draw(img)
+    d.text((x0, y0), "Calls", font=sans(40), fill=FG, anchor="ls")
+    d.text((x1, y0), "2 machines" if machines == 2 else "1 machine", font=sans(34, False), fill=MUTED if machines == 2 else WARN, anchor="rs")
+    top = y0 + 30; rh = 84
+    if rows: d.rounded_rectangle([x0, top, x1, top + rh * len(rows)], radius=24, fill=CARD)
+    for i, (label, state, machine, tint) in enumerate(rows):
+        y = top + i * rh
+        if i: d.line([(x0 + 32, y), (x1 - 32, y)], fill=LINE, width=2)
+        cx, cy = x0 + 54, y + rh / 2
+        if state == "run":
+            a0 = (t * 420 + i * 60) % 360
+            d.arc([cx - 15, cy - 15, cx + 15, cy + 15], 0, 360, fill=LINE, width=4)
+            d.arc([cx - 15, cy - 15, cx + 15, cy + 15], a0, a0 + 100, fill=FROG, width=4)
+        else:
+            d.line([(cx - 12, cy), (cx - 3, cy + 10), (cx + 13, cy - 10)], fill=MUTED, width=4, joint="curve")
+        d.text((x0 + 96, y + 28), label, font=sans(32), fill=FG if state == "run" else MUTED, anchor="lm")
+        d.ellipse([x0 + 96, y + 53, x0 + 110, y + 67], fill=tint)
+        d.text((x0 + 122, y + 60), machine, font=sans(28, False), fill=WARN if tint == WARN else MUTED, anchor="lm")
+
 def s_how(t, lt):
+    """how the pool works. Three agents send calls; each goes to a machine and lands in the list.
+    On beat 48 the gaming PC drops out: the call in flight turns round, lands on the Mac, and its
+    row says so."""
     b = CUT["how"]
     img = Image.new("RGB", (W, H), CANVAS); d = ImageDraw.Draw(img)
-    out = t >= B(b + 8)  # the PC drops out
-    agents = [(col(3), 610), (col(6), 610), (col(9), 610)]
-    mac, pc = (col(3) + 70, 910), (col(8) + 70, 910)
-    pond = Pond(); pond.pad(*mac, 280); pond.pad(*pc, 280, out=out)
-    # calls: once the agents are in, one leaves every half beat for the machine that is free
+    drop = B(b + 8); out = t >= drop
+    agents = [(col(1), 620), (col(2) + 100, 620), (col(4) + 60, 620)]
+    mac, pc = (col(1) + 40, 920), (col(4) + 40, 920)
+    # the calls: (launch beat, landing beat, from, to the PC?, caught by the drop?)
     calls = []
-    for i in range(0, 24):
-        cb = b + 2 + i * 0.5
-        if cb + 1 > b + 12: break
-        src = agents[i % 3]; to_pc = (i % 2 == 1)
-        calls.append((cb, src, to_pc))
-    for cb, src, to_pc in calls:
-        splash(pond, t, B(cb + 1), *(pc if to_pc and cb + 1 <= b + 8 else mac), 120)
+    for i in range(10):
+        cb = b + 1.5 + i
+        to_pc = i % 2 == 0 and B(cb) < drop
+        caught = to_pc and B(cb + 1) > drop
+        calls.append((cb, cb + (1.5 if caught else 1), agents[i % 3], to_pc, caught))
+    pond = Pond(); pond.pad(*mac, 180); pond.pad(*pc, 180, out=out)
+    for cb, land, src, to_pc, caught in calls: splash(pond, t, B(land), *(pc if to_pc and not caught else mac), 100)
     pond.onto(img)
-    pad_label(img, mac[0], mac[1] + 90, "this Mac")
-    pad_label(img, pc[0], pc[1] + 90, "my gaming PC dropped out" if out else "my gaming PC", WARN if out else MUTED)
+    pad_label(img, mac[0], mac[1] + 76, "this Mac")
+    pad_label(img, pc[0], pc[1] + 76, "my gaming PC", WARN if out else MUTED)
     for i, a in enumerate(agents):
-        if t >= B(b + i): frog_at(img, t, a[0], a[1], 105, land=B(b + i), look=(0, 0.8))
-    for cb, src, to_pc in calls:
-        k = seg(t, B(cb), B(cb + 1))
-        if not (0 < k < 1): continue
-        start = (src[0], src[1] + 10)
-        if to_pc and cb + 1 > b + 8:  # in flight when the PC drops: it turns round and lands on the Mac
-            turn = seg(B(b + 8), B(cb), B(cb + 1))
-            if t < B(b + 8): x, y = lerp(start[0], pc[0], ease(k)), lerp(start[1], pc[1], ease(k))
-            else:
-                mx, my = lerp(start[0], pc[0], ease(turn)), lerp(start[1], pc[1], ease(turn))
-                kk = ease(seg(t, B(b + 8), B(cb + 1))); x, y = lerp(mx, mac[0], kk), lerp(my, mac[1], kk)
+        if t >= B(b + i * 0.5): frog_at(img, t, a[0], a[1], 95, land=B(b + i * 0.5), look=(0, 0.8))
+    rows = []
+    for i, (cb, land, src, to_pc, caught) in enumerate(calls):
+        if t < B(cb): continue
+        done = t >= B(land)
+        if caught:
+            if t < drop: machine, tint = "gaming PC", LOCAL
+            elif not done: machine, tint = "gaming PC dropped out", WARN
+            else: machine, tint = "reran on this Mac", LOCAL
+        else: machine, tint = ("gaming PC" if to_pc else "this Mac"), LOCAL
+        rows.append((STEPS[i], "done" if done else "run", machine, tint))
+        if done: continue
+        k = seg(t, B(cb), B(land)); start = (src[0], src[1] + 10)  # the call in flight
+        if caught and t >= drop:
+            turn = seg(drop, B(cb), B(cb + 1)); mx, my = lerp(start[0], pc[0], ease(turn)), lerp(start[1], pc[1], ease(turn))
+            kk = ease(seg(t, drop, B(land))); x, y = lerp(mx, mac[0], kk), lerp(my, mac[1], kk)
         else:
-            dest = pc if to_pc else mac
-            x, y = lerp(start[0], dest[0], ease(k)), lerp(start[1], dest[1], ease(k))
-        d.ellipse([x - 13, y - 13, x + 13, y + 13], fill=FROG)
-    if not out:
-        words(img, t, B(b), [("Each call goes where it ", False), ("finishes first.", True)])
-    else:
-        words(img, t, B(b + 8), [("A machine drops out. ", False), ("The turn survives.", True)])
+            dest = pc if to_pc else mac; kk = ease(seg(t, B(cb), B(cb + 1)))
+            x, y = lerp(start[0], dest[0], kk), lerp(start[1], dest[1], kk)
+        d.ellipse([x - 12, y - 12, x + 12, y + 12], fill=FROG)
+    calls_panel(img, t, col(7), 420, col(12), rows[-6:], 1 if out else 2)
+    if not out: words(img, t, B(b), [("Each call goes where it", False), ("finishes first.", True)])
+    else: words(img, t, drop, [("A machine drops out.", False), ("The turn survives.", True)])
     return img
 
 @lru_cache(1)
@@ -634,8 +667,7 @@ def s_end(t, lt):
     if t >= B(b + 5):
         k = ease(seg(t, B(b + 5), B(b + 5) + 0.2))
         d.text((MARGIN, 930 - (1 - k) * 16), "frog.toys", font=sans(TITLE), fill=tuple(int(c * k) for c in FG), anchor="ls")
-    fo = seg(t, DUR - 0.7, DUR)
-    return dim(img, fo) if fo > 0 else img
+    return img  # no fade: it ends on the beat, with the music
 
 SHOTS = {"open": s_open, "mine": s_mine, "pair": s_pair, "swarm": s_swarm, "how": s_how,
          "price": s_price, "setup": s_setup, "own": s_own, "end": s_end}
