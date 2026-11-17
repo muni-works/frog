@@ -59,12 +59,13 @@ def web(shot, i):
     n = len(list((FOOT / shot).glob("*.png")))
     return load(f"{shot}/{min(max(0, i), n - 1):04d}.png")
 
-def view(img, cx, cy, z):
-    """the camera: a 16:9 window on img centred at (cx, cy), z=1 the widest that fits."""
-    sw, sh = img.size
-    rw = min(sw, sh * 16 / 9) / z; rh = rw * 9 / 16
+def view(img, cx, cy, z, out=(W, H)):
+    """the camera: a window on img with out's aspect, centred at (cx, cy), z=1 the widest that
+    fits. Cropped from the full-resolution source, so punch-ins stay sharp."""
+    sw, sh = img.size; ow, oh = out
+    rw = min(sw, sh * ow / oh) / z; rh = rw * oh / ow
     x0 = min(max(cx - rw / 2, 0), sw - rw); y0 = min(max(cy - rh / 2, 0), sh - rh)
-    return img.resize((W, H), Image.LANCZOS, box=(x0, y0, x0 + rw, y0 + rh)), (x0, y0, rw / W)
+    return img.resize(out, Image.LANCZOS, box=(x0, y0, x0 + rw, y0 + rh)), (x0, y0, rw / ow)
 
 def to_screen(cam, x, y):
     x0, y0, s = cam
@@ -96,7 +97,7 @@ def words(img, t, t0, parts, where="bottom", size=92, x=120, sub=None, t1=None):
         d.text((cx, y), text, font=f, fill=(FROG if green else FG) + (255,), anchor="ls")
         cx += d.textlength(text, font=f)
     if sub:
-        d.text((x + 2, y + 62), sub, font=sans(40, False), fill=MUTED + (255,), anchor="ls")
+        d.text((x + 2, y + 56), sub, font=sans(40, False), fill=MUTED + (255,), anchor="ls")
     a = np.asarray(lay).copy(); a[..., 3] = (a[..., 3] * k * out).astype(np.uint8)
     img.paste(Image.fromarray(a), (0, 0), Image.fromarray(a))
 
@@ -137,6 +138,70 @@ def paste_center(img, im, cx, cy, alpha=1.0):
         a = np.asarray(im).copy(); a[..., 3] = (a[..., 3] * alpha).astype(np.uint8); im = Image.fromarray(a)
     img.paste(im, (int(cx - im.width / 2), int(cy - im.height / 2)), im)
 
+# ---- layout: the title zone on top, the UI as a card with a margin, the section label below
+CARD_BOX = (222, 200, 1698, 1030)  # 1476 x 830, 16:9
+LABELS = {"mine": "01  Your Mac", "pair": "02  Your machines", "swarm": "03  Agents", "proof": "04  Measured",
+          "cloud": "05  Frog Cloud", "pr": "06  Pull request", "free": "07  Open source"}
+
+def hud(img, name):
+    """the section label, bottom left: the one thing that carries across the cuts."""
+    if name not in LABELS: return
+    d = ImageDraw.Draw(img)
+    n, label = LABELS[name].split("  ")
+    d.text((120, 1062), n, font=mono(24, True), fill=FROG, anchor="ls")
+    d.text((120 + 52, 1062), label, font=mono(24), fill=FAINT, anchor="ls")
+
+def persp_coeffs(src, dst):
+    """PIL PERSPECTIVE coefficients mapping output points dst to input points src."""
+    A, bvec = [], []
+    for (x, y), (u, v) in zip(dst, src):
+        A.append([x, y, 1, 0, 0, 0, -u * x, -u * y]); bvec.append(u)
+        A.append([0, 0, 0, x, y, 1, -v * x, -v * y]); bvec.append(v)
+    return np.linalg.solve(np.array(A, float), np.array(bvec, float)).tolist()
+
+def card(img, ui, tilt=0.0):
+    """paste a UI frame as a rounded card in CARD_BOX; tilt 0..1 turns it into a 3/4 view."""
+    x0, y0, x1, y1 = CARD_BOX; w, h = x1 - x0, y1 - y0
+    c = ui.convert("RGBA")
+    m = Image.new("L", (w, h), 0); ImageDraw.Draw(m).rounded_rectangle([0, 0, w - 1, h - 1], radius=22, fill=255)
+    c.putalpha(m)
+    ImageDraw.Draw(c).rounded_rectangle([0, 0, w - 1, h - 1], radius=22, outline=LINE + (255,), width=2)
+    if tilt > 0:
+        dx, dy = 0.10 * w * tilt, 0.09 * h * tilt
+        dst = [(0, 0), (w - dx, dy), (w - dx, h - dy), (0, h)]
+        c = c.transform((w, h), Image.PERSPECTIVE, persp_coeffs([(0, 0), (w, 0), (w, h), (0, h)], dst), Image.BICUBIC)
+    img.paste(c, (x0, y0), c)
+
+def card_view(src, cx, cy, z):
+    ui, cam = view(src, cx, cy, z, out=(CARD_BOX[2] - CARD_BOX[0], CARD_BOX[3] - CARD_BOX[1]))
+    return ui, cam
+
+def card_to_screen(cam, x, y):
+    sx, sy = to_screen(cam, x, y)
+    return CARD_BOX[0] + sx, CARD_BOX[1] + sy
+
+def glow(img, lay, r=18, k=1.0):
+    """blur-and-add glow from a drawn layer. Used once: the bench numbers."""
+    g = lay.filter(ImageFilter.GaussianBlur(r))
+    arr = np.asarray(img, np.float32) + np.asarray(g, np.float32)[..., :3] * (np.asarray(g, np.float32)[..., 3:] / 255) * 0.9 * k
+    img.paste(Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8)))
+    img.paste(lay, (0, 0), lay)
+
+def callout(img, pt, label, t, t0, dx=150, dy=-90):
+    """a dot on the thing, a leader line, a green label: grows in over a third of a beat."""
+    k = ease(seg(t, t0, t0 + BEAT / 2))
+    if k <= 0: return
+    d = ImageDraw.Draw(img)
+    x, y = pt; ex, ey = x + dx * k, y + dy * k
+    d.ellipse([x - 7, y - 7, x + 7, y + 7], fill=FROG)
+    d.line([(x, y), (ex, ey), (ex + 30 * k, ey)], fill=FROG, width=3)
+    if k > 0.6:
+        d.text((ex + 42, ey), label, font=sans(38), fill=tuple(int(c * seg(k, 0.6, 1)) for c in FROG), anchor="lm")
+
+def on_beat(t, b0, n, every=1.0):
+    """how many of n steps have landed by t, one every `every` beats from beat b0."""
+    return max(0, min(n, int((t - B(b0)) / (BEAT * every)) + 1)) if t >= B(b0) else 0
+
 @lru_cache(1)
 def mac_menu():
     """the Mac composer's where menu (This Mac, then Frog Cloud) on a black margin, so the
@@ -145,51 +210,43 @@ def mac_menu():
     c = Image.new("RGB", (2300, 1500), CANVAS); c.paste(m, (382, 380))
     return c
 
-# ---- shots. Each draws the frame at time t; lt = seconds into the shot.
-def typed_line(d, xy, text, font, k, cursor_on, anchor="ls", parts=None):
-    """text typed on: the first k (0..1) of it, then a green block cursor."""
-    n = int(round(len(text) * k)); shown = text[:n]
-    x, y = xy
-    if anchor == "ms": x -= d.textlength(text, font=font) / 2
-    cx = x
-    for seg_text, green in (parts or [(text, False)]):
-        piece = shown[:len(seg_text)]; shown = shown[len(seg_text):]
-        if piece: d.text((cx, y), piece, font=font, fill=FROG if green else FG, anchor="ls")
-        cx += d.textlength(piece, font=font)
-    if cursor_on:
-        a = d.textbbox((cx, y), "M", font=font, anchor="ls")
-        d.rectangle([cx + 6, a[1], cx + 6 + font.size * 0.45, a[3]], fill=FROG)
-
-def s_open(t, lt):
-    img = Image.new("RGB", (W, H), CANVAS); d = ImageDraw.Draw(img)
-    line = "Your agent shouldn't run out."
-    k = seg(lt, 0.6, 2.6)
-    blink = (int(lt / BEAT) % 2 == 0) or 0 < k < 1
-    typed_line(d, (W / 2, H / 2 + 40), line, sans(112), k, blink, anchor="ms")
-    return img
-
-def s_mine(t, lt):
-    src = mac_menu()
-    z = lerp(1.0, 1.08, seg(lt, 0, 8 * BEAT))
-    img, cam = view(src, 1150, 1500, z)
-    img = scrim(img, "top", 360)
-    words(img, t, B(CUT["mine"]) + 0.05, [("Open models, on the ", False), ("Mac you have.", True)], where="top",
-          sub="$0 a token." if t >= B(CUT["mine"] + 3) else None)
-    return img
-
-@lru_cache(1)
-def machines():
-    """the Mac's Settings › Models, Machines section only (this Mac and a paired RTX 3090), on a
-    black margin. The rows below it (account, credit) are left out."""
-    m = load("docs/design/parity/models-settings-mac-dark.png").crop((0, 0, 1240, 312))
+@lru_cache(2)
+def machines(rows):
+    """the Mac's Settings › Models › Machines, cut to the header and `rows` rows (1: this Mac;
+    2: and the paired RTX 3090). The account and credit rows below it are left out."""
+    m = load("docs/design/parity/models-settings-mac-dark.png").crop((0, 0, 1240, 205 if rows == 1 else 312))
     mask = Image.new("L", m.size, 0); ImageDraw.Draw(mask).rounded_rectangle([0, 0, m.width - 1, m.height - 1], radius=28, fill=255)
     c = Image.new("RGB", (1500, 844), CANVAS); c.paste(m, (130, 330), mask)
     return c
 
+# ---- shots. Each draws the frame at time t; lt = seconds into the shot.
+def s_open(t, lt):
+    img = Image.new("RGB", (W, H), CANVAS)
+    lay = Image.new("RGBA", (W, H), (0, 0, 0, 0)); d = ImageDraw.Draw(lay)
+    f = sans(124)
+    parts = [("Your ", False), ("agent ", False), ("shouldn't ", False), ("run out.", True)]
+    x = W / 2 - sum(d.textlength(p, font=f) for p, _ in parts) / 2
+    for i, (p, g) in enumerate(parts):  # a word a beat, landing whole
+        k = ease(seg(t, B(i), B(i) + 0.2))
+        if k > 0:
+            d.text((x, H / 2 + 40 - (1 - k) * 22), p, font=f, fill=(FROG if g else FG) + (int(255 * k),), anchor="ls")
+        x += d.textlength(p, font=f)
+    img.paste(lay, (0, 0), lay)
+    return img
+
+def s_mine(t, lt):
+    src = mac_menu()
+    z = lerp(1.0, 1.07, seg(lt, 0, 4 * BEAT)) * punch(t, B(CUT["mine"]), 0.04)
+    img, cam = view(src, 1150, 1500, z)
+    img = scrim(img, "top", 360)
+    words(img, t, B(CUT["mine"]), [("Open models, on the ", False), ("Mac you have.", True)], where="top",
+          sub="$0 a token." if t >= B(CUT["mine"] + 2) else None)
+    return img
+
 def s_pair(t, lt):
-    if t < B(CUT["pair"] + 4):
+    b = CUT["pair"]
+    if t < B(b + 2):
         img = Image.new("RGB", (W, H), CANVAS); d = ImageDraw.Draw(img)
-        k = ease(seg(lt, 0, 0.3)) * punch(t, B(CUT["pair"]), 0.0)
         f = mono(44)
         cmd = "curl -fsSL https://frog.toys/node | sh"
         note = "# installs tang-llm, prints a pairing code"
@@ -197,98 +254,131 @@ def s_pair(t, lt):
         x0, y0 = W / 2 - tw / 2 - 48, 450
         d.rounded_rectangle([x0, y0, W - x0, y0 + 210], radius=18, fill=CARD)
         d.text((x0 + 48, y0 + 80), "$ ", font=f, fill=FROG, anchor="ls")
-        kt = seg(t, B(CUT["pair"] + 0.3), B(CUT["pair"] + 2.2))
-        typed_line(d, (x0 + 48 + d.textlength("$ ", font=f), y0 + 80), cmd, f, kt, kt < 1)
-        if t >= B(CUT["pair"] + 2.5):
+        d.text((x0 + 48 + d.textlength("$ ", font=f), y0 + 80), cmd, font=f, fill=FG, anchor="ls")
+        if t >= B(b + 1):
             d.text((x0 + 48, y0 + 150), note, font=f, fill=FAINT, anchor="ls")
-        words(img, t, B(CUT["pair"]) + 0.05, [("Add a machine.", False)], where="top")
+        words(img, t, B(b), [("Add a machine.", False)], where="top")
         return img
-    src = machines()
-    z = lerp(1.0, 1.1, seg(t, B(CUT["pair"] + 4), B(CUT["swarm"]))) * punch(t, B(CUT["pair"] + 4), 0.04)
-    img, cam = view(src, 750, 500, z)
-    words(img, t, B(CUT["pair"] + 4) + 0.05, [("It joins the ", False), ("pool.", True)], where="top")
+    rows = 2 if t >= B(b + 4) else 1
+    src = machines(rows)
+    img, cam = view(src, 750, 500, 1.0 * punch(t, B(b + 4), 0.035))
+    if rows == 2:
+        x, y = to_screen(cam, 130 + 560, 330 + 306)  # under the paired PC's row
+        callout(img, (x, y), "joined", t, B(b + 4), dx=0, dy=110)
+    words(img, t, B(b + 2), [("Add a machine.", False)], where="top", t1=B(b + 4))
+    words(img, t, B(b + 4), [("It joins the ", False), ("pool.", True)], where="top")
     return img
 
 def s_swarm(t, lt):
-    i = 4 + int(seg(t, B(CUT["swarm"]), B(CUT["swarm"] + 10)) * 27)  # the live turn, first read to the ask
+    b = CUT["swarm"]
+    i = min(31, 4 + 2 * on_beat(t, b, 16, 0.5))  # the live turn steps forward every half beat
     src = web("stream", i)
-    k = ease(seg(lt, 0, 12 * BEAT))
-    img, cam = view(src, lerp(0, 400, k), lerp(560, 640, k), lerp(1.4, 1.25, k))
-    img = scrim(img, "bottom", 360)
-    words(img, t, B(CUT["swarm"]) + 0.3, [("As many agents as ", False), ("they can hold.", True)])
+    img = Image.new("RGB", (W, H), CANVAS)
+    k = ease(seg(t, B(b), B(b + 2)))  # the one perspective move: a 3/4 view that turns flat
+    ui, cam = card_view(src, 1100, 640, lerp(1.0, 1.08, seg(lt, 0, 8 * BEAT)))
+    card(img, ui, tilt=1 - k)
+    words(img, t, B(b), [("As many agents as ", False), ("they can hold.", True)], where="top")
     return img
 
 def s_proof(t, lt):
-    img = Image.new("RGB", (W, H), CANVAS); d = ImageDraw.Draw(img)
-    words(img, t, B(CUT["proof"]) + 0.05, [("More machines, ", False), ("more done.", True)], where="top", size=84)
-    d = ImageDraw.Draw(img)
-    stats = [(41, "tasks passed on Mac + PC", FROG), (21, "on the PC alone", FG), (0, "rate-limit errors", FROG)]
-    for j, (n, label, col) in enumerate(stats):
-        t0 = B(CUT["proof"] + 1 + j * 1.5)
-        k = ease(seg(t, t0, t0 + 0.35))
-        if k <= 0: continue
+    b = CUT["proof"]
+    img = Image.new("RGB", (W, H), CANVAS)
+    if t < B(b + 4):  # the dip: the claim alone, then the numbers hit on the drop
+        d = ImageDraw.Draw(img)
+        k = ease(seg(t, B(b), B(b) + 0.25)); f = sans(124)
+        parts = [("More machines, ", False), ("more done.", True)]
+        x = W / 2 - sum(d.textlength(p, font=f) for p, _ in parts) / 2
+        for p, g in parts:
+            d.text((x, H / 2 + 40), p, font=f, fill=tuple(int(c * k) for c in (FROG if g else FG)), anchor="ls"); x += d.textlength(p, font=f)
+        return img
+    words(img, t, B(b + 4), [("More machines, ", False), ("more done.", True)], where="top", size=84)
+    lay = Image.new("RGBA", (W, H), (0, 0, 0, 0)); d = ImageDraw.Draw(lay)
+    stats = [(41, "tasks passed on Mac + PC", FROG, b + 4), (21, "on the PC alone", FG, b + 6), (0, "rate-limit errors", FROG, b + 8)]
+    for j, (n, label, col, sb) in enumerate(stats):
+        if t < B(sb): continue
+        k = ease(seg(t, B(sb), B(sb) + 0.18))
+        shown = n if t >= B(sb + 1) else int(n * seg(t, B(sb), B(sb + 1)))  # lands on the next beat and holds
         cx = W / 2 + (j - 1) * 560
-        shown = int(round(n * ease(seg(t, t0, t0 + 0.8))))
-        c = tuple(int(v * k) for v in col)
-        d.text((cx, 600 - (1 - k) * 24), str(shown), font=sans(240), fill=c, anchor="ms")
-        d.text((cx, 680), label, font=sans(40, False), fill=tuple(int(v * k) for v in MUTED), anchor="ms")
-    k = ease(seg(t, B(CUT["proof"] + 5), B(CUT["proof"] + 5.5)))
-    if k > 0:
-        d.text((W / 2, 930), "Six agents for 15 minutes on Qwen3-8B: an M4 Max Mac added to a PC with an RTX 3090.",
-               font=sans(34, False), fill=tuple(int(v * k) for v in FAINT), anchor="ms")
+        d.text((cx, 610 - (1 - k) * 30), str(shown), font=sans(260), fill=col + (int(255 * k),), anchor="ms")
+        d.text((cx, 690), label, font=sans(40, False), fill=MUTED + (int(255 * k),), anchor="ms")
+    glow(img, lay, 22, ease(seg(t, B(b + 4), B(b + 5))))
+    if t >= B(b + 10):
+        k = ease(seg(t, B(b + 10), B(b + 10) + 0.3))
+        ImageDraw.Draw(img).text((W / 2, 930), "Six agents for 15 minutes on Qwen3-8B: an M4 Max Mac added to a PC with an RTX 3090.",
+                                 font=sans(34, False), fill=tuple(int(c * k) for c in FAINT), anchor="ms")
     return img
 
 def s_cloud(t, lt):
-    src = web("models", 1)  # the web app's model menu: Frog Cloud's models, priced per token
-    z = lerp(1.75, 1.95, seg(lt, 0, 8 * BEAT)) * punch(t, B(CUT["cloud"]), 0.06)
-    img, cam = view(src, 1800, 900, z)
-    img = scrim(img, "top", 420)
-    words(img, t, B(CUT["cloud"]) + 0.05, [("Need more? ", False), ("Frog Cloud.", True)], where="top",
-          sub="Per token, at cost plus 10%." if t >= B(CUT["cloud"] + 2) else None)
+    b = CUT["cloud"]
+    img = Image.new("RGB", (W, H), CANVAS)
+    ui, cam = card_view(web("models", 1), 1870, 960, 2.35)  # a hold, after the push and the turn
+    card(img, ui)
+    words(img, t, B(b), [("Need more? ", False), ("Frog Cloud.", True)], where="top",
+          sub="Per token, at cost plus 10%." if t >= B(b + 2) else None)
     return img
 
 def s_pr(t, lt):
-    t0 = B(CUT["pr"])
+    b = CUT["pr"]
     title = [("Then it opens the ", False), ("pull request.", True)]
-    if t >= B(CUT["pr"] + 5.5):
-        img = Image.new("RGB", (W, H), CANVAS)
-        g = load("docs/design/composer/mac-git-pr-dark.png")  # the Mac composer: the PR, checking
-        k = ease(seg(t, B(CUT["pr"] + 5.5), B(CUT["pr"] + 6.2)))
-        s = lerp(1.14, 1.24, seg(t, B(CUT["pr"] + 5.5), B(CUT["free"])))
-        paste_center(img, g.resize((int(g.width * s), int(g.height * s)), Image.LANCZOS), W / 2, H / 2 + 40, k)
-        words(img, t, t0 + 0.05, title, where="top")
+    img = Image.new("RGB", (W, H), CANVAS)
+    if t >= B(b + 8):
+        g = load("docs/design/composer/mac-git-pr-dark.png")  # the Mac composer: the PR, its checks running
+        s = 1.14 * punch(t, B(b + 8), 0.03)
+        gi = g.resize((int(g.width * s), int(g.height * s)), Image.LANCZOS)
+        paste_center(img, gi, W / 2, H / 2 + 40)
+        gx0, gy0 = W / 2 - gi.width / 2, H / 2 + 40 - gi.height / 2
+        callout(img, (gx0 + 1277 * s, gy0 + 96 * s), "checks running", t, B(b + 9), dx=-90, dy=-170)
+        words(img, t, B(b), title, where="top")
+        hud(img, "pr")
         return img
-    src = web("inspector", 0)
-    k = ease(seg(t, t0 + BEAT, B(CUT["pr"] + 4)))
-    img, cam = view(src, lerp(1280, 2100, k), lerp(720, 1100, k), lerp(1.0, 1.7, k))
-    img = scrim(img, "top", 400)
-    bx, by = to_screen(cam, 2322, 1373)
-    m = ease(seg(t, B(CUT["pr"] + 2), B(CUT["pr"] + 4)))
-    press = seg(t, B(CUT["pr"] + 4), B(CUT["pr"] + 5))
+    k = ease(seg(t, B(b + 1), B(b + 5)))
+    ui, cam = card_view(web("inspector", 0), lerp(1280, 2050, k), lerp(720, 1080, k), lerp(1.0, 1.8, k))
+    card(img, ui)
+    bx, by = card_to_screen(cam, 2322, 1373)
+    m = ease(seg(t, B(b + 4), B(b + 5)))
+    press = seg(t, B(b + 5), B(b + 6))  # the click lands on beat b + 5
     cursor(img, lerp(bx - 420, bx, m), lerp(by - 260, by, m), press)
-    words(img, t, t0 + 0.05, title, where="top")
+    words(img, t, B(b), title, where="top")
     return img
 
 def s_free(t, lt):
     img = Image.new("RGB", (W, H), CANVAS); d = ImageDraw.Draw(img)
-    k = ease(seg(lt, 0, 0.35))
+    b = CUT["free"]
+    k = ease(seg(t, B(b), B(b) + 0.25))
     d.text((W / 2, H / 2 + 10 - (1 - k) * 24), "Free and open source.", font=sans(130), fill=tuple(int(c * k) for c in FG), anchor="ms")
-    k2 = ease(seg(lt, 2 * BEAT, 2 * BEAT + 0.35))
+    k2 = ease(seg(t, B(b + 2), B(b + 2) + 0.25))
     d.text((W / 2, H / 2 + 110), "MIT or Apache-2.0. Fork it, build on it.", font=sans(52, False), fill=tuple(int(c * k2) for c in MUTED), anchor="ms")
     return img
 
+MARK_Y, MARK_SIZE = 250, 220
+
+def s_morph(t, lt):
+    """the breakdown: a green ring draws itself a quarter a beat, then fills into the mark."""
+    b = CUT["morph"]
+    img = Image.new("RGB", (W, H), CANVAS)
+    cx, cy, r = W / 2, H / 2, 150
+    q = on_beat(t, b, 4)  # quarters landed
+    arc = 90 * q if t < B(b + 4) else 360
+    d = ImageDraw.Draw(img)
+    if t < B(b + 5):
+        d.arc([cx - r, cy - r, cx + r, cy + r], -90, -90 + arc, fill=FROG, width=8)
+    k = ease(seg(t, B(b + 4), B(b + 6)))  # ring -> mark, sliding up to where the end card keeps it
+    if k > 0:
+        y = lerp(cy, MARK_Y, ease(seg(t, B(b + 5), B(b + 6))))
+        paste_center(img, mark(int(lerp(2 * r, MARK_SIZE, k))), cx, y, k)
+    return img
+
 def s_end(t, lt):
+    b = CUT["end"]
     img = Image.new("RGB", (W, H), CANVAS)
     d = ImageDraw.Draw(img)
-    k = ease(seg(lt, 0, 0.6)); s = punch(t, B(CUT["end"]), 0.08)
-    paste_center(img, mark(int(220 * s)), W / 2, 250, k)
-    k1 = ease(seg(lt, 1 * BEAT, 1 * BEAT + 0.4))
-    if k1 > 0:
-        f = sans(88); parts = [("No caps. ", True), ("Your machines. One agent.", False)]
-        x = W / 2 - sum(d.textlength(p, font=f) for p, _ in parts) / 2
-        for p, g in parts:
-            d.text((x, 510 - (1 - k1) * 18), p, font=f, fill=tuple(int(c * k1) for c in (FROG if g else FG)), anchor="ls"); x += d.textlength(p, font=f)
-    k3 = ease(seg(lt, 4 * BEAT, 4 * BEAT + 0.4))
+    paste_center(img, mark(int(MARK_SIZE * punch(t, B(b), 0.1))), W / 2, MARK_Y)
+    k1 = ease(seg(t, B(b), B(b) + 0.2))
+    f = sans(88); parts = [("No caps. ", True), ("Your machines. One agent.", False)]
+    x = W / 2 - sum(d.textlength(p, font=f) for p, _ in parts) / 2
+    for p, g in parts:
+        d.text((x, 510 - (1 - k1) * 18), p, font=f, fill=tuple(int(c * k1) for c in (FROG if g else FG)), anchor="ls"); x += d.textlength(p, font=f)
+    k3 = ease(seg(t, B(b + 2), B(b + 2) + 0.25))
     if k3 > 0:
         line = "curl -fsSL https://frog.toys/install.sh | sh"
         f = mono(40); tw = d.textlength("$ " + line, font=f)
@@ -296,19 +386,20 @@ def s_end(t, lt):
         d.rounded_rectangle([bx0, by0, W - bx0, by0 + 96], radius=16, fill=tuple(int(c * k3) for c in CARD))
         d.text((bx0 + 40, by0 + 62), "$ ", font=f, fill=tuple(int(c * k3) for c in FROG), anchor="ls")
         d.text((bx0 + 40 + d.textlength("$ ", font=f), by0 + 62), line, font=f, fill=tuple(int(c * k3) for c in FG), anchor="ls")
-    k4 = ease(seg(lt, 5 * BEAT, 5 * BEAT + 0.4))
+    k4 = ease(seg(t, B(b + 4), B(b + 4) + 0.25))
     if k4 > 0:
         d.text((W / 2, 840 - (1 - k4) * 16), "frog.toys", font=sans(96), fill=tuple(int(c * k4) for c in FG), anchor="ms")
     fo = seg(t, DUR - 1.0, DUR)
     return dim(img, fo) if fo > 0 else img
 
 SHOTS = {"open": s_open, "mine": s_mine, "pair": s_pair, "swarm": s_swarm, "proof": s_proof,
-         "cloud": s_cloud, "pr": s_pr, "free": s_free, "end": s_end}
+         "cloud": s_cloud, "pr": s_pr, "free": s_free, "morph": s_morph, "end": s_end}
 
 def frame(f):
     t = f / FPS
     name = shot_of(t)
     img = SHOTS[name](t, t - B(CUT[name]))
+    if name != "pr": hud(img, name)
     img.save(OUT / f"{f:04d}.png", compress_level=1)
     return f
 

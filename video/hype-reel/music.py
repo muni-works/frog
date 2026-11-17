@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""The reel's music: an original track, synthesized here from sine, saw and noise, on the same
-beat grid as the picture (beats.py). No samples, no recordings.
+"""A stand-in track, synthesized here from sine, saw and noise on the picture's beat grid
+(beats.py), for renders without the real track (TRACK unset in render.sh). No samples, no
+recordings, so it is safe to publish.
 
 usage: music.py <out.wav>
 
@@ -106,7 +107,7 @@ def riser(dur):
 
 
 K, H, HO, C = kick(), hat(), hat(True), clap()
-DROP1, BREAK, DROP2, END = CUT["pair"], CUT["proof"], CUT["cloud"], CUT["end"]
+DROP1, BREAK, DROP2, END = CUT["pair"], CUT["proof"], CUT["proof"] + 4, CUT["end"]
 LAST = int(DUR / BEAT)
 
 for b in range(LAST):

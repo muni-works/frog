@@ -1,6 +1,8 @@
 #!/bin/zsh
 # Re-render the reel from the captured footage: frames, music, encode, contact sheet.
-#   video/hype-reel/render.sh            (capture/run.sh first if footage/ is missing or stale)
+#   TRACK=~/Downloads/"Lackvill - No Jumper.mp3" video/hype-reel/render.sh   # the cut, on its track
+#   video/hype-reel/render.sh            # no TRACK: music.py's synthesized stand-in, same grid
+# (capture/run.sh first if footage/ is missing or stale). The grid in beats.py is fitted to the track.
 # Needs uv, ffmpeg and rsvg-convert. CPU only; NPROC (default 6) sets the frame workers.
 set -euo pipefail
 cd ${0:A:h}
@@ -8,7 +10,13 @@ cd ${0:A:h}
 PY=(uv run --quiet --with pillow==12.0.0 --with numpy==2.3.4 python)
 rm -rf build/frames && mkdir -p build
 NPROC=${NPROC:-6} nice $PY comp.py build/frames
-$PY music.py build/music.wav
+DUR=$($PY -c "from beats import DUR; print(f'{DUR:.3f}')")
+if [[ -n ${TRACK:-} ]]; then
+  # the track from its start, cut at the reel's length, 2 s fade out
+  ffmpeg -loglevel error -y -i "$TRACK" -af "atrim=0:$DUR,volume=-1.5dB,afade=t=out:st=$(( DUR - 2 )):d=2" -ar 48000 -ac 2 build/music.wav
+else
+  $PY music.py build/music.wav
+fi
 N=$(ls build/frames | wc -l | tr -d ' ')
 nice ffmpeg -loglevel error -y -framerate 30 -i build/frames/%04d.png -i build/music.wav \
   -c:v libx264 -crf 17 -preset slow -pix_fmt yuv420p -c:a aac -b:a 256k -shortest \
