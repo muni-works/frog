@@ -18,17 +18,20 @@ def B(i): return PHASE + i * BEAT
 
 # shot -> first beat. Each shot runs to the next one's beat.
 CUT = {
-    "open": 0,     # "Your agent shouldn't run out.", a word a beat; the dip at 4-8 holds it
+    "open": 0,     # another agent hits its usage limit; the frog hops in on "no jumper" (2.5-3.1 s)
     "mine": 8,     # open models on the Mac you have, $0 a token
     "pair": 12,    # add a machine (12), it joins the pool (16)
-    "swarm": 20,   # as many agents as they can hold
-    "proof": 28,   # the dip: the title alone; the drop at 32: 41, 21, 0
-    "cloud": 44,   # need more? Frog Cloud, at cost plus 10%
-    "pr": 52,      # then it opens the pull request
-    "free": 64,    # free and open source
-    "morph": 74,   # the breakdown: a ring draws itself and becomes the mark
+    "swarm": 20,   # six frogs, a landing a beat: as many agents as they can hold
+    "how": 28,     # how the pool works; the drop at 32 starts the calls; 36 a machine drops out; 40 the bench
+    "price": 44,   # Frog Cloud's three models next to other providers' list prices
+    "setup": 52,   # it brings your setup: CLAUDE.md, skills, MCP servers
+    "own": 60,     # nobody can cap what you own: the limit card bounces off
+    "morph": 72,   # the breakdown: ripples, then the frog
     "end": 80,     # the drop: No caps. Your machines. One agent. frog.toys
 }
+# "no jumper", as sung in the track (whisper word timings): the frog leaves the ground on "no"
+# and lands as "jumper" ends.
+JUMP = (2.50, 2.98)
 END_BEATS = 92
 DUR = B(END_BEATS)  # 42.5 s
 NFRAMES = int(round(DUR * FPS))

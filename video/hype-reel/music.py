@@ -107,7 +107,7 @@ def riser(dur):
 
 
 K, H, HO, C = kick(), hat(), hat(True), clap()
-DROP1, BREAK, DROP2, END = CUT["pair"], CUT["proof"], CUT["proof"] + 4, CUT["end"]
+DROP1, BREAK, DROP2, END = CUT["pair"], CUT["how"], CUT["how"] + 4, CUT["end"]
 LAST = int(DUR / BEAT)
 
 for b in range(LAST):
