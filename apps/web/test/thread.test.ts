@@ -84,6 +84,12 @@ test("retry notices read as what happened and when it tries again", async () => 
   assert.equal(humanize("HTTP 503: no inference capacity right now — retrying in 8s (3/6)"), "No model is free on Frog Cloud right now. Trying again in 8s (3 of 6).");
   assert.equal(humanize("deepseek-v4.1-flash is busy right now — still trying (3/6)"), "Frog Cloud is busy right now. Still trying (3 of 6).");
   assert.equal(humanize("context window: 32768 tokens"), "context window: 32768 tokens");
+  // First-run audit: today's engine lines are already words; the stand-in said "busy" and lost
+  // that another model was answering.
+  const standIn = "Frog Cloud: GLM-5.3 Flash is still busy, so DeepSeek V4.1 Flash is answering for now. The session's model hasn't changed.";
+  assert.equal(humanize(standIn), standIn);
+  assert.equal(humanize("Frog Cloud is busy — retrying"), "Frog Cloud is busy — retrying");
+  assert.equal(humanize("mew stopped answering; finishing on this Mac"), "mew stopped answering; finishing on this Mac");
 });
 
 test("a finished call's gist lands on its own row, not on its command", () => {

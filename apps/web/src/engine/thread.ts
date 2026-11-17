@@ -196,6 +196,9 @@ export function reduce(t: Thread, env: Envelope): Thread {
 /** The engine's notices, in words: a model call it's retrying reads as what happened and when
  * it tries again, not as an HTTP status and a JSON body. Anything else passes through. */
 export function humanize(message: string): string {
+  // Today's engine already says it in words (model_policy.rs `retrying_line`, call.rs's stand-in,
+  // node.rs's failover): keep them, or "Y is answering for now" collapses into "busy".
+  if (/ — retrying$|is answering for now|stopped answering; finishing on /.test(message)) return message
   // Engines before quiet retries said "retrying in 4s (2/6)" on every retry; newer ones stay
   // quiet for the first two and then say "still trying (3/6)".
   const retry = message.match(/retrying in (\d+)s \((\d+)\/(\d+)\)/)

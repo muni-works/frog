@@ -348,7 +348,7 @@ fn pick_remote(
     anthropic_env: bool,
 ) -> Option<(String, String)> {
     if let Some(spec) = cloud {
-        return Some((spec, "frog cloud is connected".into()));
+        return Some((spec, "Frog Cloud is connected".into()));
     }
     if let Some(spec) = enabled {
         return Some((spec, "a cloud model you turned on".into()));
