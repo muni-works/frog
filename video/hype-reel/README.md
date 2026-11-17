@@ -41,10 +41,9 @@ vite dev against it (port 5211) and `capture/capture.mjs`, which drives the app 
   suggestion chips are random per load, so those differ.
 - Shots: `type`, `stream`, `inspector`, `models`, `docs`. The current cut uses none of the web
   frames (it leans on the frog and two Mac snapshots); they stay for the next cut. `run.sh probe` writes two stills for checking selectors.
-- The only product pixels left are the Mac's Settings › Machines rows, from the checked-in
-  snapshot `docs/design/parity/models-settings-mac-dark.png`. The composer and its model menu
-  are redrawn in `comp.py`, not captured. Re-run those
-  harnesses to refresh them; they build their own copy of the app.
+- No captured product pixels are left in the current cut. The composer, its model menu and
+  Settings › Machines are redrawn in `comp.py` from the app's tokens, so check them against the
+  apps when those screens change.
 - The mark is `apps/web/public/frog-mark.svg`, rasterized by `run.sh`.
 
 ## Files
@@ -78,7 +77,7 @@ turns the title.
 |---|---|---|---|---|
 | 0–16 | 0.0–6.7 s | an unnamed agent's task card: two steps done, "Writing the fix" under way. "What's poppin'?" is asked; on beat 4 it stops: "Usage limit reached. Resets in 4 h 12 min", then "Buy extra usage $$$". The frog peeks, then hops in | Your agent ran out. / You've got options. | a drawn, generic card: no product is named or copied |
 | 16–24 | 6.7–10.0 s | the bass drops; the frog hops onto a lily pad, "this Mac". In the composer (redrawn from the app's tokens) the model menu opens on beat 19 and Qwen3 8B, on this Mac, is picked on beat 21 | Open models, on the Mac you have. / $0 a token. | `README.md:29`, `site/pricing.html` ("On your own machines: $0") |
-| 24–32 | 10.0–13.3 s | the node install line; a second pad drifts in and settles on beat 28; Settings › Machines shows studio (M4 Max) and mew (RTX 3090) | Add a machine. / It joins the pool. | `README.md:13,59`, `site/index.html` (6-digit pairing code) |
+| 24–32 | 10.0–13.3 s | a second pad drifts in carrying a pairing code. In Settings › Machines (redrawn from the app's tokens) "Pair a machine…" is clicked on beat 25, the six digits are typed, and on beat 28 the pad settles and the PC's row joins | Add a machine. / Type its 6-digit code once. / It joins the pool. | `README.md:13,59`, `docs/app/models/your-own-nodes.md:13-16` |
 | 32–40 | 13.3–16.6 s | a frog lands on a pad each beat, a counter runs to 6 | As many agents as they can hold. | `README.md:6-7` |
 | 40–48 | 16.6–19.9 s | three agent frogs above two pads; calls travel to a pad every half beat | Each call goes where it finishes first. | `README.md:59` ("A scheduler sends each call to the machine that will finish it first") |
 | 48–52 | 19.9–21.6 s | the PC's pad empties to a dashed outline; a call in flight turns round and lands on the Mac | A machine drops out. The turn survives. | `README.md:14` |

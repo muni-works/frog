@@ -362,37 +362,75 @@ def s_mine(t, lt):
     words(img, t, B(b), [("Open models, on the", False), ("Mac you have.", True)], sub="$0 a token." if local else None)
     return img
 
-@lru_cache(1)
-def machines_card():
-    """the Mac's Settings › Models › Machines: this Mac and the paired RTX 3090. The account and
-    credit rows below it are left out."""
-    m = load("docs/design/parity/models-settings-mac-dark.png").crop((40, 0, 1240, 312))
-    m = m.resize((int(m.width * 0.92), int(m.height * 0.92)), Image.LANCZOS)
-    mask = Image.new("L", m.size, 0); ImageDraw.Draw(mask).rounded_rectangle([0, 0, m.width - 1, m.height - 1], radius=20, fill=255)
-    c = Image.new("RGB", m.size, CANVAS); c.paste(m, (0, 0), mask)
-    return c
+CODE = "482913"  # the pairing code in the scene: any six digits, it is typed once
+
+def machines_panel(img, x0, y0, x1, rows, mode="button", typed=0, flash=0.0):
+    """Settings › Models › Machines, redrawn from the app's tokens: a row per machine (name, what
+    it is, its state), then "Pair a machine…", which turns into the six boxes of a pairing code.
+    rows = [(name, tag, detail, state)]. Returns the points a pointer needs."""
+    d = ImageDraw.Draw(img)
+    d.text((x0, y0), "Machines", font=sans(40), fill=FG, anchor="ls")
+    top = y0 + 30; rh = 116
+    d.rounded_rectangle([x0, top, x1, top + rh * len(rows)], radius=24, fill=CARD)
+    for i, (name, tag, detail, state) in enumerate(rows):
+        y = top + i * rh
+        if i: d.line([(x0 + 32, y), (x1 - 32, y)], fill=LINE, width=2)
+        if i == len(rows) - 1 and flash > 0:  # the row that just joined
+            d.rounded_rectangle([x0 + 3, y + 3, x1 - 3, y + rh - 3], radius=22, outline=tuple(int(c * flash + CARD[j] * (1 - flash)) for j, c in enumerate(FROG)), width=4)
+        ix, iy = x0 + 40, y + rh / 2  # a screen for the Mac, a rack unit for the PC
+        if i == 0:
+            d.rounded_rectangle([ix, iy - 20, ix + 44, iy + 10], radius=5, outline=MUTED, width=3); d.line([(ix + 12, iy + 20), (ix + 32, iy + 20)], fill=MUTED, width=3)
+        else:
+            d.rounded_rectangle([ix, iy - 18, ix + 44, iy + 18], radius=5, outline=MUTED, width=3); d.line([(ix, iy), (ix + 44, iy)], fill=MUTED, width=3)
+        d.text((x0 + 112, y + 44), name, font=sans(40), fill=FG, anchor="lm")
+        if tag: d.text((x0 + 126 + d.textlength(name, font=sans(40)), y + 46), tag, font=sans(30, False), fill=FAINT, anchor="lm")
+        d.text((x0 + 112, y + 86), detail, font=sans(30, False), fill=MUTED, anchor="lm")
+        d.ellipse([x1 - 58, iy - 9, x1 - 40, iy + 9], fill=LOCAL)
+        d.text((x1 - 76, iy), state, font=sans(34, False), fill=MUTED, anchor="rm")
+    by = top + rh * len(rows) + 24
+    pts = {"button": (x0 + 150, by + 36)}
+    if mode == "button":
+        f = sans(36); tw = d.textlength("Pair a machine…", font=f)
+        d.rounded_rectangle([x0, by, x0 + tw + 64, by + 72], radius=16, fill=WELL)
+        d.text((x0 + 32, by + 36), "Pair a machine…", font=f, fill=FG, anchor="lm")
+    elif mode == "code":
+        d.text((x0, by + 38), "Pairing code", font=sans(36, False), fill=MUTED, anchor="lm")
+        bx = x0 + 250
+        for i in range(6):
+            x = bx + i * 78 + (24 if i >= 3 else 0)
+            on = i == typed
+            d.rounded_rectangle([x, by, x + 66, by + 76], radius=12, fill=WELL, outline=FROG if on else LINE, width=3 if on else 2)
+            if i < typed: d.text((x + 33, by + 38), CODE[i], font=mono(44, True), fill=FG, anchor="mm")
+    return pts
 
 def s_pair(t, lt):
+    """a second machine: its pad drifts in showing a pairing code; in Settings › Machines the
+    code is typed, a digit at a time, and on beat 28 the pad settles and its row joins."""
     b = CUT["pair"]
     img = Image.new("RGB", (W, H), CANVAS); d = ImageDraw.Draw(img)
-    k = ease(seg(t, B(b), B(b + 4)))  # the second pad drifts in and settles on beat 16
+    joined = t >= B(b + 4)
+    k = ease(seg(t, B(b), B(b + 4)))
     px = lerp(W + 320, PC_PAD[0], k)
     pond = Pond(); pond.pad(*MAC_PAD, 250); pond.pad(px, PC_PAD[1], 250); splash(pond, t, B(b + 4), *PC_PAD, 250); pond.onto(img)
     pad_label(img, MAC_PAD[0], MAC_PAD[1] + 84, "this Mac")
     pad_label(img, px, PC_PAD[1] + 84, "a PC with an RTX 3090")
     frog_at(img, t, MAC_PAD[0], MAC_PAD[1] - 6, 180, look=(0.9, 0.0))
-    if t < B(b + 4):
-        f = mono(38); cmd = "curl -fsSL https://frog.toys/node | sh"
-        tw = d.textlength("$ " + cmd, font=f); x0, y0 = col(12) - tw - 72, 420
-        d.rounded_rectangle([x0, y0, x0 + tw + 72, y0 + 92], radius=16, fill=CARD)
-        d.text((x0 + 36, y0 + 60), "$ ", font=f, fill=FROG, anchor="ls")
-        d.text((x0 + 36 + d.textlength("$ ", font=f), y0 + 60), cmd, font=f, fill=FG, anchor="ls")
-        if t >= B(b + 2): d.text((x0, y0 + 150), "It prints a 6-digit pairing code.", font=sans(SUB, False), fill=MUTED, anchor="ls")
-        words(img, t, B(b), [("Add a machine.", False)])
-    else:
-        m = machines_card(); kk = ease(seg(t, B(b + 4), B(b + 4) + 0.2))
-        img.paste(m, (int(col(12) - m.width), int(400 + (1 - kk) * 20)))
-        words(img, t, B(b + 4), [("It joins the ", False), ("pool.", True)])
+    if not joined:  # the code the new machine printed, riding in on its pad
+        f = mono(44, True); txt = CODE[:3] + " " + CODE[3:]; tw = d.textlength(txt, font=f)
+        d.rounded_rectangle([px - tw / 2 - 28, PC_PAD[1] - 150, px + tw / 2 + 28, PC_PAD[1] - 70], radius=16, fill=WELL, outline=LINE, width=2)
+        d.text((px, PC_PAD[1] - 110), txt, font=f, fill=FG, anchor="mm")
+    click = B(b + 1)
+    typed = 0 if t < click else min(6, int((t - B(b + 1.5)) / (BEAT * 0.4)) + 1) if t >= B(b + 1.5) else 0
+    rows = [("studio", "This Mac", "M4 Max · 64 GB unified", "idle")]
+    if joined: rows.append(("mew", "", "RTX 3090 · 24 GB VRAM", "idle"))
+    mode = "button" if (t < click or joined) else "code"
+    flash = float(np.exp(-(t - B(b + 4)) * 2.2)) if joined else 0.0
+    pts = machines_panel(img, col(5), 420, col(12), rows, mode=mode, typed=typed, flash=flash)
+    if B(b + 0.2) <= t < B(b + 1.6):  # the pointer: to "Pair a machine…", a click on beat 25
+        kk = ease(seg(t, B(b + 0.2), click - 0.05)); bx, by = pts["button"]
+        cursor(img, lerp(col(9), bx, kk), lerp(820, by + 6, kk), seg(t, click, click + 0.25) if click <= t < click + 0.25 else 0)
+    if not joined: words(img, t, B(b), [("Add a machine.", False)], sub="Type its 6-digit code once." if t >= click else None)
+    else: words(img, t, B(b + 4), [("It joins the", False), ("pool.", True)])
     return img
 
 def s_swarm(t, lt):
