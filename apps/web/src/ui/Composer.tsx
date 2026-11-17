@@ -371,7 +371,8 @@ export function Composer(p: ComposerProps) {
       case 'error': {
         const e = tray.error!
         // The button that fixes it most directly is last and has the plate (board 5).
-        const [first, second] = e.actions
+        // No local model on the web: never offer one, even from an error made elsewhere.
+        const [first, second] = e.actions.filter((a) => a !== 'use_local' || !!tray.defaults.local)
         const word = (a: string) => (a === 'retry' && e.retryIn ? `Retry in ${e.retryIn}s` : ACTION_WORD[a] ?? a)
         return (
           <div className="cz-status" role="alert">

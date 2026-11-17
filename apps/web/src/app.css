@@ -110,7 +110,6 @@ a { color: var(--frog); }
 .f-pill:disabled { cursor: default; }
 .f-pill:disabled:hover { background: transparent; }
 .f-pill { white-space: nowrap; }
-   truncates before the send button is pushed out. */
 .turn { position: relative; }
 .turn-foot { position: relative; display: flex; align-items: center; gap: 10px; min-height: 22px; font-size: 11.5px; color: var(--faint); font-variant-numeric: tabular-nums; opacity: 0; transition: opacity .15s; }
 .reply-block:hover .turn-foot, .turn-foot.pinned, .turn-foot:focus-within { opacity: 1; }
