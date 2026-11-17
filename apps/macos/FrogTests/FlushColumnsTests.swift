@@ -83,10 +83,12 @@ final class FlushColumnsTests: XCTestCase {
     private func assertGray(_ shot: Shot, _ x: CGFloat, _ y: CGFloat, _ want: Int, _ what: String,
                             file: StaticString = #filePath, line: UInt = #line) {
         let got = shot.rgb(x, y)
-        // The line comes out a few steps off its token through the window's colour space (49
-        // for #2a2a2a); it's still far from the page (0) and the columns (10).
-        let slack = want == self.line ? 9 : 3
-        let ok = got.allSatisfy { abs($0 - want) <= slack }
+        // The line comes out some steps off its token through the display's colour space (#2a2a2a
+        // reads 49 here, 56 on CI's virtual display): it's a line if it's a gray well clear of
+        // both the page (0) and the columns (10).
+        let ok = want == self.line
+            ? got.allSatisfy { (30...72).contains($0) } && Set(got).count == 1
+            : got.allSatisfy { abs($0 - want) <= 3 }
         XCTAssertTrue(ok, "\(what) at (\(x), \(y)): \(got), want \(want)", file: file, line: line)
     }
 
