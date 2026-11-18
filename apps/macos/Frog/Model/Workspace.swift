@@ -349,6 +349,7 @@ final class Workspace {
     var cloudTarget: String??
 
     func runInCloud(_ text: String, repo: String?? = nil) async {
+        Funnel.track("handoff_clicked", ["from": "mac", "to": "cloud", "where": "composer"])
         let folder = folder
         // Off the main thread: it runs git and waits, which spins the main run loop.
         let repo: String? = if let repo { repo } else {

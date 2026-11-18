@@ -36,3 +36,17 @@ export function showsDownloadChip({ thisMac, phone }: { thisMac: boolean; phone:
 export function downloadChipShown(machines: readonly { thisMac?: boolean }[] = [], phone: boolean = isPhone()): boolean {
   return showsDownloadChip({ thisMac: hasThisMac(machines), phone })
 }
+
+/** A Mac with a mouse: what a Mac-only setting's invitation needs before it offers the app. An
+ *  iPad says "Macintosh" too, so a coarse pointer rules it out. */
+export function isMacVisitor(matches: Matches = media, ua: string = typeof navigator === 'object' ? navigator.userAgent : ''): boolean {
+  return !isPhone(matches) && /Macintosh|Mac OS X/.test(ua)
+}
+
+/** What an invitation row (a setting that works in the Mac app) offers where its control would
+ *  be: the download, the app they already have, or nothing off a Mac. */
+export type Invite = 'get' | 'open' | 'elsewhere'
+export function inviteFor({ mac, thisMac }: { mac: boolean; thisMac: boolean }): Invite {
+  if (!mac) return 'elsewhere'
+  return thisMac ? 'open' : 'get'
+}

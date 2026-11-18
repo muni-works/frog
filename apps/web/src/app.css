@@ -798,3 +798,13 @@ body { font-family: var(--font-sans); }
 .tp-head .line-link { border: 0; background: none; padding: 0; font: inherit; color: var(--muted); cursor: pointer; }
 .tp-none { color: var(--faint); padding: var(--space-row) 0; }
 @media (max-width: 640px) { .tp-body { flex-direction: column; } .tp-detail { width: 100%; } .tp-name { width: 120px; } .tp-axis { margin-left: 120px; } }
+/* Settings: the invitation pill and the pill menu (docs/design/app-shell.md, Invitations). */
+.settings-page .invite-pill { border: 1px solid var(--line-strong); border-radius: 999px; padding: 3px 11px; color: var(--fg); flex: none; }
+.settings-page select.set-menu { appearance: none; font: inherit; font-size: 12px; max-width: 220px; }
+/* Board 3's row: a regular 14px label, and the segmented capsule (a track, the chosen one raised),
+   as the Mac draws them. Billing's amounts keep their own chips. */
+.settings-page .set-row > div > b { font-weight: 400; font-size: 14px; }
+.settings-page .set-seg { display: inline-flex; flex: none; width: max-content; min-width: 0; gap: 0; padding: 2px; border-radius: 9px; background: var(--card); }
+.settings-page .set-seg button { flex: none; padding: 4px 12px; border-radius: 7px; background: transparent; color: var(--muted); font: 400 12px var(--font-sans); }
+.settings-page .set-seg button.on { background: var(--well); color: var(--fg); }
+@media (max-width: 760px) { .settings-page .set-seg button { flex: 1; } }
