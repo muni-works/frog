@@ -184,6 +184,12 @@ struct TranscriptView: View {
                         track.unpark()
                         return follow(proxy)
                     }
+                    #if DEBUG
+                    if following, conversation.busy, growth > 0, let live = liveAnswer, let answer = track.answerFrame(live.item) {
+                        let top = live.first ? track.lastTurnTop : answer.minY
+                        if top < new.visibleTop + growth + topInset + 4, !(answer.maxY + space.turn + TurnSpace.bottom - top > new.visibleHeight - topInset - 4) { DiagLog.declined += 1 }
+                    }
+                    #endif
                     if following, conversation.busy, growth > 0, let live = liveAnswer,
                        let answer = track.answerFrame(live.item),
                        case let top = live.first ? track.lastTurnTop : answer.minY,
@@ -203,6 +209,9 @@ struct TranscriptView: View {
                         // after this update: an animated scroll on the lazy stack aims at where it
                         // estimated the row while the content keeps growing under it, and can
                         // stop past the laid-out end, a blank transcript until you scroll.
+                        #if DEBUG
+                        DiagLog.parks += 1
+                        #endif
                         following = false
                         track.park(at: old.contentHeight)
                         let target = live.first ? firstRow(of: conversation.turns[conversation.turns.count - 1])

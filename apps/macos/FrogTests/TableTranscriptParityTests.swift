@@ -167,6 +167,7 @@ final class TableTranscriptParityTests: XCTestCase {
                 wait(timeout: 5) { self.drawnText().contains("word\(i) ") }
             }
             send(c, #""item_delta","id":"live","delta":{"type":"text","text":"\n\nlast-line"}"#)
+            print("DIAG counters table=\(table) parks=\(DiagLog.parks) declined=\(DiagLog.declined)"); DiagLog.parks = 0; DiagLog.declined = 0
             XCTAssertTrue(wait() { self.drawnText().contains("last-line") },
                           "table \(table): the streamed words are drawn")
             XCTAssertTrue(wait() { self.atEnd() },
