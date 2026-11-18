@@ -83,4 +83,42 @@ final class TokensTests: XCTestCase {
             for l in named { XCTAssertEqual(Double(table[l.swift!] ?? -1), l.value, l.swift!) }
         }
     }
+
+    /// The transcript reads `Tokens.Transcript` (spec: "neither app hard-codes a size or a gap");
+    /// `TurnSpace` keeps its literals (the web's transcript-tokens test reads them) and they must
+    /// equal the generated tokens, at both densities.
+    func testTurnSpaceIsTheTranscriptTokens() {
+        for (scale, gaps) in [(TurnSpace.Scale.comfortable, Tokens.Transcript.Gaps.comfortable), (.compact, .compact)] {
+            XCTAssertEqual(scale.gaps, gaps)
+            XCTAssertEqual(scale.turn, gaps.turn)
+            XCTAssertEqual(scale.paragraph, gaps.paragraph)
+            XCTAssertEqual(scale.block, gaps.block)
+            XCTAssertEqual(scale.activity, gaps.activity)
+            XCTAssertEqual(scale.list, gaps.list)
+            XCTAssertEqual(scale.section, gaps.section)
+            XCTAssertEqual(scale.heading, gaps.heading)
+            XCTAssertEqual(scale.block + scale.footer, gaps.footer, "the footer gap is block + Scale.footer")
+        }
+        XCTAssertEqual(TurnSpace.measure, Tokens.Transcript.Layout.column)
+        XCTAssertEqual(TurnSpace.gutter, Tokens.Transcript.Layout.gutter)
+        XCTAssertEqual(TurnSpace.promptWidth, Tokens.Transcript.Layout.prompt)
+        XCTAssertEqual(TurnType.body, Tokens.Transcript.body.size)
+        XCTAssertEqual(MessageStyle.lineBox, Tokens.Transcript.body.line)
+        XCTAssertEqual(MessageStyle.measure, Tokens.Transcript.Layout.prose)
+    }
+
+    /// The gaps between a turn's rows (spec, "Gaps"): lines in a run touch, prose and lines are
+    /// `activity` apart either way round, the prompt and a box `block`, paragraphs `paragraph`.
+    func testTheGapsBetweenRows() {
+        let s = TurnSpace.Scale.comfortable
+        let text = TurnPart.segment(.text(ItemState(id: "m", kind: .message)))
+        let lines = TurnPart.segment(.activity(ActivityGroup(steps: [])))
+        XCTAssertEqual(s.gap(lines, after: .head, first: false), s.block)
+        XCTAssertEqual(s.gap(lines, after: lines, first: false), 0)
+        XCTAssertEqual(s.gap(lines, after: text, first: false), s.activity)
+        XCTAssertEqual(s.gap(text, after: lines, first: false), s.activity)
+        XCTAssertEqual(s.gap(text, after: text, first: false), s.paragraph)
+        XCTAssertEqual(s.gap(.tail, after: text, first: false), s.block)
+        XCTAssertEqual(s.gap(.head, after: nil, first: false), s.turn)
+    }
 }

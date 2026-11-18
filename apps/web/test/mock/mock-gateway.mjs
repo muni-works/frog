@@ -9,13 +9,13 @@
 // - `resume_after` replays stored durable envelopes. `{"op":"submit"}` plays the recording
 //   live, deltas included, pausing at its permission_request until an Op::Permission arrives.
 //   First answer wins; PermissionResolved goes to every attached client.
-// - Live previews (mock/preview.mjs): POST /v1/sessions/:id/preview {port} returns a
-//   <label>.localhost URL proxied to 127.0.0.1:<port>; `--preview-script f.js` is the capture script.
+// - Live previews (mock/preview.mjs): POST /v1/sessions/:id/preview {port} returns a one-minute
+//   entry link into <label>.localhost (owner cookie, then proxied to 127.0.0.1:<port>); `--preview-script f.js` is the capture script.
 import { createServer } from "node:http";
 import { randomBytes } from "node:crypto";
 import { accept } from "./ws.mjs";
 import { loadFixture, Recorded } from "./session.mjs";
-import { okPort, previewTarget, previewURL, servePreview, upgradePreview } from "./preview.mjs";
+import { mintPreview, okPort, previewTarget, servePreview, upgradePreview } from "./preview.mjs";
 import { accountRoutes } from "./account.mjs";
 
 /** What a played turn of demo.jsonl costs at account.mjs's qwen3-coder-next prices (120 in, 18 out). */
@@ -28,7 +28,7 @@ const arg = (name, fallback) => {
   return i > 0 ? process.argv[i + 1] : fallback;
 };
 
-export function startMock({ port = 8788, fixture = new URL("./demo.jsonl", import.meta.url).pathname, delayMs = 15, previewScript, autoAllow = false } = {}) {
+export function startMock({ port = 8788, fixture = new URL("./demo.jsonl", import.meta.url).pathname, delayMs = 15, previewScript, previews = true, autoAllow = false } = {}) {
   const events = loadFixture(fixture);
   const sessions = new Map(); // id → { info, rec }
   const account_ = accountRoutes(); // local addition: the edge's account routes (./account.mjs)
@@ -56,7 +56,7 @@ export function startMock({ port = 8788, fixture = new URL("./demo.jsonl", impor
     const account = bearer(req);
     if (await account_.handle(req, res, path, account, json)) return;
     if (!account) return json(res, 401, { error: "missing or invalid key" });
-    if (path === "/v1/sessions" && req.method === "GET") return json(res, 200, { sessions: [...sessions.values()].filter((s) => s.info.account === account).map(summary) });
+    if (path === "/v1/sessions" && req.method === "GET") return json(res, 200, { sessions: [...sessions.values()].filter((s) => s.info.account === account).map(summary), ...(previews ? { preview: true } : {}) });
     if (path === "/v1/sessions" && req.method === "POST") {
       let body = "";
       for await (const c of req) body += c;
@@ -92,6 +92,7 @@ export function startMock({ port = 8788, fixture = new URL("./demo.jsonl", impor
     }
     if (m[2] === "/preview") {
       if (req.method !== "POST") return json(res, 405, { error: "method not allowed" });
+      if (!previews) return json(res, 503, { error: "previews are not configured" });
       let body = "";
       for await (const c of req) body += c;
       let port;
@@ -101,7 +102,7 @@ export function startMock({ port = 8788, fixture = new URL("./demo.jsonl", impor
         return json(res, 400, { error: "expected JSON" });
       }
       if (!okPort(port)) return json(res, 400, { error: "port must be 1024–65535, not the engine's" });
-      return json(res, 200, { url: previewURL(req.headers.host, s.info.id, port), port, expires: Date.now() + 8 * 3600_000 });
+      return json(res, 200, mintPreview(req.headers.host, s.info.id, port));
     }
     if (req.method === "GET") return json(res, 200, summary(s));
     if (req.method === "DELETE") {

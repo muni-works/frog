@@ -14,16 +14,16 @@ import SwiftUI
 /// | paragraph  | 18/16 | between a message's paragraphs, and text rows in a turn    |
 /// | section    | 30/26 | above a heading                                            |
 /// | heading    | 7 / 6 | below a heading: it belongs to what follows                |
-/// | activity   | 12/8  | above an activity line that follows prose: a margin note   |
+/// | activity   | 12/8  | between prose and a run of lines, either way round         |
 /// | block      | 16/10 | other rows in a turn: prompt, cards, visuals, the tail     |
 /// | turn       | 32/16 | between turns                                              |
-/// | footer     | 4 / 2 | extra above the model/speed caption, on top of `block`     |
+/// | footer     | 4 / 2 | extra above the footer, on top of `block` (20 / 12 in all) |
+/// | row        | 24/22 | one line's height; lines in a run touch                    |
 ///
-/// Inside a message TextKit puts `line` under a paragraph's last line too, so what you see
-/// between blocks is `line` + the gap: ≈25 between paragraphs, ≈13 between list items (vs 7
-/// for a wrapped line), ≈37 above a heading and ≈13 below it. The line leading is set to the
-/// web's read (tokens.css `web-body`, 1.55): at the body's 14pt that's ≈22pt a line, SF's own
-/// is ≈17, and 7pt of leading lands there.
+/// These are the transcript tokens (`Tokens.Transcript.Gaps`, from design/tokens.json, shared
+/// with the web); `TokensTests` checks the literals here against them. A message's lines are a
+/// fixed 22 (`Tokens.Transcript.body.line`) on the Mac, so the gap between two paragraphs is
+/// `paragraph` exactly. `line` is the phone's leading.
 ///
 /// Compact tightens the chrome (rows, turns, the footer), and the prose only a notch: a message
 /// is read the same way at either density, and a squeezed list reads as one wrapped paragraph.
@@ -47,11 +47,8 @@ enum TurnSpace {
         static let row: CGFloat = 8
         static let card: CGFloat = 10
         static let roomy: CGFloat = 12
-        /// A line's leading icon (tool rows, thoughts, event lines): one width for all of them,
-        /// so their titles line up down the column at `iconColumn`.
+        /// A line's leading icon (tool rows, thoughts, event lines): one width for all of them.
         static let icon: CGFloat = 18
-        /// Where a line's title starts, and its detail is indented to: past the icon and its gap.
-        static let iconColumn: CGFloat = icon + row
     }
 
     /// Boxes in the column (code, diagrams, subagents, the plan, cards that need you): edges on
@@ -76,14 +73,12 @@ enum TurnSpace {
         let block: CGFloat
         let turn: CGFloat
         let footer: CGFloat
-        /// Between two activity groups of one run of work (a long thought's line, then what it
-        /// did): a step tighter than the answer's own paragraph gap.
-        let rowGroup: CGFloat
 
-        static let comfortable = Scale(line: 7, list: 7, paragraph: 18, section: 30, heading: 7,
-                                       activity: 12, block: 16, turn: 32, footer: 4, rowGroup: 8)
-        static let compact = Scale(line: 6, list: 6, paragraph: 16, section: 26, heading: 6,
-                                   activity: 8, block: 10, turn: 16, footer: 2, rowGroup: 5)
+        static let comfortable = Scale(line: 7, list: 7, paragraph: 18, section: 30, heading: 7, activity: 12, block: 16, turn: 32, footer: 4)
+        static let compact = Scale(line: 6, list: 6, paragraph: 16, section: 26, heading: 6, activity: 8, block: 10, turn: 16, footer: 2)
+
+        /// The transcript tokens at this density: `row` (a line's height) and the rest.
+        var gaps: Tokens.Transcript.Gaps { self == .compact ? .compact : .comfortable }
 
         /// Space above a markdown block, from the block before it in the same message (nil: it's
         /// the first). The only gap between two blocks: nothing is added below a block, so two
@@ -103,14 +98,15 @@ enum TurnSpace {
             guard case .segment(let segment) = part else { return block }
             switch segment {
             case .activity:
-                // A group that follows prose is a margin note — closer than a paragraph, with
-                // air of its own. A group that leads the turn or follows another group is part
-                // of the same run of work: tight to it.
+                // Prose to a run of lines: `activity`. A run after another run (a thought's
+                // line, then what it did) touches it: lines in a run touch. After the prompt or
+                // a box: `block`.
                 if case .segment(.text) = previous { return activity }
-                return rowGroup
+                if case .segment(.activity) = previous { return 0 }
+                return block
             case .text:
                 if case .segment(.text) = previous { return paragraph }
-                if case .segment(.activity) = previous { return paragraph }
+                if case .segment(.activity) = previous { return activity }
                 return block
             case .visual, .notice:
                 return block
@@ -134,7 +130,7 @@ enum TurnSpace {
 /// on the Mac, like a document; activity and captions stay at UI sizes, so they recede.
 enum TurnType {
     #if os(macOS)
-    static let body: CGFloat = 14
+    static let body: CGFloat = Tokens.Transcript.body.size
     #else
     static let body: CGFloat = 17
     #endif
@@ -173,9 +169,9 @@ extension View {
     /// A line's hover or open plate. It bleeds outward into the gutter rather than padding the
     /// line in, so the line's icon and words stay on the column's edge, under the paragraphs.
     func linePlate(_ opacity: Double) -> some View {
-        padding(.horizontal, TurnSpace.Inset.snug)
-            .background(.quaternary.opacity(opacity), in: .rect(cornerRadius: TurnSpace.Card.nestedRadius))
-            .padding(.horizontal, -TurnSpace.Inset.snug)
+        padding(.horizontal, Tokens.Transcript.Layout.plateBleed)
+            .background(.quaternary.opacity(opacity), in: .rect(cornerRadius: Tokens.Transcript.Layout.plateRadius))
+            .padding(.horizontal, -Tokens.Transcript.Layout.plateBleed)
     }
 }
 

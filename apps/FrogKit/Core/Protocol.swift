@@ -450,6 +450,8 @@ struct TurnUsage: Decodable, Sendable {
     struct Timing: Decodable, Sendable {
         struct Call: Decodable, Sendable { var cachedTokens: UInt64? }
         var calls: [Call]?
+        /// The turn's wall time (the footer's time). Absent in older logs.
+        var wallMs: UInt64?
     }
 
     /// Input tokens read from the cache: as the engine totaled them, else summed from the calls.
@@ -772,6 +774,21 @@ enum Item: Decodable, Sendable {
         var app: AppView?
         /// Visualize's widget: the sandboxed document to load as is.
         var widget: VisualWidget?
+        /// A test run the engine recognised in a command's output (cargo, pytest, go, vitest,
+        /// jest). Absent: a plain command. The line reads "`passed` of `total`"; never parse
+        /// output for it.
+        var tests: TestRun? = nil
+    }
+
+    /// `tests` on a finished `Bash` call (docs/design/transcript/spec.md, "Test runs").
+    struct TestRun: Decodable, Sendable, Equatable {
+        var runner: String
+        var passed: Int
+        var failed: Int
+        var total: Int
+        /// The failing tests' names, in output order; may be shorter than `failed`
+        /// (`failed_names`, read by `JSONDecoder.frog`'s snake case).
+        var failedNames: [String]?
     }
 
     private enum Key: String, CodingKey { case type, text }

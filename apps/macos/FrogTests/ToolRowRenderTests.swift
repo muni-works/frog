@@ -63,18 +63,17 @@ final class ToolRowRenderTests: XCTestCase {
     /// has no verb at all — its result is the line — so "SendMessage" is drawn nowhere and a
     /// search for it proves nothing (this test failed on main for exactly that, 2026-11-14).
     func testTheLabelAppearsOnceAndThePayloadOpens() throws {
-        var readItem = ItemState(id: "t1", kind: .tool(name: "Read", arg: "src/retry.rs"))
+        // A command: a successful read has nothing to open (spec, "Lines").
+        var readItem = ItemState(id: "t1", kind: .tool(name: "Bash", arg: "cat src/retry.rs"))
         readItem.done = true
-        // No engine summary: "Read 2 lines" would itself contain the word "Read" and read as
-        // a second label to OCR.
         readItem.result = Item.ToolResult(
-            name: "Read", arg: "src/retry.rs", input: nil, outcome: .ok,
+            name: "Bash", arg: "cat src/retry.rs", input: nil, outcome: .ok,
             output: "let retries = 3\nlet backoff = 250\n", display: nil)
         let c = Conversation(folder: URL(fileURLWithPath: "/Users/cam/Developer/frog"), link: nil, replay: false, session: "row")
         let group = ActivityGroup(steps: [readItem])
         let size = CGSize(width: 900, height: 200)
-        let label = try XCTUnwrap(VerbLine.of(readItem)?.verb)
-        XCTAssertEqual(label, "Read", "the premise: this row does print a label")
+        let label = try XCTUnwrap(StepLine.of(readItem)?.verb)
+        XCTAssertEqual(label, "Ran", "the premise: this row does print a label")
         try withTesseract {
             // Collapsed: the line says what it read, exactly once, and nothing is open.
             let closed = try XCTUnwrap(read(try render(
@@ -89,9 +88,10 @@ final class ToolRowRenderTests: XCTestCase {
 
             // Open: the line still appears once — no inner row repeating it — and the file shows.
             let open = try XCTUnwrap(read(try render(
-                AnyView(ActivityLine(group: group, conversation: c, expanded: true)),
+                AnyView(StepLineView(item: readItem, conversation: c, startOpen: true).padding(.leading, 30)),
                 size: size, to: "read-row-open")))
-            let openLabels = open.filter { $0.localizedCaseInsensitiveContains(label) }
+            // The line's own words ("Ran cat …"), not the opened footer's "Ran on this Mac".
+            let openLabels = open.filter { $0.localizedCaseInsensitiveContains(label + " cat") }
             XCTAssertEqual(openLabels.count, 1,
                            "[open] \"\(label)\" must appear once — a repeated row is the bug; read back: \(open)")
             let openPayload = open.filter { $0.localizedCaseInsensitiveContains("retries") }
@@ -112,7 +112,7 @@ final class ToolRowRenderTests: XCTestCase {
         let size = CGSize(width: 900, height: 200)
         try withTesseract {
             for (state, view) in [("collapsed", AnyView(ActivityLine(group: group, conversation: c))),
-                                  ("open", AnyView(ActivityLine(group: group, conversation: c, expanded: true)))] {
+                                  ("open", AnyView(StepLineView(item: item, conversation: c, startOpen: true)))] {
                 let png = try render(view, size: size, to: "sendmessage-row-\(state)")
                 let read = try XCTUnwrap(read(png), "tesseract gave no output")
                 let said = read.filter { $0.localizedCaseInsensitiveContains("SendMessage") }
