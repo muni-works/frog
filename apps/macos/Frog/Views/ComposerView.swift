@@ -116,7 +116,7 @@ struct ComposerView: View {
 
     var trayModel: ComposerModel.Model {
         let spec = conversation.status?.model ?? UserDefaults.standard.string(forKey: "lastModel") ?? ""
-        let cloud = conversation.cloudSession != nil || spec.hasPrefix("cloud/") || workspace.cloudTarget != nil
+        let cloud = conversation.cloudSession != nil || conversation.start != nil || spec.hasPrefix("cloud/") || workspace.cloudTarget != nil
         return .init(id: spec, name: spec, place: cloud ? .cloud : .local, node: nil)
     }
 
@@ -186,7 +186,7 @@ struct ComposerView: View {
         let d = ComposerModel.derive(s)
         return draftHooks(
             VStack(alignment: .leading, spacing: 8) {
-                if conversation.cloudSession == nil {
+                if conversation.cloudSession == nil, conversation.start == nil {
                     NodeOffer()
                     SwitchNotice(conversation: conversation).font(.frog(size: 12))
                 }
@@ -488,6 +488,15 @@ struct ComposerView: View {
         controller.flush()
         guard Self.hasWords(text) || !attachments.isEmpty, !waitingForModel else { return }
         local.lastSent = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let start = conversation.start, start.failed || start.stuck(at: .now) {
+            // A start that failed: what's typed starts it again, in place (the web's retry).
+            let message = text
+            text = ""
+            attachments = []
+            let words = message.trimmingCharacters(in: .whitespacesAndNewlines)
+            workspace.retryStart(conversation, text: words.isEmpty ? nil : words)
+            return
+        }
         if !conversation.started, conversation.cloudSession == nil, let target = workspace.cloudTarget {
             let message = text
             text = ""

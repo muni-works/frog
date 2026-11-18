@@ -110,7 +110,8 @@ struct TurnView: View, Equatable {
         }
     }
 
-    private var running: Bool { !turn.finished && conversation.busy }
+    /// A new cloud session's first turn runs from Send, failed start included: its row says so.
+    private var running: Bool { !turn.finished && (conversation.busy || conversation.startCovers(turn)) }
 
     /// The message being written, when it's the turn's last item.
     private var liveAnswerID: String? {
