@@ -980,6 +980,15 @@ pub enum Event {
         /// Part of `output` is counted from streamed pieces, not reported by the provider.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         so_far: bool,
+        /// The streaming call is slow: over the last 5 s it streamed under a quarter of this
+        /// model's usual rate (the median of its finished calls this session; none yet means
+        /// never slow). Only on `so_far` counts; absent means not slow.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        slow: bool,
+        /// Input tokens the turn has read from the provider's cache so far, for the stats
+        /// tooltip. Only when a call ends (`so_far` false), from the provider's figure.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cached: Option<u64>,
     },
 }
 
@@ -2183,6 +2192,8 @@ mod tests {
             turn: 3,
             output: 120,
             so_far: true,
+            slow: false,
+            cached: None,
         };
         let json = serde_json::to_string(&live).unwrap();
         assert_eq!(
@@ -2190,14 +2201,38 @@ mod tests {
             r#"{"event":"output_tokens","turn":3,"output":120,"so_far":true}"#
         );
         assert!(!live.is_durable(), "the live count is never logged");
+        let slow = Event::OutputTokens {
+            turn: 3,
+            output: 125,
+            so_far: true,
+            slow: true,
+            cached: None,
+        };
+        assert_eq!(
+            serde_json::to_string(&slow).unwrap(),
+            r#"{"event":"output_tokens","turn":3,"output":125,"so_far":true,"slow":true}"#
+        );
         let done = Event::OutputTokens {
             turn: 3,
             output: 131,
             so_far: false,
+            slow: false,
+            cached: Some(9000),
         };
+        let json = serde_json::to_string(&done).unwrap();
         assert_eq!(
-            serde_json::to_string(&done).unwrap(),
-            r#"{"event":"output_tokens","turn":3,"output":131}"#
+            json,
+            r#"{"event":"output_tokens","turn":3,"output":131,"cached":9000}"#
         );
+        // The shape #420 sent still reads.
+        assert!(matches!(
+            serde_json::from_str::<Event>(r#"{"event":"output_tokens","turn":3,"output":131}"#)
+                .unwrap(),
+            Event::OutputTokens {
+                slow: false,
+                cached: None,
+                ..
+            }
+        ));
     }
 }

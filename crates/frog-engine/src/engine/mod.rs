@@ -437,6 +437,13 @@ impl Asker {
         Some((id, rx))
     }
 
+    /// Stop the turn this engine is running, exactly as the person's Stop (`Op::Interrupt`).
+    pub(crate) fn interrupt(&self) {
+        if let Some(shared) = self.shared.upgrade() {
+            shared.interrupt();
+        }
+    }
+
     /// Close question `id` (answered, or withdrawn with an empty answer because the child
     /// spoke, ended, or was stopped), so every client drops its card.
     pub(crate) fn close(&self, id: &str, answer: crate::protocol::Answer) {
@@ -451,6 +458,17 @@ impl Asker {
             item: None,
             asked: None,
         });
+    }
+}
+
+impl Shared {
+    /// Stop: what `Op::Interrupt` does, and what the quiet-call question's Stop does.
+    fn interrupt(&self) {
+        if self.working.load(Ordering::Relaxed) {
+            self.wake_hold.store(true, Ordering::SeqCst);
+        }
+        self.cancel.lock().unwrap().cancel();
+        self.bg.stop_all();
     }
 }
 
@@ -866,13 +884,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                     let upto = journal.seq.load(Ordering::Relaxed);
                     journal.emit(Event::Synced { upto });
                 }
-                Op::Interrupt => {
-                    if router.working.load(Ordering::Relaxed) {
-                        router.wake_hold.store(true, Ordering::SeqCst);
-                    }
-                    router.cancel.lock().unwrap().cancel();
-                    router.bg.stop_all();
-                }
+                Op::Interrupt => router.interrupt(),
                 Op::ClearInbox => {
                     let sent = router.inbox_sent.load(Ordering::SeqCst);
                     router.inbox_void.store(sent, Ordering::SeqCst);
@@ -1860,6 +1872,9 @@ struct Agent {
     turn_clock: Option<Instant>,
     /// The running turn's output over time, for `usage.pace`.
     turn_pace: crate::pace::TurnPace,
+    /// The model's usual output rate this session, for "slow" (see `pace::Rates`). Starts
+    /// again when the model changes.
+    rates: crate::pace::Rates,
     /// The last request sent to this conversation's server cache (a model call or a warm-up),
     /// [`flatten`]ed, to tell whether the next one only appends to it.
     sent: Mutex<String>,
@@ -2207,6 +2222,7 @@ impl Agent {
             timing: TurnTiming::default(),
             turn_clock: None,
             turn_pace: Default::default(),
+            rates: Default::default(),
             sent: Mutex::default(),
             meter: None,
             energy_mark: None,
@@ -2593,6 +2609,9 @@ impl Agent {
             self.emit_status();
         }
         let (ttft, decode, think) = (ms(streamed.ttft), ms(streamed.decode), ms(streamed.think));
+        if !compact {
+            self.rates.add(u.output, decode);
+        }
         let t = &mut self.timing;
         if compact {
             t.compact_ms += ttft + decode;
@@ -2626,6 +2645,8 @@ impl Agent {
                 turn: self.active_turn.unwrap_or_default(),
                 output: self.turn_usage.output_tokens,
                 so_far: false,
+                slow: false,
+                cached: Some(self.turn_usage.cached_tokens),
             });
         }
     }

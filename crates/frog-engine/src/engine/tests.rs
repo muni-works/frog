@@ -15022,6 +15022,22 @@ async fn turns_keep_their_pace_and_stream_a_live_count() {
         "a counted figure while streaming: {live:?}"
     );
     assert_eq!(live.last(), Some(&(usage.output_tokens, false)));
+    // The provider's figures carry what the turn read from cache, for the stats tooltip; the
+    // counted ones don't, and no call here has a usual rate yet, so none is slow.
+    for e in &evs {
+        if let Event::OutputTokens {
+            so_far, slow, cached, ..
+        } = &e.event
+        {
+            assert_eq!(cached.is_some(), !so_far);
+            assert!(!slow);
+        }
+    }
+    let last_cached = evs.iter().rev().find_map(|e| match &e.event {
+        Event::OutputTokens { cached, .. } => *cached,
+        _ => None,
+    });
+    assert_eq!(last_cached, Some(usage.cached_tokens));
 }
 
 /// A permission prompt is a timed wait in the log: the resolved event names the tool call and

@@ -72,6 +72,65 @@ impl CallPace {
     pub fn is_empty(&self) -> bool {
         self.pieces == 0
     }
+
+    /// Whether the stream is slow at `now_ms` (since sent): it has streamed for at least
+    /// [`SLOW_WINDOW_MS`] since its first piece, and over the last [`SLOW_WINDOW_MS`] it
+    /// streamed under `floor` tokens per second.
+    pub fn slow(&self, now_ms: u64, floor: f64) -> bool {
+        let Some(&(first, _, _)) = self.bins.first() else {
+            return false;
+        };
+        if now_ms < first + SLOW_WINDOW_MS {
+            return false;
+        }
+        let from = now_ms - SLOW_WINDOW_MS;
+        let (pieces, chars) = self
+            .bins
+            .iter()
+            .filter(|(b, _, _)| *b + BIN_MS > from)
+            .fold((0, 0), |(p, c), (_, bp, bc)| (p + bp, c + bc));
+        (weight(pieces, chars) as f64) * 1000.0 / (SLOW_WINDOW_MS as f64) < floor
+    }
+}
+
+/// How far back [`CallPace::slow`] looks (docs/design/transcript/spec.md, "The row": under a
+/// quarter of the model's usual rate for 5 s).
+pub const SLOW_WINDOW_MS: u64 = 5000;
+
+/// A model's usual output rate this session: the median tokens per second of its last
+/// [`RATES_KEPT`] finished calls that decoded for at least a second and wrote at least
+/// [`RATE_MIN_TOKENS`] tokens. `None` until there is one.
+#[derive(Clone, Debug, Default)]
+pub struct Rates(Vec<f64>);
+
+pub const RATES_KEPT: usize = 20;
+pub const RATE_MIN_TOKENS: u64 = 32;
+
+impl Rates {
+    /// A finished call wrote `tokens` in `decode_ms` of decoding.
+    pub fn add(&mut self, tokens: u64, decode_ms: u64) {
+        if tokens < RATE_MIN_TOKENS || decode_ms < 1000 {
+            return;
+        }
+        if self.0.len() == RATES_KEPT {
+            self.0.remove(0);
+        }
+        self.0.push(tokens as f64 * 1000.0 / decode_ms as f64);
+    }
+
+    pub fn usual(&self) -> Option<f64> {
+        if self.0.is_empty() {
+            return None;
+        }
+        let mut v = self.0.clone();
+        v.sort_by(f64::total_cmp);
+        let n = v.len();
+        Some(if n % 2 == 1 {
+            v[n / 2]
+        } else {
+            (v[n / 2 - 1] + v[n / 2]) / 2.0
+        })
+    }
 }
 
 fn weight(pieces: u64, chars: u64) -> u64 {
@@ -218,5 +277,52 @@ mod tests {
             tokens: vec![u32::MAX; MAX_BUCKETS],
         };
         assert!(serde_json::to_string(&max).unwrap().len() <= 1400);
+    }
+
+    /// Slow is a whole 5 s window under the floor: never before 5 s of streaming, and a burst
+    /// inside the window lifts it.
+    #[test]
+    fn slow_needs_five_seconds_under_the_floor() {
+        let mut c = CallPace::default();
+        // 40 tok/s for 3 s from 2 s after sending, then 2 tok/s.
+        for i in 0..120 {
+            c.piece(2000 + i * 25, 4);
+        }
+        assert!(!c.slow(4900, 20.0), "not 5 s of streaming yet");
+        for i in 0..20 {
+            c.piece(5000 + i * 500, 4);
+        }
+        assert!(
+            !c.slow(7000, 20.0),
+            "the fast stretch is still in the window"
+        );
+        assert!(
+            c.slow(10_500, 20.0),
+            "5 s at 2 tok/s under a 20 tok/s floor"
+        );
+        assert!(!c.slow(10_500, 1.0), "over a lower floor");
+        assert!(
+            !CallPace::default().slow(60_000, 20.0),
+            "nothing streamed: not slow (quiet)"
+        );
+    }
+
+    #[test]
+    fn usual_rate_is_the_median_of_real_calls() {
+        let mut r = Rates::default();
+        assert_eq!(r.usual(), None, "no finished call: never slow");
+        r.add(10, 5000); // too few tokens to say
+        r.add(500, 500); // under a second of decoding
+        assert_eq!(r.usual(), None);
+        r.add(100, 2000); // 50
+        r.add(300, 3000); // 100
+        r.add(80, 4000); // 20
+        assert_eq!(r.usual(), Some(50.0));
+        r.add(400, 2000); // 200
+        assert_eq!(r.usual(), Some(75.0));
+        for _ in 0..RATES_KEPT {
+            r.add(1000, 1000);
+        }
+        assert_eq!(r.usual(), Some(1000.0), "only the last calls count");
     }
 }
