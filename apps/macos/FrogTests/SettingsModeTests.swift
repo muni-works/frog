@@ -96,6 +96,7 @@ final class SettingsModeTests: XCTestCase {
         XCTAssertEqual(catalog.section(for: URL(string: "frog://settings/billing")!), "billing")
         XCTAssertEqual(catalog.section(for: URL(string: "frog://settings/lend")!), "models")
         XCTAssertEqual(catalog.section(for: URL(string: "frog://settings")!), "account")
+        XCTAssertEqual(catalog.section(for: URL(string: "frog-dev://settings/usage")!), "usage", "a Debug build's links")
         XCTAssertNil(catalog.section(for: URL(string: "frog://pair?code=1")!))
         XCTAssertNil(catalog.section(for: URL(string: "https://frog.toys/settings/billing")!))
     }

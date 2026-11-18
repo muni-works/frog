@@ -112,6 +112,9 @@ final class Workspace {
     /// from applying. A model left there while the policy said "last" wasn't in use: forget it,
     /// so nobody's new conversations change model on update. Runs once at launch.
     static func dropModelPolicy(_ d: UserDefaults = .standard) {
+        // Also cut: "Show cloud models in the picker". Nothing reads it now; a stored "off"
+        // goes with it so it can't come back to life.
+        d.removeObject(forKey: ModelMenu.showCloudKey)
         guard let policy = d.string(forKey: "newMessageModelPolicy") else { return }
         if policy != "fixed" { d.removeObject(forKey: "defaultModel") }
         d.removeObject(forKey: "newMessageModelPolicy")

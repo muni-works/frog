@@ -123,6 +123,11 @@ final class ModelStatsTests: XCTestCase {
         Workspace.dropModelPolicy(on)
         XCTAssertEqual(on.string(forKey: "defaultModel"), "cloud/glm-5.3-flash")
         XCTAssertNil(on.string(forKey: "newMessageModelPolicy"))
+        // The cut "Show cloud models in the picker": a stored off is forgotten.
+        let hidden = UserDefaults(suiteName: "frog-policy-\(UUID().uuidString)")!
+        hidden.set(false, forKey: ModelMenu.showCloudKey)
+        Workspace.dropModelPolicy(hidden)
+        XCTAssertNil(hidden.object(forKey: ModelMenu.showCloudKey))
     }
 
     private func entry(_ spec: String, costIn: Double, costOut: Double, cacheRead: Double? = nil) -> ModelEntry {
