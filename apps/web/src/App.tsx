@@ -17,7 +17,7 @@ import { Inspector } from './ui/Inspector'
 import { usePreviewHub } from './ui/PreviewPane'
 import type { PreviewHub } from './preview'
 import { SessionList } from './ui/SessionList'
-import { Starting } from './ui/Starting'
+import { BootRow, firstTitle, provisional, undelivered, withOpening, type Opening } from './ui/Opening'
 import { useMachines } from './machines'
 import { creditLine, Palette, type Command } from './ui/Overlays'
 import { SettingsPage, SettingsRow, SettingsSidebar } from './ui/Settings'
@@ -170,7 +170,12 @@ export default function App() {
   /** Sessions still opening: their first message (and repo), from the moment you send until the
    * first turn starts. The placeholder and then the real session show the same bubble and one
    * status line, so the hand-over doesn't flicker between two different "starting" states. */
-  const [opening, setOpening] = useState<Record<string, { text: string; repo?: string; at: number }>>({})
+  const [opening, setOpening] = useState<Record<string, Opening>>({})
+  /** Per session, the key its composer was first drawn under (the placeholder's id), so the
+   * composer, and what you're typing in it, stays put when the real id arrives. */
+  const slots = useRef<Record<string, string>>({})
+  /** Per session, its first message as a title, until the engine names it. */
+  const firsts = useRef<Record<string, string>>({})
   // Follow-ups typed while Frog works wait here (per session) and go together, in order, as the
   // next turn once this one ends, like the Mac app. × takes one back into the field.
   const [queue, setQueue] = useState<Record<string, { text: string; images: Image[] }[]>>({})
@@ -210,7 +215,8 @@ export default function App() {
   // runs): otherwise the default, never a model nothing would answer.
   const chosenModel = newModel && models.some((m) => m.id === idOf(newModel)) ? idOf(newModel) : defaultModel(models)
   const repoList = useRepos(cloud)
-  const { sessions, loaded: sessionsLoaded, error: listError, setSessions, refresh: refreshSessions } = useSessions(cloud)
+  const { sessions: listed, loaded: sessionsLoaded, error: listError, setSessions, refresh: refreshSessions } = useSessions(cloud)
+  const sessions = useMemo(() => withOpening(listed, opening), [listed, opening])
   const current = view.kind === 'session' ? sessions.find((s) => s.id === view.id) : undefined
   // The transcript's scroller: opens at the newest message, or where you were back from
   // Documentation mode. Stable per session and mode: an inline ref ran on every render and threw
@@ -250,6 +256,9 @@ export default function App() {
   const live = useMemo(() => (current && !current.id.startsWith(PENDING) ? [current.id] : []), [current])
   const { thread, threads } = useThreads(cloud, live)
   const ct = current ? thread(current.id) : null
+  // Still opening: no turn yet. Its sent message and status row stand in (ui/Opening.tsx).
+  const op = current && ct && ct.turns.length === 0 ? opening[current.id] : undefined
+  const failedStart = !!op && (!!op.failed || current?.state === 'error')
   // "Try it on your own code": once per account, after its first finished turn without GitHub.
   const tag = account ? accountTag(account) : null
   // Read in render, not an effect: a first render with no memo would claim the card again.
@@ -291,7 +300,8 @@ export default function App() {
   // The open session's own changes show in the list at once, not at the next poll.
   useEffect(() => { refreshSessions() }, [ct?.running, ct?.turns.length]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (current && compacting[current.id] && (ct?.marks ?? []).length >= compacting[current.id]) setCompacting(({ [current.id]: _, ...rest }) => rest) }, [current, ct?.marks, compacting]) // eslint-disable-line react-hooks/exhaustive-deps
-  const title = (s: SessionSummary) => keptTitle(s.id, thread(s.id).title, s.title)
+  // A session without a repo is listed as "New session" until the engine names it: its first message reads better.
+  const title = (s: SessionSummary) => keptTitle(s.id, thread(s.id).title, s.title === 'New session' && firsts.current[s.id] ? firsts.current[s.id] : s.title)
   // The turn ended: what was queued goes as the next turn, one Submit with the rest as `more`.
   const fresh = useRef(once<object>()).current
   useEffect(() => {
@@ -306,6 +316,19 @@ export default function App() {
   useEffect(() => {
     if (current && ct && ct.turns.length > 0 && opening[current.id]) setOpening(({ [current.id]: _, ...rest }) => rest)
   }, [current, ct, opening])
+  // While a new sandbox boots, its state (running, or error and why) is read every 2 s rather than
+  // at the list's 10 s, so a boot that failed says so on the status row soon after.
+  const booting = current && !current.id.startsWith(PENDING) && op && !op.failed && current.state !== 'error' ? current.id : null
+  useEffect(() => {
+    if (!booting || !cloud) return
+    const t = setInterval(() => {
+      cloud.gateway.get(booting).then((s) => {
+        setSessions((all) => all.map((x) => (x.id === s.id ? { ...x, ...s } : x)))
+        setOpening((o) => (o[s.id] ? { ...o, [s.id]: { ...o[s.id], row: { ...o[s.id].row, ...s } } } : o))
+      }).catch(() => { /* the list's poll still runs */ })
+    }, 2000)
+    return () => clearInterval(t)
+  }, [booting, cloud, setSessions])
   // Alerts: the tab title's badge and background notifications, from every streamed session.
   // Recomputed per frame (cheap), but handed on only when a signal actually changed.
   const signals = useMemo(() => sessions.map((s) => {
@@ -384,31 +407,47 @@ export default function App() {
   const [pending, setPending] = useState<string | null>(null)
   // Without GitHub a new session is a scratch sandbox, so its ideas are things to build, not repo chores.
   const starterChips = useMemo(() => pickStarters(3, !key || !account?.handle).map((text) => ({ text })), [key, account?.handle])
-  const start = useCallback(async (text: string, repo?: string, images: Image[] = [], base?: string) => {
+  const start = useCallback(async (text: string, repo?: string, images: Image[] = [], base?: string, slot?: string) => {
     if (!cloud) return
-    // Open the session at once, as a placeholder, and swap in the real one when the gateway
-    // answers: starting a conversation should feel instant, not wait on a round trip.
+    // Open the session at once, as a placeholder, and adopt the real one when the gateway
+    // answers: starting a conversation should feel instant, not wait on a round trip. The view,
+    // the sent message and the composer are the same nodes before and after (ui/Opening.tsx).
     const temp = `${PENDING}${Date.now()}`
-    setOpening((o) => ({ ...o, [temp]: { text, repo, at: Date.now() } }))
-    setSessions((all) => [{ id: temp, title: text.length > 60 ? text.slice(0, 57) + '…' : text, repo: repo ?? '', branch: '', state: 'starting', updated: Date.now() }, ...all])
+    const at = Date.now()
+    slots.current[temp] = slot ?? temp
+    firsts.current[temp] = firstTitle(text)
+    const row: SessionSummary = { id: temp, title: firstTitle(text), repo: repo ?? '', branch: '', state: 'starting', updated: at }
+    setOpening((o) => ({ ...o, [temp]: { text, images, repo, base, at, row } }))
     setView({ kind: 'session', id: temp })
     try {
-      const s0 = await cloud.gateway.create({ ...(repo ? { repo } : {}), ...(repo && base ? { base } : {}), ...(chosenModel ? { model: spec(chosenModel) } : {}) })
-      // A session without a repo comes back titled "New session" until the engine names it.
-      const s = { ...s0, title: s0.repo ? s0.title : text.length > 60 ? text.slice(0, 57) + '…' : text }
+      const s = await cloud.gateway.create({ ...(repo ? { repo } : {}), ...(repo && base ? { base } : {}), ...(chosenModel ? { model: spec(chosenModel) } : {}) })
+      slots.current[s.id] = slots.current[temp]
+      firsts.current[s.id] = firsts.current[temp]
       setSessions((all) => [s, ...all.filter((x) => x.id !== s.id && x.id !== temp)])
-      setOpening(({ [temp]: first, ...rest }) => ({ ...rest, [s.id]: first ?? { text, repo, at: Date.now() } }))
+      setOpening(({ [temp]: first, ...rest }) => ({ ...rest, [s.id]: { ...(first ?? { text, images, repo, base, at }), row: s } }))
+      // A follow-up sent while the POST was out waits for this session's first turn.
+      setQueue(({ [temp]: q, ...rest }) => (q?.length ? { ...rest, [s.id]: q } : rest))
       setView((v) => (v.kind === 'session' && v.id === temp ? { kind: 'session', id: s.id } : v))
       if (newMode !== 'default') cloud.send(s.id, { op: 'set_mode', mode: newMode })
-      send(s.id, text, images) // queued until the session's socket is live
+      // Not through the outbox: the status row speaks for the first message until its turn starts.
+      cloud.send(s.id, { op: 'submit', text, ...(images.length ? { images } : {}) }) // queued until the session's socket is live
     } catch (e) {
-      setSessions((all) => all.filter((x) => x.id !== temp))
-      setOpening(({ [temp]: _, ...rest }) => rest)
-      setView((v) => (v.kind === 'session' && v.id === temp ? { kind: 'new', repo } : v))
-      setDraft(text)
-      say(`Couldn't start a sandbox: ${friendly(e)}`)
+      // Said in place, on the status row, with Try again: the message stays where it is.
+      setOpening((o) => (o[temp] ? { ...o, [temp]: { ...o[temp], failed: `Couldn't start a sandbox: ${friendly(e)}` } } : o))
     }
-  }, [cloud, send, setSessions, chosenModel, newMode])
+  }, [cloud, setSessions, chosenModel, newMode])
+  /** A session that couldn't start, started again in place: the same message, the same composer. */
+  const retry = useCallback((id: string, text?: string, images: Image[] = []) => {
+    const o = opening[id]
+    if (!o) return
+    setOpening(({ [id]: _, ...rest }) => rest)
+    if (!id.startsWith(PENDING)) {
+      // Its sandbox failed to boot: a fresh one, and this one goes (it holds nothing yet).
+      setSessions((all) => all.filter((x) => x.id !== id))
+      cloud?.gateway.remove(id).catch(() => { /* gone already, or it'll be in the list to delete */ })
+    }
+    start(text ?? o.text, o.repo, text === undefined ? o.images : images, o.base, slots.current[id] ?? id)
+  }, [opening, cloud, setSessions, start])
   useEffect(() => { if (pending && cloud) { setPending(null); start(pending) } }, [pending, cloud, start])
 
   const decide = useCallback((id: string, allow: boolean, opts?: DecideOpts) => {
@@ -430,6 +469,7 @@ export default function App() {
     if (!confirm(`Delete "${title(s)}"? Its sandbox, changes and conversation are gone for good.`)) return
     try {
       await cloud?.gateway.remove(s.id)
+      setOpening(({ [s.id]: _, ...rest }) => rest)
       setSessions((all) => all.filter((x) => x.id !== s.id))
       setView((v) => (v.kind === 'session' && v.id === s.id ? { kind: 'new' } : v))
     } catch (e) {
@@ -658,7 +698,7 @@ export default function App() {
             )}
           </div>
           <span style={{ flex: 1 }} />
-          {current && <span style={{ fontSize: 12, color: cs?.state === 'live' ? 'var(--frog)' : 'var(--muted)' }}>{cs?.state === 'live' ? '' : cs?.state === 'connecting' ? (cs.attempt ? 'Reconnecting…' : 'Connecting…') : cs?.state === 'refused' ? 'Update Frog to continue' : cs?.state === 'closed' ? (cs.code === 4004 ? 'Session deleted' : 'Disconnected') : ''}</span>}
+          {current && !opening[current.id] && <span style={{ fontSize: 12, color: cs?.state === 'live' ? 'var(--frog)' : 'var(--muted)' }}>{cs?.state === 'live' ? '' : cs?.state === 'connecting' ? (cs.attempt ? 'Reconnecting…' : 'Connecting…') : cs?.state === 'refused' ? 'Update Frog to continue' : cs?.state === 'closed' ? (cs.code === 4004 ? 'Session deleted' : 'Disconnected') : ''}</span>}
           {current && !inspector && <button type="button" className="ic-btn" onClick={() => setInspector(!inspector)} aria-pressed={inspector} aria-label={inspector ? 'Hide inspector' : 'Show inspector'} title={inspector ? 'Hide inspector' : 'Inspector'}>
             <svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M15 4v16" />{inspector && <path d="M15 4h3a3 3 0 0 1 3 3v10a3 3 0 0 1-3 3h-3z" fill="currentColor" stroke="none" opacity=".35" />}</svg>
           </button>}
@@ -687,27 +727,21 @@ export default function App() {
                 <div className="ghost-line" style={{ width: '54%' }} />
               </div>
             )}
-            {opening[current.id] && ct.turns.length === 0 && !outbox[current.id]?.length && current.state !== 'error' && (
-              <div className="turn"><div className="me">{opening[current.id].text}</div></div>
-            )}
-            <Transcript thread={ct} models={models} credit={account ? creditLine(account).replace(/ credit$/, '') : undefined} onDecide={(a, o) => decide(current.id, a, o)}
+            <Transcript thread={op ? provisional(ct, op) : ct} boot={op && <BootRow since={op.at} repo={op.repo} error={op.failed ?? (current.state === 'error' ? (current.error ? plainError(current.error) : "The sandbox couldn't start.") : null)} onRetry={() => retry(current.id)} />} models={models} credit={account ? creditLine(account).replace(/ credit$/, '') : undefined} onDecide={(a, o) => decide(current.id, a, o)}
               onAnswer={(choices, other) => ct.question && cloud?.send(current.id, { op: 'answer', id: ct.question.id, choices, ...(other ? { other } : {}) })}
               onElicit={(action, content) => ct.elicitation && cloud?.send(current.id, { op: 'elicit', id: ct.elicitation.id, action, ...(content ? { content } : {}) })}
               onRetry={() => send(current.id, 'Try that again.')}
               onPrompt={(text) => send(current.id, text)}
               onShowChange={() => { try { localStorage.setItem('frog.inspectorTab', 'changes') } catch { /* private mode */ } setInspectorTab('changes'); setInspectorNonce((n) => n + 1); setInspector(true) }}
-              outbox={outbox[current.id]} onResend={(n) => resend(current.id, n)}
+              outbox={undelivered(outbox[current.id], ct.turns)} onResend={(n) => resend(current.id, n)}
               waiting={cs?.state === 'connecting' ? (cs.attempt ? 'reconnecting to the sandbox' : 'connecting to the sandbox')
                 : current.state === 'sleeping' ? 'waking the sandbox' : current.state === 'starting' ? 'starting the sandbox'
                 : ct.running ? 'Frog is finishing the last turn' : undefined}
               onEdit={(text) => setRestore({ text, images: [] })}
               onContinue={() => send(current.id, 'Continue.')} />
-            {opening[current.id] && ct.turns.length === 0 && current.state !== 'error' && (
-              <Starting repo={opening[current.id].repo} since={opening[current.id].at}
-                step={current.id.startsWith(PENDING) ? 0 : cs?.state === 'live' ? 2 : 1} />
-            )}
-            {/* A sandbox that couldn't start says so here, by the composer, not above the conversation. */}
-            {current.state === 'error' && <div role="status" className="banner warn"><span style={{ flex: 1 }}>{current.error ? plainError(current.error) : "The sandbox couldn't start."}</span><button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => remove(current)}>Delete</button></div>}
+            {/* A sandbox that couldn't start says so here, by the composer, not above the conversation
+                (a new one says so on its status row, under its first message). */}
+            {current.state === 'error' && !op && <div role="status" className="banner warn"><span style={{ flex: 1 }}>{current.error ? plainError(current.error) : "The sandbox couldn't start."}</span><button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => remove(current)}>Delete</button></div>}
             {card.show && !paused && key && (
               <ConnectCard onConnect={() => leave(null, 'github', key, true)} onDismiss={() => remember({ done: true })} />
             )}
@@ -740,15 +774,15 @@ export default function App() {
                 ))}
               </div>
             )}
-            <Composer key={current.id} session autoFocus usage={account ? { sub: account.subscription ?? null, credit: creditLine(account).replace(/ credit$/, ''), onBilling: () => openSettings('billing'), onOpen: refreshAccount } : undefined} context={ct.context} compacting={!!compacting[current.id]}
-              onCompact={(focus) => { setCompacting((c) => ({ ...c, [current.id]: (ct.marks ?? []).length + 1 })); cloud?.send(current.id, { op: 'compact', ...(focus ? { focus } : {}) }) }} chips={ct.next && !ct.running ? [{ text: ct.next.text, send: true, act: ct.next.act }] : undefined} state={ct.running || opening[current.id] ? 'working' : paused ? 'paused' : 'idle'} startedAt={ct.startedAt} speed={ct.speed} waiting={!!(ct.ask || ct.question || ct.elicitation)}
+            <Composer key={slots.current[current.id] ?? current.id} session autoFocus usage={account ? { sub: account.subscription ?? null, credit: creditLine(account).replace(/ credit$/, ''), onBilling: () => openSettings('billing'), onOpen: refreshAccount } : undefined} context={ct.context} compacting={!!compacting[current.id]}
+              onCompact={(focus) => { setCompacting((c) => ({ ...c, [current.id]: (ct.marks ?? []).length + 1 })); cloud?.send(current.id, { op: 'compact', ...(focus ? { focus } : {}) }) }} chips={ct.next && !ct.running ? [{ text: ct.next.text, send: true, act: ct.next.act }] : undefined} state={ct.running || (opening[current.id] && !failedStart) ? 'working' : paused ? 'paused' : 'idle'} startedAt={ct.startedAt} speed={ct.speed} waiting={!!(ct.ask || ct.question || ct.elicitation)}
               repo={current.repo} branch={current.branch} pr={current.pr} adds={adds} dels={dels}
               model={idOf(ct.model)} models={models} machines={machines} onManage={() => openSettings('models')} onModel={(id) => cloud?.send(current.id, { op: 'set_model', spec: spec(id) })}
               mode={ct.mode ?? 'default'} onMode={(mode) => cloud?.send(current.id, { op: 'set_mode', mode })}
               queued={queue[current.id]} restore={restore} vision={ct.vision} insert={preview?.insert} onText={preview ? (t) => preview.noteDraft(t) : undefined}
               onUnqueue={(i) => setQueue((all) => ({ ...all, [current.id]: (all[current.id] ?? []).filter((_, j) => j !== i) }))}
               asking={mode === 'threads' && !!ct.ask}
-              onSend={(text, images) => (ct.running || opening[current.id]
+              onSend={(text, images) => failedStart ? retry(current.id, text, images) : (ct.running || opening[current.id]
                 ? setQueue((all) => ({ ...all, [current.id]: [...(all[current.id] ?? []), { text, images }] }))
                 : send(current.id, text, images))} onStop={() => cloud?.send(current.id, { op: 'interrupt' })} onGit={() => push(current)} />
           </div>
