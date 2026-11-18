@@ -597,11 +597,50 @@ struct LiveStatus: View {
     }
 }
 
-/// The first Tang request loads the selected model's weights. Tang does not expose a byte count
-/// for that operation, so this is deliberately an indeterminate sweep rather than a made-up
-/// percentage.
+/// A model on this Mac getting ready for its first answer, read from the engine's progress
+/// label, in words true to the kind: a downloaded model is read into memory ("loading <repo>",
+/// named the way the model menu names it); Apple Intelligence is the system's own model and is
+/// only started ("starting Apple Intelligence").
+struct ModelLoad: Equatable {
+    enum Kind { case downloaded, system }
+    let name: String
+    let kind: Kind
+
+    var title: String { kind == .system ? "Starting \(name)" : "Loading \(name) into memory" }
+    var caption: String? { kind == .system ? nil : "Starting the first response" }
+    var symbol: String { kind == .system ? "sparkles" : "cpu" }
+
+    @MainActor
+    init?(label: String) {
+        if label.caseInsensitiveCompare("starting Apple Intelligence") == .orderedSame
+            || label.caseInsensitiveCompare("loading apple") == .orderedSame {  // an older engine's label
+            self.init(name: "Apple Intelligence", kind: .system)
+            return
+        }
+        guard label.lowercased().hasPrefix("loading ") else { return nil }
+        let repo = String(label.dropFirst("loading ".count))
+        guard !repo.isEmpty else { return nil }
+        self.init(name: ModelIdentity.rowName("\(ProviderID.local)/\(repo)"), kind: .downloaded)
+    }
+
+    init(name: String, kind: Kind) {
+        self.name = name
+        self.kind = kind
+    }
+
+    /// Any progress label as a line to show: a model getting ready in its words, anything else
+    /// capitalized.
+    @MainActor
+    static func words(_ label: String) -> String {
+        ModelLoad(label: label)?.title ?? label.prefix(1).uppercased() + label.dropFirst()
+    }
+}
+
+/// A model getting ready before the first answer: one card, with an indeterminate sweep (neither
+/// tang's weight load nor the system model's start reports how far along it is, so no made-up
+/// percentage). It is the turn's only loading line: `WorkingIndicator` steps aside for it.
 struct ModelLoadingStatus: View {
-    let model: String
+    let load: ModelLoad
     let since: Date
 
     var body: some View {
@@ -609,9 +648,9 @@ struct ModelLoadingStatus: View {
             let elapsed = max(0, timeline.date.timeIntervalSince(since))
             VStack(alignment: .leading, spacing: TurnSpace.Inset.snug) {
                 HStack(spacing: TurnSpace.Inset.row) {
-                    Image(systemName: "cpu")
+                    Image(systemName: load.symbol)
                         .foregroundStyle(.tint)
-                    Text("Loading \(model) into memory")
+                    Text(load.title)
                         .font(.callout.weight(.medium))
                     Spacer(minLength: 0)
                     Text(Self.elapsed(elapsed))
@@ -619,15 +658,17 @@ struct ModelLoadingStatus: View {
                         .foregroundStyle(.tertiary)
                 }
                 ModelLoadBar(elapsed: elapsed)
-                Text("Starting the first response")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
+                if let caption = load.caption {
+                    Text(caption)
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
             }
         }
         .frame(maxWidth: 440, alignment: .leading)
         .foregroundStyle(.secondary)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Loading \(model) into memory")
+        .accessibilityLabel(load.title)
     }
 
     private static func elapsed(_ seconds: TimeInterval) -> String {
