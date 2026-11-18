@@ -2782,7 +2782,11 @@
           "existing_tests_v070": [],
           "coverage_v070": "none",
           "automatable": "hard",
-          "why_hard": "Spawns several real engines and git worktrees."
+          "why_hard": "Spawns several real engines and git worktrees.",
+          "flow_tests": [
+            "Flows/GitAndRaceFlowTests.swift:test_start_race",
+            "Flows/GitAndRaceFlowTests.swift:test_start_race__apply"
+          ]
         },
         {
           "id": "race-needs-git",
@@ -2870,7 +2874,10 @@
           "existing_tests_v070": [],
           "coverage_v070": "none",
           "automatable": "hard",
-          "why_hard": "Real worktrees."
+          "why_hard": "Real worktrees.",
+          "flow_tests": [
+            "Flows/GitAndRaceFlowTests.swift:test_discard_race"
+          ]
         }
       ]
     },
@@ -3792,7 +3799,10 @@
           ],
           "existing_tests_v070": [],
           "coverage_v070": "none",
-          "automatable": "yes"
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/GitAndRaceFlowTests.swift:test_commit_from_changes"
+          ]
         },
         {
           "id": "open-pr-or-push",
@@ -3810,7 +3820,10 @@
           "existing_tests_v070": [],
           "coverage_v070": "none",
           "automatable": "hard",
-          "why_hard": "Real GitHub."
+          "why_hard": "Real GitHub.",
+          "flow_tests": [
+            "Flows/GitAndRaceFlowTests.swift:test_open_pr_or_push"
+          ]
         },
         {
           "id": "resize-inspector",
