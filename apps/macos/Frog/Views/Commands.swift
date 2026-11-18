@@ -63,6 +63,9 @@ struct FrogCommands: Commands {
     }
 
     var body: some Commands {
+        CommandGroup(replacing: .appInfo) {
+            Button("About Frog") { openWindow(id: "about") }
+        }
         if Updates.shared.enabled {
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates…") { Updates.shared.check() }
