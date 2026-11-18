@@ -7,6 +7,8 @@ struct InspectorEmpty: View {
     let symbol: String
     let title: String
     let detail: String
+    /// A primary action under the line, when there's a real one (Retry).
+    var action: AnyView? = nil
 
     var body: some View {
         VStack(spacing: 8) {
@@ -21,11 +23,12 @@ struct InspectorEmpty: View {
                 .font(.frog(size: Tokens.Size.status))
                 .foregroundStyle(Tokens.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
+            if let action { action.padding(.top, 8) }
         }
         .multilineTextAlignment(.center)
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: action == nil ? .combine : .contain)
     }
 }
 

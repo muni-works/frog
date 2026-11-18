@@ -2,38 +2,64 @@ import AppKit
 import SwiftUI
 import WebKit
 
-/// A live preview of what the agent builds: a web view with an address bar, a device-width
-/// picker, an inspect mode that turns a clicked element into an `@mention`, and a then/now
-/// switch when the timeline has a screenshot for the selected turn. The engine reads and drives
-/// the page through `paneRequest`s, and hears what the page logs through `paneReport`s.
+/// A live preview of what the agent builds, one design with the web's (docs/design/frog-web/README.md,
+/// "Preview"; apps/web/src/ui/PreviewPane.tsx): one 38 pt row of back, forward, reload (stop while
+/// loading), the address, then the tools on the strip's plates (device size, compare, pick an
+/// element, open in the browser, open in its own window), which fold into one More menu below
+/// 400 pt. Under it the page, at Fit or a device's shape scaled to the body, and a then/now switch
+/// when the timeline has a screenshot for the selected turn. The engine reads and drives the page
+/// through `paneRequest`s, and hears what the page logs through `paneReport`s.
 struct PreviewPane: View {
     let pane: ToolPane
     let hub: PaneHub
     /// Shown instead of a URL (fixtures and snapshots).
     var html: String? = nil
-    @State private var address = ""
-    @State private var device = Device.desktop
+    /// The device size it opens at (snapshots); Fit otherwise.
+    var startDevice: Device = .fit
+    @State private var device = Device.fit
     @State private var showThen = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var host: PreviewHost { hub.previewHost(pane.id) }
 
+    /// The page's frame: Fit fills the body; a device keeps its shape, scaled down to fit.
     enum Device: String, CaseIterable, Identifiable {
-        case phone, tablet, desktop
+        case fit, phone, tablet, desktop
         var id: String { rawValue }
-        var width: CGFloat? {
+        var label: String {
             switch self {
-            case .phone: 390
-            case .tablet: 820
-            case .desktop: nil
+            case .fit: "Fit"
+            case .phone: "Phone"
+            case .tablet: "Tablet"
+            case .desktop: "Desktop"
+            }
+        }
+        var size: CGSize? {
+            switch self {
+            case .fit: nil
+            case .phone: CGSize(width: 390, height: 844)
+            case .tablet: CGSize(width: 820, height: 1180)
+            case .desktop: CGSize(width: 1280, height: 800)
             }
         }
         var symbol: String {
             switch self {
+            case .fit: "arrow.up.left.and.arrow.down.right"
             case .phone: "iphone"
             case .tablet: "ipad"
             case .desktop: "desktopcomputer"
             }
+        }
+        /// "Phone  390 × 844", as the menu lists it.
+        var menuTitle: String {
+            guard let size else { return label }
+            return "\(label)  \(Int(size.width)) × \(Int(size.height))"
+        }
+        /// This device's frame in a body of `space`: its shape, scaled down (never up) to fit.
+        func fitted(in space: CGSize) -> (size: CGSize, scale: CGFloat)? {
+            guard let size, space.width > 0, space.height > 0 else { return nil }
+            let scale = min(1, space.width / size.width, space.height / size.height)
+            return (CGSize(width: size.width * scale, height: size.height * scale), scale)
         }
     }
 
@@ -43,32 +69,27 @@ struct PreviewPane: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            toolbar
+            PreviewToolbar(host: host, hub: hub, popOut: true, device: $device)
             if hub.comparing != nil { thenNow }
             content
                 .padding([.horizontal, .bottom], 10)
         }
         .onAppear {
             showThen = hub.comparing != nil
-            address = host.currentURL ?? pane.url ?? ""
+            device = startDevice
             if let html { host.load(html: html) } else if let url = pane.url, host.currentURL == nil { host.load(url) }
         }
         .onChange(of: pane.url) { _, url in
             // The engine (or a reopened pane) asked for a page.
             guard let url, url != host.currentURL else { return }
-            address = url
             host.load(url)
         }
-        .onChange(of: host.currentURL) { _, url in if let url { address = url } }
         .onChange(of: hub.inspecting) { _, on in host.setInspecting(on) }
         .onChange(of: hub.comparing) { showThen = hub.comparing != nil }
         .animation(Motion.quick(reduced: reduceMotion), value: hub.comparing != nil)
-    }
-
-    // MARK: Toolbar
-
-    private var toolbar: some View {
-        PreviewToolbar(host: host, hub: hub, popOut: true, device: $device)
+        #if DEBUG
+        .onPreferenceChange(PreviewProbe.Key.self) { frames in PreviewProbe.frames = frames }
+        #endif
     }
 
     /// Before (the turn's checkpoint) or after (the live page), which turn is "then", and a
@@ -94,8 +115,7 @@ struct PreviewPane: View {
             }
             Spacer()
             Button { hub.comparing = nil } label: { Image(systemName: "xmark") }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
+                .buttonStyle(PreviewPlateStyle())
                 .help("Stop comparing")
         }
         .padding(.horizontal, 12)
@@ -125,186 +145,372 @@ struct PreviewPane: View {
 
     // MARK: Content
 
+    /// What the body shows besides the page: nothing to preview yet, or the load that failed.
+    enum BodyState: Equatable {
+        case page, empty, failed(String), poppedOut
+    }
+
+    var bodyState: BodyState {
+        if hub.poppedOut { return .poppedOut }
+        if let error = host.loadError { return .failed(error) }
+        if pane.url == nil, host.currentURL == nil, host.attemptedURL == nil, !host.loading { return .empty }
+        return .page
+    }
+
     @ViewBuilder
     private var content: some View {
+        let state = bodyState
         GeometryReader { geo in
-            let width = min(geo.size.width, device.width ?? geo.size.width)
+            let fitted = device.fitted(in: geo.size)
             ZStack {
-                // The web view is one thing: while the pop-out window shows it, the card
-                // holds its place (the host keeps it; nothing renders twice).
-                if !hub.poppedOut {
+                // The web view is one thing: while the pop-out window shows it, the body holds
+                // its place (the host keeps it; nothing renders twice).
+                if state != .poppedOut {
                     PreviewWebView(host: host)
-                        .opacity(pane.url == nil && host.currentURL == nil ? 0 : 1)
-                } else {
-                    Text("Open in its own window")
-                        .font(.frog(size: 12))
-                        .foregroundStyle(.tertiary)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .frame(width: fitted?.size.width ?? geo.size.width, height: fitted?.size.height ?? geo.size.height)
+                        .background(Tokens.canvas)
+                        .clipShape(.rect(cornerRadius: Tokens.Radius.control))
+                        .overlay(RoundedRectangle(cornerRadius: Tokens.Radius.control).strokeBorder(Tokens.line))
+                        .opacity(state == .page ? 1 : 0)
+                        .previewProbe("frame")
                 }
-                if pane.url == nil, host.currentURL == nil {
-                    hint
-                }
-                if showThen, let checkpoint {
+                if showThen, let checkpoint, state == .page {
                     Image(nsImage: checkpoint.image)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                        .background(Color(nsColor: .textBackgroundColor))
+                        .background(Tokens.canvas)
+                        .clipShape(.rect(cornerRadius: Tokens.Radius.control))
+                }
+                switch state {
+                case .empty:
+                    InspectorEmpty(symbol: "globe", title: "Nothing to preview yet",
+                                   detail: "Run your dev server, then enter its URL or port, or ask Frog to open it.")
+                        .previewProbe("empty")
+                case .failed(let error):
+                    InspectorEmpty(symbol: "exclamationmark.circle",
+                                   title: "Couldn’t load \(PreviewAddress.display(host.attemptedURL ?? host.currentURL ?? pane.url).nonEmpty ?? "the page")",
+                                   detail: PreviewAddress.sentence(error),
+                                   action: AnyView(Button { host.retry() } label: { Text("Retry").padding(.horizontal, 10) }.buttonStyle(InspectorButtonStyle(kind: .bordered)).fixedSize()))
+                        .previewProbe("empty")
+                case .poppedOut:
+                    InspectorEmpty(symbol: "macwindow", title: "In its own window",
+                                   detail: "Close that window to bring the page back here.")
+                case .page:
+                    EmptyView()
                 }
                 if hub.inspecting {
                     Text("Click an element to mention it · Esc to stop")
                         .font(.frog(size: 10))
                         .padding(.horizontal, 10).padding(.vertical, 5)
-                        .glassEffect(.regular, in: .capsule)
+                        .background(Tokens.raised, in: .capsule)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
                         .padding(10)
                         .allowsHitTesting(false)
                 }
             }
-            .frame(width: width, height: geo.size.height)
-            .clipShape(.rect(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.white.opacity(0.08)))
-            .frame(maxWidth: .infinity)
-            .animation(Motion.quick(reduced: reduceMotion), value: width)
+            .frame(width: geo.size.width, height: geo.size.height)
+            .onChange(of: fitted?.scale ?? 1, initial: true) { _, scale in host.setZoom(scale) }
+            .animation(Motion.quick(reduced: reduceMotion), value: device)
         }
-        .background(Color.black.opacity(0.18), in: .rect(cornerRadius: 10))
+        .previewProbe("stage")
         .onExitCommand { hub.inspecting = false }
     }
+}
 
-    private var hint: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "globe").font(.title).foregroundStyle(.tertiary)
-            Text("Run your dev server, then enter its URL, or ask Frog to open it.")
-                .font(.frog(size: 12))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 260)
-        }
-        .padding()
+/// The address field's words: what's typed as a URL, and a URL as the field shows it.
+enum PreviewAddress {
+    /// A URL, a host without a scheme (`localhost:8080`), `:3000/x`, or just a port (`3000` is
+    /// `http://localhost:3000`). Blank: nil.
+    static func url(from raw: String) -> String? {
+        let s = raw.trimmingCharacters(in: .whitespaces)
+        guard !s.isEmpty else { return nil }
+        if s.allSatisfy(\.isNumber) { return "http://localhost:\(s)" }
+        if s.contains("://") { return s }
+        if s.hasPrefix(":") { return "http://localhost\(s)" }
+        return "http://\(s)"
     }
 
-    /// Go to what's in the address field: a URL, a host without a scheme, or just a port.
+    /// The page's address plainly: host and path, port kept, no scheme and no lone trailing
+    /// slash (`http://localhost:5173/` is `localhost:5173`). Not http(s): as is.
+    static func display(_ url: String?) -> String {
+        guard let url else { return "" }
+        let lower = url.lowercased()
+        guard let scheme = ["http://", "https://"].first(where: { lower.hasPrefix($0) }) else { return url }
+        let rest = String(url.dropFirst(scheme.count))
+        guard let slash = rest.firstIndex(of: "/") else { return rest }
+        let path = rest[slash...]
+        return path == "/" ? String(rest[..<slash]) : rest
+    }
+
+    /// A WebKit error as one sentence.
+    static func sentence(_ s: String) -> String {
+        guard let first = s.first else { return s }
+        let t = first.uppercased() + s.dropFirst()
+        return t.last.map { ".?!".contains($0) } == true ? t : t + "."
+    }
+}
+
+/// The strip's icon plate: a 24 pt square, the glyph in the secondary colour, the hover wash on
+/// hover, dimmed when it can't act. Never system button chrome.
+struct PreviewPlateStyle: ButtonStyle {
+    var on = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        Plate(on: on, pressed: configuration.isPressed) { configuration.label }
+    }
+}
+
+/// The plate itself, shared by the buttons and the menus' labels.
+struct Plate<Label: View>: View {
+    var on = false
+    var pressed = false
+    @ViewBuilder var label: Label
+    @State private var hovering = false
+    @Environment(\.isEnabled) private var enabled
+
+    var body: some View {
+        label
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(on ? Tokens.accent : (hovering && enabled ? Tokens.text : Tokens.textSecondary))
+            .frame(width: 24, height: 24)
+            .background(hovering && enabled ? Tokens.hover : .clear, in: .rect(cornerRadius: Tokens.Radius.control, style: .continuous))
+            .contentShape(.rect)
+            .opacity(enabled ? (pressed ? 0.7 : 1) : 0.35)
+            .onHover { hovering = $0 }
+    }
+}
+
+/// The preview's toolbar, shared by the pane and the pop-out window: back, forward, reload or
+/// stop, the address, and the tools (device size, compare and the pop-out from the pane only,
+/// pick an element, open in the browser), folded into one More menu below 400 pt.
+struct PreviewToolbar: View {
+    let host: PreviewHost
+    @Bindable var hub: PaneHub
+    /// Whether this is the pane's toolbar (which offers compare and the pop-out) or the window's.
+    let popOut: Bool
+    @Binding var device: PreviewPane.Device
+    @State private var address = ""
+    @State private var editing = false
+    @State private var width: CGFloat = PaneArea.defaultWidth
+    @FocusState private var focused: Bool
+    @Environment(\.openWindow) private var openWindow
+
+    static let height: CGFloat = 38
+    /// Below this the tools fold into More, so the address keeps its room.
+    static let foldWidth: CGFloat = 400
+    /// The mention chip shows only from here, so it never squeezes the address.
+    static let mentionWidth: CGFloat = 480
+
+    var body: some View {
+        HStack(spacing: 2) {
+            tool("Back", "chevron.left", disabled: !host.canGoBack) { host.goBack() }
+            tool("Forward", "chevron.right", disabled: !host.canGoForward) { host.goForward() }
+            if host.loading {
+                tool("Stop", "xmark") { host.stop() }
+            } else {
+                tool("Reload", "arrow.clockwise", disabled: host.currentURL == nil && host.attemptedURL == nil) { host.retry() }
+            }
+            field
+            if let m = hub.mention, hub.mentionInDraft, width >= Self.mentionWidth {
+                Text(m)
+                    .font(.frog(size: 11).monospaced())
+                    .foregroundStyle(Tokens.text)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 1)
+                    .frame(maxWidth: 96)
+                    .background(Tokens.hover, in: .capsule)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .help("In your message")
+                    .previewProbe("mention")
+            }
+            if width < Self.foldWidth {
+                more
+            } else {
+                deviceMenu
+                if popOut { tool(compareTitle, "clock.arrow.circlepath", on: hub.comparing != nil, action: toggleCompare) }
+                tool("Pick an element", "cursorarrow.click.2", on: hub.inspecting, disabled: !canPick, why: pickWhy) { hub.inspecting.toggle() }
+                tool("Open in browser", "safari", disabled: browserURL == nil, why: "Open a page first", action: openBrowser)
+                if popOut { tool("Open in its own window", "macwindow.badge.plus", disabled: host.currentURL == nil, why: "Open a page first", action: popOutWindow) }
+            }
+        }
+        .padding(.horizontal, 8)
+        .frame(height: Self.height)
+        .frame(maxWidth: .infinity)
+        .overlay(alignment: .bottomLeading) { progress }
+        .previewProbe("bar")
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+        .onChange(of: shownURL, initial: true) { _, url in if !editing { address = PreviewAddress.display(url) } }
+        .onChange(of: focused) { _, on in
+            editing = on
+            if on {
+                address = shownURL ?? ""
+                // Select it all, as a browser's address bar does.
+                DispatchQueue.main.async { NSApp.keyWindow?.firstResponder.flatMap { $0 as? NSText }?.selectAll(nil) }
+            } else {
+                address = PreviewAddress.display(shownURL)
+            }
+        }
+    }
+
+    private var field: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "globe")
+                .font(.system(size: 10.5))
+                .foregroundStyle(Tokens.textTertiary)
+            TextField("URL or port", text: $address)
+                .textFieldStyle(.plain)
+                .font(.frog(size: 12))
+                .foregroundStyle(Tokens.text)
+                .focused($focused)
+                .onSubmit(go)
+                .onExitCommand { focused = false }
+                .accessibilityLabel("Address")
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 26)
+        .frame(minWidth: 0, maxWidth: .infinity)
+        .background(Tokens.well, in: .rect(cornerRadius: Tokens.Radius.control, style: .continuous))
+        .overlay {
+            if focused {
+                RoundedRectangle(cornerRadius: Tokens.Radius.control, style: .continuous)
+                    .strokeBorder(Tokens.accent.opacity(0.35), lineWidth: 2)
+            }
+        }
+        .padding(.horizontal, 4)
+        .previewProbe("Address")
+    }
+
+    /// A 2 pt line along the row's bottom edge while loading, as far as WebKit's estimate.
+    @ViewBuilder
+    private var progress: some View {
+        if host.loading {
+            GeometryReader { geo in
+                Rectangle()
+                    .fill(Tokens.accent)
+                    .frame(width: max(geo.size.width * 0.08, geo.size.width * host.progress))
+                    .animation(.easeOut(duration: 0.2), value: host.progress)
+            }
+            .frame(height: 2)
+            .allowsHitTesting(false)
+            .accessibilityLabel("Loading")
+            .previewProbe("progress")
+        }
+    }
+
+    private func tool(_ label: String, _ symbol: String, on: Bool = false, disabled: Bool = false, why: String? = nil, action: @escaping () -> Void) -> some View {
+        Button(action: action) { Image(systemName: symbol) }
+            .buttonStyle(PreviewPlateStyle(on: on))
+            .disabled(disabled)
+            .help(disabled ? (why ?? label) : label)
+            .accessibilityLabel(label)
+            .previewProbe(label)
+    }
+
+    private var deviceMenu: some View {
+        Menu {
+            devicePicker
+        } label: {
+            Plate { Image(systemName: device.symbol) }
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Device size")
+        .accessibilityLabel("Device size")
+        .previewProbe("Device size")
+    }
+
+    private var devicePicker: some View {
+        Picker("Device size", selection: $device) {
+            ForEach(PreviewPane.Device.allCases) { d in
+                Label(d.menuTitle, systemImage: d.symbol).tag(d)
+            }
+        }
+        .pickerStyle(.inline)
+    }
+
+    private var more: some View {
+        Menu {
+            Toggle(isOn: $hub.inspecting) { Label("Pick an element", systemImage: "cursorarrow.click.2") }
+                .disabled(!canPick)
+            Button(action: openBrowser) { Label("Open in browser", systemImage: "safari") }
+                .disabled(browserURL == nil)
+            if popOut {
+                Button(action: toggleCompare) { Label(compareTitle, systemImage: "clock.arrow.circlepath") }
+                Button(action: popOutWindow) { Label("Open in its own window", systemImage: "macwindow.badge.plus") }
+                    .disabled(host.currentURL == nil)
+            }
+            Divider()
+            Section("Device size") { devicePicker }
+        } label: {
+            Plate(on: hub.inspecting) { Image(systemName: "ellipsis") }
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("More")
+        .accessibilityLabel("More")
+        .previewProbe("More")
+    }
+
+    /// The page the field stands for: what's showing, else what was last asked for (a failed load).
+    private var shownURL: String? { host.loadError != nil ? host.attemptedURL ?? host.currentURL : host.currentURL ?? host.attemptedURL }
+
+    private var canPick: Bool { host.currentURL != nil && host.loadError == nil }
+    private var pickWhy: String { "Open a page to pick an element on it" }
+    private var browserURL: URL? { host.currentURL.flatMap(URL.init).flatMap { $0.scheme?.hasPrefix("http") == true || $0.isFileURL ? $0 : nil } }
+    private var compareTitle: String { hub.comparing == nil ? "Compare with an earlier turn" : "Stop comparing" }
+
+    private func toggleCompare() {
+        if hub.comparing == nil { hub.compare() } else { hub.comparing = nil }
+    }
+
+    private func openBrowser() {
+        if let u = browserURL { NSWorkspace.shared.open(u) }
+    }
+
+    private func popOutWindow() {
+        let id = host.paneID
+        PaneHub.poppedOutHubs[id] = hub
+        hub.poppedOut = true
+        openWindow(value: PreviewDocument(paneID: id, title: host.title.isEmpty ? "Preview" : host.title))
+    }
+
     private func go() {
-        let raw = address.trimmingCharacters(in: .whitespaces)
-        guard !raw.isEmpty else { return }
-        let url: String
-        if raw.allSatisfy(\.isNumber) { url = "http://localhost:\(raw)" }
-        else if raw.contains("://") { url = raw }
-        else if raw.hasPrefix(":") { url = "http://localhost\(raw)" }
-        else { url = "http://\(raw)" }
-        address = url
+        guard let url = PreviewAddress.url(from: address) else { return }
+        focused = false
+        address = PreviewAddress.display(url)
         host.load(url)
     }
 }
 
-/// The preview's toolbar, shared by the pane's card and the pop-out window: back, reload, the
-/// address field, the device-width picker, inspect, and (from the card only) the pop-out.
-struct PreviewToolbar: View {
-    let host: PreviewHost
-    @Bindable var hub: PaneHub
-    /// Whether this is the card's toolbar (which offers the pop-out) or the window's.
-    let popOut: Bool
-    @Binding var device: PreviewPane.Device
-    @State private var address = ""
-    /// The URL the field already mirrors, so an engine navigation rewrites it once.
-    @State private var last = ""
-    @Environment(\.openWindow) private var openWindow
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Button { host.goBack() } label: { Image(systemName: "chevron.left") }
-                .disabled(!host.canGoBack)
-                .help("Back")
-            Button { host.reload() } label: { Image(systemName: "arrow.clockwise") }
-                .disabled(host.currentURL == nil)
-                .help("Reload")
-            HStack(spacing: 5) {
-                if host.loading {
-                    ProgressView().controlSize(.mini)
-                } else {
-                    Image(systemName: "globe").foregroundStyle(.tertiary)
-                }
-                TextField("URL or port", text: $address)
-                    .textFieldStyle(.plain)
-                    .onSubmit { go() }
-            }
-            .font(.frog(size: 12))
-            .padding(.horizontal, 8)
-            .frame(height: 26)
-            .background(.quaternary.opacity(0.6), in: .rect(cornerRadius: 8))
-            Picker("Device", selection: $device) {
-                ForEach(PreviewPane.Device.allCases) { d in Image(systemName: d.symbol).tag(d) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize()
-            .help("Device width")
-            if popOut {
-                Button {
-                    if hub.comparing == nil { hub.compare() } else { hub.comparing = nil }
-                } label: {
-                    Image(systemName: "clock.arrow.circlepath")
-                        .foregroundStyle(hub.comparing != nil ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
-                }
-                .help(hub.comparing == nil ? "Compare with an earlier turn" : "Stop comparing")
-            }
-            Button {
-                hub.inspecting.toggle()
-            } label: {
-                Image(systemName: "cursorarrow.click.2")
-                    .foregroundStyle(hub.inspecting ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
-            }
-            .help("Inspect: click an element to mention it (⇧⌘I)")
-            if let m = hub.mention, hub.mentionInDraft {
-                Text(m)
-                    .font(.caption.monospaced())
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(.tint.opacity(0.18), in: .capsule)
-                    .lineLimit(1)
-                    .transition(.opacity)
-            }
-            Button {
-                if let u = host.currentURL.flatMap(URL.init) { NSWorkspace.shared.open(u) }
-            } label: { Image(systemName: "safari") }
-                .disabled(host.currentURL == nil)
-                .help("Open in Browser")
-            if popOut {
-                Button {
-                    let id = host.paneID
-                    PaneHub.poppedOutHubs[id] = hub
-                    hub.poppedOut = true
-                    openWindow(value: PreviewDocument(paneID: id, title: hostTitle))
-                } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }
-                    .disabled(host.currentURL == nil)
-                    .help("Open in its own window")
-            }
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .onAppear { address = host.currentURL ?? ""; last = address }
-        .onChange(of: host.currentURL) { _, url in
-            if let url, url != last { address = url; last = url }
-        }
+/// Where the toolbar's parts and the body's states landed, for the geometry tests: window
+/// frames by label ("bar" is the row, "stage" the body). Debug builds only.
+enum PreviewProbe {
+    #if DEBUG
+    @MainActor static var frames: [String: CGRect] = [:]
+    struct Key: PreferenceKey {
+        static let defaultValue: [String: CGRect] = [:]
+        static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) { value.merge(nextValue()) { $1 } }
     }
+    #endif
+}
 
-    private var hostTitle: String {
-        host.title.isEmpty ? "Preview" : host.title
-    }
-
-    /// Go to what's in the address field: a URL, a host without a scheme, or just a port.
-    private func go() {
-        let raw = address.trimmingCharacters(in: .whitespaces)
-        guard !raw.isEmpty else { return }
-        let url: String
-        if raw.allSatisfy(\.isNumber) { url = "http://localhost:\(raw)" }
-        else if raw.contains("://") { url = raw }
-        else if raw.hasPrefix(":") { url = "http://localhost\(raw)" }
-        else { url = "http://\(raw)" }
-        address = url
-        host.load(url)
+extension View {
+    /// Report this view's frame in the window to `PreviewProbe` (debug builds).
+    func previewProbe(_ name: String) -> some View {
+        #if DEBUG
+        background(GeometryReader { g in
+            Color.clear.preference(key: PreviewProbe.Key.self, value: [name: g.frame(in: .global)])
+        })
+        #else
+        self
+        #endif
     }
 }
 
@@ -323,9 +529,15 @@ final class PreviewHost: NSObject, WKScriptMessageHandler, WKNavigationDelegate,
     private(set) var currentURL: String?
     private(set) var title = ""
     private(set) var loading = false
+    /// WebKit's estimate of the load, 0 to 1, for the toolbar's progress line.
+    private(set) var progress: Double = 0
     /// Why the last load failed, until the next one starts.
-    private var loadError: String?
+    private(set) var loadError: String?
+    /// The URL last asked for, so a failed load can say what failed and Retry it.
+    private(set) var attemptedURL: String?
     private(set) var canGoBack = false
+    private(set) var canGoForward = false
+    @ObservationIgnored private var progressWatch: NSKeyValueObservation?
     @ObservationIgnored private(set) var web: WKWebView?
     @ObservationIgnored private var inspecting = false
     /// Waiting for a navigation the engine asked for to finish.
@@ -345,6 +557,10 @@ final class PreviewHost: NSObject, WKScriptMessageHandler, WKNavigationDelegate,
         web.uiDelegate = self
         web.isInspectable = true
         web.allowsBackForwardNavigationGestures = true
+        progressWatch = web.observe(\.estimatedProgress) { [weak self] web, _ in
+            let p = web.estimatedProgress
+            Task { @MainActor in self?.progress = p }
+        }
         self.web = web
         return web
     }
@@ -352,6 +568,8 @@ final class PreviewHost: NSObject, WKScriptMessageHandler, WKNavigationDelegate,
     func load(_ string: String) {
         guard let url = URL(string: string) ?? URL(string: string.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ""),
               url.scheme != nil else { return }
+        attemptedURL = url.absoluteString
+        loadError = nil
         // A page on disk can read its folder (stylesheets, images, sibling pages).
         if url.isFileURL {
             makeWebView().loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
@@ -368,6 +586,24 @@ final class PreviewHost: NSObject, WKScriptMessageHandler, WKNavigationDelegate,
 
     func reload() { web?.reload() }
     func goBack() { web?.goBack() }
+    func goForward() { web?.goForward() }
+    func stop() {
+        web?.stopLoading()
+        loading = false
+    }
+
+    /// Reload, or after a failed load, try what failed again.
+    func retry() {
+        if loadError != nil, let url = attemptedURL { return load(url) }
+        reload()
+    }
+
+    /// Draw the page at `scale` (a device frame scaled to fit the body): its viewport stays the
+    /// device's width in CSS pixels.
+    func setZoom(_ scale: CGFloat) {
+        guard let web, abs(web.pageZoom - scale) > 0.001 else { return }
+        web.pageZoom = scale
+    }
 
     func setInspecting(_ on: Bool) {
         inspecting = on
@@ -492,6 +728,7 @@ final class PreviewHost: NSObject, WKScriptMessageHandler, WKNavigationDelegate,
     func webView(_ web: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         loading = true
         loadError = nil
+        if let url = web.url?.absoluteString { attemptedURL = url }
     }
 
     func webView(_ web: WKWebView, didCommit navigation: WKNavigation!) {
@@ -522,6 +759,7 @@ final class PreviewHost: NSObject, WKScriptMessageHandler, WKNavigationDelegate,
         loading = false
         // A navigation the user cancelled by starting another isn't news.
         guard (error as NSError).code != NSURLErrorCancelled else { return }
+        if let failing = (error as NSError).userInfo[NSURLErrorFailingURLStringErrorKey] as? String { attemptedURL = failing }
         loadError = error.localizedDescription
         hub?.report(PaneReport(id: paneID, kind: .error, level: "error", message: "Couldn't load: \(error.localizedDescription)", url: currentURL))
         if let w = navigationWaiter {
@@ -532,6 +770,7 @@ final class PreviewHost: NSObject, WKScriptMessageHandler, WKNavigationDelegate,
 
     private func noteURL(_ web: WKWebView) {
         canGoBack = web.canGoBack
+        canGoForward = web.canGoForward
         let url = web.url?.absoluteString
         guard url != currentURL else { return }
         currentURL = url
@@ -820,7 +1059,7 @@ struct PreviewDocument: Codable, Hashable {
 struct PreviewWindow: View {
     @Bindable var hub: PaneHub
     let document: PreviewDocument
-    @State private var device = PreviewPane.Device.desktop
+    @State private var device = PreviewPane.Device.fit
 
     private var host: PreviewHost { hub.previewHost(document.paneID) }
 
@@ -831,11 +1070,12 @@ struct PreviewWindow: View {
                 .opacity(host.currentURL == nil ? 0 : 1)
                 .overlay {
                     if host.currentURL == nil {
-                        ContentUnavailableView("No Page", systemImage: "globe", description: Text("Enter a URL in the pane's preview."))
+                        InspectorEmpty(symbol: "globe", title: "Nothing to preview yet",
+                                       detail: "Enter a URL or port above, or ask Frog to open one.")
                     }
                 }
         }
-        .background(Color.black.opacity(0.18))
+        .background(Tokens.sidebar)
         .frame(minWidth: 520, minHeight: 420)
         .navigationTitle(document.title)
         .onDisappear {
