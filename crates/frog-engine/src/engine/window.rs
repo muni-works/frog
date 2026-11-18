@@ -388,20 +388,65 @@ Not saved: the next session starts on {from} again"
         ));
     }
 
+    /// Start the profile's sidecar, and point the provider at where it's serving (the Apple
+    /// sidecar moves off a port something else holds).
+    pub(super) async fn start_sidecar(&mut self) -> anyhow::Result<()> {
+        crate::sidecar::ensure(&self.profile).await?;
+        if let Some(model) = &self.profile.sidecar
+            && let Some(old) = &self.profile.base_url
+        {
+            let live = crate::sidecar::base_url(model);
+            if *old != live {
+                self.profile.base_url = Some(live);
+                self.provider = Provider::new(&self.profile)?.with_cwd(&self.root);
+            }
+        }
+        Ok(())
+    }
+
+    /// Before a turn's first call: a sidecar that failed to start is tried once more (the
+    /// person may have fixed it, or the port freed), and if it still can't, the turn ends with
+    /// why and what to do, instead of waiting on a model that isn't there.
+    pub(super) async fn ready_sidecar(&mut self, activity: &str) -> anyhow::Result<()> {
+        if self.model_ready || self.sidecar_failed.is_none() {
+            return Ok(());
+        }
+        self.emit(Event::Progress {
+            label: activity.into(),
+            completed: None,
+            total: None,
+        });
+        match self.start_sidecar().await {
+            Ok(()) => {
+                self.sidecar_failed = None;
+                Ok(())
+            }
+            Err(e) => {
+                eprintln!("sidecar: the turn ends: {e:#}");
+                Err(e)
+            }
+        }
+    }
+
     /// Settle the context window: configured value, bounded by what the server reports.
     /// Ollama allocates memory per `num_ctx`, so an unconfigured window stays at 32k.
     pub(super) async fn resolve_window(&mut self) {
-        if let Some(model) = self.profile.sidecar.clone() {
+        // A sidecar that can't start fails the first turn (`ready_sidecar`), with its reason;
+        // here it's only logged, since there's no turn yet to end.
+        if let Some(model) = self.profile.sidecar.clone()
+            && !crate::sidecar::off()
+        {
             if !crate::sidecar::is_serving(&model).await {
                 self.emit(Event::Progress {
-                    label: format!("loading {model}"),
+                    label: crate::sidecar::activity(&model),
                     completed: None,
                     total: None,
                 });
             }
-            if let Err(e) = crate::sidecar::ensure(&self.profile).await {
-                self.notice(Level::Warn, format!("{e:#}"));
-            }
+            self.sidecar_failed = self.start_sidecar().await.err().map(|e| {
+                eprintln!("sidecar: {model} isn't ready: {e:#}");
+                e.to_string()
+            });
         }
         self.vision = match self.profile.vision {
             Some(v) => v,

@@ -333,10 +333,14 @@ impl Provider {
             )),
             ProviderKind::Openai => Self::OpenAi(openai::Client {
                 http,
-                base: p
-                    .base_url
-                    .clone()
-                    .unwrap_or_else(|| "https://api.openai.com/v1".into()),
+                // A sidecar's address as it is now: the Apple sidecar moves off a taken port.
+                base: match p.sidecar.as_deref() {
+                    Some(s) if p.base_url.is_some() => crate::sidecar::base_url(s),
+                    _ => p
+                        .base_url
+                        .clone()
+                        .unwrap_or_else(|| "https://api.openai.com/v1".into()),
+                },
                 model: p.model.clone(),
                 key: if p.sidecar.as_deref() == Some(crate::sidecar::APPLE) {
                     crate::sidecar::apple_token()

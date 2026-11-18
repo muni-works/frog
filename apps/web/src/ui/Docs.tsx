@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { docsPath, neighbors, search, type Page } from '../docs/docs'
 import { ICON, Icon } from './icons'
 import { Markdown } from './Markdown'
+import { useResizable } from './resize'
 
 // Documentation mode (docs/design/app-shell.md): the same window, with the left sidebar listing
 // pages and the main area showing one. The thread you were in stays mounted underneath, hidden,
@@ -29,18 +30,26 @@ interface ShellProps {
   after?: ReactNode
 }
 
+/** The left sidebar's width: 270 by default, dragged between 220 and 400 from its right edge. */
+export const SIDEBAR = { initial: 270, min: 220, max: 400 }
+
 /** The window's shell. Threads mode's sidebar, main area and right sidebar are always mounted;
  *  Documentation mode adds its own and hides them. */
 export function Shell({ mode, className, before, brand, side, main, inspector, after }: ShellProps) {
   const threads = mode === 'threads'
+  // One width for both modes, kept while the sidebar is folded away. On screen it can be
+  // narrower than this (the conversation keeps 360px; see app.css), so a drag starts from there.
+  const { width, dragging, grab, reset } = useResizable('frog.sidebarWidth', SIDEBAR, 'right')
   return (
-    <div className={className}>
+    <div className={className} style={{ '--side-w': `${width}px` } as React.CSSProperties}>
       {before}
       <aside className="side">
         {brand}
         <Keep on={threads}>{side.threads}</Keep>
         {mode === 'docs' && side.docs}
       </aside>
+      <div className={`side-grip${dragging ? ' on' : ''}`} role="separator" aria-orientation="vertical" aria-label="Resize the sidebar"
+        onPointerDown={(e) => grab(e, (e.currentTarget.previousElementSibling as HTMLElement | null)?.offsetWidth ?? width)} onDoubleClick={reset} />
       <Keep on={threads}>{main.threads}</Keep>
       {mode === 'docs' && main.docs}
       <Keep on={threads}>{inspector}</Keep>

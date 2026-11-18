@@ -232,7 +232,7 @@ struct TurnView: View, Equatable {
                     PlanView(todos: parts.plan)
                 }
                 if let loading {
-                    ModelLoadingStatus(model: loading.model, since: loading.since)
+                    ModelLoadingStatus(load: loading.load, since: loading.since)
                         .transition(.opacity)
                 } else if let status {
                     LiveStatus(text: status.text, since: status.since, preview: thinking)
@@ -299,19 +299,19 @@ struct TurnView: View, Equatable {
         // Between steps: the model is working out what to do next.
         let label = conversation.progress.flatMap { p -> String? in
             guard p.label != "thinking", !p.label.isEmpty else { return nil }
-            let s = p.label.prefix(1).uppercased() + p.label.dropFirst()
+            let s = ModelLoad.words(p.label)
             return s.hasSuffix("…") ? s : s + "…"
         }
         return (label ?? "Thinking…", turn.items.compactMap(\.endedAt).max())
     }
 
-    /// Tang accepts the first completion before its weights are resident. That request is model
-    /// loading, rather than reasoning, until the server begins to stream its first response.
-    private var modelLoading: (model: String, since: Date)? {
+    /// Before the first answer, the model may still be getting ready: tang reading a downloaded
+    /// model's weights (it accepts the first request before they're resident), or Apple
+    /// Intelligence starting. That's loading, not reasoning, until the first response streams.
+    private var modelLoading: (load: ModelLoad, since: Date)? {
         guard turn.items.isEmpty, let progress = conversation.progress,
-              progress.label.lowercased().hasPrefix("loading ") else { return nil }
-        let raw = String(progress.label.dropFirst("loading ".count))
-        return (Self.modelName(raw), conversation.progressSince ?? turn.startedAt ?? .now)
+              let load = ModelLoad(label: progress.label) else { return nil }
+        return (load, conversation.progressSince ?? turn.startedAt ?? .now)
     }
 
     /// The prompt has a row: what you asked, or a message from another session. A blank prompt
@@ -320,12 +320,6 @@ struct TurnView: View, Equatable {
         !turn.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !turn.images.isEmpty || !turn.more.isEmpty
     }
 
-    private static func modelName(_ raw: String) -> String {
-        let name = raw.split(separator: "/").last.map(String.init) ?? raw
-        return name
-            .replacingOccurrences(of: "-4bit", with: "")
-            .replacingOccurrences(of: "-", with: " ")
-    }
 
     @ViewBuilder
     private func menu(changes: Int) -> some View {

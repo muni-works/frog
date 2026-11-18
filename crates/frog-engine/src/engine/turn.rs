@@ -523,11 +523,11 @@ impl Agent {
             };
             let budget = self.think_budget(think);
             let started = Instant::now();
-            let activity = if !self.model_ready && self.profile.sidecar.is_some() {
-                format!("loading {}", self.profile.model)
-            } else {
-                "thinking".into()
+            let activity = match &self.profile.sidecar {
+                Some(model) if !self.model_ready => crate::sidecar::activity(model),
+                _ => "thinking".into(),
             };
+            self.ready_sidecar(&activity).await?;
             // A continued reply is steered by a note for this call only: it never joins the
             // history, so the reply it continues stays one assistant message there.
             let steered = steer.take().map(|note| {

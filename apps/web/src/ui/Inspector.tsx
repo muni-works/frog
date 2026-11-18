@@ -7,13 +7,13 @@ import { DownloadAppChip } from './DownloadChip'
 import { FileRow } from './Diff'
 import { ICON, Icon } from './icons'
 import { PreviewPane, usePreviewHub } from './PreviewPane'
+import { useResizable } from './resize'
 import { TerminalPane } from './TerminalPane'
 
 type Tab = 'changes' | 'terminal' | 'preview'
 
 // Width: 420 by default, dragged between 360 and 560 (the Mac's PaneArea uses the same).
 const WIDTH = 420, MIN_WIDTH = 360, MAX_WIDTH = 560
-const clampWidth = (w: number) => Math.round(Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, w)))
 const TABS: readonly { id: Tab; label: string; icon: string }[] = [
   { id: 'changes', label: 'Changes', icon: ICON.plusMinus },
   { id: 'terminal', label: 'Terminal', icon: ICON.terminalBox },
@@ -50,20 +50,7 @@ interface InspectorProps {
 
 export function Inspector({ thread, onCommit, onPr, hasPr, send, onClose, machines = [], preview, pane: initialPane }: InspectorProps) {
   // Width, dragged from the left edge and kept per browser.
-  const [width, setWidth] = useState(() => { try { return clampWidth(Number(localStorage.getItem('frog.inspectorWidth')) || WIDTH) } catch { return WIDTH } })
-  const [dragging, setDragging] = useState(false)
-  const grab = (e: React.PointerEvent) => {
-    e.preventDefault()
-    const x0 = e.clientX, w0 = width
-    setDragging(true); document.body.classList.add('resizing')
-    const move = (ev: PointerEvent) => setWidth(clampWidth(w0 + x0 - ev.clientX))
-    const up = () => {
-      setDragging(false); document.body.classList.remove('resizing')
-      removeEventListener('pointermove', move); removeEventListener('pointerup', up)
-      setWidth((w) => { try { localStorage.setItem('frog.inspectorWidth', String(w)) } catch { /* private mode */ } return w })
-    }
-    addEventListener('pointermove', move); addEventListener('pointerup', up)
-  }
+  const { width, dragging, grab, reset } = useResizable('frog.inspectorWidth', { initial: WIDTH, min: MIN_WIDTH, max: MAX_WIDTH }, 'left')
   const [pane, setPane] = useState<Tab>(() => {
     if (initialPane) return initialPane
     try { const t = localStorage.getItem('frog.inspectorTab'); return t === 'terminal' || t === 'preview' ? t : 'changes' } catch { return 'changes' }
@@ -83,8 +70,7 @@ export function Inspector({ thread, onCommit, onPr, hasPr, send, onClose, machin
   const resize = useCallback((cols: number, rows: number) => { if (term && !term.closed) send({ op: 'pane_resize', id: term.id, cols, rows }) }, [term?.id, term?.closed, send]) // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <section className="insp" aria-label="Inspector" style={{ '--insp-w': `${width}px` } as React.CSSProperties}>
-      <div className={`insp-grip${dragging ? ' on' : ''}`} role="separator" aria-orientation="vertical" aria-label="Resize the inspector" onPointerDown={grab}
-        onDoubleClick={() => { setWidth(WIDTH); try { localStorage.removeItem('frog.inspectorWidth') } catch { /* private mode */ } }} />
+      <div className={`insp-grip${dragging ? ' on' : ''}`} role="separator" aria-orientation="vertical" aria-label="Resize the inspector" onPointerDown={(e) => grab(e)} onDoubleClick={reset} />
       <div className="insp-top">
         <div className="insp-tabs" role="tablist">
           {TABS.map((t) => (

@@ -5,23 +5,29 @@ use crate::protocol::{Answer, Image, NotifyUrgency};
 use crate::provider::scripted;
 use serde_json::json;
 
-/// Scripts for subagents started in a given cwd (each test uses its own directory).
-static CHILD_SCRIPTS: std::sync::LazyLock<Mutex<HashMap<PathBuf, Vec<Vec<Response>>>>> =
-    std::sync::LazyLock::new(Default::default);
+/// Scripts for subagents started in a given cwd (each test uses its own directory): the
+/// responses, and calls that fail first (see [`scripted::Fail`]).
+static CHILD_SCRIPTS: std::sync::LazyLock<
+    Mutex<HashMap<PathBuf, Vec<(Vec<Response>, Vec<scripted::Fail>)>>>,
+> = std::sync::LazyLock::new(Default::default);
 
-pub(super) fn child_script(cwd: &Path) -> Option<Vec<Response>> {
+pub(super) fn child_script(cwd: &Path) -> Option<(Vec<Response>, Vec<scripted::Fail>)> {
     let mut all = CHILD_SCRIPTS.lock().unwrap();
     let list = all.get_mut(cwd)?;
     (!list.is_empty()).then(|| list.remove(0))
 }
 
 fn script_child(cwd: &Path, script: Vec<Response>) {
+    script_child_failing(cwd, Vec::new(), script);
+}
+
+fn script_child_failing(cwd: &Path, fails: Vec<scripted::Fail>, script: Vec<Response>) {
     CHILD_SCRIPTS
         .lock()
         .unwrap()
         .entry(cwd.to_path_buf())
         .or_default()
-        .push(script);
+        .push((script, fails));
 }
 
 fn reply(content: Vec<Block>, stop: Stop) -> Response {
@@ -14791,3 +14797,72 @@ async fn a_message_sent_mid_turn_makes_the_held_draft_stale() {
     );
     shutdown(h).await;
 }
+
+/// A sidecar whose model can't run (Apple Intelligence off, say) ends the first turn with the
+/// system's reason, promptly, instead of a loading line that waits on nothing. The model is
+/// never called.
+#[tokio::test]
+async fn a_sidecar_that_cannot_run_ends_the_turn_with_its_reason() {
+    let model = "test-unavailable".to_string();
+    let mut profile = Profile::new(ProviderKind::Openai, &model);
+    profile.sidecar = Some(model);
+    profile.tool_mode = ToolMode::Native;
+    let opts = Options {
+        cfg: Config {
+            hermetic: true,
+            ..Config::default()
+        },
+        profile_name: "test".into(),
+        profile,
+        cwd: std::env::temp_dir(),
+        mode: Mode::Default,
+        can_ask: true,
+        resume: None,
+        store: None,
+        sandbox: false,
+        rich: false,
+        subagent: false,
+        chat: false,
+    };
+    let mut h = start(
+        opts,
+        Provider::Scripted(scripted::Client::new(vec![reply(
+            vec![text("never sent")],
+            Stop::End,
+        )])),
+    )
+    .unwrap();
+    let began = std::time::Instant::now();
+    let evs = tokio::time::timeout(Duration::from_secs(10), run(&mut h, "test"))
+        .await
+        .expect("the turn ended");
+    assert!(
+        began.elapsed() < Duration::from_secs(5),
+        "took {:?}",
+        began.elapsed()
+    );
+    let end = evs
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::TurnEnded { reason, .. } => Some(reason.clone()),
+            _ => None,
+        })
+        .expect("turn ended");
+    match end {
+        EndReason::Error { error } => assert_eq!(
+            error,
+            EngineError::Config {
+                message: "Apple Intelligence is turned off. Turn it on in System Settings, or pick another model.".into()
+            }
+        ),
+        other => panic!("ended {other:?}"),
+    }
+    assert!(
+        !evs.iter()
+            .any(|e| matches!(&e.event, Event::ItemStarted { .. })),
+        "nothing was asked of the model"
+    );
+}
+
+#[path = "tests_children.rs"]
+mod children;
