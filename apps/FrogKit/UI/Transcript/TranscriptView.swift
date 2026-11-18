@@ -140,7 +140,10 @@ struct TranscriptView: View {
                     #endif
                     following = true
                     track.unpark()
-                    proxy.scrollTo(Self.end, anchor: .bottom)
+                    DispatchQueue.main.async {
+                        guard following, !track.userScrolling else { return }
+                        proxy.scrollTo(Self.end, anchor: .bottom)
+                    }
                 }
                 // Follow the answer as it streams: while following, content that grows takes the
                 // view back to the bottom. The size-change anchor alone loses the bottom once the
