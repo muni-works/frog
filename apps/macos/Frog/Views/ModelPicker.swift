@@ -95,10 +95,11 @@ struct ModelMenu: View {
     @State private var problem: String?
     /// A cloud model waiting on the project's permission.
     @State private var asking: ModelIdentity?
-    @AppStorage(ModelMenu.showCloudKey) private var showCloud = true
     @Environment(\.showSettings) private var showSettings
     @State private var filter = ""
 
+    /// "Show cloud models in the picker" was cut (board 7): signed in they show, signed out the
+    /// rows say "Sign in". `Workspace.dropRemovedSettings` forgets a stored "off".
     static let showCloudKey = "showCloudModels"
 
     /// Frog Cloud also lists the small models the engine uses for side jobs (titles, images),
@@ -178,7 +179,6 @@ struct ModelMenu: View {
     }
 
     private var cloudRows: [Row] {
-        guard showCloud else { return [] }
         var list = listed.map(workspace.allowing).filter(\.place.isFrogCloud)
         if preset == nil, let current, current.hasPrefix("cloud/"), !list.contains(where: { $0.spec == current }) {
             list.insert(workspace.identity(current), at: 0)
