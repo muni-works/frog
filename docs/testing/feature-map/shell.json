@@ -49,11 +49,11 @@
           ],
           "existing_tests_v070": [],
           "coverage_v070": "none",
-          "automatable": "hard",
-          "why_hard": "A SwiftUI .alert with a TextField (or a confirmationDialog) isn't reachable from an offscreen hosting view; needs XCUITest or a seam that sets the private @State.",
+          "automatable": "yes",
           "flow_tests": [
             "Flows/ConversationFlowTests.swift:test_rename_from_title"
-          ]
+          ],
+          "automatable_v070": "hard"
         },
         {
           "id": "archive-from-title",
@@ -91,11 +91,11 @@
           ],
           "existing_tests_v070": [],
           "coverage_v070": "none",
-          "automatable": "hard",
-          "why_hard": "A SwiftUI .alert with a TextField (or a confirmationDialog) isn't reachable from an offscreen hosting view; needs XCUITest or a seam that sets the private @State.",
+          "automatable": "yes",
           "flow_tests": [
             "Flows/ConversationFlowTests.swift:test_delete_from_title"
-          ]
+          ],
+          "automatable_v070": "hard"
         },
         {
           "id": "delete-cancel",
@@ -111,11 +111,11 @@
           ],
           "existing_tests_v070": [],
           "coverage_v070": "none",
-          "automatable": "hard",
-          "why_hard": "A SwiftUI .alert with a TextField (or a confirmationDialog) isn't reachable from an offscreen hosting view; needs XCUITest or a seam that sets the private @State.",
+          "automatable": "yes",
           "flow_tests": [
             "Flows/FlowDriverTests.swift:test_delete_cancel"
-          ]
+          ],
+          "automatable_v070": "hard"
         }
       ]
     },

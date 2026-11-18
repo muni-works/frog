@@ -35,6 +35,9 @@ final class FlowWindow {
     private let started = Date()
     private var restores: [() -> Void] = []
 
+    private var opened: OpenedBox?
+    /// What the window asked to open, newest last.
+    var openedURLs: [URL] { opened?.urls ?? [] }
     var workspace: Workspace { panes.focused.workspace }
     var conversation: Conversation? { panes.focused.conversation }
 
@@ -42,11 +45,17 @@ final class FlowWindow {
     /// the menu bar pointed at it. Signed out of Frog Cloud and with no network offers, so the
     /// Mac's real account and machines never reach a flow (the test host shares the login
     /// Keychain).
-    init(panes: Panes, size: CGSize = CGSize(width: 1300, height: 820), file: StaticString = #filePath, line: UInt = #line) {
+    init(panes: Panes, size: CGSize = CGSize(width: 1300, height: 820), signedOut: Bool = true, file: StaticString = #filePath, line: UInt = #line) {
         self.panes = panes
-        Self.isolate(&restores)
+        Self.isolate(&restores, signedOut: signedOut)
         StagedWindow.shared.capturing = true
-        let host = NSHostingView(rootView: WorkspaceView(panes: panes))
+        let opened = OpenedBox()
+        self.opened = opened
+        // Links and pages the window opens (a SwiftUI `Link`, `openURL`) are caught: no browser.
+        let host = NSHostingView(rootView: WorkspaceView(panes: panes).environment(\.openURL, OpenURLAction { url in
+            opened.urls.append(url)
+            return .handled
+        }))
         host.sceneBridgingOptions = [.toolbars, .title]
         window = NSWindow(contentRect: CGRect(origin: .zero, size: size),
                           styleMask: [.titled, .resizable, .fullSizeContentView, .closable, .miniaturizable],
@@ -82,8 +91,8 @@ final class FlowWindow {
     }
 
     /// A new window on a fresh workspace in `folder`.
-    convenience init(folder: URL, size: CGSize = CGSize(width: 1300, height: 820)) {
-        self.init(panes: Panes(Workspace(folder: folder, fresh: true)), size: size)
+    convenience init(folder: URL, size: CGSize = CGSize(width: 1300, height: 820), signedOut: Bool = true) {
+        self.init(panes: Panes(Workspace(folder: folder, fresh: true)), size: size, signedOut: signedOut)
     }
 
     func close() {
@@ -96,12 +105,16 @@ final class FlowWindow {
         pump(0.05)
     }
 
-    private static func isolate(_ restores: inout [() -> Void]) {
-        CloudAccount.shared.stage(nil)
+    /// `signedOut: false` leaves the account as a test set it up (a FakeFrogCloud account).
+    private static func isolate(_ restores: inout [() -> Void], signedOut: Bool) {
+        // No key from the login Keychain, even from a read already in flight: the account's own
+        // first read (started when it's first used) can land after staging.
+        CloudAccount.noKeychain = true
+        if signedOut { CloudAccount.shared.stage(nil) }
         Library.shared.cloudChanged([])
         let offer = Devices.shared.hideOffer
         Devices.shared.hideOffer = true
-        restores.append { CloudAccount.shared.unstage(); Devices.shared.hideOffer = offer }
+        restores.append { CloudAccount.shared.unstage(); CloudAccount.noKeychain = false; Devices.shared.hideOffer = offer }
     }
 
     // MARK: Time
@@ -312,6 +325,9 @@ final class FlowWindow {
         return nil
     }
 }
+
+@MainActor
+final class OpenedBox { var urls: [URL] = [] }
 
 /// A menu a flow opened, to choose from.
 @MainActor

@@ -43,7 +43,7 @@ final class ScriptedEngineTests: XCTestCase {
         let c = try await start(mode: .default)
         engine.model.script(
             .reply(.tool("Bash", ["command": "touch made-by-frog", "unsandboxed": true])),
-            .after("", .text("Made it."))
+            .afterTool(.text("Made it."))
         )
         c.submit("make a file")
         await waitFor("a permission card") { c.permission != nil }

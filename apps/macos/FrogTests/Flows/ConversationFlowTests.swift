@@ -13,12 +13,23 @@ class FlowTestCase: XCTestCase {
     var c: Conversation? { w.conversation }
 
     /// Opens the window on a fresh project. Call first in each test.
-    func open(mode: Mode = .default, config: [String] = [], sharedHome: Bool = false) throws {
+    func open(mode: Mode = .default, config: [String] = [], sharedHome: Bool = false, signedOut: Bool = true) throws {
         executionTimeAllowance = 120
         UserDefaults.standard.removeObject(forKey: "yoloConfirmed")
         engine = try ScriptedEngine.startNow(mode: mode, config: config, sharedHome: sharedHome)
-        w = FlowWindow(folder: engine.folder)
+        w = FlowWindow(folder: engine.folder, signedOut: signedOut)
         try w.requireReadable()
+        if worktreeOff { useTheCheckout() }
+    }
+
+    /// Flows here send in the project's own checkout: the where menu's New worktree, off (a
+    /// worktree session's first message goes from a new composer in the worktree, its own flow).
+    var worktreeOff = true
+
+    func useTheCheckout(file: StaticString = #filePath, line: UInt = #line) {
+        w.press(.id("composer.where"), file: file, line: line)
+        w.press(.text("New worktree"), file: file, line: line)
+        if w.find(.text("New worktree")) != nil { w.press(.id("composer.where"), file: file, line: line) }
     }
 
     override func tearDown() {
@@ -54,7 +65,7 @@ final class ConversationFlowTests: FlowTestCase {
     private func scriptCommand(_ file: String = "made-by-frog", then reply: String = "Made it.") {
         engine.model.add(
             .reply(.tool("Bash", ["command": "touch \(file)", "unsandboxed": true])),
-            .after("", .text(reply))
+            .afterTool(.text(reply))
         )
     }
 
@@ -80,18 +91,19 @@ final class ConversationFlowTests: FlowTestCase {
         XCTAssertNil(engine.file("made-by-frog"), "a denied command never runs")
     }
 
-    /// "Always allow" from the ⋯ menu: the next command of the same kind runs without a card.
+    /// "Allow all edits this session" from the ⋯ menu: the next edit runs without a card. (A
+    /// command that leaves the sandbox offers no standing allow.)
     func test_always_allow() throws {
         try open(mode: .default)
         engine.model.add(
-            .reply(.tool("Bash", ["command": "touch first", "unsandboxed": true])),
-            .after("", .tool("Bash", ["command": "touch second", "unsandboxed": true])),
-            .after("", .text("Both made."))
+            .reply(.tool("Write", ["file_path": "first", "content": "1\n"])),
+            .afterTool(.tool("Write", ["file_path": "second", "content": "2\n"])),
+            .afterTool(.text("Both made."))
         )
         w.send("make two files")
         let more = try XCTUnwrap(w.menu(.id("permission.more")))
-        XCTAssertTrue(more.titles.contains { $0.hasPrefix("Always allow") }, "\(more.titles)")
-        more.choose(startingWith: "Always allow")
+        XCTAssertTrue(more.titles.contains { $0.hasPrefix("Allow all edits") }, "\(more.titles)")
+        more.choose(startingWith: "Allow all edits")
         expect("the first command ran") { self.engine.file("first") != nil }
         expect("the second ran without asking") { self.engine.file("second") != nil }
         expect("the turn finished") { self.w.shows("Both made.") }
@@ -146,8 +158,9 @@ final class ConversationFlowTests: FlowTestCase {
     func test_undo_last_turn() throws {
         try open(mode: .acceptEdits)
         engine.model.add(
-            .reply(.tool("Write", ["file_path": "README.md", "content": "frog rewrote this\n"])),
-            .after("", .text("Rewrote it."))
+            .reply(.tool("Read", ["file_path": "README.md"])),
+            .afterTool(.tool("Write", ["file_path": "README.md", "content": "frog rewrote this\n"])),
+            .afterTool(.text("Rewrote it."))
         )
         w.send("rewrite the readme")
         expect("the turn ended") { self.c?.turns.last?.finished == true }
@@ -167,6 +180,9 @@ final class ConversationFlowTests: FlowTestCase {
 
     // MARK: The quiet child
 
+    /// A question's option: its button reads "2, Stop it and carry on, <detail>".
+    static func option(_ label: String) -> Query { Query(text: label, role: kAXButtonRole as String) }
+
     private func quietChild() throws {
         try open(config: ["child_quiet_secs = 2"])
         engine.model.add(
@@ -179,14 +195,14 @@ final class ConversationFlowTests: FlowTestCase {
 
     func test_quiet_child_asks() throws {
         try quietChild()
-        expect("the question", timeout: 30) { self.w.shows("find the parser") && self.w.find(.button("Keep waiting")) != nil }
-        XCTAssertNotNil(w.find(.button("Stop it and carry on")))
+        expect("the question", timeout: 30) { self.w.shows("find the parser") && self.w.find(Self.option("Keep waiting")) != nil }
+        XCTAssertNotNil(w.find(Self.option("Stop it and carry on")))
     }
 
     func test_stop_and_carry_on() throws {
         try quietChild()
-        w.element(.button("Stop it and carry on"), timeout: 30)
-        w.press(.button("Stop it and carry on"))
+        w.element(Self.option("Stop it and carry on"), timeout: 30)
+        w.press(Self.option("Stop it and carry on"))
         expect("the parent carried on", timeout: 30) { self.w.shows("Carried on without it.") }
     }
 }
@@ -270,7 +286,10 @@ final class ModeFlowTests: FlowTestCase {
 final class ComposerAndTitleFlowTests: FlowTestCase {
     func test_mention_a_file() throws {
         try open()
-        w.typeInComposer("look at @READ")
+        w.typeInComposer("look at @")
+        // The project's files load the first time a mention starts; a person types on meanwhile.
+        expect("the project's files are indexed") { !self.w.workspace.files.isEmpty }
+        w.typeInComposer("READ")
         expect("the file list offers README.md") { self.w.shows("README.md") }
         w.pressReturnInComposer()
         expect("the mention is in the draft") { self.w.composerField?.string.contains("@README.md") == true }

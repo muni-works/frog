@@ -147,8 +147,12 @@ final class ScriptedModel: @unchecked Sendable {
     struct Step {
         var after: String?
         var reply: Reply
+        /// Only a request whose newest message is a tool's result.
+        var toolResult = false
         static func reply(_ r: Reply) -> Step { Step(after: nil, reply: r) }
         static func after(_ text: String, _ r: Reply) -> Step { Step(after: text, reply: r) }
+        /// The model's next call once a tool has run (its result is the newest message).
+        static func afterTool(_ r: Reply) -> Step { Step(after: nil, reply: r, toolResult: true) }
     }
 
     private let listener: NWListener
@@ -220,6 +224,12 @@ final class ScriptedModel: @unchecked Sendable {
         }
     }
 
+    private static func newestRole(_ body: Data) -> String {
+        guard let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+              let messages = json["messages"] as? [[String: Any]] else { return "" }
+        return messages.last?["role"] as? String ?? ""
+    }
+
     /// The newest message's text (a user prompt or a tool result).
     private static func newest(_ body: Data) -> String {
         guard let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
@@ -240,7 +250,8 @@ final class ScriptedModel: @unchecked Sendable {
         if json["tools"] == nil {
             return answer(c, .text("Flow title"))
         }
-        guard let i = steps.firstIndex(where: { $0.after.map { message.contains($0) } ?? true }) else {
+        let role = Self.newestRole(body)
+        guard let i = steps.firstIndex(where: { ($0.after.map { message.contains($0) } ?? true) && (!$0.toolResult || role == "tool") }) else {
             return answer(c, .text("ok"))
         }
         let step = steps.remove(at: i)

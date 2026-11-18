@@ -17,6 +17,9 @@ final class CloudAccount {
     #if DEBUG
     /// Flow tests point the account at a local fake Frog Cloud (FakeFrogCloud).
     nonisolated(unsafe) static var origin = URL(string: "https://api.frog.toys")!
+    /// Flow tests: never read the login Keychain (the test host shares the developer's), so the
+    /// only key is `keyProvider`'s.
+    nonisolated(unsafe) static var noKeychain = false
     /// Flow tests: where a page the account opens (Stripe Checkout) goes instead of the browser.
     nonisolated(unsafe) static var openURL: (@MainActor (URL) -> Void)?
     #else
@@ -192,6 +195,9 @@ final class CloudAccount {
     nonisolated static func readKey() -> String? {
         if let env = ProcessInfo.processInfo.environment["FROG_API_KEY"], !env.isEmpty { return env }
         if let key = keyProvider?() { return key }
+        #if DEBUG
+        if noKeychain { return nil }
+        #endif
         #if os(macOS)
         return macKey()
         #else

@@ -7,23 +7,19 @@ import XCTest
 final class CloudFlowTests: FlowTestCase {
     private var cloud: FakeFrogCloud!
 
+    /// Signed in: as at a launch with an account, so the window comes up with it.
     private func openCloud(signedIn: Bool, credit: Double = 500) throws {
         cloud = try FakeFrogCloud()
         cloud.account.creditCents = credit
-        try open()
         cloud.install(signedIn: signedIn)
-        if signedIn { refreshAccount() }
+        if signedIn {
+            CloudAccount.noKeychain = true
+            refreshAccountNow()
+        }
+        try open(signedOut: !signedIn)
     }
 
-    override func tearDown() {
-        super.tearDown()
-        cloud?.uninstall()
-        cloud = nil
-        Library.shared.cloudChanged([])
-    }
-
-    /// What the app does after a sign-in, for a test that starts signed in.
-    private func refreshAccount() {
+    private func refreshAccountNow() {
         let done = Box()
         Task { @MainActor in
             await CloudAccount.shared.reloadKey()
@@ -31,7 +27,15 @@ final class CloudFlowTests: FlowTestCase {
             await CloudSessions.shared.refresh()
             done.value = true
         }
-        expect("the account loaded") { done.value }
+        let end = Date().addingTimeInterval(10)
+        while !done.value, Date() < end { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+    }
+
+    override func tearDown() {
+        super.tearDown()
+        cloud?.uninstall()
+        cloud = nil
+        Library.shared.cloudChanged([])
     }
 
     private final class Box { var value = false }
@@ -85,6 +89,22 @@ final class CloudFlowTests: FlowTestCase {
         expect("the gateway was asked for a session on the repo") {
             (self.cloud.requested("POST /v1/sessions")?["repo"] as? String) == "flowtester/demo"
         }
+    }
+
+    /// Signing in from the sidebar's foot, then the where menu: the account's repos are there.
+    /// Found by this harness (2026-11-18): the composer loads repos only when it appears (and
+    /// after the where menu's own sign-in), so after the footer's sign-in the menu has none and
+    /// the app never asks the gateway for them.
+    func testWhereMenuOffersReposAfterSigningInFromTheFooter() throws {
+        try openCloud(signedIn: false)
+        let menu = try XCTUnwrap(w.menu(.text("Sign in to Frog Cloud")))
+        menu.choose("Continue with GitHub")
+        expect("signed in") { self.w.shows("$5.00 credit") }
+        w.press(.id("composer.where"))
+        w.pump(1)
+        XCTExpectFailure("found 2026-11-18: after signing in from the footer the composer never loads the account's repos")
+        XCTAssertNotNil(cloud.requested("GET /v1/repos"), "the composer asked for the account's repos")
+        XCTAssertTrue(w.shows("flowtester/demo"), "the where menu lists the account's repos")
     }
 
     /// Reported at v0.7.0: the where menu's "Choose a folder…" makes the conversation a plain

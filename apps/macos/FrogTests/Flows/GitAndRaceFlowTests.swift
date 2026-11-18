@@ -8,7 +8,7 @@ final class GitAndRaceFlowTests: FlowTestCase {
     private func changeAFile() {
         engine.model.add(
             .reply(.tool("Write", ["file_path": "NOTES.md", "content": "frog notes\n"])),
-            .after("", .text("Wrote notes."))
+            .afterTool(.text("Wrote notes."))
         )
         w.send("write some notes")
         expect("the turn ended") { self.c?.turns.last?.finished == true && self.engine.file("NOTES.md") != nil }
@@ -45,7 +45,7 @@ final class GitAndRaceFlowTests: FlowTestCase {
         for _ in 0..<3 {
             engine.model.add(.after("race this", .tool("Write", ["file_path": "RACE.md", "content": "raced\n"])))
         }
-        for _ in 0..<3 { engine.model.add(.after("", .text("Raced."))) }
+        for _ in 0..<3 { engine.model.add(.afterTool(.text("Raced."))) }
         w.typeInComposer("race this")
         w.menuBar("Session", "Race…")
         w.press(.button("Start 3 Attempts"))
