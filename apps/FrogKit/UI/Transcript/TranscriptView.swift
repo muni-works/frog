@@ -253,6 +253,11 @@ struct TranscriptView: View {
         }
     }
 
+    /// The question that draws under its think or answer rather than after the turn.
+    private var inlineQuestion: Question? {
+        conversation.question.flatMap { conversation.drawsQuestionInline($0) ? $0 : nil }
+    }
+
     /// The rows of the turns built, in order (see `TranscriptRow`).
     private var rows: [TranscriptRow] {
         Self.rows(of: conversation.turns, from: firstShown, flows: flows, showThinking: verbosity.showsThinking, space: space)
@@ -268,8 +273,14 @@ struct TranscriptView: View {
             let start = out.count
             func add(_ part: TurnPart, _ key: String) {
                 let leads = out.count == start
-                out.append(TranscriptRow(turn: turn, part: part, first: leads,
-                                         gap: space.gap(part, after: leads ? nil : out.last?.part, first: out.isEmpty),
+                let previous = leads ? nil : out.last?.part
+                var gap = space.gap(part, after: previous, first: out.isEmpty)
+                // A running turn's tail is its live row: a line's gaps, not a block's.
+                if case .tail = part, !turn.finished, !leads {
+                    let writing = turn.items.last.map { $0.kind == .message && !$0.done } ?? false
+                    gap = TurnSpace.liveTailGap(space, after: previous, writing: writing)
+                }
+                out.append(TranscriptRow(turn: turn, part: part, first: leads, gap: gap,
                                          id: TranscriptRow.ID(turn: turn.id, part: key)))
             }
             if TurnView.hasHead(turn) { add(.head, "head") }
@@ -438,6 +449,7 @@ struct TranscriptView: View {
             // A row per piece of each turn: only what's on screen is built (see `TurnPart`).
             ForEach(rows) { row in
                 TurnView(turn: row.turn, conversation: conversation, actions: actions, part: row.part,
+                         question: inlineQuestion.flatMap { row.part.holds($0.item) ? $0.id : nil },
                          gap: row.gap, pinsFooter: footers.contains(row.turn.id))
                     .equatable()
                     .id(row.id)
@@ -517,7 +529,9 @@ struct TranscriptTrailer: View {
     @Environment(\.openSessionID) private var openSessionID
 
     var body: some View {
-        if let q = conversation.question {
+        // A question anchored on a think or an answer draws under it (`TurnView`); one with no
+        // `item` (or one not drawn here) waits after the turn, as on the web.
+        if let q = conversation.question, !conversation.drawsQuestionInline(q) {
             QuestionCard(question: q, conversation: conversation)
                 .padding(.top, space.turn)
                 .id(q.id)

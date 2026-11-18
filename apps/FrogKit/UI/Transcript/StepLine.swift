@@ -573,6 +573,7 @@ struct FoldLineView: View {
 /// A thought: one quiet line with a chevron, opening to what it thought. Today's words ("Thought
 /// for 12s"); phase 2 replaces the row.
 struct ThoughtLineView: View {
+    @Environment(\.transcriptEdge) private var edge
     let item: ItemState
     var gist: String?
     /// Verbose shows the thought: it opens (and closes) with the setting.
@@ -587,9 +588,22 @@ struct ThoughtLineView: View {
         _open = State(initialValue: verbose)
     }
 
-    private var words: String {
-        item.duration.map { "Thought for \(ActivityWords.duration($0))" } ?? "Thought"
+    /// "Thought for 31s" from the engine's think time (started→completed overstates it), or
+    /// the item's own times in an old log; "Stopped after 12s" for a think the turn stopped.
+    private var words: String { Self.words(item) }
+
+    /// "Thought for 31s" from the engine's think time (started→completed overstates it), or
+    /// the item's own times in an old log; "Stopped after 12s" for a think the turn stopped
+    /// (verbs.json's `live` words, the web's `thoughtLabel`).
+    static func words(_ item: ItemState) -> String {
+        if !item.done {
+            guard let start = item.startedAt else { return "Thought" }
+            return Verbs.Live.fill(Verbs.Live.stopped, time: LiveStats.clock((item.endedAt ?? .now).timeIntervalSince(start)))
+        }
+        let secs = item.thinkMs.map { Double($0) / 1000 } ?? item.duration
+        return secs.map { Verbs.Live.fill(Verbs.Live.thought, time: LiveStats.clock(max(1, $0))) } ?? "Thought"
     }
+
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -614,7 +628,8 @@ struct ThoughtLineView: View {
             .metricsRow(.thought, [words, gist.map { "· \($0)" } ?? ""].filter { !$0.isEmpty }.joined(separator: " "),
                         key: item.id, fontSize: LineType.status.size)
             if open {
-                CappedThought(text: item.text)
+                ThinkingOutline(item: item)
+                    .padding(.leading, edge.indent)
                     .padding(.bottom, TurnSpace.Inset.snug)
                     .transition(.opacity)
             }
