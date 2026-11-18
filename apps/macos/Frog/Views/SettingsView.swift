@@ -33,6 +33,7 @@ private struct GeneralSettings: View {
     @State private var code = RemoteBridge.token
     @AppStorage(UpdateDrain.key) private var gracefulUpdates = false
     @AppStorage(UpdateDrain.budgetKey) private var drainBudget = 20.0
+    @AppStorage(Funnel.optInKey) private var shareUsage = false
 
     var body: some View {
         Form {
@@ -48,6 +49,13 @@ private struct GeneralSettings: View {
                 }
             }
             Toggle("Let frog notify me when I'm in another app", isOn: $notifyWhenDone)
+            Section {
+                Toggle("Share usage with Frog", isOn: $shareUsage)
+                    .onChange(of: shareUsage) { _, on in if !on { Funnel.forget() } }
+            } footer: {
+                Text("A few moments, like a first local answer or a model download, so we can see where people get stuck. Never what you type, your code, file names or model names. Off by default.")
+                    .foregroundStyle(.secondary)
+            }
             Section {
                 Toggle("Pause agents for app updates and resume them", isOn: $gracefulUpdates)
                 if gracefulUpdates {
