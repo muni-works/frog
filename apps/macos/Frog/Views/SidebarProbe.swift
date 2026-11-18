@@ -10,11 +10,14 @@ enum SidebarProbe {
     static var badgeBodies = 0
     /// Row bodies built with the title expanded (hover's 450 ms have passed).
     static var expandedBodies = 0
+    /// Git badge bodies built in a row whose title is expanded: the badge surviving the hover.
+    static var expandedBadgeBodies = 0
 
     static func reset() {
         rowBodies = 0
         badgeBodies = 0
         expandedBodies = 0
+        expandedBadgeBodies = 0
     }
 }
 #endif
