@@ -24,6 +24,8 @@ export interface Entry {
   ended?: number
   /** A recognised test run, from the engine. */
   tests?: TestRun
+  /** Reasoning: how long it thought, from the engine (absent in older logs). */
+  thinkMs?: number
 }
 
 export interface Ask { id: string; item: string; name: string; arg: string; always?: string; preview?: FileDiff; reason?: string }
@@ -142,7 +144,7 @@ function apply(t: Thread, ev: Event, created: number): Thread {
       const it = ev.item
       const next = patch(t, ev.id, (e) => it.type === 'tool_call'
         ? { ...e, done: true, ended: created, outcome: it.outcome, display: it.display, diff: it.diff, ...(it.widget ? { widget: it.widget } : {}), ...(it.tests ? { tests: it.tests } : {}), output: it.output }
-        : { ...e, done: true, ended: created, text: it.text })
+        : { ...e, done: true, ended: created, text: it.text, ...(it.type === 'reasoning' && it.think_ms != null ? { thinkMs: it.think_ms } : {}) })
       if (it.type === 'tool_call' && it.diff && it.outcome === 'ok') {
         // A file edited several times keeps every edit's hunks and the summed counts.
         const d = it.diff

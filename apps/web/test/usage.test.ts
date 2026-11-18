@@ -13,11 +13,13 @@ test("cost splits fresh input, cached input and output at list price", () => {
   assert.equal(turnCost(u, undefined), null);
 });
 
-test("formats like the Mac app", () => {
+test("formats like the Mac app (FrogKit Dollars.format: costs are dollars)", () => {
   assert.equal(money(0), "Free");
-  assert.equal(money(0.004), "<1¢");
-  assert.equal(money(0.11), "11¢");
+  assert.equal(money(0.004), "<$0.01");
+  assert.equal(money(0.11), "$0.11");
   assert.equal(money(1.844), "$1.84");
+  assert.equal(money(15), "$15", "cents only when there are any");
+  assert.equal(money(0.999), "$1");
   assert.equal(tokens(8400), "8.4k");
   assert.equal(seconds(400), "0.4s");
   assert.equal(seconds(125_000), "2m 5s");
