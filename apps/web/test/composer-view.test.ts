@@ -138,7 +138,7 @@ test("the card has no shadow and no glass", () => {
   const css = readFileSync(new URL("../src/app.css", import.meta.url), "utf8");
   const card = css.match(/\.cz-card \{([^}]*)\}/)![1];
   assert.match(card, /box-shadow: none/);
-  assert.match(card, /border: 1px solid var\(--line-strong\)/);
+  assert.match(card, /border: 1px solid var\(--edge\)/);
   assert.doesNotMatch(css, /\.cz-card[^{]*\{[^}]*backdrop-filter/);
   assert.ok(!html({}).includes("f-glass"));
 });

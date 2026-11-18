@@ -88,12 +88,16 @@ test("each column has a hairline in --edge on its inner edge, and no other borde
   assert.equal(insp.get("box-sizing"), "border-box");
 });
 
-test("--edge is the column hairlines' token and nothing else's", () => {
+test("--edge is the quiet border: the column hairlines and the composer card at rest, nothing else", () => {
   // The whole stylesheet, every width: only the sidebar's right and the inspector's left use it.
   const all = app.replace(/\/\*[\s\S]*?\*\//g, "");
   const uses = [...all.matchAll(/([^{}]+)\{([^{}]*var\(--edge\)[^{}]*)\}/g)]
     .flatMap((m) => m[2].split(";").filter((d) => d.includes("var(--edge)")).map((d) => `${m[1].trim()} { ${d.trim()} }`));
-  assert.deepEqual(uses, [".side { border-right: 1px solid var(--edge) }", ".insp { border-left: 1px solid var(--edge) }"]);
+  assert.deepEqual(uses, [
+    ".side { border-right: 1px solid var(--edge) }",
+    ".insp { border-left: 1px solid var(--edge) }",
+    ".cz-card { border: 1px solid var(--edge) }",
+  ]);
   // And it's quieter than --line in both themes (closer to the --sidebar fill).
   const tokens = read("../src/tokens.css");
   assert.match(tokens, /--edge:\s*#ededed;/);
