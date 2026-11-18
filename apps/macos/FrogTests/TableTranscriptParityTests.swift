@@ -129,7 +129,9 @@ final class TableTranscriptParityTests: XCTestCase {
         let box = jumpBox
         let view = TranscriptView(conversation: c, actions: TurnActions(fork: { _ in }, rewind: { _ in }),
                                   jump: Binding(get: { box.id }, set: { box.id = $0 }),
-                                  onVisibleTurns: { [weak self] in self?.visible = $0 })
+                                  onVisibleTurns: { [weak self] ids in
+                                      print("DIAG vis from table=\(table) n=\(ids.count) t=\(String(format: "%.3f", ProcessInfo.processInfo.systemUptime))")
+                                      self?.visible = ids })
         host = NSHostingView(rootView: AnyView(view))
         host.frame = CGRect(x: 0, y: 0, width: 900, height: 700)
         window = NSWindow(contentRect: host.frame, styleMask: [.titled, .resizable], backing: .buffered, defer: false)
@@ -182,6 +184,7 @@ final class TableTranscriptParityTests: XCTestCase {
         for table in [false, true] {
             let c = open(table: table, turns: 200)
             let target = c.turns[40].id
+            print("DIAG jump set table=\(table) t=\(String(format: "%.3f", ProcessInfo.processInfo.systemUptime))")
             jumpBox.id = target
             let jt0 = Date()
             let jok = wait() { self.visible.contains(target) }
@@ -229,6 +232,27 @@ final class TableTranscriptParityTests: XCTestCase {
             XCTAssertTrue(wait() { self.atEnd() },
                           "table \(table): follows a short answer to the end")
             window.close()
+        }
+    }
+
+    /// DIAG scratch: a closed window's table transcript, re-rendered after the static flips to
+    /// the lazy stack. Does it spin?
+    func testZZStaleClosedTranscriptFlipsContainer() {
+        let c = open(table: true, turns: Int(ProcessInfo.processInfo.environment["FROG_STALE_TURNS"] ?? "200") ?? 200)
+        window.close()
+        pump(0.3)
+        TranscriptContainer.table = false
+        let mode = ProcessInfo.processInfo.environment["FROG_STALE_POKE"] ?? "event"
+        var n = 0
+        for _ in 0..<5 {
+            n += 1
+            if mode == "event" { turn(c, 1000 + n) } else { jumpBox.id = c.turns[3].id }
+            let c0 = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
+            let p0 = Self.pumps
+            let start = Date()
+            pump(1)
+            print("DIAG stale poke \(n) cpu=\(String(format: "%.2f", Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - c0) / 1e9)) wall=\(String(format: "%.2f", Date().timeIntervalSince(start))) stack=\(views(host, NSTableView.self).isEmpty) scrolls=\(views(host, NSScrollView.self).count)")
+            _ = p0
         }
     }
 
