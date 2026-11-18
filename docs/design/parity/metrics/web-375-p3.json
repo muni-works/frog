@@ -1,0 +1,142 @@
+{
+  "format": "frog-transcript-metrics/1",
+  "app": "web",
+  "width": 375,
+  "height": 812,
+  "look": "dark",
+  "column": 343,
+  "gutter": 16,
+  "pane": 375,
+  "mark": 0,
+  "markOnScreen": true,
+  "rows": [
+    {
+      "kind": "prompt",
+      "text": "upload_retries_on_503 is flaky. Find out why and fix it.",
+      "x": 27.2,
+      "top": 0,
+      "height": 60,
+      "fontSize": 14
+    },
+    {
+      "kind": "thought",
+      "text": "Thought for 1s",
+      "x": 26,
+      "top": 76,
+      "height": 24,
+      "fontSize": 12.5
+    },
+    {
+      "kind": "fold",
+      "text": "4 steps 2.2s",
+      "x": 26,
+      "top": 100,
+      "height": 24,
+      "fontSize": 12.5
+    },
+    {
+      "kind": "line",
+      "text": "Failed cargo test -q upload 10 of 11 · 9.0s",
+      "x": 26,
+      "top": 124,
+      "height": 24,
+      "fontSize": 12.5
+    },
+    {
+      "kind": "prose",
+      "text": "The jitter came from thread_rng(), so the third retry could wait 800 ms while the mock store gave up at 500 ms.",
+      "x": 26,
+      "top": 404,
+      "height": 66,
+      "fontSize": 14
+    },
+    {
+      "kind": "line",
+      "text": "Edited src/retry.rs +3 −2",
+      "x": 26,
+      "top": 482,
+      "height": 24,
+      "fontSize": 12.5
+    },
+    {
+      "kind": "line",
+      "text": "Ran cargo test -q upload 11 of 11 · 14s",
+      "x": 26,
+      "top": 506,
+      "height": 24,
+      "fontSize": 12.5
+    },
+    {
+      "kind": "prose",
+      "text": "Backoff::delay now takes the Rng, and the test passes a seeded one, so the retry timing is the same every run.",
+      "x": 30,
+      "top": 542,
+      "height": 66,
+      "fontSize": 13
+    },
+    {
+      "kind": "prose",
+      "text": "All eleven upload tests pass. I ran them once after the change, in the sandbox.",
+      "x": 26,
+      "top": 626,
+      "height": 44,
+      "fontSize": 14
+    },
+    {
+      "kind": "footer",
+      "text": "Qwen3 Coder Next · 56s · 1,902 tokens · <$0.01",
+      "x": 26,
+      "top": 690,
+      "height": 16,
+      "fontSize": 11.5
+    },
+    {
+      "kind": "turnline",
+      "text": "",
+      "x": 143,
+      "top": 690,
+      "height": 16,
+      "fontSize": 0
+    },
+    {
+      "kind": "prompt",
+      "text": "nice. open a PR",
+      "x": 232.9,
+      "top": 738,
+      "height": 38,
+      "fontSize": 14
+    },
+    {
+      "kind": "card",
+      "text": "Allow this command?",
+      "x": 16,
+      "top": 792,
+      "height": 180,
+      "fontSize": 14
+    },
+    {
+      "kind": "live",
+      "text": "Waiting for you",
+      "x": 26,
+      "top": 988,
+      "height": 24,
+      "fontSize": 12.5
+    },
+    {
+      "kind": "stats",
+      "text": "#s · waited #s",
+      "x": 26,
+      "top": 1014,
+      "height": 16,
+      "fontSize": 11.5
+    },
+    {
+      "kind": "turnline",
+      "text": "",
+      "x": 143,
+      "top": 1014,
+      "height": 16,
+      "fontSize": 0
+    }
+  ]
+}

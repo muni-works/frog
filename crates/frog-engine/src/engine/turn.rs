@@ -293,6 +293,7 @@ impl Agent {
             self.title_chapter(closed);
         }
         self.turn_clock = Some(Instant::now());
+        self.turn_pace = Default::default();
         if let Some(m) = &self.meter {
             // Idle from the seconds spent waiting before this turn (the op loop marked it busy).
             self.energy_mark = Some((m.mark(), m.idle_estimate()));
@@ -617,6 +618,7 @@ impl Agent {
                         widget: None,
                         images: Vec::new(),
                         app: None,
+                        tests: None,
                     },
                 });
             }
@@ -642,10 +644,19 @@ impl Agent {
                 })
                 .collect();
             if !reasoning.is_empty() {
+                // Only a streamed reasoning has a measured length.
+                let think_ms = streamed
+                    .reasoning
+                    .is_some()
+                    .then(|| streamed.think.as_millis() as u64);
                 self.complete_item(
                     streamed.reasoning,
                     ItemKind::Reasoning,
-                    Item::Reasoning { text: reasoning },
+                    Item::Reasoning {
+                        thoughts: streamed.thoughts.shown(&reasoning),
+                        think_ms,
+                        text: reasoning,
+                    },
                 );
             }
             let answer = msg.text();

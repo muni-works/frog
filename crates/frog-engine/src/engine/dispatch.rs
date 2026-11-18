@@ -843,9 +843,15 @@ Don't repeat it. {}",
             if !seen.is_empty() {
                 self.extend_last(seen);
             }
+            // A test run's counts, read from the command's own output (`display` is that,
+            // with colours, when the model's copy carries a hint after it).
+            let tests = (name == "Bash")
+                .then(|| crate::test_run::parse(out.display.as_deref().unwrap_or(&output)))
+                .flatten();
             self.emit(Event::ItemCompleted {
                 id,
                 item: Item::ToolCall {
+                    tests,
                     name,
                     arg,
                     input,

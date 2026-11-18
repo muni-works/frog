@@ -1,2 +1,3 @@
+$ node docs/design/parity/diff-metrics.mjs docs/design/transcript/metrics/web-1280.json docs/design/transcript/metrics/web-1600.json
 match: 12 rows, web@1280 and web@1600, within 1 pt
-exit 0
+(exit 0)

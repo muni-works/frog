@@ -3,20 +3,41 @@
 // and requests on that host go to 127.0.0.1:<port> with the capture script added to HTML, as the
 // Session DO does. Chrome and Safari resolve *.localhost to loopback, so each preview is its own
 // origin here too. Labels aren't signed: `<session hex>-<port>`.
+//
+// Owner-only, as zest 3642f57: the minted `url` is a one-minute entry link,
+// `<origin>/__frog/enter?t=<token>[&next=/path]`, that sets the host's owner cookie and 302s to
+// `next` when it's a plain same-origin path, else `/` (zest 947a8ee). Without the
+// cookie every request gets a 403 error page, except the capture script (so that page can say so).
 import { request as httpRequest } from "node:http";
 import { connect } from "node:net";
 import { readFileSync } from "node:fs";
 
 export const SCRIPT_PATH = "/__frog/preview.js";
+export const ENTER_PATH = "/__frog/enter";
+export const GATE_COOKIE = "__Host-frog_preview";
+export const ENTRY_TTL_MS = 60_000;
+const entries = new Map(); // token → { host label, expires }
 const TAG = `<script src="${SCRIPT_PATH}"></script>`;
 const LABEL = /^([0-9a-f]{20})-(\d{4,5})\.localhost$/;
 
 export const okPort = (p) => Number.isInteger(p) && p >= 1024 && p <= 65535 && p !== 7070;
 
-export function previewURL(host, id, port) {
+/** The preview's origin for a session's port. */
+export function previewOrigin(host, id, port) {
   const mockPort = host.split(":")[1] ?? "80";
-  return `http://${id.slice(2)}-${port}.localhost:${mockPort}/`;
+  return `http://${id.slice(2)}-${port}.localhost:${mockPort}`;
 }
+
+/** What POST /v1/sessions/:id/preview answers: a fresh entry link and the origin it enters. */
+export function mintPreview(host, id, port, now = Date.now()) {
+  const origin = previewOrigin(host, id, port);
+  const t = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+  entries.set(t, { label: `${id.slice(2)}-${port}`, expires: now + ENTRY_TTL_MS });
+  return { url: `${origin}${ENTER_PATH}?t=${t}`, origin, port, expires: now + 8 * 3600_000 };
+}
+
+const gate = (label) => `owner-${label}`;
+const cookies = (req) => (req.headers.cookie ?? "").split(";").map((c) => c.trim().split("="));
 
 /** The session and port when `host` is a preview host, else null. */
 export function previewTarget(host) {
@@ -45,7 +66,19 @@ function upstreamHeaders(req, target) {
 /** Serve one request on a preview host. `script` is the capture script's path on disk, if any. */
 export function servePreview(req, res, target, { script, exists }) {
   if (!exists(target.session)) return page(res, 404, "This session is gone.");
-  if (req.url.split("?")[0] === SCRIPT_PATH) {
+  const label = `${target.session.slice(2)}-${target.port}`;
+  const path = req.url.split("?")[0];
+  if (path === ENTER_PATH) {
+    const q = new URL(req.url, "http://mock").searchParams;
+    const t = q.get("t") ?? "";
+    const next = q.get("next") ?? "";
+    const land = /^\/(?![\/\\])[^\x00-\x1f\x7f]*$/.test(next) ? next : "/";
+    const e = entries.get(t);
+    if (!e || e.label !== label || e.expires < Date.now()) return page(res, 403, "This preview link has expired. Reload the preview in Frog.");
+    return res.writeHead(302, { location: land, "cache-control": "no-store", "set-cookie": `${GATE_COOKIE}=${gate(label)}; Path=/; HttpOnly; Secure; SameSite=None; Partitioned` }).end();
+  }
+  if (path !== SCRIPT_PATH && !cookies(req).some(([k, v]) => k === GATE_COOKIE && v === gate(label))) return page(res, 403, "Open this preview from Frog. Only the session's owner can view it.");
+  if (path === SCRIPT_PATH) {
     let body = "// no capture script configured\n";
     try { if (script) body = readFileSync(script, "utf8"); } catch {}
     return res.writeHead(200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store" }).end(body);

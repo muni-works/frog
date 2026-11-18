@@ -187,3 +187,78 @@ export function gutterLayout(paneWidth: number): { gutter: number; mode: 'hang' 
   const mode = gutter < HANG ? 'inset' : 'hang'
   return { gutter, mode, indent: mode === 'inset' ? HANG : 0 }
 }
+
+// The live row (spec, "The row"): one row at the end of the live turn for whatever runs now,
+// worded from the verb table's `live` entry.
+const LIVE = verbs.live as { thinking: string; waiting: string; thought: string; stopped: string; stalled: string; mixed: string; counts: Record<ObjectFormat, string> }
+
+/** "4s", "31s", "2m 5s": whole seconds, for the row and its stats. */
+export function secs(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000))
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`
+}
+const fill = (t: string, v: Record<string, string | number>) => t.replace(/\{(\w+)\}/g, (_, k) => String(v[k] ?? ''))
+
+export type LiveKind = 'thinking' | 'step' | 'waiting' | 'activity' | 'writing'
+export interface LiveRow {
+  kind: LiveKind
+  /** "Thinking", "Editing", "Reading 3 files", "Waiting for you", or what the engine says. */
+  label: string
+  object: string
+  mono: boolean
+  /** The engine's thought line, verbatim (thinking only; empty until it sends one). */
+  thought: string
+  /** The reasoning item the row stands for, while it thinks. */
+  item?: string
+}
+
+/** What the live turn's row says now. A card waiting on a person wins; then what the engine says
+ * it's doing; then the running steps (several fold into a count); then a think; an answer
+ * writing has no row (its stats sit under the text); anything else is a think about to start. */
+export function liveRow(entries: Entry[], o: { waiting: boolean; activity: string | null }): LiveRow {
+  const row = (kind: LiveKind, label: string, rest: Partial<LiveRow> = {}): LiveRow => ({ kind, label, object: '', mono: false, thought: '', ...rest })
+  if (o.waiting) return row('waiting', LIVE.waiting)
+  if (o.activity) return row('activity', o.activity)
+  const steps = entries.filter((e) => e.kind === 'tool' && !e.done)
+  if (steps.length === 1) {
+    const l = lineOf(steps[0])
+    return row('step', l.verb, { object: l.object, mono: l.mono })
+  }
+  if (steps.length > 1) {
+    const looks = new Set(steps.map((e) => lookOf(e.name ?? '').live))
+    const look = lookOf(steps[0].name ?? '')
+    return row('step', looks.size === 1 ? `${look.live} ${steps.length} ${LIVE.counts[look.object]}` : fill(LIVE.mixed, { n: steps.length }))
+  }
+  const last = entries[entries.length - 1]
+  if (last?.kind === 'reasoning' && !last.done) return row('thinking', LIVE.thinking, { thought: last.thought ?? '', item: last.id })
+  if (last?.kind === 'message' && !last.done && last.text) return row('writing', '')
+  return row('thinking', LIVE.thinking)
+}
+
+/** A finished think's line: "Thought for 31s" from the engine's think_ms (an older log: the item's
+ * own times); "Stopped after 12s" when the turn was stopped mid-think; plain "Thought" with no times. */
+export function thoughtLabel(e: Entry, stoppedAt?: number): string {
+  if (!e.done && stoppedAt != null && e.started != null) return fill(LIVE.stopped, { time: secs(stoppedAt - e.started) })
+  // An older log has no think_ms: the item's own times, as the engine's timeline and the Mac read it.
+  const ms = e.thinkMs ?? (e.done && e.started != null && e.ended != null && e.ended >= e.started ? e.ended - e.started : null)
+  if (ms != null) return fill(LIVE.thought, { time: secs(Math.max(1000, ms)) })
+  return 'Thought'
+}
+
+export const stalledLabel = (ms: number) => fill(LIVE.stalled, { time: secs(ms) })
+
+/** The outline (spec, "Hover and opening"): at most twelve lines, then "24 more". */
+export const OUTLINE_MAX = 12
+
+/** Tokens per second over the last few seconds of `samples` (viewer clock, ms; output tokens),
+ * or null until there's a second of them. Counted pieces are approximate: never a decimal. */
+export function rateOf(samples: { at: number; output: number }[], now: number, windowMs = 4000): number | null {
+  const recent = samples.filter((s) => s.at >= now - windowMs)
+  const first = recent[0] ?? samples[samples.length - 1]
+  const last = samples[samples.length - 1]
+  if (!first || !last || last.at - first.at < 2000) return null
+  return Math.round(((last.output - first.output) * 1000) / (now - first.at))
+}
+
+/** No output for this long while thinking: the row says so (the engine asks at 30 s). */
+export const STALL_AT = 10_000

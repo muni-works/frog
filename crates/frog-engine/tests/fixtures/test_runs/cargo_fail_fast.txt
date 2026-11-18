@@ -1,0 +1,35 @@
+
+running 4 tests
+test tests::slow ... ignored
+test tests::squares ... ok
+test tests::adds_zero ... FAILED
+test tests::adds ... FAILED
+
+failures:
+
+---- tests::adds_zero stdout ----
+
+thread 'tests::adds_zero' (77628065) panicked at src/lib.rs:15:30:
+assertion `left == right` failed
+  left: 7
+ right: 8
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- tests::adds stdout ----
+
+thread 'tests::adds' (77628064) panicked at src/lib.rs:14:25:
+assertion `left == right` failed
+  left: 4
+ right: 5
+
+
+failures:
+    tests::adds
+    tests::adds_zero
+
+test result: FAILED. 1 passed; 2 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.00s
+     Running unittests src/lib.rs (/work/tf/debug/deps/shapes-bd6bb5950cfecc60)
+error: test failed, to rerun pass `--lib`
+[exit code 101]

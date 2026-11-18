@@ -1,9 +1,3 @@
 $ node docs/design/parity/diff-metrics.mjs docs/design/transcript/metrics/web-1280.json docs/design/transcript/metrics/mac-1280.json
-2 differences (tolerance 1 pt):
-  row 1 (thought "Thought"): text
-    web: Thought
-    mac: Thought for 1s
-  row 9 (footer "Qwen3 Coder Next · 56s · 1,902 tokens"): text
-    web: Qwen3 Coder Next · 56s · 1,902 tokens
-    mac: Qwen3 Coder Next · 56s · 1,902 tokens · <$0.01
-(exit 1)
+match: 12 rows, web and mac, within 1 pt
+(exit 0)
