@@ -29,6 +29,9 @@ pub enum Fail {
     /// A call that never answers: the stream stalls before its first byte and stays that way
     /// (a dead upstream with the socket still open). For the quiet-child tests.
     Stall,
+    /// A call that hangs `secs` and then fails as a timed-out stream would: a real stall,
+    /// which the retry policy retries.
+    Hang { secs: u64 },
     /// A bug: the call panics, taking the engine's work loop with it. For the dead-child tests.
     Panic,
 }
@@ -257,6 +260,13 @@ impl Client {
                     .into());
                 }
                 Fail::Stall => std::future::pending::<()>().await,
+                Fail::Hang { secs } => {
+                    tokio::time::sleep(Duration::from_secs(secs)).await;
+                    return Err(StreamError {
+                        message: "operation timed out".into(),
+                    }
+                    .into());
+                }
                 Fail::Panic => panic!("scripted provider panic (a test's injected bug)"),
             }
         }

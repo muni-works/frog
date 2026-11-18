@@ -420,14 +420,20 @@ impl Asker {
             }
             open.insert(id.clone(), tx);
         }
-        shared.journal.emit(Event::Question {
+        let event = Event::Question {
             id: id.clone(),
             item: item.into(),
             question,
             options,
             multi: false,
             allow_other: false,
-        });
+        };
+        shared
+            .watching
+            .lock()
+            .unwrap()
+            .insert(id.clone(), event.clone());
+        shared.journal.emit(event);
         Some((id, rx))
     }
 
@@ -438,6 +444,7 @@ impl Asker {
             return;
         };
         shared.questions.lock().unwrap().remove(id);
+        shared.watching.lock().unwrap().remove(id);
         shared.journal.emit(Event::QuestionResolved {
             id: id.into(),
             answer,
@@ -466,6 +473,17 @@ impl Drop for Closer {
     }
 }
 
+impl Shared {
+    /// Show the watchers' open questions again (a turn just ended, or the model's own `Ask`
+    /// just closed, and clients put the card away).
+    fn reshow_watching(&self) {
+        let open: Vec<Event> = self.watching.lock().unwrap().values().cloned().collect();
+        for event in open {
+            self.journal.emit(event);
+        }
+    }
+}
+
 /// State the op router touches while a turn is running.
 struct Shared {
     cancel: Mutex<CancellationToken>,
@@ -475,6 +493,11 @@ struct Shared {
     notes: Mutex<HashMap<String, String>>,
     /// Open `Ask` questions, answered by `Op::Answer`.
     questions: Mutex<HashMap<String, oneshot::Sender<crate::protocol::Answer>>>,
+    /// The open ones a child's watcher raised (see `child_watch`), by id, as sent. They
+    /// outlive a turn of this session (a child session's quiet question is asked while this
+    /// one is idle), so a turn's end doesn't dismiss them, and they're shown again after it:
+    /// clients put every question away at `turn_ended`.
+    watching: Mutex<HashMap<String, Event>>,
     /// A client shows questions to someone who can answer (`SetClientCaps { ask }`).
     client_ask: AtomicBool,
     /// Session tools the client answers (`SetClientCaps { sessions }`).
@@ -756,6 +779,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         pending: Default::default(),
         notes: Default::default(),
         questions: Default::default(),
+        watching: Default::default(),
         client_ask: Default::default(),
         sessions: Default::default(),
         mcp: Default::default(),
@@ -1264,19 +1288,27 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             shared.pending.lock().unwrap().clear();
             // A question still open when the turn ends (interrupted) was dismissed; say so,
             // so clients put the card away.
-            let open: Vec<String> = shared
-                .questions
-                .lock()
-                .unwrap()
-                .drain()
-                .map(|(id, _)| id)
-                .collect();
+            // A child watcher's question isn't this turn's: it stays open, and is shown again.
+            let open: Vec<String> = {
+                let watching = shared.watching.lock().unwrap();
+                let mut questions = shared.questions.lock().unwrap();
+                let ids: Vec<String> = questions
+                    .keys()
+                    .filter(|id| !watching.contains_key(*id))
+                    .cloned()
+                    .collect();
+                for id in &ids {
+                    questions.remove(id);
+                }
+                ids
+            };
             for id in open {
                 agent.emit(Event::QuestionResolved {
                     id,
                     answer: Default::default(),
                 });
             }
+            shared.reshow_watching();
             shared.panes.set_in_turn(false);
             // A drain (app update) ends the turn suspended, never cancelled: the ack tells
             // the client the engine stopped at a safe point and the jobs it stopped. A turn

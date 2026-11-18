@@ -3,9 +3,11 @@
 //! Both kinds of child an engine runs are watched the same way: a `Task` subagent (the parent's
 //! turn is blocked on it) and a child session the engine owns (`kids`: headless runs wait for
 //! it, and the apps show it running). A [`Watch`] sees every event the child emits. Any event
-//! at all is life: a streamed token, tool output, a status line, a provider's "busy,
-//! retrying…" progress. When none has come for `child_quiet_secs` while the child is
-//! working, and it isn't sitting on a permission card (the card already reaches the person
+//! that shows progress is life: a streamed token, tool output, a card, counted progress, a
+//! provider saying it's busy. A status line, a notice, or a model call starting again after a
+//! timed-out stream is not (see [`alive`]): a stall that times out and retries would otherwise
+//! look alive every ten minutes for an hour. When none has come for `child_quiet_secs` while
+//! the child is working, and it isn't sitting on a permission card (the card already reaches the person
 //! through the parent, so the child isn't quiet, it's waiting on them), the parent asks its
 //! person one question on the ordinary question path:
 //!
@@ -16,11 +18,12 @@
 //! the child and the parent carries on with whatever it reported so far, saying why. The
 //! question is withdrawn the moment the child emits anything, ends, or is stopped, so a child
 //! that recovers never leaves a stale card behind, and a child that has ended never asks
-//! (#117: nothing here wakes the parent's model or queues anything for it).
+//! (#117: going quiet never wakes the parent's model or queues anything for it; only a stop
+//! or a death sends the one note a child's turn end always sends).
 //!
 //! **Nobody to ask** (headless `-p`, `frog bench`, a client that can't show questions): no
-//! question. After `child_quiet_stop_secs` of silence (default 30 min, longer than a provider
-//! request's own timeout and its retries, so a slow call gets its own chance first) the engine
+//! question. After `child_quiet_stop_secs` of silence (default 30 min: three of a provider
+//! request's own 10 min timeouts, so a slow call gets a couple of chances first) the engine
 //! stops the child itself, exactly as the Stop answer would. A run with nobody watching must
 //! end, and it must end the same way every time.
 //!
@@ -120,6 +123,9 @@ impl Watch {
     /// The child emitted `event`: it's alive. Its quiet clock restarts and an open question is
     /// withdrawn.
     pub fn saw(&mut self, event: &Event) {
+        if !alive(event) {
+            return;
+        }
         match event {
             Event::PermissionRequest { .. } => self.cards += 1,
             Event::PermissionResolved { .. } => self.cards = self.cards.saturating_sub(1),
@@ -221,5 +227,19 @@ fn capital(s: &str) -> String {
     match c.next() {
         Some(f) => f.to_uppercase().chain(c).collect(),
         None => String::new(),
+    }
+}
+
+/// Whether `event` shows the child making progress. A status line or a notice isn't progress,
+/// and neither is a model call starting or being retried after a stall: a stream that hangs
+/// until the request timeout and is retried emits those every few minutes forever. Progress
+/// with a count is, and so is a provider saying it's busy (a machine reporting it is busy).
+fn alive(event: &Event) -> bool {
+    match event {
+        Event::Status(_) | Event::Notice { .. } => false,
+        Event::Progress {
+            label, completed, ..
+        } => completed.is_some() || label == crate::model_policy::BUSY_LABEL,
+        _ => true,
     }
 }

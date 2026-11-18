@@ -343,7 +343,7 @@ pub struct Config {
     #[serde(default = "default_background_tasks")]
     pub background_tasks: usize,
     /// Seconds a child (a `Task` subagent, or a child session this engine owns) may run with
-    /// no event at all before its parent asks the person whether to keep waiting. A child on
+    /// no progress (see `child_watch::alive`) before its parent asks the person whether to keep waiting. A child on
     /// a permission card is never quiet. 0: never ask. See `child_watch`.
     #[serde(default = "default_child_quiet")]
     pub child_quiet_secs: u64,

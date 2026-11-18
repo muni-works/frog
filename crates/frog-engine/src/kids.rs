@@ -526,6 +526,12 @@ impl Kids {
                 if k.archived {
                     bail!("{} is archived", k.name);
                 }
+                if k.state.lock().unwrap().ended.as_deref() == Some("died") {
+                    bail!(
+                        "{} died (its engine exited), so nothing can reach it. Start a new session if the work still needs doing.",
+                        k.name
+                    );
+                }
                 let message = input["message"].as_str().unwrap_or("").to_string();
                 let op = if input["informational"].as_bool() == Some(true) {
                     Op::Inform {

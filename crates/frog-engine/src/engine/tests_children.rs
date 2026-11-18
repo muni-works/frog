@@ -509,3 +509,137 @@ async fn an_ended_child_never_asks_or_wakes_again() {
     );
     shutdown(h).await;
 }
+
+/// A real stall: the stream hangs until the request times out, and the retry policy tries
+/// again, five times. The retries' status lines aren't progress, so the quiet clock isn't
+/// reset by them: one question, still open while the retries go on.
+#[tokio::test(start_paused = true)]
+async fn a_stream_that_times_out_and_retries_still_asks_once() {
+    let dir = tmp_store();
+    let hangs = (0..6).map(|_| scripted::Fail::Hang { secs: 600 }).collect();
+    script_child_failing(&dir, hangs, vec![]);
+    let (mut h, _) = parent(after_task(), 300, 1800, true, None, dir);
+    shows_questions(&h);
+    drive(&mut h, |e| matches!(e, Event::Idle)).await;
+    submit(&h, "find it");
+    let evs = drive_long(&mut h, |e| matches!(e, Event::Question { .. })).await;
+    let id = questions(&evs)[0].0.clone();
+    // Through two more timed-out attempts.
+    let later = quiet_for(&mut h, 1300).await;
+    assert!(questions(&later).is_empty(), "still the one question");
+    assert!(
+        !later
+            .iter()
+            .any(|e| matches!(&e.event, Event::QuestionResolved { .. })),
+        "a retry isn't the child coming back"
+    );
+    answer(&h, &id, STOP);
+    let evs = drive_long(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+    assert!(
+        task_output(&evs)
+            .0
+            .contains("The user stopped this subagent")
+    );
+    shutdown(h).await;
+}
+
+/// Headless, the same stall is stopped at the cap, not after an hour of retries.
+#[tokio::test(start_paused = true)]
+async fn headless_stops_a_timing_out_subagent_at_the_cap() {
+    let dir = tmp_store();
+    let hangs = (0..6).map(|_| scripted::Fail::Hang { secs: 600 }).collect();
+    script_child_failing(&dir, hangs, vec![]);
+    let (mut h, _) = parent(after_task(), 300, 1800, false, None, dir);
+    drive(&mut h, |e| matches!(e, Event::Idle)).await;
+    let began = tokio::time::Instant::now();
+    submit(&h, "find it");
+    let evs = drive_long(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+    let took = began.elapsed();
+    assert!(
+        took >= Duration::from_secs(1800) && took < Duration::from_secs(2400),
+        "{took:?}"
+    );
+    assert!(questions(&evs).is_empty());
+    assert!(task_output(&evs).0.contains("nobody was there to ask"));
+    shutdown(h).await;
+}
+
+/// `frog -p`'s case: a child session goes quiet with nobody to ask. frog stops it at the
+/// cap, the parent's note says so, and the child settles, so the run can end.
+#[tokio::test(start_paused = true)]
+async fn a_quiet_child_session_with_nobody_to_ask_is_stopped_and_settles() {
+    let dir = tmp_store();
+    let store = dir.join(".store");
+    script_child_failing(&dir, vec![scripted::Fail::Stall], vec![]);
+    let (mut h, _) = parent(start_child(), 60, 120, false, Some(store), dir);
+    drive(&mut h, |e| matches!(e, Event::Idle)).await;
+    submit(&h, "find the parser in parallel");
+    let evs = drive_long(&mut h, |e| matches!(e, Event::TurnEnded { turn: 2, .. })).await;
+    assert!(questions(&evs).is_empty());
+    let woke = evs
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::TurnStarted { input, .. } if input.contains("<session-message") => {
+                Some(input.clone())
+            }
+            _ => None,
+        })
+        .unwrap();
+    assert!(
+        woke.contains(
+            "frog stopped it after it had produced nothing for 2 min (nobody was there to ask)"
+        ),
+        "{woke}"
+    );
+    let last = evs
+        .iter()
+        .rev()
+        .find_map(|e| match &e.event {
+            Event::ChildSession { state, .. } => Some(state.clone()),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(last, "idle");
+    shutdown(h).await;
+}
+
+/// A child session's question is asked while its parent is idle, and clients put every
+/// question away when a turn ends. So a parent turn in between (the person sends something)
+/// leaves the question open in the engine and shows it again, same id, and it still works.
+#[tokio::test(start_paused = true)]
+async fn a_child_question_survives_a_parent_turn_and_is_shown_again() {
+    let dir = tmp_store();
+    let store = dir.join(".store");
+    script_child_failing(&dir, vec![scripted::Fail::Stall], vec![]);
+    let mut script = start_child();
+    script.insert(2, reply(vec![text("still waiting on it")], Stop::End));
+    let (mut h, _) = parent(script, 60, 1800, true, Some(store), dir);
+    shows_questions(&h);
+    drive(&mut h, |e| matches!(e, Event::Idle)).await;
+    submit(&h, "find the parser in parallel");
+    let evs = drive_long(&mut h, |e| matches!(e, Event::Question { .. })).await;
+    let id = questions(&evs)[0].0.clone();
+    submit(&h, "how is it going?");
+    let evs = drive_long(&mut h, |e| matches!(e, Event::Question { .. })).await;
+    assert!(
+        !evs.iter()
+            .any(|e| matches!(&e.event, Event::QuestionResolved { id: r, .. } if *r == id)),
+        "the parent's turn didn't dismiss the child's question"
+    );
+    let ended = evs
+        .iter()
+        .position(|e| matches!(e.event, Event::TurnEnded { .. }))
+        .expect("the parent's turn ended");
+    let again = evs
+        .iter()
+        .position(|e| matches!(&e.event, Event::Question { id: q, .. } if *q == id))
+        .unwrap();
+    assert!(again > ended, "shown again after the turn ended");
+    answer(&h, &id, STOP);
+    let evs = drive_long(&mut h, |e| matches!(e, Event::TurnEnded { turn: 3, .. })).await;
+    assert!(evs.iter().any(|e| matches!(
+        &e.event,
+        Event::TurnStarted { input, .. } if input.contains("The user stopped it")
+    )));
+    shutdown(h).await;
+}
