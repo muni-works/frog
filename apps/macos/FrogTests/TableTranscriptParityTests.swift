@@ -175,6 +175,35 @@ final class TableTranscriptParityTests: XCTestCase {
         }
     }
 
+    /// The other side of following: an answer taller than the window stops at its start, so it
+    /// reads from the top, instead of the view keeping to its end. (The short answer above must
+    /// not stop; this one must.)
+    func testStreamingALongAnswerStopsAtItsStart() {
+        for table in [false, true] {
+            let c = open(table: table, turns: 30)
+            send(c, #""turn_started","turn":99,"input":"go""#)
+            send(c, #""item_started","id":"t99","kind":{"type":"tool_call","name":"Bash","arg":"ls"}"#)
+            send(c, #""item_completed","id":"t99","item":{"type":"tool_call","name":"Bash","arg":"ls","input":{"command":"ls"},"outcome":"ok","output":"ok","display":null}"#)
+            send(c, #""item_started","id":"live","kind":{"type":"message"}"#)
+            for i in 0..<40 {
+                let para = "line\(i) of a long answer, a paragraph that wraps in the window. "
+                send(c, #""item_delta","id":"live","delta":{"type":"text","text":\#(Self.json(para + "\n\n"))}"#)
+                wait(timeout: 5) { self.drawnText().contains("line\(i) ") }
+            }
+            XCTAssertTrue(wait() { self.drawnText().contains("line39 ") }, "table \(table): the streamed words are drawn")
+            // The answer's first words at the top of the view, and the view short of the end.
+            XCTAssertTrue(wait() {
+                guard let s = self.scrollView,
+                      let start = self.views(self.host, MessageTextView.self).first(where: { $0.string.hasPrefix("line0 ") })
+                else { return false }
+                let clip = s.contentView.bounds
+                let top = start.convert(start.bounds, to: s.contentView).minY
+                return top >= clip.minY - 2 && top < clip.minY + 120 && !self.atEnd()
+            }, "table \(table): a long answer stops at its start")
+            close()
+        }
+    }
+
     func testResizeRelaysOutVisibleRows() {
         for table in [false, true] {
             _ = open(table: table, turns: 60)
