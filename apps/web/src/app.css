@@ -808,3 +808,18 @@ body { font-family: var(--font-sans); }
 .settings-page .set-seg button { flex: none; padding: 4px 12px; border-radius: 7px; background: transparent; color: var(--muted); font: 400 12px var(--font-sans); }
 .settings-page .set-seg button.on { background: var(--well); color: var(--fg); }
 @media (max-width: 760px) { .settings-page .set-seg button { flex: 1; } }
+/* Settings' header: where you are, in place of a page title. */
+.settings-main .crumbs { display: flex; align-items: center; gap: 6px; min-width: 0; font: 600 13px var(--font-sans); color: var(--muted); white-space: nowrap; overflow: hidden; }
+.settings-main .crumbs b { color: var(--fg); font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.settings-main .crumbs button { all: unset; cursor: pointer; color: var(--muted); }
+.settings-main .crumbs button:hover { color: var(--fg); text-decoration: underline; }
+.settings-main .crumbs button:focus-visible { outline: 2px solid var(--frog); outline-offset: 2px; border-radius: 4px; }
+.settings-main .crumb-sep { color: var(--faint); font-weight: 400; }
+/* No title any more: the first group sits closer to the top. */
+.settings-page > .set-h:first-child { margin-top: 4px; }
+/* A read-only list (keys, a machine's facts) goes without lines: they're for telling controls apart. */
+.settings-page .set-group.plain > .set-row { border-bottom: 0; padding: 7px 0; }
+/* A machine row says it opens: the whole row lifts on hover. */
+.settings-page .set-machine { cursor: pointer; }
+.settings-page .set-machine:hover { background: var(--hover); border-radius: 8px; }
+.settings-page .set-machine:hover b { text-decoration: none; }

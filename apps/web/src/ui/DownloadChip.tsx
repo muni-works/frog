@@ -56,8 +56,8 @@ export function InvitePill({ section, machines = [], invite }: {
 }) {
   usePhone() // re-read the gate when the pointer changes
   const which = invite ?? inviteFor({ mac: isMacVisitor(), thisMac: hasThisMac(machines) })
-  if (which === 'elsewhere') return <span className="det invite-elsewhere">On a Mac</span>
+  if (which === 'elsewhere') return <span className="det invite-elsewhere" title="Frog for Mac does this; open this page on a Mac to get it">On a Mac</span>
   return which === 'open'
-    ? <a className="f-pill invite-pill" href={`frog://settings/${section}`} style={{ textDecoration: 'none' }}>Open in Frog for Mac</a>
-    : <a className="f-pill invite-pill" href="/download" title="Download Frog for Mac" style={{ textDecoration: 'none' }}>Get the Mac app</a>
+    ? <a className="f-pill invite-pill" href={`frog://settings/${section}`} style={{ textDecoration: 'none' }} title="Opens this section in Frog for Mac">Open in Frog for Mac</a>
+    : <a className="f-pill invite-pill" href="/download" title="Download Frog for Mac (free)" style={{ textDecoration: 'none' }}>Get the Mac app</a>
 }

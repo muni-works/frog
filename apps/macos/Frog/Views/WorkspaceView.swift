@@ -819,7 +819,10 @@ struct TitleBarClip: Shape {
 extension WorkspaceView {
     private var windowTitle: String {
         if panes.mode == .docs { return "Documentation" }
-        if panes.mode == .settings { return "Settings" }
+        if panes.mode == .settings {
+            let label = SettingsCatalog.bundled.sections.first { $0.id == panes.settingsSection }?.label
+            return ["Settings", label].compactMap { $0 }.joined(separator: " › ")
+        }
         // The mirror (see `Workspace.currentTitle`), not the conversation: the root body
         // reading the streaming conversation re-evaluated per delta to redraw a title that
         // only changes when the engine names the session.
@@ -837,7 +840,11 @@ extension WorkspaceView {
     /// mirror, not the streaming conversation.
     @ViewBuilder
     private var titleBar: some View {
-        if panes.mode != .threads {
+        if panes.mode == .settings {
+            SettingsCrumbs(section: panes.settingsSection,
+                           machine: panes.settingsSection == "models" ? panes.settingsMachine.flatMap { id in SettingsBindings.devices.list.first { $0.id == id }?.name } : nil,
+                           backToSection: { panes.settingsMachine = nil })
+        } else if panes.mode != .threads {
             Text(windowTitle).font(.frog(size: 13, weight: .semibold)).lineLimit(1).fixedSize()
         } else {
             threadTitleBar

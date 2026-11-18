@@ -215,7 +215,12 @@ test("Models: the machines list and a machine page, and Frog Cloud's credit", as
   const p = await signedIn("/settings/models");
   assert.match(shownText(page(p)!), /Machines mew .*RTX 3090.*Frog Cloud Account .*Credit \$12\.78/);
   await click(find(p, (n) => n.type === "button" && hasClass("set-machine")(n)));
-  assert.match(shownText(page(p)!), /‹ Models mew Status Ready Hardware RTX 3090 · 24 GB VRAM .*Qwen3 4B .*58 tok\/s/);
+  assert.match(shownText(page(p)!), /^Status Ready Hardware RTX 3090 · 24 GB VRAM .*Qwen3 4B .*58 tok\/s/);
+  // The header says where you are, and Models in it goes back.
+  const crumbs = () => shownText(find(p, (n) => n.type === "nav" && n.props["aria-label"] === "Breadcrumb")!);
+  assert.equal(crumbs(), "Settings › Models › mew");
+  await click(find(p, (n) => n.type === "button" && n.props.title === "Back to Models"));
+  assert.equal(crumbs(), "Settings › Models");
   p.unmount();
 });
 
@@ -433,7 +438,7 @@ test("no Mac-only row shows on the web, in any section", async () => {
 test("General: Notifications, then the Mac's rows under On your Mac", async () => {
   const p = await signedIn("/settings/general", fresh(), { Notification: { permission: "granted", requestPermission: async () => "granted" } });
   const t = shownText(page(p)!);
-  assert.match(t, /^General Notifications When a session needs you .* On your Mac Open files in your editor .* Let Frog on iPhone connect/);
+  assert.match(t, /^Notifications When a session needs you .* On your Mac Open files in your editor .* Let Frog on iPhone connect/);
   assert.ok(find(p, (n) => n.type === "input" && n.props.role === "switch" && n.props["aria-label"] === "Notifications"));
   p.unmount();
 });
@@ -497,9 +502,9 @@ test("Shortcuts lists the web's own keys; Connections and Usage are the Mac's ro
   const t = shownText(page(p)!);
   for (const [, keys] of WEB_SHORTCUTS) for (const [what] of keys) assert.ok(t.includes(what), what);
   await click(btn(p, "Connections"));
-  assert.equal(shownText(page(p)!).replace(/ (Get the Mac app|On a Mac)$/, ""), "Connections On your Mac Sign in to a server Servers like Linear and GitHub, with your own account.");
+  assert.equal(shownText(page(p)!).replace(/ (Get the Mac app|On a Mac)$/, ""), "On your Mac Sign in to a server Servers like Linear and GitHub, with your own account.");
   await click(btn(p, "Usage"));
-  assert.match(shownText(page(p)!), /^Usage On your Mac Measured energy for this Mac/);
+  assert.match(shownText(page(p)!), /^On your Mac Measured energy for this Mac/);
   p.unmount();
 });
 

@@ -143,6 +143,7 @@ struct OpenConfigButton: View {
             Editor.open([url])
         }
         .buttonStyle(SettingsButtonStyle())
+        .help("~/.config/frog/config.toml, in your editor")
     }
 }
 
@@ -159,7 +160,7 @@ private struct EditorRow: View {
 
     var body: some View {
         SettingsRow(row) {
-            FrogPillMenu(title: title) {
+            FrogPillMenu(title: title, help: "The app that opens files Frog changed") {
                 Button(Editor.installed.first.map { "Automatic (\($0.name))" } ?? "Default app") { editor = "" }
                 ForEach(Editor.installed) { e in Button(e.name) { editor = e.id } }
             }
@@ -256,6 +257,7 @@ struct PairingCard: View {
                 Text(RemoteBridge.name).font(.frog(size: 13, weight: .semibold))
                 Text(code).font(.frog(size: 13).monospaced()).textSelection(.enabled)
                 Button("New code", action: renew).buttonStyle(SettingsButtonStyle())
+                    .help("Every phone using the old code is signed out")
             }
         }
         .padding(.vertical, 4)
@@ -321,6 +323,7 @@ private struct MCPServersRows: View {
         Group {
             SettingsRow(row) {
                 Button("Refresh") { Task { await load() } }.buttonStyle(SettingsButtonStyle())
+                    .help("Ask each server again")
             }
             if loading {
                 SettingsRow("Connecting…") { ProgressView().controlSize(.small) }
@@ -344,13 +347,13 @@ private struct MCPServersRows: View {
     @ViewBuilder
     private func state(_ s: MCPStatus) -> some View {
         if s.connected {
-            SettingsValue("\(s.tools.count) tool\(s.tools.count == 1 ? "" : "s")")
+            SettingsValue("\(s.tools.count) tool\(s.tools.count == 1 ? "" : "s")", help: "Connected")
         } else if s.needsAuth == true {
             if signingIn.contains(s.name) {
                 ProgressView().controlSize(.small)
             } else {
                 Button("Sign in") { signIn(s) }.buttonStyle(SettingsButtonStyle())
-                    .help(s.declined == true ? "Signed out; you declined before" : "Signed out")
+                    .help(s.declined == true ? "Opens \(s.name)'s sign-in in your browser (you declined before)" : "Opens \(s.name)'s sign-in in your browser")
             }
         } else {
             SettingsValue("Not connected")
@@ -404,7 +407,7 @@ struct ShortcutRows: View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(Self.groups, id: \.0) { group in
                 SettingsGroupLabel(text: group.0)
-                SettingsRows {
+                SettingsRows(divided: false) {
                     ForEach(group.1, id: \.0) { item in
                         SettingsRow(item.0) {
                             Text(item.1).font(.frog(size: 12).monospaced()).foregroundStyle(Tokens.textSecondary)
