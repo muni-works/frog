@@ -102,6 +102,72 @@ enum Tokens {
         static let row: CGFloat = 8
     }
 
+    /// The transcript's type, gaps and layout (docs/design/transcript/spec.md), shared with the web.
+    enum Transcript {
+        /// A type role: its size, line height, the mono size inside it, and its weight.
+        struct Role: Equatable {
+            let size: CGFloat
+            let line: CGFloat
+            let mono: CGFloat
+            let weight: Font.Weight
+        }
+
+        /// Prose, the prompt, a card's title.
+        static let body = Role(size: 14, line: 22, mono: 13, weight: .regular)
+        /// Live rows, tool lines, thoughts, the opened outline.
+        static let status = Role(size: 12.5, line: 20, mono: 12, weight: .regular)
+        /// Stats, the footer, counts, durations.
+        static let meta = Role(size: 11.5, line: 16, mono: 11, weight: .regular)
+        /// Small labels (Queued, Beta).
+        static let label = Role(size: 10.5, line: 14, mono: 10, weight: .semibold)
+
+        /// The transcript's gaps at one density.
+        struct Gaps: Equatable {
+            /// Between turns.
+            let turn: CGFloat
+            /// The last row and the footer: block + 4 / + 2 (TurnSpace.Scale.footer is the extra).
+            let footer: CGFloat
+            /// Between paragraphs of prose.
+            let paragraph: CGFloat
+            /// The prompt and the first row; prose and a card or code box.
+            let block: CGFloat
+            /// Prose and a run of lines, either way round.
+            let activity: CGFloat
+            /// One line's height: its text line plus 4 / 2. Lines in a run touch.
+            let row: CGFloat
+            /// A live row and its stats line.
+            let stats: CGFloat
+
+            static let comfortable = Gaps(turn: 32, footer: 20, paragraph: 18, block: 16, activity: 12, row: 24, stats: 2)
+            static let compact = Gaps(turn: 16, footer: 12, paragraph: 16, block: 10, activity: 8, row: 22, stats: 2)
+        }
+
+        enum Layout {
+            /// The column (TurnSpace.measure): boxes, code, tables, cards, the composer.
+            static let column: CGFloat = 720
+            /// Prose stops here: paragraphs, lists, headings.
+            static let prose: CGFloat = 640
+            /// Room either side of the column (TurnSpace.gutter).
+            static let gutter: CGFloat = 32
+            /// How far a line's mark hangs into the gutter. Under this much gutter, marks come inside and all text indents by it.
+            static let hang: CGFloat = 26
+            /// A line's mark box (icon, live dot, fold chevron).
+            static let mark: CGFloat = 18
+            /// A line's hover plate: its height.
+            static let plate: CGFloat = 24
+            /// How far the plate reaches past the text on each side, so words don't move.
+            static let plateBleed: CGFloat = 6
+            /// The plate's corner.
+            static let plateRadius: CGFloat = 7
+            /// The prompt bubble's widest (TurnSpace.promptWidth).
+            static let prompt: CGFloat = 540
+            /// The prompt bubble's padding, top and bottom: one line is 38 tall.
+            static let bubbleY: CGFloat = 8
+            /// The prompt bubble's padding, left and right.
+            static let bubbleX: CGFloat = 14
+        }
+    }
+
     /// The one status pulse: a slow breathe for live dots (Motion.swift keeps the springs).
     static let pulse = Animation.easeInOut(duration: 1.2).repeatForever(autoreverses: true)
 }

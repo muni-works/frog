@@ -157,6 +157,49 @@
   --font-display: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, sans-serif;
   --font-rounded: ui-rounded, "SF Pro Rounded", -apple-system, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --tx-body-size: 14px;
+  --tx-body-line: 22px;
+  --tx-body-mono: 13px;
+  --tx-body-weight: 400;
+  --tx-status-size: 12.5px;
+  --tx-status-line: 20px;
+  --tx-status-mono: 12px;
+  --tx-status-weight: 400;
+  --tx-meta-size: 11.5px;
+  --tx-meta-line: 16px;
+  --tx-meta-mono: 11px;
+  --tx-meta-weight: 400;
+  --tx-label-size: 10.5px;
+  --tx-label-line: 14px;
+  --tx-label-mono: 10px;
+  --tx-label-weight: 600;
+  --tx-column: 720px;
+  --tx-prose: 640px;
+  --tx-gutter: 32px;
+  --tx-hang: 26px;
+  --tx-mark: 18px;
+  --tx-plate: 24px;
+  --tx-plate-bleed: 6px;
+  --tx-plate-radius: 7px;
+  --tx-prompt: 540px;
+  --tx-bubble-y: 8px;
+  --tx-bubble-x: 14px;
+  --gap-turn: 32px;
+  --gap-footer: 20px;
+  --gap-paragraph: 18px;
+  --gap-block: 16px;
+  --gap-activity: 12px;
+  --gap-row: 24px;
+  --gap-stats: 2px;
+}
+[data-density="compact"] {
+  --gap-turn: 16px;
+  --gap-footer: 12px;
+  --gap-paragraph: 16px;
+  --gap-block: 10px;
+  --gap-activity: 8px;
+  --gap-row: 22px;
+  --gap-stats: 2px;
 }
 .title { font-family: var(--font-sans); font-size: 22px; line-height: 26px; font-weight: 400; }
 .headline { font-family: var(--font-sans); font-size: 13px; line-height: 16px; font-weight: 700; }

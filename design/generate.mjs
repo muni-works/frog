@@ -37,6 +37,16 @@ export function renderCss(t) {
     ...t.space.filter((s) => s.css).map((s) => `  --${s.css}: ${num(s.value)}px;`),
     ...t.font.map((f) => `  --${f.css}: ${f.value};`),
   ].join("\n");
+  const tx = t.transcript;
+  const txFixed = tx
+    ? [
+        ...tx.type.flatMap((r) => [`  --tx-${r.role}-size: ${num(r.size)}px;`, `  --tx-${r.role}-line: ${num(r.line)}px;`, `  --tx-${r.role}-mono: ${num(r.mono)}px;`, `  --tx-${r.role}-weight: ${r.weight};`]),
+        ...tx.layout.map((l) => `  --tx-${l.name}: ${num(l.value)}px;`),
+        ...tx.gap.map((g) => `  --gap-${g.name}: ${num(g.comfortable)}px;`),
+      ].join("\n")
+    : "";
+  // Comfortable is the default; compact is the Mac's density setting, opted into by an ancestor.
+  const compact = tx ? `[data-density="compact"] {\n${tx.gap.map((g) => `  --gap-${g.name}: ${num(g.compact)}px;`).join("\n")}\n}\n` : "";
   const type = t.type
     .map((y) => `.${y.class} { font-family: var(--font-${y.font}); font-size: ${y.size}; line-height: ${y.line}; font-weight: ${y.weight};${y.tracking ? ` letter-spacing: ${y.tracking};` : ""} }`)
     .join("\n");
@@ -51,9 +61,9 @@ ${colors("dark")}
 ${colors("dark")}
 }
 :root {
-${fixed}
+${fixed}${txFixed ? `\n${txFixed}` : ""}
 }
-${type}
+${compact}${type}
 `;
 }
 
@@ -70,6 +80,44 @@ const swiftColor = (c) => {
 };
 const docs = (d, pad) => (d ? `${pad}/// ${d}\n` : "");
 const cg = (n) => (Number.isInteger(n) ? `${n}` : `${n}`);
+
+/** Tokens.Transcript: the transcript's type roles, gaps (a comfortable / compact pair, like
+ * TurnSpace.Scale) and layout. Nothing reads it yet: TokensTests checks it against TurnSpace. */
+function swiftTranscript(tx) {
+  if (!tx) return "";
+  const ident = (s) => s.replace(/-(\w)/g, (_, c) => c.toUpperCase());
+  const weight = (w) => (w >= 600 ? ".semibold" : ".regular");
+  const roles = tx.type.map((r) => `${docs(r.doc, "        ")}        static let ${r.role} = Role(size: ${cg(r.size)}, line: ${cg(r.line)}, mono: ${cg(r.mono)}, weight: ${weight(r.weight)})`).join("\n");
+  const fields = tx.gap.map((g) => `${docs(g.doc, "            ")}            let ${g.name}: CGFloat`).join("\n");
+  const pair = (k) => `Gaps(${tx.gap.map((g) => `${g.name}: ${cg(g[k])}`).join(", ")})`;
+  const layout = tx.layout.map((l) => `${docs(l.doc, "            ")}            static let ${ident(l.name)}: CGFloat = ${cg(l.value)}`).join("\n");
+  return `
+
+    /// The transcript's type, gaps and layout (docs/design/transcript/spec.md), shared with the web.
+    enum Transcript {
+        /// A type role: its size, line height, the mono size inside it, and its weight.
+        struct Role: Equatable {
+            let size: CGFloat
+            let line: CGFloat
+            let mono: CGFloat
+            let weight: Font.Weight
+        }
+
+${roles}
+
+        /// The transcript's gaps at one density.
+        struct Gaps: Equatable {
+${fields}
+
+            static let comfortable = ${pair("comfortable")}
+            static let compact = ${pair("compact")}
+        }
+
+        enum Layout {
+${layout}
+        }
+    }`;
+}
 
 export function renderSwift(t) {
   const colors = t.color.filter((c) => c.swift).map((c) => `${docs(c.doc, "    ")}    static let ${c.swift} = ${swiftColor(c)}`).join("\n");
@@ -100,7 +148,7 @@ ${group(t.radius)}
 
     enum Space {
 ${group(t.space)}
-    }
+    }${swiftTranscript(t.transcript)}
 
     /// The one status pulse: a slow breathe for live dots (Motion.swift keeps the springs).
     static let pulse = Animation.easeInOut(duration: 1.2).repeatForever(autoreverses: true)
