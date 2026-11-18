@@ -16,6 +16,7 @@ import { randomBytes } from "node:crypto";
 import { accept } from "./ws.mjs";
 import { loadFixture, Recorded } from "./session.mjs";
 import { okPort, previewTarget, previewURL, servePreview, upgradePreview } from "./preview.mjs";
+import { accountRoutes } from "./account.mjs";
 
 const arg = (name, fallback) => {
   const i = process.argv.indexOf(`--${name}`);
@@ -25,6 +26,7 @@ const arg = (name, fallback) => {
 export function startMock({ port = 8788, fixture = new URL("./demo.jsonl", import.meta.url).pathname, delayMs = 15, previewScript } = {}) {
   const events = loadFixture(fixture);
   const sessions = new Map(); // id → { info, rec }
+  const account_ = accountRoutes(); // local addition: the edge's account routes (./account.mjs)
 
   const json = (res, status, body) => res.writeHead(status, { "content-type": "application/json" }).end(body === undefined ? "" : JSON.stringify(body));
   const summary = ({ info }) => ({ id: info.id, title: info.title, repo: info.repo, branch: info.branch, state: info.state, updated: info.updated });
@@ -47,6 +49,7 @@ export function startMock({ port = 8788, fixture = new URL("./demo.jsonl", impor
     const path = url.pathname.replace(/\/+$/, "");
     if (path === "/health") return json(res, 200, { ok: true });
     const account = bearer(req);
+    if (await account_.handle(req, res, path, account, json)) return;
     if (!account) return json(res, 401, { error: "missing or invalid key" });
     if (path === "/v1/sessions" && req.method === "GET") return json(res, 200, { sessions: [...sessions.values()].filter((s) => s.info.account === account).map(summary) });
     if (path === "/v1/sessions" && req.method === "POST") {

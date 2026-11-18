@@ -32,6 +32,8 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- Settings › Appearance's theme, before first paint (src/settings.ts). -->
+    <script>try { var t = localStorage.getItem('frog.theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t } catch (e) {}</script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -103,6 +103,8 @@ export default {
     if (/^\/s\/[\w-]+\/?$/.test(pathname) && env.ASSETS) return env.ASSETS.fetch(new URL("/", request.url));
     // A documentation page's URL (/docs/<slug>) is the app's Documentation mode, likewise.
     if (/^\/docs(\/[\w-]*)?\/?$/.test(pathname) && env.ASSETS) return env.ASSETS.fetch(new URL("/", request.url));
+    // A settings section's URL (/settings/<section>) is the app's Settings mode, likewise.
+    if (/^\/settings(\/[\w-]*)?\/?$/.test(pathname) && env.ASSETS) return env.ASSETS.fetch(new URL("/", request.url));
     return new Response("not found\n", { status: 404, headers: { "Content-Type": "text/plain" } });
   },
 };

@@ -785,3 +785,38 @@ button.tool:hover .tool-chev { opacity: 1; }
   .cz-card textarea { font-size: 16px; } /* 16px keeps iOS from zooming the page on focus */
   .cz-menu { left: 4px !important; right: 4px !important; width: auto !important; max-width: none; }
 }
+
+/* Signed out: one quiet line where the session list goes; it takes the list's space. */
+.side-quiet { flex: 1; padding: 10px 8px; font-size: 12.5px; line-height: 1.45; }
+/* The chip slot, directly above the Documentation row: at most one chip; empty, it isn't drawn. */
+.chip-slot { position: relative; margin: 4px 0 2px; }
+.side-chip { display: flex; align-items: center; gap: 10px; padding: 8px 28px 8px 10px; border-radius: var(--radius-card); background: var(--card); color: var(--fg); font-size: 13px; }
+.side-chip:hover { background: var(--hover); }
+.side-chip-text { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
+.side-chip-text .det { font-size: 12px; }
+.side-chip-x { position: absolute; top: 6px; right: 6px; width: 20px; height: 20px; color: var(--muted); }
+/* No chip in the phone drawer. */
+@media (max-width: 760px) { .chip-slot { display: none; } }
+.signin-row { position: relative; }
+.signin-menu { left: 0; right: 0; bottom: calc(100% + 4px); max-width: none; }
+
+/* Settings mode: one section per page in the reading column. Rows are label left, control right,
+   with a hairline between them, not cards. */
+.settings-page { gap: 0; padding-bottom: 40px; }
+.settings-page h2 { margin: 0 0 14px; font-size: 17px; font-weight: 600; }
+.settings-page .set-h { margin: 22px 0 4px; }
+.settings-page .set-group { gap: 0; }
+.settings-page .set-group > .set-row { background: transparent; border-radius: 0; padding: 11px 0; border-bottom: 1px solid var(--line); }
+.settings-page .set-group > .set-row:last-child { border-bottom: 0; }
+.settings-page .set-machine:hover { background: transparent; }
+.settings-page .set-machine:hover b { text-decoration: underline; }
+.settings-page > .det.wrap { margin: 10px 0 0; }
+.settings-page .set-prices { margin-top: 18px; }
+.set-seg { flex: none; width: 240px; }
+.set-seg button { padding: 6px 0; font-size: 12px; }
+.coupon { display: flex; flex-direction: column; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
+.coupon-row { display: flex; gap: 8px; align-items: center; }
+.coupon-row .f-field { flex: 1; text-transform: none; }
+@media (max-width: 760px) { .settings-page .set-group > .set-row { flex-wrap: wrap; } .set-seg { width: 100%; } }
+.credit-history .set-price-h, .credit-history .set-price { grid-template-columns: 1fr 1fr 80px 80px; }
+.credit-history .set-price span:nth-child(2) { text-align: left; }
