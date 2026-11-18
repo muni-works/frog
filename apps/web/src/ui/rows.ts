@@ -235,11 +235,13 @@ export function liveRow(entries: Entry[], o: { waiting: boolean; activity: strin
   return row('thinking', LIVE.thinking)
 }
 
-/** A finished think's line: "Thought for 31s" from the engine's think_ms; "Stopped after 12s" when
- * the turn was stopped mid-think; plain "Thought" for an older log, which has no length. */
+/** A finished think's line: "Thought for 31s" from the engine's think_ms (an older log: the item's
+ * own times); "Stopped after 12s" when the turn was stopped mid-think; plain "Thought" with no times. */
 export function thoughtLabel(e: Entry, stoppedAt?: number): string {
   if (!e.done && stoppedAt != null && e.started != null) return fill(LIVE.stopped, { time: secs(stoppedAt - e.started) })
-  if (e.thinkMs != null) return fill(LIVE.thought, { time: secs(Math.max(1000, e.thinkMs)) })
+  // An older log has no think_ms: the item's own times, as the engine's timeline and the Mac read it.
+  const ms = e.thinkMs ?? (e.done && e.started != null && e.ended != null && e.ended >= e.started ? e.ended - e.started : null)
+  if (ms != null) return fill(LIVE.thought, { time: secs(Math.max(1000, ms)) })
   return 'Thought'
 }
 

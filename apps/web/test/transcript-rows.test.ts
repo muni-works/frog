@@ -166,3 +166,13 @@ test("the CSS switches at the same width as gutterLayout", () => {
   const css = readFileSync(new URL("../src/transcript.css", import.meta.url), "utf8");
   assert.match(css, new RegExp(`@container transcript \\(max-width: ${INSET_BELOW - 1}px\\)`));
 });
+
+test("a finished thought reads 'Thought for Ns', as the Mac's does (spec, the settled row)", async () => {
+  const { thoughtLabel } = await import("../src/ui/rows.ts");
+  const r = (over: Partial<Entry>): Entry => ({ id: "r1", kind: "reasoning", text: "Probably timing.", output: "", done: true, ...over });
+  assert.equal(thoughtLabel(r({ thinkMs: 31_200 })), "Thought for 31s", "the engine's think_ms when it sends one");
+  // An older log: the item's own times, as the timeline reads it (engine timeline.rs) and the Mac does.
+  assert.equal(thoughtLabel(r({ started: 1794398400250, ended: 1794398401450 })), "Thought for 1s");
+  assert.equal(thoughtLabel(r({ thinkMs: 300 })), "Thought for 1s", "never 'for 0s'");
+  assert.equal(thoughtLabel(r({})), "Thought", "no times at all");
+});
