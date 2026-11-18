@@ -1420,6 +1420,14 @@
         },
         {
           "properties": {
+            "asked": {
+              "description": "When the request was sent (unix ms); the envelope's `created` is when it was\nanswered. Together: the wait, for the turn's timeline. Absent in older logs and on\na withdrawal.",
+              "format": "int64",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
             "created": {
               "format": "int64",
               "type": "integer"
@@ -1433,6 +1441,13 @@
             },
             "id": {
               "type": "string"
+            },
+            "item": {
+              "description": "The tool call it gated (the request's `item`), so a log reader can place the wait\nwithout the request, which isn't kept. Absent in older logs and on a withdrawal.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "seq": {
               "format": "uint64",
@@ -1456,6 +1471,13 @@
         {
           "description": "The user answered (or dismissed) a [`Event::Question`].",
           "properties": {
+            "asked": {
+              "format": "int64",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
             "choices": {
               "items": {
                 "type": "string"
@@ -1472,6 +1494,13 @@
             },
             "id": {
               "type": "string"
+            },
+            "item": {
+              "description": "As on [`Event::PermissionResolved`]: the tool call that asked, and when (unix ms).",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "other": {
               "type": [
@@ -3608,6 +3637,51 @@
             "created"
           ],
           "type": "object"
+        },
+        {
+          "description": "The turn's output tokens so far, for the stats line: at most four times a second while\na call streams, and once when each call ends. While a call streams the count is\napproximate (`so_far`: show it as \"so far\", never as exact; see [`crate::pace`]); when\nthe call ends the provider's figure replaces it (`so_far` false). Live only: the\nfinished figure is `turn_ended`'s `usage.output_tokens`.",
+          "properties": {
+            "created": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "event": {
+              "const": "output_tokens",
+              "type": "string"
+            },
+            "output": {
+              "description": "Every finished call's figure from the provider, plus the streaming call's count.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "seq": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session": {
+              "type": "string"
+            },
+            "so_far": {
+              "description": "Part of `output` is counted from streamed pieces, not reported by the provider.",
+              "type": "boolean"
+            },
+            "turn": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "event",
+            "turn",
+            "output",
+            "seq",
+            "session",
+            "created"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -3834,6 +3908,14 @@
         },
         {
           "properties": {
+            "asked": {
+              "description": "When the request was sent (unix ms); the envelope's `created` is when it was\nanswered. Together: the wait, for the turn's timeline. Absent in older logs and on\na withdrawal.",
+              "format": "int64",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
             "decision": {
               "$ref": "#/$defs/Decision"
             },
@@ -3843,6 +3925,13 @@
             },
             "id": {
               "type": "string"
+            },
+            "item": {
+              "description": "The tool call it gated (the request's `item`), so a log reader can place the wait\nwithout the request, which isn't kept. Absent in older logs and on a withdrawal.",
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [
@@ -3855,6 +3944,13 @@
         {
           "description": "The user answered (or dismissed) a [`Event::Question`].",
           "properties": {
+            "asked": {
+              "format": "int64",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
             "choices": {
               "items": {
                 "type": "string"
@@ -3867,6 +3963,13 @@
             },
             "id": {
               "type": "string"
+            },
+            "item": {
+              "description": "As on [`Event::PermissionResolved`]: the tool call that asked, and when (unix ms).",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "other": {
               "type": [
@@ -5240,6 +5343,36 @@
           },
           "required": [
             "event"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The turn's output tokens so far, for the stats line: at most four times a second while\na call streams, and once when each call ends. While a call streams the count is\napproximate (`so_far`: show it as \"so far\", never as exact; see [`crate::pace`]); when\nthe call ends the provider's figure replaces it (`so_far` false). Live only: the\nfinished figure is `turn_ended`'s `usage.output_tokens`.",
+          "properties": {
+            "event": {
+              "const": "output_tokens",
+              "type": "string"
+            },
+            "output": {
+              "description": "Every finished call's figure from the provider, plus the streaming call's count.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "so_far": {
+              "description": "Part of `output` is counted from streamed pieces, not reported by the provider.",
+              "type": "boolean"
+            },
+            "turn": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "event",
+            "turn",
+            "output"
           ],
           "type": "object"
         }
@@ -6777,6 +6910,29 @@
         }
       ]
     },
+    "Pace": {
+      "description": "Output tokens per bucket over a turn, from its start: `tokens[i]` streamed in\n`[i * bucket_ms, (i + 1) * bucket_ms)`. Tokens per second in a bucket is\n`tokens[i] * 1000 / bucket_ms`. Trailing quiet buckets are dropped, so the last bucket is\nthe last one with output; the turn's length is `usage.timing.wall_ms`.",
+      "properties": {
+        "bucket_ms": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tokens": {
+          "items": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "bucket_ms",
+        "tokens"
+      ],
+      "type": "object"
+    },
     "PaneAction": {
       "description": "What the engine can ask a preview pane to do.",
       "enum": [
@@ -7531,6 +7687,17 @@
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
+        },
+        "pace": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Pace"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Output tokens over the turn in fixed buckets, for the turn line's curve (see\n[`crate::pace`]). Absent when nothing streamed, and in every turn before it was kept:\nsuch a turn has no pace data."
         },
         "ran_on": {
           "anyOf": [

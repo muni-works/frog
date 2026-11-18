@@ -448,6 +448,8 @@ impl Asker {
         shared.journal.emit(Event::QuestionResolved {
             id: id.into(),
             answer,
+            item: None,
+            asked: None,
         });
     }
 }
@@ -1306,6 +1308,8 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                 agent.emit(Event::QuestionResolved {
                     id,
                     answer: Default::default(),
+                    item: None,
+                    asked: None,
                 });
             }
             shared.reshow_watching();
@@ -1717,6 +1721,11 @@ struct Streamed {
     early: crate::early::Early,
     /// The thought line over this attempt's reasoning (see `thought`).
     thoughts: crate::thought::Thoughts,
+    /// When this attempt's request went out, what it streamed when (see `pace`), and when the
+    /// live token count last went out.
+    sent: Option<Instant>,
+    pace: crate::pace::CallPace,
+    tokens_sent: Option<Instant>,
 }
 
 /// A request as a server's prompt cache sees it, flattened: the system prompt, the tools, then
@@ -1849,6 +1858,8 @@ struct Agent {
     /// Where the current turn's time went, and when it started.
     timing: TurnTiming,
     turn_clock: Option<Instant>,
+    /// The running turn's output over time, for `usage.pace`.
+    turn_pace: crate::pace::TurnPace,
     /// The last request sent to this conversation's server cache (a model call or a warm-up),
     /// [`flatten`]ed, to tell whether the next one only appends to it.
     sent: Mutex<String>,
@@ -2195,6 +2206,7 @@ impl Agent {
             turn_usage: TurnUsage::default(),
             timing: TurnTiming::default(),
             turn_clock: None,
+            turn_pace: Default::default(),
             sent: Mutex::default(),
             meter: None,
             energy_mark: None,
@@ -2603,6 +2615,19 @@ impl Agent {
             compact,
             ran_on: u.ran_on.as_ref().map(|r| r.name.clone()),
         });
+        // A call that streamed: its share of the turn's pace, scaled to the provider's count,
+        // which now replaces the live one.
+        if let (Some(start), Some(sent)) = (self.turn_clock, streamed.sent)
+            && !streamed.pace.is_empty()
+        {
+            let offset = ms(sent.saturating_duration_since(start));
+            self.turn_pace.add_call(offset, &streamed.pace, u.output);
+            self.emit(Event::OutputTokens {
+                turn: self.active_turn.unwrap_or_default(),
+                output: self.turn_usage.output_tokens,
+                so_far: false,
+            });
+        }
     }
 
     /// A title for sessions nobody else will name. The Mac app names its own conversations
@@ -2709,9 +2734,13 @@ impl Agent {
             );
             t
         });
+        let pace = timing
+            .as_ref()
+            .and_then(|t| self.turn_pace.finish(t.wall_ms));
         let usage = TurnUsage {
             tokens_per_sec: self.tokens_per_sec(),
             context_tokens: self.context_tokens(),
+            pace,
             timing,
             model: Some(self.profile_name.clone()),
             energy: self.turn_energy(),

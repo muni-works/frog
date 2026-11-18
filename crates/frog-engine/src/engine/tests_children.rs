@@ -225,7 +225,7 @@ async fn a_quiet_subagent_asks_once_and_stop_carries_on() {
     let evs = drive_long(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
     assert!(questions(&evs).is_empty(), "one question, not one per tick");
     assert!(evs.iter().any(
-        |e| matches!(&e.event, Event::QuestionResolved { id: r, answer } if r == id && !answer.dismissed())
+        |e| matches!(&e.event, Event::QuestionResolved { id: r, answer, .. } if r == id && !answer.dismissed())
     ));
     let (out, _) = task_output(&evs);
     assert!(
@@ -414,7 +414,7 @@ async fn a_quiet_question_is_withdrawn_when_the_child_speaks() {
     let id = questions(&evs)[0].0.clone();
     let evs = drive_long(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
     assert!(evs.iter().any(
-        |e| matches!(&e.event, Event::QuestionResolved { id: r, answer } if *r == id && answer.dismissed())
+        |e| matches!(&e.event, Event::QuestionResolved { id: r, answer, .. } if *r == id && answer.dismissed())
     ), "withdrawn with no answer");
     assert!(task_output(&evs).0.contains("src/parse.rs:12"));
     shutdown(h).await;

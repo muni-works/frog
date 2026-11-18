@@ -293,6 +293,7 @@ impl Agent {
             self.title_chapter(closed);
         }
         self.turn_clock = Some(Instant::now());
+        self.turn_pace = Default::default();
         if let Some(m) = &self.meter {
             // Idle from the seconds spent waiting before this turn (the op loop marked it busy).
             self.energy_mark = Some((m.mark(), m.idle_estimate()));

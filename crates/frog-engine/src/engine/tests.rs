@@ -488,6 +488,9 @@ async fn text_turn_lifecycle() {
             "status",
             "item_started",
             "item_delta",
+            // The live token count while it streams, then the provider's figure.
+            "output_tokens",
+            "output_tokens",
             "item_completed",
             // The first turn's end names the session (headless title fallback).
             "titled",
@@ -513,10 +516,10 @@ async fn text_turn_lifecycle() {
         })
         .expect("the turn's end is followed by a status");
     assert!(after.waiting.is_none(), "still waiting after the turn: {after:?}");
-    assert!(matches!(
-        &evs[6].event,
+    assert!(evs.iter().any(|e| matches!(
+        &e.event,
         Event::Titled { title } if title == "hi"
-    ));
+    )));
     let seqs: Vec<u64> = evs.iter().map(|e| e.seq).collect();
     assert!(
         seqs.windows(2).all(|w| w[1] == w[0] + 1),
@@ -5977,7 +5980,7 @@ async fn an_interrupt_dismisses_the_question() {
                 asked = Some(id);
                 h.ops.send(Op::Interrupt).unwrap();
             }
-            Event::QuestionResolved { id, answer } => {
+            Event::QuestionResolved { id, answer, .. } => {
                 assert_eq!(Some(id), asked);
                 assert!(answer.dismissed());
             }
@@ -14902,7 +14905,9 @@ async fn reasoning_deltas_carry_the_thought_line() {
         .iter()
         .find_map(|e| match &e.event {
             Event::ItemCompleted {
-                item: Item::Reasoning { thoughts, think_ms, .. },
+                item: Item::Reasoning {
+                    thoughts, think_ms, ..
+                },
                 ..
             } => Some((thoughts.clone(), *think_ms)),
             _ => None,
@@ -14932,7 +14937,10 @@ async fn bash_test_runs_carry_their_counts() {
     let script = vec![
         reply(
             vec![
-                bash("b1", "echo 'tests/test_a.py ..F'; echo '==== 1 failed, 2 passed in 0.01s ===='"),
+                bash(
+                    "b1",
+                    "echo 'tests/test_a.py ..F'; echo '==== 1 failed, 2 passed in 0.01s ===='",
+                ),
                 bash("b2", "echo hello"),
             ],
             Stop::ToolUse,
@@ -14964,4 +14972,118 @@ async fn bash_test_runs_carry_their_counts() {
             None
         ]
     );
+}
+
+/// A turn's pace lands on `turn_ended`, adding up to the provider's output count, and the
+/// live count goes out while it streams (`so_far`) and settles on the provider's figure.
+#[tokio::test]
+async fn turns_keep_their_pace_and_stream_a_live_count() {
+    let script = vec![reply(
+        vec![
+            Block::Thinking {
+                text: "Checking the parser first.\n\n".into(),
+                signature: None,
+            },
+            text("Here is the answer."),
+        ],
+        Stop::End,
+    )];
+    let mut h = engine(script, false);
+    let evs = run(&mut h, "go").await;
+    let usage = evs
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::TurnEnded { usage, .. } => Some(usage.clone()),
+            _ => None,
+        })
+        .unwrap();
+    let pace = usage.pace.expect("a turn that streamed keeps its pace");
+    assert_eq!(pace.bucket_ms, 1000);
+    assert_eq!(pace.tokens.iter().sum::<u32>() as u64, usage.output_tokens);
+    let live: Vec<(u64, bool)> = evs
+        .iter()
+        .filter_map(|e| match &e.event {
+            Event::OutputTokens { output, so_far, .. } => Some((*output, *so_far)),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        live.first().is_some_and(|l| l.1),
+        "a counted figure while streaming: {live:?}"
+    );
+    assert_eq!(live.last(), Some(&(usage.output_tokens, false)));
+}
+
+/// A permission prompt is a timed wait in the log: the resolved event names the tool call and
+/// when it asked, and the timeline draws it.
+#[tokio::test]
+async fn permission_waits_are_timed() {
+    let script = vec![
+        reply(
+            // A write outside the session's folder always asks; it's denied, so nothing is
+            // written.
+            vec![Block::ToolUse {
+                id: "w1".into(),
+                name: "Write".into(),
+                input: json!({ "file_path": "/frog-timeline-test/never.txt", "content": "x" }),
+            }],
+            Stop::ToolUse,
+        ),
+        reply(vec![text("ok")], Stop::End),
+    ];
+    let mut h = engine(script, true);
+    h.ops
+        .send(Op::Submit {
+            text: "write it".into(),
+            images: Vec::new(),
+            more: Vec::new(),
+        })
+        .unwrap();
+    let mut evs = Vec::new();
+    loop {
+        let env = h.events.recv().await.unwrap();
+        if let Event::PermissionRequest { id, .. } = &env.event {
+            tokio::time::sleep(Duration::from_millis(60)).await;
+            h.ops
+                .send(Op::Permission {
+                    id: id.clone(),
+                    decision: Decision::Deny,
+                    note: None,
+                })
+                .unwrap();
+        }
+        let ended = matches!(env.event, Event::TurnEnded { .. });
+        evs.push(env);
+        if ended {
+            break;
+        }
+    }
+    let item = evs
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::ItemStarted {
+                id,
+                kind: ItemKind::ToolCall { .. },
+            } => Some(id.clone()),
+            _ => None,
+        })
+        .unwrap();
+    let (asked, answered) = evs
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::PermissionResolved {
+                item: Some(i),
+                asked: Some(a),
+                ..
+            } if *i == item => Some((*a, e.created)),
+            _ => None,
+        })
+        .expect("the resolved permission names its tool call and when it asked");
+    assert!(answered - asked >= 50, "waited {}ms", answered - asked);
+    let waits: Vec<_> = crate::timeline::segments(&evs)
+        .into_iter()
+        .filter(|s| s.kind == crate::timeline::SegmentKind::Waiting)
+        .collect();
+    assert_eq!(waits.len(), 1);
+    assert_eq!(waits[0].item.as_deref(), Some(item.as_str()));
 }

@@ -337,7 +337,12 @@ async fn play(p: &mut Player, events: &[Envelope], ask: bool) -> Result<(), Inte
                         p.wait(2000.0).await?;
                         Answer::default()
                     };
-                    p.emit(Event::QuestionResolved { id: qid, answer });
+                    p.emit(Event::QuestionResolved {
+                        id: qid,
+                        answer,
+                        item: None,
+                        asked: None,
+                    });
                 }
                 if let Some(out) = outputs.get(id.as_str()) {
                     for line in out.split_inclusive('\n') {
