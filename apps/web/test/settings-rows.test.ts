@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 type Opt = { id: string; label: string; description?: string };
 type Row = {
   id: string; section: string; group?: string; label: string; description?: string
-  control: string; platform: string; options?: Opt[]; when?: string
+  control: string; platform: string; options?: Opt[]; when?: string; page?: string
   web?: { label: string; description?: string }; notYet?: Record<string, string>
 };
 const file = JSON.parse(readFileSync(new URL("../../../design/settings.json", import.meta.url), "utf8")) as {
@@ -39,6 +39,7 @@ test("every row has a known section, control and platform, and a unique id", () 
     assert.ok(r.label && !r.label.endsWith(":"), `${r.id}: a label, no colon`);
     if (r.control === "segmented") assert.ok(r.options && r.options.length >= 2 && r.options.length <= 4, `${r.id}: segmented takes two to four choices`);
     if (r.when) assert.equal(byId.get(r.when)?.control, "toggle", `${r.id}: when names a toggle`);
+    if (r.page) assert.ok(r.page === "machine" || r.page === "provider", `${r.id}: page ${r.page}`);
     if (r.web) assert.equal(r.platform, "invite", `${r.id}: only an invitation has web words`);
     for (const [p, why] of Object.entries(r.notYet ?? {})) {
       assert.ok(p === "web" || p === "mac", `${r.id}: notYet.${p}`);

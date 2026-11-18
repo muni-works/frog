@@ -165,6 +165,7 @@ Lend folds into Models: "Lend this Mac" was the same switch as "Share with my ot
 - **notYet**: a row that belongs on a platform but can't work there yet, with the reason. That
   app leaves it out rather than draw a control that does nothing.
 - **when**: shown only while the named toggle is on.
+- **page**: drawn on a machine's (or a provider's) own page under Models, not on the section.
 - **web**: the label and description an invitation uses on the web, where they differ.
 - The four permission-mode explanations are the selected mode's one-line description, not
   rows of their own.
