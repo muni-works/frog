@@ -169,6 +169,7 @@ impl Agent {
             .with_cwd(&self.root);
         self.profile_name = name;
         self.profile = profile;
+        self.rates = Default::default();
         // A stand-in was for the old model: the new one starts on itself.
         *self.detour.lock().unwrap() = None;
         if self.cfg.compare_model.is_none() {
@@ -191,6 +192,51 @@ impl Agent {
     /// discarding whatever a failed attempt streamed. Without `offer_tools` the model can only
     /// answer: in `json` mode a summary request that offers tools gets a tool call back, not a
     /// summary.
+    /// Await the provider's call. When it streams nothing for `call_quiet_secs` and someone
+    /// can answer, ask them whether to keep waiting or stop the turn (see
+    /// `child_watch::Watch::call`); Stop is the Stop button. A cloud call's clock starts when
+    /// it's sent; a local one's at its first piece, since a local prefill can rightly be long.
+    async fn watch_call<T>(
+        &self,
+        call: impl std::future::Future<Output = T>,
+        watching: bool,
+        cloud: bool,
+        piece: &tokio::sync::Notify,
+        anchor: &std::sync::Mutex<Option<String>>,
+    ) -> T {
+        if !watching {
+            return call.await;
+        }
+        let quiet = Duration::from_secs(self.cfg.call_quiet_secs);
+        let new = || crate::child_watch::Watch::call(self.asker(), quiet);
+        let mut watch = cloud.then(new);
+        let mut stopped = false;
+        tokio::pin!(call);
+        loop {
+            tokio::select! {
+                biased;
+                r = &mut call => return r,
+                _ = piece.notified() => {
+                    let w = watch.get_or_insert_with(new);
+                    w.reset();
+                    if let Some(id) = anchor.lock().unwrap().as_deref() {
+                        w.anchor(id);
+                    }
+                }
+                _ = async { watch.as_mut().unwrap().next().await }, if watch.is_some() && !stopped => {
+                    // The turn ends: the work loop drops this call, and the watch with it.
+                    stopped = true;
+                    self.asker().interrupt();
+                }
+            }
+        }
+    }
+
+    /// This model's usual output rate this session, in tokens per second.
+    fn usual_rate(&self) -> Option<f64> {
+        self.rates.usual()
+    }
+
     pub(super) async fn call(
         &self,
         label: &str,
@@ -352,106 +398,126 @@ impl Agent {
                 });
             };
             let via = alt.as_ref().map(|a| a.provider.clone());
+            // Each streamed piece, for the quiet watch (see `watch_call`), and the item the
+            // call is streaming, for its question to anchor on.
+            let piece = tokio::sync::Notify::new();
+            let anchor = std::sync::Mutex::new(None::<String>);
+            let mut anchored = false;
+            let slow_floor = self.usual_rate().map(|u| u / 4.0);
+            let mut on_event = |e: StreamEvent| {
+                piece.notify_one();
+                started = true;
+                heard.store(true, Ordering::Relaxed);
+                let now = Instant::now();
+                first.get_or_insert(now);
+                if !matches!(e, StreamEvent::Thinking(_)) {
+                    answer.get_or_insert(now);
+                }
+                if quiet {
+                    return;
+                }
+                // The live token count: every streamed piece, sent on at most four
+                // times a second (see `pace`).
+                let chars = match &e {
+                    StreamEvent::Text(s) | StreamEvent::Thinking(s) => s.chars().count(),
+                    StreamEvent::ToolArgs { chunk, .. } => chunk.chars().count(),
+                    _ => 0,
+                };
+                if chars > 0 {
+                    streamed.pace.piece(ms(now.duration_since(sent)), chars);
+                }
+                let count = chars > 0
+                    && streamed
+                        .tokens_sent
+                        .is_none_or(|t| now.duration_since(t) >= TOKENS_EVERY);
+                match e {
+                    StreamEvent::Thinking(text) => {
+                        let id = streamed.reasoning.get_or_insert_with(|| {
+                            let id = new_id();
+                            self.emit(Event::ItemStarted {
+                                id: id.clone(),
+                                kind: ItemKind::Reasoning,
+                            });
+                            id
+                        });
+                        let at = now.duration_since(sent).as_millis() as u64;
+                        let thought = streamed.thoughts.push(&text, at);
+                        self.emit(Event::ItemDelta {
+                            id: id.clone(),
+                            delta: Delta::Reasoning { text, thought },
+                        });
+                    }
+                    StreamEvent::ToolCall(name) => {
+                        presenting = (name == crate::present::TOOL).then(Default::default);
+                        self.emit(Event::Progress {
+                            label: format!("{name}…"),
+                            completed: None,
+                            total: None,
+                        })
+                    }
+                    StreamEvent::ToolArgs { name, chunk } => {
+                        if name == crate::present::TOOL
+                            && let Some(p) =
+                                presenting.as_mut().and_then(|s| s.push(&chunk, &cwd, weak))
+                        {
+                            self.emit(Event::PresentPreview {
+                                present: Box::new(p),
+                            });
+                        }
+                    }
+                    StreamEvent::ToolReady { index, name, input } => {
+                        if early_tools {
+                            let ctx = self.early_ctx(&name, &input);
+                            streamed.early.ready(index, name, input, ctx);
+                        }
+                    }
+                    // JSON-mode output is raw JSON; the parsed answer is shown when complete.
+                    StreamEvent::Text(_) if json_mode => {}
+                    StreamEvent::Text(s) => {
+                        if early_text {
+                            streamed.early.text(&s, |n, i| self.early_ctx(n, i));
+                        }
+                        let was_inside = filter.inside;
+                        let visible = filter.push(&s);
+                        if !visible.is_empty() {
+                            text(&mut streamed, visible);
+                        }
+                        if filter.inside && !was_inside {
+                            self.emit(Event::Progress {
+                                label: "tool call…".into(),
+                                completed: None,
+                                total: None,
+                            });
+                        }
+                    }
+                }
+                if !anchored
+                    && let Some(id) = streamed.reasoning.as_ref().or(streamed.message.as_ref())
+                {
+                    anchored = true;
+                    *anchor.lock().unwrap() = Some(id.clone());
+                }
+                // After the piece's own item and delta, so a client has drawn them.
+                if count {
+                    streamed.tokens_sent = Some(now);
+                    let at = ms(now.duration_since(sent));
+                    self.emit(Event::OutputTokens {
+                        turn: self.active_turn.unwrap_or_default(),
+                        output: self.turn_usage.output_tokens + streamed.pace.approx(),
+                        so_far: true,
+                        slow: slow_floor.is_some_and(|f| streamed.pace.slow(at, f)),
+                        cached: None,
+                    });
+                }
+            };
             let r = via
                 .as_deref()
                 .unwrap_or(&self.provider)
-                .complete(&req, &mut |e| {
-                    started = true;
-                    heard.store(true, Ordering::Relaxed);
-                    let now = Instant::now();
-                    first.get_or_insert(now);
-                    if !matches!(e, StreamEvent::Thinking(_)) {
-                        answer.get_or_insert(now);
-                    }
-                    if quiet {
-                        return;
-                    }
-                    // The live token count: every streamed piece, sent on at most four
-                    // times a second (see `pace`).
-                    let chars = match &e {
-                        StreamEvent::Text(s) | StreamEvent::Thinking(s) => s.chars().count(),
-                        StreamEvent::ToolArgs { chunk, .. } => chunk.chars().count(),
-                        _ => 0,
-                    };
-                    if chars > 0 {
-                        streamed.pace.piece(ms(now.duration_since(sent)), chars);
-                    }
-                    let count = chars > 0
-                        && streamed
-                            .tokens_sent
-                            .is_none_or(|t| now.duration_since(t) >= TOKENS_EVERY);
-                    match e {
-                        StreamEvent::Thinking(text) => {
-                            let id = streamed.reasoning.get_or_insert_with(|| {
-                                let id = new_id();
-                                self.emit(Event::ItemStarted {
-                                    id: id.clone(),
-                                    kind: ItemKind::Reasoning,
-                                });
-                                id
-                            });
-                            let at = now.duration_since(sent).as_millis() as u64;
-                            let thought = streamed.thoughts.push(&text, at);
-                            self.emit(Event::ItemDelta {
-                                id: id.clone(),
-                                delta: Delta::Reasoning { text, thought },
-                            });
-                        }
-                        StreamEvent::ToolCall(name) => {
-                            presenting = (name == crate::present::TOOL).then(Default::default);
-                            self.emit(Event::Progress {
-                                label: format!("{name}…"),
-                                completed: None,
-                                total: None,
-                            })
-                        }
-                        StreamEvent::ToolArgs { name, chunk } => {
-                            if name == crate::present::TOOL
-                                && let Some(p) =
-                                    presenting.as_mut().and_then(|s| s.push(&chunk, &cwd, weak))
-                            {
-                                self.emit(Event::PresentPreview {
-                                    present: Box::new(p),
-                                });
-                            }
-                        }
-                        StreamEvent::ToolReady { index, name, input } => {
-                            if early_tools {
-                                let ctx = self.early_ctx(&name, &input);
-                                streamed.early.ready(index, name, input, ctx);
-                            }
-                        }
-                        // JSON-mode output is raw JSON; the parsed answer is shown when complete.
-                        StreamEvent::Text(_) if json_mode => {}
-                        StreamEvent::Text(s) => {
-                            if early_text {
-                                streamed.early.text(&s, |n, i| self.early_ctx(n, i));
-                            }
-                            let was_inside = filter.inside;
-                            let visible = filter.push(&s);
-                            if !visible.is_empty() {
-                                text(&mut streamed, visible);
-                            }
-                            if filter.inside && !was_inside {
-                                self.emit(Event::Progress {
-                                    label: "tool call…".into(),
-                                    completed: None,
-                                    total: None,
-                                });
-                            }
-                        }
-                    }
-                    // After the piece's own item and delta, so a client has drawn them.
-                    if count {
-                        streamed.tokens_sent = Some(now);
-                        self.emit(Event::OutputTokens {
-                            turn: self.active_turn.unwrap_or_default(),
-                            output: self.turn_usage.output_tokens + streamed.pace.approx(),
-                            so_far: true,
-                        });
-                    }
-                })
-                .await;
+                .complete(&req, &mut on_event);
+            let watching = !quiet && !self.subagent && self.cfg.call_quiet_secs > 0;
+            let cloud = crate::harness::is_cloud(&self.profile);
+            let r = self.watch_call(r, watching, cloud, &piece, &anchor).await;
+            drop(on_event);
             let rest = filter.finish();
             if !quiet && !rest.is_empty() {
                 text(&mut streamed, rest);

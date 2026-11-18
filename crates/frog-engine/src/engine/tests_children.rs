@@ -4,7 +4,7 @@
 // paused clock: the stalls are scripted (`Fail::Stall`) and the minutes are virtual.
 
 use super::*;
-use crate::child_watch::{KEEP, STOP};
+use crate::child_watch::{KEEP, STOP, STOP_TURN};
 
 /// A parent engine with these child limits, its provider's requests handed back.
 fn parent(
@@ -641,5 +641,222 @@ async fn a_child_question_survives_a_parent_turn_and_is_shown_again() {
         &e.event,
         Event::TurnStarted { input, .. } if input.contains("The user stopped it")
     )));
+    shutdown(h).await;
+}
+
+// The turn's own model call going quiet (see `child_watch::Watch::call`): at
+// `call_quiet_secs` of nothing streamed the person is asked to keep waiting or stop the turn.
+
+/// An engine on a cloud model (the clock starts when a call is sent) or a local one (it starts
+/// at the first token), its provider failing the first calls with `fails`.
+fn quiet_call_engine(cloud: bool, fails: Vec<scripted::Fail>, script: Vec<Response>) -> Handle {
+    let kind = if cloud {
+        ProviderKind::Anthropic
+    } else {
+        ProviderKind::Ollama
+    };
+    let mut profile = Profile::new(kind, "test");
+    profile.tool_mode = ToolMode::Native;
+    let opts = Options {
+        cfg: Config {
+            hermetic: true,
+            ..Config::default()
+        },
+        profile_name: "test".into(),
+        profile,
+        cwd: tmp_store(),
+        mode: Mode::Default,
+        can_ask: true,
+        resume: None,
+        store: None,
+        sandbox: false,
+        rich: false,
+        subagent: false,
+        chat: false,
+    };
+    let client = scripted::Client::new(script);
+    *client.fails.lock().unwrap() = fails.into();
+    start(opts, Provider::Scripted(client)).unwrap()
+}
+
+fn options(evs: &[Envelope]) -> Vec<String> {
+    evs.iter()
+        .rev()
+        .find_map(|e| match &e.event {
+            Event::Question { options, .. } => {
+                Some(options.iter().map(|o| o.label.clone()).collect())
+            }
+            _ => None,
+        })
+        .unwrap_or_default()
+}
+
+fn ended(evs: &[Envelope]) -> EndReason {
+    evs.iter()
+        .find_map(|e| match &e.event {
+            Event::TurnEnded { reason, .. } => Some(reason.clone()),
+            _ => None,
+        })
+        .expect("the turn ended")
+}
+
+/// A cloud call that sends nothing asks at 30 s, and Stop is the Stop button: the turn ends
+/// cancelled and the question closes with the answer.
+#[tokio::test(start_paused = true)]
+async fn a_quiet_call_asks_at_30s_and_stop_ends_the_turn() {
+    let mut h = quiet_call_engine(true, vec![scripted::Fail::Stall], vec![]);
+    shows_questions(&h);
+    drive(&mut h, |e| matches!(e, Event::Idle)).await;
+    let began = tokio::time::Instant::now();
+    submit(&h, "go");
+    let evs = drive_long(&mut h, |e| matches!(e, Event::Question { .. })).await;
+    assert_eq!(began.elapsed().as_secs(), 30, "asked at 30 s");
+    let (id, _, question) = questions(&evs)[0].clone();
+    assert_eq!(question, "The model has sent nothing for 30 s.");
+    assert_eq!(options(&evs), [KEEP, STOP_TURN]);
+    answer(&h, &id, STOP_TURN);
+    let evs = drive_long(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+    assert!(
+        evs.iter().any(|e| matches!(&e.event,
+            Event::QuestionResolved { id: r, answer, .. } if *r == id && answer.choices == [STOP_TURN])),
+        "the question closes with the answer"
+    );
+    assert_eq!(ended(&evs), EndReason::Cancelled);
+    assert!(began.elapsed() < Duration::from_secs(31), "stopped at once");
+    shutdown(h).await;
+}
+
+/// Keep waiting asks again after twice as long, so a slow provider isn't asked every 30 s.
+#[tokio::test(start_paused = true)]
+async fn keep_waiting_on_a_quiet_call_asks_again_after_twice_as_long() {
+    let mut h = quiet_call_engine(true, vec![scripted::Fail::Stall], vec![]);
+    shows_questions(&h);
+    drive(&mut h, |e| matches!(e, Event::Idle)).await;
+    submit(&h, "go");
+    let evs = drive_long(&mut h, |e| matches!(e, Event::Question { .. })).await;
+    answer(&h, &questions(&evs)[0].0, KEEP);
+    let kept = tokio::time::Instant::now();
+    let soon = quiet_for(&mut h, 59).await;
+    assert!(questions(&soon).is_empty(), "not again within 60 s");
+    let evs = drive_long(&mut h, |e| matches!(e, Event::Question { .. })).await;
+    assert_eq!(kept.elapsed().as_secs(), 60);
+    let (id, _, question) = questions(&evs)[0].clone();
+    assert_eq!(question, "The model has sent nothing for 60 s.");
+    answer(&h, &id, STOP_TURN);
+    let evs = drive_long(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+    assert_eq!(ended(&evs), EndReason::Cancelled);
+    shutdown(h).await;
+}
+
+/// A stream that stalls mid-reply asks, anchored on the message it's writing, and the question
+/// is withdrawn the moment the stream comes back; the turn finishes as usual.
+#[tokio::test(start_paused = true)]
+async fn a_quiet_call_question_is_withdrawn_when_tokens_come_back() {
+    let pause = scripted::Fail::Pause {
+        text: "Working on it".into(),
+        secs: 45,
+    };
+    let mut h = quiet_call_engine(
+        true,
+        vec![pause],
+        vec![reply(vec![text(", done.")], Stop::End)],
+    );
+    shows_questions(&h);
+    drive(&mut h, |e| matches!(e, Event::Idle)).await;
+    submit(&h, "go");
+    let evs = drive_long(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+    let asked = questions(&evs);
+    assert_eq!(asked.len(), 1, "{asked:?}");
+    let (id, item, _) = asked[0].clone();
+    let message = evs
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::ItemStarted {
+                id,
+                kind: ItemKind::Message,
+            } => Some(id.clone()),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(item, message, "anchored on the message being written");
+    assert!(
+        evs.iter().any(|e| matches!(&e.event,
+            Event::QuestionResolved { id: r, answer, .. } if *r == id && answer.dismissed())),
+        "withdrawn with no answer"
+    );
+    assert_eq!(ended(&evs), EndReason::Complete);
+    shutdown(h).await;
+}
+
+/// A local model's prefill can rightly take minutes: its clock starts at the first token, so a
+/// call that hasn't sent one yet never asks, and one that stalls after it does.
+#[tokio::test(start_paused = true)]
+async fn a_local_call_counts_from_its_first_token() {
+    let mut h = quiet_call_engine(false, vec![scripted::Fail::Stall], vec![]);
+    shows_questions(&h);
+    drive(&mut h, |e| matches!(e, Event::Idle)).await;
+    submit(&h, "go");
+    let evs = quiet_for(&mut h, 600).await;
+    assert!(questions(&evs).is_empty(), "no first token yet: not quiet");
+    h.ops.send(Op::Interrupt).unwrap();
+    drive_long(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+    shutdown(h).await;
+
+    let pause = scripted::Fail::Pause {
+        text: "Working on it".into(),
+        secs: 45,
+    };
+    let mut h = quiet_call_engine(
+        false,
+        vec![pause],
+        vec![reply(vec![text(", done.")], Stop::End)],
+    );
+    shows_questions(&h);
+    drive(&mut h, |e| matches!(e, Event::Idle)).await;
+    submit(&h, "go");
+    let evs = drive_long(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+    assert_eq!(
+        questions(&evs).len(),
+        1,
+        "quiet after its first token: asked"
+    );
+    shutdown(h).await;
+}
+
+/// With nobody to ask, a quiet call raises nothing: the provider's own timeout governs.
+#[tokio::test(start_paused = true)]
+async fn a_quiet_call_with_nobody_to_ask_raises_no_question() {
+    let mut h = quiet_call_engine(true, vec![scripted::Fail::Stall], vec![]);
+    drive(&mut h, |e| matches!(e, Event::Idle)).await;
+    submit(&h, "go");
+    let evs = quiet_for(&mut h, 600).await;
+    assert!(questions(&evs).is_empty());
+    h.ops.send(Op::Interrupt).unwrap();
+    drive_long(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
+    shutdown(h).await;
+}
+
+/// A subagent's calls are its parent's `child_watch`'s to ask about, never its own: a stalled
+/// subagent raises the child question at `child_quiet_secs`, and nothing before.
+#[tokio::test(start_paused = true)]
+async fn a_quiet_subagent_call_asks_only_through_its_parent() {
+    let dir = tmp_store();
+    script_child_failing(&dir, vec![scripted::Fail::Stall], vec![]);
+    let (mut h, _) = parent(after_task(), 120, 1800, true, None, dir);
+    shows_questions(&h);
+    drive(&mut h, |e| matches!(e, Event::Idle)).await;
+    let began = tokio::time::Instant::now();
+    submit(&h, "find it");
+    let evs = drive_long(&mut h, |e| matches!(e, Event::Question { .. })).await;
+    assert_eq!(
+        began.elapsed().as_secs(),
+        120,
+        "the child question, at child_quiet_secs"
+    );
+    let asked = questions(&evs);
+    assert_eq!(asked.len(), 1);
+    assert!(asked[0].2.starts_with("The subagent"), "{}", asked[0].2);
+    answer(&h, &asked[0].0, STOP);
+    drive_long(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
     shutdown(h).await;
 }

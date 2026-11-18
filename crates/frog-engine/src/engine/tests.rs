@@ -1858,11 +1858,11 @@ async fn a_broken_body_stream_is_retryable_and_a_connect_failure_is_not() {
         "{broken:#}"
     );
     assert!(retryable(&(broken.into())));
-    // Connect: the request never got anywhere — a dead server, not a broken reply.
-    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let dead = l.local_addr().unwrap();
-    drop(l);
-    let refused = http.get(format!("http://{dead}/v1")).send().await.unwrap_err();
+    // Connect: the request never got anywhere — a dead server, not a broken reply. Port 1:
+    // privileged, so no test (they all bind :0, an ephemeral port) can be listening there. A
+    // port freed by dropping a listener could be taken by a parallel test first, and then
+    // the request is sent and broken instead of refused.
+    let refused = http.get("http://127.0.0.1:1/v1").send().await.unwrap_err();
     assert!(
         refused.is_connect() && !refused.is_decode() && !refused.is_body(),
         "{refused:#}"
@@ -15022,6 +15022,22 @@ async fn turns_keep_their_pace_and_stream_a_live_count() {
         "a counted figure while streaming: {live:?}"
     );
     assert_eq!(live.last(), Some(&(usage.output_tokens, false)));
+    // The provider's figures carry what the turn read from cache, for the stats tooltip; the
+    // counted ones don't, and no call here has a usual rate yet, so none is slow.
+    for e in &evs {
+        if let Event::OutputTokens {
+            so_far, slow, cached, ..
+        } = &e.event
+        {
+            assert_eq!(cached.is_some(), !so_far);
+            assert!(!slow);
+        }
+    }
+    let last_cached = evs.iter().rev().find_map(|e| match &e.event {
+        Event::OutputTokens { cached, .. } => *cached,
+        _ => None,
+    });
+    assert_eq!(last_cached, Some(usage.cached_tokens));
 }
 
 /// A permission prompt is a timed wait in the log: the resolved event names the tool call and
