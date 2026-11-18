@@ -79,7 +79,11 @@ const events = [
   // The two-paragraph reply.
   ...said("m2", "message", "`Backoff::delay` now takes the `Rng`, and the test passes a seeded one, so the retry timing is the same every run.\n\nAll eleven upload tests pass. I ran them once after the change, in the sandbox.", 900),
   [200, { event: "turn_ended", turn: 1, reason: { type: "complete" }, usage: { context_tokens: 9800, input_tokens: 31200, output_tokens: 1902, model_calls: 6, tokens_per_sec: 58,
-    timing: { wall_ms: 56000, prefill_ms: 4100, decode_ms: 32800, think_ms: 0, tool_ms: 19100, user_ms: 0, classifier_ms: 0, compact_ms: 0, other_ms: 0 }, model: "cloud/qwen3-coder-next" } }],
+    timing: { wall_ms: 56000, prefill_ms: 4100, decode_ms: 32800, think_ms: 0, tool_ms: 19100, user_ms: 0, classifier_ms: 0, compact_ms: 0, other_ms: 0 },
+    // The turn line's pace curve (#420): output tokens per second, streamed while it thought and
+    // wrote, nothing while tools ran. Adds up to output_tokens.
+    pace: { bucket_ms: 1000, tokens: [40, 58, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 600, 300, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 600, 304] },
+    model: "cloud/qwen3-coder-next" } }],
   [4000, { event: "turn_started", turn: 2, input: "nice. open a PR" }],
   // The card that needs you.
   [250, { event: "item_started", id: "t8", kind: { type: "tool_call", name: "Bash", arg: "gh pr create --fill" } }],

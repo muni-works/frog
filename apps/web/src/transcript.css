@@ -152,10 +152,6 @@
 .tx .turn-model { color: var(--muted); }
 .tx .turn-foot .turn-plate { border: 0; background: transparent; color: inherit; font: inherit; padding: 0; margin: 0; border-radius: var(--radius-plate); cursor: pointer; }
 .tx .turn-foot .turn-plate:hover, .tx .turn-foot .turn-plate[aria-expanded="true"] { color: var(--muted); background: var(--hover); box-shadow: 0 0 0 var(--space-tight) var(--hover); }
-.tx .turn-card { position: absolute; top: calc(100% + var(--space-tight)); left: var(--tx-indent); z-index: 10; width: 280px; display: flex; flex-direction: column; gap: var(--space-row); font-size: var(--tx-status-size); line-height: var(--tx-status-line); color: var(--fg); box-shadow: var(--shadow-float); }
-.tx .turn-card-h { display: flex; justify-content: space-between; font-size: var(--tx-body-size); }
-.tx .turn-card-row { display: flex; gap: var(--space-row); }
-.tx .turn-card-time { color: var(--muted); padding-top: var(--space-row); }
 .tx .turn-foot .hover-acts { margin-left: 0; height: var(--tx-meta-line); align-items: center; }
 .tx .turn-note { padding-left: var(--tx-indent); margin-top: var(--gap-block); font-size: var(--tx-status-size); line-height: var(--tx-status-line); color: var(--muted); white-space: normal; }
 
@@ -210,4 +206,32 @@
   .tx [data-state="on"] .live-dot, .tx .tool-spin, .tx .caret { animation: none; }
   .tx .live-thought > .tf.tf-was { display: none; }
   .tx .live-thought > .tf.tf-now { animation: none; }
+}
+
+/* The turn line (spec phase 3, "The turn line"): 200 by 16 at the right end of the footer, and of
+ * the stats while live. A strip coloured by phase along the bottom, the pace curve above. Grey at
+ * rest, so it reads as part of the numbers; on hover it takes its colours over 150 ms and scrubs. */
+.tx .turn-foot, .tx .live-stats { display: flex; align-items: center; }
+.tx .live-figures { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tx .turn-graph { position: relative; margin-left: auto; flex: none; display: inline-flex; height: var(--tx-meta-line); }
+.tx .turn-graph svg { display: block; cursor: pointer; outline: none; overflow: visible; }
+.tx .turn-graph .seg { fill: var(--faint); opacity: .55; transition: fill .15s, opacity .15s; }
+.tx .turn-graph .pace { stroke: var(--faint); stroke-width: 1.25; opacity: .7; transition: stroke .15s, opacity .15s; }
+.tx .turn-graph:is([data-hover], :focus-within) .seg { opacity: 1; }
+.tx .turn-graph:is([data-hover], :focus-within) .seg-thinking { fill: var(--frog); }
+.tx .turn-graph:is([data-hover], :focus-within) .seg-tool { fill: var(--faint); }
+.tx .turn-graph:is([data-hover], :focus-within) .seg-waiting { fill: var(--notice); }
+.tx .turn-graph:is([data-hover], :focus-within) .seg-writing { fill: var(--fg); }
+.tx .turn-graph:is([data-hover], :focus-within) .pace { stroke: var(--muted); opacity: 1; }
+.tx .turn-graph .hair { stroke: var(--fg); stroke-width: 1; }
+.tx .turn-read {
+  position: absolute; right: 0; bottom: calc(100% + var(--space-tight)); white-space: nowrap; pointer-events: none; z-index: 5;
+  font-size: var(--tx-meta-size); line-height: var(--tx-meta-line); color: var(--fg); background: var(--card);
+  padding: var(--space-hair) var(--space-snug); border-radius: var(--radius-plate); box-shadow: var(--shadow-float);
+}
+/* The step under the pointer gets the hover plate. */
+.tx .scrubbed { background: var(--hover); }
+/* Narrow: the curve goes, the strip stays. */
+@container transcript (max-width: 419px) {
+  .tx .turn-graph .pace { display: none; }
 }

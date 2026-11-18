@@ -183,6 +183,8 @@ export type Event =
   | { event: "mode_changed"; mode: Mode }
   | { event: "error"; message?: string }
   | { event: "idle" }
+  /** A retried call's partial items, dropped (the timeline leaves them out). */
+  | { event: "items_discarded"; ids: string[] }
   /** The turn's output tokens so far, for the stats line (live only, at most 4 a second).
    * `so_far`: part of it is counted from streamed pieces, so never show it as exact. `slow` (#426,
    * only on so_far counts): the call is slow; say so, never compute it. `cached` (#426, only when a
