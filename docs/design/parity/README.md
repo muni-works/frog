@@ -75,7 +75,16 @@ node docs/design/parity/diff-metrics.mjs web.json mac.json
 
 [`metrics.mjs`](metrics.mjs) is the web's dumper (headless Chrome, like `web-shot.mjs`;
 `METRICS_STORAGE` seeds localStorage, e.g. `{"frog.inspector":"1"}`). The Mac writes the same file
-(to build: a `-FrogMetrics <path>` launch argument beside `-FrogSnapshot`).
+with `-FrogMetrics <path>` beside `-FrogSnapshot`; [`mac-metrics.sh`](mac-metrics.sh) replays the
+fixture off-screen at 1280 × 800, writes `../transcript/metrics/mac-1280.json` and diffs it against
+the web's:
+
+```bash
+docs/design/parity/mac-metrics.sh [out.json] [WxH] [look] [web.json]
+```
+
+It needs the parity build (`capture.sh` makes it) with an engine that replays with the log's own
+times and carries `tests` (`FROG_PREBUILT_DIR`).
 
 ### Format (`frog-transcript-metrics/1`)
 

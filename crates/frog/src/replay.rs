@@ -42,7 +42,9 @@ impl Player {
         let env = Envelope {
             seq: self.seq,
             session: self.session.clone(),
-            created: self.at.unwrap_or_else(|| chrono::Utc::now().timestamp_millis()),
+            created: self
+                .at
+                .unwrap_or_else(|| chrono::Utc::now().timestamp_millis()),
             event,
         };
         if let Ok(line) = serde_json::to_string(&env) {
