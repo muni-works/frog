@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The thinking row and how it moves</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.b{box-sizing:border-box;background:#0a0a0a;color:#ececec;font:13px/16px -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;padding:40px;display:flex;flex-direction:column;gap:24px}
+.h{font-size:22px;line-height:26px;font-weight:600;margin:0}
+.h2{font-size:13px;line-height:16px;font-weight:600;margin:0}
+.sub{color:#a3a3a3;margin:6px 0 0;max-width:840px;line-height:18px}
+.g2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}
+.g3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px 22px}
+.cap{color:#a3a3a3;font-size:12px;line-height:16px}
+.cap b{color:#ececec;font-weight:600}
+.pn{background:#000;border-radius:12px;padding:22px 24px;display:flex;flex-direction:column;gap:0;min-height:96px;justify-content:center}
+.r{display:flex;align-items:center;gap:10px;height:18px}
+.d{width:7px;height:7px;border-radius:50%;background:#58cc6f;flex:none;animation:br 2.4s ease-in-out infinite}
+@keyframes br{0%,100%{opacity:.45;transform:scale(.85)}50%{opacity:1;transform:scale(1)}}
+.lb{color:#ececec;flex:none}
+.sl{position:relative;flex:1;min-width:0;height:18px;color:#a3a3a3}
+.sl span{position:absolute;left:0;top:1px;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.st{margin:8px 0 0 17px;color:#808080;font:11px/16px ui-monospace,"SF Mono",Menlo,monospace;font-variant-numeric:tabular-nums}
+.st:not(:hover) svg polyline{stroke:#5c5c5c}
+.st svg polyline{transition:stroke .15s ease-out}
+.st svg{order:9}
+.st svg+span::before{content:"·";margin-right:12px}
+.an{position:relative;background:#000;border-radius:12px;padding:44px 24px 46px}
+.tg{position:absolute;font-size:11px;line-height:14px;color:#0d1a10;background:#58cc6f;border-radius:999px;width:16px;height:16px;display:flex;align-items:center;justify-content:center;font-weight:600}
+.ls{display:grid;grid-template-columns:20px 1fr;gap:6px 10px;color:#a3a3a3;font-size:12px;line-height:16px}
+.ls b{color:#ececec;font-weight:600}
+.n{color:#0d1a10;background:#58cc6f;border-radius:999px;width:16px;height:16px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600}
+.rule{background:#121212;border-radius:12px;padding:16px 18px;color:#a3a3a3;font-size:12px;line-height:17px}
+.rule b{color:#ececec;font-weight:600;display:block}
+.mono{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:11px}
+</style>
+</helmet>
+<div class="b" style="width: 1180px; height: 900px">
+<div>
+<h1 class="h">1. The row, and how it moves</h1>
+<p class="sub">Today's layout, kept: a dot, the word Thinking, and the model's current thought on one line. Two changes. The thought is the opening sentence of the last finished paragraph of reasoning, never the raw tail, and it cross-fades when it changes. The turn's stats sit on a second line and stay put while the line above moves.</p>
+</div>
+<div class="g2" style="align-items: start">
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div class="cap"><b>Live.</b> Lines from a real DeepSeek think in Frog, at about the pace they arrived.</div>
+<div class="pn">
+<div class="r"><span class="d"></span><span class="lb">Thinking</span><div class="sl"><span style="opacity: {{opA}}; transition: opacity {{durA}} ease-out">{{textA}}</span><span style="opacity: {{opB}}; transition: opacity {{durB}} ease-out">{{textB}}</span></div></div>
+<div class="st" style="display: flex; align-items: center; gap: 12px"><span>{{clock}}</span><svg width="120" height="16" viewBox="0 0 120 16" role="img" aria-label="Tokens per second so far"><polyline fill="none" stroke="#58cc6f" stroke-width="1.1" stroke-linejoin="round" points="{{pts}}"/></svg><span>{{nums}}</span></div>
+</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div class="cap"><b>Anatomy.</b> Four parts, two lines, nothing else.</div>
+<div class="an">
+<span class="tg" style="left: 20px; top: 20px">1</span>
+<span class="tg" style="left: 56px; top: 20px">2</span>
+<span class="tg" style="left: 150px; top: 20px">3</span>
+<span class="tg" style="left: 56px; bottom: 14px">4</span>
+<div class="r"><span class="d" style="animation: none"></span><span class="lb">Thinking</span><div class="sl"><span>A diagram per idea: tokens, embeddings, attention</span></div></div>
+<div class="st" style="display: flex; align-items: center; gap: 12px"><span>31s</span><svg width="120" height="16" viewBox="0 0 120 16" aria-hidden="true"><polyline fill="none" stroke="#58cc6f" stroke-width="1.1" stroke-linejoin="round" points="0,13 8,5 16,4 24,5 32,3 40,5 48,4 56,6 64,12 72,13 80,5 88,4 96,3 104,5 112,4 120,5"/></svg><span>1,240 tokens · 58 tok/s</span></div>
+</div>
+</div>
+</div>
+<div class="ls">
+<span class="n">1</span><span><b>The dot</b> breathes while tokens are arriving and holds still when they aren't. It is the only thing that loops.</span>
+<span class="n">2</span><span><b>The label</b> says what kind of work this is: Thinking here; a verb for tools and waits on board 3. Primary text, never animated.</span>
+<span class="n">3</span><span><b>The thought</b> is one line in secondary text, truncated with an ellipsis. It changes only at paragraph boundaries and is empty until there is a real sentence.</span>
+<span class="n">4</span><span><b>The stats</b> are time, tokens and tokens per second in small mono with tabular digits, then the pace line at the right end, in the same grey as the numbers. The pace line draws tokens per second as they arrive; on hover it takes its colour and scrubs; it is the short form of the turn line on board 7. Numbers tick and the line grows; nothing fades or moves.</span>
+</div>
+<div><h2 class="h2">Motion</h2></div>
+<div class="g3">
+<div class="rule"><b>Cross-fade, no travel</b>The old line fades out over 180 ms as the new one fades in over 240 ms, overlapping. Nothing slides, so the row never changes size or nudges the composer.</div>
+<div class="rule"><b>A calm cadence</b>At most one change every 1.2 s. A paragraph that lands sooner waits its turn; if three land together, only the newest is shown.</div>
+<div class="rule"><b>First line</b>For the first 600 ms the row is just the dot and the label. If the think ends before then, no thought ever shows.</div>
+<div class="rule"><b>Settling</b>When the answer starts, the thought fades out, the label becomes "Thought for 31s", the dot goes, and the stats move to the turn's footer. 220 ms, one step.</div>
+<div class="rule"><b>Reduced motion</b>Text swaps with no fade and the dot holds its first frame. Everything else is identical.</div>
+<div class="rule"><b>Cost</b>Opacity only: no blur, no layout. Six sessions thinking in the sidebar animate six opacity changes every second or so.</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1180,"height":900}}'>
+class Component extends DCLogic {
+constructor(props) {
+super(props);
+this.lines = [
+['The user wants a visual explanation of transformers from first principles', 1700],
+['Tokens, embeddings, attention, the MLP, then the next-token distribution', 2300],
+['Build one widget that walks through five stages', 1500],
+['A temperature slider for the next-token bars', 1400],
+['Keep it self-contained, no network', 1300],
+['Simplest robust approach: stage buttons and plain elements', 2100],
+['Stage 1: a fixed phrase split into tokens', 1300],
+['Stage 3: one query attending to keys, with weight bars', 1900],
+['Better idea: attention as a soft lookup in two dimensions', 2600],
+['Three visuals might be a lot; do two or three well', 1700],
+['Laying out the diagram: seven rows, a loop back from the centre', 3200],
+['Skip the closing question, keep it tight', 1300],
+['Writing the widget', 2600]
+];
+this.state = { textA: '', textB: '', onA: true, s: 0, tok: 0, rate: 58 };
+}
+componentDidMount() {
+this.i = 0; this.t0 = Date.now(); this.tok = 0; this.rate = 58;
+const step = () => {
+const [text, gap] = this.lines[this.i];
+this.setState((st) => st.onA ? { textB: text, onA: false } : { textA: text, onA: true });
+this.i = (this.i + 1) % this.lines.length;
+if (this.i === 0) { this.timer = setTimeout(() => { this.t0 = Date.now(); this.tok = 0; step(); }, gap + 900); }
+else { this.timer = setTimeout(step, gap); }
+};
+this.timer = setTimeout(step, 600);
+this.tick = setInterval(() => {
+this.rate += (52 + Math.random() * 14 - this.rate) * 0.2;
+this.tok += this.rate * 0.25;
+const el = (Date.now() - this.t0) / 1000;
+if (el < 0.4) this.hist = [];
+this.hist = (this.hist || []).concat([this.rate]).slice(-200);
+this.setState({ s: Math.floor(el), tok: Math.round(this.tok), rate: Math.round(this.rate), hist: this.hist });
+}, 250);
+}
+componentWillUnmount() { clearTimeout(this.timer); clearInterval(this.tick); }
+renderVals() {
+const st = this.state;
+return {
+textA: st.textA, textB: st.textB,
+opA: st.onA ? 1 : 0, opB: st.onA ? 0 : 1,
+durA: st.onA ? '.24s' : '.18s', durB: st.onA ? '.18s' : '.24s',
+clock: st.s + 's',
+nums: st.tok.toLocaleString('en-US') + ' tokens · ' + st.rate + ' tok/s',
+pts: (st.hist || []).map((r, i, a) => ((i / Math.max(1, a.length - 1)) * 120).toFixed(1) + ',' + (14 - (r / 70) * 11).toFixed(1)).join(' ')
+};
+}
+}
+</script>
+</body>
+</html>

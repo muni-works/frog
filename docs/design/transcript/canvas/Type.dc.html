@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Transcript type and spacing</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400&family=IBM+Plex+Sans:wght@400;600&display=swap">
+<style>
+body{margin:0}
+.b{box-sizing:border-box;background:#0a0a0a;color:#ececec;font:13px/18px "IBM Plex Sans",-apple-system,"Helvetica Neue",sans-serif;padding:40px;display:flex;flex-direction:column;gap:22px}
+.h{font-size:22px;line-height:26px;font-weight:600;margin:0}
+.h2{font-size:13px;line-height:16px;font-weight:600;margin:0 0 10px}
+.sub{color:#a3a3a3;margin:6px 0 0;max-width:880px;line-height:19px}
+.top{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:24px;align-items:start}
+.box{background:#121212;border-radius:12px;padding:16px 18px}
+.sc{display:grid;grid-template-columns:86px 78px minmax(0,1fr);gap:10px 14px;align-items:baseline}
+.sc .k{color:#ececec;font-weight:600;font-size:12px}
+.sc .v{color:#808080;font:11px/16px "IBM Plex Mono",ui-monospace,Menlo,monospace}
+.sc .u{color:#a3a3a3;font-size:12px;line-height:17px}
+.s14{font-size:14px;line-height:22px;color:#ececec}
+.s125{font-size:12.5px;line-height:20px;color:#a3a3a3}
+.s115{font-size:11.5px;line-height:16px;color:#808080;font-variant-numeric:tabular-nums}
+.s105{font-size:10.5px;line-height:14px;font-weight:600;color:#ececec}
+.mono{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace}
+.note{color:#a3a3a3;font-size:12px;line-height:18px;margin:0}
+.note b{color:#ececec;font-weight:600}
+.pair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.mini{background:#000;border-radius:10px;padding:12px 14px 12px 34px;position:relative}
+.mini .edge{position:absolute;top:8px;bottom:8px;width:1px;background:rgba(88,204,111,.35)}
+.mini p{margin:0}
+.lab{font-size:11px;line-height:14px;color:#808080;margin:0 0 6px}
+.bottom{display:flex;flex-direction:column;gap:20px}
+.tx{background:#000;border-radius:14px;padding:20px 32px 22px;position:relative;display:flex;flex-direction:column}
+.tx .edge{position:absolute;left:32px;top:10px;bottom:10px;width:1px;background:rgba(88,204,111,.22)}
+.me{align-self:flex-end;max-width:540px;background:#121212;border-radius:16px;padding:8px 14px;font-size:14px;line-height:22px}
+.p{font-size:14px;line-height:22px;margin:0;max-width:640px}
+.p code,.me code{font:13px/22px "IBM Plex Mono",ui-monospace,Menlo,monospace;background:#161616;border-radius:4px;padding:1px 4px}
+.ln{display:flex;align-items:center;height:24px;font-size:12.5px;line-height:20px;color:#a3a3a3;gap:6px;position:relative}
+.ln .o{color:#ececec}
+.ln .o.m{font:12px/20px "IBM Plex Mono",ui-monospace,Menlo,monospace}
+.ln .x{color:#808080;font-size:11.5px;font-variant-numeric:tabular-nums}
+.sp{flex:1}
+.hang{position:absolute;left:-26px;top:3px;width:18px;height:18px;display:flex;align-items:center;justify-content:center;color:#808080}
+.i{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round}
+.c{width:11px;height:11px;fill:none;stroke:#808080;stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round}
+.d{width:7px;height:7px;border-radius:50%;background:#58cc6f}
+.tag{font-size:10.5px;line-height:14px;font-weight:600;padding:0 6px;border-radius:999px;border:1px solid #ff9f0a;color:#ececec}
+.add{color:#30d158}.del{color:#e5775f}
+.ft{display:flex;align-items:center;gap:10px;font-size:11.5px;line-height:16px;color:#808080;font-variant-numeric:tabular-nums}
+.ft .q{color:#a3a3a3}
+.gap{height:0;position:relative}
+.gap span{position:absolute;right:-32px;transform:translateX(100%);top:-8px;font:10px/14px "IBM Plex Mono",ui-monospace,Menlo,monospace;color:#58cc6f;white-space:nowrap;padding-left:8px}
+.gap i{position:absolute;right:-32px;width:20px;border-top:1px solid rgba(88,204,111,.5)}
+.rh{display:grid;grid-template-columns:64px minmax(0,1fr);gap:8px 14px;font-size:12px;line-height:17px;color:#a3a3a3}
+.rh b{color:#ececec;font-weight:400;font:11px/17px "IBM Plex Mono",ui-monospace,Menlo,monospace}
+</style>
+</helmet>
+<div class="b" style="width: 1180px; height: 1640px">
+<div>
+<h1 class="h">9. Type and spacing</h1>
+<p class="sub">The app already has a transcript scale and rhythm (the Mac's <span class="mono">TurnSpace</span> and <span class="mono">Tokens.Size</span>), and the earlier boards drifted from it: they were drawn in the system font at 13. This board sets the new rows inside the real system, in IBM Plex, and proposes three changes to it. Everything here is set in the real faces at the real sizes.</p>
+</div>
+<div class="top">
+<div class="box">
+<h2 class="h2">Four sizes, two weights, three tones</h2>
+<div class="sc">
+<span class="k">Body</span><span class="v">14 / 22</span><span class="s14">What you asked, and what Frog says back.</span>
+<span class="k">Status</span><span class="v">12.5 / 20</span><span class="s125">Thinking, <span style="color: #ececec">tool lines</span>, the thought, the opened outline</span>
+<span class="k">Meta</span><span class="v">11.5 / 16</span><span class="s115">56s · 1,902 tokens · 58 tok/s · lines 1 to 124</span>
+<span class="k">Label</span><span class="v">10.5 / 14</span><span class="s105" style="color: #a3a3a3">Queued · Beta</span>
+<span class="k">Mono</span><span class="v">one step down</span><span class="u">Plex Mono, one size under the text it sits in: <span class="mono" style="color: #ececec; font-size: 13px">13</span> in body, <span class="mono" style="color: #ececec; font-size: 12px">12</span> in status. Only for code, paths and commands.</span>
+<span class="k">Weights</span><span class="v">400, 600</span><span class="u">600 for labels and the title of a card that needs you. Nothing in a line or the stats is bold.</span>
+<span class="k">Tones</span><span class="v">3</span><span class="u"><span style="color: #ececec">Text</span> for prose and the thing a line acts on, <span style="color: #a3a3a3">secondary</span> for verbs and thoughts, <span style="color: #808080">faint</span> for numbers. Hierarchy comes from tone before size. One exception in colour: the verb of a step that failed is <span style="color: #e5775f">red</span>, and reads "Failed", so the word and the colour both say it.</span>
+</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 14px">
+<div class="box">
+<h2 class="h2">Change 1: one left edge, with the marks hung in the gutter</h2>
+<div class="pair">
+<div><p class="lab">Today: prose at 0, line titles at 26</p><div class="mini" style="padding-left: 14px"><span class="edge" style="left: 14px"></span><span class="edge" style="left: 40px; background: rgba(255,159,10,.4)"></span><p class="s125" style="display: flex; gap: 8px; align-items: center"><span style="width: 18px; display: inline-flex; justify-content: center; color: #808080"><svg class="i" viewBox="0 0 14 14" aria-hidden="true"><path d="M3.5 2h5l2.5 2.5V12h-7.5z"/></svg></span>Read <span class="mono" style="color: #ececec; font-size: 12px">src/retry.rs</span></p><p class="s14" style="margin-top: 6px">The jitter came from…</p></div></div>
+<div><p class="lab">Proposed: every word on one edge</p><div class="mini"><span class="edge" style="left: 34px"></span><p class="s125" style="position: relative"><span class="hang" style="left: -26px; top: 1px"><svg class="i" viewBox="0 0 14 14" aria-hidden="true"><path d="M3.5 2h5l2.5 2.5V12h-7.5z"/></svg></span>Read <span class="mono" style="color: #ececec; font-size: 12px">src/retry.rs</span></p><p class="s14" style="margin-top: 6px">The jitter came from…</p></div></div>
+</div>
+<p class="note" style="margin-top: 10px">Icons, the live dot and fold chevrons sit in an 18-point box that hangs 26 points into the 32-point gutter. Verbs, thoughts, stats and prose then start on the same line down the page, and the marks read as margin notes.</p>
+</div>
+<div class="box">
+<h2 class="h2">Change 2: prose stops at 640, boxes still use 720</h2>
+<p class="note">At 14 points the 720 column runs to about 100 characters a line, past comfortable reading. Paragraphs and lists cap at 640 (about 88). Code, tables, diffs, cards and the composer keep the full 720, so the column's right edge is still drawn by the things that need the room.</p>
+</div>
+<div class="box">
+<h2 class="h2">Change 3: stats are set in the text face</h2>
+<p class="note">Time, tokens and speed move from mono to Plex Sans with tabular figures. Digits still don't jiggle, and mono goes back to meaning one thing: this is code, a path or a command.</p>
+</div>
+</div>
+</div>
+<div class="bottom">
+<div>
+<p class="lab" style="margin-bottom: 8px">A finished turn, set to the system. The green line is the shared left edge; the figures at the right are the gaps, in points.</p>
+<div class="tx" style="width: 784px; box-sizing: border-box">
+<span class="edge"></span>
+<div class="me">upload_retries_on_503 is flaky. Find out why and fix it.</div>
+<div class="gap" style="height: 16px"><i style="top: 8px"></i><span style="top: 0">16 block</span></div>
+<div class="ln"><span class="hang"><svg class="c" viewBox="0 0 12 12" aria-hidden="true"><path d="M4.5 2.5 8 6l-3.5 3.5"/></svg></span><span>Thought for 15s</span></div>
+<div class="ln"><span class="hang"><svg class="c" viewBox="0 0 12 12" aria-hidden="true"><path d="M4.5 2.5 8 6l-3.5 3.5"/></svg></span><span class="o">2 reads</span><span class="sp"></span><span class="x">1s</span></div>
+<div class="ln"><span class="hang"><svg class="i" viewBox="0 0 14 14" aria-hidden="true"><path d="M2.5 4.5 5 7l-2.5 2.5M7 9.5h4.5"/></svg></span><span style="color: #e5775f">Failed</span><span class="o m">cargo test -q upload</span><span class="sp"></span><span class="x">10 of 11 · 9s</span></div>
+<div class="gap" style="height: 12px"><i style="top: 6px"></i><span style="top: -2px">12 lines to prose · 24 per line</span></div>
+<p class="p">The jitter came from <code>thread_rng()</code>, so the third retry could wait 800 ms while the mock store gave up at 500 ms.</p>
+<div class="gap" style="height: 12px"><i style="top: 6px"></i><span style="top: -2px">12 prose to lines</span></div>
+<div class="ln"><span class="hang"><svg class="i" viewBox="0 0 14 14" aria-hidden="true"><path d="m9 2.5 2.5 2.5L5 11.5H2.5V9z"/></svg></span><span>Edited</span><span class="o m">src/retry.rs</span><span class="sp"></span><span class="x"><span class="add">+3</span> <span class="del">−2</span></span></div>
+<div class="ln"><span class="hang"><svg class="i" viewBox="0 0 14 14" aria-hidden="true"><path d="M2.5 4.5 5 7l-2.5 2.5M7 9.5h4.5"/></svg></span><span>Ran</span><span class="o m">cargo test -q upload</span><span class="sp"></span><span class="x">11 of 11 · 14s</span></div>
+<div class="gap" style="height: 12px"></div>
+<p class="p"><code>Backoff::delay</code> now takes the <code>Rng</code>, and the test passes a seeded one, so the retry timing is the same every run.</p>
+<div class="gap" style="height: 18px"><i style="top: 9px"></i><span style="top: 1px">18 paragraph</span></div>
+<p class="p">All eleven upload tests pass. I ran them once after the change, in the sandbox.</p>
+<div class="gap" style="height: 20px"><i style="top: 10px"></i><span style="top: 2px">20 above the footer</span></div>
+<div class="ft"><span class="q">Qwen3 Coder Next</span><span>·</span><span>56s</span><span>·</span><span>1,902 tokens</span><span>·</span><span>&lt;1¢</span><svg width="200" height="16" viewBox="0 0 240 20" preserveAspectRatio="none" aria-hidden="true"><polyline fill="none" stroke="#5c5c5c" stroke-width="1.1" vector-effect="non-scaling-stroke" points="0,15 6,5 17,4 30,5 40,13 47,6 64,5 64,15 105,15 105,6 115,5 126,6 126,15 203,15 203,5 215,4 228,5 240,5"/><rect x="0" y="16" width="63" height="3" fill="#444"/><rect x="68" y="16" width="36" height="3" fill="#444"/><rect x="105" y="16" width="20" height="3" fill="#444"/><rect x="126" y="16" width="16" height="3" fill="#444"/><rect x="143" y="16" width="59" height="3" fill="#444"/><rect x="203" y="16" width="37" height="3" fill="#444"/></svg></div>
+<div class="gap" style="height: 32px"><i style="top: 16px"></i><span style="top: 8px">32 between turns</span></div>
+<div class="me">nice. open a PR</div>
+<div class="gap" style="height: 16px"></div>
+<div class="ln"><span class="hang"><span class="d"></span></span><span style="color: #ececec">Thinking</span><span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap">The branch is two commits ahead; write the PR body from the change</span></div>
+<div class="ft" style="margin-top: 2px"><span>4s</span><span>·</span><span>212 tokens</span><span>·</span><span>58 tok/s</span><svg width="200" height="16" viewBox="0 0 240 20" preserveAspectRatio="none" aria-hidden="true"><polyline fill="none" stroke="#5c5c5c" stroke-width="1.1" vector-effect="non-scaling-stroke" points="0,15 6,5 14,4 22,6 30,5"/><rect x="0" y="16" width="30" height="3" fill="#444"/></svg></div>
+</div>
+</div>
+<div class="top" style="grid-template-columns: repeat(2, minmax(0, 1fr))">
+<div class="box">
+<h2 class="h2">The rhythm, from loud to quiet</h2>
+<div class="rh">
+<b>32</b><span>Between turns. The loudest gap, so a turn reads as one paragraph of work.</span>
+<b>20</b><span>Above the footer: a block plus 4, so the footer belongs to the turn but stands off the last line of prose.</span>
+<b>18</b><span>Between paragraphs of prose.</span>
+<b>16</b><span>Between blocks: prompt to first row, prose to a card or a code box.</span>
+<b>12</b><span>Between prose and a run of lines, either way round. Lines are margin notes: nearer than a paragraph, with air of their own.</span>
+<b>24</b><span>One line: 20 of text in a 24 row, which is also the hover plate's height. Lines in a run touch.</span>
+<b>2</b><span>Between the live row and its stats. They are one unit and move as one.</span>
+</div>
+</div>
+<div class="box">
+<h2 class="h2">Small things that add up</h2>
+<div class="rh">
+<b>−</b><span>A true minus in "+3 −2", and a real ellipsis where a line is cut.</span>
+<b>·</b><span>The middle dot separates stats, with a normal space each side. Never a pipe or a slash.</span>
+<b>0–9</b><span>Tabular figures wherever numbers tick or stack; proportional in prose.</span>
+<b>16</b><span>The prompt bubble's corner. Its padding is 8 by 14, so one line of prompt is 38 tall and sits on the same 2-point grid as everything else.</span>
+<b>code</b><span>Inline code is one size down on a quiet plate and never changes the line's height.</span>
+<b>7</b><span>The hover plate's corner. It bleeds 6 points past the text on both sides, so the words don't move when it appears.</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1180,"height":1640}}'>
+class Component extends DCLogic {
+renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

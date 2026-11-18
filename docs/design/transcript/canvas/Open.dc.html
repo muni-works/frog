@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Hovering and opening the thinking</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.b{box-sizing:border-box;background:#0a0a0a;color:#ececec;font:13px/16px -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;padding:40px;display:flex;flex-direction:column;gap:20px}
+.h{font-size:22px;line-height:26px;font-weight:600;margin:0}
+.h2{font-size:13px;line-height:16px;font-weight:600;margin:0}
+.sub{color:#a3a3a3;margin:6px 0 0;max-width:840px;line-height:18px}
+.g{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 20px;align-items:start}
+.cell{display:flex;flex-direction:column;gap:6px}
+.cap{color:#a3a3a3;font-size:12px;line-height:16px}
+.cap b{color:#ececec;font-weight:600}
+.pn{background:#000;border-radius:12px;padding:12px 12px}
+.row{display:flex;align-items:center;gap:10px;height:26px;padding:0 6px;border-radius:7px;border:0;background:transparent;color:inherit;font:inherit;width:100%;text-align:left;box-sizing:border-box}
+.row.hv{background:rgba(255,255,255,.07)}
+button.row{cursor:pointer}
+button.row:hover{background:rgba(255,255,255,.07)}
+.d{width:7px;height:7px;border-radius:50%;background:#58cc6f;flex:none}
+.lb{flex:none}
+.lb.q{color:#a3a3a3}
+.th{flex:1;min-width:0;color:#a3a3a3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.st{margin:4px 0 0 23px;color:#808080;font:11px/16px ui-monospace,"SF Mono",Menlo,monospace;font-variant-numeric:tabular-nums}
+.i{width:12px;height:12px;fill:none;stroke:#808080;stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.i.on{stroke:#ececec}
+.sp{flex:1}
+.out{margin:6px 0 2px 23px;border-left:1px solid #2a2a2a;padding-left:6px;display:grid;gap:1px}
+.ol{display:flex;align-items:flex-start;gap:8px;padding:4px 6px;border-radius:7px;color:#a3a3a3;font-size:12px;line-height:17px;border:0;background:transparent;font-family:inherit;text-align:left;width:100%;box-sizing:border-box}
+button.ol{cursor:pointer}
+button.ol:hover{background:rgba(255,255,255,.07);color:#ececec}
+.ol.hv{background:rgba(255,255,255,.07);color:#ececec}
+.ol.now{color:#ececec}
+.para{margin:2px 0 6px 6px;padding:8px 10px;background:#121212;border-radius:8px;color:#a3a3a3;font-size:12px;line-height:18px;white-space:pre-wrap}
+.para code{font:11px/16px ui-monospace,"SF Mono",Menlo,monospace;color:#ececec}
+.tip{display:inline-block;background:#121212;border:1px solid #2a2a2a;border-radius:8px;padding:6px 10px;color:#ececec;font-size:12px;line-height:16px;margin:6px 0 0 23px;max-width:440px}
+.tip .k{color:#808080}
+.lk{border:0;background:transparent;color:#a3a3a3;font:12px/16px inherit;padding:4px 6px;border-radius:7px;cursor:pointer}
+.lk:hover{background:rgba(255,255,255,.07);color:#ececec}
+.rule{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px 22px;background:#121212;border-radius:12px;padding:16px 18px;color:#a3a3a3;font-size:12px;line-height:17px}
+.rule b{color:#ececec;font-weight:600;display:block}
+.kbd{font:11px/14px ui-monospace,"SF Mono",Menlo,monospace;color:#ececec;background:#1a1a1a;border-radius:4px;padding:1px 5px}
+</style>
+</helmet>
+<div class="b" style="width: 1180px; height: 1220px">
+<div>
+<h1 class="h">5. Hovering and opening the thinking</h1>
+<p class="sub">The row is a button, live or settled. Hover shows it can open; one click opens the thinking as a short outline; a click on any line opens that paragraph in full. Three depths, each one step, and nothing opens by itself.</p>
+</div>
+<div class="g">
+<div class="cell">
+<div class="cap"><b>Try it.</b> This one works: hover it, open it, open a line.</div>
+<div class="pn">
+<button class="row" onClick="{{toggle}}" aria-expanded="{{openStr}}"><span class="lb q">Thought for 31s</span><sc-if value="{{closed}}" hint-placeholder-val="{{true}}"><svg class="i" viewBox="0 0 12 12" aria-hidden="true"><path d="M4.5 2.5 8 6l-3.5 3.5"/></svg></sc-if><sc-if value="{{open}}" hint-placeholder-val="{{false}}"><svg class="i on" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5"/></svg></sc-if></button>
+<sc-if value="{{open}}" hint-placeholder-val="{{false}}">
+<div class="out">
+<sc-for list="{{lines}}" as="l" hint-placeholder-count="4">
+<button class="ol" onClick="{{l.pick}}" aria-expanded="{{l.openStr}}"><span>{{l.text}}</span></button>
+<sc-if value="{{l.open}}" hint-placeholder-val="{{false}}"><div class="para">{{l.full}}</div></sc-if>
+</sc-for>
+<div style="display: flex; gap: 4px; padding: 2px 0 0"><button class="lk">Show all 15,670 characters</button><button class="lk">Copy</button></div>
+</div>
+</sc-if>
+</div>
+</div>
+<div class="cell">
+<div class="cap"><b>Hover, live.</b> A plate under the row and a chevron after the label. The thought and the stats don't change.</div>
+<div class="pn"><div class="row hv"><span class="d"></span><span class="lb">Thinking</span><svg class="i on" viewBox="0 0 12 12" aria-hidden="true"><path d="M4.5 2.5 8 6l-3.5 3.5"/></svg><span class="th">Build one widget that walks through five stages</span></div><div class="st">9s · 388 tokens · 58 tok/s</div></div>
+<div class="cap" style="margin-top: 8px"><b>Hover, settled.</b> The same plate; the chevron that was grey turns to text colour.</div>
+<div class="pn"><div class="row hv"><span class="lb" style="color: #ececec">Thought for 31s</span><svg class="i on" viewBox="0 0 12 12" aria-hidden="true"><path d="M4.5 2.5 8 6l-3.5 3.5"/></svg></div></div>
+</div>
+<div class="cell">
+<div class="cap"><b>Opened while still thinking.</b> The outline grows at the bottom as paragraphs finish; the newest line is in text colour. The row's own thought hides, since the list is showing it.</div>
+<div class="pn">
+<div class="row"><span class="d"></span><span class="lb">Thinking</span><svg class="i on" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5"/></svg></div>
+<div class="out"><div class="ol">The user wants a visual explanation of transformers from first principles</div><div class="ol">Build one widget that walks through five stages</div><div class="ol now">Better idea: attention as a soft lookup in two dimensions</div></div>
+<div class="st">19s · 1,105 tokens · 58 tok/s</div>
+</div>
+</div>
+<div class="cell">
+<div class="cap"><b>A line opened.</b> The paragraph as the model wrote it, lists and code kept. Other lines stay closed.</div>
+<div class="pn">
+<div class="row"><span class="lb q">Thought for 31s</span><svg class="i on" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5"/></svg></div>
+<div class="out"><div class="ol">The user wants a visual explanation of transformers from first principles</div><div class="ol hv">Build one widget that walks through five stages</div><div class="para">Idea: build a single-page widget that walks through stages with tabs/steps, showing:
+1. Text → tokens (tokenize a phrase, show ids)
+2. Embeddings (vectors as heatmap rows)
+3. Attention: one query attending to keys, weight bars</div><div class="ol">Better idea: attention as a soft lookup in two dimensions</div></div>
+</div>
+</div>
+<div class="cell">
+<div class="cap"><b>Resting on a cut-off thought</b> for half a second shows the whole sentence. Nothing else in the row has a tooltip except the stats.</div>
+<div class="pn"><div class="row"><span class="d"></span><span class="lb">Thinking</span><span class="th">Simplest robust approach: one widget with stage buttons, a live visual per stage built from plain elements</span></div><div class="tip">Simplest robust approach: one widget with stage buttons, a live visual per stage built from plain elements, and two global sliders</div></div>
+</div>
+<div class="cell">
+<div class="cap"><b>Resting on the stats</b> spells the numbers out, with the two that don't fit the line.</div>
+<div class="pn"><div class="row"><span class="d"></span><span class="lb">Thinking</span><span class="th">Build one widget that walks through five stages</span></div><div class="st">9s · 388 tokens · 58 tok/s</div><div class="tip"><span class="k">Thinking for</span> 9 seconds<br><span class="k">Written</span> 388 tokens at 58 tokens per second<br><span class="k">First token after</span> 0.8 seconds<br><span class="k">Read</span> 12,400 tokens, 11,900 from cache</div></div>
+</div>
+<div class="cell">
+<div class="cap"><b>The outline as a rail.</b> One mark per paragraph, spaced by when it was written. Gaps show where it worked something out; skipped paragraphs stay as small marks, so nothing is hidden. The line under the pointer lights its mark.</div>
+<div class="pn" style="display: grid; grid-template-columns: 18px minmax(0,1fr); gap: 0 10px; padding: 14px 16px">
+<svg width="18" height="126" viewBox="0 0 18 126" aria-hidden="true"><line x1="9" y1="6" x2="9" y2="120" stroke="#2a2a2a"/><circle cx="9" cy="8" r="3" fill="#808080"/><circle cx="9" cy="34" r="3" fill="#808080"/><circle cx="9" cy="47" r="1.5" fill="#444"/><circle cx="9" cy="53" r="1.5" fill="#444"/><circle cx="9" cy="74" r="3.5" fill="#58cc6f"/><circle cx="9" cy="90" r="1.5" fill="#444"/><circle cx="9" cy="96" r="1.5" fill="#444"/><circle cx="9" cy="102" r="1.5" fill="#444"/><circle cx="9" cy="118" r="3" fill="#808080"/></svg>
+<div style="position: relative; height: 126px; color: #a3a3a3; font-size: 12px; line-height: 17px"><span style="position: absolute; top: 0; left: 0; right: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">The user wants a visual explanation of transformers from first principles</span><span style="position: absolute; top: 26px; left: 0">Build one widget that walks through five stages</span><span style="position: absolute; top: 66px; left: -6px; right: 0; padding: 0 6px; border-radius: 7px; background: rgba(255,255,255,.07); color: #ececec">Better idea: attention as a soft lookup in two dimensions</span><span style="position: absolute; top: 87px; left: 0; color: #808080; font: 11px/16px ui-monospace,Menlo,monospace">3 paragraphs of layout working-out</span><span style="position: absolute; top: 110px; left: 0">Write the widget</span></div>
+</div>
+</div>
+<div class="cell">
+<div class="cap"><b>Pace, in the opened header.</b> The think's tokens per second as a small line beside its totals. A dip is a slow patch, a flat floor is a stall, and the rail's marks line up under it in time.</div>
+<div class="pn" style="padding: 14px 16px">
+<div class="row" style="padding: 0"><span class="lb q">Thought for 31s</span><svg class="i on" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5"/></svg><span class="sp"></span><svg width="160" height="20" viewBox="0 0 160 20" role="img" aria-label="Tokens per second over the think"><polyline fill="none" stroke="#58cc6f" stroke-width="1.2" stroke-linejoin="round" points="0,15 10,6 21,5 32,6 42,4 53,6 64,5 74,7 85,15 96,16 106,6 117,5 128,4 138,6 149,5 160,6"/></svg></div>
+<div class="st" style="margin-left: 0">1,902 tokens · 58 tok/s · slowest 12 tok/s at 19s</div>
+</div>
+</div>
+</div>
+<div class="rule">
+<span><b>It never opens itself.</b>Not when thinking runs long, not when it stalls. What you opened stays open for that turn and is remembered when you scroll back.</span>
+<span><b>Opening doesn't move the page.</b>The outline grows downward. If you're following the bottom, the view keeps following; if you've scrolled up, nothing shifts under you.</span>
+<span><b>Keys.</b><span class="kbd">Space</span> or <span class="kbd">Return</span> opens the focused row, arrows move through the outline, <span class="kbd">Esc</span> closes one level. <span class="kbd">⌥</span>-click opens every paragraph at once.</span>
+<span><b>Long thinks stay short.</b>The outline shows at most twelve lines, then "24 more". The full text is one more click and scrolls inside its own box.</span>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1180,"height":1220}}'>
+class Component extends DCLogic {
+constructor(props) { super(props); this.state = { open: true, picked: 1 }; }
+renderVals() {
+const src = [
+['The user wants a visual explanation of transformers from first principles', 'The user wants a visual explanation of transformers from first principles. I should build an interactive visual. Call VisualGuide first.'],
+['Build one widget that walks through five stages', 'Idea: build a single-page widget that walks through stages with tabs/steps, showing:\n1. Text → tokens (tokenize a phrase, show ids)\n2. Embeddings (vectors as heatmap rows)\n3. Attention: one query attending to keys, weight bars'],
+['Better idea: attention as a soft lookup in two dimensions', 'Better idea for A: "attention is a soft lookup": a query vector and several key vectors in 2D, slider rotates the query, bars show softmax(q·k/√d). That is genuinely first-principles and interactive and honest.'],
+['Write the widget', 'Write the widget.']
+];
+const st = this.state;
+return {
+open: st.open, closed: !st.open, openStr: st.open ? 'true' : 'false',
+toggle: () => this.setState({ open: !st.open }),
+lines: src.map((s, i) => ({ text: s[0], full: s[1], open: st.picked === i, openStr: st.picked === i ? 'true' : 'false', pick: () => this.setState({ picked: st.picked === i ? -1 : i }) }))
+};
+}
+}
+</script>
+</body>
+</html>
