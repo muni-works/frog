@@ -6,6 +6,7 @@ pub mod auto;
 pub mod background;
 pub mod catalog;
 pub mod chapter;
+pub mod child_watch;
 pub mod checkpoint;
 pub mod cloud_login;
 pub mod codemap;

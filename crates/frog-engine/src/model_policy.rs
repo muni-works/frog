@@ -23,6 +23,13 @@ pub const FALLBACK_RETRIES: u32 = 1;
 /// The longest a provider's `retry-after` is honored for: past this the wait is ours.
 pub const MAX_RETRY_AFTER: Duration = Duration::from_secs(60);
 
+/// The working line while a provider that said it's busy (429, 503/529) is retried: the
+/// machine reporting it's busy, which a parent's quiet clock counts as life (`child_watch`).
+/// Any other retry (a dropped or timed-out stream, a broken upstream) reads [`RETRY_LABEL`]
+/// and doesn't.
+pub const BUSY_LABEL: &str = "busy, retrying…";
+pub const RETRY_LABEL: &str = "retrying…";
+
 /// How long calls keep going to the stand-in after the session's Frog Cloud model stayed
 /// busy through a whole retry budget, before the session's model is tried again.
 pub const DETOUR_TTL: Duration = Duration::from_secs(120);

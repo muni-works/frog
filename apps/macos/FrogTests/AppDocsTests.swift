@@ -182,6 +182,7 @@ final class AppDocsTests: XCTestCase {
     }
 
     func testWebLink() {
-        XCTAssertEqual(DocsLinks.web("install").absoluteString, "https://docs.frog.toys/install")
+        // frog.toys/docs/<slug> is where the web app serves a page; docs.frog.toys doesn't resolve.
+        XCTAssertEqual(DocsLinks.web("install").absoluteString, "https://frog.toys/docs/install")
     }
 }
