@@ -50,8 +50,9 @@ final class ModelsParityTests: XCTestCase {
             .frame(maxHeight: .infinity, alignment: .top)
         }
         SettingsBindings.devices = devices
+        SettingsBindings.loads = false
         CloudAccount.shared.stage(SettingsModeTests.fixtureAccount)
-        defer { SettingsBindings.devices = Devices.shared; CloudAccount.shared.unstage() }
+        defer { SettingsBindings.loads = true; SettingsBindings.devices = Devices.shared; CloudAccount.shared.unstage() }
         try render("models-settings", width: 820, height: 760) { SettingsSectionView(section: "models") }
         try render("models-machine", width: 820, height: 760) { MachineSettingsPage(deviceID: "n1") {} }
     }

@@ -267,7 +267,8 @@ final class LocalModelsTests: XCTestCase {
         let downloads = ["mlx-community/Qwen3-32B-4bit": LocalDownload(done: 7_400_000_000, total: 18_429_850_874, rate: 41_000_000)]
 
         SettingsBindings.devices = devices
-        defer { SettingsBindings.devices = Devices.shared }
+        SettingsBindings.loads = false
+        defer { SettingsBindings.loads = true; SettingsBindings.devices = Devices.shared }
         try render("machine-mew", height: 1180) {
             MachineSettingsPage(deviceID: "n1") {}
         }
