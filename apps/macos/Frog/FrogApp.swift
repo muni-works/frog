@@ -96,10 +96,7 @@ struct FrogApp: App {
         .defaultLaunchBehavior(.suppressed)
         .restorationBehavior(.disabled)
 
-        Settings {
-            SettingsView()
-                .containerBackground(FrogCanvas.color, for: .window)
-        }
+        // No Settings scene: Settings is a mode of the window (⌘,, FrogCommands), not a window.
     }
 }
 

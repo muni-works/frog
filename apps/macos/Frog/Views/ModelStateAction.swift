@@ -29,8 +29,9 @@ struct ModelStateAction: View {
         case .notAllowed:
             if let askCloud { button("Allow…") { askCloud(model) } }
         case .overCap:
+            // The monthly cap lives in Settings › Usage.
             button("Raise Cap…") {
-                showSettings?("models")
+                showSettings?("usage")
             }
         case .ready, .wontFit, .unreachable:
             EmptyView()

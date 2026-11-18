@@ -545,6 +545,8 @@ struct WorkspaceView: View {
         // Every "open Settings on…" in the window (the composer's Billing, the footer, the model
         // menu's Manage) lands on Settings mode here.
         .environment(\.showSettings) { showSettings($0) }
+        // A turn's energy popover: History is Settings › Usage.
+        .environment(\.showEnergyHistory) { showSettings("usage") }
         // ⌘, with no window, or a frog://settings/<section> link: the front window takes it, or
         // this one if it's the one that just opened for it.
         .onReceive(NotificationCenter.default.publisher(for: SettingsRequest.name)) { _ in

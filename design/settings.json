@@ -20,6 +20,8 @@
       "web": { "label": "Open files in your editor", "description": "Frog opens the files it changed in Zed, VS Code, Xcode or your default app." } },
     { "id": "iphone", "section": "general", "platform": "invite", "control": "toggle",
       "label": "Let Frog on iPhone connect", "description": "Scan the code with your iPhone's camera. A new code signs out every phone." },
+    { "id": "share-usage", "section": "general", "platform": "mac", "control": "toggle",
+      "label": "Share usage with Frog", "description": "A few moments, like a first local answer or a model download, so we can see where people get stuck. Never what you type, your code, file names or model names. Off by default." },
     { "id": "update-pause", "section": "general", "group": "Updates", "platform": "mac", "control": "toggle",
       "label": "Pause agents for app updates and resume them", "description": "Each agent stops at its next safe point, then picks up where it stopped." },
     { "id": "update-wait", "section": "general", "group": "Updates", "platform": "mac", "control": "field", "when": "update-pause",

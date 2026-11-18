@@ -56,11 +56,12 @@ test("rows run in section order, so a section is one run of the list", () => {
 
 // Board 7 lists 23 both; Frog Cloud (account and credit) in Models is board 2's and board 5's, which
 // board 7 left off its list without cutting it, so it stays: 24.
-test("board 7's verdicts: 23 both plus Frog Cloud, 12 invite, 7 Mac, and one web-only fact", () => {
+test("board 7's verdicts: 23 both plus Frog Cloud, 12 invite, 7 Mac plus Share usage, and one web-only fact", () => {
   const ids = (p: string) => rows.filter((r) => r.platform === p).map((r) => r.id)
   assert.deepEqual(ids("both"), ["notifications", "theme", "density", "detail", "playful", "sounds", "default-model", "machines", "frog-cloud", "default-mode", "mcp-servers", "shortcuts", "spent", "monthly-cap", "show-energy", "energy-chart", "profile", "sign-ins", "devices", "plan", "credit", "coupon", "credit-history", "prices"]);
   assert.deepEqual(ids("invite"), ["editor", "iphone", "pair-machine", "local-models", "machine-name", "share-models", "other-clouds", "servers", "sandbox", "computer-use", "mcp-sign-in", "measured-energy"]);
-  assert.deepEqual(ids("mac"), ["update-pause", "update-wait", "lend-battery", "pair-mac", "provider-models", "allowed-commands", "mcp-config"]);
+  // Plus "Share usage with Frog" (b5edfe37, after the canvas): the Mac app's own opt-in.
+  assert.deepEqual(ids("mac"), ["share-usage", "update-pause", "update-wait", "lend-battery", "pair-mac", "provider-models", "allowed-commands", "mcp-config"]);
   assert.deepEqual(ids("web"), ["cloud-sandbox"]);
 });
 

@@ -82,8 +82,12 @@ struct FrogCloudRows: View {
 
     var body: some View {
         Group {
-            SettingsRow("Account") {
-                SettingsValue(account.me.map { [$0.name, $0.email].compactMap { $0 }.joined(separator: " · ") } ?? (account.signedIn ? "Signed in" : "Not signed in"))
+            if !account.signedIn {
+                SignInRows()
+            } else {
+                SettingsRow("Account") {
+                    SettingsValue(account.me.map { [$0.name, $0.email].compactMap { $0 }.joined(separator: " · ") } ?? "Signed in")
+                }
             }
             if let me = account.me {
                 SettingsRow("Credit", description: "Prices per model are in Billing.") {

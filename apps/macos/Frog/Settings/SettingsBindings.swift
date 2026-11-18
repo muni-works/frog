@@ -39,6 +39,7 @@ enum SettingsBindings {
         case "notifications": AnyView(ToggleRow(row: row, key: "notifyWhenDone", fallback: true))
         case "editor": AnyView(EditorRow(row: row))
         case "iphone": AnyView(IPhoneRow(row: row))
+        case "share-usage": AnyView(ShareUsageRow(row: row))
         case "update-pause": AnyView(ToggleRow(row: row, key: UpdateDrain.key, fallback: false))
         case "update-wait": AnyView(UpdateWaitRow(row: row))
         // Appearance
@@ -199,6 +200,18 @@ private struct IPhoneRow: View {
                         .frame(width: 180)
                 }
             }
+        }
+    }
+}
+
+/// Opt-in funnel events; turning it off forgets what was queued.
+private struct ShareUsageRow: View {
+    let row: SettingsCatalog.Row
+    @AppStorage(Funnel.optInKey) private var on = false
+
+    var body: some View {
+        SettingsRow(row) {
+            FrogToggle(label: row.label, isOn: Binding(get: { on }, set: { on = $0; if !$0 { Funnel.forget() } }))
         }
     }
 }

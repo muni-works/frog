@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Settings' one row and six controls (docs/design/app-shell.md › Settings › Layout), drawn
 /// from `Tokens` the way the web's `.set-row` is: label left, control right, a hairline between
-/// rows. No system `Form`, grouped list or `TabView`.
+/// rows. No system form, grouped list or tab view.
 
 enum SettingsLook {
     static let column: CGFloat = 720
