@@ -10,7 +10,8 @@ import XCTest
 @MainActor
 final class TableTranscriptParityTests: XCTestCase {
     @Observable fileprivate final class JumpBox { var id: TurnState.ID? }
-    private let jumpBox = JumpBox()
+    /// A new one for each transcript opened (see `close()`).
+    private var jumpBox = JumpBox()
     private var visible: [TurnState.ID] = []
     private var seq: UInt64 = 0
     private var window: NSWindow!
@@ -19,9 +20,25 @@ final class TableTranscriptParityTests: XCTestCase {
     private var container = TranscriptContainer.table
     override func setUp() async throws { container = TranscriptContainer.table }
     override func tearDown() async throws {
-        window?.close()
+        close()
         TranscriptContainer.table = container
         pump(0.1)
+    }
+
+    /// Done with this transcript: take it down, not just its window. A closed window's hosting
+    /// view lives on (this test case holds it, and XCTest holds every test case to the end of the
+    /// run), and so does the transcript in it: it still observes the jump box and the app's
+    /// shared state, still reports visible turns into `visible`, and re-renders into whichever
+    /// container `TranscriptContainer.table` says now. The next pass's assertions then read
+    /// what the last one's transcript did (a jump test saw the closed lazy stack's turns land in
+    /// `visible` after the table had reported the jumped-to turn).
+    private func close() {
+        host?.rootView = AnyView(EmptyView())
+        window?.contentView = nil
+        window?.close()
+        host = nil
+        window = nil
+        visible = []
     }
 
     private func send(_ c: Conversation, _ event: String) {
@@ -68,6 +85,8 @@ final class TableTranscriptParityTests: XCTestCase {
     private func open(table: Bool, turns: Int) -> Conversation {
         TranscriptContainer.table = table
         TranscriptProbe.reset()
+        close()
+        jumpBox = JumpBox()
         let c = Conversation(folder: URL(fileURLWithPath: "/tmp/demo"), link: nil, replay: false, session: "t")
         for n in 0..<turns { turn(c, n + 1) }
         let box = jumpBox
@@ -110,7 +129,7 @@ final class TableTranscriptParityTests: XCTestCase {
             XCTAssertTrue(wait() { self.atEnd() }, "table \(table): opens at the end")
             XCTAssertTrue(wait() { self.visible.contains(c.turns.last!.id) },
                           "table \(table): reports the last turn visible")
-            window.close()
+            close()
         }
     }
 
@@ -118,7 +137,7 @@ final class TableTranscriptParityTests: XCTestCase {
         for table in [false, true] {
             _ = open(table: table, turns: 300)
             XCTAssertLessThanOrEqual(TranscriptProbe.peakMountedRows, 30, "table \(table): virtualized")
-            window.close()
+            close()
         }
     }
 
@@ -130,7 +149,7 @@ final class TableTranscriptParityTests: XCTestCase {
             XCTAssertTrue(wait() { self.visible.contains(target) },
                           "table \(table): the jumped-to turn is on screen")
             XCTAssertTrue(wait() { !self.atEnd() }, "table \(table): a jump stops following")
-            window.close()
+            close()
         }
     }
 
@@ -152,7 +171,7 @@ final class TableTranscriptParityTests: XCTestCase {
                           "table \(table): the streamed words are drawn")
             XCTAssertTrue(wait() { self.atEnd() },
                           "table \(table): follows a short answer to the end")
-            window.close()
+            close()
         }
     }
 
@@ -169,7 +188,7 @@ final class TableTranscriptParityTests: XCTestCase {
             XCTAssertFalse(narrow.isEmpty, "table \(table): text on screen")
             XCTAssertTrue(narrow.allSatisfy { $0.frame.width <= 520 }, "table \(table): rows narrowed to the window")
             XCTAssertTrue(atEnd(), "table \(table): still at the end after a resize")
-            window.close()
+            close()
         }
     }
 }
