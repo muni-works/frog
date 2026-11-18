@@ -387,6 +387,22 @@ final class Devices {
     private(set) var asked: [String: String] = [:]
     /// Why the last load of a spec failed, in one line.
     private(set) var loadProblem: [String: String] = [:]
+    /// Loads and deletes this Mac asked a machine for and hasn't heard back on, by
+    /// `rowKey(device, model id)` → when it asked. A row shows "loading" from one of these only
+    /// inside `Device.loadDeadline`.
+    private(set) var pending: [String: Date] = [:]
+    /// Why the last load or delete of a model on a machine failed, by `rowKey`.
+    private(set) var rowProblem: [String: String] = [:]
+
+    nonisolated static func rowKey(_ deviceID: String, _ modelID: String) -> String { "\(deviceID)|\(modelID)" }
+
+    func clearProblem(_ deviceID: String, _ modelID: String) { rowProblem[Self.rowKey(deviceID, modelID)] = nil }
+
+    /// Keep the first reason a row's action failed (switchTo records the node's own words).
+    func noteProblem(_ deviceID: String, _ modelID: String, _ line: String) {
+        let k = Self.rowKey(deviceID, modelID)
+        if rowProblem[k] == nil { rowProblem[k] = line }
+    }
 
     /// Where a pooled model (`node/<hash>`) stands on your nodes: loaded somewhere, loading,
     /// on a disk where it fits (and what it would replace), or on a disk where it won't.
@@ -483,7 +499,7 @@ final class Devices {
                 let hold = MachineModel.Hold(deviceID: d.id, name: d.role == .thisMac ? "This Mac" : d.name, action: action,
                                              decode: m.loaded ? d.decode : nil, busy: d.running + d.waiting)
                 if rows[key] == nil {
-                    rows[key] = MachineModel(spec: "node/\(key)", name: Self.displayName(m.name), holds: [])
+                    rows[key] = MachineModel(spec: "node/\(key)", name: LocalCatalog.displayName(m.id.isEmpty ? m.name : m.id), holds: [])
                     order.append(key)
                 }
                 rows[key]!.holds.append(hold)
@@ -541,9 +557,12 @@ final class Devices {
               let base = baseURL(hold.deviceID)
         else { throw NodeLoadError("Can't reach \(hold.name).") }
         let swapped = d.model
+        let rk = Self.rowKey(hold.deviceID, m.id)
         asked[spec] = hold.name
         loadProblem[spec] = nil
-        defer { asked[spec] = nil; waitingSwap[spec] = nil }
+        rowProblem[rk] = nil
+        pending[rk] = Date()
+        defer { asked[spec] = nil; waitingSwap[spec] = nil; pending[rk] = nil }
         while true {
             do {
                 try await Self.requestLoad(base, key: key(hold.deviceID), model: m.id)
@@ -561,6 +580,7 @@ final class Devices {
             } catch {
                 let line = (error as? NodeLoadError)?.message ?? error.localizedDescription
                 loadProblem[spec] = line
+                rowProblem[rk] = line
                 await poll()
                 throw NodeLoadError(line)
             }
@@ -585,6 +605,31 @@ final class Devices {
             if status == 409 { throw NodeLoadError("It's busy with a turn. Stop it when it's idle.", busy: true) }
             throw NodeLoadError((try? JSONDecoder().decode([String: String].self, from: data))?["error"] ?? "Stopping failed (\(status)).")
         }
+    }
+
+    /// Remove a model from a node's disk (`POST /models/delete`, tang with `/models/pull`).
+    func deleteModel(_ modelID: String, on deviceID: String) async {
+        let rk = Self.rowKey(deviceID, modelID)
+        guard let base = baseURL(deviceID) else { rowProblem[rk] = "Can't reach it."; return }
+        var req = URLRequest(url: base.appending(path: "models/delete"))
+        req.httpMethod = "POST"
+        req.timeoutInterval = 60
+        if let k = key(deviceID) { req.setValue("Bearer \(k)", forHTTPHeaderField: "Authorization") }
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["model": modelID])
+        rowProblem[rk] = nil
+        pending[rk] = Date()
+        defer { pending[rk] = nil }
+        do {
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            if status != 200 {
+                rowProblem[rk] = "Couldn't delete: " + ((try? JSONDecoder().decode([String: String].self, from: data))?["error"] ?? "the node said \(status).")
+            }
+        } catch {
+            rowProblem[rk] = "Couldn't delete: \(error.localizedDescription)"
+        }
+        await poll()
     }
 
     /// Call a machine something else, on this Mac only.
@@ -743,9 +788,47 @@ struct Device: Identifiable, Equatable {
     var host: String?
     var model: String?
     var loading: String?
-    /// The repo id being loaded, and for how long so far.
+    /// The repo id being loaded, and for how long so far. Only while the load is inside its
+    /// deadline (`Device.loadDeadline`); past it, the load is `stuckLoad` instead.
     var loadingID: String?
     var loadingSecs: Double?
+    /// A load the node has reported for longer than any load takes: the node never ended it
+    /// (tang's worker died or hung mid-load). Not a load in progress.
+    var stuckLoad: StuckLoad?
+    /// tang's version (`/node` `version`).
+    var version: String?
+    /// The node takes `/models/pull` and `/models/delete` (it reports `models.pulling`).
+    var canPull = false
+    /// A download onto the node, as `/node` reports it, with its rate from successive polls.
+    var pulling: Pull?
+    /// How the node's last download ended.
+    var lastPull: LastPull?
+
+    struct StuckLoad: Equatable {
+        var id: String
+        var seconds: Int
+    }
+    struct Pull: Equatable {
+        var model: String
+        var done: UInt64
+        var total: UInt64
+        /// Bytes a second, once two polls have seen it move.
+        var rate: Double?
+        /// When `done` last moved.
+        var movedAt: Date
+    }
+    struct LastPull: Equatable {
+        var model: String
+        var ok: Bool
+        var cancelled: Bool
+        var error: String?
+    }
+
+    /// How long a load of `bytes` may take before it's stuck: ten minutes, or longer for a
+    /// model that takes longer to read at 40 MB/s (a slow disk).
+    nonisolated static func loadDeadline(bytes: UInt64?) -> TimeInterval {
+        max(600, Double(bytes ?? 0) / 40e6)
+    }
     /// Device memory the loaded model holds (weights and KV pool).
     var footprint: UInt64 = 0
     var decode: Double?
@@ -768,6 +851,8 @@ struct Device: Identifiable, Equatable {
         var id: String = ""
         /// Device memory loading it takes, by the node's own estimate (`load_bytes`).
         var loadBytes: UInt64?
+        /// Its weights on disk (`size_bytes`).
+        var sizeBytes: UInt64?
     }
 
     /// Memory a load could use: what's free plus what the loaded model gives back (tang
@@ -782,11 +867,12 @@ struct Device: Identifiable, Equatable {
         return d
     }
 
-    mutating func apply(_ r: NodeReport?) {
+    mutating func apply(_ r: NodeReport?, at now: Date = Date()) {
         guard let r else {
             online = false
             models = []
-            model = nil; loading = nil; loadingID = nil; loadingSecs = nil; footprint = 0; decode = nil; prefill = nil; running = 0; waiting = 0
+            model = nil; loading = nil; loadingID = nil; loadingSecs = nil; stuckLoad = nil; footprint = 0; decode = nil; prefill = nil; running = 0; waiting = 0
+            pulling = nil
             if role != .thisMac { freeBytes = nil }
             return
         }
@@ -801,9 +887,34 @@ struct Device: Identifiable, Equatable {
         }
         let m = r.models.loaded.first
         model = m.map { Self.shortModel($0.id) }
-        loading = r.models.loading.map { Self.shortModel($0.id) }
-        loadingID = r.models.loading?.id
-        loadingSecs = r.models.loading.map { Double($0.elapsed_ms ?? 0) / 1000 }
+        version = r.version
+        loading = nil; loadingID = nil; loadingSecs = nil; stuckLoad = nil
+        if let l = r.models.loading {
+            let secs = Double(l.elapsed_ms ?? 0) / 1000
+            let bytes = r.models.on_disk?.first { $0.id == l.id }.flatMap { $0.size_bytes ?? $0.load_bytes }
+            if secs > Self.loadDeadline(bytes: bytes) {
+                stuckLoad = StuckLoad(id: l.id, seconds: Int(secs))
+            } else {
+                loading = Self.shortModel(l.id); loadingID = l.id; loadingSecs = secs
+            }
+        }
+        canPull = r.models.reportsPulls
+        if let p = r.models.pulling {
+            var next = Pull(model: p.model, done: p.done_bytes, total: p.total_bytes, rate: nil, movedAt: now)
+            if let prev = pulling, prev.model == p.model {
+                if p.done_bytes > prev.done {
+                    let dt = now.timeIntervalSince(prev.movedAt)
+                    let fresh = dt > 0 ? Double(p.done_bytes - prev.done) / dt : nil
+                    next.rate = fresh.map { r in prev.rate.map { 0.7 * $0 + 0.3 * r } ?? r }
+                } else {
+                    next.rate = prev.rate; next.movedAt = prev.movedAt
+                }
+            }
+            pulling = next
+        } else {
+            pulling = nil
+        }
+        lastPull = r.models.last_pull.map { LastPull(model: $0.model, ok: $0.ok, cancelled: $0.cancelled ?? false, error: $0.error) }
         footprint = r.models.loaded.reduce(0) { $0 + ($1.memory?.weights_bytes ?? 0) + ($1.memory?.kv_bytes ?? 0) }
         decode = m?.rates.decode_tok_s.flatMap { $0 > 0 ? $0 : nil }
         prefill = m?.rates.prefill_tok_s.flatMap { $0 > 0 ? $0 : nil }
@@ -813,7 +924,7 @@ struct Device: Identifiable, Equatable {
         var pooled: [PooledModel] = []
         for l in r.models.loaded { if let h = l.weights_hash { pooled.append(.init(name: Self.shortModel(l.id), weightsHash: h, quant: l.quant, loaded: true, id: l.id)) } }
         for l in r.models.on_disk ?? [] where !pooled.contains(where: { $0.weightsHash == l.weights_hash }) {
-            if let h = l.weights_hash { pooled.append(.init(name: Self.shortModel(l.id), weightsHash: h, quant: l.quant, loaded: false, id: l.id, loadBytes: l.load_bytes)) }
+            if let h = l.weights_hash { pooled.append(.init(name: Self.shortModel(l.id), weightsHash: h, quant: l.quant, loaded: false, id: l.id, loadBytes: l.load_bytes, sizeBytes: l.size_bytes)) }
         }
         models = pooled
     }
@@ -887,6 +998,7 @@ struct NodeReport: Decodable {
         var weights_hash: String?
         var quant: String?
         var load_bytes: UInt64?
+        var size_bytes: UInt64?
     }
     struct Identity: Decodable {
         var fingerprint: String
@@ -896,10 +1008,42 @@ struct NodeReport: Decodable {
         var id: String
         var elapsed_ms: UInt64?
     }
+    struct Pulling: Decodable {
+        var model: String
+        var done_bytes: UInt64
+        var total_bytes: UInt64
+    }
+    struct LastPull: Decodable {
+        var model: String
+        var ok: Bool
+        var cancelled: Bool?
+        var error: String?
+    }
     struct Models: Decodable {
         var loaded: [Loaded]
         var loading: Loading?
         var on_disk: [OnDisk]?
+        var pulling: Pulling?
+        var last_pull: LastPull?
+        /// The node has `/models/pull` and `/models/delete`: it reports `pulling` (null when
+        /// idle). tang before that leaves the key out.
+        var reportsPulls = false
+
+        enum CodingKeys: String, CodingKey { case loaded, loading, on_disk, pulling, last_pull }
+
+        init(loaded: [Loaded], loading: Loading? = nil, on_disk: [OnDisk]? = nil) {
+            self.loaded = loaded; self.loading = loading; self.on_disk = on_disk
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            loaded = try c.decode([Loaded].self, forKey: .loaded)
+            loading = try c.decodeIfPresent(Loading.self, forKey: .loading)
+            on_disk = try c.decodeIfPresent([OnDisk].self, forKey: .on_disk)
+            pulling = try c.decodeIfPresent(Pulling.self, forKey: .pulling)
+            last_pull = try c.decodeIfPresent(LastPull.self, forKey: .last_pull)
+            reportsPulls = c.contains(.pulling)
+        }
     }
     struct Job: Decodable {}
     struct Queue: Decodable {
@@ -909,6 +1053,7 @@ struct NodeReport: Decodable {
     var schema: Int?
     var node_id: String
     var name: String?
+    var version: String?
     var identity: Identity?
     var hardware: Hardware
     var models: Models

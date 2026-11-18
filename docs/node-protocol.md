@@ -86,6 +86,16 @@ Gated (section 1). Changes from schema 1:
 
 Clients must ignore unknown fields, and treat `schema` higher than they know as "update frog".
 
+How the Mac reads model state from it (`Device.apply`, `LocalModelList.build`):
+- `models.loading` counts as a load in progress only while `elapsed_ms` is under its deadline:
+  ten minutes, or the checkpoint's size read at 40 MB/s if that's longer. Past it the load is
+  stuck (tang's worker never came back from it): the row shows the model on disk with "Stuck
+  loading for 5 days … Restart the Frog node on mew", and Load is off until the node stops reporting it.
+- `models.pulling` (`{model, done_bytes, total_bytes}`, or null) means the node takes
+  `/models/pull` and `/models/delete`; a node that leaves the key out takes neither, and its
+  Get and Delete are off with that reason. `models.last_pull` gives a failed download's reason.
+- Names, sources, sizes and capabilities come from `catalog/local-models.json`, by repo id.
+
 ## 6. Model identity
 
 `weights_hash` = lowercase hex SHA-256 over, in order:

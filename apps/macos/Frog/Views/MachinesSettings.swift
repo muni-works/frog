@@ -98,7 +98,6 @@ struct MachinePage: View {
     @State private var renaming = false
     @State private var newName = ""
     @State private var confirmUnpair = false
-    @State private var problem: String?
     @Environment(\.dismiss) private var dismiss
 
     private var device: Device? { devices.list.first { $0.id == deviceID } }
@@ -111,16 +110,7 @@ struct MachinePage: View {
                     LabeledContent("Hardware", value: d.hardwareLine)
                     if d.totalBytes > 0 { MachineMemoryBar(device: d) }
                 }
-                Section("Models") {
-                    if d.models.isEmpty {
-                        Text(d.online ? "No models on this machine." : "Not answering.").foregroundStyle(Tokens.textTertiary)
-                    }
-                    ForEach(d.models, id: \.weightsHash) { m in modelRow(d, m) }
-                    if Devices.canPull {
-                        Button("Download a model…") {}.disabled(true)
-                    }
-                    if let problem { Text(problem).font(.frog(size: 11)).foregroundStyle(Tokens.signal) }
-                }
+                MachineModelsSections(device: d, devices: devices)
                 Section("Node") {
                     if d.role == .thisMac {
                         Toggle("Share with my other machines", isOn: $lender.enabled)
@@ -157,42 +147,6 @@ struct MachinePage: View {
         } else {
             Text("This machine isn't paired anymore.").foregroundStyle(Tokens.textTertiary)
         }
-    }
-
-    private func modelRow(_ d: Device, _ m: Device.PooledModel) -> some View {
-        let spec = "node/\(m.weightsHash.prefix(12))"
-        let loading = devices.asked[spec] != nil || d.loadingID == m.id
-        return HStack(spacing: 8) {
-            Button {
-                guard !m.loaded else { return }
-                problem = nil
-                Task {
-                    do { try await devices.switchTo(spec, on: d.id) } catch { problem = error.localizedDescription }
-                }
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: m.loaded ? "largecircle.fill.circle" : "circle")
-                        .foregroundStyle(m.loaded ? Tokens.placeLocal : Tokens.textTertiary)
-                    Text(Devices.displayName(m.name))
-                    if let q = m.quant { Text(q).font(.frog(size: 11)).foregroundStyle(Tokens.textTertiary) }
-                }
-            }
-            .buttonStyle(.plain)
-            Spacer()
-            if loading {
-                ProgressView().controlSize(.small)
-                Text(devices.waitingSwap[spec] != nil ? "swaps after this turn" : "loading")
-                    .font(.frog(size: 11)).foregroundStyle(Tokens.textTertiary)
-            } else if m.loaded {
-                if let tps = d.decode { Text(ModelStats.speedText(tps)).font(.frog(size: 11)).foregroundStyle(Tokens.textTertiary) }
-                Button("Stop") {
-                    Task { do { try await devices.stopModel(on: d.id) } catch { problem = error.localizedDescription } }
-                }
-            } else if Devices.canPull {
-                Button("Delete") {}.disabled(true)
-            }
-        }
-        .monospacedDigit()
     }
 }
 
@@ -279,9 +233,9 @@ extension Device {
     var runningLine: String {
         if let refused { return refused }
         if !online { return role == .thisMac ? "not running" : "offline" }
-        if let loading { return "loading \(Devices.displayName(loading))" }
+        if let loading { return "loading \(LocalCatalog.displayName(loading))" }
         guard let model else { return "idle" }
-        return [Devices.displayName(model), decode.map(ModelStats.speedText)].compactMap { $0 }.joined(separator: " · ")
+        return [LocalCatalog.displayName(model), decode.map(ModelStats.speedText)].compactMap { $0 }.joined(separator: " · ")
     }
 
     var statusLine: String {

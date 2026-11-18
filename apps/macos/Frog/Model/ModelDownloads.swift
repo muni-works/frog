@@ -17,18 +17,13 @@ struct SuggestedModel: Identifiable, Hashable {
         g >= 10 ? "\(Int(g.rounded())) GB" : String(format: "%.1f GB", g)
     }
 
-    static let all: [SuggestedModel] = [
-        SuggestedModel(repo: "mlx-community/Qwen3-4B-4bit", title: "Qwen3 4B",
-                       detail: "Best balance for coding on most Macs", approxGB: 2.3),
-        SuggestedModel(repo: "mlx-community/Qwen3-8B-4bit", title: "Qwen3 8B",
-                       detail: "Stronger, needs 16 GB of memory", approxGB: 4.6),
-        SuggestedModel(repo: "mlx-community/Qwen3-32B-4bit", title: "Qwen3 32B",
-                       detail: "Best local quality, needs 48 GB of memory", approxGB: 18.0),
-        SuggestedModel(repo: "mlx-community/Qwen3-1.7B-4bit", title: "Qwen3 1.7B",
-                       detail: "Fastest, for quick questions", approxGB: 1.0),
-        SuggestedModel(repo: "mlx-community/gemma-3-4b-it-4bit", title: "Gemma 3 4B",
-                       detail: "Sees images: screenshots, diagrams, photos", approxGB: 3.4),
-    ]
+    /// The models the composer's menu offers on This Mac before they're downloaded: the
+    /// catalog's `menu` entries (catalog/local-models.json), in its order, so the menu and
+    /// Settings › Models name and size them the same.
+    static let all: [SuggestedModel] = LocalCatalog.all.filter { $0.menu == true && $0.runs_on.contains("metal") }.map {
+        SuggestedModel(repo: $0.source.repo, title: $0.name, detail: LocalCatalog.usesLine($0),
+                       approxGB: Double($0.download_bytes) / 1e9)
+    }
 }
 
 /// Downloads Hugging Face repos into the standard cache (`~/.cache/huggingface/hub`), where
@@ -46,6 +41,8 @@ final class ModelDownloads {
     }
 
     private(set) var states: [String: State] = [:]
+    /// Bytes so far, of how many, and the rate, by repo: Settings › Models' progress row.
+    private(set) var progress: [String: (done: Int64, total: Int64, rate: Double?, at: Date)] = [:]
     @ObservationIgnored private var tasks: [String: Task<Void, Never>] = [:]
 
     static var hub: URL {
@@ -79,8 +76,10 @@ final class ModelDownloads {
         tasks[repo] = Task {
             do {
                 try await fetch(repo)
+                progress[repo] = nil
                 states[repo] = .done
             } catch is CancellationError {
+                progress[repo] = nil
                 states[repo] = nil
             } catch {
                 states[repo] = .failed(error.localizedDescription)
@@ -142,7 +141,15 @@ final class ModelDownloads {
             let url = URL(string: "https://huggingface.co/\(repo)/resolve/\(info.sha)/\(file.rfilename)")!
             let base = finished
             try await Self.download(url, to: dest) { [weak self] received in
-                self?.states[repo] = .downloading(fraction: Double(base + received) / Double(total))
+                guard let self else { return }
+                let done = base + received, now = Date()
+                var rate = progress[repo]?.rate
+                if let prev = progress[repo], done > prev.done, now.timeIntervalSince(prev.at) > 0 {
+                    let fresh = Double(done - prev.done) / now.timeIntervalSince(prev.at)
+                    rate = rate.map { 0.8 * $0 + 0.2 * fresh } ?? fresh
+                }
+                if progress[repo]?.done != done { progress[repo] = (done, total, rate, now) }
+                states[repo] = .downloading(fraction: Double(done) / Double(total))
             }
             finished += file.size ?? 0
         }

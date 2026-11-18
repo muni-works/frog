@@ -37,7 +37,7 @@ test('names come from the shared catalog, as on the Mac', () => {
   assert.equal(displayName('mlx-community/Qwen3-32B-4bit'), 'Qwen3 32B')
   assert.deepEqual(machineModels([mac, mew]).map((r) => r.name), ['Qwen3 4B', 'Qwen3 8B'])
   const q32 = catalogModel('mlx-community/Qwen3-32B-4bit')!
-  assert.equal(usesLine(q32), 'Coding, tool use, thinking · 32K context')
+  assert.equal(usesLine(q32), 'Coding, uses tools, reasons · 32K context')
   // Frog Cloud's models carry Frog Cloud's names.
   assert.deepEqual(localCatalog.filter((m) => m.cloud).map((m) => modelName(m.cloud!)), localCatalog.filter((m) => m.cloud).map((m) => m.name))
 })

@@ -486,7 +486,8 @@ extension SuggestedModel {
         case 16...: repo = "mlx-community/Qwen3-8B-4bit"
         default: repo = "mlx-community/Qwen3-4B-4bit"
         }
-        return all.first { $0.repo == repo } ?? all[0]
+        return all.first { $0.repo == repo } ?? all.first
+            ?? SuggestedModel(repo: "mlx-community/Qwen3-4B-4bit", title: "Qwen3 4B", detail: "", approxGB: 2.3)
     }
 }
 
