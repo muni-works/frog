@@ -1,0 +1,26 @@
+
+running 4 tests
+test tests::slow ... ignored
+test tests::adds ... ok
+test tests::adds_zero ... ok
+test tests::squares ... ok
+
+test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 2 tests
+test outer_add ... ok
+test outer_square ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 1 test
+test src/lib.rs - square (line 3) ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.00s
+     Running unittests src/lib.rs (/work/tp/debug/deps/shapes-bd6bb5950cfecc60)
+     Running tests/outer.rs (/work/tp/debug/deps/outer-b85b311d5e33327e)
+   Doc-tests shapes

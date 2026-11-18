@@ -254,6 +254,21 @@ final class LivePulse {
     /// what has arrived (never shown as exact) or the providers' figure.
     private(set) var output: UInt64?
     private(set) var soFar = false
+    /// The engine says the stream is slow (#426): the stats say "Slow". Never computed here.
+    private(set) var slow = false
+    /// Tokens read from cache, from the last call that ended (kept through the next call's counts).
+    private(set) var cached: UInt64?
+    /// The counts as they arrived (this Mac's clock), for the speed over the last few seconds.
+    @ObservationIgnored private var samples: [(at: Date, output: UInt64)] = []
+
+    /// Tokens per second over the last few seconds (the web's `rateOf`), nil until two seconds
+    /// of counts. A count of pieces is approximate: never a decimal.
+    func rate(at now: Date, window: TimeInterval = 4) -> Int? {
+        guard let last = samples.last else { return nil }
+        let first = samples.first { $0.at >= now.addingTimeInterval(-window) } ?? last
+        guard last.at.timeIntervalSince(first.at) >= 2, now > first.at else { return nil }
+        return Int((Double(last.output) - Double(first.output)) / now.timeIntervalSince(first.at))
+    }
 
     func start(turn: UInt64) {
         self.turn = turn
@@ -261,6 +276,9 @@ final class LivePulse {
         lastTokenAt = nil
         output = nil
         soFar = false
+        slow = false
+        cached = nil
+        samples = []
     }
 
     func tick(at: Date = .now) {
@@ -270,9 +288,12 @@ final class LivePulse {
         lastTokenAt = at
     }
 
-    func tokens(turn: UInt64, output: UInt64, soFar: Bool) {
+    func tokens(turn: UInt64, output: UInt64, soFar: Bool, slow: Bool = false, cached: UInt64? = nil) {
         if self.turn != turn { start(turn: turn) }
+        if samples.last?.output != output { samples = Array((samples + [(Date(), output)]).suffix(40)) }
         self.output = output
         self.soFar = soFar
+        self.slow = slow
+        if let cached { self.cached = cached }
     }
 }

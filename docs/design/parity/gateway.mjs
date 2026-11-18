@@ -32,6 +32,9 @@ const json = (res, s, b) => res.writeHead(s, { "content-type": "application/json
 const server = createServer((req, res) => {
   const path = new URL(req.url, "http://x").pathname.replace(/\/+$/, "");
   if (path === "/v1/sessions" && req.method === "GET") return json(res, 200, { sessions: [info] });
+  // The fixture's model with list prices (USD per token), so the footer shows the turn's cost as
+  // the Mac does from its catalog. 31,200 read and 1,902 written come to under a cent.
+  if (path === "/v1/models") return json(res, 200, { data: [{ id: "qwen3-coder-next", context_length: 262144, pricing: { prompt: "0.0000002", completion: "0.0000008", input_cache_read: "0.00000002" } }] });
   if (path === `/v1/sessions/${id}`) return json(res, 200, info);
   json(res, 404, { error: "not in the parity fixture" });
 });

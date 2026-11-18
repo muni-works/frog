@@ -1,0 +1,42 @@
+[1m============================= test session starts ==============================[0m
+platform darwin -- Python 3.15.2, pytest-9.2.0, pluggy-1.7.0
+rootdir: /work/py
+collected 8 items
+
+tests/test_shapes.py [32m.[0m[31mF[0m[32m.[0m[33ms[0m[31mF[0m[32m.[0m[32m.[0m[31mE[0m[31m                                            [100%][0m
+
+==================================== ERRORS ====================================
+[31m[1m________________________ ERROR at setup of test_uses_db ________________________[0m
+
+    [0m[37m@pytest[39;49;00m.fixture[90m[39;49;00m
+    [94mdef[39;49;00m[90m [39;49;00m[92mdb[39;49;00m():[90m[39;49;00m
+>       [94mraise[39;49;00m [96mRuntimeError[39;49;00m([33m"[39;49;00m[33mno database[39;49;00m[33m"[39;49;00m)[90m[39;49;00m
+[1m[31mE       RuntimeError: no database[0m
+
+[1m[31mtests/test_shapes.py[0m:16: RuntimeError
+=================================== FAILURES ===================================
+[31m[1m___________________________________ test_add ___________________________________[0m
+
+>   [0m[94mdef[39;49;00m[90m [39;49;00m[92mtest_add[39;49;00m(): [94massert[39;49;00m add([94m2[39;49;00m, [94m2[39;49;00m) == [94m5[39;49;00m[90m[39;49;00m
+                    ^^^^^^^^^^^^^^^^^^^^^[90m[39;49;00m
+[1m[31mE   assert 4 == 5[0m
+[1m[31mE    +  where 4 = add(2, 2)[0m
+
+[1m[31mtests/test_shapes.py[0m:7: AssertionError
+[31m[1m_______________________________ test_positive[1] _______________________________[0m
+
+n = 1
+
+    [0m[37m@pytest[39;49;00m.mark.parametrize([33m"[39;49;00m[33mn[39;49;00m[33m"[39;49;00m, [[94m1[39;49;00m, [94m2[39;49;00m, [94m3[39;49;00m])[90m[39;49;00m
+>   [94mdef[39;49;00m[90m [39;49;00m[92mtest_positive[39;49;00m(n): [94massert[39;49;00m square(n) > [94m1[39;49;00m[90m[39;49;00m
+                          ^^^^^^^^^^^^^^^^^^^^[90m[39;49;00m
+[1m[31mE   assert 1 > 1[0m
+[1m[31mE    +  where 1 = square(1)[0m
+
+[1m[31mtests/test_shapes.py[0m:12: AssertionError
+[36m[1m=========================== short test summary info ============================[0m
+[31mFAILED[0m tests/test_shapes.py::[1mtest_add[0m - assert 4 == 5
+[31mFAILED[0m tests/test_shapes.py::[1mtest_positive[1][0m - assert 1 > 1
+[31mERROR[0m tests/test_shapes.py::[1mtest_uses_db[0m - RuntimeError: no database
+[31m=============== [31m[1m2 failed[0m, [32m4 passed[0m, [33m1 skipped[0m, [31m[1m1 error[0m[31m in 0.05s[0m[31m ================[0m
+[exit code 1]

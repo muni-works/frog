@@ -58,6 +58,10 @@ load_claude_md = true
 # stopped and the parent carries on (0: wait forever).
 # child_quiet_secs = 300
 # child_quiet_stop_secs = 1800
+# Seconds the turn's own model call may send nothing before you're asked whether to keep
+# waiting or stop the turn (a cloud model counts from the request, a local one from its first
+# token; 0: never ask).
+# call_quiet_secs = 30
 # Screenshot service for page captures (default: the bundled WebKit sidecar).
 # screenshot_endpoint = "http://localhost:3000/screenshot"
 

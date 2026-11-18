@@ -1,0 +1,39 @@
+[0m[7m[1m[31m FAIL [39m[22m[27m[0m [2mjt/[22m[1mshapes.test.js[22m
+[1m[31m  [1m● [22m[1mshapes › adds[39m[22m
+
+    [2mexpect([22m[31mreceived[39m[2m).[22mtoBe[2m([22m[32mexpected[39m[2m) // Object.is equality[22m
+
+    Expected: [32m5[39m
+    Received: [31m4[39m
+[2m[22m
+[2m      3 | describe('shapes', () => {[22m
+[2m      4 |   it('squares', () => expect(square(3)).toBe(9))[22m
+[2m    > 5 |   it('adds', () => expect(add(2, 2)).toBe(5))[22m
+[2m        |                                      ^[22m
+[2m      6 |   it.skip('is slow', () => {})[22m
+[2m      7 | })[22m
+[2m      8 |[22m
+[2m[22m
+[2m      [2mat Object.toBe ([22m[2m[0m[36mshapes.test.js[39m[0m[2m:5:38)[22m[2m[22m
+
+[0m[7m[1m[31m FAIL [39m[22m[27m[0m [2mjt/[22m[1msizes.test.js[22m
+[1m[31m  [1m● [22m[1mdoubles zero[39m[22m
+
+    [2mexpect([22m[31mreceived[39m[2m).[22mtoBe[2m([22m[32mexpected[39m[2m) // Object.is equality[22m
+
+    Expected: [32m1[39m
+    Received: [31m0[39m
+[2m[22m
+[2m      1 | it('doubles', () => expect(2 * 2).toBe(4))[22m
+[2m    > 2 | it('doubles zero', () => expect(0 * 2).toBe(1))[22m
+[2m        |                                        ^[22m
+[2m      3 |[22m
+[2m[22m
+[2m      [2mat Object.toBe ([22m[2m[0m[36msizes.test.js[39m[0m[2m:2:40)[22m[2m[22m
+
+[1mTest Suites: [22m[1m[31m2 failed[39m[22m, 2 total
+[1mTests:       [22m[1m[31m2 failed[39m[22m, [1m[33m1 skipped[39m[22m, [1m[32m2 passed[39m[22m, 5 total
+[1mSnapshots:   [22m0 total
+[1mTime:[22m        0.11 s, estimated 1 s
+[2mRan all test suites[22m[2m.[22m
+[exit code 1]

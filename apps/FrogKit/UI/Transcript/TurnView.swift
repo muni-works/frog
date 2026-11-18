@@ -18,6 +18,15 @@ enum TurnPart {
     case head
     case segment(TurnFlow.Segment)
     case tail
+
+    /// This row draws `item` (a think, an answer, or a step in its run).
+    func holds(_ item: String?) -> Bool {
+        guard let item, !item.isEmpty, case .segment(let s) = self else { return false }
+        switch s {
+        case .activity(let g): return g.steps.contains { $0.id == item }
+        case .text(let i), .visual(let i), .notice(let i): return i.id == item
+        }
+    }
 }
 
 struct TurnView: View, Equatable {
@@ -26,6 +35,8 @@ struct TurnView: View, Equatable {
     let actions: TurnActions
     /// Which of the turn's rows this is.
     let part: TurnPart
+    /// The question anchored on this row's think or answer (it draws under the row).
+    var question: String? = nil
     /// Space above the row: between turns for a turn's first row, within one for the rest.
     var gap: CGFloat = 0
     /// Show the model/speed footer without hovering (see `TurnFooter.pinned`).
@@ -41,7 +52,7 @@ struct TurnView: View, Equatable {
     /// outside equality, as it must for a row that survives body evaluations.
     nonisolated static func == (a: Self, b: Self) -> Bool {
         guard a.conversation === b.conversation, a.pinsFooter == b.pinsFooter, a.gap == b.gap,
-              a.turn.id == b.turn.id else { return false }
+              a.turn.id == b.turn.id, a.question == b.question else { return false }
         switch (a.part, b.part) {
         case (.head, .head):
             // What the head renders derives entirely from these four (see `TurnLead`), so the
@@ -75,11 +86,13 @@ struct TurnView: View, Equatable {
 
     @Environment(\.transcriptTrack) private var track
 
-    init(turn: TurnState, conversation: Conversation, actions: TurnActions, part: TurnPart, gap: CGFloat = 0, pinsFooter: Bool = true) {
+    init(turn: TurnState, conversation: Conversation, actions: TurnActions, part: TurnPart, question: String? = nil,
+         gap: CGFloat = 0, pinsFooter: Bool = true) {
         self.turn = turn
         self.conversation = conversation
         self.actions = actions
         self.part = part
+        self.question = question
         self.gap = gap
         self.pinsFooter = pinsFooter
         // Only a prompt sent a moment ago flies in; history, replays and a scrolled-back
@@ -201,8 +214,16 @@ struct TurnView: View, Equatable {
     // (so the handoff is a fade inside one view, not a swap of two), and it settles to the
     // plain row when the message completes; tool rows run above it.
     private func row(_ segment: TurnFlow.Segment) -> some View {
-        SegmentRow(segment: segment, conversation: conversation, live: running, verbosity: verbosity)
-            .equatable()
+        VStack(alignment: .leading, spacing: space.block) {
+            SegmentRow(segment: segment, conversation: conversation, live: running, verbosity: verbosity)
+                .equatable()
+            // An engine question anchored on this think or answer (the quiet call): right under it.
+            if question != nil, let q = conversation.question {
+                QuestionCard(question: q, conversation: conversation)
+                    .id(q.id)
+                    .transition(.opacity)
+            }
+        }
             .modifier(FadeIn(enabled: running))
             .background {
                 // The answer being written: where it starts and ends, so a long one stops at

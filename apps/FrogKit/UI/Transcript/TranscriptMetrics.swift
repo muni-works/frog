@@ -34,7 +34,7 @@ final class TranscriptMetrics {
     func set(_ key: String, kind: Kind, text: String, box: CGRect, fontSize: CGFloat) {
         var row = rows[key] ?? Row(kind: kind, text: text, box: box, fontSize: fontSize)
         row.kind = kind
-        row.text = Self.collapse(text)
+        row.text = kind == .stats ? Self.ticking(Self.collapse(text)) : Self.collapse(text)
         row.box = box
         row.fontSize = fontSize
         rows[key] = row
@@ -49,6 +49,13 @@ final class TranscriptMetrics {
     private var pendingFirst: [String: CGFloat] = [:]
 
     func remove(_ key: String) { rows[key] = nil }
+
+    /// The stats' figures tick, so the dump writes every duration `#s` and every other run of
+    /// digits `#` (docs/design/parity/README.md; metrics.mjs's own two replacements).
+    static func ticking(_ s: String) -> String {
+        let durations = s.replacingOccurrences(of: #"(\d+m )?\d+s\b"#, with: "#s", options: .regularExpression)
+        return durations.replacingOccurrences(of: #"\d[\d,.]*"#, with: "#", options: .regularExpression)
+    }
 
     static func collapse(_ s: String) -> String {
         s.split(whereSeparator: \.isWhitespace).joined(separator: " ")

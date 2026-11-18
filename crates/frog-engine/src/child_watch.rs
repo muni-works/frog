@@ -32,6 +32,19 @@
 //! "keep waiting" for an engine that no longer exists. A `Task` returns an error naming it, for
 //! the parent's model to act on in the turn it is in; a child session's parent gets a note,
 //! as it does when a child ends a turn.
+//!
+//! **The turn's own model call** is watched the same way ([`Watch::call`]): the spec's live row
+//! says "No output for 12s" by itself, and at `call_quiet_secs` (default 30 s) of nothing
+//! streamed the person is asked:
+//!
+//! > The model has sent nothing for 30 s.
+//! > [Keep waiting] [Stop the turn]
+//!
+//! Stop is the Stop button (`Op::Interrupt`). Keep waiting asks again after twice as long, so
+//! a slow provider isn't nagged every 30 s. Any streamed piece withdraws it and starts the
+//! clock again from the first stretch. Nobody to ask: nothing (the provider's own request
+//! timeout and retries govern). Never for a subagent (its parent's watch covers it) or a
+//! call that streams nothing to the person (compaction, side jobs).
 
 use crate::config::Config;
 use crate::engine::Asker;
@@ -42,6 +55,7 @@ use tokio::time::Instant;
 
 pub const KEEP: &str = "Keep waiting";
 pub const STOP: &str = "Stop it and carry on";
+pub const STOP_TURN: &str = "Stop the turn";
 
 /// Why a watch says to stop the child.
 #[derive(Clone, Debug, PartialEq)]
@@ -86,11 +100,15 @@ fn secs(n: u64) -> Option<Duration> {
 pub struct Watch {
     /// How the parent names it: `the subagent “find the parser”`.
     what: String,
-    /// What it was asked, for the question.
-    brief: String,
+    /// What it was asked, for the question. `None`: the turn's own model call.
+    brief: Option<String>,
     /// Where the question anchors in the parent's transcript (the Task item, the child's id).
     item: String,
     quiet: Option<Duration>,
+    /// The first stretch, which `quiet` returns to when there's life again; Keep waiting
+    /// doubles `quiet` from it when `backoff`.
+    base: Option<Duration>,
+    backoff: bool,
     stop: Option<Duration>,
     asker: Asker,
     last: Instant,
@@ -107,16 +125,45 @@ impl Watch {
         } else {
             brief
         };
+        let quiet = secs(cfg.child_quiet_secs);
         Self {
             what,
-            brief,
+            brief: Some(brief),
             item,
-            quiet: secs(cfg.child_quiet_secs),
+            quiet,
+            base: quiet,
+            backoff: false,
             stop: secs(cfg.child_quiet_stop_secs),
             asker,
             last: Instant::now(),
             cards: 0,
             open: None,
+        }
+    }
+
+    /// The turn's own model call: asks after `quiet` of nothing streamed, then after twice as
+    /// long each time the person keeps waiting; never stops it unasked.
+    pub(crate) fn call(asker: Asker, quiet: Duration) -> Self {
+        Self {
+            what: "the model".into(),
+            brief: None,
+            item: String::new(),
+            quiet: Some(quiet),
+            base: Some(quiet),
+            backoff: true,
+            stop: None,
+            asker,
+            last: Instant::now(),
+            cards: 0,
+            open: None,
+        }
+    }
+
+    /// Where the question anchors: the reasoning or message item the call is streaming, once
+    /// there is one.
+    pub fn anchor(&mut self, item: &str) {
+        if self.item.is_empty() {
+            self.item = item.into();
         }
     }
 
@@ -138,6 +185,7 @@ impl Watch {
     /// Restart the clock without an event (a new turn handed to an idle child).
     pub fn reset(&mut self) {
         self.last = Instant::now();
+        self.quiet = self.base;
         self.withdraw();
     }
 
@@ -163,11 +211,15 @@ impl Watch {
                 let id = id.clone();
                 self.open = None;
                 self.asker.close(&id, answer.clone());
-                if answer.choices.iter().any(|c| c == STOP) {
+                if answer.choices.iter().any(|c| c == STOP || c == STOP_TURN) {
                     return Stop::Asked(self.last.elapsed());
                 }
-                // Keep waiting, or a dismissal: another full stretch before asking again.
+                // Keep waiting, or a dismissal: another full stretch before asking again
+                // (twice as long, for a call).
                 self.last = Instant::now();
+                if self.backoff {
+                    self.quiet = self.quiet.map(|q| q * 2);
+                }
                 continue;
             }
             // On a card the person already has: not quiet.
@@ -181,24 +233,41 @@ impl Watch {
                 };
                 tokio::time::sleep_until(self.last + quiet).await;
                 let gone = self.last.elapsed();
-                let question = format!(
-                    "{} has produced nothing for {}. It was asked: “{}”",
-                    capital(&self.what),
-                    span(gone),
-                    self.brief
-                );
-                let options = vec![
-                    AskOption {
-                        label: KEEP.into(),
-                        detail: Some("Ask again if it stays quiet as long again".into()),
-                    },
-                    AskOption {
-                        label: STOP.into(),
-                        detail: Some(
-                            "Interrupt it; the parent goes on with what it has so far".into(),
+                let (question, options) = match &self.brief {
+                    Some(brief) => (
+                        format!(
+                            "{} has produced nothing for {}. It was asked: “{brief}”",
+                            capital(&self.what),
+                            span(gone),
                         ),
-                    },
-                ];
+                        vec![
+                            AskOption {
+                                label: KEEP.into(),
+                                detail: Some("Ask again if it stays quiet as long again".into()),
+                            },
+                            AskOption {
+                                label: STOP.into(),
+                                detail: Some(
+                                    "Interrupt it; the parent goes on with what it has so far"
+                                        .into(),
+                                ),
+                            },
+                        ],
+                    ),
+                    None => (
+                        format!("The model has sent nothing for {}.", span(gone)),
+                        vec![
+                            AskOption {
+                                label: KEEP.into(),
+                                detail: Some("Ask again if it stays quiet twice as long".into()),
+                            },
+                            AskOption {
+                                label: STOP_TURN.into(),
+                                detail: Some("End this turn; what came so far stays".into()),
+                            },
+                        ],
+                    ),
+                };
                 match self.asker.open(&self.item, question, options) {
                     Some(open) => self.open = Some(open),
                     // Another question is on screen: try again shortly.

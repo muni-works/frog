@@ -402,6 +402,9 @@ body.resizing { cursor: col-resize; user-select: none; }
 .title-chev { width: 24px; height: 24px; }
 @keyframes shimmer-text { from { background-position: 100% 0; } to { background-position: -150% 0; } }
 @keyframes breathe { 0%, 100% { opacity: .35; transform: scale(.8); } 50% { opacity: 1; transform: scale(1); } }
+/* The live row's thought cross-fade (transcript.css): out 180 ms, in 240 ms, overlapping, no movement. */
+@keyframes tf-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes tf-in { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .thinking { animation: none; background: none; color: var(--muted); } .thinking-dot { animation: none; } }
 /* Diffs: a gutter of line numbers, tinted added and removed rows, quiet gaps between hunks. */
 .hunks { font: 12px/19px var(--font-mono); overflow-x: auto; padding: 2px 0 8px; }
@@ -767,3 +770,41 @@ body { font-family: var(--font-sans); }
 @media (max-width: 760px) { .settings-page .set-group > .set-row { flex-wrap: wrap; } .set-seg { width: 100%; } }
 .credit-history .set-price-h, .credit-history .set-price { grid-template-columns: 1fr 1fr 80px 80px; }
 .credit-history .set-price span:nth-child(2) { text-align: left; }
+
+/* The turn panel (transcript spec phase 3): over the transcript pane, which dims and doesn't
+ * reflow. Portaled to the body, so it sits outside .tx; sizes follow the transcript's tokens. */
+.turn-panel-scrim { position: fixed; z-index: 40; display: flex; align-items: flex-start; justify-content: center; padding: var(--space-roomy) var(--tx-gutter-narrow); background: color-mix(in srgb, var(--bg) 60%, transparent); box-sizing: border-box; overflow: auto; }
+.turn-panel { width: min(var(--tx-column), 100%); display: flex; flex-direction: column; gap: var(--space-roomy); padding: var(--space-card) var(--space-roomy); box-shadow: var(--shadow-float); font-size: var(--tx-status-size); line-height: var(--tx-status-line); color: var(--fg); outline: none; }
+.tp-head { display: flex; align-items: baseline; gap: var(--space-row); flex-wrap: wrap; }
+.tp-head b { font-size: var(--tx-body-size); }
+.tp-meta { color: var(--muted); }
+.tp-totals { color: var(--faint); font-variant-numeric: tabular-nums; margin-left: auto; }
+.tp-h { font-size: var(--tx-label-size); line-height: var(--tx-label-line); font-weight: var(--tx-label-weight); color: var(--muted); margin-bottom: var(--space-tight); }
+.tp-where { display: flex; flex-direction: column; max-width: 360px; }
+.tp-kv { display: flex; justify-content: space-between; gap: var(--space-row); font-variant-numeric: tabular-nums; }
+.tp-kv > span:last-child { color: var(--muted); }
+.tp-key { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: var(--space-snug); background: var(--faint); }
+.tp-body { display: flex; gap: var(--space-roomy); align-items: flex-start; }
+.tp-fall { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.tp-axis { position: relative; height: 30px; margin: 0 0 20px 180px; border-bottom: 1px solid var(--line); }
+.tp-pace { position: absolute; inset: 0 0 2px 0; width: 100%; height: 28px; }
+.tp-pace path { stroke: var(--muted); stroke-width: 1.25; }
+.tp-tick { position: absolute; top: calc(100% + 2px); transform: translateX(-50%); font-size: var(--tx-meta-size); line-height: var(--tx-meta-line); color: var(--faint); font-variant-numeric: tabular-nums; }
+.tp-row { display: flex; align-items: center; gap: 0; border: 0; background: none; padding: 0; margin: 0; text-align: left; font: inherit; color: inherit; cursor: pointer; min-height: var(--gap-row); border-radius: var(--tx-plate-radius); }
+.tp-row:hover, .tp-row.on { background: var(--hover); }
+.tp-name { width: 180px; flex: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); padding-right: var(--space-row); box-sizing: border-box; }
+.tp-row.on .tp-name { color: var(--fg); }
+.tp-track { position: relative; flex: 1; height: 10px; }
+.tp-bar { position: absolute; top: 0; bottom: 0; border-radius: 2px; background: var(--faint); font-size: var(--tx-label-size); line-height: 10px; color: var(--bg); text-align: center; overflow: hidden; white-space: nowrap; }
+.tp-bar.seg-thinking, .tp-key.seg-thinking { background: var(--frog); }
+.tp-bar.seg-waiting, .tp-key.seg-waiting { background: var(--notice); }
+.tp-bar.seg-writing, .tp-key.seg-writing { background: var(--fg); }
+.tp-bar.broken { background: repeating-linear-gradient(135deg, var(--notice) 0 4px, transparent 4px 6px); color: var(--fg); }
+.tp-bar.growing { opacity: .8; }
+.tp-detail { width: 280px; flex: none; display: flex; flex-direction: column; gap: var(--space-snug); min-width: 0; }
+.tp-detail .line-out { margin: 0; max-height: 280px; overflow: auto; background: var(--well); border-radius: var(--radius-nested); padding: var(--space-row) var(--space-card); font-family: var(--font-mono); font-size: var(--tx-status-mono); white-space: pre-wrap; word-break: break-word; }
+.tp-detail .line-link { border: 0; background: none; padding: 0; font: inherit; color: var(--muted); cursor: pointer; align-self: flex-start; }
+.tp-detail .line-link:hover, .tp-head .line-link:hover { color: var(--fg); }
+.tp-head .line-link { border: 0; background: none; padding: 0; font: inherit; color: var(--muted); cursor: pointer; }
+.tp-none { color: var(--faint); padding: var(--space-row) 0; }
+@media (max-width: 640px) { .tp-body { flex-direction: column; } .tp-detail { width: 100%; } .tp-name { width: 120px; } .tp-axis { margin-left: 120px; } }

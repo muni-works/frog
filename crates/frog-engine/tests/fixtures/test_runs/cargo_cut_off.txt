@@ -1,0 +1,19 @@
+   Compiling shapes v0.1.0 (/work/cargo_fail)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.15s
+     Running unittests src/lib.rs (/work/tf/debug/deps/shapes-bd6bb5950cfecc60)
+
+running 4 tests
+test tests::slow ... ignored
+test tests::squares ... ok
+test tests::adds_zero ... FAILED
+test tests::adds ... FAILED
+
+failures:
+
+---- tests::adds_zero stdout ----
+
+thread 'tests::adds_zero' (77684175) panicked at src/lib.rs:15:30:
+assertion `left == right` failed
+  left: 7
+ right: 8
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

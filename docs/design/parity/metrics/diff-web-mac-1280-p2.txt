@@ -1,0 +1,3 @@
+$ node docs/design/parity/diff-metrics.mjs docs/design/parity/metrics/web-1280-p2.json docs/design/parity/metrics/mac-1280-p2.json
+match: 14 rows, web and mac, within 1 pt
+(exit 0)

@@ -16,12 +16,13 @@ export function turnCost(u: TurnUsage, m: Prices | undefined) {
   return { fresh, cached: reused, output, total: fresh + reused + output }
 }
 
-/** The Mac's ModelStats.money: "Free", "<1¢", "11¢", "$1.84". */
+/** The Mac's ModelStats.money over FrogKit's Dollars.format, the one way frog writes dollars:
+ * "Free", "<$0.01", "$0.11", "$1.84", "$15" (cents only when there are any). */
 export function money(d: number) {
   if (d <= 0) return 'Free'
-  if (d < 0.01) return '<1¢'
-  if (d < 1) return `${Math.round(d * 100)}¢`
-  return `$${d.toFixed(2)}`
+  if (d < 0.01) return '<$0.01'
+  const cents = Math.round(d * 100)
+  return cents % 100 === 0 ? `$${cents / 100}` : `$${(cents / 100).toFixed(2)}`
 }
 
 /** "8.4k", "312", "1.2M". */

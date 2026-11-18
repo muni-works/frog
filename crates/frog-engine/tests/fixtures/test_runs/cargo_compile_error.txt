@@ -1,0 +1,16 @@
+   Compiling shapes v0.1.0 (/work/cargo_fail)
+error: this file contains an unclosed delimiter
+  --> src/lib.rs:18:3
+   |
+ 8 | pub fn unused_thing() -> u32 { 2 } fn broken( {
+   |                                             - - unclosed delimiter
+   |                                             |
+   |                                             unclosed delimiter
+...
+18 | }
+   |  ^
+
+error: could not compile `shapes` (lib test) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `shapes` (lib) due to 1 previous error
+[exit code 101]

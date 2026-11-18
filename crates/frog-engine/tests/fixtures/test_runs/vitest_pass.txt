@@ -1,0 +1,10 @@
+
+ RUN  v3.2.7 /work/js/vt
+
+ ✓ shapes.test.js (3 tests | 1 skipped) 1ms
+ ✓ sizes.test.js (2 tests) 1ms
+
+ Test Files  2 passed (2)
+      Tests  4 passed | 1 skipped (5)
+   Start at  23:42:03
+   Duration  148ms (transform 12ms, setup 0ms, collect 11ms, tests 2ms, environment 0ms, prepare 66ms)

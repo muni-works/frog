@@ -97,6 +97,21 @@ final class Conversation {
     private(set) var permission: PermissionRequest?
     /// When the permission card went up, for the live row's "waited 6s".
     @ObservationIgnored private(set) var permissionAt: Date?
+    /// When the question went up (an `Ask`, or the engine's quiet call).
+    @ObservationIgnored private(set) var questionAt: Date?
+    /// A question anchored on an item this transcript draws (a think or an answer): it draws
+    /// under that row, not after the turn. An `Ask` call's question is its own step's.
+    func drawsQuestionInline(_ q: Question) -> Bool {
+        guard !q.item.isEmpty, let item = turns.last?.items.first(where: { $0.id == q.item }) else { return false }
+        return item.kind == .reasoning || item.kind == .message
+    }
+
+    /// When whatever is waiting on the person went up.
+    var waitingSince: Date? {
+        if permission != nil { return permissionAt }
+        if question != nil { return questionAt }
+        return nil
+    }
     /// An MCP server waiting on the user.
     private(set) var elicitation: Elicitation?
     /// The model's open `Ask`.
@@ -884,8 +899,8 @@ final class Conversation {
             }
             if case .toolCall = item, isNews(env) { stepsDone += 1 }
             changesVersion += 1
-        case .outputTokens(let turn, let output, let soFar):
-            pulse.tokens(turn: turn, output: output, soFar: soFar)
+        case .outputTokens(let turn, let output, let soFar, let slow, let cached):
+            pulse.tokens(turn: turn, output: output, soFar: soFar, slow: slow, cached: cached)
         case .itemGisted(let item, let gist):
             // A finished call's one-line summary, from the engine's side-model. It lands on the
             // row itself, so it survives a replay and a reload: nothing is cached here.
@@ -940,6 +955,7 @@ final class Conversation {
             if elicitation?.id == id { elicitation = nil }
         case .question(let q):
             question = q
+            questionAt = Date(timeIntervalSince1970: Double(env.created) / 1000)
             if isNews(env) { FrogSounds.shared.play(.drip) }
             if progress != nil { progress = nil }
         case .questionResolved(let id, _, _):

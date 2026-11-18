@@ -20,7 +20,7 @@
     },
     {
       "kind": "thought",
-      "text": "Thought",
+      "text": "Thought for 1s",
       "x": 26,
       "top": 76,
       "height": 24,
@@ -84,7 +84,7 @@
     },
     {
       "kind": "footer",
-      "text": "Qwen3 Coder Next · 56s · 1,902 tokens",
+      "text": "Qwen3 Coder Next · 56s · 1,902 tokens · <$0.01",
       "x": 26,
       "top": 690,
       "height": 16,

@@ -285,6 +285,7 @@ impl Agent {
             let (tx, rx) = oneshot::channel();
             self.shared.pending.lock().unwrap().insert(id.clone(), tx);
             let preview = tools::fs::preview(name, input, &self.ctx);
+            let asked = self.open_wait(&id, item);
             self.emit(Event::PermissionRequest {
                 id: id.clone(),
                 item: item.into(),
@@ -300,7 +301,13 @@ impl Agent {
                 card: None,
             });
             let decision = rx.await.unwrap_or(Decision::Deny);
-            self.emit(Event::PermissionResolved { id, decision });
+            self.shared.waits.lock().unwrap().remove(&id);
+            self.emit(Event::PermissionResolved {
+                id,
+                decision,
+                item: Some(item.into()),
+                asked: Some(asked),
+            });
             if decision != Decision::Deny {
                 self.ctx.permitted.insert(path);
             } else {
@@ -667,6 +674,7 @@ impl Agent {
             0,
         );
         let card_prefix = card.as_ref().and_then(|c| c.prefix.clone());
+        let asked_at = self.open_wait(&id, item);
         self.emit(Event::PermissionRequest {
             id: id.clone(),
             item: item.into(),
@@ -727,7 +735,13 @@ impl Agent {
             };
             self.record_denial(call, why);
         }
-        self.emit(Event::PermissionResolved { id, decision });
+        self.shared.waits.lock().unwrap().remove(&id);
+        self.emit(Event::PermissionResolved {
+            id,
+            decision,
+            item: Some(item.into()),
+            asked: Some(asked_at),
+        });
         // The grant: these hosts for this one run, or for the rest of the session.
         if let (Some(hosts), Some(egress)) = (&egress_ask, &self.ctx.egress)
             && !hosts.is_empty()
@@ -1179,6 +1193,7 @@ arrives as a <session-message from=\"parent\"> in this turn."
         }
         let (tx, rx) = oneshot::channel();
         self.shared.questions.lock().unwrap().insert(id.clone(), tx);
+        let asked_at = self.open_wait(&id, item);
         self.emit(Event::Question {
             id: id.clone(),
             item: item.into(),
@@ -1198,9 +1213,12 @@ arrives as a <session-message from=\"parent\"> in this turn."
                 l.dismiss(&id, crate::engine::now_ms());
             }
         }
+        self.shared.waits.lock().unwrap().remove(&id);
         self.emit(Event::QuestionResolved {
             id,
             answer: answer.clone(),
+            item: Some(item.into()),
+            asked: Some(asked_at),
         });
         // A child's quiet question this card covered on screen comes back.
         self.shared.reshow_watching();
@@ -1300,13 +1318,20 @@ arrives as a <session-message from=\"parent\"> in this turn."
             subagent: None,
             card: None,
         });
+        let asked_at = self.open_wait(&id, item);
         let asked = Instant::now();
         let decision = match rx.await.unwrap_or(Decision::Deny) {
             Decision::AllowAlways | Decision::AllowPrefix => Decision::Allow,
             d => d,
         };
         self.timing.user_ms += ms(asked.elapsed());
-        self.emit(Event::PermissionResolved { id, decision });
+        self.shared.waits.lock().unwrap().remove(&id);
+        self.emit(Event::PermissionResolved {
+            id,
+            decision,
+            item: Some(item.into()),
+            asked: Some(asked_at),
+        });
         decision
     }
 
