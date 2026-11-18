@@ -14919,3 +14919,49 @@ async fn reasoning_deltas_carry_the_thought_line() {
     );
     assert!(item.1.is_some(), "a streamed reasoning has a length");
 }
+
+/// A Bash command whose output ends in a test runner's summary carries its counts; any other
+/// command carries none.
+#[tokio::test]
+async fn bash_test_runs_carry_their_counts() {
+    let bash = |id: &str, command: &str| Block::ToolUse {
+        id: id.into(),
+        name: "Bash".into(),
+        input: json!({ "command": command }),
+    };
+    let script = vec![
+        reply(
+            vec![
+                bash("b1", "echo 'tests/test_a.py ..F'; echo '==== 1 failed, 2 passed in 0.01s ===='"),
+                bash("b2", "echo hello"),
+            ],
+            Stop::ToolUse,
+        ),
+        reply(vec![text("ran")], Stop::End),
+    ];
+    let mut h = engine(script, false);
+    let evs = run(&mut h, "run the tests").await;
+    let tests: Vec<Option<crate::test_run::TestRun>> = evs
+        .iter()
+        .filter_map(|e| match &e.event {
+            Event::ItemCompleted {
+                item: Item::ToolCall { name, tests, .. },
+                ..
+            } if name == "Bash" => Some(tests.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        tests,
+        [
+            Some(crate::test_run::TestRun {
+                runner: "pytest".into(),
+                passed: 2,
+                failed: 1,
+                total: 3,
+                failed_names: vec![],
+            }),
+            None
+        ]
+    );
+}

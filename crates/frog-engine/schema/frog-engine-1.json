@@ -5481,6 +5481,17 @@
               ],
               "description": "Set for Present: validated blocks, ready to draw."
             },
+            "tests": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TestRun"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Set for a Bash command whose output ends in a test runner's summary (cargo test,\npytest, go test -v, vitest, jest): the counts and failing names. Absent when the\noutput wasn't recognised with confidence, and in older logs (see `test_run`)."
+            },
             "type": {
               "const": "tool_call",
               "type": "string"
@@ -7153,6 +7164,45 @@
         "tool_mode",
         "tier",
         "todos"
+      ],
+      "type": "object"
+    },
+    "TestRun": {
+      "description": "A test run's counts, as the completed command item carries them (`tests`).",
+      "properties": {
+        "failed": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "failed_names": {
+          "description": "The failing tests, as the runner names them, in its order. May be shorter than\n`failed` when the runner didn't print every name (or the output was cut); never longer.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "passed": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "runner": {
+          "description": "`cargo`, `pytest`, `go`, `vitest` or `jest`.",
+          "type": "string"
+        },
+        "total": {
+          "description": "Tests that ran: `passed + failed`. Skipped, ignored and filtered tests aren't counted.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "runner",
+        "passed",
+        "failed",
+        "total"
       ],
       "type": "object"
     },

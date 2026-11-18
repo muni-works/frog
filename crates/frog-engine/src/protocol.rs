@@ -1067,6 +1067,11 @@ pub enum Item {
         /// An MCP App: the server's own UI for this result, for clients that can host it.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         app: Option<Box<AppView>>,
+        /// Set for a Bash command whose output ends in a test runner's summary (cargo test,
+        /// pytest, go test -v, vitest, jest): the counts and failing names. Absent when the
+        /// output wasn't recognised with confidence, and in older logs (see `test_run`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tests: Option<crate::test_run::TestRun>,
     },
 }
 
