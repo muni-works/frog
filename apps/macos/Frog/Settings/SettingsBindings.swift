@@ -27,6 +27,9 @@ enum SettingsBindings {
     /// The machines Models lists, and the spend and energy Usage shows (snapshots bring their own).
     @MainActor static var devices = Devices.shared
     @MainActor static var stats = ModelStats.shared
+    /// Off in snapshots: no row starts the engine, probes a server or calls the edge while it
+    /// renders (one did, and hung a full test run).
+    @MainActor static var loads = true
 
     /// A row's control, or nil if the Mac has none for it.
     @MainActor
@@ -315,7 +318,7 @@ private struct MCPServersRows: View {
                 SettingsRow(s.name, description: detail(s)) { state(s) }
             }
         }
-        .task { await load() }
+        .task { guard SettingsBindings.loads else { return }; await load() }
     }
 
     private func detail(_ s: MCPStatus) -> String? {
