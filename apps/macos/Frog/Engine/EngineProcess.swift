@@ -175,6 +175,11 @@ enum TestHome {
                                    withDestinationURL: real.appending(path: "Library/Keychains"))
         setenv("CFFIXED_USER_HOME", home.path, 1)
         setenv("HOME", home.path, 1)
+        // No engine a test opens starts a sidecar (`frog-apple`, `tang-llm`): they listen on
+        // fixed ports the real app uses, and with Apple Intelligence the default model, every
+        // test engine put frog-apple on 8912 for the whole run. A test that needs a real one
+        // passes `FROG_SIDECARS=ephemeral` in `Frog.overrides` (a port the OS picks).
+        setenv("FROG_SIDECARS", "off", 1)
         isolateDefaults()
     }
 

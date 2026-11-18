@@ -28,6 +28,19 @@ xcodebuild test \
     "$@" > "$log" 2>&1
 rc=$?
 
+# Sidecars this run's build started (frog-apple, tang-llm) go with the test host; one still
+# running a few seconds after the run, even one that was killed, is a leak: it would hold its
+# port. Named and stopped, and the run fails. Only this build's own copies are looked at.
+built="$PWD/build/test/"
+sleep 5
+leaked=$(ps -axo pid=,comm= | awk -v p="$built" 'index($2, p) == 1 && ($2 ~ /\/frog-apple$/ || $2 ~ /\/tang-llm$/) { print $1 " " $2 }')
+if [[ -n "$leaked" ]]; then
+    echo "test run left sidecars running (stopping them):"
+    echo "$leaked"
+    echo "$leaked" | awk '{ print $1 }' | xargs kill 2>/dev/null
+    rc=1
+fi
+
 grep -aE "^Test Case .*(failed|exceeded execution time)" "$log"
 grep -aE "^\s+Executed [0-9]+ tests?, with" "$log" | tail -1
 grep -aE "^\*\* (TEST|BUILD) [A-Z ]+ \*\*" "$log" | tail -1

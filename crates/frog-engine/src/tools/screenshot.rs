@@ -66,7 +66,7 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
     } else {
         let mut profile = Profile::new(ProviderKind::Openai, crate::sidecar::APPLE);
         profile.sidecar = Some(crate::sidecar::APPLE.into());
-        crate::sidecar::ensure(&profile).await?;
+        crate::sidecar::ensure_running(&profile).await?;
         format!(
             "{}/screenshots",
             crate::sidecar::base_url(crate::sidecar::APPLE)

@@ -63,7 +63,20 @@ final class HTTPServer: @unchecked Sendable {
         self.handler = handler
     }
 
-    func start() {
+    /// Starts listening; `ready` runs once the port is ours. A port that can't be had (another
+    /// process holds it) ends the process with the reason on stderr, so whoever started it
+    /// sees it exit at once instead of a live process that never answers.
+    func start(ready: @escaping @Sendable () -> Void) {
+        let port = listener.parameters.requiredLocalEndpoint.map { "\($0)" } ?? "?"
+        listener.stateUpdateHandler = { state in
+            switch state {
+            case .ready: ready()
+            case .failed(let error), .waiting(let error):
+                FileHandle.standardError.write(Data("frog-apple: can't listen on \(port): \(error)\n".utf8))
+                exit(1)
+            default: break
+            }
+        }
         listener.newConnectionHandler = { [self] conn in
             conn.start(queue: .global())
             // Slow or stalled clients don't get to hold a connection open forever.
