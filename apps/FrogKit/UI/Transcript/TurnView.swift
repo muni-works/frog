@@ -110,12 +110,6 @@ struct TurnView: View, Equatable {
             for: conversation.sessionID, default: Verbosity(rawValue: defaultVerbosity) ?? .normal)
     }
 
-    /// The thought streaming now, previewed beside "Thinking…" (verbose shows it in full, below).
-    private var thinking: String? {
-        guard verbosity == .normal, let last = turn.items.last, last.kind == .reasoning, !last.done else { return nil }
-        return last.text
-    }
-
     var body: some View {
         #if DEBUG
         let _ = TranscriptProbe.turn()
@@ -227,9 +221,9 @@ struct TurnView: View, Equatable {
     private var tail: some View {
         let parts = TurnParts(turn)
         let loading = running ? modelLoading : nil
-        let status = running && loading == nil ? liveStatus : nil
+        let live = running && loading == nil
         let plan = running && !parts.plan.isEmpty
-        if plan || loading != nil || status != nil || !parts.changes.isEmpty || turn.end != nil
+        if plan || loading != nil || live || !parts.changes.isEmpty || turn.end != nil
             || (FeatureFlags.outcomeCard && turn.claims != nil) {
             VStack(alignment: .leading, spacing: space.block) {
                 if plan {
@@ -238,8 +232,10 @@ struct TurnView: View, Equatable {
                 if let loading {
                     ModelLoadingStatus(load: loading.load, since: loading.since)
                         .transition(.opacity)
-                } else if let status {
-                    LiveStatus(text: status.text, since: status.since, preview: thinking)
+                } else if live {
+                    // The thinking row and its stats (spec phase 2); under a writing answer,
+                    // only the stats.
+                    LiveRow(turn: turn, conversation: conversation)
                         .transition(.opacity)
                 }
                 #if !os(macOS)
@@ -282,31 +278,6 @@ struct TurnView: View, Equatable {
         case .complete, .denied: true
         default: false
         }
-    }
-
-    /// What's happening now, for the turn's last line. Nothing while the answer is being
-    /// written (the text is the status), a permission card is up, or a subagent or diagram
-    /// shows its own progress.
-    private var liveStatus: (text: String, since: Date?)? {
-        guard let last = turn.items.last else { return nil }
-        if last.kind == .message, !last.done, !last.text.isEmpty { return nil }
-        if let current = turn.items.last(where: { !$0.done && $0.kind != .message }) {
-            if case .tool("Task", _) = current.kind {
-                // The agent's own row shows what it's doing; this line, how the turn's agents stand.
-                return conversation.permission == nil ? conversation.agentStatus(turn).map { ($0, current.startedAt) } : nil
-            }
-            if current.needsPermission { return nil }
-            if case .tool("Diagram", _) = current.kind { return nil }
-            if case .tool("Visualize", _) = current.kind { return nil }
-            return (ActivityWords.now(current), current.startedAt)
-        }
-        // Between steps: the model is working out what to do next.
-        let label = conversation.progress.flatMap { p -> String? in
-            guard p.label != "thinking", !p.label.isEmpty else { return nil }
-            let s = ModelLoad.words(p.label)
-            return s.hasSuffix("…") ? s : s + "…"
-        }
-        return (label ?? "Thinking…", turn.items.compactMap(\.endedAt).max())
     }
 
     /// Before the first answer, the model may still be getting ready: tang reading a downloaded

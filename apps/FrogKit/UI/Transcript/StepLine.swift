@@ -573,6 +573,7 @@ struct FoldLineView: View {
 /// A thought: one quiet line with a chevron, opening to what it thought. Today's words ("Thought
 /// for 12s"); phase 2 replaces the row.
 struct ThoughtLineView: View {
+    @Environment(\.transcriptEdge) private var edge
     let item: ItemState
     var gist: String?
     /// Verbose shows the thought: it opens (and closes) with the setting.
@@ -587,8 +588,17 @@ struct ThoughtLineView: View {
         _open = State(initialValue: verbose)
     }
 
-    private var words: String {
-        item.duration.map { "Thought for \(ActivityWords.duration($0))" } ?? "Thought"
+    /// "Thought for 31s" from the engine's think time (started→completed overstates it), or
+    /// the item's own times in an old log; "Stopped after 12s" for a think the turn stopped.
+    private var words: String { Self.words(item) }
+
+    static func words(_ item: ItemState) -> String {
+        let secs = item.thinkMs.map { Double($0) / 1000 } ?? item.duration
+        if !item.done {
+            let ran = item.startedAt.map { (item.endedAt ?? .now).timeIntervalSince($0) }
+            return ran.map { "Stopped after \(ActivityWords.duration($0))" } ?? "Stopped"
+        }
+        return secs.map { "Thought for \(ActivityWords.duration($0))" } ?? "Thought"
     }
 
     var body: some View {
@@ -614,7 +624,8 @@ struct ThoughtLineView: View {
             .metricsRow(.thought, [words, gist.map { "· \($0)" } ?? ""].filter { !$0.isEmpty }.joined(separator: " "),
                         key: item.id, fontSize: LineType.status.size)
             if open {
-                CappedThought(text: item.text)
+                ThinkingOutline(item: item)
+                    .padding(.leading, edge.indent)
                     .padding(.bottom, TurnSpace.Inset.snug)
                     .transition(.opacity)
             }

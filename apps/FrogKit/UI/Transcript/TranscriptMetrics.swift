@@ -12,7 +12,7 @@ final class TranscriptMetrics {
     /// `-FrogMetrics <path>` was given.
     nonisolated static let enabled: Bool = !(UserDefaults.standard.string(forKey: "FrogMetrics") ?? "").isEmpty
 
-    enum Kind: String { case prompt, thought, fold, line, prose, code, card, footer, live }
+    enum Kind: String { case prompt, thought, fold, line, prose, code, card, footer, live, stats }
 
     struct Row {
         var kind: Kind

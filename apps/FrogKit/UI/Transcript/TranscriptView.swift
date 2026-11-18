@@ -268,8 +268,14 @@ struct TranscriptView: View {
             let start = out.count
             func add(_ part: TurnPart, _ key: String) {
                 let leads = out.count == start
-                out.append(TranscriptRow(turn: turn, part: part, first: leads,
-                                         gap: space.gap(part, after: leads ? nil : out.last?.part, first: out.isEmpty),
+                let previous = leads ? nil : out.last?.part
+                var gap = space.gap(part, after: previous, first: out.isEmpty)
+                // A running turn's tail is its live row: a line's gaps, not a block's.
+                if case .tail = part, !turn.finished, !leads {
+                    let writing = turn.items.last.map { $0.kind == .message && !$0.done } ?? false
+                    gap = TurnSpace.liveTailGap(space, after: previous, writing: writing)
+                }
+                out.append(TranscriptRow(turn: turn, part: part, first: leads, gap: gap,
                                          id: TranscriptRow.ID(turn: turn.id, part: key)))
             }
             if TurnView.hasHead(turn) { add(.head, "head") }

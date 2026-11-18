@@ -754,8 +754,28 @@ struct FileDiff: Decodable, Sendable, Hashable {
 
 enum Item: Decodable, Sendable {
     case message(String)
-    case reasoning(String)
+    case reasoning(String, Reasoning = Reasoning())
     case toolCall(ToolResult)
+
+    /// What the engine says about a finished think (transcript-engine-wire.md, "The thought
+    /// line"). Both absent in old logs.
+    struct Reasoning: Decodable, Sendable, Equatable {
+        /// The lines that were shown, in order.
+        var thoughts: [Thought]? = nil
+        /// How long the reasoning streamed (first reasoning delta to the first answer or tool
+        /// call): "Thought for 31s". Started→completed overstates it.
+        var thinkMs: UInt64? = nil
+    }
+
+    /// One shown thought line: its words, the paragraph it came from (a half-open range in
+    /// UTF-16 code units into the reasoning text) and when it showed, in ms after the first
+    /// reasoning arrived.
+    struct Thought: Decodable, Sendable, Equatable {
+        var text: String
+        var start: Int
+        var end: Int
+        var ms: UInt64
+    }
 
     struct ToolResult: Decodable, Sendable {
         var name: String
@@ -797,7 +817,7 @@ enum Item: Decodable, Sendable {
         let c = try decoder.container(keyedBy: Key.self)
         switch try c.decode(String.self, forKey: .type) {
         case "tool_call": self = .toolCall(try ToolResult(from: decoder))
-        case "reasoning": self = .reasoning(try c.decode(String.self, forKey: .text))
+        case "reasoning": self = .reasoning(try c.decode(String.self, forKey: .text), try Reasoning(from: decoder))
         default: self = .message(try c.decode(String.self, forKey: .text))
         }
     }
@@ -805,7 +825,9 @@ enum Item: Decodable, Sendable {
 
 enum Delta: Decodable, Sendable {
     case text(String)
-    case reasoning(String)
+    /// Reasoning text, and the engine's thought line when it changed on this delta (absent
+    /// otherwise: keep the last one).
+    case reasoning(String, thought: String? = nil)
     case output(String)
     case imagePreview(ToolImage, step: UInt64, of: UInt64, imageIndex: Int)
 
@@ -818,13 +840,13 @@ enum Delta: Decodable, Sendable {
     func joined(_ next: Delta) -> Delta? {
         switch (self, next) {
         case (.text(let a), .text(let b)): .text(a + b)
-        case (.reasoning(let a), .reasoning(let b)): .reasoning(a + b)
+        case (.reasoning(let a, let x), .reasoning(let b, let y)): .reasoning(a + b, thought: y ?? x)
         case (.output(let a), .output(let b)): .output(a + b)
         default: nil
         }
     }
 
-    private enum Key: String, CodingKey { case type, text, image, step, of, imageIndex }
+    private enum Key: String, CodingKey { case type, text, image, step, of, imageIndex, thought }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Key.self)
@@ -834,7 +856,7 @@ enum Delta: Decodable, Sendable {
         }
         let text = try c.decode(String.self, forKey: .text)
         switch try c.decode(String.self, forKey: .type) {
-        case "reasoning": self = .reasoning(text)
+        case "reasoning": self = .reasoning(text, thought: try c.decodeIfPresent(String.self, forKey: .thought))
         case "output": self = .output(text)
         default: self = .text(text)
         }
@@ -1081,6 +1103,10 @@ enum Event: Decodable, Sendable {
     /// jobs (id, label) are listed for the resumed notice; `inbox` holds delivered messages
     /// that never ran as a turn — re-send them after the restart.
     case drained(stepsDone: Int, jobs: [String], jobLabels: [(String, String)], inbox: [(String, String, String)])
+    /// The running turn's output tokens so far (ephemeral, at most 4/s while a call streams):
+    /// finished calls' provider figures plus the streaming call's count. `soFar`: a count of
+    /// what has arrived, never shown as exact.
+    case outputTokens(turn: UInt64, output: UInt64, soFar: Bool)
     case unknown(String)
 }
 
@@ -1118,6 +1144,7 @@ extension Event {
         case urgency, body, prs
         /// The MCP server list and a sign-in's outcome.
         case servers, server, tools
+        case output, soFar
     }
 
     init(from decoder: Decoder) throws {
@@ -1135,6 +1162,9 @@ extension Event {
                 turn: try c.decode(UInt64.self, forKey: .turn),
                 reason: try c.decode(EndReason.self, forKey: .reason),
                 usage: try c.decode(TurnUsage.self, forKey: .usage))
+        case "output_tokens":
+            self = .outputTokens(turn: try c.decode(UInt64.self, forKey: .turn), output: try c.decode(UInt64.self, forKey: .output),
+                                 soFar: try c.decodeIfPresent(Bool.self, forKey: .soFar) ?? false)
         case "item_started":
             self = .itemStarted(id: try c.decode(String.self, forKey: .id), kind: try c.decode(ItemKind.self, forKey: .kind))
         case "item_completed":

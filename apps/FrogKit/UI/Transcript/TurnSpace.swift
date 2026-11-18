@@ -114,6 +114,19 @@ enum TurnSpace {
         }
     }
 
+    /// Space above a running turn's tail, which is its live row (a line) and the stats: a line's
+    /// gaps (12 from prose, touching other lines, a block from the prompt), or the stats' 2 right
+    /// under an answer that's writing (spec phase 2: the stats sit under the text).
+    static func liveTailGap(_ s: Scale, after previous: TurnPart?, writing: Bool) -> CGFloat {
+        guard let previous else { return 0 }
+        guard case .segment(let segment) = previous else { return s.block }
+        switch segment {
+        case .text: return writing ? s.gaps.stats : s.activity
+        case .activity: return 0
+        case .visual, .notice: return s.block
+        }
+    }
+
     /// The scale for a raw density value (an `@AppStorage` string, not the enum).
     static func scale(_ raw: String) -> Scale {
         raw == Density.compact.rawValue ? .compact : .comfortable

@@ -97,6 +97,43 @@ final class SnapshotTests: XCTestCase {
         print("snapshots: \(outDir.path)")
     }
 
+    /// Phase 2's thinking row (docs/design/transcript/spec.md): a think twenty seconds in, its
+    /// thought and stats (`thinking-live`), and the outline a finished think opens to
+    /// (`thinking-outline`).
+    func testRenderThinkingRow() throws {
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        func at(_ s: Double) -> Int64 { now - Int64(s * 1000) }
+        let live = Conversation(preview: URL(fileURLWithPath: "/tmp/lilypad"))
+        try [
+            #"{"seq":1,"session":"p","created":\#(at(20)),"event":"turn_started","turn":1,"input":"pls visually explain transformers (LLM) to me from first principles"}"#,
+            #"{"seq":2,"session":"p","created":\#(at(19.5)),"event":"item_started","id":"r","kind":{"type":"reasoning"}}"#,
+            #"{"seq":3,"session":"p","created":\#(at(18)),"event":"item_delta","id":"r","delta":{"type":"reasoning","text":"The user wants a visual explanation.\n\n","thought":"The user wants a visual explanation of transformers"}}"#,
+            #"{"seq":4,"session":"p","created":\#(at(1)),"event":"item_delta","id":"r","delta":{"type":"reasoning","text":"Better idea: attention as a soft lookup.\n\n","thought":"Better idea: attention as a soft lookup in two dimensions"}}"#,
+            #"{"seq":5,"session":"p","created":\#(at(0.5)),"event":"output_tokens","turn":1,"output":1105,"so_far":true}"#,
+        ].map { try JSONDecoder.frog.decode(Envelope.self, from: Data($0.utf8)) }.forEach(live.ingest)
+        let turn = try XCTUnwrap(live.turns.last)
+        try render(LiveRow(turn: turn, conversation: live).padding(.horizontal, 46).padding(.vertical, 20)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .background(Color(nsColor: .windowBackgroundColor)),
+                   size: CGSize(width: 760, height: 120), to: "thinking-live", settle: 1)
+
+        var done = ItemState(id: "d", kind: .reasoning,
+                             text: "The user wants a visual explanation of transformers from first principles.\n\nIdea: build a single-page widget that walks through stages:\n1. Text to tokens\n2. Embeddings\n3. Attention\n\nBetter idea: attention as a soft lookup in two dimensions.\n\n")
+        done.done = true
+        done.thinkMs = 31_000
+        done.thoughts = [Item.Thought(text: "The user wants a visual explanation of transformers from first principles", start: 0, end: 75, ms: 0),
+                         Item.Thought(text: "Build one widget that walks through five stages", start: 77, end: 170, ms: 4000),
+                         Item.Thought(text: "Better idea: attention as a soft lookup in two dimensions", start: 172, end: 230, ms: 9000)]
+        try render(VStack(alignment: .leading, spacing: 0) {
+                       ThoughtLineView(item: done, verbose: true)
+                   }
+                   .padding(.horizontal, 46).padding(.vertical, 20)
+                   .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                   .background(Color(nsColor: .windowBackgroundColor)),
+                   size: CGSize(width: 760, height: 160), to: "thinking-outline", settle: 0.6)
+        print("snapshots: \(outDir.path)")
+    }
+
     /// The popovers behind a turn's cost and energy hints, for a hosted model's turn.
     func testRenderTurnCostCards() throws {
         let usage = try JSONDecoder.frog.decode(TurnUsage.self, from: Data(#"{"input_tokens":12400,"output_tokens":380,"model_calls":2,"model":"vercel/anthropic/claude-opus-5.5-fast","energy":{"local_wh":0.021,"remote_wh":2.96,"idle_w":11.6}}"#.utf8))
