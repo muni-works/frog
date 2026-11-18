@@ -2,19 +2,53 @@
 // URLs, the old `?settings=` deep links, and the theme Appearance keeps. No React here, so the
 // routing and the theme are testable on their own.
 
-/** The web's sections, in the spec's order (its sections table). The Mac-only ones (General,
- *  Permissions, MCP, Shortcuts, Energy, Lend) aren't shown on the web at all. Account is where
- *  Settings first opens. */
-export const SECTIONS = [
-  { id: 'appearance', label: 'Appearance' },
-  { id: 'models', label: 'Models' },
-  { id: 'account', label: 'Account' },
-  { id: 'billing', label: 'Billing' },
-] as const
+import file from '../../../design/settings.json'
 
-export type Section = (typeof SECTIONS)[number]['id']
+/** A setting, as design/settings.json lists it for both apps. */
+export interface SettingRow {
+  id: string
+  section: Section
+  group?: string
+  label: string
+  description?: string
+  control: 'toggle' | 'segmented' | 'menu' | 'field' | 'button' | 'value' | 'list'
+  /** both: works here; invite: the Mac's, shown here as an invitation; mac: never here; web: only here. */
+  platform: 'both' | 'invite' | 'mac' | 'web'
+  options?: { id: string; label: string; description?: string }[]
+  when?: string
+  /** Drawn on a machine's (or provider's) own page, not the section's. */
+  page?: 'machine' | 'provider'
+  /** An invitation's words on the web, where they differ from the Mac's. */
+  web?: { label: string; description?: string }
+  /** Why it can't work on a platform yet: that platform leaves it out. */
+  notYet?: { web?: string; mac?: string }
+}
+
+/** The nine sections, in the spec's order, from design/settings.json. Account is where Settings
+ *  first opens. */
+export const SECTION_IDS = ['general', 'appearance', 'models', 'permissions', 'connections', 'shortcuts', 'usage', 'account', 'billing'] as const
+export type Section = (typeof SECTION_IDS)[number]
+export const SECTIONS: readonly { id: Section; label: string; aliases?: string[] }[] = file.sections as { id: Section; label: string; aliases?: string[] }[]
+export const ROWS: readonly SettingRow[] = file.rows as SettingRow[]
 
 export const isSection = (s: unknown): s is Section => SECTIONS.some((x) => x.id === s)
+
+/** A section by its name or an old one (mcp → connections, energy → usage, lend → models). */
+export const sectionNamed = (s: string | null | undefined): Section | null =>
+  SECTIONS.find((x) => x.id === s || (s != null && x.aliases?.includes(s)))?.id ?? null
+
+/** What the web draws of a section (or a machine's page): the rows that work here, and the
+ *  Mac's rows it shows as invitations. `mac` rows and anything not yet possible here are left out. */
+export function webRows(section: Section, page?: SettingRow['page']): { rows: SettingRow[]; invites: SettingRow[] } {
+  const here = ROWS.filter((r) => r.section === section && r.page === page && !r.notYet?.web)
+  return {
+    rows: here.filter((r) => r.platform === 'both' || r.platform === 'web'),
+    invites: here.filter((r) => r.platform === 'invite'),
+  }
+}
+
+/** A row's label and description as the web shows them. */
+export const webWords = (r: SettingRow) => ({ label: r.web?.label ?? r.label, description: r.web ? r.web.description : r.description })
 
 /** Settings › <section>'s own URL. */
 export const settingsPath = (s: Section) => `/settings/${s}`
@@ -23,15 +57,14 @@ export const settingsPath = (s: Section) => `/settings/${s}`
 export function settingsSectionOf(path: string): Section | '' | null {
   const m = path.match(/^\/settings(?:\/([\w-]*))?\/?$/)
   if (!m) return null
-  return isSection(m[1]) ? m[1] : ''
+  return sectionNamed(m[1]) ?? ''
 }
 
 /** api.frog.toys and Stripe land on `?settings=account|billing`: the section that names, if any. */
 export function sectionOfQuery(search: string): Section | null {
   const q = new URLSearchParams(search)
   if (!q.has('settings')) return null
-  const v = q.get('settings')
-  return isSection(v) ? v : 'account'
+  return sectionNamed(q.get('settings')) ?? 'account'
 }
 
 // ---------- Appearance ----------
@@ -75,3 +108,62 @@ export function toggledTheme(): Theme {
   const dark = on ? on === 'dark' : typeof matchMedia === 'function' && matchMedia('(prefers-color-scheme: dark)').matches
   return dark ? 'light' : 'dark'
 }
+
+// ---------- Density ----------
+
+export type Density = 'comfortable' | 'compact'
+export const DENSITY_KEY = 'frog.density'
+
+/** The density kept in this browser; comfortable when none is. */
+export function savedDensity(): Density {
+  try { return localStorage.getItem(DENSITY_KEY) === 'compact' ? 'compact' : 'comfortable' } catch { return 'comfortable' }
+}
+
+/** Compact swaps the transcript's gaps (tokens.css, [data-density="compact"]). */
+export function applyDensity(d: Density, root: { dataset: Record<string, string | undefined> } = document.documentElement) {
+  if (d === 'compact') root.dataset.density = 'compact'
+  else delete root.dataset.density
+}
+
+export function setDensity(d: Density) {
+  try {
+    if (d === 'compact') localStorage.setItem(DENSITY_KEY, d)
+    else localStorage.removeItem(DENSITY_KEY)
+  } catch { /* private mode: this page only */ }
+  applyDensity(d)
+}
+
+// ---------- New conversations use ----------
+
+/** "New conversations use": one model every time, kept here. Absent, the last one picked. */
+export const DEFAULT_MODEL_KEY = 'frog.defaultModel'
+/** The model last picked in a new conversation's composer. */
+export const LAST_MODEL_KEY = 'frog.newModel'
+
+type Store = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
+const store = (): Store | null => { try { return globalThis.localStorage ?? null } catch { return null } }
+
+/** The model a new conversation starts on: the pinned one, else the last picked. */
+export function startingModel(s: Store | null = store()): string | null {
+  try { return s?.getItem(DEFAULT_MODEL_KEY) ?? s?.getItem(LAST_MODEL_KEY) ?? null } catch { return null }
+}
+
+/** A pick in the new conversation's composer: remembered as the last model unless one is pinned,
+ *  which the next conversation goes back to. */
+export function rememberPick(m: string | null, s: Store | null = store()) {
+  try {
+    if (s?.getItem(DEFAULT_MODEL_KEY)) return
+    if (m) s?.setItem(LAST_MODEL_KEY, m)
+    else s?.removeItem(LAST_MODEL_KEY)
+  } catch { /* private mode */ }
+}
+
+/** Pin a model, or null for "the last model I used". */
+export function pinModel(m: string | null, s: Store | null = store()) {
+  try {
+    if (m) s?.setItem(DEFAULT_MODEL_KEY, m)
+    else s?.removeItem(DEFAULT_MODEL_KEY)
+  } catch { /* private mode */ }
+}
+
+export const pinnedModel = (s: Store | null = store()): string | null => { try { return s?.getItem(DEFAULT_MODEL_KEY) ?? null } catch { return null } }

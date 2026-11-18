@@ -11,10 +11,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { byText, click, closeHarness, find, hasClass, key, mount, shownText, act, dispatch, type HostNode, type Page } from "./app-harness.ts";
 import { redeem } from "./mock/account.mjs";
 import TestRenderer from "react-test-renderer";
-import { Coupon, creditRowLabel, SettingsPage, SettingsSidebar } from "../src/ui/Settings.tsx";
+import { Coupon, creditRowLabel, DRAWN_BY, RENDER, SettingsPage, SettingsSidebar, WEB_SHORTCUTS } from "../src/ui/Settings.tsx";
 import { Shell, type ShellMode } from "../src/ui/Docs.tsx";
 import { Inspector } from "../src/ui/Inspector.tsx";
-import { sectionOfQuery, settingsSectionOf } from "../src/settings.ts";
+import { pinModel, rememberPick, ROWS, SECTIONS, sectionOfQuery, settingsSectionOf, startingModel, webRows } from "../src/settings.ts";
 
 after(closeHarness);
 
@@ -80,7 +80,7 @@ test("⌘, opens Settings mode on Account: the sidebar is Back to app and the se
   await key(",");
   assert.equal(p.path(), "/settings/account");
   assert.equal(sectionShown(p), "Account");
-  assert.match(shownText(side(p)), /Back to app esc Appearance Models Account Billing/);
+  assert.match(shownText(side(p)), /Back to app esc General Appearance Models Permissions Connections Shortcuts Usage Account Billing/);
   assert.equal(find(p, (n) => n.props.role === "dialog"), undefined, "no settings overlay");
   p.unmount();
 });
@@ -190,11 +190,11 @@ test("returning from Settings keeps the new-session draft, and Escape is Back to
 
 // ---------- every control the overlay had ----------
 
-test("Account: identity, Sign out, GitHub and Google Connect, devices and keys with create and revoke, notifications", async () => {
+test("Account: identity, Sign out, GitHub and Google Connect, devices and keys with create and revoke", async () => {
   const p = await signedIn("/settings/account", fresh(), { Notification: { permission: "granted", requestPermission: async () => "granted" } });
   const t = shownText(page(p)!);
-  for (const s of ["Ada Lovelace", "ada@example.com", "GitHub Not connected", "Google Not connected", "frog.toys web · ab12", "This browser", "laptop cli", "Notifications"]) assert.ok(t.includes(s), `${s}: ${t}`);
-  assert.ok(find(p, (n) => n.type === "input" && n.props.role === "switch"), "the notifications switch");
+  for (const s of ["Ada Lovelace", "ada@example.com", "Sign-ins GitHub Not connected", "Google Not connected", "Devices and keys frog.toys web · ab12", "This browser", "laptop cli"]) assert.ok(t.includes(s), `${s}: ${t}`);
+  assert.ok(!t.includes("Notifications"), "Notifications moved to General (board 7)");
   await type(find(p, (n) => n.type === "input" && n.props["aria-label"] === "New API key name"), "ci");
   await submit(find(p, (n) => n.type === "form" && hasClass("set-row")(n)));
   assert.equal(JSON.parse(calls(p, "/v1/keys")[0].body!).name, "ci");
@@ -406,4 +406,106 @@ test("signed out at /settings/<x>, or signing out from Settings, replaces the UR
   assert.equal(q.path(), "/");
   assert.equal(q.pushes(), before, "signing out from Settings replaces the settings entry");
   q.unmount();
+});
+
+// ---------- one list of rows (design/settings.json) ----------
+
+test("every row the web can do has a renderer, and nothing renders that the list leaves out", () => {
+  const web = SECTIONS.flatMap((s) => [...webRows(s.id).rows, ...webRows(s.id, "machine").rows]).map((r) => r.id);
+  for (const id of web) assert.ok(RENDER[id] || DRAWN_BY[id], `${id} has no renderer on the web`);
+  for (const id of [...Object.keys(RENDER), ...Object.keys(DRAWN_BY)]) assert.ok(web.includes(id), `${id} renders but isn't a web row`);
+  // What's left out says why: Mac rows, and rows marked not yet with a reason.
+  const left = ROWS.filter((r) => !web.includes(r.id) && r.platform !== "invite");
+  for (const r of left) assert.ok(r.platform === "mac" || r.notYet?.web, `${r.id} is missing on the web without a reason`);
+});
+
+test("no Mac-only row shows on the web, in any section", async () => {
+  const p = await signedIn("/settings/general");
+  const mac = ROWS.filter((r) => r.platform === "mac").map((r) => r.label);
+  for (const s of SECTIONS) {
+    await click(btn(p, s.label));
+    const t = shownText(page(p)!);
+    for (const l of mac) assert.ok(!t.includes(l), `${l} showed in ${s.label}`);
+  }
+  p.unmount();
+});
+
+test("General: Notifications, then the Mac's rows under On your Mac", async () => {
+  const p = await signedIn("/settings/general", fresh(), { Notification: { permission: "granted", requestPermission: async () => "granted" } });
+  const t = shownText(page(p)!);
+  assert.match(t, /^General Notifications When a session needs you .* On your Mac Open files in your editor .* Let Frog on iPhone connect/);
+  assert.ok(find(p, (n) => n.type === "input" && n.props.role === "switch" && n.props["aria-label"] === "Notifications"));
+  p.unmount();
+});
+
+test("Permissions: New sessions start in is the new composer's mode; Yolo asks first; the sandbox is a fact", async () => {
+  const p = await signedIn("/settings/permissions");
+  const radio = (t: string) => find(p, (n) => n.props.role === "radio" && shownText(n) === t);
+  assert.match(shownText(page(p)!), /New sessions start in A model approves steps .* Sandbox Cloud sessions always run in a sandbox of their own\. Always on On your Mac Work in folders on your computer/);
+  await click(radio("Edits"));
+  assert.equal(p.storage.getItem("frog.newMode"), "accept-edits");
+  assert.match(shownText(page(p)!), /New sessions start in File edits are allowed; commands still ask\./, "the selected mode's line");
+  await click(radio("Yolo"));
+  assert.equal(p.storage.getItem("frog.newMode"), "accept-edits", "not until it's confirmed");
+  await click(btn(p, "Start in Yolo"));
+  assert.equal(p.storage.getItem("frog.newMode"), "yolo");
+  await click(btn(p, "Back to app"));
+  const composer = p.root.root.findAll((n) => typeof n.type === "function" && "onMode" in n.props && "mode" in n.props)[0];
+  assert.equal(composer.props.mode, "yolo", "the new session's composer starts there");
+  p.unmount();
+});
+
+test("Models: New conversations use pins a model for the new composer; the last one picked otherwise", async () => {
+  const p = await signedIn("/settings/models");
+  const menu = find(p, (n) => n.type === "select" && n.props["aria-label"] === "New conversations use")!;
+  assert.equal(menu.props.value, "", "the last model I used");
+  await act(async () => { (menu.props.onChange as (e: unknown) => void)({ target: { value: "glm-5.3-flash" } }); });
+  assert.equal(p.storage.getItem("frog.defaultModel"), "glm-5.3-flash");
+  await click(btn(p, "Back to app"));
+  const composer = p.root.root.findAll((n) => typeof n.type === "function" && "onMode" in n.props && "model" in n.props)[0];
+  assert.equal(composer.props.model, "glm-5.3-flash");
+  p.unmount();
+});
+
+test("a pinned model outlasts picks in the composer; unpinned, the last pick is remembered", () => {
+  const m = new Map<string, string>();
+  const s = { getItem: (k: string) => m.get(k) ?? null, setItem: (k: string, v: string) => void m.set(k, v), removeItem: (k: string) => void m.delete(k) };
+  rememberPick("a", s);
+  assert.equal(startingModel(s), "a");
+  pinModel("b", s);
+  rememberPick("c", s);
+  assert.equal(startingModel(s), "b", "the next conversation goes back to the pinned one");
+  pinModel(null, s);
+  assert.equal(startingModel(s), "a");
+});
+
+test("Appearance: Compact puts the transcript's compact gaps on the page and keeps them", async () => {
+  const p = await signedIn("/settings/appearance");
+  const root = (globalThis.document as unknown as { documentElement: { dataset: Record<string, string> } }).documentElement;
+  await click(find(p, (n) => n.props.role === "radio" && shownText(n) === "Compact"));
+  assert.equal(p.storage.getItem("frog.density"), "compact");
+  assert.equal(root.dataset.density, "compact");
+  await click(find(p, (n) => n.props.role === "radio" && shownText(n) === "Comfortable"));
+  assert.equal(p.storage.getItem("frog.density"), null);
+  assert.equal(root.dataset.density, undefined);
+  assert.match(readFileSync(new URL("../src/tokens.css", import.meta.url), "utf8"), /\[data-density="compact"\]/, "the hook it sets exists");
+  p.unmount();
+});
+
+test("Shortcuts lists the web's own keys; Connections and Usage are the Mac's rows as invitations", async () => {
+  const p = await signedIn("/settings/shortcuts");
+  const t = shownText(page(p)!);
+  for (const [, keys] of WEB_SHORTCUTS) for (const [what] of keys) assert.ok(t.includes(what), what);
+  await click(btn(p, "Connections"));
+  assert.equal(shownText(page(p)!).replace(/ (Get the Mac app|On a Mac)$/, ""), "Connections On your Mac Sign in to a server Servers like Linear and GitHub, with your own account.");
+  await click(btn(p, "Usage"));
+  assert.match(shownText(page(p)!), /^Usage On your Mac Measured energy for this Mac/);
+  p.unmount();
+});
+
+test("old section names open the section they became", () => {
+  assert.equal(settingsSectionOf("/settings/mcp"), "connections");
+  assert.equal(settingsSectionOf("/settings/energy"), "usage");
+  assert.equal(settingsSectionOf("/settings/lend"), "models");
+  assert.equal(sectionOfQuery("?settings=energy"), "usage");
 });

@@ -1,7 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
-import { applyTheme, savedTheme } from './settings'
+import { applyDensity, applyTheme, savedDensity, savedTheme } from './settings'
 import { listenForHandoffs } from './track'
 import './tokens.css'
 import './components.css'
@@ -14,6 +14,8 @@ import './wall.css'
 const theme = new URLSearchParams(location.search).get('theme')
 if (theme) document.documentElement.dataset.theme = theme
 else applyTheme(savedTheme())
+// Settings › Appearance › Density: compact swaps the transcript's gaps.
+applyDensity(savedDensity())
 
 // Web → Mac hand-off clicks, counted only while the gateway has funnel events on (./track.ts).
 listenForHandoffs()
