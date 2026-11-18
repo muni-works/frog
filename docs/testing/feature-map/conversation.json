@@ -1424,7 +1424,10 @@
             "FrogTests/SessionRegistryTests.swift:testStopMarksTheTurnUserStopped"
           ],
           "coverage_v070": "unit",
-          "automatable": "yes"
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/ConversationFlowTests.swift:test_interrupt_running_turn"
+          ]
         },
         {
           "id": "interrupt-disabled-under-card",
@@ -1440,7 +1443,10 @@
           ],
           "existing_tests_v070": [],
           "coverage_v070": "none",
-          "automatable": "yes"
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/ConversationFlowTests.swift:test_interrupt_disabled_under_card"
+          ]
         },
         {
           "id": "interrupt-then-queued-flush",
@@ -1530,7 +1536,10 @@
           ],
           "existing_tests_v070": [],
           "coverage_v070": "none",
-          "automatable": "yes"
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/ConversationFlowTests.swift:test_allow_once"
+          ]
         },
         {
           "id": "deny",
@@ -1546,7 +1555,10 @@
           ],
           "existing_tests_v070": [],
           "coverage_v070": "none",
-          "automatable": "yes"
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/ConversationFlowTests.swift:test_deny"
+          ]
         },
         {
           "id": "deny-with-note",
@@ -1566,7 +1578,10 @@
             "FrogTests/SessionBrokerTests.swift:testDenyWithANoteEncodes"
           ],
           "coverage_v070": "unit",
-          "automatable": "yes"
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/ConversationFlowTests.swift:test_deny_with_note"
+          ]
         },
         {
           "id": "always-allow",
@@ -1586,7 +1601,10 @@
             "FrogTests/SessionBrokerTests.swift:testDenyWithANoteEncodes"
           ],
           "coverage_v070": "unit",
-          "automatable": "yes"
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/ConversationFlowTests.swift:test_always_allow"
+          ]
         },
         {
           "id": "card-notifies-when-away",
@@ -1966,7 +1984,10 @@
           "existing_tests_v070": [],
           "coverage_v070": "none",
           "automatable": "hard",
-          "why_hard": "Real watchdog needs the engine with a short child_quiet_secs; the card itself is fake-engine-ok."
+          "why_hard": "Real watchdog needs the engine with a short child_quiet_secs; the card itself is fake-engine-ok.",
+          "flow_tests": [
+            "Flows/ConversationFlowTests.swift:test_quiet_child_asks"
+          ]
         },
         {
           "id": "keep-waiting",
@@ -2000,7 +2021,10 @@
           "existing_tests_v070": [],
           "coverage_v070": "none",
           "automatable": "hard",
-          "why_hard": "Engine behaviour after the answer."
+          "why_hard": "Engine behaviour after the answer.",
+          "flow_tests": [
+            "Flows/ConversationFlowTests.swift:test_stop_and_carry_on"
+          ]
         },
         {
           "id": "question-withdrawn-when-child-resumes",
@@ -2444,7 +2468,10 @@
           ],
           "existing_tests_v070": [],
           "coverage_v070": "none",
-          "automatable": "yes"
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/ConversationFlowTests.swift:test_undo_last_turn"
+          ]
         },
         {
           "id": "undo-disabled",
@@ -2460,7 +2487,10 @@
           ],
           "existing_tests_v070": [],
           "coverage_v070": "none",
-          "automatable": "yes"
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/ConversationFlowTests.swift:test_undo_disabled"
+          ]
         },
         {
           "id": "rewind-from-prompt",

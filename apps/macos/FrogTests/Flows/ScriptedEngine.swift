@@ -29,22 +29,41 @@ final class ScriptedEngine {
     ///   - mode: the permission mode new sessions start in (Settings' `defaultMode`); `default`
     ///     asks before every risky step.
     ///   - config: extra lines for the engine's config.toml (`child_quiet_secs = 2`).
-    static func start(mode: Mode = .default, config: [String] = [], git: Bool = true) async throws -> ScriptedEngine {
+    ///   - sharedHome: the engine uses the test host's own HOME, so its sessions are the ones the
+    ///     app lists (the sidebar, rename, delete); the config and sessions it adds are removed.
+    static func start(mode: Mode = .default, config: [String] = [], git: Bool = true, sharedHome: Bool = false) async throws -> ScriptedEngine {
         let model = try await ScriptedModel.start()
-        let e = try ScriptedEngine(model: model, mode: mode, config: config, git: git)
-        return e
+        return try ScriptedEngine(model: model, mode: mode, config: config, git: git, sharedHome: sharedHome)
     }
 
-    private init(model: ScriptedModel, mode: Mode, config: [String], git: Bool) throws {
+    /// `start`, for a synchronous setUp: pumps the run loop until the model listens.
+    static func startNow(mode: Mode = .default, config: [String] = [], git: Bool = true, sharedHome: Bool = false) throws -> ScriptedEngine {
+        var result: Result<ScriptedEngine, Error>?
+        Task { @MainActor in
+            do { result = .success(try await start(mode: mode, config: config, git: git, sharedHome: sharedHome)) } catch { result = .failure(error) }
+        }
+        let end = Date().addingTimeInterval(10)
+        while result == nil, Date() < end { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+        guard let result else { throw NSError(domain: "ScriptedEngine", code: 2, userInfo: [NSLocalizedDescriptionKey: "the model never listened"]) }
+        return try result.get()
+    }
+
+    private let shared: Bool
+    private var sessionsBefore: Set<String> = []
+
+    private init(model: ScriptedModel, mode: Mode, config: [String], git: Bool, sharedHome: Bool) throws {
         self.model = model
-        home = FileManager.default.temporaryDirectory.appending(path: "frog-flow-\(UUID().uuidString.prefix(8))")
-        folder = home.appending(path: "project")
+        shared = sharedHome
+        let scratch = FileManager.default.temporaryDirectory.appending(path: "frog-flow-\(UUID().uuidString.prefix(8))")
+        home = sharedHome ? URL(fileURLWithPath: NSHomeDirectory()) : scratch
+        folder = scratch.appending(path: "project")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let conf = home.appending(path: ".config/frog")
         try FileManager.default.createDirectory(at: conf, withIntermediateDirectories: true)
         // The model's own quiet question would interrupt a held reply: off unless asked for.
         let lines = ["call_quiet_secs = 0"] + config
         try lines.joined(separator: "\n").write(to: conf.appending(path: "config.toml"), atomically: true, encoding: .utf8)
+        sessionsBefore = Set((try? FileManager.default.contentsOfDirectory(atPath: sessionsDir.path)) ?? [])
         if git {
             try "hello\n".write(to: folder.appending(path: "README.md"), atomically: true, encoding: .utf8)
             try Self.git(["init", "-q", "-b", "main"], in: folder)
@@ -67,19 +86,27 @@ final class ScriptedEngine {
         UserDefaults.standard.set(mode.rawValue, forKey: "defaultMode")
     }
 
+    var sessionsDir: URL { home.appending(path: ".local/share/frog/sessions") }
+
     func stop() {
         model.stop()
         Frog.overrides = [:]
+        if shared {
+            try? FileManager.default.removeItem(at: home.appending(path: ".config/frog/config.toml"))
+            let now = Set((try? FileManager.default.contentsOfDirectory(atPath: sessionsDir.path)) ?? [])
+            for name in now.subtracting(sessionsBefore) { try? FileManager.default.removeItem(at: sessionsDir.appending(path: name)) }
+        }
+        try? FileManager.default.removeItem(at: folder.deletingLastPathComponent())
         for (key, value) in saved {
             if let value { UserDefaults.standard.set(value, forKey: key) } else { UserDefaults.standard.removeObject(forKey: key) }
         }
-        try? FileManager.default.removeItem(at: home)
+        if !shared { try? FileManager.default.removeItem(at: home) }
     }
 
     /// The session's log, as the engine wrote it.
     func log(_ session: String?) -> String {
         guard let session else { return "" }
-        return (try? String(contentsOf: home.appending(path: ".local/share/frog/sessions/\(session).jsonl"), encoding: .utf8)) ?? ""
+        return (try? String(contentsOf: sessionsDir.appending(path: "\(session).jsonl"), encoding: .utf8)) ?? ""
     }
 
     func file(_ name: String) -> String? { try? String(contentsOf: folder.appending(path: name), encoding: .utf8) }

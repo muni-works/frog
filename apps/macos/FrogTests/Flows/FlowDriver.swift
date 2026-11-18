@@ -129,7 +129,10 @@ final class FlowWindow {
     /// The text is on screen somewhere (a substring of any readable text).
     func shows(_ text: String) -> Bool { texts.contains { $0.contains(text) } }
 
-    func find(_ q: Query) -> AXElement? { elements.first(where: q.matches) }
+    func find(_ q: Query) -> AXElement? {
+        guard q.inSheet else { return elements.first(where: q.matches) }
+        return elements.filter { $0.role == kAXSheetRole as String }.flatMap(\.descendants).first(where: q.matches)
+    }
 
     /// The element, waiting for it to appear; fails the test if it never does.
     @discardableResult
@@ -220,7 +223,7 @@ final class FlowWindow {
         var item: NSMenuItem?
         for title in path {
             menu?.update()
-            item = menu?.items.first { $0.title == title }
+            item = menu?.items.first { $0.title == title } ?? menu?.items.first { $0.title.hasPrefix(title) }
             menu = item?.submenu
         }
         if item == nil {
@@ -296,6 +299,14 @@ struct PoppedMenu {
 
     func isEnabled(_ title: String) -> Bool { menu.items.first { $0.title == title }?.isEnabled ?? false }
 
+    /// Chooses the first item whose title starts with `prefix`.
+    func choose(startingWith prefix: String, file: StaticString = #filePath, line: UInt = #line) {
+        guard let title = menu.items.first(where: { $0.title.hasPrefix(prefix) })?.title else {
+            return XCTFail("no item starting \(prefix) in the menu: \(titles)", file: file, line: line)
+        }
+        choose(title, file: file, line: line)
+    }
+
     /// Chooses the item, as clicking it would (a path for a submenu: "Group By", "Folder").
     func choose(_ path: String..., file: StaticString = #filePath, line: UInt = #line) {
         var m = menu
@@ -320,12 +331,16 @@ struct Query: CustomStringConvertible {
     var label: String?
     var text: String?
     var role: String?
+    /// Only inside a sheet (an alert's field, a dialog's buttons).
+    var inSheet = false
 
     static func id(_ s: String) -> Query { Query(id: s) }
     static func label(_ s: String) -> Query { Query(label: s) }
     static func text(_ s: String) -> Query { Query(text: s) }
     static func button(_ label: String) -> Query { Query(label: label, role: kAXButtonRole as String) }
     static func field(placeholder: String) -> Query { Query(text: placeholder, role: kAXTextFieldRole as String) }
+    static var sheetField: Query { Query(role: kAXTextFieldRole as String, inSheet: true) }
+    static func sheetButton(_ label: String) -> Query { Query(label: label, role: kAXButtonRole as String, inSheet: true) }
 
     func matches(_ e: AXElement) -> Bool {
         if let id, e.identifier != id { return false }
@@ -337,7 +352,7 @@ struct Query: CustomStringConvertible {
     }
 
     var description: String {
-        [id.map { "id \($0)" }, label.map { "“\($0)”" }, text.map { "text “\($0)”" }, role].compactMap { $0 }.joined(separator: " ")
+        [id.map { "id \($0)" }, label.map { "“\($0)”" }, text.map { "text “\($0)”" }, role, inSheet ? "in a sheet" : nil].compactMap { $0 }.joined(separator: " ")
     }
 }
 
@@ -358,6 +373,8 @@ struct AXElement {
     var label: String? { string(kAXDescriptionAttribute) }
     var title: String? { string(kAXTitleAttribute) }
     var placeholder: String? { string(kAXPlaceholderValueAttribute) }
+    /// Its tooltip.
+    var help: String? { string(kAXHelpAttribute) }
     var value: String? {
         guard let v = raw(kAXValueAttribute) else { return nil }
         if let s = v as? String { return s }

@@ -50,7 +50,10 @@
           "existing_tests_v070": [],
           "coverage_v070": "none",
           "automatable": "hard",
-          "why_hard": "A SwiftUI .alert with a TextField (or a confirmationDialog) isn't reachable from an offscreen hosting view; needs XCUITest or a seam that sets the private @State."
+          "why_hard": "A SwiftUI .alert with a TextField (or a confirmationDialog) isn't reachable from an offscreen hosting view; needs XCUITest or a seam that sets the private @State.",
+          "flow_tests": [
+            "Flows/ConversationFlowTests.swift:test_rename_from_title"
+          ]
         },
         {
           "id": "archive-from-title",
@@ -89,7 +92,10 @@
           "existing_tests_v070": [],
           "coverage_v070": "none",
           "automatable": "hard",
-          "why_hard": "A SwiftUI .alert with a TextField (or a confirmationDialog) isn't reachable from an offscreen hosting view; needs XCUITest or a seam that sets the private @State."
+          "why_hard": "A SwiftUI .alert with a TextField (or a confirmationDialog) isn't reachable from an offscreen hosting view; needs XCUITest or a seam that sets the private @State.",
+          "flow_tests": [
+            "Flows/ConversationFlowTests.swift:test_delete_from_title"
+          ]
         },
         {
           "id": "delete-cancel",
@@ -1867,7 +1873,10 @@
           ],
           "existing_tests_v070": [],
           "coverage_v070": "none",
-          "automatable": "yes"
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/ConversationFlowTests.swift:test_interrupt_shortcut"
+          ]
         }
       ]
     },
@@ -2111,7 +2120,10 @@
             "FrogTests/ComposerReducerTests.swift:testEverySharedCase"
           ],
           "coverage_v070": "unit",
-          "automatable": "yes"
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/ConversationFlowTests.swift:test_pick_mode_from_chip"
+          ]
         },
         {
           "id": "confirm-yolo",
@@ -2129,7 +2141,10 @@
             "FrogTests/ComposerReducerTests.swift:testEverySharedCase"
           ],
           "coverage_v070": "unit",
-          "automatable": "yes"
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/ConversationFlowTests.swift:test_confirm_yolo"
+          ]
         },
         {
           "id": "mode-from-menu-bar",
@@ -2146,7 +2161,11 @@
           ],
           "existing_tests_v070": [],
           "coverage_v070": "none",
-          "automatable": "yes"
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/ConversationFlowTests.swift:test_mode_from_menu_bar",
+            "Flows/ConversationFlowTests.swift:test_mode_from_menu_bar__yoloAsksFirst"
+          ]
         }
       ]
     },
@@ -2285,7 +2304,10 @@
           ],
           "existing_tests_v070": [],
           "coverage_v070": "none",
-          "automatable": "yes"
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/ConversationFlowTests.swift:test_mention_a_file"
+          ]
         },
         {
           "id": "mention-from-plus-menu",
@@ -3178,7 +3200,11 @@
           ],
           "existing_tests_v070": [],
           "coverage_v070": "none",
-          "automatable": "yes"
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/ConversationFlowTests.swift:test_mode_or_model_from_palette",
+            "Flows/ConversationFlowTests.swift:test_mode_or_model_from_palette__yoloAsksFirst"
+          ]
         },
         {
           "id": "session-actions-from-palette",

@@ -291,12 +291,14 @@ struct ComposerView: View {
                 ModeChipLabel(mode: s.mode)
             }
             .fixedSize()
+            .accessibilityIdentifier("composer.mode")
             .composerMenu(menu == .mode, trailing: true, close: closeMenu) {
                 ModeMenu(mode: s.mode, send: dispatch, close: closeMenu)
             }
             ModelPicker(workspace: workspace, conversation: conversation, open: menu == .model, narrow: narrow,
                         loading: s.busy == .loading_model, toggle: { toggle(.model) }, close: closeMenu)
             ComposerAction(state: s, send: dispatch).padding(.leading, 4)
+                .accessibilityIdentifier("composer.action")
         }
     }
 
