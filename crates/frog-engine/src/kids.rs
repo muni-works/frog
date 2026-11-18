@@ -416,13 +416,23 @@ impl Kids {
                             card,
                         });
                     }
-                    Event::PermissionResolved { id, decision } => {
+                    Event::PermissionResolved {
+                        id,
+                        decision,
+                        item: _,
+                        asked,
+                    } => {
                         let mut s = state.lock().unwrap();
                         s.needs_you = s.needs_you.saturating_sub(1);
                         drop(s);
                         cards.retain(|c| *c != id);
                         relay.unrelay(&id);
-                        relay.emit(Event::PermissionResolved { id, decision });
+                        relay.emit(Event::PermissionResolved {
+                            id,
+                            decision,
+                            item: Some(id2.clone()),
+                            asked,
+                        });
                         kids.announce(&id2, &relay);
                     }
                     _ => {}
@@ -455,6 +465,8 @@ impl Kids {
                 relay.emit(Event::PermissionResolved {
                     id,
                     decision: crate::protocol::Decision::Deny,
+                    item: None,
+                    asked: None,
                 });
             }
             kids.announce(&id2, &relay);

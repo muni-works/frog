@@ -1,0 +1,7 @@
+Deploy log, 2026-11-17
+step 1: tests
+======================== 12 passed in 3.10s ========================
+step 2: build
+built dist/app.tar.gz (4.1 MB)
+step 3: upload
+uploaded

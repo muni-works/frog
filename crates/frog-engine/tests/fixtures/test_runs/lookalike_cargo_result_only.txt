@@ -1,0 +1,2 @@
+Summary of last night's run:
+test result: ok. 41 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.31s
