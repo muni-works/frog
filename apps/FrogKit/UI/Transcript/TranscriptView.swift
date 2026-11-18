@@ -137,7 +137,15 @@ struct TranscriptView: View {
                     guard id != nil else { return }
                     following = true
                     track.unpark()
-                    proxy.scrollTo(Self.end, anchor: .bottom)
+                    // After this update, not inside it (as `follow` does): scrolling the lazy stack
+                    // from inside SwiftUI's update makes it re-estimate rows mid-update, and on
+                    // macOS 26 that sometimes never settled: the transaction flush looped with the
+                    // main thread pegged, and the new turn's words never drew (the streaming
+                    // parity test's 5-minute CI timeouts).
+                    DispatchQueue.main.async {
+                        guard following, !track.userScrolling else { return }
+                        proxy.scrollTo(Self.end, anchor: .bottom)
+                    }
                 }
                 // Follow the answer as it streams: while following, content that grows takes the
                 // view back to the bottom. The size-change anchor alone loses the bottom once the
