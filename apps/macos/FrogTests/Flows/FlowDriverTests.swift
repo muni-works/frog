@@ -13,9 +13,9 @@ final class FlowDriverTests: XCTestCase {
 
     override func setUpWithError() throws {
         executionTimeAllowance = 120
-        try FlowWindow.requireScreen()
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         w = FlowWindow(folder: folder)
+        try w.requireReadable()
     }
 
     override func tearDown() {
@@ -70,6 +70,8 @@ final class FlowDriverTests: XCTestCase {
 
     /// The title menu offers Rename… only once the conversation has a session.
     func testTitleMenuRenameNeedsASession() throws {
+        w.workspace.testShow(Conversation(folder: folder, link: nil, replay: false, session: nil))
+        w.pump(0.3)
         let menu = try XCTUnwrap(w.menu(.text("New Conversation")))
         XCTAssertEqual(menu.titles, ["Rename…"])
         XCTAssertFalse(menu.isEnabled("Rename…"))
@@ -85,9 +87,21 @@ final class FlowDriverTests: XCTestCase {
         menu.choose("Delete…")
         XCTAssertNotNil(w.element(.text("Its log moves to the Trash.")), "the dialog asks")
         XCTAssertFalse(w.window.attachedSheet?.isSeenByUser ?? false, "its sheet stays hidden")
-        w.press(.button("Cancel"))
+        w.press(.sheetButton("Cancel"))
         XCTAssertTrue(w.waitUntil { self.w.find(.text("Its log moves to the Trash.")) == nil }, "the dialog went")
         XCTAssertEqual(w.conversation?.sessionID, "flow-delete-cancel", "the conversation is still open")
     }
 }
 
+
+/// On CI a flow test that can't read its window fails rather than skips (`requireReadable`), so
+/// a green run means the flows ran. This one says so on its own, by name.
+@MainActor
+final class FlowWindowCanaryTests: XCTestCase {
+    func testTheHostedWindowIsReadable() throws {
+        let w = FlowWindow(folder: URL(fileURLWithPath: NSTemporaryDirectory()))
+        defer { w.close() }
+        try w.requireReadable()
+        XCTAssertNotNil(w.find(.button("Commands")))
+    }
+}

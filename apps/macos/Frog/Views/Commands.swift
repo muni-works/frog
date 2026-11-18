@@ -42,7 +42,18 @@ extension FocusedValues {
 @MainActor
 final class StagedWindow: ObservableObject {
     static let shared = StagedWindow()
+    /// A flow test wants the window it hosts staged here (WorkspaceView does it while true).
+    var capturing = false
     @Published var window: FrogWindow?
+
+    /// What the menu bar reads from a window's offer, as one comparable value: the window
+    /// re-stages itself only when this changes.
+    static func key(_ w: FrogWindow) -> String {
+        [String(describing: ObjectIdentifier(w.workspace)), String(describing: ObjectIdentifier(w.state)),
+         "\(w.sessionsShown)", "\(w.changesShown)", "\(w.maximized)", "\(w.split != nil)", "\(w.closePane != nil)",
+         w.workspace.conversation.map { String(describing: ObjectIdentifier($0)) } ?? "-",
+         w.sidebarOrder.map(\.id).joined(separator: ",")].joined(separator: "|")
+    }
 }
 #endif
 
