@@ -27,10 +27,12 @@ enum Tokens {
     static let hairline = Color(light: (0.0, 0.0, 0.0, 0), dark: (1.0, 1.0, 1.0, 0))
     /// Field strokes: a faint wash, for the few controls that still need an edge.
     static let hairlineStrong = Color(light: (0.0, 0.0, 0.0, 0.05), dark: (1.0, 1.0, 1.0, 0.06))
-    /// Rails that nest content (quotes, tool output, the sidebar's started-by tree), and the hairline on each column's inner edge (the sidebar's right, the inspector's left). No other borders.
+    /// Rails that nest content (quotes, tool output, the sidebar's started-by tree). Not a border.
     static let line = Color(light: (0.89, 0.89, 0.89, 1), dark: (0.165, 0.165, 0.165, 1))
     /// The rare control edge.
     static let lineStrong = Color(light: (0.824, 0.824, 0.824, 1), dark: (0.22, 0.22, 0.22, 1))
+    /// The hairline on each column's inner edge (the sidebar's right, the inspector's left): quieter than line.
+    static let edge = Color(light: (0.929, 0.929, 0.929, 1), dark: (0.102, 0.102, 0.102, 1))
     /// Primary text on the Mac (solid, same as fg).
     static let text = Color(light: (0.106, 0.114, 0.102, 1), dark: (0.925, 0.925, 0.925, 1))
     /// Secondary text on the Mac (solid, same as muted).

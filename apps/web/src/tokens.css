@@ -8,6 +8,7 @@
   --hover: rgba(0, 0, 0, 0.05);
   --line: #e3e3e3;
   --line-strong: #d2d2d2;
+  --edge: #ededed;
   --fg: #1b1d1a;
   --muted: #5e5e5e;
   --faint: #767676;
@@ -49,6 +50,7 @@
   --hover: rgba(255, 255, 255, 0.07);
   --line: #2a2a2a;
   --line-strong: #383838;
+  --edge: #1a1a1a;
   --fg: #ececec;
   --muted: #a3a3a3;
   --faint: #808080;
@@ -90,6 +92,7 @@
   --hover: rgba(255, 255, 255, 0.07);
   --line: #2a2a2a;
   --line-strong: #383838;
+  --edge: #1a1a1a;
   --fg: #ececec;
   --muted: #a3a3a3;
   --faint: #808080;
