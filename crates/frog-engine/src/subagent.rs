@@ -90,10 +90,14 @@ impl Drop for Child {
 
 /// Run a subagent to completion, passing each of its events to `forward` (for a live view).
 /// Cancelling `stop` ends it early with what it has so far.
+///
+/// `watch` is its quiet clock (see `child_watch`): a child that goes quiet raises a question
+/// on the parent, or with nobody to ask is stopped, and the parent carries on with what it has.
 pub async fn run(
     opts: Options,
     input: &Value,
     stop: CancellationToken,
+    mut watch: crate::child_watch::Watch,
     forward: impl Fn(Event, &mpsc::UnboundedSender<Op>),
 ) -> Result<Output> {
     let prompt = input["prompt"].as_str().unwrap_or("").trim().to_string();
@@ -109,27 +113,59 @@ pub async fn run(
     let (mut report, mut steps, mut started) = (String::new(), 0u32, false);
     // The message being written, so a stop keeps the partial report.
     let mut draft = String::new();
+    // What a stop hands back: the report, else the message being written.
+    let stopped = |why: &str, report: &str, draft: &str, steps: u32| {
+        let so_far = if report.trim().is_empty() {
+            draft.trim()
+        } else {
+            report.trim()
+        };
+        let text = if so_far.is_empty() {
+            format!("{why} It hadn't found anything yet.")
+        } else {
+            format!("{why} What it had so far:\n\n{so_far}")
+        };
+        Output {
+            display: Some(format!(
+                "{text}\n\n(stopped after {steps} step{})",
+                plural(steps)
+            )),
+            content: text,
+            ..Default::default()
+        }
+    };
     loop {
         let env = tokio::select! {
             env = child.0.events.recv() => match env {
                 Some(env) => env,
-                None => break,
+                // The stream closed with no turn end: its engine is gone (see
+                // `engine::Closer`). Dead, not quiet: say so, with whatever it had.
+                None => {
+                    watch.withdraw();
+                    let so_far = if report.trim().is_empty() { draft.trim() } else { report.trim() };
+                    let mut msg = format!(
+                        "the subagent's engine stopped unexpectedly after {steps} step{} (a bug in frog; nothing was asked of the user). Run the Task again if you still need it.",
+                        plural(steps)
+                    );
+                    if !so_far.is_empty() {
+                        msg.push_str(&format!(" What it had so far:\n\n{so_far}"));
+                    }
+                    bail!(msg);
+                }
             },
             _ = stop.cancelled() => {
                 let _ = child.0.ops.send(Op::Interrupt);
-                let so_far = if report.trim().is_empty() { draft.trim() } else { report.trim() };
-                let text = if so_far.is_empty() {
-                    "The user stopped this subagent before it found anything.".to_string()
-                } else {
-                    format!("The user stopped this subagent early. What it had so far:\n\n{so_far}")
-                };
-                return Ok(Output {
-                    display: Some(format!("{text}\n\n(stopped after {steps} step{})", plural(steps))),
-                    content: text,
-                    ..Default::default()
-                });
+                return Ok(stopped("The user stopped this subagent early.", &report, &draft, steps));
+            }
+            why = watch.next() => {
+                let _ = child.0.ops.send(Op::Interrupt);
+                watch.withdraw();
+                return Ok(stopped(&why.words("this subagent"), &report, &draft, steps));
             }
         };
+        if !matches!(env.event, Event::Idle | Event::Synced { .. }) {
+            watch.saw(&env.event);
+        }
         match &env.event {
             Event::TurnStarted { .. } => started = true,
             Event::ItemStarted {

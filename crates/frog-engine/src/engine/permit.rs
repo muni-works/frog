@@ -1130,6 +1130,8 @@ arrives as a <session-message from=\"parent\"> in this turn."
                 branch.clone(),
                 prompt,
                 self.shared.bg.clone(),
+                &self.cfg,
+                self.asker(),
             )
             .await?;
         let mut text = format!("Started session {title} ({id}) in {}", cwd.display());
