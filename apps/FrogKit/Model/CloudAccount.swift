@@ -17,6 +17,9 @@ final class CloudAccount {
     #if DEBUG
     /// Flow tests point the account at a local fake Frog Cloud (FakeFrogCloud).
     nonisolated(unsafe) static var origin = URL(string: "https://api.frog.toys")!
+    /// Flow tests: a staged account still refreshes, because `origin` is a local fake Frog Cloud
+    /// (FakeFrogCloud sets this while installed). Snapshots leave it off: staged stays offline.
+    nonisolated(unsafe) static var stagedRefreshes = false
     /// Flow tests: where a page the account opens (Stripe Checkout) goes instead of the browser.
     nonisolated(unsafe) static var openURL: (@MainActor (URL) -> Void)?
     #else
@@ -121,7 +124,7 @@ final class CloudAccount {
 
     func refresh() async {
         #if DEBUG
-        if isStaged { return }
+        if isStaged && !Self.stagedRefreshes { return }
         #endif
         if !keyLoaded { await reloadKey() }
         guard let key else { me = nil; error = nil; return }

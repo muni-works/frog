@@ -62,7 +62,9 @@ final class FakeFrogCloud {
             CloudAccount.openURL = opener
             ProviderStore.keySink = sink
             CloudAccount.keyProvider = provider
+            CloudAccount.stagedRefreshes = false
         }
+        CloudAccount.stagedRefreshes = true
         CloudAccount.origin = origin
         CloudGateway.origin = origin
         CloudSignIn.openBrowser = { [weak self] url in self?.browser(url) }
