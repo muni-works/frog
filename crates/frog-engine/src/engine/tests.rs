@@ -14791,3 +14791,55 @@ async fn a_message_sent_mid_turn_makes_the_held_draft_stale() {
     );
     shutdown(h).await;
 }
+
+/// A sidecar whose model can't run (Apple Intelligence off, say) ends the first turn with the
+/// system's reason, promptly, instead of a loading line that waits on nothing. The model is
+/// never called.
+#[tokio::test]
+async fn a_sidecar_that_cannot_run_ends_the_turn_with_its_reason() {
+    let model = "test-unavailable".to_string();
+    let mut profile = Profile::new(ProviderKind::Openai, &model);
+    profile.sidecar = Some(model);
+    profile.tool_mode = ToolMode::Native;
+    let opts = Options {
+        cfg: Config {
+            hermetic: true,
+            ..Config::default()
+        },
+        profile_name: "test".into(),
+        profile,
+        cwd: std::env::temp_dir(),
+        mode: Mode::Default,
+        can_ask: true,
+        resume: None,
+        store: None,
+        sandbox: false,
+        rich: false,
+        subagent: false,
+        chat: false,
+    };
+    let mut h = start(opts, Provider::Scripted(scripted::Client::new(vec![reply(vec![text("never sent")], Stop::End)]))).unwrap();
+    let began = std::time::Instant::now();
+    let evs = tokio::time::timeout(Duration::from_secs(10), run(&mut h, "test")).await.expect("the turn ended");
+    assert!(began.elapsed() < Duration::from_secs(5), "took {:?}", began.elapsed());
+    let end = evs
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::TurnEnded { reason, .. } => Some(reason.clone()),
+            _ => None,
+        })
+        .expect("turn ended");
+    match end {
+        EndReason::Error { error } => assert_eq!(
+            error,
+            EngineError::Config {
+                message: "Apple Intelligence is turned off. Turn it on in System Settings, or pick another model.".into()
+            }
+        ),
+        other => panic!("ended {other:?}"),
+    }
+    assert!(
+        !evs.iter().any(|e| matches!(&e.event, Event::ItemStarted { .. })),
+        "nothing was asked of the model"
+    );
+}

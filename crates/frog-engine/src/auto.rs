@@ -555,6 +555,11 @@ impl Classifier {
             if let Err(e) = crate::sidecar::ensure(&self.profile).await {
                 return Verdict::Failed(format!("the classifier couldn't start ({e:#})"));
             }
+            // Where it's serving now (the Apple sidecar moves off a taken port).
+            match Provider::new(&self.profile) {
+                Ok(p) => self.provider = p,
+                Err(e) => return Verdict::Failed(format!("the classifier couldn't start ({e:#})")),
+            }
             self.started = true;
         }
         let asks: Vec<String> = intent
@@ -645,6 +650,11 @@ impl Classifier {
         if !self.started {
             if let Err(e) = crate::sidecar::ensure(&self.profile).await {
                 return Verdict::Failed(format!("the second pass couldn't start ({e:#})"));
+            }
+            // Where it's serving now (the Apple sidecar moves off a taken port).
+            match Provider::new(&self.profile) {
+                Ok(p) => self.provider = p,
+                Err(e) => return Verdict::Failed(format!("the second pass couldn't start ({e:#})")),
             }
             self.started = true;
         }

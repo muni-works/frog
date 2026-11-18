@@ -1484,6 +1484,12 @@ fn classify(spec: &str, e: &anyhow::Error) -> EngineError {
             },
         };
     }
+    // A local model that couldn't start: its own plain line (what happened, what to do).
+    if let Some(s) = e.downcast_ref::<crate::sidecar::StartError>() {
+        return EngineError::Config {
+            message: s.to_string(),
+        };
+    }
     if e.is::<IncompleteStream>() {
         return EngineError::IncompleteStream;
     }
@@ -1708,6 +1714,9 @@ struct Agent {
     /// A Tang sidecar loads its weights on its first completion request. Keep that visible until
     /// the first response arrives, then regular request activity takes over.
     model_ready: bool,
+    /// The sidecar didn't start at session start or a model switch: why. The next turn tries
+    /// again, and ends with this if it still can't.
+    sidecar_failed: Option<String>,
     /// Model calls in a row this turn with thinking switched off.
     quiet: u32,
     /// The last note the turn loop made about the waiting inbox: (count, step). `None` at
@@ -2059,6 +2068,7 @@ impl Agent {
             est: Estimator::default(),
             harness,
             model_ready: false,
+            sidecar_failed: None,
             quiet: 0,
             inbox_told: None,
             turn_usage: TurnUsage::default(),

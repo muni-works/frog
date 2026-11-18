@@ -134,7 +134,7 @@ pub async fn run(input: &Value, ctx: &mut Ctx) -> Result<Output> {
                     crate::sidecar::APPLE,
                 );
                 profile.sidecar = Some(crate::sidecar::APPLE.into());
-                crate::sidecar::ensure(&profile).await?;
+                crate::sidecar::ensure_running(&profile).await?;
                 format!(
                     "{}/images/generations",
                     crate::sidecar::base_url(crate::sidecar::APPLE)
