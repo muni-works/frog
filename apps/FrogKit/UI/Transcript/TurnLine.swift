@@ -166,6 +166,7 @@ struct TurnLine: View {
                 }
             }
             .help(pointer == nil ? "This turn: click to open it" : "")
+            .metricsRow(.turnline, "", key: "turnline-\(turn.id)-\(live)", fontSize: 0)
             .accessibilityLabel("Turn timeline")
             .accessibilityAddTraits(.isButton)
         }
@@ -182,21 +183,25 @@ struct TurnLine: View {
         return parts.joined(separator: " · ")
     }
 
-    /// A segment's step in words: its line ("Ran cargo test -q upload · 9s · failed"), or its kind.
+    /// A segment's step in words, for the readout ("Ran cargo test -q upload", "Thought", "Waited
+    /// for you"): the step, not its result (spec: "time, speed then, and the step under it").
     static func step(_ piece: TurnLineShape.Piece, in turn: TurnState) -> String {
-        let time = StepLine.duration(Double(piece.endMs - min(piece.endMs, piece.startMs)) / 1000)
-        if piece.kind == .waiting { return "Waited for you · \(time)" }
-        guard let item = turn.items.first(where: { $0.id == piece.item }) else { return "\(piece.kind.words) · \(time)" }
+        if piece.kind == .waiting { return "Waited for you" }
+        guard let item = turn.items.first(where: { $0.id == piece.item }) else { return piece.kind.words }
         switch item.kind {
-        case .reasoning: return "Thought · \(time)"
-        case .message: return "Wrote the answer · \(time)"
+        case .reasoning: return "Thought"
+        case .message: return "Wrote the answer"
         case .tool:
-            guard let line = StepLine.of(item) else { return time }
-            let words = [line.verb == Verbs.failed ? Verbs.look(line.name).past : line.verb, line.object].filter { !$0.isEmpty }.joined(separator: " ")
-            return [words, time, line.state == .failed ? "failed" : ""].filter { !$0.isEmpty }.joined(separator: " · ")
-        case .notice: return time
+            guard let line = StepLine.of(item) else { return piece.kind.words }
+            // A failed step reads as what it did ("Ran …"): the failure is its result.
+            let verb = line.verb == Verbs.failed || line.verb == Verbs.denied || !line.gist.isEmpty
+                ? Verbs.look(line.name).past : line.verb
+            let object = line.object.isEmpty ? (StepLine.of(item.clearingGist)?.object ?? "") : line.object
+            return [verb, object].filter { !$0.isEmpty }.joined(separator: " ")
+        case .notice: return piece.kind.words
         }
     }
+
 }
 
 // MARK: - The panel
@@ -360,7 +365,7 @@ struct TurnWaterfall: View {
                 continue
             }
             let piece = TurnLineShape.Piece(kind: s.kind, x: 0, width: 0, item: s.item, startMs: s.startMs, endMs: s.endMs)
-            let label = TurnLine.step(piece, in: turn).components(separatedBy: " · ").first ?? s.kind.words
+            let label = TurnLine.step(piece, in: turn)
             out.append(Row(id: id, label: label, kind: s.kind, startMs: s.startMs, endMs: s.endMs, item: s.item))
         }
         return out

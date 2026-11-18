@@ -76,10 +76,10 @@ final class TurnLineTests: XCTestCase {
         func words(_ k: TurnTimeline.Kind, _ item: String?) -> String {
             TurnLine.step(TurnLineShape.Piece(kind: k, x: 0, width: 0, item: item, startMs: 15_400, endMs: 24_400), in: t)
         }
-        XCTAssertEqual(words(.tool, "t5"), "Ran cargo test -q upload · 9.0s · failed", "board 7's readout")
-        XCTAssertEqual(words(.thinking, "r"), "Thought · 9.0s")
-        XCTAssertEqual(words(.writing, "m"), "Wrote the answer · 9.0s")
-        XCTAssertEqual(words(.waiting, "t5"), "Waited for you · 9.0s")
+        XCTAssertEqual(words(.tool, "t5"), "Ran cargo test -q upload", "the step, not its result (spec)")
+        XCTAssertEqual(words(.thinking, "r"), "Thought")
+        XCTAssertEqual(words(.writing, "m"), "Wrote the answer")
+        XCTAssertEqual(words(.waiting, "t5"), "Waited for you")
     }
 
     /// Where the time went: each kind's union, so tools that ran together count once.

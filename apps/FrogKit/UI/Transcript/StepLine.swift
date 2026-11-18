@@ -237,6 +237,15 @@ enum SelfOpening {
     static func reset() { remembered = [:] }
 }
 
+extension ItemState {
+    /// The same step without its gist: its own verb and object (for words that name the step).
+    var clearingGist: ItemState {
+        var copy = self
+        copy.gist = nil
+        return copy
+    }
+}
+
 // MARK: - The left edge
 
 /// Where the transcript's text starts (spec, "Measure and the left edge"). A line's mark hangs
