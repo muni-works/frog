@@ -24,7 +24,9 @@ import XCTest
 /// **Menus.** A `Menu` pressed in a hidden window doesn't track (`HiddenMenus` catches it):
 /// `menu(_:)` presses the control and hands back the menu to choose from. The menu bar is the
 /// app's real main menu built by `FrogCommands`, acting on this window through `StagedWindow`
-/// (a test host has no key window, so `@FocusedValue` would be nil); `menuBar(_:)` performs an
+/// (a test host has no key window, so `@FocusedValue` would be nil; and reading the focused
+/// value from a wrapper view loops SwiftUI's accessibility update forever, so the window stages
+/// its own offer); `menuBar(_:)` performs an
 /// item by its titles and `shortcut(_:_:)` sends a key equivalent the way the menu bar gets one.
 @MainActor
 final class FlowWindow {
@@ -43,7 +45,8 @@ final class FlowWindow {
     init(panes: Panes, size: CGSize = CGSize(width: 1300, height: 820), file: StaticString = #filePath, line: UInt = #line) {
         self.panes = panes
         Self.isolate(&restores)
-        let host = NSHostingView(rootView: FlowRoot { WorkspaceView(panes: panes) })
+        StagedWindow.shared.capturing = true
+        let host = NSHostingView(rootView: WorkspaceView(panes: panes))
         host.sceneBridgingOptions = [.toolbars, .title]
         window = NSWindow(contentRect: CGRect(origin: .zero, size: size),
                           styleMask: [.titled, .resizable, .fullSizeContentView, .closable, .miniaturizable],
@@ -53,19 +56,29 @@ final class FlowWindow {
         window.orderInForTest()
         HiddenMenus.reset()
         pump(0.5)
-        if !waitUntil(timeout: 5, { self.axWindow != nil }) {
-            XCTFail("the hosted window never showed in the accessibility tree", file: file, line: line)
-        }
+        readable = waitUntil(timeout: 5) { self.axWindow != nil }
     }
 
-    /// Skips the test while the Mac's screen is locked: macOS then counts no window as on
-    /// screen, so the accessibility tree has none to read (seen 2026-11-18: every window came back
-    /// as the bare app element until the screen was unlocked).
-    nonisolated static func requireScreen() throws {
+    /// The window is in the accessibility tree, so the flow can be driven. Sometimes it isn't:
+    /// seen 2026-11-18 while the Mac's screen was locked, when the app's window list came back
+    /// holding only the app element. `requireReadable()` skips the test then, saying why.
+    private(set) var readable = false
+
+    /// What macOS said about the screen and the window, for a skip or failure message.
+    var screenState: String {
         let session = CGSessionCopyCurrentDictionary() as? [String: Any] ?? [:]
-        if (session["CGSSessionScreenIsLocked"] as? Bool) == true {
-            throw XCTSkip("the screen is locked: macOS lists no windows to accessibility, so a flow can't be driven")
-        }
+        let locked = (session["CGSSessionScreenIsLocked"] as? Bool) == true
+        return "screen locked: \(locked), display asleep: \(CGDisplayIsAsleep(CGMainDisplayID()) != 0), "
+            + "window on the active space: \(window.isOnActiveSpace), occlusion: \(window.occlusionState.rawValue)"
+    }
+
+    /// Skips the test when the window can't be read (see `readable`); fails instead on CI, where
+    /// a skip would turn a run that drove nothing green.
+    func requireReadable(file: StaticString = #filePath, line: UInt = #line) throws {
+        guard !readable else { return }
+        let why = "the hosted window isn't in the accessibility tree (\(screenState))"
+        if TestRunner.isCI { XCTFail(why, file: file, line: line) }
+        throw XCTSkip(why)
     }
 
     /// A new window on a fresh workspace in `folder`.
@@ -74,6 +87,7 @@ final class FlowWindow {
     }
 
     func close() {
+        StagedWindow.shared.capturing = false
         StagedWindow.shared.window = nil
         window.close()
         panes.stopAll()
@@ -129,7 +143,10 @@ final class FlowWindow {
     /// The text is on screen somewhere (a substring of any readable text).
     func shows(_ text: String) -> Bool { texts.contains { $0.contains(text) } }
 
-    func find(_ q: Query) -> AXElement? { elements.first(where: q.matches) }
+    func find(_ q: Query) -> AXElement? {
+        guard q.inSheet else { return elements.first(where: q.matches) }
+        return elements.filter { $0.role == kAXSheetRole as String }.flatMap(\.descendants).first(where: q.matches)
+    }
 
     /// The element, waiting for it to appear; fails the test if it never does.
     @discardableResult
@@ -149,8 +166,25 @@ final class FlowWindow {
         guard let e = element(q, file: file, line: line) else { return }
         if !e.enabled { XCTFail("\(q) is disabled", file: file, line: line); return }
         let err = e.perform(kAXPressAction)
-        if err != .success { XCTFail("pressing \(q) failed: \(err.rawValue)", file: file, line: line) }
         pump()
+        // A button that closes its own sheet reports an error: it was gone before the press
+        // returned. Gone is pressed.
+        if err != .success, find(q) != nil, !clickSheetButton(q.label ?? [e.label, e.title].compactMap { $0 }.first { !$0.isEmpty }) {
+            XCTFail("pressing \(q) failed: \(err.rawValue)", file: file, line: line)
+        }
+    }
+
+    /// An alert's button, clicked as the AppKit button it is (its AX press can be refused while
+    /// the sheet settles).
+    private func clickSheetButton(_ title: String?) -> Bool {
+        guard let title, let sheet = window.attachedSheet else { return false }
+        func find(_ v: NSView) -> NSButton? {
+            if let b = v as? NSButton, b.title == title { return b }
+            return v.subviews.lazy.compactMap(find).first
+        }
+        guard let button = sheet.contentView.flatMap(find) else { return false }
+        button.performClick(nil)
+        return true
     }
 
     /// Types into a text field (its whole value becomes `text`) and, with `submit`, presses
@@ -218,9 +252,17 @@ final class FlowWindow {
         pump()
         var menu = NSApp.mainMenu
         var item: NSMenuItem?
+        NSApp.updateWindows()
+        NotificationCenter.default.post(name: NSApplication.didUpdateNotification, object: NSApp)
+        pump()
         for title in path {
+            if let m = menu {
+                // What opening it does: SwiftUI fills and validates its menus here.
+                m.delegate?.menuNeedsUpdate?(m)
+                m.delegate?.menuWillOpen?(m)
+            }
             menu?.update()
-            item = menu?.items.first { $0.title == title }
+            item = menu?.items.first { $0.title == title } ?? menu?.items.first { $0.title.hasPrefix(title) }
             menu = item?.submenu
         }
         if item == nil {
@@ -271,21 +313,6 @@ final class FlowWindow {
     }
 }
 
-/// The window's root, wrapped: it reads the `FrogWindow` the window publishes for the menu bar
-/// (the focused value the real menu bar reads in a key window) and stages it.
-private struct FlowRoot<Content: View>: View {
-    @ViewBuilder let content: () -> Content
-    @FocusedValue(\.frogWindow) private var frogWindow
-
-    var body: some View {
-        // Each body pass is the window's latest offer (its closures and flags); staged after
-        // the pass, so the update doesn't write state mid-render.
-        let current = frogWindow
-        DispatchQueue.main.async { if let current { StagedWindow.shared.window = current } }
-        return content()
-    }
-}
-
 /// A menu a flow opened, to choose from.
 @MainActor
 struct PoppedMenu {
@@ -295,6 +322,14 @@ struct PoppedMenu {
     var titles: [String] { menu.items.map(\.title).filter { !$0.isEmpty } }
 
     func isEnabled(_ title: String) -> Bool { menu.items.first { $0.title == title }?.isEnabled ?? false }
+
+    /// Chooses the first item whose title starts with `prefix`.
+    func choose(startingWith prefix: String, file: StaticString = #filePath, line: UInt = #line) {
+        guard let title = menu.items.first(where: { $0.title.hasPrefix(prefix) })?.title else {
+            return XCTFail("no item starting \(prefix) in the menu: \(titles)", file: file, line: line)
+        }
+        choose(title, file: file, line: line)
+    }
 
     /// Chooses the item, as clicking it would (a path for a submenu: "Group By", "Folder").
     func choose(_ path: String..., file: StaticString = #filePath, line: UInt = #line) {
@@ -320,12 +355,16 @@ struct Query: CustomStringConvertible {
     var label: String?
     var text: String?
     var role: String?
+    /// Only inside a sheet (an alert's field, a dialog's buttons).
+    var inSheet = false
 
     static func id(_ s: String) -> Query { Query(id: s) }
     static func label(_ s: String) -> Query { Query(label: s) }
     static func text(_ s: String) -> Query { Query(text: s) }
     static func button(_ label: String) -> Query { Query(label: label, role: kAXButtonRole as String) }
     static func field(placeholder: String) -> Query { Query(text: placeholder, role: kAXTextFieldRole as String) }
+    static var sheetField: Query { Query(role: kAXTextFieldRole as String, inSheet: true) }
+    static func sheetButton(_ label: String) -> Query { Query(label: label, role: kAXButtonRole as String, inSheet: true) }
 
     func matches(_ e: AXElement) -> Bool {
         if let id, e.identifier != id { return false }
@@ -337,7 +376,7 @@ struct Query: CustomStringConvertible {
     }
 
     var description: String {
-        [id.map { "id \($0)" }, label.map { "“\($0)”" }, text.map { "text “\($0)”" }, role].compactMap { $0 }.joined(separator: " ")
+        [id.map { "id \($0)" }, label.map { "“\($0)”" }, text.map { "text “\($0)”" }, role, inSheet ? "in a sheet" : nil].compactMap { $0 }.joined(separator: " ")
     }
 }
 
@@ -358,6 +397,8 @@ struct AXElement {
     var label: String? { string(kAXDescriptionAttribute) }
     var title: String? { string(kAXTitleAttribute) }
     var placeholder: String? { string(kAXPlaceholderValueAttribute) }
+    /// Its tooltip.
+    var help: String? { string(kAXHelpAttribute) }
     var value: String? {
         guard let v = raw(kAXValueAttribute) else { return nil }
         if let s = v as? String { return s }
