@@ -1068,6 +1068,76 @@
    ]
   },
   {
+   "name": "a card still up when the turn is stopped waits until the stop",
+   "events": [
+    {
+     "seq": 1,
+     "session": "s",
+     "created": 1794900000000,
+     "event": "turn_started",
+     "turn": 1,
+     "input": "go"
+    },
+    {
+     "seq": 2,
+     "session": "s",
+     "created": 1794900001000,
+     "event": "item_started",
+     "id": "w1",
+     "kind": {
+      "type": "tool_call",
+      "name": "Write",
+      "arg": "x"
+     }
+    },
+    {
+     "seq": 3,
+     "session": "s",
+     "created": 1794900009000,
+     "event": "permission_resolved",
+     "id": "p1",
+     "decision": "deny",
+     "item": "w1",
+     "asked": 1794900001200
+    },
+    {
+     "seq": 4,
+     "session": "s",
+     "created": 1794900009010,
+     "event": "turn_ended",
+     "turn": 1,
+     "reason": {
+      "type": "cancelled"
+     },
+     "usage": {
+      "input_tokens": 10,
+      "output_tokens": 20,
+      "model_calls": 1
+     }
+    }
+   ],
+   "segments": [
+    {
+     "kind": "tool",
+     "start_ms": 1000,
+     "end_ms": 1200,
+     "item": "w1"
+    },
+    {
+     "kind": "waiting",
+     "start_ms": 1200,
+     "end_ms": 9000,
+     "item": "w1"
+    },
+    {
+     "kind": "tool",
+     "start_ms": 9000,
+     "end_ms": 9010,
+     "item": "w1"
+    }
+   ]
+  },
+  {
    "name": "a live turn ends at its last event",
    "events": [
     {
