@@ -18,6 +18,15 @@ enum TurnPart {
     case head
     case segment(TurnFlow.Segment)
     case tail
+
+    /// This row draws `item` (a think, an answer, or a step in its run).
+    func holds(_ item: String?) -> Bool {
+        guard let item, !item.isEmpty, case .segment(let s) = self else { return false }
+        switch s {
+        case .activity(let g): return g.steps.contains { $0.id == item }
+        case .text(let i), .visual(let i), .notice(let i): return i.id == item
+        }
+    }
 }
 
 struct TurnView: View, Equatable {
@@ -26,6 +35,8 @@ struct TurnView: View, Equatable {
     let actions: TurnActions
     /// Which of the turn's rows this is.
     let part: TurnPart
+    /// The question anchored on this row's think or answer (it draws under the row).
+    var question: String? = nil
     /// Space above the row: between turns for a turn's first row, within one for the rest.
     var gap: CGFloat = 0
     /// Show the model/speed footer without hovering (see `TurnFooter.pinned`).
@@ -41,7 +52,7 @@ struct TurnView: View, Equatable {
     /// outside equality, as it must for a row that survives body evaluations.
     nonisolated static func == (a: Self, b: Self) -> Bool {
         guard a.conversation === b.conversation, a.pinsFooter == b.pinsFooter, a.gap == b.gap,
-              a.turn.id == b.turn.id else { return false }
+              a.turn.id == b.turn.id, a.question == b.question else { return false }
         switch (a.part, b.part) {
         case (.head, .head):
             // What the head renders derives entirely from these four (see `TurnLead`), so the
@@ -75,11 +86,13 @@ struct TurnView: View, Equatable {
 
     @Environment(\.transcriptTrack) private var track
 
-    init(turn: TurnState, conversation: Conversation, actions: TurnActions, part: TurnPart, gap: CGFloat = 0, pinsFooter: Bool = true) {
+    init(turn: TurnState, conversation: Conversation, actions: TurnActions, part: TurnPart, question: String? = nil,
+         gap: CGFloat = 0, pinsFooter: Bool = true) {
         self.turn = turn
         self.conversation = conversation
         self.actions = actions
         self.part = part
+        self.question = question
         self.gap = gap
         self.pinsFooter = pinsFooter
         // Only a prompt sent a moment ago flies in; history, replays and a scrolled-back
@@ -108,12 +121,6 @@ struct TurnView: View, Equatable {
     private var verbosity: Verbosity {
         VerbosityOverrides.shared.level(
             for: conversation.sessionID, default: Verbosity(rawValue: defaultVerbosity) ?? .normal)
-    }
-
-    /// The thought streaming now, previewed beside "Thinking…" (verbose shows it in full, below).
-    private var thinking: String? {
-        guard verbosity == .normal, let last = turn.items.last, last.kind == .reasoning, !last.done else { return nil }
-        return last.text
     }
 
     var body: some View {
@@ -207,8 +214,16 @@ struct TurnView: View, Equatable {
     // (so the handoff is a fade inside one view, not a swap of two), and it settles to the
     // plain row when the message completes; tool rows run above it.
     private func row(_ segment: TurnFlow.Segment) -> some View {
-        SegmentRow(segment: segment, conversation: conversation, live: running, verbosity: verbosity)
-            .equatable()
+        VStack(alignment: .leading, spacing: space.block) {
+            SegmentRow(segment: segment, conversation: conversation, live: running, verbosity: verbosity)
+                .equatable()
+            // An engine question anchored on this think or answer (the quiet call): right under it.
+            if question != nil, let q = conversation.question {
+                QuestionCard(question: q, conversation: conversation)
+                    .id(q.id)
+                    .transition(.opacity)
+            }
+        }
             .modifier(FadeIn(enabled: running))
             .background {
                 // The answer being written: where it starts and ends, so a long one stops at
@@ -227,9 +242,9 @@ struct TurnView: View, Equatable {
     private var tail: some View {
         let parts = TurnParts(turn)
         let loading = running ? modelLoading : nil
-        let status = running && loading == nil ? liveStatus : nil
+        let live = running && loading == nil
         let plan = running && !parts.plan.isEmpty
-        if plan || loading != nil || status != nil || !parts.changes.isEmpty || turn.end != nil
+        if plan || loading != nil || live || !parts.changes.isEmpty || turn.end != nil
             || (FeatureFlags.outcomeCard && turn.claims != nil) {
             VStack(alignment: .leading, spacing: space.block) {
                 if plan {
@@ -238,8 +253,10 @@ struct TurnView: View, Equatable {
                 if let loading {
                     ModelLoadingStatus(load: loading.load, since: loading.since)
                         .transition(.opacity)
-                } else if let status {
-                    LiveStatus(text: status.text, since: status.since, preview: thinking)
+                } else if live {
+                    // The thinking row and its stats (spec phase 2); under a writing answer,
+                    // only the stats.
+                    LiveRow(turn: turn, conversation: conversation)
                         .transition(.opacity)
                 }
                 #if !os(macOS)
@@ -261,7 +278,7 @@ struct TurnView: View, Equatable {
                 if let end = turn.end {
                     // An unpinned footer keeps its place and fades in on hover, so it neither
                     // covers the answer nor shifts what's below.
-                    EndView(reason: end, usage: turn.usage, answer: answer, hovering: hovering)
+                    EndView(reason: end, usage: turn.usage, turn: turn, answer: answer, hovering: hovering)
                         // Set off from the answer above it (see `TurnSpace`): the turn's last
                         // line reads as a caption, not as one more paragraph.
                         .padding(.top, isFooter(end) ? space.footer : 0)
@@ -282,31 +299,6 @@ struct TurnView: View, Equatable {
         case .complete, .denied: true
         default: false
         }
-    }
-
-    /// What's happening now, for the turn's last line. Nothing while the answer is being
-    /// written (the text is the status), a permission card is up, or a subagent or diagram
-    /// shows its own progress.
-    private var liveStatus: (text: String, since: Date?)? {
-        guard let last = turn.items.last else { return nil }
-        if last.kind == .message, !last.done, !last.text.isEmpty { return nil }
-        if let current = turn.items.last(where: { !$0.done && $0.kind != .message }) {
-            if case .tool("Task", _) = current.kind {
-                // The agent's own row shows what it's doing; this line, how the turn's agents stand.
-                return conversation.permission == nil ? conversation.agentStatus(turn).map { ($0, current.startedAt) } : nil
-            }
-            if current.needsPermission { return nil }
-            if case .tool("Diagram", _) = current.kind { return nil }
-            if case .tool("Visualize", _) = current.kind { return nil }
-            return (ActivityWords.now(current), current.startedAt)
-        }
-        // Between steps: the model is working out what to do next.
-        let label = conversation.progress.flatMap { p -> String? in
-            guard p.label != "thinking", !p.label.isEmpty else { return nil }
-            let s = ModelLoad.words(p.label)
-            return s.hasSuffix("…") ? s : s + "…"
-        }
-        return (label ?? "Thinking…", turn.items.compactMap(\.endedAt).max())
     }
 
     /// Before the first answer, the model may still be getting ready: tang reading a downloaded

@@ -22,7 +22,8 @@ struct ActivityLine: View {
     /// The group is only thinking: each finished thought is a line ("Thought for 12s").
     private var thoughts: [ItemState] {
         let hasTools = group.steps.contains { if case .tool = $0.kind { true } else { false } }
-        return hasTools ? [] : group.done.filter { $0.kind == .reasoning }
+        // A think the turn stopped in the middle of settles too ("Stopped after 12s").
+        return hasTools ? [] : group.steps.filter { $0.kind == .reasoning && ($0.done || !live) }
     }
 
     /// A long thought on a line of its own gets a gist.
@@ -70,11 +71,6 @@ struct ActivityLine: View {
     @ViewBuilder
     private func liveStep(_ item: ItemState) -> some View {
         switch item.kind {
-        case .reasoning where !ActivityGroup.isShort(item):
-            // Normal previews it beside "Thinking…" (see `LiveStatus`); verbose shows it here.
-            if verbosity == .verbose {
-                LiveThought(text: item.text)
-            }
         case .tool("Task", let arg):
             // An agent works for a while; show its step row, with its Stop button.
             AgentStepRow(arg: arg, item: item, conversation: conversation)
@@ -133,106 +129,6 @@ struct CappedThought: View {
                 .foregroundStyle(.tint)
             }
         }
-    }
-}
-
-/// A long thought as it streams: its latest lines, muted, until it folds into its line.
-struct LiveThought: View {
-    let text: String
-
-    var body: some View {
-        Text(tail)
-            .font(.callout)
-            .foregroundStyle(.tertiary)
-            .lineLimit(6, reservesSpace: false)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .transition(.opacity)
-    }
-
-    private var tail: String {
-        text.split(separator: "\n", omittingEmptySubsequences: true).suffix(6).joined(separator: "\n")
-    }
-}
-
-/// A thought as it streams, in one line beside "Thinking…": the sentence being written, replaced
-/// by the next. Enough to see what it's working on, without a block of text growing and
-/// shrinking.
-struct ThoughtSubtitle: View {
-    let text: String
-
-    var body: some View {
-        let (index, sentence) = Self.current(text)
-        Text(sentence)
-            .font(.callout)
-            .foregroundStyle(.tertiary)
-            .lineLimit(1)
-            // The newest words stay in view as the sentence outgrows the line.
-            .truncationMode(.head)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .id(index)
-            .transition(.opacity)
-            .animation(.easeOut(duration: 0.2), value: index)
-    }
-
-    /// The sentence being written and its position, so a new sentence fades in. One that's
-    /// barely begun shows the one before it until it has a few words.
-    static func current(_ text: String) -> (Int, String) {
-        var sentences: [String] = []
-        var sentence = ""
-        for ch in text {
-            if ch == "\n" {
-                if !sentence.trimmingCharacters(in: .whitespaces).isEmpty { sentences.append(sentence) }
-                sentence = ""
-                continue
-            }
-            sentence.append(ch)
-            if ".?!".contains(ch) {
-                sentences.append(sentence)
-                sentence = ""
-            }
-        }
-        let tail = sentence.trimmingCharacters(in: .whitespaces)
-        if tail.count >= 24 || sentences.isEmpty {
-            return (sentences.count, tail)
-        }
-        return (sentences.count - 1, sentences[sentences.count - 1].trimmingCharacters(in: .whitespaces))
-    }
-}
-
-/// The running turn's last line: a small spinner and what's happening now.
-struct LiveStatus: View {
-    @Environment(\.transcriptEdge) private var edge
-    let text: String
-    /// When the current step started, for "Running the tests… 12s".
-    let since: Date?
-    /// A thought as it streams: its current sentence, after "Thinking… 4s".
-    var preview: String?
-
-    var body: some View {
-        HStack(spacing: TurnSpace.Inset.row) {
-            BreathingDot(live: true)
-            TimelineView(.periodic(from: .now, by: 1)) { ctx in
-                Text(text + elapsed(at: ctx.date))
-                    .font(.callout)
-                    .monospacedDigit()
-                    .contentTransition(.opacity)
-            }
-            .fixedSize()
-            if let preview, !ThoughtSubtitle.current(preview).1.isEmpty {
-                ThoughtSubtitle(text: preview)
-            }
-        }
-        .foregroundStyle(.secondary)
-        .animation(.default, value: text)
-        .padding(.leading, edge.indent)
-    }
-
-    private func elapsed(at now: Date) -> String {
-        guard let since else { return "" }
-        let secs = now.timeIntervalSince(since)
-        // Under a second isn't worth saying; over an hour usually means a replayed session.
-        guard secs >= 1, secs < 3600 else { return "" }
-        return " " + ActivityWords.duration(secs)
     }
 }
 

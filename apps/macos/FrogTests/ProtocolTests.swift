@@ -127,7 +127,7 @@ final class ProtocolTests: XCTestCase {
         XCTAssertEqual(q.allowOther, true)
         XCTAssertNil(q.multi)
         let resolved = try decode(#"{"seq":5,"session":"s","created":0,"event":"question_resolved","id":"q1","other":"neither"}"#)
-        guard case .questionResolved("q1") = resolved.event else { return XCTFail() }
+        guard case .questionResolved("q1", _, _) = resolved.event else { return XCTFail() }
 
         let shown = try decode(#"{"seq":9,"session":"s","created":0,"event":"item_completed","id":"t2","item":{"type":"tool_call","name":"Present","arg":"","input":{},"outcome":"ok","output":"Shown","present":{"title":"Tests","blocks":[{"type":"table","columns":["test","ms"],"rows":[["resume","12"]]},{"type":"callout","tone":"warning","text":"careful"},{"type":"steps","items":["a","b"],"current":1},{"type":"sparkline"}]}}}"#)
         guard case .itemCompleted(_, .toolCall(let r)) = shown.event, let p = r.present else { return XCTFail() }

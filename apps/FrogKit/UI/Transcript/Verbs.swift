@@ -79,4 +79,20 @@ enum Verbs {
     static func look(_ name: String) -> Look {
         table[name.lowercased()] ?? Look(tool: name, live: unknownLive, past: unknownPast, created: nil, object: .tool)
     }
+
+    /// The live row's words (spec.md, "The row"): `{time}` and `{n}` are filled in.
+    enum Live {
+        static let thinking = "Thinking"
+        static let waiting = "Waiting for you"
+        static let thought = "Thought for {time}"
+        static let stopped = "Stopped after {time}"
+        static let stalled = "No output for {time}"
+        static let mixed = "Running {n} steps"
+        /// The noun several steps at once fold into, by their object format ("Reading 3 files").
+        static let counts: [Object: String] = [.path: "files", .command: "commands", .pattern: "searches", .host: "pages", .text: "steps", .tool: "tools", .none: "steps"]
+
+        static func fill(_ template: String, time: String = "", n: Int = 0) -> String {
+            template.replacingOccurrences(of: "{time}", with: time).replacingOccurrences(of: "{n}", with: String(n))
+        }
+    }
 }
