@@ -153,7 +153,27 @@ final class TableTranscriptParityTests: XCTestCase {
         }
     }
 
+    /// PROBE: the state at the first delta that didn't reach the screen.
+    private func missed(_ c: Conversation, _ what: String) {
+        let s = scrollView
+        let clip = s?.contentView.bounds ?? .zero
+        let tvs = views(host, MessageTextView.self).map { tv -> String in
+            let r = s.map { tv.convert(tv.bounds, to: $0.contentView) } ?? .zero
+            return "  tv len \(tv.string.count) win \(tv.window != nil) hidden \(tv.isHiddenOrHasHiddenAncestor) y \(Int(r.minY))..\(Int(r.maxY)) head \(tv.string.prefix(14).debugDescription)"
+        }.joined(separator: "\n")
+        let item = c.turns.last?.items.last
+        let cpu0 = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID); pump(1)
+        let cpu = Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - cpu0) / 1e9
+        let text = "MISS \(what): clip \(clip) doc \(s?.documentView?.frame.height ?? -1) atEnd \(atEnd()) item text \(item?.text.count ?? -1) cpu1s \(String(format: "%.2f", cpu)) mounted \(TranscriptProbe.mountedKeys.count)\n\(tvs)\nring (t kind #tag h top visH below fol ansMin ansMax parked):\n\(DiagLog.dump())\n"
+        print("DIAG " + text.prefix(3000))
+        if let dir = ProcessInfo.processInfo.environment["FROG_DIAG_DIR"] {
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            try? text.write(toFile: "\(dir)/miss-\(Int(Date().timeIntervalSince1970 * 1000)).txt", atomically: true, encoding: .utf8)
+        }
+    }
+
     func testStreamingShowsWordsAndFollows() {
+        if ProcessInfo.processInfo.environment["FROG_DIAG_DIR"] != nil { executionTimeAllowance = 60 }
         for table in [false, true] {
             let c = open(table: table, turns: 30)
             send(c, #""turn_started","turn":99,"input":"go""#)
@@ -164,7 +184,7 @@ final class TableTranscriptParityTests: XCTestCase {
                 send(c, #""item_delta","id":"live","delta":{"type":"text","text":"word\#(i) "}"#)
                 // Each delta drawn before the next is sent, so this is a stream and not one buffered
                 // write: wait for the words so far rather than sleeping a guessed interval.
-                wait(timeout: 5) { self.drawnText().contains("word\(i) ") }
+                if !wait(timeout: 5, until: { self.drawnText().contains("word\(i) ") }) { missed(c, "streaming table=\(table) word\(i)"); break }
             }
             send(c, #""item_delta","id":"live","delta":{"type":"text","text":"\n\nlast-line"}"#)
             print("DIAG counters table=\(table) parks=\(DiagLog.parks) declined=\(DiagLog.declined)"); DiagLog.parks = 0; DiagLog.declined = 0
@@ -182,6 +202,7 @@ final class TableTranscriptParityTests: XCTestCase {
     /// Both ways an answer starts: after tool calls (it stops at the answer), and as the turn's
     /// first words (it stops at the prompt above them).
     func testStreamingALongAnswerStopsAtItsStart() {
+        if ProcessInfo.processInfo.environment["FROG_DIAG_DIR"] != nil { executionTimeAllowance = 60 }
         for table in [false, true] {
           for tools in [true, false] {
             let c = open(table: table, turns: 30)
@@ -196,7 +217,7 @@ final class TableTranscriptParityTests: XCTestCase {
             for i in 0..<40 {
                 let para = "line\(i) of a long answer, a paragraph that wraps in the window. "
                 send(c, #""item_delta","id":"live","delta":{"type":"text","text":\#(Self.json(para + "\n\n"))}"#)
-                wait(timeout: 5) { self.drawnText().contains("line\(i) ") }
+                if !wait(timeout: 5, until: { self.drawnText().contains("line\(i) ") }) { missed(c, "long table=\(table) tools=\(tools) line\(i)"); break }
                 if let s = self.scrollView, let start = self.views(self.host, MessageTextView.self).first(where: { $0.string.hasPrefix("line0 ") }) {
                     overshoot = max(overshoot, s.contentView.bounds.minY - start.convert(start.bounds, to: s.contentView).minY)
                 }

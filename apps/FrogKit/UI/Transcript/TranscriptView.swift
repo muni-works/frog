@@ -135,6 +135,9 @@ struct TranscriptView: View {
                 // the new rows out for real, and following keeps the view there as it grows.
                 .onChange(of: conversation.turns.last?.id) { _, id in
                     guard id != nil else { return }
+                    #if DEBUG
+                    DiagLog.note(4, track)
+                    #endif
                     following = true
                     track.unpark()
                     proxy.scrollTo(Self.end, anchor: .bottom)
@@ -144,6 +147,9 @@ struct TranscriptView: View {
                 // lazy stack re-estimates rows it hasn't laid out.
                 .onScrollGeometryChange(for: ScrollEnd.self, of: ScrollEnd.init) { old, new in
                     defer { track.measured(below: new.below, height: new.contentHeight) }
+                    #if DEBUG
+                    DiagLog.note(1, track, (new.contentHeight, new.visibleTop, new.visibleHeight, new.below, following ? 1 : 0, Double(track.answer?.frame.minY ?? -1), Double(track.answer?.frame.maxY ?? -1), track.parked ? 1 : 0))
+                    #endif
                     // Near the top of what's built, once it has opened at the end: build more
                     // above (and, when what's built is shorter than the view, until it isn't).
                     // A row in the lazy stack can't be the trigger: the stack estimates the rows
@@ -180,6 +186,9 @@ struct TranscriptView: View {
                     // Past the end of what's laid out: nothing to draw (the lazy stack's estimate
                     // of rows above shrank under a still offset). Back to the end, and follow.
                     if new.pastEnd {
+                        #if DEBUG
+                        DiagLog.note(5, track)
+                        #endif
                         following = true
                         track.unpark()
                         return follow(proxy)
@@ -211,6 +220,7 @@ struct TranscriptView: View {
                         // stop past the laid-out end, a blank transcript until you scroll.
                         #if DEBUG
                         DiagLog.parks += 1
+                        DiagLog.note(2, track, (live.first ? 1 : 0, top, 0, 0, 0, 0, 0, 0))
                         #endif
                         following = false
                         track.park(at: old.contentHeight)
@@ -252,6 +262,7 @@ struct TranscriptView: View {
             // Perf task: the follow fires at most once per run-loop turn.
             os_signpost(.event, log: Self.followLog, name: "transcript.follow")
             TranscriptProbe.follows += 1
+            DiagLog.note(3, track)
             #endif
             proxy.scrollTo(Self.end, anchor: .bottom)
         }

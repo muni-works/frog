@@ -100,13 +100,15 @@ jobs:
         # the run writes a result bundle, and the next two steps read the failures back out.
         env:
           TEST_RUNNER_CI: "true"
+          TEST_RUNNER_FROG_DIAG_DIR: ${{ github.workspace }}/diag
         timeout-minutes: 30
         run: |
           cd apps/macos
           set +e
           xcodebuild test -test-iterations 25 \
             -test-timeouts-enabled YES -default-test-execution-time-allowance 300 \
-            -only-testing:FrogTests/TableTranscriptParityTests \
+            -only-testing:FrogTests/TableTranscriptParityTests/testStreamingALongAnswerStopsAtItsStart \
+            -only-testing:FrogTests/TableTranscriptParityTests/testStreamingShowsWordsAndFollows \
             -resultBundlePath build/ci/Test.xcresult \
             -project Frog.xcodeproj -scheme Frog -configuration Debug \
             -derivedDataPath build/ci -destination 'platform=macOS,arch=arm64' \
@@ -118,6 +120,13 @@ jobs:
             -project Frog.xcodeproj -scheme Frog -configuration Debug \
             -derivedDataPath build/ci -destination 'platform=macOS,arch=arm64' \
             CODE_SIGN_IDENTITY="-" DEVELOPMENT_TEAM="" CODE_SIGN_STYLE="Manual"
+      - name: upload probe diag
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: probe-diag-${{ matrix.probe }}
+          path: diag
+          if-no-files-found: ignore
       # Each failing test with its assertion message, in the log and as a check annotation.
       # It lists every failed try, so a test that failed and then passed on a retry shows too.
       - name: test failures
