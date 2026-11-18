@@ -12,6 +12,20 @@ final class InkRevealTests: XCTestCase {
         RunLoop.main.run(until: Date().addingTimeInterval(seconds))
     }
 
+    /// Spin the run loop until `condition` holds or `timeout` passes. The pen runs up to
+    /// `InkReveal.lagStreaming` behind arrival by design and moves on the display's frames, so
+    /// a fixed pause after the last chunk is a guess at how many frames came: on a busy machine
+    /// fewer do, and the assertion raced the pen instead of checking that it gets there.
+    @discardableResult
+    private func wait(timeout: TimeInterval, until condition: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return true }
+            pump(0.02)
+        }
+        return condition()
+    }
+
     private func view() -> MessageTextView {
         let v = MessageTextView(usingTextLayoutManager: false)
         v.textContainer?.lineFragmentPadding = 0
@@ -55,8 +69,11 @@ final class InkRevealTests: XCTestCase {
             pump(0.1)
         }
         let length = (v.textStorage?.string ?? "").count
+        wait(timeout: 3) { v.reveal.revealed == length }
         XCTAssertEqual(v.reveal.revealed, length, "the pen never caught up")
-        pump(0.7)
+        // The last run fades for `InkReveal.inkTime` once revealed; wait for it rather than for
+        // a guessed number of frames.
+        wait(timeout: 3) { self.settled(v) }
         XCTAssertGreaterThan(TranscriptProbe.inkStyles, 0, "no ink styling ran")
         // Each character is painted at most its fade's steps (plus the full-window pass when its
         // chunk arrived), never a whole-body restyle per frame.
