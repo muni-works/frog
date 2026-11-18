@@ -249,6 +249,8 @@ final class Conversation {
     @ObservationIgnored static var userActivity: ((Conversation) -> Void)?
     /// A new permission prompt opened (the Mac's `SessionBroker` escalates it to a parent).
     @ObservationIgnored static var permissionRequests: ((Conversation, PermissionRequest) -> Void)?
+    /// The person answered a permission prompt (the Mac's opt-in funnel events, `Funnel.decided`).
+    @ObservationIgnored static var decided: ((PermissionRequest, Decision) -> Void)?
     /// Counts of live happenings, for haptics and the frog's face.
     private(set) var stepsDone = 0
     private(set) var turnsDone = 0
@@ -576,6 +578,7 @@ final class Conversation {
         link?.send(.permission(id: p.id, decision: decision, note: note?.isEmpty == false ? note : nil))
         permission = nil
         Conversation.effects?.answered(self, permission: p.id)
+        Conversation.decided?(p, decision)
     }
 
     /// Answer the open `Ask`: the picked labels and/or the user's own words. Neither dismisses it.
@@ -897,6 +900,7 @@ final class Conversation {
                     if state.subagent?.endedAt == nil { state.subagent?.endedAt = Date() }
                 }
             }
+            if case .reasoning(_, let meta) = item { settleThought(id, thinkMs: meta.thinkMs, completed: at) }
             if case .toolCall = item, isNews(env) { stepsDone += 1 }
             changesVersion += 1
         case .outputTokens(let turn, let output, let soFar, let slow, let cached):
@@ -1315,6 +1319,24 @@ final class Conversation {
     /// transcript's structure reads changes (see `LiveText`). False when the item isn't a
     /// running message already in `turns`, or when the append is one the structure must see;
     /// then the caller writes through `upsert`, which also starts the live buffer.
+    /// A think finished: how long it thought (see `ItemState.thoughtMs`). Items are kept in the
+    /// order they started, so the first message or tool call after it in its turn is the answer
+    /// it led to; one that starts later still can only be later than its completion.
+    private func settleThought(_ id: String, thinkMs: UInt64?, completed: Date) {
+        guard let (ti, ii) = itemAt[id], turns.indices.contains(ti), turns[ti].items.indices.contains(ii),
+              let start = turns[ti].items[ii].startedAt else { return }
+        var end = completed
+        if let thinkMs {
+            end = min(start.addingTimeInterval(Double(thinkMs) / 1000), completed)
+        } else if let next = turns[ti].items[(ii + 1)...].first(where: { item in
+            if case .tool = item.kind { return item.startedAt != nil }
+            return item.kind == .message && item.startedAt != nil
+        }), let at = next.startedAt {
+            end = min(at, completed)
+        }
+        turns[ti].items[ii].thoughtMs = UInt64(max(0, (end.timeIntervalSince(start) * 1000).rounded()))
+    }
+
     private func recordTimeline(_ env: Envelope) {
         switch env.event {
         case .turnStarted(let n, _, _, _):

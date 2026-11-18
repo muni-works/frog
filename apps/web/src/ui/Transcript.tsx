@@ -7,9 +7,10 @@ import { Markdown } from './Markdown'
 import { Hunks } from './Diff'
 import { ICON } from './icons'
 import { endError } from '../store'
+import { resumedLine } from '../wall'
 import { TurnFooter } from './TurnFooter'
 import { WidgetCard } from './Widget'
-import { foldRuns, foldTime, lineOf, opensItself, rememberOpen, thoughtLabel, type Step } from './rows'
+import { foldRuns, foldTime, lineOf, opensItself, rememberOpen, thinkMsOf, thoughtLabel, type Step } from './rows'
 import { LiveContext, LiveTail, ThinkingLine, type LiveInfo } from './LiveRow'
 
 // Draws a folded Thread: the user's message, tool lines, "Decided" steps (reasoning items),
@@ -383,7 +384,7 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
       // An older log has no length: a short scratch thought alone between replies folds away.
       if (e.thinkMs == null && !e.thoughts && foldedThought(entries, n)) return null
       // An empty thought has nothing to open, and a blank reply nothing to read: neither draws.
-      return e.text.trim() ? <ThinkingLine e={e} label={thoughtLabel(e, turn.reason?.type === 'cancelled' ? turn.endAt : undefined)} /> : null
+      return e.text.trim() ? <ThinkingLine e={e} label={thoughtLabel(e, turn.reason?.type === 'cancelled' ? turn.endAt : undefined, thinkMsOf(turn, e.id))} /> : null
     }
     if (e.kind === 'message' && e.done && !e.text.trim()) return null
     if (e.kind === 'message') return <div className="say" data-row="prose" data-item={e.id}><Markdown text={e.text} />{!e.done && <span className="caret" />}</div>
@@ -403,6 +404,8 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
   }
   return (
     <div className="turn">
+      {/* A turn the credit wall resumed (Op::Continue with wall.ts's note) is one quiet line, not a message. */}
+      {resumedLine(turn.input) ? <div className="turn-note" data-row="resumed" role="status">{resumedLine(turn.input)}</div> : (
       <div className="ask-block">
         {/* A blank message (whitespace, no images) draws no empty bubble. */}
         {/* The receipts and actions sit beside the last bubble, not under it, so the prompt is a
@@ -422,7 +425,7 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
             )}
           </div>
         ))}
-      </div>
+      </div>)}
       <div className="reply-block">
       {foldRuns(rows(turn.entries, ask, question)).map((r) => r.kind === 'fold'
         ? <Fold key={r.id} steps={r.steps.map((x) => x.e)} render={(e) => <ToolLine key={e.id} e={e} onShowChange={cb.onShowChange} />} />
