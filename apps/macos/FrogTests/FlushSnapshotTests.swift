@@ -31,9 +31,14 @@ final class FlushSnapshotTests: XCTestCase {
         try XCTSkipIf(TestRunner.isCI, "display-driven snapshots for docs/design/flush; run locally")
     }
 
+    /// The test host shares the app's defaults: this Mac's sidebar width stays out of the images.
+    private var savedSidebar: Any?
+
     override func setUp() {
         super.setUp()
         executionTimeAllowance = 120
+        savedSidebar = UserDefaults.standard.object(forKey: WorkspaceView.sidebarWidthKey)
+        UserDefaults.standard.removeObject(forKey: WorkspaceView.sidebarWidthKey)
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         func s(_ id: String, _ title: String, ago minutes: Double, repo: String = "frog") -> SessionInfo {
             let t = now - Int64(minutes * 60_000)
@@ -54,6 +59,8 @@ final class FlushSnapshotTests: XCTestCase {
     }
 
     override func tearDown() {
+        if let savedSidebar { UserDefaults.standard.set(savedSidebar, forKey: WorkspaceView.sidebarWidthKey) }
+        else { UserDefaults.standard.removeObject(forKey: WorkspaceView.sidebarWidthKey) }
         Library.shared.unstage()
         CloudAccount.shared.unstage()
         Devices.shared.hideOffer = false
@@ -135,5 +142,17 @@ final class FlushSnapshotTests: XCTestCase {
             try show(panes.items[0], inspector: false)
             panes.items[0].peekChanges = true
         }
+    }
+
+    /// The sidebar dragged wider (340 of 220–400): the header in the title row, the title and
+    /// the panes follow it.
+    func testWideSidebar() throws {
+        let saved = UserDefaults.standard.object(forKey: WorkspaceView.sidebarWidthKey)
+        defer {
+            if let saved { UserDefaults.standard.set(saved, forKey: WorkspaceView.sidebarWidthKey) }
+            else { UserDefaults.standard.removeObject(forKey: WorkspaceView.sidebarWidthKey) }
+        }
+        UserDefaults.standard.set(340.0, forKey: WorkspaceView.sidebarWidthKey)
+        try render("wide-sidebar") { try show($0.items[0], inspector: true) }
     }
 }

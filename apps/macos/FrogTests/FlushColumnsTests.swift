@@ -21,9 +21,16 @@ final class FlushColumnsTests: XCTestCase {
         executionTimeAllowance = 60
         // This Mac's real sessions don't belong in a test's window.
         Library.shared.stage(sessions: [])
+        // Nor its sidebar width: the test host shares the app's defaults.
+        savedSidebar = UserDefaults.standard.object(forKey: "sidebarWidth")
+        UserDefaults.standard.removeObject(forKey: "sidebarWidth")
     }
 
+    private var savedSidebar: Any?
+
     override func tearDown() {
+        if let savedSidebar { UserDefaults.standard.set(savedSidebar, forKey: "sidebarWidth") }
+        else { UserDefaults.standard.removeObject(forKey: "sidebarWidth") }
         Library.shared.unstage()
         super.tearDown()
     }
@@ -80,17 +87,17 @@ final class FlushColumnsTests: XCTestCase {
         }
     }
 
-    /// Dark: the page, the columns' fill and the hairline.
-    private let canvas = 0, column = 10, line = 42
+    /// Dark: the page, the columns' fill and their hairline (`Tokens.edge`, #1a1a1a).
+    private let canvas = 0, column = 10, line = 26
 
     private func assertGray(_ shot: Shot, _ x: CGFloat, _ y: CGFloat, _ want: Int, _ what: String,
                             file: StaticString = #filePath, line: UInt = #line) {
         let got = shot.rgb(x, y)
-        // The line comes out some steps off its token through the display's colour space (#2a2a2a
-        // reads 49 here, 56 on CI's virtual display): it's a line if it's a gray well clear of
-        // both the page (0) and the columns (10).
+        // The line comes out some steps off its token through the display's colour space (the old
+        // #2a2a2a read 49 here and 56 on CI's virtual display): it's the edge if it's a gray clear
+        // of both the page (0) and the columns (10), and quieter than `Tokens.line` (49 / 56).
         let ok = want == self.line
-            ? got.allSatisfy { (30...72).contains($0) } && Set(got).count == 1
+            ? got.allSatisfy { (16...44).contains($0) } && Set(got).count == 1
             : got.allSatisfy { abs($0 - want) <= 3 }
         XCTAssertTrue(ok, "\(what) at (\(x), \(y)): \(got), want \(want)", file: file, line: line)
     }
@@ -316,5 +323,36 @@ final class FlushColumnsTests: XCTestCase {
         let focused = brightest(CGRect(x: WorkspaceView.sessionsWidth + 40, y: h - 150, width: mid - WorkspaceView.sessionsWidth - 120, height: 145))
         let other = brightest(CGRect(x: mid + 40, y: h - 150, width: W - mid - 120, height: 145))
         XCTAssertGreaterThan(focused - other, 30, "the focused pane's composer (\(focused)) should stand out from the other's (\(other))")
+    }
+
+    /// The sidebar's width is the one last dragged to: the column, its hairline, the page and
+    /// the panes all follow it.
+    func testPanesFollowTheSidebarsWidth() throws {
+        UserDefaults.standard.set(320.0, forKey: "sidebarWidth")
+        let (shot, panes) = try shoot { try showConversation($0, inspector: true) }
+        defer { panes.stopAll() }
+        let h = shot.size.height
+        for y: CGFloat in [1, h / 2, h - 1] {
+            assertGray(shot, 300, y, column, "the widened sidebar")
+            assertGray(shot, 319.5, y, line, "the widened sidebar's hairline")
+            assertGray(shot, 322, y, canvas, "the page past the widened sidebar")
+        }
+        let sidebar = try XCTUnwrap(firstRow(shot, from: 0, to: 320))
+        let strip = try XCTUnwrap(firstRow(shot, from: shot.size.width - panes.items[0].cardWidth, to: shot.size.width))
+        XCTAssertEqual(strip, sidebar, accuracy: 1, "the inspector's strip stays on the sidebar's first row")
+    }
+
+    /// The sidebar's width: 250 by default, dragged between 220 and 400, kept under
+    /// `sidebarWidth` (beside the inspector's `inspectorWidth`).
+    func testSidebarWidthClampsAndPersists() {
+        XCTAssertEqual(WorkspaceView.sessionsWidth, 250)
+        XCTAssertEqual(WorkspaceView.sidebarWidthKey, "sidebarWidth")
+        XCTAssertEqual(WorkspaceView.savedSidebarWidth, 250, "nothing saved: the default")
+        UserDefaults.standard.set(900.0, forKey: "sidebarWidth")
+        XCTAssertEqual(WorkspaceView.savedSidebarWidth, 400)
+        UserDefaults.standard.set(100.0, forKey: "sidebarWidth")
+        XCTAssertEqual(WorkspaceView.savedSidebarWidth, 220)
+        UserDefaults.standard.set(310.0, forKey: "sidebarWidth")
+        XCTAssertEqual(WorkspaceView.savedSidebarWidth, 310)
     }
 }

@@ -26,6 +26,9 @@ struct WorkspaceView: View {
     /// The peek came from the pointer at the window's left edge: it goes when the pointer
     /// moves out over the page.
     @State private var peekByHover = false
+    /// The sidebar's width, as last dragged (`savedSidebarWidth`).
+    @AppStorage(WorkspaceView.sidebarWidthKey) private var sidebarWidthRaw = Double(WorkspaceView.sessionsWidth)
+    private var sidebarWidth: CGFloat { Self.clampSidebar(sidebarWidthRaw) }
     /// This view's window, so the sidebar can bring an already-open conversation forward.
     @State private var window: NSWindow?
     @State private var renamingTitle = false
@@ -47,6 +50,7 @@ struct WorkspaceView: View {
     private struct LayoutInputs: Equatable {
         var size: CGSize
         var sessions: Bool
+        var sidebar: CGFloat
         var layout: PaneLayout
         var panes: [PaneInputs]
     }
@@ -60,7 +64,17 @@ struct WorkspaceView: View {
         var hasRail: Bool
     }
 
+    /// The sidebar's default width; dragged between `minSessions` and `maxSessions`, kept under
+    /// `sidebarWidthKey` beside the inspector's.
     static let sessionsWidth: CGFloat = 250
+    static let minSessions: CGFloat = 220
+    static let maxSessions: CGFloat = 400
+    static let sidebarWidthKey = "sidebarWidth"
+    static func clampSidebar(_ w: Double) -> CGFloat {
+        min(maxSessions, max(minSessions, w > 0 ? CGFloat(w) : sessionsWidth))
+    }
+    /// The width last dragged to, else the default.
+    static var savedSidebarWidth: CGFloat { clampSidebar(UserDefaults.standard.double(forKey: sidebarWidthKey)) }
     static let button: CGFloat = 36
     /// Room between the timeline rail and the inspector's hairline (or the pane's edge), and
     /// above the rail and a split pane's header.
@@ -110,7 +124,7 @@ struct WorkspaceView: View {
     /// The session list's width, its hairline included: where the panes start. Collapsed, it's
     /// gone.
     private func extent(sessions open: Bool) -> CGFloat {
-        open ? Self.sessionsWidth : 0
+        open ? sidebarWidth : 0
     }
 
     /// What a pane's right edge keeps from its conversation: the inspector when docked, and the
@@ -163,7 +177,7 @@ struct WorkspaceView: View {
     }
 
     private var layoutInputs: LayoutInputs {
-        LayoutInputs(size: canvasSize, sessions: showSessions, layout: panes.layout, panes: panes.items.map {
+        LayoutInputs(size: canvasSize, sessions: showSessions, sidebar: sidebarWidth, layout: panes.layout, panes: panes.items.map {
             PaneInputs(id: $0.id, shows: $0.conversation.map(ObjectIdentifier.init), changes: $0.showChanges, hasChanges: $0.hasTabs, hasRail: $0.hasRail)
         })
     }
@@ -478,7 +492,7 @@ struct WorkspaceView: View {
         // A hover peek goes when the pointer moves out over the page.
         .onContinuousHover(coordinateSpace: .named(Self.canvasSpace)) { phase in
             guard peekByHover, peekSessions, case .active(let p) = phase,
-                  p.x > Self.sessionsWidth + Tokens.Space.row * 3 else { return }
+                  p.x > sidebarWidth + Tokens.Space.row * 3 else { return }
             peekSessions = false
         }
         .onChange(of: peekSessions) { if !peekSessions { peekByHover = false } }
@@ -609,7 +623,7 @@ struct WorkspaceView: View {
             if sessionsVisible {
                 ToolbarItem(placement: .navigation) {
                     SidebarTitleRow(docs: inDocs, peeking: peekSessions, toggle: toggleSessions)
-                        .frame(width: Self.sessionsWidth - Self.trafficLights)
+                        .frame(width: sidebarWidth - Self.trafficLights)
                 }
                 .sharedBackgroundVisibility(.hidden)
             } else {
@@ -688,8 +702,17 @@ struct WorkspaceView: View {
                     SessionList(workspace: workspace, maxHeight: room, titleRow: false) { toggleSessions() }
                 }
             }
-            .frame(width: Self.sessionsWidth)
+            .frame(width: sidebarWidth)
             .flushColumn(trailing: true, floating: peekSessions)
+            // Drag its hairline to resize it, as the inspector's.
+            .overlay(alignment: .trailing) {
+                if docked.sessions {
+                    ColumnGrip(width: Binding(get: { sidebarWidth }, set: { sidebarWidthRaw = Double($0) }),
+                               range: Self.minSessions...Self.maxSessions, reset: Self.sessionsWidth, growsLeft: false,
+                               help: "Drag to resize the sidebar, double-click to reset")
+                        .offset(x: ColumnGrip.reach)
+                }
+            }
             .transition(.move(edge: .leading))
         }
     }
@@ -698,7 +721,7 @@ struct WorkspaceView: View {
 extension View {
     /// A flush column (docs/design/flush): the sidebar's fill, square, from the top of the space
     /// it's given to the bottom, running up under the title bar when `underTitleBar`, with a
-    /// `Tokens.line` hairline on the edges it shares with the page. Floating (a peek, or an
+    /// `Tokens.edge` hairline on the edges it shares with the page. Floating (a peek, or an
     /// inspector the window is too narrow to dock) it keeps its shadow.
     func flushColumn(leading: Bool = false, trailing: Bool = false, floating: Bool = false,
                      underTitleBar: Bool = true) -> some View {
@@ -706,10 +729,10 @@ extension View {
         return frame(maxHeight: .infinity, alignment: .top)
             .background { Tokens.sidebar.ignoresSafeArea(edges: up) }
             .overlay(alignment: .leading) {
-                if leading { Tokens.line.frame(width: 1).ignoresSafeArea(edges: up).allowsHitTesting(false) }
+                if leading { Tokens.edge.frame(width: 1).ignoresSafeArea(edges: up).allowsHitTesting(false) }
             }
             .overlay(alignment: .trailing) {
-                if trailing { Tokens.line.frame(width: 1).ignoresSafeArea(edges: up).allowsHitTesting(false) }
+                if trailing { Tokens.edge.frame(width: 1).ignoresSafeArea(edges: up).allowsHitTesting(false) }
             }
             .shadow(color: .black.opacity(floating ? 0.35 : 0), radius: 24, y: 10)
     }
