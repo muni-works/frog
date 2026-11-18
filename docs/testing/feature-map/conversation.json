@@ -1,0 +1,4289 @@
+{
+  "area": "Conversation and inspector",
+  "features": [
+    {
+      "id": "turn-lifecycle",
+      "name": "A turn from send to finish",
+      "group": "Turns",
+      "what": "A sent prompt lands as a bubble, shows a working line, streams the answer with the frog's typing bubble, and settles into a finished turn.",
+      "entry_points": [
+        "Composer Send (hand-off: composer agent)",
+        "Return in the composer"
+      ],
+      "files": [
+        "apps/FrogKit/UI/Transcript/TranscriptView.swift",
+        "apps/FrogKit/UI/Transcript/TurnView.swift",
+        "apps/FrogKit/UI/Transcript/ItemViews.swift",
+        "apps/FrogKit/UI/Transcript/InkReveal.swift",
+        "apps/FrogKit/UI/Transcript/MessageText.swift",
+        "apps/FrogKit/Model/Conversation.swift",
+        "apps/FrogKit/Model/TurnFlow.swift",
+        "apps/FrogKit/Core/Protocol.swift",
+        "apps/macos/Frog/Views/PaneView.swift"
+      ],
+      "flows": [
+        {
+          "id": "prompt-lands-as-bubble",
+          "name": "see my prompt land in the transcript",
+          "steps": [
+            "Open a conversation",
+            "Type a prompt in the composer",
+            "Press Return"
+          ],
+          "expected": "The prompt springs up from the composer as a right-aligned bubble (a fade under Reduce Motion) and a turn begins below it.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "working-indicator-before-first-row",
+          "name": "know frog started working before anything streams",
+          "steps": [
+            "Open a session in Frog",
+            "Send a prompt",
+            "Wait before the first event arrives"
+          ],
+          "expected": "A spinner with Working… (or the engine's progress words) shows under the prompt until the first item arrives; it never shows once the engine has exited.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "model-loading-card",
+          "name": "see a local model getting ready instead of a spinner",
+          "steps": [
+            "Pick a local model that is not in memory (hand-off: models agent)",
+            "Send a prompt",
+            "Watch the turn's tail"
+          ],
+          "expected": "A loading card says the model is loading into memory with elapsed time and a bar, then gives way to the answer when the first response streams.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ModelLoadTests.swift:testDownloadedModelIsLoadedIntoMemoryByItsMenuName",
+            "FrogTests/ModelLoadTests.swift:testAppleIntelligenceIsStarted",
+            "FrogTests/ModelLoadTests.swift:testOtherProgressIsNotAModelLoad",
+            "FrogTests/ModelLoadTests.swift:testOnlyOneLoadingIndication"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "answer-streams-word-by-word",
+          "name": "read the answer as it is written",
+          "steps": [
+            "Open a session in Frog",
+            "Send a prompt",
+            "Watch the answer while the engine streams text deltas"
+          ],
+          "expected": "Words appear in the typing bubble as each delta arrives, not only when the message completes.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/StreamingTextTests.swift:testAnswerShowsWordsWhileStreaming",
+            "FrogTests/TableTranscriptParityTests.swift:testStreamingShowsWordsAndFollows"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        },
+        {
+          "id": "ink-reveal-slow-vs-fast",
+          "name": "see slow streams ink in and fast streams appear at once",
+          "steps": [
+            "Send a prompt to a slow model",
+            "Watch the answer ink in",
+            "Send one to a fast model",
+            "Watch the text appear as it arrives"
+          ],
+          "expected": "A slow stream reveals a few characters a frame with a capped fade; a fast stream or Reduce Motion skips the ink.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/InkRevealTests.swift:testSlowStreamInksInAndSettles",
+            "FrogTests/InkRevealTests.swift:testFastStreamSkipsTheInk"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        },
+        {
+          "id": "live-status-line",
+          "name": "see what frog is doing between steps",
+          "steps": [
+            "Send a prompt that makes tool calls",
+            "Watch the turn's last line while a step runs",
+            "Watch it between steps"
+          ],
+          "expected": "The tail says the step in words (Reading X…, Running the tests…, with elapsed seconds), or Thinking… between steps; it hides while text streams or a card is up.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/TurnFlowTests.swift:testRowsAndLiveWords",
+            "FrogTests/OneLookTests.swift:testVerbLines"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "plan-checklist-while-running",
+          "name": "follow the agent's plan while it works",
+          "steps": [
+            "Send a task that makes frog use TodoWrite",
+            "Watch the plan card in the running turn",
+            "Let the turn finish"
+          ],
+          "expected": "A plan card lists each todo with pending, in-progress (tinted) and completed (struck through) marks while the turn runs, and goes when it ends.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/AgentRowTests.swift:testAgentPlanProgressFromTodoWrite"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "turn-settles-finished",
+          "name": "see the turn finish cleanly",
+          "steps": [
+            "Open a session in Frog",
+            "Send a prompt",
+            "Wait for turn_ended and idle"
+          ],
+          "expected": "The typing bubble fades into a plain message row, the spinner goes, the footer appears and the frog looks pleased; the conversation is no longer busy.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ReconcileTests.swift:testReconcileClearsBusyWhenTheLogEndsInTurnEnded"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "empty-reply-asked-again",
+          "name": "see what happens when the model says nothing",
+          "steps": [
+            "Open a session in Frog",
+            "Send a prompt to a model that returns an empty reply twice",
+            "Wait for the turn to end"
+          ],
+          "expected": "frog asks once more; a second empty reply ends the turn with a line saying so instead of silence.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Needs the real engine retry path or a scripted provider that returns empty replies."
+        },
+        {
+          "id": "bang-shell-command",
+          "name": "run a shell command straight from the composer",
+          "steps": [
+            "Type !ls in the composer",
+            "Press Return",
+            "Open the Shell row"
+          ],
+          "expected": "A Shell row runs the command without a model turn and shows its output; the conversation is busy until it finishes.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/QueueTests.swift:testCommandsCantJoinATurn"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "memory-command-notice",
+          "name": "use a memory command and get its answer",
+          "steps": [
+            "Open a session in Frog",
+            "Type /remember something in the composer",
+            "Press Return"
+          ],
+          "expected": "No model turn runs; the engine's answer arrives as a notice row.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "prompt-context-disclosure",
+          "name": "read context that was sent with my message",
+          "steps": [
+            "Send a message that carries context (an issue or PR)",
+            "Click the › context chip under the bubble",
+            "Click it again"
+          ],
+          "expected": "The chip opens to the exact text the model was given and folds back.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "prompt-images",
+          "name": "see images I attached in my bubble",
+          "steps": [
+            "Attach an image in the composer (hand-off: composer agent)",
+            "Send",
+            "Click the thumbnail"
+          ],
+          "expected": "Thumbnails show above the bubble and open in the lightbox.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "follow-end",
+      "name": "Following the end and the new-below pill",
+      "group": "Turns",
+      "what": "The transcript keeps to the bottom while an answer streams, stops at a long answer's start, and offers a pill back down when something new arrives out of view.",
+      "entry_points": [
+        "Scroll the transcript",
+        "The pill at the bottom (Go to the end and follow the answer)"
+      ],
+      "files": [
+        "apps/FrogKit/UI/Transcript/TranscriptView.swift",
+        "apps/FrogKit/UI/Transcript/TableTranscript.swift",
+        "apps/FrogKit/UI/Transcript/TurnView.swift"
+      ],
+      "flows": [
+        {
+          "id": "opens-at-end",
+          "name": "open a conversation at its newest turn",
+          "steps": [
+            "Pick a session with a long history in the sidebar",
+            "Wait for it to load",
+            "Look at where the transcript is scrolled"
+          ],
+          "expected": "The transcript opens scrolled to the end with only on-screen rows built.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/TableTranscriptParityTests.swift:testOpensAtTheEnd",
+            "FrogTests/TableTranscriptParityTests.swift:testOnlyRowsOnScreenAreBuilt",
+            "FrogTests/TranscriptSwitchBenchmarkTests.swift:testSwitchTo400RowSession",
+            "FrogTests/TranscriptSwitchBenchmarkTests.swift:testSwitchTo5000RowSession"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        },
+        {
+          "id": "follows-short-answer",
+          "name": "keep reading a short answer as it streams",
+          "steps": [
+            "Stay at the end of the transcript",
+            "Send a prompt",
+            "Let a short (one-line) answer stream"
+          ],
+          "expected": "The view stays pinned to the end as the answer grows, including a one-line answer (0.7.0, #408).",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/TableTranscriptParityTests.swift:testStreamingShowsWordsAndFollows",
+            "FrogTests/TranscriptStreamBenchmarkTests.swift:testStreaming500RowsStaysDrawnAnchoredAndIncremental"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        },
+        {
+          "id": "long-answer-stops-at-start",
+          "name": "start reading a long answer from its top",
+          "steps": [
+            "Stay at the end",
+            "Send a prompt that produces a long answer",
+            "Watch the view as the answer passes a screenful"
+          ],
+          "expected": "Following stops with the answer's first line at the top instead of scrolling past it.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/TableTranscriptParityTests.swift:testStreamingALongAnswerStopsAtItsStart"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "hard",
+          "why_hard": "The existing test skips on CI until a post-park hang is found (commit b440055d); timing-sensitive."
+        },
+        {
+          "id": "new-below-pill",
+          "name": "get back down after scrolling up mid-answer",
+          "steps": [
+            "Send a prompt",
+            "Scroll up while it streams",
+            "Wait for new text below",
+            "Click the pill"
+          ],
+          "expected": "A pill appears only once something new arrives below where you stopped; clicking it scrolls to the end and resumes following.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "scroll-up-loads-older",
+          "name": "scroll back through a long history",
+          "steps": [
+            "Open a long session",
+            "Scroll toward the top",
+            "Keep scrolling"
+          ],
+          "expected": "Older turns fill in above without moving the row you are reading; a loading line shows while older history is still being read.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/TranscriptSwitchBenchmarkTests.swift:testScrollUpFillsOlderRowsInOrder"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        },
+        {
+          "id": "resize-keeps-rows",
+          "name": "resize the window while reading",
+          "steps": [
+            "Open a conversation",
+            "Resize the window or split a pane",
+            "Keep reading"
+          ],
+          "expected": "Visible rows relay out at the new width without gaps or overlaps, even while streaming.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/TableTranscriptParityTests.swift:testResizeRelaysOutVisibleRows",
+            "FrogTests/LayoutStressTests.swift:testStreamingWhileScrollingAndResizing"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "thinking-rows",
+      "name": "Thinking rows",
+      "group": "Turns",
+      "what": "The model's reasoning shows as a quiet Thinking… line with a live subtitle that settles into Thought and opens to the full trace, depending on detail level.",
+      "entry_points": [
+        "Click a Thinking/Thought row",
+        "Session > Detail"
+      ],
+      "files": [
+        "apps/FrogKit/UI/Transcript/ItemViews.swift",
+        "apps/FrogKit/UI/Transcript/ActivityLine.swift",
+        "apps/FrogKit/UI/Transcript/Thinking/ThinkingTraceView.swift",
+        "apps/FrogKit/UI/Transcript/Thinking/ThinkingStepView.swift",
+        "apps/FrogKit/Model/TurnFlow.swift",
+        "apps/FrogKit/Model/Verbosity.swift"
+      ],
+      "flows": [
+        {
+          "id": "thinking-live-subtitle",
+          "name": "see what the model is thinking right now",
+          "steps": [
+            "Use a reasoning model",
+            "Send a prompt",
+            "Watch the Thinking… line"
+          ],
+          "expected": "A breathing dot and Thinking… with the sentence being written as a one-line subtitle.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/VerbosityTests.swift:testSubtitleShowsTheSentenceBeingWritten"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "thought-settles-and-opens",
+          "name": "read a finished thought in full",
+          "steps": [
+            "Let a thought finish",
+            "Click the Thought row",
+            "Click Show all if it is capped",
+            "Click the row again"
+          ],
+          "expected": "The row reads Thought with its first line; it opens to the capped thought, Show all reveals the rest, and it folds back.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "short-thoughts-dropped",
+          "name": "not see noise from trivial thoughts",
+          "steps": [
+            "Open a session in Frog",
+            "Send a prompt whose thoughts are very short",
+            "Look at the turn"
+          ],
+          "expected": "A short thought alone is left out; one between steps is its own line.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/TurnFlowTests.swift:testShortThoughtIsItsOwnLine",
+            "FrogTests/TurnFlowTests.swift:testShortThoughtAloneIsLeftOut",
+            "FrogTests/TurnFlowTests.swift:testLongThoughtWithNothingAfterIsOneLine"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "tool-rows",
+      "name": "Tool-call rows and activity folds",
+      "group": "Tools and permissions",
+      "what": "What frog did shows as muted activity lines (Read 3 files, ran the tests) that open to each step, each step opening to its diff, output or report.",
+      "entry_points": [
+        "Click an activity line",
+        "Click a step row",
+        "Hover a step for the raw command"
+      ],
+      "files": [
+        "apps/FrogKit/UI/Transcript/ActivityLine.swift",
+        "apps/FrogKit/UI/Transcript/ItemViews.swift",
+        "apps/FrogKit/Model/TurnFlow.swift",
+        "apps/FrogKit/Model/Gist.swift",
+        "apps/FrogKit/Core/ToolIcon.swift",
+        "apps/FrogKit/Core/CommandElision.swift",
+        "apps/FrogKit/UI/Cards/DiffView.swift"
+      ],
+      "flows": [
+        {
+          "id": "activity-sentence",
+          "name": "see a one-line summary of what was done",
+          "steps": [
+            "Send a task that reads, edits and runs commands",
+            "Let it finish",
+            "Read the activity line"
+          ],
+          "expected": "Consecutive steps fold into one sentence like Edited 2 files +18 −6, ran the tests; failures are counted; running steps are not in the sentence yet.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/TurnFlowTests.swift:testSentences",
+            "FrogTests/TurnFlowTests.swift:testFailuresAreCounted",
+            "FrogTests/TurnFlowTests.swift:testRunningStepsAreNotInTheSentenceYet",
+            "FrogTests/TurnFlowTests.swift:testSegmentsAreChronological",
+            "FrogTests/TurnFlowTests.swift:testEmptyMessageDoesNotSplitAGroup",
+            "FrogTests/TurnFlowTests.swift:testNoticesAndDiagramsBreakGroups"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "open-activity-steps",
+          "name": "see each step behind a summary",
+          "steps": [
+            "Click an activity line",
+            "Read its step rows",
+            "Click it again"
+          ],
+          "expected": "The line opens to one row per step (Read PaneView.swift, Ran xcodebuild test · passed) and folds back; a lone step opens straight to its content.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ToolRowClicksTests.swift:testALoneStepOpensToItsContentNotToItsOwnRow",
+            "FrogTests/ToolRowClicksTests.swift:testTheStepRowsTitleWouldOnlyRepeatTheLine",
+            "FrogTests/ToolRowRenderTests.swift:testTheLabelAppearsOnceAndThePayloadOpens"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "inline-short-result",
+          "name": "read a short result without clicking",
+          "steps": [
+            "Open a session in Frog",
+            "Let frog run a tool whose result is a sentence (SendMessage, a short display)",
+            "Look at its row"
+          ],
+          "expected": "The result shows on the row's own line and the row has no chevron when nothing more is hidden.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ToolRowClicksTests.swift:testAShortResultIsOnTheLineItself",
+            "FrogTests/ToolRowClicksTests.swift:testEveryShortToolSaysItsResultOnTheLine",
+            "FrogTests/ToolRowClicksTests.swift:testPayloadToolsAreNotInline",
+            "FrogTests/ToolRowClicksTests.swift:testAFullySaidResultNeedsNoChevron",
+            "FrogTests/ToolRowClicksTests.swift:testTheLineIsOneClippedLine",
+            "FrogTests/ToolRowRenderTests.swift:testAShortResultIsVisibleWithoutAClick"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "edit-row-opens-diff",
+          "name": "see the diff of an edit",
+          "steps": [
+            "Let frog edit a file",
+            "Click the Edited row",
+            "Click N more lines on a long diff"
+          ],
+          "expected": "The row says the file with +added −removed and opens to a highlighted diff with old/new line numbers, collapsed past a cut with N more lines.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ProtocolTests.swift:testToolCallWithDiff"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "shell-row-output",
+          "name": "check a command and its output",
+          "steps": [
+            "Let frog run a shell command",
+            "Click its row",
+            "Click N more lines",
+            "Click Collapse"
+          ],
+          "expected": "The command shows with worktree paths elided, its ANSI-styled output below, folded past 24 lines.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/CommandRowTests.swift:testElisionMakesWorktreePathsRelative",
+            "FrogTests/CommandRowTests.swift:testElisionKeepsSeparatorsAndQuotes",
+            "FrogTests/OneLookTests.swift:testACdPrefixGivesWayToTheCommand"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "gist-on-row",
+          "name": "read a plain-words gist of a command",
+          "steps": [
+            "Let frog run a long shell command",
+            "Wait for the side model's gist",
+            "Hover the row"
+          ],
+          "expected": "The row's words switch from the raw argument to the gist; the hover help still carries the raw command.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/CommandRowTests.swift:testTheGistBelongsToTheRow",
+            "FrogTests/CommandRowTests.swift:testItemGistedEventDecodesAndLandsOnTheRow",
+            "FrogTests/CommandRowTests.swift:testAnEmptyGistLeavesTheRowOnItsArgument",
+            "FrogTests/OneLookTests.swift:testRowHelpCarriesTheRawCommand"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "live-output-tail",
+          "name": "watch a running command's output",
+          "steps": [
+            "Open a session in Frog",
+            "Let frog run a long command",
+            "Watch its row while it runs"
+          ],
+          "expected": "A live tail of the output (or a progress bar with a message for tools that report progress) shows under the running row with a streaming marker.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "failed-and-denied-tags",
+          "name": "spot steps that failed or were denied",
+          "steps": [
+            "Let a step fail",
+            "Deny another step",
+            "Look at the rows"
+          ],
+          "expected": "A failed step is tagged with a short error word in red, a denied one says Denied, a skipped one Skipped.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ToolResultWordsTests.swift:testErrorBadges",
+            "FrogTests/OneLookTests.swift:testUnknownToolNeverSaysUsed"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "subagent-report-opens",
+          "name": "read a finished subagent's report",
+          "steps": [
+            "Open a session in Frog",
+            "Let a Task subagent finish",
+            "Click its step row"
+          ],
+          "expected": "The report reads like an answer (markdown) under the row.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "visuals",
+      "name": "Inline visuals: diagrams, Visualize widgets, Present cards, images, MCP apps",
+      "group": "Turns",
+      "what": "Diagrams, interactive widgets, Present tables/charts/actions, generated images and MCP App UIs render inline as part of the answer, with their own controls.",
+      "entry_points": [
+        "Diagram card buttons (Source, Export, Open in its own window, expand)",
+        "Widget Expand / Source",
+        "Present action buttons",
+        "Click an image (lightbox)",
+        "Session > Map Project (⇧⌘M)"
+      ],
+      "files": [
+        "apps/FrogKit/UI/Transcript/DiagramView.swift",
+        "apps/FrogKit/UI/Transcript/WidgetView.swift",
+        "apps/FrogKit/UI/Transcript/AskViews.swift",
+        "apps/FrogKit/UI/Transcript/McpViews.swift",
+        "apps/FrogKit/UI/Transcript/Lightbox.swift",
+        "apps/FrogKit/Core/Diagram.swift",
+        "apps/FrogKit/Core/Present.swift",
+        "apps/macos/Frog/Views/Commands.swift"
+      ],
+      "flows": [
+        {
+          "id": "diagram-drawing-then-drawn",
+          "name": "see a diagram appear in the answer",
+          "steps": [
+            "Ask frog to draw a diagram",
+            "Watch Drawing a diagram…",
+            "See the diagram render"
+          ],
+          "expected": "A Drawing… line while the Diagram tool runs, then the diagram at the column width at no less than the readable scale.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/DiagramInlineTests.swift:testTheInlineFormIsDrawnAtTheColumnAndFits",
+            "FrogTests/DiagramInlineTests.swift:testBundleRowsHaveNoSourceEdge",
+            "FrogTests/DiagramInlineTests.swift:testOldTranscriptWithoutInlineDecodes"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "diagram-expand-crop",
+          "name": "see a too-wide diagram in full",
+          "steps": [
+            "Get a diagram wider than the column",
+            "Click the expand control",
+            "Click it again"
+          ],
+          "expected": "The cropped diagram offers expand; expanded it draws the full layout, and collapses back to the compact view.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/DiagramInlineTests.swift:testATooWideDiagramCropsAndOffersExpand",
+            "FrogTests/DiagramInlineTests.swift:testExpandingDrawsTheFullLayout"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "diagram-source-toggle",
+          "name": "read a diagram's source",
+          "steps": [
+            "Hover a diagram card",
+            "Click Source",
+            "Click Diagram"
+          ],
+          "expected": "The card flips to its Mermaid source in a code block and back.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "diagram-export",
+          "name": "export a diagram",
+          "steps": [
+            "Open the diagram's Export menu (or right-click it)",
+            "Pick Copy Image, Copy Mermaid, or Save as PNG/SVG/Mermaid",
+            "Look at the transcript"
+          ],
+          "expected": "The image or Mermaid lands on the clipboard, or a save panel writes the file.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Save panels are modal system UI; clipboard variants are automatable."
+        },
+        {
+          "id": "diagram-own-window",
+          "name": "open a diagram in its own window and zoom",
+          "steps": [
+            "Click Open in its own window on a diagram",
+            "Use Zoom In (⌘=), Zoom Out (⌘-), Actual Size (⌘0)",
+            "Close the window"
+          ],
+          "expected": "A diagram window opens with zoom controls and an Export menu.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Opens a separate SwiftUI window scene."
+        },
+        {
+          "id": "diagram-node-click",
+          "name": "jump from a diagram node to its file",
+          "steps": [
+            "Open a code map or diagram with file-backed nodes",
+            "Hover a node",
+            "Click it"
+          ],
+          "expected": "The node's help names the file and clicking opens it.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Opens a file in an external editor."
+        },
+        {
+          "id": "map-project",
+          "name": "map the project's structure",
+          "steps": [
+            "Open a folder",
+            "Choose Session > Map Project (⇧⌘M)",
+            "Look at the transcript"
+          ],
+          "expected": "A diagram window opens with the code map, or a warning toast says the folder could not be mapped.",
+          "needs": [
+            "git-repo"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Runs a code-map scan of a real folder and opens a window."
+        },
+        {
+          "id": "visualize-widget-renders",
+          "name": "see an interactive visual frog made",
+          "steps": [
+            "Ask for a chart",
+            "Watch Making a visual…",
+            "See the widget draw at its reported height"
+          ],
+          "expected": "The widget runs in the locked-down web view, reports its height and draws; titles read as words.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/WidgetViewTests.swift:testRecordedWidgetsRenderAndReportHeight",
+            "FrogTests/WidgetViewTests.swift:testTitlesReadAsWords",
+            "FrogTests/WidgetViewTests.swift:testPromptGateSpacesAndCaps"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "visualize-expand-source",
+          "name": "look closer at a widget",
+          "steps": [
+            "Hover the widget",
+            "Click Expand",
+            "Click Done",
+            "Click Source then Visual"
+          ],
+          "expected": "Expand shows the visual large; Done closes it; Source flips to the code and back.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "present-card-actions",
+          "name": "answer frog by pressing a Present action",
+          "steps": [
+            "Open a session in Frog",
+            "Get a Present card with action buttons",
+            "Click one action"
+          ],
+          "expected": "The pressed action becomes your next message (queued if a turn runs) and the other buttons go quiet.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ProtocolTests.swift:testAskAndPresent"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "present-table-chart",
+          "name": "read a Present table, comparison, steps or chart",
+          "steps": [
+            "Open a session in Frog",
+            "Get a Present result with a table, chart or steps",
+            "Read it inline"
+          ],
+          "expected": "The blocks draw natively as tables, side-by-side comparisons, steps, callouts and charts.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SnapshotTests.swift:testRenderVisualLoop"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "image-lightbox",
+          "name": "look at a generated image full size",
+          "steps": [
+            "Let frog generate images",
+            "Click a thumbnail",
+            "Step with the arrows",
+            "Double-click to zoom",
+            "Press Esc"
+          ],
+          "expected": "The lightbox opens on the clicked image, steps between them, zooms, and closes with Esc or the close button.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SnapshotTests.swift:testRenderImageGeneration"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "image-copy-save",
+          "name": "copy, save or open an image",
+          "steps": [
+            "Open an image in the lightbox",
+            "Right-click it",
+            "Pick Copy Image, Save…, or Open in Preview"
+          ],
+          "expected": "The image is copied, saved through a panel, or opened in Preview.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Context menus, save panels and opening Preview.app are outside the app's views."
+        },
+        {
+          "id": "mcp-app-card",
+          "name": "use an MCP App's own UI in the answer",
+          "steps": [
+            "Call an MCP tool that ships an app",
+            "Interact with the app",
+            "Let it call a tool on its server"
+          ],
+          "expected": "Only the latest call's app shows; the app's tool calls go to the engine and their results come back to the app.",
+          "needs": [
+            "engine",
+            "network"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Needs an MCP server with a UI resource and the web view bridge."
+        }
+      ]
+    },
+    {
+      "id": "code-links-copy",
+      "name": "Code blocks, links and copy",
+      "group": "Turns",
+      "what": "Answers render markdown with code blocks, tables and links; text is selectable; prompts and answers can be copied.",
+      "entry_points": [
+        "Code block Copy button / right-click Copy, Save As…",
+        "Click a link",
+        "Hover a prompt (Copy)",
+        "Hover a finished turn's footer (Copy answer)",
+        "Right-click a prompt > Copy"
+      ],
+      "files": [
+        "apps/FrogKit/UI/Transcript/MessageText.swift",
+        "apps/FrogKit/UI/Transcript/Markdown.swift",
+        "apps/FrogKit/UI/Transcript/MessageActions.swift",
+        "apps/FrogKit/UI/Transcript/TurnView.swift",
+        "apps/FrogKit/UI/Transcript/TranscriptView.swift"
+      ],
+      "flows": [
+        {
+          "id": "markdown-blocks",
+          "name": "read a formatted answer",
+          "steps": [
+            "Open a session in Frog",
+            "Get an answer with headings, lists, quotes, tables and code",
+            "Read it"
+          ],
+          "expected": "Each block kind renders; a code block reserves its height so text after it sits below.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/MessageTextTests.swift:testCodeBlockReservesItsHeight",
+            "FrogTests/MarkdownTests.swift:testPipeTableParses",
+            "FrogTests/MarkdownTests.swift:testQuoteLinesAreOneQuote",
+            "FrogTests/MarkdownTests.swift:testPipesInCodeStay",
+            "FrogTests/MarkdownTests.swift:testHeaderWithoutAlignmentIsAParagraph"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "copy-code-block",
+          "name": "copy a code block",
+          "steps": [
+            "Hover a code block",
+            "Click its Copy button",
+            "Paste elsewhere"
+          ],
+          "expected": "Exactly the block's code is on the clipboard.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "save-code-block",
+          "name": "save a code block to a file",
+          "steps": [
+            "Right-click a code block",
+            "Choose Save As…",
+            "Pick a location"
+          ],
+          "expected": "A save panel writes the code to a file.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Save panel is modal system UI."
+        },
+        {
+          "id": "select-and-copy-across-code",
+          "name": "copy a passage that spans a code block",
+          "steps": [
+            "Drag-select text across a code block",
+            "Press ⌘C",
+            "Paste"
+          ],
+          "expected": "The copied text includes the code itself, not an attachment character; the block tints while selected.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/MessageTextTests.swift:testCopyAcrossACodeBlock"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "open-link",
+          "name": "open a link in an answer",
+          "steps": [
+            "Get an answer with a link",
+            "Hover it",
+            "Click it"
+          ],
+          "expected": "The link is in the accent colour with a pointing hand and opens in the default browser.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Opening the default browser leaves the app; would need a stubbed URL opener."
+        },
+        {
+          "id": "copy-prompt",
+          "name": "copy what I asked",
+          "steps": [
+            "Hover a prompt bubble",
+            "Click Copy (or right-click > Copy)",
+            "Paste"
+          ],
+          "expected": "The prompt text is on the clipboard; the hover row also shows when it was sent.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "copy-answer",
+          "name": "copy frog's answer",
+          "steps": [
+            "Hover a finished turn",
+            "Click Copy answer at the footer's end",
+            "Paste"
+          ],
+          "expected": "All the turn's message text, joined, is on the clipboard.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "file-path-actions",
+          "name": "act on a file path frog mentions",
+          "steps": [
+            "Open a session in Frog",
+            "Right-click a file chip or changed-file row",
+            "Pick Open in editor, Reveal in Finder, Quick Look, Copy Path or Copy Relative Path"
+          ],
+          "expected": "The file opens, is revealed, previews, or its path is copied.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Context menus, Finder and Quick Look are system UI."
+        }
+      ]
+    },
+    {
+      "id": "turn-footer",
+      "name": "Turn footer, stats and end banners",
+      "group": "Turns",
+      "what": "Under each finished turn a caption names the model, who served it, and its cost or tokens per second (and energy), each opening to its working; turns that stopped early show a banner instead.",
+      "entry_points": [
+        "Hover a finished turn",
+        "Click the price or energy hint"
+      ],
+      "files": [
+        "apps/FrogKit/UI/Transcript/TranscriptView.swift",
+        "apps/FrogKit/UI/Transcript/TurnCosts.swift",
+        "apps/FrogKit/UI/Transcript/ModelLabel.swift",
+        "apps/FrogKit/Model/ModelStats.swift",
+        "apps/FrogKit/Model/Turns.swift"
+      ],
+      "flows": [
+        {
+          "id": "footer-model-and-speed",
+          "name": "see which model answered and how fast",
+          "steps": [
+            "Open a session in Frog",
+            "Finish a turn on a local model",
+            "Look under the answer"
+          ],
+          "expected": "The caption names the model with its place icon and the speed in tokens per second; hover shows calls and token counts.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ModelStatsTests.swift:testSpeedIsAMedianInTokens",
+            "FrogTests/ModelStatsTests.swift:testWordSpeedsMigrateToTokens"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "footer-served-by",
+          "name": "see that Frog Cloud served a turn whoever proxied it",
+          "steps": [
+            "Open a session in Frog",
+            "Finish a turn on a Frog Cloud model served by a third party",
+            "Look at the footer"
+          ],
+          "expected": "The footer says Frog Cloud in cloud green and draws identically to a first-party turn.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/OpacityViewTests.swift:testAThirdPartyTurnDrawsIdenticallyToFrogClouds",
+            "FrogTests/OpacityViewTests.swift:testAnUnknownUpstreamDrawsIdenticallyToo",
+            "FrogTests/OpacityViewTests.swift:testTheFooterStillNamesFrogCloud"
+          ],
+          "coverage_v070": "snapshot",
+          "automatable": "yes"
+        },
+        {
+          "id": "price-card",
+          "name": "see what a turn cost",
+          "steps": [
+            "Open a session in Frog",
+            "Finish a turn on a priced model",
+            "Click the price hint"
+          ],
+          "expected": "A card breaks the cost into parts (input, cached, output) with a split bar, in dollars per token.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ModelStatsTests.swift:testTurnsArePricedAndAddedToTheWeek",
+            "FrogTests/ModelStatsTests.swift:testCacheReadsArePricedAtTheCachedRate",
+            "FrogTests/ModelPriceTests.swift:testNoPriceMeansNoLine"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "energy-card",
+          "name": "see a turn's energy use",
+          "steps": [
+            "Turn on energy display (hand-off: settings agent)",
+            "Finish a turn",
+            "Click the energy hint",
+            "Click to see energy history"
+          ],
+          "expected": "An energy card shows the turn's energy and links to the history.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ProtocolTests.swift:testTurnEnergy"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "footer-hover-only",
+          "name": "keep finished turns uncluttered",
+          "steps": [
+            "Scroll through finished turns",
+            "Hover one",
+            "Move the pointer away"
+          ],
+          "expected": "On the Mac no footer is pinned: each fades in on hover (with Copy answer) without shifting text, and fades out again.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "end-banners",
+          "name": "understand why a turn stopped early",
+          "steps": [
+            "Open a session in Frog",
+            "Have a turn end by step limit, looping, output-token limit, or a retried denial",
+            "Read the turn's end"
+          ],
+          "expected": "A banner says why (Stopped at the step limit. Say continue…, Hit the output token limit, …) in orange instead of the footer.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ProtocolTests.swift:testEndReasonsAndSynced"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "out-of-credit",
+          "name": "fix running out of Frog Cloud credit",
+          "steps": [
+            "Run a Frog Cloud turn with no credit",
+            "Read the end",
+            "Click add credit"
+          ],
+          "expected": "A muted out of credit line with an add credit link to the billing page (hand-off: account agent).",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ProtocolTests.swift:testBillingLimitDecodes",
+            "FrogTests/BillingTests.swift:testBillingLimitRendersAsOneCalmLine",
+            "FrogTests/BillingTests.swift:testHardBillingEndRendersTheBanner"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "errors-retries",
+      "name": "Errors, retries and notices",
+      "group": "Turns",
+      "what": "A failed turn shows a plain-words error with raw details folded away; retry and stand-in notices, warnings and a dead engine each say what happened.",
+      "entry_points": [
+        "Read the turn's end",
+        "Details disclosure"
+      ],
+      "files": [
+        "apps/FrogKit/UI/Transcript/TranscriptView.swift",
+        "apps/FrogKit/UI/Transcript/ItemViews.swift",
+        "apps/FrogKit/UI/Transcript/WakeEventView.swift",
+        "apps/FrogKit/Model/Conversation.swift",
+        "apps/FrogKit/Core/Protocol.swift",
+        "apps/macos/Frog/Engine/EngineProcess.swift",
+        "apps/macos/Frog/Engine/EngineLink.swift"
+      ],
+      "flows": [
+        {
+          "id": "error-banner-with-details",
+          "name": "understand a model error",
+          "steps": [
+            "Have the provider return an error",
+            "Read the red banner",
+            "Open Details"
+          ],
+          "expected": "One plain sentence per status (busy, rate limit, server problem, no capacity) without JSON or transport text; Details shows the raw reply for a bug report.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/EngineErrorTests.swift:testFrogCloudNoCapacityIsAPlainLine",
+            "FrogTests/EngineErrorTests.swift:testStatusesHaveTheirOwnWords",
+            "FrogTests/EngineErrorTests.swift:testBusyWordingWithoutA503StillReadsAsBusy",
+            "FrogTests/EngineErrorTests.swift:testOtherClientErrorsShowAShortReasonButNeverJSON",
+            "FrogTests/EngineErrorTests.swift:testConnectionErrorsDontDumpTheTransportMessage",
+            "FrogTests/BillingTests.swift:testBillingEngineErrorRendersClean"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "retry-notice",
+          "name": "see that frog is retrying a model call",
+          "steps": [
+            "Open a session in Frog",
+            "Have a model call fail transiently",
+            "Watch the transcript"
+          ],
+          "expected": "A notice row says the call is being retried, or that Frog Cloud's stand-in is answering for now.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/OneLookTests.swift:testDiagnosticNoticesStayOutOfTheComposer"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "notice-rows",
+          "name": "read warnings and info notices",
+          "steps": [
+            "Open a session in Frog",
+            "Trigger an engine warning notice",
+            "Click the collapsed notice line"
+          ],
+          "expected": "Warnings show as one collapsed system line that expands to the full text; engine diagnostics never reach the transcript.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/WakeEventTests.swift:testSystemRowsAreOneCollapsedLine",
+            "FrogTests/WakeEventTests.swift:testEngineNotesAreNoticesNotUserBubbles"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "engine-died",
+          "name": "know the engine died mid-turn",
+          "steps": [
+            "Start a turn",
+            "Kill the engine process",
+            "Look at the transcript"
+          ],
+          "expected": "A red line says why the engine stopped (killed, missing session, its fatal line) without OS error strings, and the turn stops showing Working….",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/EngineEndTests.swift:testAKilledEngineSaysSoNotItsTimingTraces",
+            "FrogTests/EngineEndTests.swift:testARealErrorKeepsItsLine",
+            "FrogTests/EngineEndTests.swift:testNothingSaidFallsBackToTheExit",
+            "FrogTests/EngineEndTests.swift:testAFatalLineOnStdoutIsTheBanner",
+            "FrogTests/EngineEndTests.swift:testAMissingSessionSaysWhatToDo",
+            "FrogTests/EngineEndTests.swift:testNoOSErrorStringIsShown",
+            "FrogTests/EngineEndTests.swift:testAnEventLineOnStdoutIsNotTheBanner",
+            "FrogTests/EngineEndTests.swift:testStdoutFatalLineWinsOverStderrWords",
+            "FrogTests/EngineEndTests.swift:testAPlainLineIsKept",
+            "FrogTests/EngineEndTests.swift:testAnErrorEventMapsToo",
+            "FrogTests/ReconcileTests.swift:testDeadEngineWithEmptyLogSettles"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "stale-busy-reconciles",
+          "name": "not be stuck on a spinner after the stream dies",
+          "steps": [
+            "Start a turn",
+            "Cut the event stream without ending the turn",
+            "Wait for the watchdog"
+          ],
+          "expected": "The conversation reconciles from the session log and stops showing busy once the log says the turn ended.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ReconcileTests.swift:testReconcileClearsBusyWhenTheLogEndsInTurnEnded",
+            "FrogTests/ReconcileTests.swift:testAliveEngineStaysBusy",
+            "FrogTests/SessionStateTests.swift:testAStaleOpenTurnIsIdleNotASpinner"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "resend-after-error",
+          "name": "try again after a failed turn",
+          "steps": [
+            "Open a session in Frog",
+            "Have a turn end with an error",
+            "Send the prompt again or a retry from the composer status line (hand-off: composer agent)"
+          ],
+          "expected": "A new turn starts normally after the failed one.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "interrupt",
+      "name": "Interrupting a turn",
+      "group": "Turns",
+      "what": "Stop the running turn from the menu, Esc or the composer's stop button; the turn ends Interrupted and queued messages behave as stop says.",
+      "entry_points": [
+        "Session > Interrupt (⌘.)",
+        "Esc in the composer while busy (hand-off: composer agent)",
+        "Composer stop button (hand-off: composer agent)",
+        "Command palette > Interrupt"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/Commands.swift",
+        "apps/FrogKit/Model/Conversation.swift",
+        "apps/FrogKit/UI/Transcript/TranscriptView.swift"
+      ],
+      "flows": [
+        {
+          "id": "interrupt-running-turn",
+          "name": "stop a turn that's going the wrong way",
+          "steps": [
+            "Send a prompt",
+            "While it runs choose Session > Interrupt (⌘.)",
+            "Read the turn's end"
+          ],
+          "expected": "The interrupt op goes to the engine, the turn ends with an Interrupted banner, and the conversation is idle.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SessionRegistryTests.swift:testStopMarksTheTurnUserStopped"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "interrupt-disabled-under-card",
+          "name": "not deny a card by accident when interrupting",
+          "steps": [
+            "Get a permission card up",
+            "Look at Session > Interrupt",
+            "Press ⌘."
+          ],
+          "expected": "Interrupt is disabled while a card is up; ⌘. denies the card instead.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "interrupt-then-queued-flush",
+          "name": "have queued messages and wakes survive a stop",
+          "steps": [
+            "Start a turn",
+            "Queue a message or let a background wake park",
+            "Interrupt",
+            "Watch the next turn"
+          ],
+          "expected": "What was parked still flushes into the next turn after the stop.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/WakeEventTests.swift:testTheQueueSurvivesAStopAndFlushesIntoTheTurn"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        },
+        {
+          "id": "stop-subagent",
+          "name": "stop one subagent without stopping the turn",
+          "steps": [
+            "Open a session in Frog",
+            "Let a Task subagent run",
+            "Click its Stop button"
+          ],
+          "expected": "The row says Stopping…, the agent stops, and the turn continues with what it found.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "permission-card",
+      "name": "Permission cards",
+      "group": "Tools and permissions",
+      "what": "A step that needs approval shows a card under its row with the command or diff, where it runs, and Deny / Allow (once) / always-allow / deny with a note.",
+      "entry_points": [
+        "Allow (⌘↩)",
+        "Deny (⌘.)",
+        "… menu: Always allow / Allow prefix, Deny with a note…"
+      ],
+      "files": [
+        "apps/FrogKit/UI/Transcript/ItemViews.swift",
+        "apps/FrogKit/UI/Transcript/ActivityLine.swift",
+        "apps/FrogKit/UI/Cards/QuestionBody.swift",
+        "apps/FrogKit/Model/Conversation.swift",
+        "apps/FrogKit/Core/Protocol.swift"
+      ],
+      "flows": [
+        {
+          "id": "card-appears",
+          "name": "see what frog wants to do before it does it",
+          "steps": [
+            "Use Ask mode",
+            "Send a task that runs a command",
+            "Look at the step row"
+          ],
+          "expected": "The row turns to a hand icon and a card appears with the question, reason, the command in a well (or a diff preview), and Runs on this Mac · sandboxed / outside the sandbox / in your Frog Cloud sandbox.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/PermissionCardTests.swift:testAWaitingStepRebuildsItsGroup",
+            "FrogTests/OneLookTests.swift:testPermissionCardSaysWhereItRuns"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "allow-once",
+          "name": "let one step run",
+          "steps": [
+            "Open a session in Frog",
+            "Get a permission card",
+            "Click Allow (or press ⌘↩)"
+          ],
+          "expected": "The allow decision goes to the engine, the card goes, the step runs and completes.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "deny",
+          "name": "refuse a step",
+          "steps": [
+            "Open a session in Frog",
+            "Get a permission card",
+            "Click Deny (or press ⌘.)"
+          ],
+          "expected": "The deny goes to the engine, the card goes, the step's row says Denied and the turn carries on.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "deny-with-note",
+          "name": "refuse a step and say what to do instead",
+          "steps": [
+            "Get a permission card",
+            "Open the … menu",
+            "Choose Deny with a note…",
+            "Type a note",
+            "Press Return or Deny"
+          ],
+          "expected": "The deny carries the trimmed note to the engine; Deny is disabled while the note is blank.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SessionBrokerTests.swift:testDenyWithANoteEncodes"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "always-allow",
+          "name": "stop being asked for this kind of step",
+          "steps": [
+            "Get a card offering an always choice",
+            "Open the … menu",
+            "Choose the always-allow label (or allow prefix for an approval card)",
+            "Run a matching step again"
+          ],
+          "expected": "allow_always (or allow_prefix) goes to the engine and the next matching step runs without a card; requests that are decided every time offer no always choice.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ProtocolTests.swift:testOpsEncodeLikeTheEngineExpects",
+            "FrogTests/SessionBrokerTests.swift:testDenyWithANoteEncodes"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "card-notifies-when-away",
+          "name": "find out a card is waiting when Frog isn't in front",
+          "steps": [
+            "Start a turn",
+            "Switch to another app",
+            "Let a permission card open"
+          ],
+          "expected": "The Dock bounces and a notification posts (hand-off: settings agent for notification preferences).",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/NotifierTests.swift:testAttentionBouncesOnlyWhenFrogIsNotFrontmost"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "Dock bounce and system notifications are outside the app."
+        },
+        {
+          "id": "six-risky-commands-checked",
+          "name": "be asked before a push, reset --hard, rebase, kill or system setting even when sandboxed",
+          "steps": [
+            "Use Ask or Accept Edits mode",
+            "Ask frog to git push",
+            "Read the card"
+          ],
+          "expected": "A card appears even though the command is sandboxed (0.6.1, #387).",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "The classification is the engine's; needs a real engine and a scripted model."
+        }
+      ]
+    },
+    {
+      "id": "permission-modes",
+      "name": "Permission modes in effect",
+      "group": "Tools and permissions",
+      "what": "The session's mode (Ask, Accept Edits, Auto, Yolo) decides which steps card, which run with an Auto tag, and which widen access with a quiet row.",
+      "entry_points": [
+        "Model > Permissions (⌃⌘1-4)",
+        "Composer mode chip (hand-off: composer agent)"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/Commands.swift",
+        "apps/FrogKit/Model/Conversation.swift",
+        "apps/FrogKit/Core/Protocol.swift",
+        "apps/FrogKit/UI/Transcript/ItemViews.swift",
+        "apps/FrogKit/UI/Transcript/ActivityLine.swift",
+        "docs/app/use/permissions.md"
+      ],
+      "flows": [
+        {
+          "id": "switch-mode-menu",
+          "name": "change the permission mode from the menu",
+          "steps": [
+            "Open a conversation",
+            "Choose Model > Permissions > Accept Edits (⌃⌘2)",
+            "Check the composer's mode chip"
+          ],
+          "expected": "set_mode goes to the engine and the status shows the new mode.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ProtocolTests.swift:testOpsEncodeLikeTheEngineExpects"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "ask-mode-cards-everything",
+          "name": "approve each risky step in Ask",
+          "steps": [
+            "Open a session in Frog",
+            "Choose Ask",
+            "Send a task that edits a file and runs a command"
+          ],
+          "expected": "Both the edit and the command show cards.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Which steps card is decided in the engine."
+        },
+        {
+          "id": "accept-edits-mode",
+          "name": "let edits through but check commands",
+          "steps": [
+            "Open a session in Frog",
+            "Choose Accept Edits",
+            "Send a task that edits and runs a command"
+          ],
+          "expected": "Edits run without a card; the command still cards.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Engine decision."
+        },
+        {
+          "id": "auto-mode-tag",
+          "name": "see why Auto let a step run",
+          "steps": [
+            "Choose Auto",
+            "Send a task",
+            "Look at a step that ran without asking"
+          ],
+          "expected": "The step carries an Auto: <why> tag with help explaining the classifier let it run.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "yolo-mode-widening",
+          "name": "see what Yolo allowed",
+          "steps": [
+            "Open a session in Frog",
+            "Confirm Yolo in the composer (hand-off: composer agent)",
+            "Let frog reach a new host"
+          ],
+          "expected": "A quiet row says the hosts are now allowed for the session; a blocked connection in other modes shows as a warning row.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/EgressTests.swift:testAYoloWideningDecodesAndShowsAsAQuietRow",
+            "FrogTests/EgressTests.swift:testABlockedConnectionDecodesAndShowsAsAWarningRow"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "child-mode-capped",
+          "name": "have children never exceed the parent's mode",
+          "steps": [
+            "Run a session in Accept Edits",
+            "Let it start a child session",
+            "Check the child's mode"
+          ],
+          "expected": "The child inherits a mode capped at the parent's; a Yolo ceiling needs the flag.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SessionBrokerTests.swift:testChildModeInheritsCapped",
+            "FrogTests/SessionBrokerTests.swift:testSetSessionModeCeilingAndYoloFlag"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "computer-use",
+      "name": "Computer use rows",
+      "group": "Tools and permissions",
+      "what": "With computer use on, desktop tool calls (mcp__desktop__*, Screenshot) show as tool rows with screenshots and a live approximate step preview.",
+      "entry_points": [
+        "Settings toggle Let frog see and use other apps (hand-off: settings agent)"
+      ],
+      "files": [
+        "apps/FrogKit/UI/Transcript/ItemViews.swift",
+        "apps/FrogKit/UI/Transcript/McpViews.swift",
+        "apps/FrogKit/Core/ToolIcon.swift",
+        "apps/macos/Frog/Model/Workspace.swift"
+      ],
+      "flows": [
+        {
+          "id": "desktop-step-preview",
+          "name": "watch frog act on another app",
+          "steps": [
+            "Turn on computer use (hand-off: settings agent)",
+            "Ask frog to do something in another app",
+            "Watch the desktop tool rows"
+          ],
+          "expected": "Rows with the window-and-cursor icon show a live image marked Approximate step preview, replaced by the result's screenshots when the step completes.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ProtocolTests.swift:testImagePreviewDeltaDecodesWithoutText",
+            "FrogTests/TurnFlowTests.swift:testPreviewReplacementAndCompletionInReplay"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "desktop-real-run",
+          "name": "have frog really drive another app",
+          "steps": [
+            "Grant accessibility permission",
+            "Turn on computer use",
+            "Ask for a desktop action"
+          ],
+          "expected": "The engine runs with --computer-use and the action happens on the desktop.",
+          "needs": [
+            "engine",
+            "accessibility-permission"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "no",
+          "why_hard": "Takes over the real screen; Mac tests must never take over the user's screen."
+        }
+      ]
+    },
+    {
+      "id": "ask-card",
+      "name": "Questions the agent asks",
+      "group": "Questions",
+      "what": "The model's Ask shows as a card after the last turn: one click answers a single choice; several picks, your own words, or Skip.",
+      "entry_points": [
+        "Click an option",
+        "1-9 keys",
+        "Pick several / Pick one",
+        "Something else… field + Answer (⌘↩)",
+        "Skip (Esc)"
+      ],
+      "files": [
+        "apps/FrogKit/UI/Transcript/AskViews.swift",
+        "apps/FrogKit/UI/Transcript/TranscriptView.swift",
+        "apps/FrogKit/Core/Questions.swift",
+        "apps/FrogKit/Core/AskPhrase.swift",
+        "apps/FrogKit/Model/Conversation.swift"
+      ],
+      "flows": [
+        {
+          "id": "single-click-answers",
+          "name": "answer a single-choice question in one click",
+          "steps": [
+            "Open a session in Frog",
+            "Let frog ask a single-choice question",
+            "Click an option"
+          ],
+          "expected": "The pick goes to the engine as the answer and the card goes.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/AskClickTests.swift:testAPlainClickOnASingleChoiceCardAnswersAtOnce",
+            "FrogTests/AskPhraseTests.swift:testAsksReadAsPlainQuestions"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "number-key-answers",
+          "name": "answer with the keyboard",
+          "steps": [
+            "Open a session in Frog",
+            "Let frog ask a question",
+            "Press 2"
+          ],
+          "expected": "The second option is picked (keys 1-9 work only while not typing in the field).",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "multi-pick",
+          "name": "pick several options",
+          "steps": [
+            "Let frog ask a multi-choice question (or click Pick several)",
+            "Click two options",
+            "Click Answer (⌘↩)"
+          ],
+          "expected": "Clicks toggle picks instead of answering; Answer sends all picks; the card is wide whichever way you got there.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/AskClickTests.swift:testAMultiCardTogglesInsteadOfAnswering",
+            "FrogTests/AskClickTests.swift:testOncePickingFurtherClicksKeepToggling",
+            "FrogTests/AskClickTests.swift:testAMultiQuestionIsWideWhicheverWayThePersonGotThere"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "own-answer",
+          "name": "answer in my own words",
+          "steps": [
+            "Let frog ask a question",
+            "Type in Something else…",
+            "Optionally click an option",
+            "Press ⌘↩"
+          ],
+          "expected": "The typed words (and any picks) go as the answer; a click while typing picks rather than answers.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/AskClickTests.swift:testTypingFirstMakesTheClickPartOfOneAnswer",
+            "FrogTests/ProtocolTests.swift:testAskAndPresent"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "skip-question",
+          "name": "let frog decide",
+          "steps": [
+            "Open a session in Frog",
+            "Let frog ask a question",
+            "Click Skip or press Esc"
+          ],
+          "expected": "An empty answer goes to the engine and the card goes.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ProtocolTests.swift:testAskAndPresent"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "question-resolved-elsewhere",
+          "name": "have a card disappear when it's answered elsewhere",
+          "steps": [
+            "Open a session in Frog",
+            "Let frog ask a question",
+            "Answer it from another client or let it be withdrawn"
+          ],
+          "expected": "question_resolved removes the card.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "quiet-child-question",
+      "name": "A quiet or dead child becomes a question",
+      "group": "Questions",
+      "what": "When a subagent or child session produces nothing for five minutes, the parent asks keep waiting or stop it and carry on; a crashed child is reported at once (0.7.0, #411).",
+      "entry_points": [
+        "The question card on the parent conversation"
+      ],
+      "files": [
+        "apps/FrogKit/UI/Transcript/AskViews.swift",
+        "apps/FrogKit/Model/Conversation.swift",
+        "docs/app/use/sessions-and-children.md"
+      ],
+      "flows": [
+        {
+          "id": "quiet-child-asks",
+          "name": "decide what to do about a stalled child",
+          "steps": [
+            "Start a task that launches a subagent or child session",
+            "Let the child go quiet for child_quiet_secs",
+            "Read the parent's question"
+          ],
+          "expected": "A question names the child, what it was asked and how long it has been quiet, offering keep waiting or stop and carry on.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Real watchdog needs the engine with a short child_quiet_secs; the card itself is fake-engine-ok."
+        },
+        {
+          "id": "keep-waiting",
+          "name": "keep waiting on a slow child",
+          "steps": [
+            "Open a session in Frog",
+            "Get the quiet-child question",
+            "Pick keep waiting"
+          ],
+          "expected": "The child keeps running and the parent turn keeps waiting.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Engine behaviour after the answer."
+        },
+        {
+          "id": "stop-and-carry-on",
+          "name": "stop a stalled child and use what it has",
+          "steps": [
+            "Open a session in Frog",
+            "Get the quiet-child question",
+            "Pick stop it and carry on"
+          ],
+          "expected": "The child stops and the parent continues with the child's partial result.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Engine behaviour after the answer."
+        },
+        {
+          "id": "question-withdrawn-when-child-resumes",
+          "name": "not be asked once the child speaks again",
+          "steps": [
+            "Open a session in Frog",
+            "Get the quiet-child question",
+            "Let the child emit an event"
+          ],
+          "expected": "The question withdraws by itself.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "dead-child-reported",
+          "name": "know straight away when a child crashed",
+          "steps": [
+            "Start a child",
+            "Kill the child engine",
+            "Watch the parent"
+          ],
+          "expected": "A dead Task returns an error naming the death; a dead child session's parent gets a note.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Needs a real child engine to crash."
+        }
+      ]
+    },
+    {
+      "id": "mcp-elicitation",
+      "name": "MCP elicitation and sign-in cards",
+      "group": "Questions",
+      "what": "An MCP server asking for input shows a form card (Submit / Decline / Cancel, or an open-URL step); servers needing sign-in show a card with Sign in.",
+      "entry_points": [
+        "Submit (⌘↩)",
+        "Decline",
+        "Cancel (⌘.)",
+        "Sign in"
+      ],
+      "files": [
+        "apps/FrogKit/UI/Transcript/McpViews.swift",
+        "apps/FrogKit/Model/Conversation.swift",
+        "apps/FrogKit/Core/Protocol.swift"
+      ],
+      "flows": [
+        {
+          "id": "elicitation-form",
+          "name": "give an MCP tool what it asks for",
+          "steps": [
+            "Call an MCP tool that elicits input",
+            "Fill the fields and toggles",
+            "Click Submit (⌘↩)"
+          ],
+          "expected": "accept with the content goes to the engine and the card goes.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "elicitation-decline-cancel",
+          "name": "refuse or cancel an MCP request",
+          "steps": [
+            "Open a session in Frog",
+            "Get an elicitation card",
+            "Click Decline, or Cancel (⌘.)"
+          ],
+          "expected": "decline or cancel goes to the engine; cancel ends the tool call.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "elicitation-open-url",
+          "name": "complete an MCP step in the browser",
+          "steps": [
+            "Open a session in Frog",
+            "Get an elicitation that needs a URL",
+            "Click its open button"
+          ],
+          "expected": "The URL opens in the browser.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Opens the default browser."
+        },
+        {
+          "id": "signed-out-server",
+          "name": "sign in to an MCP server that dropped its tools",
+          "steps": [
+            "Configure an MCP server that needs sign-in",
+            "Open a conversation",
+            "Click Sign in on the card"
+          ],
+          "expected": "The card names the signed-out servers; signing in starts the server's auth (hand-off: settings agent).",
+          "needs": [
+            "engine",
+            "network"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "OAuth against a real server."
+        }
+      ]
+    },
+    {
+      "id": "find",
+      "name": "Find in conversation",
+      "group": "Navigation",
+      "what": "A find bar over the pane matches whole turns by prompt or output, steps through them and marks them on the timeline rail.",
+      "entry_points": [
+        "Edit > Find in Conversation… (⌘F)",
+        "Find Next (⌘G)",
+        "Find Previous (⇧⌘G)",
+        "Return in the field",
+        "Done"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/WorkspaceView.swift",
+        "apps/macos/Frog/Model/WindowState.swift",
+        "apps/macos/Frog/Views/PaneView.swift",
+        "apps/macos/Frog/Views/Commands.swift",
+        "apps/macos/Frog/Views/TimelineRail.swift"
+      ],
+      "flows": [
+        {
+          "id": "open-find-and-search",
+          "name": "find a turn by its words",
+          "steps": [
+            "Press ⌘F",
+            "Type a word",
+            "Read the count"
+          ],
+          "expected": "The bar shows N of M (or No matches) and scrolls to the first matching turn.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "step-through-matches",
+          "name": "move between matches",
+          "steps": [
+            "Search for a word with several matches",
+            "Press Return or ⌘G",
+            "Press ⇧⌘G"
+          ],
+          "expected": "Each press scrolls to the next/previous matching turn and the counter follows; the arrows are disabled with no matches.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "matches-on-rail",
+          "name": "see where matches are in a long conversation",
+          "steps": [
+            "Open a session in Frog",
+            "Search for a word",
+            "Look at the timeline rail"
+          ],
+          "expected": "Matching turns are marked beside their ticks while the bar is open.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "close-find",
+          "name": "close the find bar",
+          "steps": [
+            "Open find",
+            "Click Done",
+            "Look at the transcript"
+          ],
+          "expected": "The bar slides away; Find Next/Previous are disabled again.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "turn-navigation",
+      "name": "Jumping between turns and the timeline rail",
+      "group": "Navigation",
+      "what": "Move turn by turn with the keyboard, or scrub the timeline rail (chapters, a thumb over turns on screen, marks on turns that need you).",
+      "entry_points": [
+        "Session > Previous Turn (⌥⌘↑) / Next Turn (⌥⌘↓)",
+        "Hover / click / drag the timeline rail",
+        "Rail right-click: Show Turn"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/TimelineRail.swift",
+        "apps/macos/Frog/Model/WindowState.swift",
+        "apps/macos/Frog/Model/Chapters.swift",
+        "apps/macos/Frog/Views/PaneView.swift",
+        "apps/macos/Frog/Views/Commands.swift",
+        "apps/FrogKit/UI/Transcript/TranscriptView.swift"
+      ],
+      "flows": [
+        {
+          "id": "step-turns-keyboard",
+          "name": "move one turn up or down",
+          "steps": [
+            "Open a conversation with several turns",
+            "Press ⌥⌘↑",
+            "Press ⌥⌘↓"
+          ],
+          "expected": "The transcript scrolls to the turn above or below the top-most visible one and stops following.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/TableTranscriptParityTests.swift:testJumpShowsTheTurn"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "rail-hover-label",
+          "name": "see a turn's prompt from the rail",
+          "steps": [
+            "Open a session in Frog",
+            "Hover a point on the rail",
+            "Look at the transcript"
+          ],
+          "expected": "The prompt of the turn under the pointer shows as a label.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "rail-click-drag-scrub",
+          "name": "scrub the conversation",
+          "steps": [
+            "Open a session in Frog",
+            "Click a point on the rail",
+            "Drag along it"
+          ],
+          "expected": "The transcript jumps to the turn under the pointer as you drag.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/TableTranscriptParityTests.swift:testJumpShowsTheTurn"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "rail-chapters",
+          "name": "see the conversation's shape as chapters",
+          "steps": [
+            "Open a session in Frog",
+            "Have several prompts, a long autonomous run and a compaction",
+            "Look at the rail"
+          ],
+          "expected": "A dot per chapter (solid for prompts, hollow for autonomous runs, a gap at compaction) with names when there's room; model titles replace heuristics.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ChapterTests.swift:testPromptsStartChapters",
+            "FrogTests/ChapterTests.swift:testCompactionStartsAChapter",
+            "FrogTests/ChapterTests.swift:testLongRunBreaksIntoChapters",
+            "FrogTests/ChapterTests.swift:testCurrentChapterIsTheLastStartAtOrBeforeTheTurn",
+            "FrogTests/ChapterTests.swift:testWarningNoticesAreNotCompactions",
+            "FrogTests/ChapterTests.swift:testChapterTitlesAreTheFirstClauseInAFewWords",
+            "FrogTests/ChapterTests.swift:testHeuristicShowsUntilTheModelTitleArrivesThenTheModelWins",
+            "FrogTests/ChapterTests.swift:testModelTitleOverridesEveryKind"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "rail-marks-trouble",
+          "name": "spot failed, stopped or running turns",
+          "steps": [
+            "Open a session in Frog",
+            "Have a failed turn and a running one",
+            "Look at the rail"
+          ],
+          "expected": "Only turns that need you are coloured; the thumb covers the turns on screen.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "rail-show-turn",
+          "name": "jump to a turn from its menu",
+          "steps": [
+            "Open a session in Frog",
+            "Right-click a rail tick",
+            "Choose Show Turn"
+          ],
+          "expected": "The transcript scrolls to that turn.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Context menu."
+        }
+      ]
+    },
+    {
+      "id": "detail-level",
+      "name": "Detail level per session",
+      "group": "Navigation",
+      "what": "Session > Detail overrides the app's default (Quiet, Normal, Verbose) for one session, changing how much thinking and step detail shows.",
+      "entry_points": [
+        "Session > Detail"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/Commands.swift",
+        "apps/FrogKit/Model/Verbosity.swift",
+        "apps/FrogKit/UI/Transcript/TurnView.swift",
+        "apps/FrogKit/UI/Transcript/ActivityLine.swift"
+      ],
+      "flows": [
+        {
+          "id": "set-detail-quiet",
+          "name": "see only the answer and one line of work",
+          "steps": [
+            "Open a session",
+            "Choose Session > Detail > Quiet",
+            "Look at the transcript"
+          ],
+          "expected": "Thinking rows disappear and work is one line; only this session changes.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/TurnFlowTests.swift:testThinkingHiddenBySetting"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "set-detail-verbose",
+          "name": "see every thought and step open",
+          "steps": [
+            "Open a session in Frog",
+            "Choose Session > Detail > Verbose",
+            "Look at the transcript"
+          ],
+          "expected": "Thoughts and steps render expanded and a thought streams in full.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "detail-back-to-default",
+          "name": "go back to the app default",
+          "steps": [
+            "Set a session to Verbose",
+            "Choose Default (Normal)",
+            "Reopen the session later"
+          ],
+          "expected": "The override is cleared; overrides are remembered per session across opens.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/VerbosityTests.swift:testDefaultComesFromTheOldThinkingSwitch"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "undo-rewind",
+      "name": "Undo last turn and rewind",
+      "group": "Session actions",
+      "what": "Undo Last Turn (or Rewind to Before This Turn) restores files Frog edited in that turn and later and continues on a new branch session, keeping the old one.",
+      "entry_points": [
+        "Edit > Undo Turn N… (⌥⌘Z)",
+        "Prompt hover > Rewind",
+        "Prompt right-click > Rewind to Before This Turn…",
+        "Rail right-click > Rewind to Before This Turn…"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/Commands.swift",
+        "apps/macos/Frog/Views/PaneView.swift",
+        "apps/FrogKit/UI/Transcript/TurnView.swift",
+        "apps/FrogKit/UI/Transcript/MessageActions.swift",
+        "apps/macos/Frog/Views/TimelineRail.swift",
+        "apps/macos/Frog/Model/Workspace.swift"
+      ],
+      "flows": [
+        {
+          "id": "undo-last-turn",
+          "name": "undo what the last turn did to my files",
+          "steps": [
+            "Finish a turn that edited files",
+            "Choose Edit > Undo Turn N… (⌥⌘Z)",
+            "Confirm Undo Changes"
+          ],
+          "expected": "Files go back, a new branch session opens with Rewound to before turn N and restored K files, and the old session is kept.",
+          "needs": [
+            "engine",
+            "git-repo"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "undo-disabled",
+          "name": "know when there's nothing to undo",
+          "steps": [
+            "Open a session whose last turn changed no files, or while busy",
+            "Open the Edit menu",
+            "Look at the transcript and the sidebar"
+          ],
+          "expected": "Undo Last Turn is disabled; the label names the turn when one is undoable.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "rewind-from-prompt",
+          "name": "rewind to before any earlier turn",
+          "steps": [
+            "Hover an earlier prompt",
+            "Click Rewind (or right-click > Rewind to Before This Turn…)",
+            "Confirm Rewind"
+          ],
+          "expected": "Files edited in that turn and later are restored and the conversation continues on a branch from there.",
+          "needs": [
+            "engine",
+            "git-repo"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "rewind-cancel",
+          "name": "back out of a rewind",
+          "steps": [
+            "Open a session in Frog",
+            "Start a rewind or undo",
+            "Cancel the confirmation"
+          ],
+          "expected": "Nothing changes.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "rewind-fails",
+          "name": "know when a rewind failed",
+          "steps": [
+            "Open a session in Frog",
+            "Rewind a session the engine can't rewind",
+            "Look at the transcript and the sidebar"
+          ],
+          "expected": "A warning toast says Rewind failed with the reason.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "fork",
+      "name": "Fork",
+      "group": "Session actions",
+      "what": "Branch the session after a turn into a new session and switch to it.",
+      "entry_points": [
+        "Session > Fork After Last Turn (⇧⌘D)",
+        "Prompt hover > Fork",
+        "Prompt right-click > Fork from Here",
+        "Rail right-click > Fork After This Turn"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/Commands.swift",
+        "apps/FrogKit/UI/Transcript/TurnView.swift",
+        "apps/macos/Frog/Views/TimelineRail.swift",
+        "apps/macos/Frog/Model/Workspace.swift",
+        "apps/FrogKit/Core/SessionFolds.swift"
+      ],
+      "flows": [
+        {
+          "id": "fork-after-last",
+          "name": "try a different direction without losing this one",
+          "steps": [
+            "Finish a turn",
+            "Choose Session > Fork After Last Turn (⇧⌘D)",
+            "Send a new prompt"
+          ],
+          "expected": "A new session starts from that point with the history up to it, and the original stays in the sidebar.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "fork-from-earlier-turn",
+          "name": "branch from an earlier turn",
+          "steps": [
+            "Open a session in Frog",
+            "Hover an earlier prompt",
+            "Click Fork (or right-click > Fork from Here)"
+          ],
+          "expected": "A new session with history up to that turn opens.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "fork-groups-with-source",
+          "name": "find a fork next to where it came from",
+          "steps": [
+            "Open a session in Frog",
+            "Fork a session",
+            "Look at the sidebar (hand-off: sidebar agent)"
+          ],
+          "expected": "The fork folds under its source session.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SessionFoldsTests.swift:testForksJoinTheirSourceEvenElsewhere",
+            "FrogTests/SessionFoldsTests.swift:testForkWithNoSourceListedStandsAlone"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "fork-disabled-while-busy",
+          "name": "not fork mid-turn",
+          "steps": [
+            "Open a session in Frog",
+            "Start a turn",
+            "Open the Session menu"
+          ],
+          "expected": "Fork After Last Turn is disabled until the turn finishes.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "compact",
+      "name": "Compact conversation",
+      "group": "Session actions",
+      "what": "Compaction summarises the history to free context; a success shows a carried-forward banner with a receipt; a failed one offers a carried-forward session.",
+      "entry_points": [
+        "Session > Compact Conversation (⇧⌘K)",
+        "what was kept expander",
+        "start a carried-forward session"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/Commands.swift",
+        "apps/FrogKit/Model/Conversation.swift",
+        "apps/FrogKit/UI/Transcript/ItemViews.swift",
+        "apps/FrogKit/UI/Transcript/TranscriptView.swift",
+        "apps/macos/Frog/Model/SessionBroker.swift"
+      ],
+      "flows": [
+        {
+          "id": "compact-now",
+          "name": "free up context",
+          "steps": [
+            "Have a conversation with some turns",
+            "Choose Session > Compact Conversation (⇧⌘K)",
+            "Wait for it to finish"
+          ],
+          "expected": "The conversation is busy while compacting, then a chapter break and the carried forward · everything important was saved banner appear at the top.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ContinuityTests.swift:testCompactedDecodesWithTheReceiptAndWithout",
+            "FrogTests/ContinuityTests.swift:testCompactedSetsTheBannerState"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "receipt-expander",
+          "name": "check what was kept",
+          "steps": [
+            "Open a session in Frog",
+            "Compact",
+            "Click what was kept"
+          ],
+          "expected": "The receipt lists files with +/−, turns with their requests and outcomes, and tests run with pass/fail.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ContinuityTests.swift:testBannerRendersWithExpanderAndReceipt"
+          ],
+          "coverage_v070": "snapshot",
+          "automatable": "yes"
+        },
+        {
+          "id": "compaction-failed-rescue",
+          "name": "carry on when the context overflowed",
+          "steps": [
+            "Overflow the context so compaction fails",
+            "Read the compaction failed line",
+            "Click start a carried-forward session"
+          ],
+          "expected": "continue_session goes to the engine, a new session opens carried forward, and one honest line replaces the banner.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ContinuityTests.swift:testTheRescueButtonEmitsTheOpAndTheAnswerLands",
+            "FrogTests/ContinuityTests.swift:testOverflowSetsTheRescueState",
+            "FrogTests/ContinuityTests.swift:testCompactionFailedDecodes",
+            "FrogTests/ContinuityTests.swift:testContinueSessionOpEncodes"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        },
+        {
+          "id": "rescue-without-host",
+          "name": "understand a rescue that can't start",
+          "steps": [
+            "Open a session in Frog",
+            "Trigger the rescue where no session host is installed",
+            "Look at the transcript and the sidebar"
+          ],
+          "expected": "The line says the carried-forward session couldn't start, in warning colour.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ContinuityTests.swift:testTheRescueWithoutAHostSaysSo"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "compact-disabled",
+          "name": "not compact when there's nothing to compact",
+          "steps": [
+            "Open an empty or busy conversation",
+            "Open the Session menu",
+            "Look at the transcript and the sidebar"
+          ],
+          "expected": "Compact Conversation is disabled.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "race",
+      "name": "Race",
+      "group": "Session actions",
+      "what": "One prompt, several attempts in parallel, each in its own worktree with optional check; view each, apply one, discard the rest.",
+      "entry_points": [
+        "Session > Race… (⌥⌘R)",
+        "Composer race popover: attempts, models, check, Start N Attempts (hand-off: composer agent)",
+        "Race card: View, Apply, Discard All, Close"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/RaceCard.swift",
+        "apps/macos/Frog/Model/Race.swift",
+        "apps/macos/Frog/Model/Workspace.swift",
+        "apps/macos/Frog/Views/Commands.swift",
+        "apps/macos/Frog/Views/PaneView.swift"
+      ],
+      "flows": [
+        {
+          "id": "start-race",
+          "name": "try several models on the same prompt",
+          "steps": [
+            "Type a prompt",
+            "Choose Session > Race… (⌥⌘R)",
+            "Pick models and an optional check",
+            "Click Start N Attempts"
+          ],
+          "expected": "A race card shows one line per attempt with its model and progress.",
+          "needs": [
+            "engine",
+            "git-repo",
+            "local-model"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Spawns several real engines and git worktrees."
+        },
+        {
+          "id": "race-needs-git",
+          "name": "know why a race can't start",
+          "steps": [
+            "Open a folder that isn't a git repo",
+            "Start a race",
+            "Look at the transcript and the sidebar"
+          ],
+          "expected": "An error says racing needs a git repository.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "view-attempt",
+          "name": "inspect an attempt",
+          "steps": [
+            "Let attempts finish",
+            "Click View on one",
+            "Click Done"
+          ],
+          "expected": "A sheet shows that attempt's transcript and changes.",
+          "needs": [
+            "engine",
+            "git-repo"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Needs finished real attempts."
+        },
+        {
+          "id": "check-results",
+          "name": "compare attempts by their check",
+          "steps": [
+            "Start a race with a check command",
+            "Let attempts finish",
+            "Hover the check icon"
+          ],
+          "expected": "Each attempt shows running, passed or failed with the last lines of output on hover.",
+          "needs": [
+            "engine",
+            "git-repo"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Real check runs in each worktree."
+        },
+        {
+          "id": "apply-attempt",
+          "name": "keep the best attempt",
+          "steps": [
+            "Let attempts finish",
+            "Click Apply on one",
+            "Click Close"
+          ],
+          "expected": "Its changes land in the project, the other worktrees are removed, Apply is disabled for the rest.",
+          "needs": [
+            "engine",
+            "git-repo"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Real worktrees and file changes."
+        },
+        {
+          "id": "discard-race",
+          "name": "throw all attempts away",
+          "steps": [
+            "Open a session in Frog",
+            "Start a race",
+            "Click Discard All"
+          ],
+          "expected": "Every attempt stops and its worktree is removed.",
+          "needs": [
+            "engine",
+            "git-repo"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Real worktrees."
+        }
+      ]
+    },
+    {
+      "id": "subagents",
+      "name": "Subagents in the transcript",
+      "group": "Child sessions",
+      "what": "A Task call is a quiet step row with the agent's live status, Stop while it runs, and a sheet with its whole run.",
+      "entry_points": [
+        "Click a subagent row",
+        "Stop button on the row",
+        "Show its N steps"
+      ],
+      "files": [
+        "apps/FrogKit/UI/Transcript/SubagentView.swift",
+        "apps/FrogKit/UI/Transcript/ActivityLine.swift",
+        "apps/FrogKit/Model/Agents.swift",
+        "apps/FrogKit/Model/Conversation.swift"
+      ],
+      "flows": [
+        {
+          "id": "subagent-live-row",
+          "name": "watch a subagent work",
+          "steps": [
+            "Open a session in Frog",
+            "Send a task that spawns a subagent",
+            "Watch its row"
+          ],
+          "expected": "The row names the agent and says what it's doing now; the turn's live line counts the agents.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SubagentLiveStateTests.swift:testForegroundTaskSubagentEventsStillFold",
+            "FrogTests/SubagentLiveStateTests.swift:testLiveActivitySaysSubagentActivityWhileTaskRuns",
+            "FrogTests/SubagentLiveStateTests.swift:testLiveActivityBeforeFirstSubagentStep",
+            "FrogTests/SubagentLiveStateTests.swift:testLiveActivityClearsAfterTaskCompletes",
+            "FrogTests/AgentRowTests.swift:testTranscriptLiveStatusCountsTheTurnsAgents",
+            "FrogTests/AgentRowTests.swift:testStepRowWords",
+            "FrogTests/AgentRowTests.swift:testAgentRowAndNowWords",
+            "FrogTests/AgentRowTests.swift:testRowProgressWords",
+            "FrogTests/SubagentLiveStateTests.swift:testReplayedStepsKeepTheTasksClock"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "subagent-run-sheet",
+          "name": "see everything a subagent did",
+          "steps": [
+            "Click a subagent row (running or done)",
+            "Scroll the sheet",
+            "Click Done"
+          ],
+          "expected": "A sheet shows the agent's run as a transcript.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "subagent-failure",
+          "name": "see why a subagent failed",
+          "steps": [
+            "Open a session in Frog",
+            "Let a subagent fail",
+            "Hover its row"
+          ],
+          "expected": "The row shows failed and the help gives the failure's first line.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/AgentRowTests.swift:testFailureHeadIsFirstLine",
+            "FrogTests/AgentRowTests.swift:testAgentFailureInSummary",
+            "FrogTests/AgentRowTests.swift:testFailedAgentThenTurnEnd"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "subagent-needs-approval",
+          "name": "approve a subagent's step",
+          "steps": [
+            "Open a session in Frog",
+            "Let a subagent hit a permission",
+            "Answer the card"
+          ],
+          "expected": "The agent shows as blocked/needs you, the card is answered like any other, and the agent carries on.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/AgentRowTests.swift:testBlockedAgentNeedsYou",
+            "FrogTests/SubagentLiveStateTests.swift:testLiveActivityAfterAnApproval"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "background-agent",
+          "name": "let a background agent keep working",
+          "steps": [
+            "Let frog start a background Task",
+            "Finish the turn",
+            "Watch its sidebar row (hand-off: sidebar agent)"
+          ],
+          "expected": "Its steps fold into its own run with no item in the parent turn; it ends and its row goes.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SubagentLiveStateTests.swift:testBackgroundAgentStepsFoldIntoItsOwnRun",
+            "FrogTests/SubagentLiveStateTests.swift:testBackgroundAgentEnds",
+            "FrogTests/SubagentLiveStateTests.swift:testStaleBackgroundAgentHasNoRow",
+            "FrogTests/SubagentLiveStateTests.swift:testBackgroundTaskSubagentEventDoesNotCreateParentItem",
+            "FrogTests/SubagentLiveStateTests.swift:testBackgroundAgentPermissionMakesNoItem"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "agent-sidebar-rows",
+          "name": "see a conversation's agents under its sidebar row",
+          "steps": [
+            "Run a turn with several agents",
+            "Look under the session's sidebar row (hand-off: sidebar agent)",
+            "Let the turn end",
+            "Click the done fold"
+          ],
+          "expected": "Working, waiting and finished agents show as rows; once the turn ends finished ones fold into N done · M failed; a row opens the session.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/AgentRowTests.swift:testRowsWhileTheTurnRuns",
+            "FrogTests/AgentRowTests.swift:testFinishedAgentsFoldWhenTheTurnEnds",
+            "FrogTests/AgentRowTests.swift:testTheFoldGoesOnceTheSessionMovesOn",
+            "FrogTests/AgentRowTests.swift:testAgentsOfRunningTurn",
+            "FrogTests/AgentRowTests.swift:testSummaryCountsAgents"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "child-sessions",
+      "name": "Child sessions and messages between sessions",
+      "group": "Child sessions",
+      "what": "A session can start other sessions, message them, and hear back; messages from another session open a turn as a card that links to its sender, and a child's approvals reach its parent.",
+      "entry_points": [
+        "Open the session that sent this (link on a message row)",
+        "Answering a child's card from the parent"
+      ],
+      "files": [
+        "apps/macos/Frog/Model/SessionBroker.swift",
+        "apps/FrogKit/UI/Transcript/SessionMessageView.swift",
+        "apps/FrogKit/UI/Transcript/WakeEventView.swift",
+        "apps/FrogKit/Model/Conversation.swift",
+        "docs/app/use/sessions-and-children.md"
+      ],
+      "flows": [
+        {
+          "id": "start-child-session",
+          "name": "have frog start a session for parallel work",
+          "steps": [
+            "Ask frog to start a worker session",
+            "Watch the sidebar (hand-off: sidebar agent)",
+            "Open the child"
+          ],
+          "expected": "The child starts in its own worktree outside the main checkout (based on the remote default branch) and its last reply is reported back to the parent; the sidebar nests it under the parent.",
+          "needs": [
+            "engine",
+            "git-repo"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SessionBrokerTests.swift:testWorktreeInATempRepo",
+            "FrogTests/SessionBrokerTests.swift:testWorkerSessionsStayOutOfTheMainCheckout",
+            "FrogTests/SessionBrokerTests.swift:testAStartedSessionReportsItsLastReplyToItsParent",
+            "FrogTests/SessionBrokerTests.swift:testBirthsArePersisted",
+            "FrogTests/SessionBrokerTests.swift:testWorktreeBasesOnTheRemoteDefaultBranch",
+            "FrogTests/SessionBrokerTests.swift:testAnOwnedWorktreeIsSteeredNotSpawnedInto"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        },
+        {
+          "id": "message-arrives-as-turn",
+          "name": "see a message from another session",
+          "steps": [
+            "Have another session send this one a message",
+            "Look at the new turn",
+            "Click the sender's name"
+          ],
+          "expected": "The turn opens with a collapsed message line naming the sender (not a user bubble); clicking opens the sending session.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SessionBrokerTests.swift:testSessionMessageParsing",
+            "FrogTests/SessionBrokerTests.swift:testSendResultSaysQueuedWhileBusyAndDeliveredWhenIdle",
+            "FrogTests/SessionBrokerTests.swift:testIdleNoticeAfterTheTargetRunsTheMessage",
+            "FrogTests/SessionBrokerTests.swift:testAnInformationalSendIsReadWithoutATurn"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "child-approval-reaches-parent",
+          "name": "approve a child's step from its parent",
+          "steps": [
+            "Let a child hit a permission card",
+            "Watch the parent",
+            "Answer from the parent (or the chief)"
+          ],
+          "expected": "The pending approval reaches the parent without a turn; only the parent's or chief's answer counts and a session can't answer its own card.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SessionBrokerTests.swift:testAPendingApprovalReachesTheParentWithoutATurn",
+            "FrogTests/SessionBrokerTests.swift:testAParentAnswersItsChildsPendingCard",
+            "FrogTests/SessionBrokerTests.swift:testDelegatedApprovalReachesTheChiefAndOnlyItsAnswerCounts",
+            "FrogTests/SessionBrokerTests.swift:testTheChiefAnswersAPendingCardAndNobodyElseCan",
+            "FrogTests/SessionBrokerTests.swift:testListApprovalsCollectsPendingCards"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        },
+        {
+          "id": "stop-child",
+          "name": "stop a busy child and clear its queue",
+          "steps": [
+            "Open a session in Frog",
+            "Have the parent stop a busy child with clear_queue",
+            "Look at the parent's transcript"
+          ],
+          "expected": "The child is interrupted and nothing queued starts its next turn.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SessionBrokerTests.swift:testStopSessionInterruptsABusyTarget",
+            "FrogTests/SessionBrokerTests.swift:testStopSessionWithClearQueueLeavesNothingQueued"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        },
+        {
+          "id": "dead-child-restarts-on-send",
+          "name": "message a child whose engine died",
+          "steps": [
+            "Open a session in Frog",
+            "Kill a child's engine",
+            "Send it a message from the parent"
+          ],
+          "expected": "The engine restarts and the message starts a turn; a child killed before its first call gets its prompt again.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SessionBrokerTests.swift:testSendToADeadEngineRestartsItAndStartsATurn",
+            "FrogTests/SessionBrokerTests.swift:testAChildKilledBeforeItsFirstCallGetsItsPromptOnRespawn",
+            "FrogTests/SessionBrokerTests.swift:testADeadEngineMidTurnIsReconciledNotReportedIdle"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        },
+        {
+          "id": "parent-manages-child",
+          "name": "have a session rename, move, re-mode or archive its children",
+          "steps": [
+            "Run a manager session with workers",
+            "Ask it to rename a worker, move it under another parent, change its mode or model, or archive it",
+            "Look at the sidebar (hand-off: sidebar agent)"
+          ],
+          "expected": "The change applies (a mode or model set while the child is stopped applies at its next start); a move that would cycle is refused and archiving cancels the child's queued messages.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SessionBrokerTests.swift:testRenameSessionSetsTheTitle",
+            "FrogTests/SessionBrokerTests.swift:testMoveSessionReparentsAndUnparents",
+            "FrogTests/SessionBrokerTests.swift:testMoveSessionFailuresLeaveStateUntouched",
+            "FrogTests/SessionBrokerTests.swift:testWouldCycleWalksTheParentChain",
+            "FrogTests/SessionBrokerTests.swift:testSetSessionModeAndModelPersistWhenNoEngineRunsAndApplyAtNextStart",
+            "FrogTests/SessionBrokerTests.swift:testArchiveSessionCancelsItsQueuedMessages",
+            "FrogTests/SessionBrokerTests.swift:testArchiveAndUnarchiveUseTheArchiver"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        },
+        {
+          "id": "messaging-loop-stops",
+          "name": "not have sessions message each other forever",
+          "steps": [
+            "Let two sessions message each other in a loop",
+            "Watch the rate limit",
+            "Send something yourself"
+          ],
+          "expected": "Messaging stops at the rate limit until the user acts; the user's message resets it.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SessionBrokerTests.swift:testRateLimitStopsLoopsUntilTheUserActs"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        },
+        {
+          "id": "degraded-child-status",
+          "name": "see that a child is running degraded",
+          "steps": [
+            "Open a session in Frog",
+            "Start a child on a fallback or text-tool-call model",
+            "Ask the parent for its status"
+          ],
+          "expected": "The degraded state reaches the child's status and its badge.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SessionBrokerTests.swift:testDegradedStatusReachesSessionStatusAndTheBadge",
+            "FrogTests/SessionBrokerTests.swift:testStatusInfoJsonCarriesTheFields"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "background-wakes-open-turn",
+          "name": "see background work that woke the session",
+          "steps": [
+            "Let a background job or monitor finish",
+            "Look at the turn it opened",
+            "Click a wake row",
+            "Click log"
+          ],
+          "expected": "Event rows (glyph, id, outcome) lead the turn instead of a user bubble; a row expands to its payload and log opens the job's log.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/WakeEventTests.swift:testWakesParseInOrderWithTheirOutcomes",
+            "FrogTests/WakeEventTests.swift:testAWakeTurnLeadsWithEventRowsNotAUserBubble",
+            "FrogTests/WakeEventTests.swift:testABatchTurnShowsItsWakesAheadOfItsInput",
+            "FrogTests/WakeEventTests.swift:testTheConversationTracksJobsForTheirRows",
+            "FrogTests/WakeEventTests.swift:testBackgroundEventsDecode"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "resume-after-restart",
+      "name": "Resume after quit or crash",
+      "group": "Lifecycle",
+      "what": "Open sessions are saved; quitting mid-turn asks whether to resume; at launch interrupted turns carry on with a Resumed banner (Stop, Resume automatically, dismiss).",
+      "entry_points": [
+        "Quit (⌘Q) alert: Quit and Resume Running Sessions / Quit and Stop Them / Cancel",
+        "Resumed banner: Resume automatically checkbox, Stop, ×"
+      ],
+      "files": [
+        "apps/macos/Frog/Model/SessionRegistry.swift",
+        "apps/macos/Frog/Views/ResumedBanner.swift",
+        "apps/FrogKit/Model/Conversation.swift",
+        "apps/macos/Frog/FrogApp.swift"
+      ],
+      "flows": [
+        {
+          "id": "quit-mid-turn-asks",
+          "name": "quit while a turn is running",
+          "steps": [
+            "Start a turn",
+            "Press ⌘Q",
+            "Read the alert"
+          ],
+          "expected": "An alert says N conversations are still working with Quit and Resume / Quit and Stop / Cancel; Cancel keeps the app open.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "NSAlert.runModal blocks; needs UI automation or a seam for the alert."
+        },
+        {
+          "id": "quit-and-resume",
+          "name": "pick up running turns next launch",
+          "steps": [
+            "Start a turn",
+            "Quit and Resume Running Sessions",
+            "Relaunch Frog"
+          ],
+          "expected": "The same windows and panes reopen, the turn carries on, and a Resumed after restart banner shows.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SessionRegistryTests.swift:testRestoreDecisions",
+            "FrogTests/SessionRegistryTests.swift:testRoundTrip",
+            "FrogTests/SessionRegistryTests.swift:testContinueGoesBeforeQueuedMessages"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "Needs a real quit and relaunch of the app."
+        },
+        {
+          "id": "quit-and-stop",
+          "name": "let running turns go on quit",
+          "steps": [
+            "Start a turn",
+            "Quit and Stop Them",
+            "Relaunch"
+          ],
+          "expected": "Sessions reopen idle without continuing.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SessionRegistryTests.swift:testRestoreDecisions"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "Needs a real relaunch."
+        },
+        {
+          "id": "crash-resume",
+          "name": "recover after Frog crashed",
+          "steps": [
+            "Start a turn",
+            "Kill the app",
+            "Relaunch"
+          ],
+          "expected": "With no quit recorded it's treated as a crash: interrupted turns continue; a turn you stopped just reopens.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SessionRegistryTests.swift:testRestoreDecisions",
+            "FrogTests/SessionRegistryTests.swift:testMissingOrCorruptFileLoadsAsNothing"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "Needs killing and relaunching the app."
+        },
+        {
+          "id": "no-orphan-engines",
+          "name": "not leave engines running after Frog dies",
+          "steps": [
+            "Start a turn",
+            "Kill the app",
+            "Check running processes"
+          ],
+          "expected": "Each engine notices its parent died and exits.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SilentFailureTests.swift:testParentWatchEndsTheChildWhenTheParentDies",
+            "FrogTests/SilentFailureTests.swift:testParentWatchEndsWhenTheChildDoes"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "hard",
+          "why_hard": "Killing the app process under test; the existing tests use a stand-in parent process."
+        },
+        {
+          "id": "resumed-banner-stop",
+          "name": "stop a turn that resumed on its own",
+          "steps": [
+            "Launch Frog",
+            "Relaunch with a resumed turn",
+            "Click Stop on the banner"
+          ],
+          "expected": "The turn is interrupted.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "resumed-banner-opt-out",
+          "name": "stop a conversation resuming by itself",
+          "steps": [
+            "Relaunch with a resumed turn",
+            "Uncheck Resume automatically",
+            "Quit mid-turn and relaunch"
+          ],
+          "expected": "That session is opted out and just reopens next time; the × dismisses the banner.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SessionRegistryTests.swift:testRestoreDecisions"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "resume-after-update",
+          "name": "carry on after an app update",
+          "steps": [
+            "Start a turn",
+            "Install an update (hand-off: updates agent)",
+            "Relaunch"
+          ],
+          "expected": "Turns suspended by the update's drain resume with Resumed after app update; their turn shows Suspended for app update.",
+          "needs": [
+            "engine",
+            "sparkle-feed"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SessionRegistryTests.swift:testUpdateManifestRoundTripAndActions",
+            "FrogTests/SessionRegistryTests.swift:testContinueAfterUpdateSendsTheUpdateNote",
+            "FrogTests/SessionRegistryTests.swift:testDrainOpEncodesDeadlineAndIsNeverAStop"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "Real update path."
+        }
+      ]
+    },
+    {
+      "id": "reopen-session",
+      "name": "Reopening a session",
+      "group": "Lifecycle",
+      "what": "Opening a session from history shows its newest rows at once, replays the rest, and picks up a turn another process is still running.",
+      "entry_points": [
+        "Click a session in the sidebar (hand-off: sidebar agent)",
+        "⌘1-9"
+      ],
+      "files": [
+        "apps/FrogKit/Model/Conversation.swift",
+        "apps/FrogKit/Model/SessionLog.swift",
+        "apps/macos/Frog/Model/Workspace.swift",
+        "apps/FrogKit/UI/Transcript/TranscriptView.swift"
+      ],
+      "flows": [
+        {
+          "id": "history-lands-at-once",
+          "name": "open an old session",
+          "steps": [
+            "Launch Frog",
+            "Click an old session",
+            "Look at the window"
+          ],
+          "expected": "Its history lands in one step at the end, with Loading session… only if it's slow; no busy state while replaying.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ReopenTests.swift:testReplayedHistoryLandsInOneStep",
+            "FrogTests/ReopenTests.swift:testReplayEndingOnACompletedTurnStaysIdle",
+            "FrogTests/ReopenTests.swift:testRepeatedTurnStartedDoesNotDuplicateTheTurn"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        },
+        {
+          "id": "open-turn-runs-after-sync",
+          "name": "watch a turn that's still running elsewhere",
+          "steps": [
+            "Have another frog process running a turn in a session",
+            "Open that session in the Mac app",
+            "Wait for the history to sync"
+          ],
+          "expected": "Once synced the turn shows as running here too.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ReopenTests.swift:testReplayedOpenTurnRunsAfterSynced"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        },
+        {
+          "id": "send-while-loading",
+          "name": "type before the history is in",
+          "steps": [
+            "Open a long session",
+            "Send a message immediately",
+            "Look at the window"
+          ],
+          "expected": "The message waits and goes after the history.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ReopenTests.swift:testMessageSentWhileLoadingGoesAfterTheHistory"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        },
+        {
+          "id": "switch-away-keeps-running",
+          "name": "switch sessions without stopping work",
+          "steps": [
+            "Start a turn",
+            "Open another session",
+            "Come back"
+          ],
+          "expected": "The turn kept running; an idle startup engine was let go.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SwitchAwayTests.swift:testSwitchingFoldersAtOnce",
+            "FrogTests/SwitchAwayTests.swift:testSwitchingFoldersTwoSecondsIn",
+            "FrogTests/SessionBrokerTests.swift:testAPaneLettingGoKeepsAnyWorkingSessionAndLetsAnIdleStartupGo",
+            "FrogTests/SwitchAwayTests.swift:testSwitchingFoldersHalfASecondIn",
+            "FrogTests/SwitchAwayTests.swift:testSwitchingFoldersFiveSecondsIn",
+            "FrogTests/SwitchAwayTests.swift:testNewThreadInTheSameFolderTwoSecondsIn",
+            "FrogTests/TranscriptSwitchBenchmarkTests.swift:testReswitchFromCacheAndNewEventsInvalidate"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        },
+        {
+          "id": "resume-keeps-model-and-mode",
+          "name": "reopen a session on the model and mode it last used",
+          "steps": [
+            "Run a session on model A in Accept Edits",
+            "Pick model B for a new chat",
+            "Reopen the first session"
+          ],
+          "expected": "The resumed engine gets no model or mode flag, so it keeps A and Accept Edits.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SessionBrokerTests.swift:testPaneResumeCarriesNoModelOrMode",
+            "FrogTests/SessionBrokerTests.swift:testResumeArgumentsCarryNoModelOrMode"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "worktrees-folders",
+      "name": "Worktrees and opening a folder",
+      "group": "Lifecycle",
+      "what": "A conversation runs in a folder or worktree; a worktree another engine holds shows why with a way to its owner; File > Open Folder… opens a folder window.",
+      "entry_points": [
+        "File > Open Folder… (⌘O)",
+        "Open <owner> button on the held-worktree line",
+        "Composer place menu (hand-off: composer agent)"
+      ],
+      "files": [
+        "apps/macos/Frog/Model/Worktrees.swift",
+        "apps/macos/Frog/Model/Workspace.swift",
+        "apps/FrogKit/UI/Transcript/TranscriptView.swift",
+        "apps/macos/Frog/Views/Commands.swift",
+        "apps/macos/Frog/Model/Panes.swift"
+      ],
+      "flows": [
+        {
+          "id": "open-folder",
+          "name": "start working in a project folder",
+          "steps": [
+            "Choose File > Open Folder… (⌘O)",
+            "Pick a folder",
+            "Click Open"
+          ],
+          "expected": "A window opens on that folder (an empty chat switches to it) without a layout crash.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/OpenFolderLayoutTests.swift:testOpenFolderWindow",
+            "FrogTests/OpenFolderLayoutTests.swift:testEmptyChatSwitchesToFolder"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "hard",
+          "why_hard": "NSOpenPanel is modal; the tests drive the state change behind it."
+        },
+        {
+          "id": "held-worktree-refused",
+          "name": "open a session whose worktree another engine holds",
+          "steps": [
+            "Run a worker in a worktree",
+            "Open another session that resumes in the same worktree",
+            "Read the red line"
+          ],
+          "expected": "No engine starts and the line names the owning session and when it becomes resumable; a fresh or free worktree still spawns.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/WorktreeHoldTests.swift:testOpeningAnOwnedSessionSpawnsNothingAndNamesTheHold",
+            "FrogTests/WorktreeHoldTests.swift:testTheSameSessionResumingItsOwnTreeIsAReuseNotARefusal",
+            "FrogTests/WorktreeHoldTests.swift:testStartSessionIntoAHeldWorktreeIsRefusedWithTheOwnerNamed",
+            "FrogTests/WorktreeHoldTests.swift:testAFreshWorktreeIsFreeEvenWhileAnotherIsHeld",
+            "FrogTests/WorktreeHoldTests.swift:testAFreeWorktreeSpawnsWithoutARefusal"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        },
+        {
+          "id": "held-worktree-open-owner",
+          "name": "jump to the session holding a worktree",
+          "steps": [
+            "Open a session refused for a held worktree",
+            "Click Open <owner> under the red line",
+            "Look at the window"
+          ],
+          "expected": "The owning session opens (its window, or here).",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "missing-folder",
+          "name": "open a session whose folder is gone",
+          "steps": [
+            "Delete a session's folder on disk",
+            "Open that session from the sidebar",
+            "Read the transcript"
+          ],
+          "expected": "A plain message says so instead of hanging.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/WorktreeHoldTests.swift:testAFolderThatDoesNotExistIsPlainAndReturns",
+            "FrogTests/WorktreeHoldTests.swift:testARelativeFolderURLIsPlainAndReturnsBeforeTheTimeout",
+            "FrogTests/WorktreeHoldTests.swift:testDotDotSegmentsResolveToTheRightAbsolutePlace"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        },
+        {
+          "id": "agent-moves-folder",
+          "name": "follow frog when it moves to another folder",
+          "steps": [
+            "Launch Frog",
+            "Let frog call UseFolder",
+            "Wait for the turn to end"
+          ],
+          "expected": "The pane reopens the conversation in the new folder, and the sidebar and git bar follow.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "worktree-list",
+          "name": "see frog's worktrees",
+          "steps": [
+            "Open a repo with frog worktrees",
+            "Open the composer's place menu (hand-off: composer agent)",
+            "Read the worktree rows"
+          ],
+          "expected": "frog's own trees and the main checkout list with branch and dirtiness; held trees are disabled.",
+          "needs": [
+            "git-repo"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/WorktreeTests.swift:testParsesWorktrees",
+            "FrogTests/WorktreeTests.swift:testMainCheckoutFallsBackClean",
+            "FrogTests/WorktreeHoldTests.swift:testTheWorktreeMenuDisablesOwnedTrees"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "changes-tab",
+      "name": "Inspector Changes tab",
+      "group": "Changes",
+      "what": "The inspector's first tab lists every file changed in the session with counts, opens each to its diffs, and offers Commit and Open PR / Push (no per-file discard exists at v0.7.0).",
+      "entry_points": [
+        "View > Show Changes (⌥⌘0)",
+        "Toolbar Inspector button",
+        "Changes tab",
+        "Expand all / Collapse all",
+        "Click a file row",
+        "Commit",
+        "Open PR / Push"
+      ],
+      "files": [
+        "apps/FrogKit/UI/Transcript/ChangesInspector.swift",
+        "apps/macos/Frog/Views/PaneArea.swift",
+        "apps/macos/Frog/Views/PaneView.swift",
+        "apps/macos/Frog/Model/WindowState.swift",
+        "apps/FrogKit/UI/Cards/DiffView.swift",
+        "apps/macos/Frog/Views/FileActions.swift"
+      ],
+      "flows": [
+        {
+          "id": "show-hide-inspector",
+          "name": "open and close the inspector",
+          "steps": [
+            "Open a session in Frog",
+            "Press ⌥⌘0 (or the toolbar Inspector button)",
+            "Press ⌥⌘0 again (or the × in the strip)"
+          ],
+          "expected": "The inspector column appears flush on the right with Changes, Terminal and Preview tabs in the title row, then goes away entirely.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/FlushColumnsTests.swift:testDockedInspectorIsFlushAndFullHeight",
+            "FrogTests/FlushColumnsTests.swift:testFoldedInspectorLeavesNothing",
+            "FrogTests/FlushColumnsTests.swift:testInspectorStripsShareTheSidebarsFirstRow",
+            "FrogTests/InspectorSnapshotTests.swift:testStripOrder"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "empty-changes",
+          "name": "see that nothing has changed yet",
+          "steps": [
+            "Open a session with no edits",
+            "Press ⌥⌘0",
+            "Look at the Changes tab"
+          ],
+          "expected": "The Changes tab says No changes yet · Files Frog edits show up here, filling the height.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/InspectorSnapshotTests.swift:testRenderInspector"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "file-list-and-counts",
+          "name": "see every file the session changed",
+          "steps": [
+            "Open a session in Frog",
+            "Let frog edit several files",
+            "Open Changes"
+          ],
+          "expected": "N files +a −d, then one row per file in first-touched order with name, folder and counts; new files are marked.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/InspectorSnapshotTests.swift:testRenderInspector"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "open-file-diffs",
+          "name": "read a file's diffs",
+          "steps": [
+            "Open Changes",
+            "Click a file row",
+            "Click it again"
+          ],
+          "expected": "The row opens to each edit's diff (Edit 1 of N when several) and folds; a lone file opens by itself.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "expand-collapse-all",
+          "name": "open every diff at once",
+          "steps": [
+            "Open Changes with several files",
+            "Click Expand all",
+            "Click Collapse all"
+          ],
+          "expected": "All files open, then all close.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "changes-update-live",
+          "name": "watch changes arrive during a turn",
+          "steps": [
+            "Open a session in Frog",
+            "Keep Changes open",
+            "Let frog edit a new file"
+          ],
+          "expected": "The new file appears in the list as its edit completes.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "commit-from-changes",
+          "name": "commit the session's changes",
+          "steps": [
+            "Open Changes in a repo session",
+            "Click Commit",
+            "Look at the Changes tab"
+          ],
+          "expected": "The composer's draft_commit action runs with the tray's prompt and error slot (hand-off: composer agent).",
+          "needs": [
+            "git-repo"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "open-pr-or-push",
+          "name": "open a PR or push",
+          "steps": [
+            "Open Changes in a repo session",
+            "Click Open PR (or Push once a PR is bound)",
+            "Look at the Changes tab"
+          ],
+          "expected": "The composer's open_pr / push action runs (hand-off: composer agent); chats show neither button.",
+          "needs": [
+            "git-repo",
+            "github"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Real GitHub."
+        },
+        {
+          "id": "resize-inspector",
+          "name": "make the inspector wider or narrower",
+          "steps": [
+            "Open a session in Frog",
+            "Drag the inspector's leading edge",
+            "Double-click the grip"
+          ],
+          "expected": "Width stays between 360 and 560 and persists; double-click resets to 420.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/InspectorSnapshotTests.swift:testWidthBounds",
+            "FrogTests/WindowDragFallThroughTests.swift:testGripTakesDragOnHairline",
+            "FrogTests/WindowDragFallThroughTests.swift:testGripTakesDragJustOutsideHairline"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "file-row-context-menu",
+          "name": "open or reveal a changed file",
+          "steps": [
+            "Open a session in Frog",
+            "Right-click a file row",
+            "Choose Open in editor, Reveal in Finder, Quick Look, or Copy Path"
+          ],
+          "expected": "The file opens, is revealed, previews or its path is copied.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Context menu and system apps."
+        }
+      ]
+    },
+    {
+      "id": "terminal-tab",
+      "name": "Inspector Terminal tab",
+      "group": "Terminal",
+      "what": "A shell the engine runs and the user can type into, shown from engine-sent grids; frog can open it, and a failed command reaches the model.",
+      "entry_points": [
+        "View > Terminal (⇧⌘T)",
+        "Terminal tab",
+        "Tab close ×"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/TerminalPane.swift",
+        "apps/FrogKit/Model/ToolPanes.swift",
+        "apps/macos/Frog/Views/PaneArea.swift",
+        "apps/FrogKit/UI/Transcript/TerminalView.swift",
+        "apps/FrogKit/Core/Protocol.swift"
+      ],
+      "flows": [
+        {
+          "id": "open-terminal",
+          "name": "open a shell in the project",
+          "steps": [
+            "Open a folder session",
+            "Press ⇧⌘T (or click the Terminal tab)",
+            "Look at the Terminal tab"
+          ],
+          "expected": "Starting shell… then a prompt in the session folder; the header shows the folder.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/FocusHideFreezeTests.swift:testOrderInWithInspector",
+            "FrogTests/SnapshotTests.swift:testRenderPanes"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "chat-has-no-terminal",
+          "name": "understand why a chat has no terminal",
+          "steps": [
+            "Open a plain chat",
+            "Click the Terminal tab",
+            "Look at the Terminal tab"
+          ],
+          "expected": "No terminal · A chat has no folder to open a shell in.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "type-in-terminal",
+          "name": "run my own command in the shared shell",
+          "steps": [
+            "Click into the terminal",
+            "Type a command",
+            "Press Return"
+          ],
+          "expected": "Keys go to the engine as pane input (arrows, ⌥ as Meta, control characters), the grid updates, and the header shows You while you type.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "copy-paste-terminal",
+          "name": "copy output and paste a command",
+          "steps": [
+            "Drag to select text in the grid",
+            "Press ⌘C",
+            "Press ⌘V"
+          ],
+          "expected": "The selection is copied; paste sends the text to the shell.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "terminal-resize",
+          "name": "keep the shell's size right",
+          "steps": [
+            "Open the terminal",
+            "Resize the inspector",
+            "Look at the Terminal tab"
+          ],
+          "expected": "The new size in cells goes to the engine.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "shell-exits",
+          "name": "see that the shell ended",
+          "steps": [
+            "Open a session in Frog",
+            "Type exit (or a failing command that ends the shell)",
+            "Look at the Terminal tab"
+          ],
+          "expected": "The header shows exited or exited N in orange, and the last screen stays.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "frog-opens-terminal",
+          "name": "see a terminal frog opened",
+          "steps": [
+            "Open a session in Frog",
+            "Let frog open a terminal pane",
+            "Watch the inspector"
+          ],
+          "expected": "The inspector opens by itself and brings the terminal tab forward.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ProtocolTests.swift:testPaneOpsEncode",
+            "FrogTests/ProtocolTests.swift:testPaneEventsDecode"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "failed-command-reaches-frog",
+          "name": "have frog notice a command I ran failed",
+          "steps": [
+            "Open a session in Frog",
+            "Run a failing command in the Terminal tab",
+            "Send the next prompt"
+          ],
+          "expected": "The model hears about the failure without being told (0.6.0, #371).",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "The engine detects the failure in its shell; needs a real engine."
+        },
+        {
+          "id": "close-terminal",
+          "name": "close the terminal",
+          "steps": [
+            "Open a session in Frog",
+            "Hover the Terminal tab",
+            "Click its ×"
+          ],
+          "expected": "The pane closes and the tab returns to its open-a-terminal state.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "terminal-focus-no-freeze",
+          "name": "hide or tab away from a focused terminal",
+          "steps": [
+            "Open a session in Frog",
+            "Focus the terminal",
+            "Hide the inspector, narrow the window, or tab away"
+          ],
+          "expected": "The app does not hang in the focus walk.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/FocusHideFreezeTests.swift:testHideFocusedTerminal",
+            "FrogTests/FocusHideFreezeTests.swift:testNarrowUndocksInspectorWithTerminalFocused",
+            "FrogTests/FocusHideFreezeTests.swift:testTabAwayFromFocusedTerminal",
+            "FrogTests/FocusHideFreezeTests.swift:testRecalculateKeyViewLoopWithInspector"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "preview-tab",
+      "name": "Inspector Preview tab",
+      "group": "Preview",
+      "what": "One browser bar (back, forward, reload/stop, address, device size, compare, pick an element, open in browser, pop out) over the live page frog and the user share.",
+      "entry_points": [
+        "View > Preview (⇧⌘P)",
+        "Preview tab",
+        "View > Inspect Element in Preview (⇧⌘I)",
+        "Rail right-click > Compare with Now"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/PreviewPane.swift",
+        "apps/FrogKit/Model/ToolPanes.swift",
+        "apps/macos/Frog/Views/PaneArea.swift",
+        "apps/macos/Frog/Views/TimelineRail.swift",
+        "apps/macos/Frog/Views/Commands.swift"
+      ],
+      "flows": [
+        {
+          "id": "open-preview-empty",
+          "name": "open the preview before anything runs",
+          "steps": [
+            "Open a session in Frog",
+            "Press ⇧⌘P (or click the Preview tab)",
+            "Look at the Preview tab"
+          ],
+          "expected": "Nothing to preview yet · Run your dev server, then enter its URL or port, or ask Frog to open it, centred in the body.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/PreviewLayoutTests.swift:testEmptyAndFailedAreCentredInTheBody"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "enter-address",
+          "name": "load my dev server",
+          "steps": [
+            "Click the address field",
+            "Type 3000 (or localhost:5173, or a URL)",
+            "Press Return"
+          ],
+          "expected": "The field selects all on focus; a bare port or host:port becomes an http URL, the page loads with a progress line, and the field shows host and path.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/PreviewLayoutTests.swift:testAddressTakesAURLAPortOrHostPort",
+            "FrogTests/PreviewLayoutTests.swift:testAddressShowsHostAndPathWithThePort",
+            "FrogTests/PreviewLayoutTests.swift:testLoadingShowsStopAndAProgressLineOnTheRowsEdge"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "back-forward-reload-stop",
+          "name": "navigate the page",
+          "steps": [
+            "Load a page and follow a link",
+            "Click Back, then Forward",
+            "Click Reload",
+            "Click Stop while loading"
+          ],
+          "expected": "Back and Forward are enabled only when possible; Reload becomes Stop while loading.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "load-failed-retry",
+          "name": "recover from a page that didn't load",
+          "steps": [
+            "Enter an address with nothing listening",
+            "Read the failure",
+            "Start the server",
+            "Click Retry"
+          ],
+          "expected": "Couldn't load <address> with a one-sentence reason and Retry; Retry loads what failed.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/PreviewLayoutTests.swift:testFailedSaysWhatFailedWithRetry"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "device-sizes",
+          "name": "see the page at phone, tablet or desktop size",
+          "steps": [
+            "Open the Device size menu",
+            "Pick Phone 390 × 844",
+            "Pick Tablet, then Desktop, then Fit"
+          ],
+          "expected": "The page keeps the device's shape, scaled down (never up) to fit the body; Fit fills it.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/PreviewLayoutTests.swift:testDevicesKeepTheirShapeAndScaleDownNeverUp",
+            "FrogTests/PreviewLayoutTests.swift:testDevicesTakeTheirShapeInsideTheBody"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "toolbar-folds-narrow",
+          "name": "use the tools in a narrow inspector",
+          "steps": [
+            "Open a session in Frog",
+            "Make the inspector narrower than 400 pt",
+            "Open More"
+          ],
+          "expected": "One toolbar row at every width; below 400 the tools fold into More with Device size as a section.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/PreviewLayoutTests.swift:testOneToolbarRowAtEveryWidth"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "inspect-element-mention",
+          "name": "point frog at an element on the page",
+          "steps": [
+            "Load a page",
+            "Click Pick an element (or ⇧⌘I)",
+            "Click an element",
+            "Look at the composer"
+          ],
+          "expected": "A hint says Click an element to mention it · Esc to stop; the click tells the engine and inserts a mention in the composer, with a chip in the bar while it's in the draft (hand-off: composer agent).",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "inspect-disabled-no-page",
+          "name": "know why Pick an element is off",
+          "steps": [
+            "Open the preview with no page",
+            "Hover Pick an element",
+            "Look at the Preview tab"
+          ],
+          "expected": "It is disabled with Open a page to pick an element on it.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "stop-inspecting",
+          "name": "leave inspect mode",
+          "steps": [
+            "Open a session in Frog",
+            "Turn on Pick an element",
+            "Press Esc"
+          ],
+          "expected": "Inspect mode ends.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "open-in-browser",
+          "name": "open the page in my browser",
+          "steps": [
+            "Open a session in Frog",
+            "Load a page",
+            "Click Open in browser"
+          ],
+          "expected": "The page opens in the default browser; disabled with no http/file page.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Opens an external browser."
+        },
+        {
+          "id": "pop-out-window",
+          "name": "give the preview its own window",
+          "steps": [
+            "Load a page",
+            "Click Open in its own window",
+            "Close that window"
+          ],
+          "expected": "The page moves to a window with the same toolbar while the tab says In its own window; closing it brings the page back.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Separate window scene."
+        },
+        {
+          "id": "compare-then-now",
+          "name": "compare the page with how it was before a turn",
+          "steps": [
+            "Load a page across several turns",
+            "Click Compare with an earlier turn",
+            "Toggle Then / Now",
+            "Pick another turn",
+            "Click × to stop comparing"
+          ],
+          "expected": "It opens on the newest screenshot up to the current turn; Then shows the checkpoint and Now the live page; with none it says No screenshots yet.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/CompareTests.swift:testDefaultsToTheNewestUpToTheCurrentTurn",
+            "FrogTests/CompareTests.swift:testAPickedTurnWins",
+            "FrogTests/CompareTests.swift:testOpensOnTheCurrentTurnWithNoScreenshots",
+            "FrogTests/CompareTests.swift:testReplayedCheckpointLoadsFromTheSessionFolder",
+            "FrogTests/SnapshotTests.swift:testRenderPreviewCompare"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        },
+        {
+          "id": "compare-from-rail",
+          "name": "compare from the timeline",
+          "steps": [
+            "Open a session in Frog",
+            "Right-click a camera-badged turn on the rail",
+            "Choose Compare with Now"
+          ],
+          "expected": "The inspector opens on the preview comparing against that turn.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Context menu."
+        },
+        {
+          "id": "frog-drives-preview",
+          "name": "watch frog open, read and click the page",
+          "steps": [
+            "Open a session in Frog",
+            "Ask frog to open and check the app",
+            "Watch the Preview tab"
+          ],
+          "expected": "The inspector brings the preview forward, frog's navigation loads, and its read/click/type/screenshot requests are answered; console output and errors are reported back.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ProtocolTests.swift:testPaneEventsDecode",
+            "FrogTests/FocusHideFreezeTests.swift:testHideFocusedPreview"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        }
+      ]
+    }
+  ]
+}
