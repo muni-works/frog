@@ -46,7 +46,36 @@ final class TableTranscriptParityTests: XCTestCase {
         let line = #"{"seq":\#(seq),"session":"t","created":1790113417019,"event":\#(event)}"#
         c.ingest(try! JSONDecoder.frog.decode(Envelope.self, from: Data(line.utf8)))
     }
-    private func pump(_ s: TimeInterval) { RunLoop.main.run(until: Date().addingTimeInterval(s)) }
+    nonisolated(unsafe) static var pumps = 0
+    private func pump(_ s: TimeInterval) { Self.pumps += 1; RunLoop.main.run(until: Date().addingTimeInterval(s)) }
+
+    /// PROBE: from a background thread, dump the ring when the main thread stops returning from
+    /// a pump for 8 s (it's stuck inside one run-loop pass).
+    private func startWatchdog(_ name: String) -> () -> Void {
+        final class Flag: @unchecked Sendable { var done = false; let lock = NSLock() }
+        let flag = Flag()
+        let dir = ProcessInfo.processInfo.environment["FROG_DIAG_DIR"]
+        Thread {
+            var last = -1, same = 0, dumps = 0
+            while true {
+                Thread.sleep(forTimeInterval: 1)
+                flag.lock.lock(); let d = flag.done; flag.lock.unlock()
+                if d { return }
+                let p = Self.pumps
+                if p == last { same += 1 } else { same = 0; last = p }
+                if same >= 8, dumps < 2, same % 8 == 0 {
+                    dumps += 1
+                    let text = "STUCK \(name): pump not returned for \(same) s (pumps \(p))\nring (t kind #tag h top visH below fol ansMin ansMax parked):\n\(DiagLog.dump(last: 1500))\n"
+                    print("DIAG " + text.prefix(2000))
+                    if let dir {
+                        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+                        try? text.write(toFile: "\(dir)/stuck-\(Int(Date().timeIntervalSince1970 * 1000)).txt", atomically: true, encoding: .utf8)
+                    }
+                }
+            }
+        }.start()
+        return { flag.lock.lock(); flag.done = true; flag.lock.unlock() }
+    }
 
     /// Spin the run loop until `condition` holds, giving up after `timeout` (times `TestRunner.slack`
     /// on CI, whose runner is a loaded shared VM). A fixed `pump` is a guess at how long layout and
@@ -174,6 +203,7 @@ final class TableTranscriptParityTests: XCTestCase {
 
     func testStreamingShowsWordsAndFollows() {
         if ProcessInfo.processInfo.environment["FROG_DIAG_DIR"] != nil { executionTimeAllowance = 60 }
+        let stop = startWatchdog("streaming"); defer { stop() }
         for table in [false, true] {
             let c = open(table: table, turns: 30)
             send(c, #""turn_started","turn":99,"input":"go""#)
@@ -203,6 +233,7 @@ final class TableTranscriptParityTests: XCTestCase {
     /// first words (it stops at the prompt above them).
     func testStreamingALongAnswerStopsAtItsStart() {
         if ProcessInfo.processInfo.environment["FROG_DIAG_DIR"] != nil { executionTimeAllowance = 60 }
+        let stop = startWatchdog("long"); defer { stop() }
         for table in [false, true] {
           for tools in [true, false] {
             let c = open(table: table, turns: 30)
