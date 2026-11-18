@@ -127,8 +127,9 @@ export class Gateway {
   }
 
   /** A browser URL for a dev server on `port` in the session's sandbox (zest sandbox/src/preview.ts):
-   * its own origin, good for hours. Minting doesn't wake the sandbox. */
-  preview(id: string, port: number): Promise<{ url: string; port: number; expires: number }> {
+   * `url` is a one-minute entry link (owner cookie, then `/`): mint again for every iframe or tab.
+   * `origin` is the preview's own origin (absent from an older gateway). Minting doesn't wake the sandbox. */
+  preview(id: string, port: number): Promise<{ url: string; origin?: string; port: number; expires: number }> {
     return this.req("POST", `/v1/sessions/${encodeURIComponent(id)}/preview`, { port });
   }
 

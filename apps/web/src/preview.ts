@@ -77,6 +77,13 @@ export const NO_SCREENSHOT = "the web preview can't take screenshots yet; use re
 const REQUEST_GIVE_UP_MS = 18_000 // the engine waits 20s
 const NAVIGATE_WAIT_MS = 15_000
 const MINT_MARGIN_MS = 10 * 60_000
+/** Where a minted link enters the preview (zest sandbox/src/preview.ts ENTER_PATH): a one-minute
+ * token that sets the preview host's owner cookie and lands on `/`. */
+export const ENTER_PATH = '/__frog/enter'
+
+/** What the gateway mints for a sandbox port. `url` is a one-minute entry link (never reused);
+ * `origin` is the preview's own origin; `expires` is when the label behind both dies (8 h). */
+export interface Minted { url: string; origin?: string; expires: number }
 
 type Reply = (result: unknown, error?: string) => void
 
@@ -94,7 +101,12 @@ export class PreviewHub {
   private waiters = new Map<string, Reply>()
   /** Requests for a pane whose iframe isn't mounted yet (the inspector was closed). */
   private parked: { req: PaneRequest; run: () => void }[] = []
-  private minted = new Map<number, { url: string; expires: number }>()
+  /** Per pane, the label it entered with: its origin and when it dies. */
+  private labels = new Map<string, { origin: string; expires: number }>()
+  /** Per pane, the path to load once the entry link has landed on `/` (it can't go anywhere else). */
+  private entering = new Map<string, string>()
+  /** Panes that already minted again after a gateway error page, so one bad link isn't a loop. */
+  private retried = new Set<string>()
   private listeners = new Set<() => void>()
   private n = 0
   /** Bumps on every change, for useSyncExternalStore. */
@@ -119,7 +131,7 @@ export class PreviewHub {
   constructor(
     private send: (op: Op) => void,
     /** The gateway's preview URL for a sandbox port. */
-    private mint: (port: number) => Promise<{ url: string; expires: number }>,
+    private mint: (port: number) => Promise<Minted>,
     private now: () => number = Date.now,
     private timer: (f: () => void, ms: number) => unknown = (f, ms) => setTimeout(f, ms),
   ) {}
@@ -147,7 +159,8 @@ export class PreviewHub {
   attach(id: string, frame: Frame, url?: string) {
     this.frames.set(id, frame)
     const s = this.state(id)
-    if (s.src && s.url && this.expired(id, s.url)) void this.load(id, s.url)
+    // A new iframe for a sandbox page enters again: the last entry link was good for a minute.
+    if (s.src && s.url && this.origins.has(id)) void this.load(id, s.url)
     else if (s.src) frame.load(s.src)
     else if (url && !s.url) void this.load(id, url)
     if (this.inspecting) frame.post({ frog: 1, type: 'inspect', on: true })
@@ -159,51 +172,59 @@ export class PreviewHub {
   detach(id: string, frame: Frame) { if (this.frames.get(id) === frame) this.frames.delete(id) }
 
   /** Show `url`: a sandbox dev server through the gateway, or any other http(s) page as is. */
-  async load(id: string, url: string) {
+  load(id: string, url: string) {
+    this.retried.delete(id)
+    return this.open(id, url)
+  }
+
+  private async open(id: string, url: string) {
     this.patch(id, { url, loading: true, error: undefined })
+    this.entering.delete(id)
     const local = localTarget(url)
     let src: string
     if (local) {
+      // Minted fresh for every iframe load: the entry link is good for a minute, and only once.
+      let m: Minted
       try {
-        src = (await this.previewURL(local.port)).replace(/\/$/, '') + local.path
+        m = await this.mint(local.port)
       } catch (e) {
         // A 503 here (no preview host) while the list says previews are on is this load failing,
         // not the feature going away: availability is the list's alone, so the tab doesn't flap.
         return this.failed(id, e instanceof Error ? e.message : String(e))
       }
-      this.origins.set(id, { preview: new URL(src).origin, local: `http://localhost:${local.port}` })
+      if (this.state(id).url !== url) return // superseded while minting
+      const origin = m.origin ?? new URL(m.url).origin
+      const entry = new URL(m.url).pathname === ENTER_PATH
+      // An entry link lands on `/`; the page asked for follows once it has (see `loaded`). An
+      // older gateway's link is the page itself.
+      src = entry ? m.url : m.url.replace(/\/$/, '') + local.path
+      if (entry && local.path !== '/') this.entering.set(id, local.path)
+      this.labels.set(id, { origin, expires: m.expires })
+      this.origins.set(id, { preview: origin, local: `http://localhost:${local.port}` })
     } else if (/^https?:\/\//i.test(url)) {
       src = url
       this.origins.delete(id)
+      this.labels.delete(id)
     } else {
       return this.failed(id, `the web preview shows dev servers in the sandbox, not ${url.split(':')[0]}: pages. Serve it (for example \`npx serve\`) and open its port`)
     }
-    if (this.state(id).url !== url) return // superseded while minting
     this.patch(id, { src })
     this.frames.get(id)?.load(src)
   }
 
-  private async previewURL(port: number): Promise<string> {
-    const hit = this.minted.get(port)
-    if (hit && hit.expires - MINT_MARGIN_MS > this.now()) return hit.url
-    const m = await this.mint(port)
-    this.minted.set(port, m)
-    return m.url
-  }
-
-  /** Whether pane `id` shows a sandbox page whose link is past (or near) its expiry. */
-  private expired(id: string, url: string): boolean {
-    const local = localTarget(url)
-    if (!local || !this.origins.has(id)) return false
-    const hit = this.minted.get(local.port)
-    return !hit || hit.expires - MINT_MARGIN_MS <= this.now()
+  /** Whether pane `id`'s label (and so its owner cookie) is past, or near, its 8 h life. */
+  private expired(id: string): boolean {
+    if (!this.origins.has(id)) return false
+    const l = this.labels.get(id)
+    return !l || l.expires - MINT_MARGIN_MS <= this.now()
   }
 
   reload(id: string) {
     const s = this.state(id)
     if (s.error && s.url) return void this.load(id, s.url)
-    // The link is good for hours, not forever: past it, mint a fresh one rather than reload a 404.
-    if (s.url && this.expired(id, s.url)) return void this.load(id, s.url)
+    // The page reloads itself while its label lives (the owner cookie is already set in this
+    // frame); past it, enter again with a fresh link rather than reload into the gateway's 403.
+    if (s.url && this.expired(id)) return void this.load(id, s.url)
     this.patch(id, { loading: true, error: undefined })
     // A page outside the sandbox has no capture script to ask: load it again from here.
     if (!this.origins.has(id) && s.src) return this.frames.get(id)?.load(s.src)
@@ -228,10 +249,17 @@ export class PreviewHub {
   /** Whether the page is a dev server in the sandbox, which Frog can read, drive and pick from. */
   drivable(id: string) { return this.origins.has(id) && !!this.state(id).src }
 
-  /** The page's browser URL, for Open in Browser. */
-  browserURL(id: string): string | undefined {
+  /** Whether there's a page to open in a browser tab. */
+  canOpen(id: string) { return !!this.state(id).src }
+
+  /** A URL for Open in Browser: a sandbox page gets its own fresh entry link (a new tab has no
+   * owner cookie, and the iframe's link is spent), which lands on the dev server's `/`. */
+  async browserURL(id: string): Promise<string | undefined> {
     const s = this.state(id)
-    return s.url ? this.toPreview(id, s.url) ?? s.src : s.src
+    const local = s.url && this.origins.has(id) ? localTarget(s.url) : null
+    if (!local) return s.src
+    const m = await this.mint(local.port)
+    return new URL(m.url).pathname === ENTER_PATH ? m.url : m.url.replace(/\/$/, '') + local.path
   }
 
   setInspecting(on: boolean) {
@@ -253,6 +281,9 @@ export class PreviewHub {
   loaded(id: string) {
     const s = this.state(id)
     if (s.error) return
+    // The entry link landed on `/` with the owner cookie set: now the page that was asked for.
+    const path = this.entering.get(id), o = this.origins.get(id)
+    if (path && o) { this.entering.delete(id); return this.frames.get(id)?.load(o.preview + path) }
     this.patch(id, { loading: false })
     if (this.inspecting) this.frames.get(id)?.post({ frog: 1, type: 'inspect', on: true })
     const w = this.waiters.get(id)
@@ -270,6 +301,8 @@ export class PreviewHub {
   received(id: string, raw: unknown) {
     if (!raw || typeof raw !== 'object' || (raw as { frog?: unknown }).frog !== 1) return
     const m = this.fromPreview(id, raw as Record<string, unknown>) as Record<string, unknown>
+    // The entry's own landing on `/` isn't the page anyone asked for: only its failure counts.
+    if (this.entering.has(id) && m.type !== 'load_failed') return
     const text = typeof m.message === 'string' ? m.message : ''
     const url = typeof m.url === 'string' ? m.url : undefined
     switch (m.type) {
@@ -291,6 +324,7 @@ export class PreviewHub {
         // The Mac's noteURL: reported when the committed page changes (not when a load starts).
         const s = this.state(id), move = this.moving.get(id)
         this.moving.delete(id)
+        this.retried.delete(id)
         const index = move === 'back' ? Math.max(0, s.index - 1) : move === 'forward' ? Math.min(s.length - 1, s.index + 1) : move === 'reload' ? Math.max(0, s.index) : s.index + 1
         const length = move ? Math.max(s.length, index + 1) : index + 1
         this.patch(id, { pages: s.pages + 1, index, length, ...(url ? { url } : {}) })
@@ -298,8 +332,13 @@ export class PreviewHub {
         this.committed.set(id, url)
         return this.report({ id, kind: 'navigated', message: url, url })
       }
-      case 'load_failed':
+      case 'load_failed': {
+        // A gateway error page (frog-preview-error): most likely a spent link or a lost owner
+        // cookie, so enter again with a fresh one, once; a second failure is the answer.
+        const s = this.state(id)
+        if (this.origins.has(id) && s.url && !this.retried.has(id)) { this.retried.add(id); return void this.open(id, s.url) }
         return this.failed(id, text || "the page didn't load")
+      }
       case 'inspect':
         if (m.on === false && this.inspecting) { this.inspecting = false; this.changed() }
         return
@@ -423,10 +462,6 @@ export class PreviewHub {
     return v
   }
 
-  private toPreview(id: string, url: string): string | undefined {
-    const o = this.origins.get(id)
-    return o && url.startsWith(o.local) ? o.preview + url.slice(o.local.length) : undefined
-  }
 }
 
 function same(a: PaneReport, b: PaneReport) {

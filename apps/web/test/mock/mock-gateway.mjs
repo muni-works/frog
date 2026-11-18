@@ -9,13 +9,13 @@
 // - `resume_after` replays stored durable envelopes. `{"op":"submit"}` plays the recording
 //   live, deltas included, pausing at its permission_request until an Op::Permission arrives.
 //   First answer wins; PermissionResolved goes to every attached client.
-// - Live previews (mock/preview.mjs): POST /v1/sessions/:id/preview {port} returns a
-//   <label>.localhost URL proxied to 127.0.0.1:<port>; `--preview-script f.js` is the capture script.
+// - Live previews (mock/preview.mjs): POST /v1/sessions/:id/preview {port} returns a one-minute
+//   entry link into <label>.localhost (owner cookie, then proxied to 127.0.0.1:<port>); `--preview-script f.js` is the capture script.
 import { createServer } from "node:http";
 import { randomBytes } from "node:crypto";
 import { accept } from "./ws.mjs";
 import { loadFixture, Recorded } from "./session.mjs";
-import { okPort, previewTarget, previewURL, servePreview, upgradePreview } from "./preview.mjs";
+import { mintPreview, okPort, previewTarget, servePreview, upgradePreview } from "./preview.mjs";
 import { accountRoutes } from "./account.mjs";
 
 const arg = (name, fallback) => {
@@ -97,7 +97,7 @@ export function startMock({ port = 8788, fixture = new URL("./demo.jsonl", impor
         return json(res, 400, { error: "expected JSON" });
       }
       if (!okPort(port)) return json(res, 400, { error: "port must be 1024–65535, not the engine's" });
-      return json(res, 200, { url: previewURL(req.headers.host, s.info.id, port), port, expires: Date.now() + 8 * 3600_000 });
+      return json(res, 200, mintPreview(req.headers.host, s.info.id, port));
     }
     if (req.method === "GET") return json(res, 200, summary(s));
     if (req.method === "DELETE") {

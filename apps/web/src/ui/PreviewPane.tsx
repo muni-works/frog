@@ -153,11 +153,19 @@ export function PreviewPane({ hub, pane, send, machines = [] }: { hub: PreviewHu
   }
   const page = !!s?.src
   const drivable = !!id && hub.drivable(id)
-  const browser = id ? hub.browserURL(id) : undefined
+  const browser = !!id && hub.canOpen(id)
   const pickDevice = (d: Device) => { setDevice(d); setMenu(null) }
   const pickWhy = page ? 'Frog can pick elements on a dev server in the sandbox' : 'Open a page to pick an element on it'
   const togglePick = () => { hub.setInspecting(!hub.inspecting); setMenu(null) }
-  const openBrowser = () => { if (browser) open(browser, '_blank', 'noopener'); setMenu(null) }
+  // The tab opens now, inside the click (popup blockers), and goes to a link minted for it.
+  const openBrowser = () => {
+    setMenu(null)
+    if (!id || !browser) return
+    const w = open('about:blank', '_blank')
+    if (!w) return
+    w.opener = null
+    hub.browserURL(id).then((u) => { if (u) w.location.replace(u); else w.close() }, () => w.close())
+  }
   const fitted = fitDevice(device, box.w, box.h)
   const failed = !!s?.error
   const empty = !failed && !page && !s?.loading && !url
