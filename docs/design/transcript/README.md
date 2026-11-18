@@ -188,6 +188,10 @@ and font size match within 1 point, and every row's words match (`match: 12 rows
 - **The phone** keeps one gutter and no inset: its prose (`MessageText+UIKit`) has no indent yet, so
   `TranscriptEdge` applies on the Mac only. The phone does get the new lines, folds, footer and
   bubble from FrogKit.
+- **"Thought for Ns"** is how long the think ran (`ItemState.thoughtMs`, set as it completes):
+  `think_ms` cut at its completion, or in an older log, until the first message or tool call
+  logged after it starts, or its completion if sooner (#441). The turn line's thinking segments
+  use the same rule; `TurnLineTests` runs every case's `thinking` in timeline.json.
 - **Thoughts between steps** don't draw on the Mac (as before) and so don't break a fold; on the
   web a thought line breaks the run.
 
@@ -273,9 +277,11 @@ verbatim and keep it until the next.
 
 ### Decided beyond the spec, or left out
 
-- **Old logs** (no `think_ms`, no `thoughts`) read "Thought" and open straight to the full text.
-  The length is never derived from the item's own times: `item_completed` comes after the whole
-  reply. A short scratch thought alone between replies still folds away there, as before.
+- **Old logs** (no `think_ms`, no `thoughts`) read "Thought for Ns" with the engine's rule (#441,
+  timeline.rs `thinking`): the think runs from its `item_started` to the first message or tool call
+  logged after it in the turn, or to its own `item_completed` if that's sooner. Never to its
+  completion alone: `item_completed` comes after the whole reply. They open straight to the full
+  text. A short scratch thought alone between replies still folds away there, as before.
 - **Hover**: time, tokens (with "so far"), first-token time (the first reasoning or text delta
   minus the turn's start), and "Read 11,900 tokens from cache" once a call has ended (`cached`). The
   total read isn't on the wire while it runs, so only the cached part shows.
