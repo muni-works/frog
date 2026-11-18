@@ -76,7 +76,8 @@ final class TurnLineTests: XCTestCase {
         func words(_ k: TurnTimeline.Kind, _ item: String?) -> String {
             TurnLine.step(TurnLineShape.Piece(kind: k, x: 0, width: 0, item: item, startMs: 15_400, endMs: 24_400), in: t)
         }
-        XCTAssertEqual(words(.tool, "t5"), "Ran cargo test -q upload", "the step, not its result (spec)")
+        XCTAssertEqual(words(.tool, "t5"), "Failed cargo test -q upload",
+                       "the step as its line says it (Failed is a failed step's verb), not its result")
         XCTAssertEqual(words(.thinking, "r"), "Thought")
         XCTAssertEqual(words(.writing, "m"), "Wrote the answer")
         XCTAssertEqual(words(.waiting, "t5"), "Waited for you")

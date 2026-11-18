@@ -192,12 +192,10 @@ struct TurnLine: View {
         case .reasoning: return "Thought"
         case .message: return "Wrote the answer"
         case .tool:
+            // The step as its transcript line says it: the gist when it has one, else its own
+            // verb and object, so a failed step reads "Failed …" (the web's `stepName`).
             guard let line = StepLine.of(item) else { return piece.kind.words }
-            // A failed step reads as what it did ("Ran …"): the failure is its result.
-            let verb = line.verb == Verbs.failed || line.verb == Verbs.denied || !line.gist.isEmpty
-                ? Verbs.look(line.name).past : line.verb
-            let object = line.object.isEmpty ? (StepLine.of(item.clearingGist)?.object ?? "") : line.object
-            return [verb, object].filter { !$0.isEmpty }.joined(separator: " ")
+            return [line.gist.isEmpty ? line.verb : line.gist, line.object].filter { !$0.isEmpty }.joined(separator: " ")
         case .notice: return piece.kind.words
         }
     }
