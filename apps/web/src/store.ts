@@ -75,7 +75,10 @@ export function useSessions(cloud: CloudEngine | null) {
   const refresh = useCallback(async () => {
     if (!cloud) return
     try {
-      const list = (await cloud.gateway.list()).sort((a, b) => b.updated - a.updated)
+      const index = await cloud.gateway.index()
+      // Whether this gateway serves previews: the Preview tab and the engine's preview tools follow it.
+      cloud.setPreviews(index.preview)
+      const list = index.sessions.sort((a, b) => b.updated - a.updated)
       setSessions(list)
       noteSessions(list)
       setLoaded(true)

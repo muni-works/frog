@@ -450,6 +450,8 @@ struct TurnUsage: Decodable, Sendable {
     struct Timing: Decodable, Sendable {
         struct Call: Decodable, Sendable { var cachedTokens: UInt64? }
         var calls: [Call]?
+        /// The turn's wall time (the footer's time). Absent in older logs.
+        var wallMs: UInt64?
     }
 
     /// Input tokens read from the cache: as the engine totaled them, else summed from the calls.
@@ -752,8 +754,28 @@ struct FileDiff: Decodable, Sendable, Hashable {
 
 enum Item: Decodable, Sendable {
     case message(String)
-    case reasoning(String)
+    case reasoning(String, Reasoning = Reasoning())
     case toolCall(ToolResult)
+
+    /// What the engine says about a finished think (transcript-engine-wire.md, "The thought
+    /// line"). Both absent in old logs.
+    struct Reasoning: Decodable, Sendable, Equatable {
+        /// The lines that were shown, in order.
+        var thoughts: [Thought]? = nil
+        /// How long the reasoning streamed (first reasoning delta to the first answer or tool
+        /// call): "Thought for 31s". Started→completed overstates it.
+        var thinkMs: UInt64? = nil
+    }
+
+    /// One shown thought line: its words, the paragraph it came from (a half-open range in
+    /// UTF-16 code units into the reasoning text) and when it showed, in ms after the first
+    /// reasoning arrived.
+    struct Thought: Decodable, Sendable, Equatable {
+        var text: String
+        var start: Int
+        var end: Int
+        var ms: UInt64
+    }
 
     struct ToolResult: Decodable, Sendable {
         var name: String
@@ -772,6 +794,21 @@ enum Item: Decodable, Sendable {
         var app: AppView?
         /// Visualize's widget: the sandboxed document to load as is.
         var widget: VisualWidget?
+        /// A test run the engine recognised in a command's output (cargo, pytest, go, vitest,
+        /// jest). Absent: a plain command. The line reads "`passed` of `total`"; never parse
+        /// output for it.
+        var tests: TestRun? = nil
+    }
+
+    /// `tests` on a finished `Bash` call (docs/design/transcript/spec.md, "Test runs").
+    struct TestRun: Decodable, Sendable, Equatable {
+        var runner: String
+        var passed: Int
+        var failed: Int
+        var total: Int
+        /// The failing tests' names, in output order; may be shorter than `failed`
+        /// (`failed_names`, read by `JSONDecoder.frog`'s snake case).
+        var failedNames: [String]?
     }
 
     private enum Key: String, CodingKey { case type, text }
@@ -780,7 +817,7 @@ enum Item: Decodable, Sendable {
         let c = try decoder.container(keyedBy: Key.self)
         switch try c.decode(String.self, forKey: .type) {
         case "tool_call": self = .toolCall(try ToolResult(from: decoder))
-        case "reasoning": self = .reasoning(try c.decode(String.self, forKey: .text))
+        case "reasoning": self = .reasoning(try c.decode(String.self, forKey: .text), try Reasoning(from: decoder))
         default: self = .message(try c.decode(String.self, forKey: .text))
         }
     }
@@ -788,7 +825,9 @@ enum Item: Decodable, Sendable {
 
 enum Delta: Decodable, Sendable {
     case text(String)
-    case reasoning(String)
+    /// Reasoning text, and the engine's thought line when it changed on this delta (absent
+    /// otherwise: keep the last one).
+    case reasoning(String, thought: String? = nil)
     case output(String)
     case imagePreview(ToolImage, step: UInt64, of: UInt64, imageIndex: Int)
 
@@ -801,13 +840,13 @@ enum Delta: Decodable, Sendable {
     func joined(_ next: Delta) -> Delta? {
         switch (self, next) {
         case (.text(let a), .text(let b)): .text(a + b)
-        case (.reasoning(let a), .reasoning(let b)): .reasoning(a + b)
+        case (.reasoning(let a, let x), .reasoning(let b, let y)): .reasoning(a + b, thought: y ?? x)
         case (.output(let a), .output(let b)): .output(a + b)
         default: nil
         }
     }
 
-    private enum Key: String, CodingKey { case type, text, image, step, of, imageIndex }
+    private enum Key: String, CodingKey { case type, text, image, step, of, imageIndex, thought }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Key.self)
@@ -817,7 +856,7 @@ enum Delta: Decodable, Sendable {
         }
         let text = try c.decode(String.self, forKey: .text)
         switch try c.decode(String.self, forKey: .type) {
-        case "reasoning": self = .reasoning(text)
+        case "reasoning": self = .reasoning(text, thought: try c.decodeIfPresent(String.self, forKey: .thought))
         case "output": self = .output(text)
         default: self = .text(text)
         }
@@ -1064,6 +1103,12 @@ enum Event: Decodable, Sendable {
     /// jobs (id, label) are listed for the resumed notice; `inbox` holds delivered messages
     /// that never ran as a turn — re-send them after the restart.
     case drained(stepsDone: Int, jobs: [String], jobLabels: [(String, String)], inbox: [(String, String, String)])
+    /// The running turn's output tokens so far (ephemeral, at most 4/s while a call streams):
+    /// finished calls' provider figures plus the streaming call's count. `soFar`: a count of
+    /// what has arrived, never shown as exact.
+    /// `slow`: the engine finds the stream slow (only on `soFar` counts; absent means not). `cached`:
+    /// tokens read from cache, when a call ends (the stats' hover).
+    case outputTokens(turn: UInt64, output: UInt64, soFar: Bool, slow: Bool = false, cached: UInt64? = nil)
     case unknown(String)
 }
 
@@ -1101,6 +1146,7 @@ extension Event {
         case urgency, body, prs
         /// The MCP server list and a sign-in's outcome.
         case servers, server, tools
+        case output, soFar, slow, cached
     }
 
     init(from decoder: Decoder) throws {
@@ -1118,6 +1164,11 @@ extension Event {
                 turn: try c.decode(UInt64.self, forKey: .turn),
                 reason: try c.decode(EndReason.self, forKey: .reason),
                 usage: try c.decode(TurnUsage.self, forKey: .usage))
+        case "output_tokens":
+            self = .outputTokens(turn: try c.decode(UInt64.self, forKey: .turn), output: try c.decode(UInt64.self, forKey: .output),
+                                 soFar: try c.decodeIfPresent(Bool.self, forKey: .soFar) ?? false,
+                                 slow: try c.decodeIfPresent(Bool.self, forKey: .slow) ?? false,
+                                 cached: try c.decodeIfPresent(UInt64.self, forKey: .cached))
         case "item_started":
             self = .itemStarted(id: try c.decode(String.self, forKey: .id), kind: try c.decode(ItemKind.self, forKey: .kind))
         case "item_completed":

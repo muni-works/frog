@@ -57,6 +57,83 @@ final class SnapshotTests: XCTestCase {
             .background(Color(nsColor: .windowBackgroundColor))
     }
 
+    /// The unified transcript, phase 1 (docs/design/transcript/spec.md): the parity fixture in
+    /// a pane under 480 wide, where marks come inside and text indents 26 (`transcript-narrow`),
+    /// and a reply with a heading, bold, a list, a table and code at the full column, to check
+    /// the 640 measure against the 720 boxes and Plex's weights (`transcript-prose`).
+    func testRenderTranscriptPhase1() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let fixture = Conversation(preview: URL(fileURLWithPath: "/tmp/lilypad"))
+        try events(root.appending(path: "docs/design/parity/fixture.jsonl")).forEach(fixture.ingest)
+        try render(transcript(fixture), size: CGSize(width: 420, height: 1100), to: "transcript-narrow", settle: 1)
+
+        let reply = """
+        ## What changed
+
+        The retry now takes **a seeded Rng**, so the timing is the same every run. A long sentence that runs past the prose measure, so you can see where it wraps against the boxes below it.
+
+        - `Backoff::delay` takes the `Rng`
+        - the test passes a seeded one
+        - nothing else moved
+
+        | file | lines |
+        | --- | --- |
+        | src/retry.rs | +3 −2 |
+
+        ```rust
+        let delay = backoff.delay(attempt, &mut rng);
+        ```
+        """
+        let text = try String(data: JSONSerialization.data(withJSONObject: [reply]), encoding: .utf8)!.dropFirst().dropLast()
+        let prose = Conversation(preview: URL(fileURLWithPath: "/tmp/lilypad"))
+        try [
+            #"{"seq":1,"session":"p","created":0,"event":"turn_started","turn":1,"input":"what changed?"}"#,
+            #"{"seq":2,"session":"p","created":0,"event":"item_started","id":"m","kind":{"type":"message"}}"#,
+            #"{"seq":3,"session":"p","created":1000,"event":"item_completed","id":"m","item":{"type":"message","text":\#(text)}}"#,
+            #"{"seq":4,"session":"p","created":2000,"event":"turn_ended","turn":1,"reason":{"type":"complete"},"usage":{"input_tokens":900,"output_tokens":120,"model_calls":1,"timing":{"wall_ms":2000},"model":"cloud/qwen3-coder-next"}}"#,
+        ].map { try JSONDecoder.frog.decode(Envelope.self, from: Data($0.utf8)) }.forEach(prose.ingest)
+        try render(transcript(prose), size: CGSize(width: 1030, height: 760), to: "transcript-prose", settle: 1)
+        print("snapshots: \(outDir.path)")
+    }
+
+    /// Phase 2's thinking row (docs/design/transcript/spec.md): a think twenty seconds in, its
+    /// thought and stats (`thinking-live`), and the outline a finished think opens to
+    /// (`thinking-outline`).
+    func testRenderThinkingRow() throws {
+        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        func at(_ s: Double) -> Int64 { now - Int64(s * 1000) }
+        let live = Conversation(preview: URL(fileURLWithPath: "/tmp/lilypad"))
+        try [
+            #"{"seq":1,"session":"p","created":\#(at(20)),"event":"turn_started","turn":1,"input":"pls visually explain transformers (LLM) to me from first principles"}"#,
+            #"{"seq":2,"session":"p","created":\#(at(19.5)),"event":"item_started","id":"r","kind":{"type":"reasoning"}}"#,
+            #"{"seq":3,"session":"p","created":\#(at(18)),"event":"item_delta","id":"r","delta":{"type":"reasoning","text":"The user wants a visual explanation.\n\n","thought":"The user wants a visual explanation of transformers"}}"#,
+            #"{"seq":4,"session":"p","created":\#(at(1)),"event":"item_delta","id":"r","delta":{"type":"reasoning","text":"Better idea: attention as a soft lookup.\n\n","thought":"Better idea: attention as a soft lookup in two dimensions"}}"#,
+            #"{"seq":5,"session":"p","created":\#(at(0.5)),"event":"output_tokens","turn":1,"output":1105,"so_far":true}"#,
+        ].map { try JSONDecoder.frog.decode(Envelope.self, from: Data($0.utf8)) }.forEach(live.ingest)
+        let turn = try XCTUnwrap(live.turns.last)
+        try render(LiveRow(turn: turn, conversation: live).padding(.horizontal, 46).padding(.vertical, 20)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .background(Color(nsColor: .windowBackgroundColor)),
+                   size: CGSize(width: 760, height: 120), to: "thinking-live", settle: 1)
+
+        var done = ItemState(id: "d", kind: .reasoning,
+                             text: "The user wants a visual explanation of transformers from first principles.\n\nIdea: build a single-page widget that walks through stages:\n1. Text to tokens\n2. Embeddings\n3. Attention\n\nBetter idea: attention as a soft lookup in two dimensions.\n\n")
+        done.done = true
+        done.thinkMs = 31_000
+        done.thoughts = [Item.Thought(text: "The user wants a visual explanation of transformers from first principles", start: 0, end: 75, ms: 0),
+                         Item.Thought(text: "Build one widget that walks through five stages", start: 77, end: 170, ms: 4000),
+                         Item.Thought(text: "Better idea: attention as a soft lookup in two dimensions", start: 172, end: 230, ms: 9000)]
+        try render(VStack(alignment: .leading, spacing: 0) {
+                       ThoughtLineView(item: done, verbose: true)
+                   }
+                   .padding(.horizontal, 46).padding(.vertical, 20)
+                   .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                   .background(Color(nsColor: .windowBackgroundColor)),
+                   size: CGSize(width: 760, height: 160), to: "thinking-outline", settle: 0.6)
+        print("snapshots: \(outDir.path)")
+    }
+
     /// The popovers behind a turn's cost and energy hints, for a hosted model's turn.
     func testRenderTurnCostCards() throws {
         let usage = try JSONDecoder.frog.decode(TurnUsage.self, from: Data(#"{"input_tokens":12400,"output_tokens":380,"model_calls":2,"model":"vercel/anthropic/claude-opus-5.5-fast","energy":{"local_wh":0.021,"remote_wh":2.96,"idle_w":11.6}}"#.utf8))
@@ -417,10 +494,9 @@ extension SnapshotTests {
         try render(
             VStack(alignment: .leading, spacing: 14) {
                 ForEach(Array(groups.enumerated()), id: \.offset) { _, g in
-                    ActivityLine(group: g, conversation: done, expanded: true)
+                    ActivityLine(group: g, conversation: done, verbosity: .verbose)
                 }
-                ActivitySteps(steps: [edit], conversation: done)
-                ActivityStepRow(item: edit, conversation: done, expanded: true)
+                StepLineView(item: edit, conversation: done, startOpen: true)
             }
             .padding(28)
             .frame(maxHeight: .infinity, alignment: .top)
@@ -505,7 +581,7 @@ extension SnapshotTests {
         try lines.map(env).forEach(live.ingest)
         try render(transcript(live), size: CGSize(width: 760, height: 420), to: "agents-calm-live")
         let steps = try XCTUnwrap(live.turns.last?.items)
-        try render(ActivitySteps(steps: steps, conversation: live).padding(24).frame(maxHeight: .infinity, alignment: .top)
+        try render(ActivityLine(group: ActivityGroup(steps: steps), conversation: live, live: true).padding(24).frame(maxHeight: .infinity, alignment: .top)
                     .background(Color(nsColor: .windowBackgroundColor)),
                    size: CGSize(width: 600, height: 200), to: "agents-calm-steps")
         let sidebar = VStack(alignment: .leading, spacing: 0) {
@@ -714,22 +790,22 @@ extension SnapshotTests {
             tool("f1", "Bash", "cargo test -- --nocapture", outcome: .error),
             tool("m1", "mcp__github__list_issues", #"{"repo":"muni-works/frog"}"#),
         ]
-        let lines = VerbLine.lines(steps)
-        // The proof that matters: a gist row and a no-gist row are the same height.
-        let gisted = try XCTUnwrap(lines.first { $0.arg == nil && !$0.quiet })
-        let raw = try XCTUnwrap(lines.first { $0.arg != nil && $0.verb.isEmpty })
-        XCTAssertEqual(try renderedHeight(VerbLineView(line: gisted), width: 560),
-                       try renderedHeight(VerbLineView(line: raw), width: 560), accuracy: 0.5)
+        let c = Conversation(folder: URL(fileURLWithPath: "/Users/cam/Developer/frog"), link: nil, replay: false, session: "rows")
+        // The proof that matters: every line is one row tall, gist or not, failed or not, so the
+        // transcript doesn't jump as gists land (spec: lines in a run touch, 24 each).
+        // (A failed command opens itself, so it's taller: left out here.)
+        for step in steps where step.result?.outcome != .error {
+            XCTAssertEqual(try renderedHeight(StepLineView(item: step, conversation: c), width: 560), 24,
+                           accuracy: 0.5, "\(step.id)")
+        }
         for dark in [true, false] {
-            let view = VStack(alignment: .leading, spacing: 6) {
-                ForEach(Array(lines.enumerated()), id: \.offset) { _, v in
-                    VerbLineView(line: v)
-                }
+            let view = VStack(alignment: .leading, spacing: 0) {
+                ForEach(steps) { StepLineView(item: $0, conversation: c) }
             }
-            .padding(20)
+            .padding(.vertical, 20).padding(.horizontal, 46)
             .background(Color(nsColor: .windowBackgroundColor))
             .environment(\.colorScheme, dark ? .dark : .light)
-            try render(view, size: CGSize(width: 620, height: 240), to: "tool-rows" + (dark ? "" : "-light"),
+            try render(view, size: CGSize(width: 660, height: 420), to: "tool-rows" + (dark ? "" : "-light"),
                        appearance: dark ? .darkAqua : .aqua)
         }
         print("snapshots: \(outDir.path)")
