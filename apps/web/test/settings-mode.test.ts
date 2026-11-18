@@ -145,13 +145,12 @@ test("every openSettings caller lands on its section: the composer's Billing and
   p.unmount();
 });
 
-test("the out-of-credit card's Billing and Have a code? open Billing (the code one with the field focused)", () => {
-  // The card needs a live session's socket, which the harness doesn't run; its wiring is read here
-  // and the focus itself is held by the next test.
-  const src = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
-  const card = src.slice(src.indexOf('aria-label="Out of credit"'), src.indexOf("</section>", src.indexOf('aria-label="Out of credit"')));
-  assert.match(card, /onClick=\{\(\) => openSettings\('billing'\)\}>Billing</);
-  assert.match(card, /onClick=\{\(\) => openSettings\('billing', \{ coupon: true \}\)\}>Have a code\?</);
+test("the out-of-credit card (the credit wall) opens Have a code? inline, with Billing's own Coupon field", () => {
+  // The wall needs a live session's socket, which the harness doesn't run; its wiring is read here
+  // and rendered in test/credit-wall.test.ts.
+  const src = readFileSync(new URL("../src/ui/CreditWall.tsx", import.meta.url), "utf8");
+  assert.match(src, /import \{ Coupon \} from '\.\/Settings'/);
+  assert.match(src, /<Coupon apiKey=\{apiKey\} focus=\{1\} onRedeemed=\{onRedeemed\} \/>/);
 });
 
 test("Billing opened for a code puts the cursor in the field; a plain visit doesn't", async () => {

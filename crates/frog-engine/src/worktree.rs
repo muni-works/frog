@@ -183,9 +183,14 @@ pub(crate) mod tests {
     fn a_released_lock_held_a_moment_by_a_forked_copy_is_waited_out() {
         let (repo, wt) = repo_with_worktree("linger");
         let first = acquire(&wt, "s-first", Duration::ZERO).unwrap().unwrap();
+        // The copy stands in for a forked child's before its exec, so it's close-on-exec like
+        // every descriptor Rust opens. A plain `dup` isn't: a process any other test started
+        // while it was open kept the flock for its whole life, past `acquire`'s 2 s of grace,
+        // and this test failed under a parallel run. The process started here pins that.
         // SAFETY: dup of a valid fd we own; the copy is closed on the thread below.
-        let copy = unsafe { libc::dup(first.file.as_raw_fd()) };
+        let copy = unsafe { libc::fcntl(first.file.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 0) };
         assert!(copy >= 0);
+        let mut other = Command::new("sleep").arg("5").spawn().unwrap();
         drop(first);
         let closer = std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(150));
@@ -197,6 +202,8 @@ pub(crate) mod tests {
         assert!(next.is_some(), "a released lock is taken once its copy closes");
         assert!(t0.elapsed() >= Duration::from_millis(100), "it waited for the copy");
         closer.join().unwrap();
+        let _ = other.kill();
+        let _ = other.wait();
         let _ = std::fs::remove_dir_all(repo.parent().unwrap());
     }
 

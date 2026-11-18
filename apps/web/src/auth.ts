@@ -10,6 +10,8 @@
 // (cast: under node --test there's no vite env, so this reads undefined rather than throwing)
 export const API = (import.meta as unknown as { env?: { VITE_API?: string } }).env?.VITE_API ?? 'https://api.frog.toys'
 
+import { configureTracking } from './track'
+
 /** The account shape every app gets from the edge (accounts-ux §5). */
 export interface Account {
   plan: string
@@ -29,6 +31,9 @@ export interface Account {
   /** The plan, if subscribed: its allowance windows and whether it's past them (then credit
    * pays at usage prices). Null on usage pricing alone. Older edges leave it out. */
   subscription?: { plan: string; name: string; windows: { kind: '5h' | 'weekly'; used: number; limit: number; resets_at: string }[]; over: boolean } | null
+  /** The gateway forwards this app's funnel events (POST /v1/events): true only while it has
+   *  PostHog configured. Absent or false, the app sends none (./track.ts). */
+  events?: boolean
 }
 
 const KEY = 'frog.key'
@@ -95,6 +100,7 @@ export async function finishSignIn(): Promise<{ key: string; account: Account; a
     method: 'POST', body: JSON.stringify({ code, verifier: pending.verifier, device_name: device() }),
   })
   store.set(localStorage, KEY, r.key)
+  configureTracking(r.key, r.account)
   return { ...r, after: pending.after, pick: pending.pick }
 }
 
@@ -173,12 +179,15 @@ export function portalErrorMessage(e: unknown): string | null {
 }
 
 export async function me(key: string): Promise<Account> {
-  return (await call<{ account: Account }>('/v1/me', {}, key)).account
+  const account = (await call<{ account: Account }>('/v1/me', {}, key)).account
+  configureTracking(key, account)
+  return account
 }
 
 /** Forgets the key here and, given it, revokes it on the gateway too (best effort: a dead
  * network or an already-dead key still signs you out locally). */
 export function signOut(key?: string) {
+  configureTracking(null, null)
   store.del(localStorage, KEY)
   if (!key) return
   listKeys(key)

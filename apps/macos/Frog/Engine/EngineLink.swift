@@ -80,6 +80,7 @@ final class MacEffects: ConversationEffects {
     func turnEnded(_ c: Conversation, turn: TurnState) {
         if let id = c.cloudSession ?? c.sessionID { Library.shared.turnEnded(id) }
         if let usage = turn.usage { ModelStats.shared.record(usage, model: c.status?.model) }
+        Funnel.turnEnded(model: c.status?.model, cloud: c.cloudSession != nil, end: turn.end)
         // No notification here: a finished reply is already on screen, and an alert per turn
         // end is exactly the noise this replaced. The model asks for attention itself with
         // its `Notify` tool (`notified`, below); the Dock badge only says "there's something
