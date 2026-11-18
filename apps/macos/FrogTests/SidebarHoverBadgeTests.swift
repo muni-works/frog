@@ -51,6 +51,9 @@ final class SidebarHoverBadgeTests: XCTestCase {
     /// The badge is still in the row after the hover's 450 ms have passed and the title has
     /// expanded. Before the fix (`if let git, !expandTitle`) the badge dropped from the layout
     /// the moment the title expanded: `expandedBodies` incremented with no badge body behind it.
+    /// The badge is counted in the expanded bodies themselves, not against a count taken "before
+    /// the expand": on a loaded Mac the main loop can stall past 450 ms inside the first 0.1 s,
+    /// so that snapshot already held the expanded body and nothing came after it (2 vs 2).
     func testBadgeStaysInTheRowWhileHovered() throws {
         let s = stage()
         let host = NSHostingView(rootView: hoveredRow(s))
@@ -61,13 +64,11 @@ final class SidebarHoverBadgeTests: XCTestCase {
         host.layoutSubtreeIfNeeded()
         // The row's task needs the main loop to run: to fire, to sleep its 450 ms, and to set
         // expandTitle — the same path a real pointer takes.
-        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
-        let earlyBadge = SidebarProbe.badgeBodies
-        RunLoop.main.run(until: Date().addingTimeInterval(0.6))
+        RunLoop.main.run(until: Date().addingTimeInterval(0.7))
         XCTAssertTrue(SidebarProbe.expandedBodies > 0,
                       "the row never expanded its title, so this test proved nothing")
-        XCTAssertGreaterThan(SidebarProbe.badgeBodies, earlyBadge,
-                             "the badge left the row when the title expanded under the pointer")
+        XCTAssertEqual(SidebarProbe.expandedBadgeBodies, SidebarProbe.expandedBodies,
+                       "the badge left the row when the title expanded under the pointer")
     }
 
     /// The hover, frame by frame: a row at rest, the pointer arriving (before the 450 ms
