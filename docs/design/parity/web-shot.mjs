@@ -52,7 +52,8 @@ if (process.env.WEB_SHOT_CLICK) {
     await call("Runtime.evaluate", { expression: `document.querySelector(${JSON.stringify(process.env.WEB_SHOT_SCROLL)})?.scrollIntoView({block:'start'})` });
     await new Promise((r) => setTimeout(r, 800));
   }
-  await call("Runtime.evaluate", { expression: `document.querySelector(${JSON.stringify(process.env.WEB_SHOT_CLICK)})?.click()` });
+  // A real click event at the element's middle: SVG elements have no .click().
+  await call("Runtime.evaluate", { expression: `(() => { const el = document.querySelector(${JSON.stringify(process.env.WEB_SHOT_CLICK)}); if (!el) return; const r = el.getBoundingClientRect(); el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 })) })()` });
   await new Promise((r) => setTimeout(r, 500));
 }
 // WEB_SHOT_SCROLL=<selector>: bring that element to the top first (the visuals shots).

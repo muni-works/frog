@@ -1421,7 +1421,7 @@
         {
           "properties": {
             "asked": {
-              "description": "When the request was sent (unix ms); the envelope's `created` is when it was\nanswered. Together: the wait, for the turn's timeline. Absent in older logs and on\na withdrawal.",
+              "description": "When the request was sent (unix ms); the envelope's `created` is when it was\nanswered, or when the turn was stopped with it still up (then `deny`). Together:\nthe wait, for the turn's timeline. Absent in older logs and on a withdrawal.",
               "format": "int64",
               "type": [
                 "integer",
@@ -3922,7 +3922,7 @@
         {
           "properties": {
             "asked": {
-              "description": "When the request was sent (unix ms); the envelope's `created` is when it was\nanswered. Together: the wait, for the turn's timeline. Absent in older logs and on\na withdrawal.",
+              "description": "When the request was sent (unix ms); the envelope's `created` is when it was\nanswered, or when the turn was stopped with it still up (then `deny`). Together:\nthe wait, for the turn's timeline. Absent in older logs and on a withdrawal.",
               "format": "int64",
               "type": [
                 "integer",

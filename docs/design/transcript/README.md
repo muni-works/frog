@@ -219,3 +219,136 @@ and font size match within 1 point, and every row's words match (`match: 12 rows
 - **Hover**: the plate on lines that open, and Copy command on commands. Show in Changes, Run in
   Terminal, opening a read or a search result: not yet.
 - **The composer** keeps the 32 gutter in a narrow pane; the web's follows the transcript's.
+
+## Phase 2 (web): the thinking row and the stats line
+
+Built against the engine's wire shapes from #420 and #426, as the transcript manager's wire contract
+gives them (`thought` on reasoning deltas, `thoughts` and `think_ms` on the finished item, the live
+`output_tokens` event with `so_far`, `slow` and `cached`, and the quiet call as an ordinary
+`question`). Its cases,
+[`thoughts.json`](thoughts.json), are loaded by `apps/web/test/transcript-thinking.test.ts`: every
+`streams` case is replayed through the reducer and the row must show each delta's `thought`
+verbatim and keep it until the next.
+
+| Piece | Where |
+| --- | --- |
+| Folding the wire: `thought`, `shown`, `thoughts`, `thinkMs`; `live` tokens, `pulse`, `firstOutputAt`, `askedAt` | `apps/web/src/engine/thread.ts` |
+| What the row says (`liveRow`), "Thought for 31s" (`thoughtLabel`), rate and slow | `apps/web/src/ui/rows.ts` |
+| The row, its stats, the outline, the settled line | `apps/web/src/ui/LiveRow.tsx` |
+| The words | [`verbs.json`](verbs.json) → `live` |
+| A turn streamed in real time (full, stall, think) | [`../parity/live.mjs`](../parity/live.mjs) |
+
+### What it does
+
+- **One row** at the end of the running turn, a line's height, its dot hung where a line's mark
+  is. A card waiting on a person wins ("Waiting for you", amber, still). Then what the engine says
+  it's doing (`progress`, a retry notice). Then the running steps: one shows its live verb and
+  object ("Editing src/retry.rs"), several fold into a count ("Reading 3 files", or "Running 3
+  steps" when they differ). Then a think. An answer writing has no row; its stats sit under the
+  text. Anything else (between steps, before the first token) is "Thinking" with no thought yet.
+- **A running step is the row, not a line.** It becomes a line when it finishes (board 8B).
+- **The thought** is the engine's, verbatim, empty for the first 600 ms. It cross-fades (out 180 ms,
+  in 240 ms, overlapping, no movement); reduced motion swaps it.
+- **The dot** breathes while output arrives (the last piece within 1.5 s), holds still otherwise,
+  greys when stalled, and is amber only for a card.
+- **Stats**, 2 under the row in meta: time after the first second, tokens, tokens per second.
+  Tokens are the engine's `output_tokens`; the hover says "so far" while `so_far` is set. The rate
+  is the change in that figure over the last 4 s of the viewer's clock, never with a decimal.
+  Waiting: time and "waited 6s".
+- **Slow**: the stats say "Slow" while the engine's latest count carries `slow`. The web never
+  works it out itself. Nothing turns orange.
+- **Stalled**: no output (no streamed piece and no token count) for 10 s while thinking, and the
+  row says "No output for 12s" with the dot grey and still. At 30 s the engine asks (its quiet
+  call: "Keep waiting" / "Stop the turn"), drawn as a question card after the streaming think or
+  answer, or after the turn when nothing has streamed (`item: ""`); the row then waits on you. A
+  token withdraws it. A step or a card is never called stalled: a command can be quiet for minutes.
+- **Settled**: "Thought for 31s" from `think_ms`, opening to the outline: one line per shown
+  thought (twelve, then "3 more"), a line opening its paragraph, "Show all N characters" for the
+  whole text in its own scrolling box with Copy. Stopped mid-think: "Stopped after 46s" (to when
+  the turn ended), and the turn's own "Stopped" note isn't repeated under it.
+- **Opened while live**: the outline is every line shown so far, newest twelve, newest in fg; the
+  row's own thought hides.
+- **It never opens itself**, and what you opened stays open across redraws (kept by item id, per
+  page load). Return opens, arrows move between outline lines, Esc closes one level.
+
+### Decided beyond the spec, or left out
+
+- **Old logs** (no `think_ms`, no `thoughts`) read "Thought" and open straight to the full text.
+  The length is never derived from the item's own times: `item_completed` comes after the whole
+  reply. A short scratch thought alone between replies still folds away there, as before.
+- **Hover**: time, tokens (with "so far"), first-token time (the first reasoning or text delta
+  minus the turn's start), and "Read 11,900 tokens from cache" once a call has ended (`cached`). The
+  total read isn't on the wire while it runs, so only the cached part shows.
+- **The rail** (board 5's marks spaced by time) and **pace in the opened header** are left out of
+  phase 2; the spec marks the rail optional, and the pace curve is phase 3's.
+- **Parallel steps** count only the steps still running; the nouns are in `verbs.json` (`counts`).
+- **Activity** (`progress`, retry notices) takes the row while it lasts, held still, in the
+  engine's words.
+
+### Measured
+
+[`../parity/metrics/`](../parity/metrics/): on the parity fixture every phase 1 row is unchanged,
+and phase 2 adds two under the ask card, the live row "Waiting for you" 16 below the card and its
+stats 2 below that (`diff-p1-p2-1280.txt`). 1280 and 1600 match (`diff-p2-1280-1600.txt`).
+Captures: `captures/p2-*` (`capture-p2.sh`): thinking, thinking opened, two reads at once, an
+answer writing with its stats, waiting on a card, stalled ("No output for 12s"), and the engine's quiet call at 30 s.
+
+## Phase 3 (web): the turn line and the turn panel
+
+No new wire fields (#427): the timeline is computed from the events the web already gets.
+`apps/web/src/engine/timeline.ts` ports the engine's `timeline.rs`, and
+`apps/web/test/transcript-timeline.test.ts` runs every case in [`timeline.json`](timeline.json)
+(18 with #427's "a card still up when the turn is stopped waits until the stop"). It also folds
+each case through the reducer and checks that the events the thread keeps per turn (`turn.tl`, a
+few numbers per step) give the same segments. A reload, which rebuilds the thread, draws the same
+line.
+
+| Piece | Where |
+| --- | --- |
+| Segments and per-kind totals | `apps/web/src/engine/timeline.ts` |
+| Each turn's kept events (`tl`) | `apps/web/src/engine/thread.ts` (`timed`) |
+| The turn line, the panel, the live pace | `apps/web/src/ui/TurnGraph.tsx` |
+| Where they sit | `TurnFooter.tsx` (at rest), `LiveRow.tsx` (live stats) |
+
+### What it does
+
+- **The turn line**: 200 by 16, at the right end of the footer at rest and of the stats while live.
+  A strip along the bottom coloured by phase (thinking `frog`, tools `faint`, waiting `notice`,
+  writing `fg`), the pace curve above. Grey at rest; on hover it takes its colours over 150 ms and
+  scrubs: a hairline, a readout ("15s · 0 tok/s · Ran cargo test -q upload"), and that step's
+  line (or the closed fold holding it) gets the hover plate. A click on the strip scrolls to the
+  step; anywhere else opens the panel. Under 420 wide the curve goes and the strip stays.
+- **The panel** opens over the transcript pane, which dims and doesn't reflow; Esc or a click
+  outside closes it. It replaces the footer's old cost popover (`.turn-card` is gone).
+  - Header: "This turn", the model and where it ran, the totals (the footer's time, tokens and cost).
+  - Where the time went: thinking, tools, waiting on you, writing (each kind's wall time, so tools
+    that ran together count once), then tokens read and from cache, and the cost.
+  - The waterfall: one row per step under a shared axis with ticks, the pace curve above. Steps that
+    ran together overlap on their own rows. A wait over 30 s takes 3 s of room and is drawn broken,
+    with its real length written on it.
+  - Select a row to see its detail beside the waterfall: a command's output, an edit's change, a
+    think's outline, an answer's text. "Show in transcript" closes the panel and scrolls there.
+  - A live turn opens the same panel. Its open step grows to now, and a card still up is a wait
+    growing to now, cut out of its step as an answered one is.
+- **The live pace curve** comes from the running counts: `output_tokens` arrives up to four times a
+  second with the turn's total, and each second's bucket is that total's growth over the second.
+  A finished turn uses the engine's `usage.pace`; a turn without it (every turn before #420) draws
+  the strip and no curve.
+
+### Decided beyond the spec, or left out
+
+- **The fixture's pace**: turn 1's `turn_ended.usage` carries the Mac's proposed record (#429,
+  commit faa9d943): 31 one-second buckets summing to the 1,902 output tokens, streamed while it
+  thought and wrote. Both apps measure the same fixture.
+- **The line's span** is the turn's events (`turn_started` to `turn_ended`), the same span the
+  segments and the pace use; the header's time is the footer's (wall time).
+- **A sidebar row and a fold carrying the strip alone** (spec: "may") are left out.
+- **The readout's step** is named like its line ("Ran cargo test -q upload"); the Mac adds the
+  step's result after it. The readout isn't in the metrics dump.
+
+### Measured
+
+[`../parity/metrics/`](../parity/metrics/) `web-*-p3.json`: every phase 2 row is unchanged, and a
+`turnline` row follows the footer and the live stats, its left edge at 520 (the column's 720 less
+200), on the same top as the row it ends. 1280 and 1600 match (`diff-p3-1280-1600.txt`).
+Captures: `captures/p3-*` (`capture-p3.sh`), the turn line hovered and the panel open.

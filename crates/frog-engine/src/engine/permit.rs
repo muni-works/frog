@@ -285,7 +285,7 @@ impl Agent {
             let (tx, rx) = oneshot::channel();
             self.shared.pending.lock().unwrap().insert(id.clone(), tx);
             let preview = tools::fs::preview(name, input, &self.ctx);
-            let asked = crate::engine::now_ms();
+            let asked = self.open_wait(&id, item);
             self.emit(Event::PermissionRequest {
                 id: id.clone(),
                 item: item.into(),
@@ -301,6 +301,7 @@ impl Agent {
                 card: None,
             });
             let decision = rx.await.unwrap_or(Decision::Deny);
+            self.shared.waits.lock().unwrap().remove(&id);
             self.emit(Event::PermissionResolved {
                 id,
                 decision,
@@ -673,7 +674,7 @@ impl Agent {
             0,
         );
         let card_prefix = card.as_ref().and_then(|c| c.prefix.clone());
-        let asked_at = crate::engine::now_ms();
+        let asked_at = self.open_wait(&id, item);
         self.emit(Event::PermissionRequest {
             id: id.clone(),
             item: item.into(),
@@ -734,6 +735,7 @@ impl Agent {
             };
             self.record_denial(call, why);
         }
+        self.shared.waits.lock().unwrap().remove(&id);
         self.emit(Event::PermissionResolved {
             id,
             decision,
@@ -1191,7 +1193,7 @@ arrives as a <session-message from=\"parent\"> in this turn."
         }
         let (tx, rx) = oneshot::channel();
         self.shared.questions.lock().unwrap().insert(id.clone(), tx);
-        let asked_at = crate::engine::now_ms();
+        let asked_at = self.open_wait(&id, item);
         self.emit(Event::Question {
             id: id.clone(),
             item: item.into(),
@@ -1211,6 +1213,7 @@ arrives as a <session-message from=\"parent\"> in this turn."
                 l.dismiss(&id, crate::engine::now_ms());
             }
         }
+        self.shared.waits.lock().unwrap().remove(&id);
         self.emit(Event::QuestionResolved {
             id,
             answer: answer.clone(),
@@ -1315,13 +1318,14 @@ arrives as a <session-message from=\"parent\"> in this turn."
             subagent: None,
             card: None,
         });
-        let asked_at = crate::engine::now_ms();
+        let asked_at = self.open_wait(&id, item);
         let asked = Instant::now();
         let decision = match rx.await.unwrap_or(Decision::Deny) {
             Decision::AllowAlways | Decision::AllowPrefix => Decision::Allow,
             d => d,
         };
         self.timing.user_ms += ms(asked.elapsed());
+        self.shared.waits.lock().unwrap().remove(&id);
         self.emit(Event::PermissionResolved {
             id,
             decision,
