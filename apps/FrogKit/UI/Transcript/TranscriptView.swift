@@ -189,12 +189,13 @@ struct TranscriptView: View {
                        case let top = live.first ? track.lastTurnTop : answer.minY,
                        top < new.visibleTop + growth + topInset + 4,
                        // Long by its own laid-out size: from where it starts to where the answer
-                       // ends, taller than what the view shows. The growth above can't say so
-                       // alone: right after a turn goes in, the lazy stack reports a content
-                       // height that counts rows it hasn't laid out by estimate, hundreds of
-                       // points that are gone a frame later, and a one-line answer stopped
-                       // following and left the view short of the end.
-                       answer.maxY - top > new.visibleHeight - topInset - 4 {
+                       // ends, plus the fixed space under the last row, taller than what the view
+                       // shows. The growth above can't say so alone: right after a turn goes in,
+                       // the lazy stack reports a content height that counts rows it hasn't laid
+                       // out by estimate, hundreds of points that are gone a frame later, and a
+                       // one-line answer stopped following and left the view short of the end.
+                       // (The end row's position carries the same estimate, so it can't stand in.)
+                       answer.maxY + space.turn + TurnSpace.bottom - top > new.visibleHeight - topInset - 4 {
                         // Keeping to the bottom would push the answer's start above the top:
                         // stop at its start instead (the prompt, when it's the turn's first
                         // words), and read from there. Only for an answer: a turn of tool calls
