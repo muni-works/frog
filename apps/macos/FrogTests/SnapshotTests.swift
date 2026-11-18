@@ -57,6 +57,46 @@ final class SnapshotTests: XCTestCase {
             .background(Color(nsColor: .windowBackgroundColor))
     }
 
+    /// The unified transcript, phase 1 (docs/design/transcript/spec.md): the parity fixture in
+    /// a pane under 480 wide, where marks come inside and text indents 26 (`transcript-narrow`),
+    /// and a reply with a heading, bold, a list, a table and code at the full column, to check
+    /// the 640 measure against the 720 boxes and Plex's weights (`transcript-prose`).
+    func testRenderTranscriptPhase1() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let fixture = Conversation(preview: URL(fileURLWithPath: "/tmp/lilypad"))
+        try events(root.appending(path: "docs/design/parity/fixture.jsonl")).forEach(fixture.ingest)
+        try render(transcript(fixture), size: CGSize(width: 420, height: 1100), to: "transcript-narrow", settle: 1)
+
+        let reply = """
+        ## What changed
+
+        The retry now takes **a seeded Rng**, so the timing is the same every run. A long sentence that runs past the prose measure, so you can see where it wraps against the boxes below it.
+
+        - `Backoff::delay` takes the `Rng`
+        - the test passes a seeded one
+        - nothing else moved
+
+        | file | lines |
+        | --- | --- |
+        | src/retry.rs | +3 −2 |
+
+        ```rust
+        let delay = backoff.delay(attempt, &mut rng);
+        ```
+        """
+        let text = try String(data: JSONSerialization.data(withJSONObject: [reply]), encoding: .utf8)!.dropFirst().dropLast()
+        let prose = Conversation(preview: URL(fileURLWithPath: "/tmp/lilypad"))
+        try [
+            #"{"seq":1,"session":"p","created":0,"event":"turn_started","turn":1,"input":"what changed?"}"#,
+            #"{"seq":2,"session":"p","created":0,"event":"item_started","id":"m","kind":{"type":"message"}}"#,
+            #"{"seq":3,"session":"p","created":1000,"event":"item_completed","id":"m","item":{"type":"message","text":\#(text)}}"#,
+            #"{"seq":4,"session":"p","created":2000,"event":"turn_ended","turn":1,"reason":{"type":"complete"},"usage":{"input_tokens":900,"output_tokens":120,"model_calls":1,"timing":{"wall_ms":2000},"model":"cloud/qwen3-coder-next"}}"#,
+        ].map { try JSONDecoder.frog.decode(Envelope.self, from: Data($0.utf8)) }.forEach(prose.ingest)
+        try render(transcript(prose), size: CGSize(width: 1030, height: 760), to: "transcript-prose", settle: 1)
+        print("snapshots: \(outDir.path)")
+    }
+
     /// The popovers behind a turn's cost and energy hints, for a hosted model's turn.
     func testRenderTurnCostCards() throws {
         let usage = try JSONDecoder.frog.decode(TurnUsage.self, from: Data(#"{"input_tokens":12400,"output_tokens":380,"model_calls":2,"model":"vercel/anthropic/claude-opus-5.5-fast","energy":{"local_wh":0.021,"remote_wh":2.96,"idle_w":11.6}}"#.utf8))

@@ -447,6 +447,13 @@ struct OpenedStep: View {
                 .accessibilityLabel("Failing tests")
             }
             content
+            if let why = item.autoReason {
+                Label("Auto: \(why)", systemImage: "wand.and.sparkles")
+                    .font(.frog(size: Tokens.Transcript.meta.size))
+                    .foregroundStyle(Tokens.textSecondary)
+                    .lineLimit(2)
+                    .help("Auto mode's classifier let this run without asking")
+            }
         }
         .padding(.top, TurnSpace.Inset.tight)
         .padding(.bottom, TurnSpace.Inset.row)
@@ -458,6 +465,9 @@ struct OpenedStep: View {
     private var content: some View {
         if line.kind == .command {
             command
+        } else if line.name == "Task" {
+            // An agent's report reads like an answer, with its run a click away.
+            AgentReport(arg: item.arg, item: item, conversation: conversation)
         } else if !item.displayImages.isEmpty {
             ToolImages(images: item.displayImages, preview: !item.done)
         } else if ToolLook.isInline(line.name) || line.kind == .web {
@@ -514,8 +524,17 @@ struct OpenedStep: View {
 struct FoldLineView: View {
     let steps: [ItemState]
     let conversation: Conversation
-    @State var open = false
+    /// Verbose shows every step: it opens (and closes) with the setting.
+    var verbose = false
+    @State private var open: Bool
     @State private var hovered = false
+
+    init(steps: [ItemState], conversation: Conversation, verbose: Bool = false) {
+        self.steps = steps
+        self.conversation = conversation
+        self.verbose = verbose
+        _open = State(initialValue: verbose)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -547,6 +566,7 @@ struct FoldLineView: View {
                 .transition(.opacity)
             }
         }
+        .onChange(of: verbose) { _, v in open = v }
     }
 }
 
@@ -555,8 +575,17 @@ struct FoldLineView: View {
 struct ThoughtLineView: View {
     let item: ItemState
     var gist: String?
-    @State var open = false
+    /// Verbose shows the thought: it opens (and closes) with the setting.
+    var verbose = false
+    @State private var open: Bool
     @State private var hovered = false
+
+    init(item: ItemState, gist: String? = nil, verbose: Bool = false) {
+        self.item = item
+        self.gist = gist
+        self.verbose = verbose
+        _open = State(initialValue: verbose)
+    }
 
     private var words: String {
         item.duration.map { "Thought for \(ActivityWords.duration($0))" } ?? "Thought"
@@ -590,6 +619,7 @@ struct ThoughtLineView: View {
                     .transition(.opacity)
             }
         }
+        .onChange(of: verbose) { _, v in open = v }
     }
 }
 

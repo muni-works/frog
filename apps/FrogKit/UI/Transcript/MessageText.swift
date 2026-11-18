@@ -551,7 +551,16 @@ enum MessageStyle {
             return .systemFont(ofSize: size, weight: weight)
         }
         guard weight != .regular else { return base }
-        let d = base.fontDescriptor.addingAttributes([.traits: [NSFontDescriptor.TraitKey.weight: weight]])
+        // IBMPlexSans.ttf is a variable font: a weight is a point on its `wght` axis (a weight
+        // trait on the descriptor resolves to the regular face).
+        let value: Double = switch weight {
+        case .medium: 500
+        case .semibold: 600
+        case .bold, .heavy, .black: 700
+        default: 400
+        }
+        let wght = 0x7767_6874 // 'wght'
+        let d = base.fontDescriptor.addingAttributes([.variation: [NSNumber(value: wght): NSNumber(value: value)]])
         return NSFont(descriptor: d, size: size) ?? base
     }
 
@@ -685,7 +694,7 @@ enum MessageStyle {
         table.numberOfColumns = max(columns, 1)
         table.collapsesBorders = true
         table.setWidth(gap, type: .absoluteValueType, for: .margin, edge: .minY)
-        let font = NSFont.systemFont(ofSize: TurnType.small)
+        let font = plex(TurnType.small)
         let out = NSMutableAttributedString()
         for (r, row) in ([header] + rows).enumerated() {
             for c in 0..<columns {
@@ -703,7 +712,7 @@ enum MessageStyle {
                 let style = NSMutableParagraphStyle()
                 style.textBlocks = [cell]
                 style.alignment = a == .center ? .center : a == .trailing ? .right : .left
-                let text = inline(row[safe: c] ?? "", font: r == 0 ? .systemFont(ofSize: TurnType.small, weight: .semibold) : font, style: style)
+                let text = inline(row[safe: c] ?? "", font: r == 0 ? plex(TurnType.small, weight: .semibold) : font, style: style)
                 out.append(text)
                 // Every cell is its own paragraph; the message's last cell ends the table.
                 if !(r == rows.count && c == columns - 1) { out.append(NSAttributedString(string: "\n", attributes: [.paragraphStyle: style])) }

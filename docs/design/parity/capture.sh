@@ -66,7 +66,7 @@ mac_shot() {
         -FrogReplaySpeed 4 -FrogSnapshotSize ${PARITY_SIZE:-1280x800} -FrogOffscreen YES \
         -FrogSnapshot "$HERE/mac-$look.png" -FrogMetrics "$WORK/mac-$look.json" -FrogSnapshotDelay ${PARITY_MAC_WAIT:-14} \
         -ApplePersistenceIgnoreState YES -importedLegacyDefaults YES -autoArchiveChats NO -archivedSessions "()" \
-        -NSAppSleepDisabled YES -remoteEnabled NO -density comfortable $style >/dev/null 2>&1 || true
+        -NSAppSleepDisabled YES -remoteEnabled NO -density comfortable -verbosity normal -showEnergy NO -verbosityBySession "{}" $style >/dev/null 2>&1 || true
     [[ -s $HERE/mac-$look.png ]] || { print -u2 "capture.sh: the Mac app didn't write mac-$look.png"; exit 1; }
 }
 for look in $LOOKS; do mac_shot $look; done

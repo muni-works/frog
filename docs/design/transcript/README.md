@@ -162,21 +162,30 @@ and font size match within 1 point; two rows differ in their words, both on purp
 
 ### Measured (Mac)
 
-- 1280 × 800, sidebar open: pane 1030, column 720, gutter 32, marks at −26 (on screen).
+- 1280 × 800, sidebar open: pane 1030, column 720, gutter 32, marks at −26 (on screen). The dump's
+  `pane` is measured; `gutter`, `column` and `mark` follow from it by `TranscriptEdge`'s rule, and
+  the 420-wide snapshot below draws that rule.
 - 720 × 800 (the window's minimum): the sidebar folds away, pane 720, column 656, gutter 32, marks
   at −26, on screen.
 - A split pane can go down to 360 (`WorkspaceView.minPane`). Under 480 the gutter is 16 and text
   indents 26 (`TranscriptEdge`, the web's rule), so at 360: column 328, marks at 0, text at 26.
-  Checked by `OneLookTests.testTheLeftEdge`, not by a capture: the replay opens one pane.
+  Checked by `OneLookTests.testTheLeftEdge` and drawn by `SnapshotTests.testRenderTranscriptPhase1`
+  (`transcript-narrow`, the fixture 420 wide: marks at 0, every text row at 26, boxes on the edge).
+  Compact density wasn't measured against the web (the web has no compact yet).
 
 ### Where the Mac and the web still differ
 
 - **The thought line** reads "Thought for 1s" on the Mac and "Thought" on the web. Each keeps
   today's words until phase 2 replaces the row (the spec's settled row is "Thought for 31s").
 - **The footer's cost**: the Mac knows the model's list price and shows "· <$0.01"; the parity
-  gateway serves no models, so the web can't price the turn there. Both show it in a real session.
+  gateway serves no models, so the web can't price the turn there. In a real session both price it,
+  but in different words for small sums: the web's `money()` says "<1¢" and "12¢", the Mac's
+  `ModelStats.money` "<$0.01". Costs are dollars, so the web's cents are the ones to change.
 - **A result that repeats its line** ("Moved to /tmp/demo" under "Moved to /tmp/demo") is dropped
   on the Mac, as before; the web shows it twice. Worth porting to the web.
+- **The phone** keeps one gutter and no inset: its prose (`MessageText+UIKit`) has no indent yet, so
+  `TranscriptEdge` applies on the Mac only. The phone does get the new lines, folds, footer and
+  bubble from FrogKit.
 - **Thoughts between steps** don't draw on the Mac (as before) and so don't break a fold; on the
   web a thought line breaks the run.
 
@@ -191,10 +200,13 @@ and font size match within 1 point; two rows differ in their words, both on purp
   draw the view hierarchy (`cacheDisplay`): on macOS 27 the window-server picture of our own
   window comes back blank without Screen Recording. `-FrogSnapshotWindowServer YES` keeps the old
   path. Captures pass `-remoteEnabled NO` (the remote bridge's Keychain write hangs under a
-  throwaway HOME) and `-density comfortable`; `InkReveal` is off in a capture, since its pen runs
+  throwaway HOME), `-density comfortable` and `-verbosity normal` (the shared `toys.frog.parity`
+  defaults carry other runs' settings); `InkReveal` is off in a capture, since its pen runs
   on the display link an off-screen window doesn't get.
 - **The prompt's receipts** sit beside the last bubble, as on the web, so the prompt is a block gap
   from the first row.
+- **Plex's weights**: IBMPlexSans.ttf is a variable font, so medium and semibold (bold runs,
+  headings, table headers) are points on its `wght` axis; a weight trait resolved to regular.
 - **Fixed line boxes** in SwiftUI top up from the font's ascent and descent rounded each (what
   SwiftUI lays out), or every line comes up 0.2–0.6 short.
 - **The card** (ask card): its title on the 22 line and its command on the 20 line, so it is 144

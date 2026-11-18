@@ -43,12 +43,12 @@ struct ActivityLine: View {
         let runs = StepRuns.of(group.steps)
         VStack(alignment: .leading, spacing: 0) {
             ForEach(thoughts) { t in
-                ThoughtLineView(item: t, gist: t.id == thought?.id ? gist : nil, open: verbosity == .verbose)
+                ThoughtLineView(item: t, gist: t.id == thought?.id ? gist : nil, verbose: verbosity == .verbose)
             }
             ForEach(runs) { run in
                 switch run {
                 case .step(let item): StepLineView(item: item, conversation: conversation)
-                case .fold(let steps): FoldLineView(steps: steps, conversation: conversation, open: verbosity == .verbose)
+                case .fold(let steps): FoldLineView(steps: steps, conversation: conversation, verbose: verbosity == .verbose)
                 }
             }
             if live, let now = group.current {
@@ -201,6 +201,7 @@ struct ThoughtSubtitle: View {
 
 /// The running turn's last line: a small spinner and what's happening now.
 struct LiveStatus: View {
+    @Environment(\.transcriptEdge) private var edge
     let text: String
     /// When the current step started, for "Running the tests… 12s".
     let since: Date?
@@ -223,6 +224,7 @@ struct LiveStatus: View {
         }
         .foregroundStyle(.secondary)
         .animation(.default, value: text)
+        .padding(.leading, edge.indent)
     }
 
     private func elapsed(at now: Date) -> String {

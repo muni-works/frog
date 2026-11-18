@@ -45,9 +45,10 @@ struct TranscriptView: View {
     /// How near the top of what's built (in points) builds more above it.
     static let nearTop: CGFloat = 60
 
-    /// The transcript pane's width, for its gutter (see `TranscriptEdge`).
-    @State private var paneWidth: CGFloat = 1000
-    private var edge: TranscriptEdge { TranscriptEdge.of(paneWidth: paneWidth) }
+    /// The transcript's left edge for its pane's width (see `TranscriptEdge`), written only when
+    /// it changes, so a live resize doesn't redraw every row each frame. The Mac only: the phone's
+    /// prose (`MessageText+UIKit`) has no inset yet, so it keeps the one gutter.
+    @State private var edge = TranscriptEdge(gutter: TurnSpace.gutter, indent: 0)
 
     #if os(macOS)
     @State private var tableHandle = TableTranscriptHandle()
@@ -480,7 +481,10 @@ struct TranscriptView: View {
         }
         // The pane's width decides the gutter, and whether marks hang in it (`TranscriptEdge`).
         .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { w in
-            paneWidth = w
+            #if os(macOS)
+            let next = TranscriptEdge.of(paneWidth: w)
+            if next != edge { edge = next }
+            #endif
             if TranscriptMetrics.enabled {
                 let e = TranscriptEdge.of(paneWidth: w)
                 TranscriptMetrics.shared.pane = w
@@ -662,6 +666,7 @@ private struct ContextDisclosure: View {
 struct EndView: View {
     let reason: EndReason
     let usage: TurnUsage?
+    @Environment(\.transcriptEdge) private var edge
     @AppStorage(ModelStats.energyKey) private var showEnergy = false
     /// The turn's answer: a copy button at the row's end, shown on hover.
     var answer: String = ""
@@ -704,6 +709,7 @@ struct EndView: View {
                 .font(.frog(size: Tokens.Transcript.meta.size).monospacedDigit())
                 .foregroundStyle(Tokens.textTertiary)
                 .frame(height: Tokens.Transcript.meta.line)
+                .padding(.leading, edge.indent)
                 .metricsRow(.footer, Self.footer(usage, models: models).map(\.words).joined(separator: " · "),
                             key: "footer-\(usage.model ?? "")-\(usage.outputTokens)-\(usage.timing?.wallMs ?? 0)", fontSize: Tokens.Transcript.meta.size)
             }

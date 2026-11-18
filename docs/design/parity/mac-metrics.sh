@@ -7,8 +7,8 @@
 #
 # Needs a built parity app (capture.sh builds it; or PARITY_APP=…/Frog.app) whose engine
 # replays with the log's own times and carries `tests` (FROG_PREBUILT_DIR at build time).
-# Headless: launched straight from the binary (never activated; `open -g` gets no window) and
-# `-FrogOffscreen` (drawn off-screen).
+# Headless: launched straight from the binary, which doesn't activate it, and `-FrogOffscreen`
+# (drawn off-screen).
 set -euo pipefail
 HERE=${0:A:h}
 ROOT=${HERE:h:h:h}
@@ -32,6 +32,6 @@ shot=(); [[ -n ${PARITY_PNG:-} ]] && shot=(-FrogSnapshot "$PARITY_PNG")
 HOME="$home" "$APP/Contents/MacOS/Frog" -FrogFolder "$home/code/lilypad" -FrogReplay "$home/parity.jsonl" \
     -FrogReplaySpeed 4 -FrogSnapshotSize "$SIZE" -FrogOffscreen ${PARITY_OFFSCREEN:-YES} -FrogMetrics "$OUT" $shot \
     -FrogSnapshotDelay ${PARITY_MAC_WAIT:-14} -ApplePersistenceIgnoreState YES -importedLegacyDefaults YES \
-    -autoArchiveChats NO -archivedSessions "()" -NSAppSleepDisabled YES -remoteEnabled NO -density comfortable $style >/dev/null 2>"$WORK/stderr.log" || true
+    -autoArchiveChats NO -archivedSessions "()" -NSAppSleepDisabled YES -remoteEnabled NO -density comfortable -verbosity normal -showEnergy NO -verbosityBySession "{}" $style >/dev/null 2>"$WORK/stderr.log" || true
 [[ -s $OUT ]] || { print -u2 "mac-metrics.sh: the Mac app didn't write $OUT"; tail -20 "$WORK/stderr.log" >&2; exit 1; }
 node "$HERE/diff-metrics.mjs" "$WEB" "$OUT"
