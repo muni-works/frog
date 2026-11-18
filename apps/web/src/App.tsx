@@ -437,6 +437,7 @@ export default function App() {
             <div className="det" style={{ color: account && account.credit_cents <= 0 ? 'var(--warn)' : undefined }}>{account ? creditLine(account) : DEV_KEY ? 'local gateway' : ''}</div>
           </div>
         </button>
+        <a className="version-chip" href={`https://github.com/muni-works/frog/commit/${__FROG_COMMIT__}`} target="_blank" rel="noreferrer" title="This build on GitHub">Frog · {__FROG_COMMIT__}</a>
       </aside>
 
       <main className="main">

@@ -269,6 +269,8 @@ button.tool:hover { color: var(--fg); }
 .trust li { display: flex; align-items: center; gap: 6px; }
 .trust li::before { content: '✓'; color: var(--frog); font-size: 11px; }
 @media (prefers-reduced-motion: reduce) { .beta-pill i { animation: none; } }
+.version-chip { align-self: flex-start; margin: -2px 0 4px 18px; padding: 2px 6px; border-radius: 5px; font-size: 10.5px; color: var(--faint); text-decoration: none; font-variant-numeric: tabular-nums; }
+.version-chip:hover, .version-chip:focus-visible { color: var(--muted); background: var(--raised, transparent); }
 .muni-foot { display: flex; justify-content: center; padding: 0 0 14px; }
 .muni-foot a { display: flex; color: var(--faint); transition: color .2s; }
 .muni-foot a:hover, .muni-foot a:focus-visible { color: #ff8a1f; }

@@ -19,12 +19,7 @@ struct AboutView: View {
     @State private var eaten = 0
     @State private var flyStart = Date.now
 
-    private var version: String {
-        let info = Bundle.main.infoDictionary
-        let short = info?["CFBundleShortVersionString"] as? String ?? "?"
-        let build = info?["CFBundleVersion"] as? String ?? "?"
-        return "Version \(short) (\(build))"
-    }
+    private var version: String { "Version \(FrogVersion.short) (\(FrogVersion.build))" }
 
     private var copyright: String {
         Bundle.main.infoDictionary?["NSHumanReadableCopyright"] as? String ?? ""
@@ -56,12 +51,34 @@ struct AboutView: View {
                 Text("Frog").font(.frog(size: 20, weight: .bold))
                 Text(version).font(.frog(size: 13))
                     .foregroundStyle(.secondary)
+                    .onTapGesture {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(FrogVersion.full, forType: .string)
+                        say("copied.")
+                    }
+                    .help("Copy version")
                 Text(flies.isEmpty && eaten > 0 ? "flies eaten: \(eaten) 🐸" : copyright)
                     .font(.frog(size: 13))
                     .foregroundStyle(.secondary)
                     .contentTransition(.opacity)
+                HStack(spacing: 8) {
+                    Button("What's New") { NSWorkspace.shared.open(FrogVersion.releaseNotes) }
+                    if Updates.shared.enabled {
+                        Button("Check for Updates…") { Updates.shared.check() }
+                            .disabled(!Updates.shared.canCheck)
+                    }
+                }
+                .controlSize(.small)
+                .padding(.top, 6)
+                HStack(spacing: 14) {
+                    Link("frog.toys", destination: URL(string: "https://frog.toys")!)
+                    Link("GitHub", destination: FrogVersion.repo)
+                    Link("Report a Bug", destination: FrogVersion.newIssue)
+                }
+                .font(.frog(size: 11.5))
+                .tint(.green)
             }
-            .frame(width: 280, height: 260)
+            .frame(width: 300, height: 330)
 
             // The swarm: each fly wanders on its own path; click one to eat it.
             TimelineView(.animation(paused: flies.isEmpty)) { timeline in
@@ -75,7 +92,7 @@ struct AboutView: View {
                     }
                 }
             }
-            .frame(width: 280, height: 260)
+            .frame(width: 300, height: 330)
             .allowsHitTesting(!flies.isEmpty)
         }
         .background(FrogCanvas.color)
@@ -120,8 +137,8 @@ struct AboutView: View {
 /// A fly on a wobbly Lissajous loop around the window.
 private struct Fly: Identifiable {
     let id = UUID()
-    private let cx = Double.random(in: 90...190)
-    private let cy = Double.random(in: 70...170)
+    private let cx = Double.random(in: 90...210)
+    private let cy = Double.random(in: 70...200)
     private let rx = Double.random(in: 40...90)
     private let ry = Double.random(in: 30...70)
     private let fx = Double.random(in: 0.6...1.4)
@@ -132,5 +149,24 @@ private struct Fly: Identifiable {
         let jitter = sin(t * 23 + phase) * 2
         return CGPoint(x: cx + rx * sin(t * fx + phase) + jitter,
                        y: cy + ry * sin(t * fy + phase * 1.7) + jitter)
+    }
+}
+
+/// This build's version, and the places it links to.
+enum FrogVersion {
+    static let repo = URL(string: "https://github.com/muni-works/frog")!
+    static var short: String { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?" }
+    static var build: String { Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?" }
+    /// What a bug report wants: "Frog 0.7.0 (2004) · macOS 26.1".
+    static var full: String {
+        let os = ProcessInfo.processInfo.operatingSystemVersion
+        return "Frog \(short) (\(build)) · macOS \(os.majorVersion).\(os.minorVersion)"
+    }
+    /// The release's notes on GitHub (what Sparkle's appcast links to as well).
+    static var releaseNotes: URL { repo.appending(path: "releases/tag/v\(short)") }
+    static var newIssue: URL {
+        var c = URLComponents(url: repo.appending(path: "issues/new"), resolvingAgainstBaseURL: false)!
+        c.queryItems = [URLQueryItem(name: "body", value: "\n\n---\n\(full)")]
+        return c.url!
     }
 }
