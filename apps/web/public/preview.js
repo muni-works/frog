@@ -273,6 +273,8 @@
     if (e.source !== window.parent || !m || m.frog !== 1) return;
     if (m.type === "inspect") return inspect(!!m.on);
     if (m.type === "back") return history.back();
+    if (m.type === "forward") return history.forward();
+    if (m.type === "stop") return window.stop();
     if (m.type === "reload") return location.reload();
     if (m.type !== "call") return;
     try {
