@@ -63,9 +63,10 @@ struct SettingsCatalog: Decodable {
         return sections.first { $0.id == name || ($0.aliases ?? []).contains(name) }?.id
     }
 
-    /// `frog://settings/<section>`: the section it opens, if it's a settings link.
+    /// `frog://settings/<section>` (`frog-dev://` for a Debug build): the section it opens, if
+    /// it's a settings link.
     func section(for url: URL) -> String? {
-        guard url.scheme == "frog", url.host() == "settings" else { return nil }
+        guard url.scheme == "frog" || url.scheme == "frog-dev", url.host() == "settings" else { return nil }
         let first = url.pathComponents.first { $0 != "/" }
         return section(named: first) ?? sections.first(where: { $0.id == "account" })?.id
     }

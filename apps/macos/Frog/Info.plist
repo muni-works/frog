@@ -25,7 +25,7 @@
 			<string>toys.frog.links</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>frog</string>
+				<string>$(FROG_URL_SCHEME)</string>
 			</array>
 		</dict>
 	</array>
