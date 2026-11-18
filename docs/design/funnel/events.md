@@ -73,8 +73,8 @@ in these PRs. ⏳ means it needs something that doesn't exist yet, which is name
 | `credit_purchased` | a Stripe top-up payment succeeds (every top-up) | G | `amount_usd`, `first` | web: a habit (first payment) | ✅ |
 | `coupon_redeemed` | a coupon's credit lands | G | `amount_usd` | web: a habit | ✅ |
 | `plan_started` | a subscription checkout completes | G | `plan`, `interval`, `amount_usd` | web: a plan | ✅ |
-| `plan_cancelled` | a subscription is cancelled | G | `plan` | web: a plan | ✅ |
-| `payment_failed` | a subscription invoice fails | G | `plan` | (diagnostic) | ✅ |
+| `plan_cancelled` | a subscription is set to cancel at period end, and again when it's deleted (it can fire twice; count the first) | G | `plan` | web: a plan | ✅ |
+| `payment_failed` | a subscription invoice fails | G | `plan` | (diagnostic) | ⏳ the Stripe webhook has no `invoice.payment_failed` handler yet; the gateway maps the event for when it does |
 | `local_answer` | a turn on a local or Apple model ends complete, on the Mac | M | `model`: `apple` \| `local` | Mac: an answer, no account | ✅ (opt-in) |
 | `model_download_started` | a model download starts on the Mac | M | — | Mac: a real model | ✅ (opt-in) |
 | `model_download_finished` | a model download finishes on the Mac | M | `ok` (false when it failed) | Mac: a real model | ✅ (opt-in) |
@@ -131,8 +131,8 @@ Time from wall to resume: step 4 to step 5 of this funnel, shown as time to conv
 
 ### Mac and local models lane
 
-All four steps need **Share usage with Frog** turned on, except steps 4b and 4c, which the
-gateway records for any signed-in Mac.
+Steps 1–3 need **Share usage with Frog** turned on. Step 4's two events are the gateway's own
+and are recorded for any signed-in Mac.
 
 | # | Step (canvas) | Entered by |
 |---|---|---|
@@ -142,7 +142,14 @@ gateway records for any signed-in Mac.
 | 4 | More machines | `app_signed_in` with `client = app`, then `session_started` with `client = app` (the first cloud run). Machine pairing isn't counted yet |
 
 Steps 1–3 join step 4 through the `$identify` the gateway sends on the first signed-in event
-from an opted-in Mac. Without opt-in, the lane starts at step 4.
+from an opted-in Mac. Without opt-in, the lane starts at step 4. Once joined, the install id
+stays merged with that account: if the Mac signs out and keeps sending under the install id,
+PostHog counts those events toward the same person until the setting is turned off (which
+deletes the id).
+
+Debits from `/v1/search` don't go through the usage queue, so a search that takes the credit
+to zero doesn't send `out_of_credit`; the next model request is refused and the web app shows
+the wall anyway.
 
 ### The loop
 
