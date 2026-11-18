@@ -5,6 +5,8 @@
 //   node web-shot.mjs <url> <out.png> <width> <height> <light|dark>
 //   WEB_SHOT_SCROLL='.widget' scrolls an element into view before the shot.
 //   WEB_SHOT_STORAGE='{"frog.inspector":"1"}' seeds localStorage first (opens the inspector).
+//   WEB_SHOT_CLICK='.line-row.fold .line' clicks an element (opens a fold) before the scroll.
+//   WEB_SHOT_HOVER='.line-row .line' puts the pointer over an element (its hover plate) last.
 import { spawn } from "node:child_process";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -43,10 +45,36 @@ if (process.env.WEB_SHOT_STORAGE) {
 }
 await call("Page.navigate", { url });
 await new Promise((r) => setTimeout(r, Number(process.env.WEB_SHOT_WAIT ?? 6000)));
+// WEB_SHOT_CLICK=<selector>: click it first (a fold, a line).
+if (process.env.WEB_SHOT_CLICK) {
+  // Scroll there first, so the transcript stops following its end before the click grows it.
+  if (process.env.WEB_SHOT_SCROLL) {
+    await call("Runtime.evaluate", { expression: `document.querySelector(${JSON.stringify(process.env.WEB_SHOT_SCROLL)})?.scrollIntoView({block:'start'})` });
+    await new Promise((r) => setTimeout(r, 800));
+  }
+  await call("Runtime.evaluate", { expression: `document.querySelector(${JSON.stringify(process.env.WEB_SHOT_CLICK)})?.click()` });
+  await new Promise((r) => setTimeout(r, 500));
+}
 // WEB_SHOT_SCROLL=<selector>: bring that element to the top first (the visuals shots).
 if (process.env.WEB_SHOT_SCROLL) {
+  // Twice: the transcript follows its end while content settles (an opened fold grows it).
+  for (let i = 0; i < 2; i++) {
+    await call("Runtime.evaluate", { expression: `document.querySelector(${JSON.stringify(process.env.WEB_SHOT_SCROLL)})?.scrollIntoView({block:'start'})` });
+    await new Promise((r) => setTimeout(r, 800));
+  }
+}
+// WEB_SHOT_HOVER=<selector>: the pointer over it, for its hover state.
+if (process.env.WEB_SHOT_HOVER) {
+  const { result } = await call("Runtime.evaluate", { expression: `(() => { const r = document.querySelector(${JSON.stringify(process.env.WEB_SHOT_HOVER)})?.getBoundingClientRect(); return r ? [r.left + r.width / 2, r.top + r.height / 2] : null })()`, returnByValue: true });
+  if (result?.value) {
+    await call("Input.dispatchMouseEvent", { type: "mouseMoved", x: result.value[0], y: result.value[1] });
+    await new Promise((r) => setTimeout(r, 400));
+  }
+}
+// And once more just before the shot: the app's scroll ref pins the end on its own re-renders.
+if (process.env.WEB_SHOT_SCROLL) {
   await call("Runtime.evaluate", { expression: `document.querySelector(${JSON.stringify(process.env.WEB_SHOT_SCROLL)})?.scrollIntoView({block:'start'})` });
-  await new Promise((r) => setTimeout(r, 800));
+  await new Promise((r) => setTimeout(r, 50));
 }
 const { data } = await call("Page.captureScreenshot", { format: "png" });
 writeFileSync(out, Buffer.from(data, "base64"));

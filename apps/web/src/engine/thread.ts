@@ -1,4 +1,4 @@
-import type { ElicitSchema, EndReason, Envelope, Event, FileDiff, Image, Mode, Part, Todo, ToolOutcome, TurnUsage, Widget } from '../cloud/protocol'
+import type { ElicitSchema, EndReason, Envelope, Event, FileDiff, Image, Mode, Part, TestRun, Todo, ToolOutcome, TurnUsage, Widget } from '../cloud/protocol'
 
 // Folds a session's envelopes into what the transcript draws. Pure, so replay and
 // live streaming share one path: `reduce(thread, envelope)` for every envelope in order.
@@ -19,6 +19,13 @@ export interface Entry {
   widget?: Widget
   output: string
   done: boolean
+  /** When the step started and finished (envelope `created`), for its time and a fold's. */
+  started?: number
+  ended?: number
+  /** A recognised test run, from the engine. */
+  tests?: TestRun
+  /** Reasoning: how long it thought, from the engine (absent in older logs). */
+  thinkMs?: number
 }
 
 export interface Ask { id: string; item: string; name: string; arg: string; always?: string; preview?: FileDiff; reason?: string }
@@ -116,8 +123,8 @@ function apply(t: Thread, ev: Event, created: number): Thread {
     case 'item_started': {
       const k = ev.kind
       const entry: Entry = k.type === 'tool_call'
-        ? { id: ev.id, kind: 'tool', text: '', name: k.name, arg: k.arg, output: '', done: false }
-        : { id: ev.id, kind: k.type, text: '', output: '', done: false }
+        ? { id: ev.id, kind: 'tool', text: '', name: k.name, arg: k.arg, output: '', done: false, started: created }
+        : { id: ev.id, kind: k.type, text: '', output: '', done: false, started: created }
       const last = t.turns[t.turns.length - 1]
       if (!last) return t
       const terminal = k.type === 'tool_call' && k.name === 'Bash' ? t.terminal + `$ ${k.arg}\n` : t.terminal
@@ -136,8 +143,8 @@ function apply(t: Thread, ev: Event, created: number): Thread {
     case 'item_completed': {
       const it = ev.item
       const next = patch(t, ev.id, (e) => it.type === 'tool_call'
-        ? { ...e, done: true, outcome: it.outcome, display: it.display, diff: it.diff, ...(it.widget ? { widget: it.widget } : {}), output: it.output }
-        : { ...e, done: true, text: it.text })
+        ? { ...e, done: true, ended: created, outcome: it.outcome, display: it.display, diff: it.diff, ...(it.widget ? { widget: it.widget } : {}), ...(it.tests ? { tests: it.tests } : {}), output: it.output }
+        : { ...e, done: true, ended: created, text: it.text, ...(it.type === 'reasoning' && it.think_ms != null ? { thinkMs: it.think_ms } : {}) })
       if (it.type === 'tool_call' && it.diff && it.outcome === 'ok') {
         // A file edited several times keeps every edit's hunks and the summed counts.
         const d = it.diff

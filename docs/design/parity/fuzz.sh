@@ -67,7 +67,7 @@ fi
 if [[ -n ${PARITY_SKIP_WEB:-} ]]; then exit 0; fi
 # --- Web ---------------------------------------------------------------------------------------
 cd "$WEB"
-GATEWAY=http://127.0.0.1:$PORT VITE_DEV_KEY=parity npx vite --host 127.0.0.1 --port $VITE_PORT --strictPort > "$WORK/vite.log" 2>&1 & pids+=($!)
+GATEWAY=http://127.0.0.1:$PORT VITE_DEV_KEY=parity VITE_API= npx vite --host 127.0.0.1 --port $VITE_PORT --strictPort > "$WORK/vite.log" 2>&1 & pids+=($!)
 for i in {1..60}; do curl -sf "http://127.0.0.1:$VITE_PORT/" >/dev/null && break; sleep 0.5; done
 curl -sf "http://127.0.0.1:$VITE_PORT/" >/dev/null || { print -u2 "fuzz.sh: vite didn't start:"; cat "$WORK/vite.log" >&2; exit 1; }
 for c in $CASES; do

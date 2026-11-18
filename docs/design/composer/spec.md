@@ -136,7 +136,7 @@ One line. It shows the first of these that applies:
 
 Rules: one at a time (a new error replaces the old one). Buttons are quiet: text in `fg`
 on the 8% plate, 22 tall; a secondary or Cancel is plain `muted` text with no plate.
-Nothing in the status line is filled or green except an urged Open PR. Text is never red.
+Nothing in the status line is filled or green except an urged Open PR. Text is never red (the one red word anywhere is a failed step's verb in the transcript; see ../transcript/spec.md, "Failure").
 It opens and closes by sliding (0.22s; 0.12s fade under reduced motion). Esc clears an
 error or a question.
 

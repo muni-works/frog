@@ -5,6 +5,7 @@ import { applyTheme, savedTheme } from './settings'
 import './tokens.css'
 import './components.css'
 import './app.css'
+import './transcript.css'
 
 // `?theme=light|dark` pins the theme; otherwise Settings › Appearance's (index.html applies it
 // before first paint too), which is System unless you picked one.

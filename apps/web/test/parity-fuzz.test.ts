@@ -68,6 +68,7 @@ test("Arabic and Hebrew lines pick their own direction", () => {
 });
 
 test("a short thought alone before the reply folds away, as on Mac", () => {
-  assert.equal((render("scripts-and-emoji").match(/class="thought"/g) ?? []).length, 0);
-  assert.equal((render("thoughts").match(/class="thought"/g) ?? []).length, 1);
+  // The thought's line is a line-row since the unified transcript (spec phase 1).
+  assert.equal((render("scripts-and-emoji").match(/class="line-row thought"/g) ?? []).length, 0);
+  assert.equal((render("thoughts").match(/class="line-row thought"/g) ?? []).length, 1);
 });

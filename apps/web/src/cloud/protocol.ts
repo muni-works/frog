@@ -53,7 +53,8 @@ export type ItemKind = { type: "message" } | { type: "reasoning" } | { type: "to
 
 export type Item =
   | { type: "message"; text: string }
-  | { type: "reasoning"; text: string }
+  /** `think_ms`: how long the reasoning streamed (engine #420); absent in older logs. */
+  | { type: "reasoning"; text: string; think_ms?: number }
   | {
       type: "tool_call";
       name: string;
@@ -63,7 +64,15 @@ export type Item =
       display: string | null;
       diff?: FileDiff;
       widget?: Widget;
+      /** A test run the engine recognised in the output's summary line (cargo, pytest, go,
+       * vitest, jest). Absent for anything else: the web never parses output for a count. */
+      tests?: TestRun;
     };
+
+/** A recognised test run (the engine's shape, commit 420a7ae2): "passed of total", and the failing
+ * tests' names in output order. `total` = passed + failed; `failed_names` may be shorter than
+ * `failed`, never longer, and is absent when empty. */
+export interface TestRun { runner: string; passed: number; failed: number; total: number; failed_names?: string[] }
 
 /** widget.rs `Widget`: a Visualize result. `html` is the sandboxed document to load as is. */
 export interface Widget { title: string; code: string; html: string }
