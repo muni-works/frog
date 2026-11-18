@@ -491,7 +491,8 @@ struct TranscriptTrailer: View {
                 .padding(.top, space.turn)
         } else if conversation.busy, conversation.engineAlive, conversation.permission == nil,
            conversation.elicitation == nil, conversation.question == nil,
-           conversation.turns.last?.items.isEmpty ?? true {
+           conversation.turns.last?.items.isEmpty ?? true,
+           !WorkingIndicator.yields(to: conversation.progress, turn: conversation.turns.last) {
             WorkingIndicator(progress: conversation.progress, since: conversation.progressSince)
                 .padding(.top, space.turn)
         }
@@ -755,8 +756,16 @@ struct WorkingIndicator: View {
         }
     }
 
-    fileprivate static func title(_ label: String) -> String {
-        label.prefix(1).uppercased() + label.dropFirst()
+    @MainActor fileprivate static func title(_ label: String) -> String {
+        ModelLoad.words(label)
+    }
+
+    /// A running turn shows a model getting ready as its loading card (`ModelLoadingStatus`):
+    /// this row would only say the same thing again under it ("Loading apple" under "Loading
+    /// apple into memory").
+    @MainActor static func yields(to progress: EngineProgress?, turn: TurnState?) -> Bool {
+        guard let progress, let turn, !turn.finished, turn.items.isEmpty else { return false }
+        return ModelLoad(label: progress.label) != nil
     }
 }
 
