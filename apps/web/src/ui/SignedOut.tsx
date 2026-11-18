@@ -34,7 +34,7 @@ export function SignInRow({ onSignIn }: { onSignIn: (provider: Provider) => void
         <span className="mark" style={{ width: 28, height: 28 }} aria-hidden="true" />
         <div style={{ flex: 1, textAlign: 'left', minWidth: 0 }}>
           <b>Sign in</b>
-          <div className="det wrap">$1 of Frog Cloud credit free when you connect GitHub</div>
+          <div className="det wrap">25¢ of Frog Cloud credit free, $1 when you connect GitHub</div>
         </div>
       </button>
     </div>
