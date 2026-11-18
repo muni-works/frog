@@ -63,6 +63,7 @@ pub mod summary;
 mod test_watchdog;
 mod text_filter;
 pub mod thinking;
+pub mod thought;
 pub mod next;
 pub mod title;
 pub mod tools;

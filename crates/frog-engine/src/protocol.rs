@@ -1029,6 +1029,16 @@ pub enum Item {
     },
     Reasoning {
         text: String,
+        /// The thought lines the thinking row showed while this streamed, in order, each with
+        /// its paragraph's range in `text` (see [`crate::thought`]). Empty in older logs and
+        /// for reasoning that never showed a line.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        thoughts: Vec<crate::thought::ShownThought>,
+        /// How long the reasoning streamed, in ms: its first delta to the first answer text
+        /// or tool call (`item_completed` comes only when the whole reply is in). Absent in
+        /// older logs.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        think_ms: Option<u64>,
     },
     ToolCall {
         name: String,
@@ -1164,6 +1174,10 @@ pub enum Delta {
     },
     Reasoning {
         text: String,
+        /// The thought line (see [`crate::thought`]), on the delta where it changes: at most
+        /// once every 1.2 s. Absent on every other delta; a client keeps the last one it got.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        thought: Option<String>,
     },
     /// Approximate image for display while generation runs; never model input.
     ImagePreview {

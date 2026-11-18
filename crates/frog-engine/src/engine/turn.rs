@@ -642,10 +642,19 @@ impl Agent {
                 })
                 .collect();
             if !reasoning.is_empty() {
+                // Only a streamed reasoning has a measured length.
+                let think_ms = streamed
+                    .reasoning
+                    .is_some()
+                    .then(|| streamed.think.as_millis() as u64);
                 self.complete_item(
                     streamed.reasoning,
                     ItemKind::Reasoning,
-                    Item::Reasoning { text: reasoning },
+                    Item::Reasoning {
+                        thoughts: streamed.thoughts.shown(&reasoning),
+                        think_ms,
+                        text: reasoning,
+                    },
                 );
             }
             let answer = msg.text();

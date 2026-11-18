@@ -511,6 +511,13 @@
             "text": {
               "type": "string"
             },
+            "thought": {
+              "description": "The thought line (see [`crate::thought`]), on the delta where it changes: at most\nonce every 1.2 s. Absent on every other delta; a client keeps the last one it got.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "type": {
               "const": "reasoning",
               "type": "string"
@@ -5373,6 +5380,22 @@
             "text": {
               "type": "string"
             },
+            "think_ms": {
+              "description": "How long the reasoning streamed, in ms: its first delta to the first answer text\nor tool call (`item_completed` comes only when the whole reply is in). Absent in\nolder logs.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "thoughts": {
+              "description": "The thought lines the thinking row showed while this streamed, in order, each with\nits paragraph's range in `text` (see [`crate::thought`]). Empty in older logs and\nfor reasoning that never showed a line.",
+              "items": {
+                "$ref": "#/$defs/ShownThought"
+              },
+              "type": "array"
+            },
             "type": {
               "const": "reasoning",
               "type": "string"
@@ -6952,6 +6975,39 @@
           "type": "string"
         }
       ]
+    },
+    "ShownThought": {
+      "description": "One line the thinking row showed, as the completed reasoning item carries it.",
+      "properties": {
+        "end": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "ms": {
+          "description": "When it was shown, in ms after the item's first reasoning arrived.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "start": {
+          "description": "The paragraph it came from, as a half-open range into the item's `text`, in UTF-16 code\nunits (JavaScript string indices; Swift's `String.utf16` view).",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "text": {
+          "description": "The line, exactly as it was shown.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "start",
+        "end",
+        "ms"
+      ],
+      "type": "object"
     },
     "Side": {
       "properties": {

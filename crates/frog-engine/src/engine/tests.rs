@@ -5416,7 +5416,7 @@ async fn json_mode_turn_runs_the_action_and_shows_the_answer() {
             _ => None,
         })
         .collect();
-    assert!(matches!(items[0], Item::Reasoning { text } if text == "check the file"));
+    assert!(matches!(items[0], Item::Reasoning { text, .. } if text == "check the file"));
     assert!(
         matches!(items[1], Item::ToolCall { name, outcome: ToolOutcome::Ok, .. } if name == "Glob")
     );
@@ -14866,3 +14866,56 @@ async fn a_sidecar_that_cannot_run_ends_the_turn_with_its_reason() {
 
 #[path = "tests_children.rs"]
 mod children;
+
+/// The thought line rides on the reasoning deltas and the completed item lists what showed:
+/// the first finished paragraph's line goes out at once, a list paragraph after it changes
+/// nothing, and the item carries the line with its paragraph's range and how long it thought.
+#[tokio::test]
+async fn reasoning_deltas_carry_the_thought_line() {
+    let thought = |t: &str| Block::Thinking {
+        text: t.into(),
+        signature: None,
+    };
+    let script = vec![reply(
+        vec![
+            thought("Let me check the tests first.\n\n"),
+            thought("- one\n- two\n\n"),
+            thought("Still writing this"),
+            text("Done."),
+        ],
+        Stop::End,
+    )];
+    let mut h = engine(script, false);
+    let evs = run(&mut h, "check").await;
+    let thoughts: Vec<Option<&str>> = evs
+        .iter()
+        .filter_map(|e| match &e.event {
+            Event::ItemDelta {
+                delta: Delta::Reasoning { thought, .. },
+                ..
+            } => Some(thought.as_deref()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(thoughts, [Some("Check the tests first"), None, None]);
+    let item = evs
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::ItemCompleted {
+                item: Item::Reasoning { thoughts, think_ms, .. },
+                ..
+            } => Some((thoughts.clone(), *think_ms)),
+            _ => None,
+        })
+        .expect("a completed reasoning item");
+    assert_eq!(
+        item.0,
+        [crate::thought::ShownThought {
+            text: "Check the tests first".into(),
+            start: 0,
+            end: 29,
+            ms: 0,
+        }]
+    );
+    assert!(item.1.is_some(), "a streamed reasoning has a length");
+}

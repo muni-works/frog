@@ -1715,6 +1715,8 @@ struct Streamed {
     reusable: Option<f64>,
     /// Read-only tool calls started while the reply streamed (see `early`).
     early: crate::early::Early,
+    /// The thought line over this attempt's reasoning (see `thought`).
+    thoughts: crate::thought::Thoughts,
 }
 
 /// A request as a server's prompt cache sees it, flattened: the system prompt, the tools, then

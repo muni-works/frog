@@ -372,9 +372,11 @@ impl Agent {
                                 });
                                 id
                             });
+                            let at = now.duration_since(sent).as_millis() as u64;
+                            let thought = streamed.thoughts.push(&text, at);
                             self.emit(Event::ItemDelta {
                                 id: id.clone(),
-                                delta: Delta::Reasoning { text },
+                                delta: Delta::Reasoning { text, thought },
                             });
                         }
                         StreamEvent::ToolCall(name) => {
