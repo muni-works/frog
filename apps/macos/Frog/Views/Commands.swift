@@ -42,8 +42,9 @@ extension FocusedValues {
 @MainActor
 final class StagedWindow: ObservableObject {
     static let shared = StagedWindow()
-    /// A flow test wants the window it hosts staged here (WorkspaceView does it while true).
-    var capturing = false
+    /// The panes of the window a flow test hosts: that window stages itself here (any other
+    /// WorkspaceView alive in the test host doesn't).
+    var capturing: ObjectIdentifier?
     @Published var window: FrogWindow?
 
     /// What the menu bar reads from a window's offer, as one comparable value: the window

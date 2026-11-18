@@ -577,7 +577,7 @@ struct WorkspaceView: View {
         // Flow tests: a test host never has a key window, so the menu bar acts on this one
         // when a test asks (`StagedWindow`). Off otherwise.
         .onChange(of: StagedWindow.key(frogWindow), initial: true) {
-            if StagedWindow.shared.capturing { StagedWindow.shared.window = frogWindow }
+            if StagedWindow.shared.capturing == ObjectIdentifier(panes) { StagedWindow.shared.window = frogWindow }
         }
         #endif
         // ⌘L and friends ask for the composer: that's a way back to the thread.
