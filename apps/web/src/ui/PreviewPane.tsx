@@ -98,9 +98,6 @@ export function PreviewPane({ hub, pane, send, machines = [] }: { hub: PreviewHu
   const stage = useRef<HTMLDivElement>(null)
   const [box, setBox] = useState({ w: 0, h: 0 })
 
-  // Does the gateway serve previews at all? Production's doesn't yet; the tab then says so.
-  useEffect(() => { void hub.probe() }, [hub])
-
   useLayoutEffect(() => {
     const el = stage.current
     if (!el) return
@@ -120,18 +117,21 @@ export function PreviewPane({ hub, pane, send, machines = [] }: { hub: PreviewHu
   useEffect(() => {
     const el = frame.current
     if (!id || !el) return
-    const origin = () => { try { return new URL(el.src).origin } catch { return null } }
+    // Both ways only with the minted preview origin: a page that navigated elsewhere, or one
+    // outside the sandbox, neither hears the app nor gets heard (its data is untrusted anyway).
     const f: Frame = {
-      post: (m) => { const o = origin(); if (o) el.contentWindow?.postMessage(m, o) },
+      post: (m) => { const o = hub.target(id); if (o) el.contentWindow?.postMessage(m, o) },
       load: (src) => { el.src = src },
     }
-    const onMessage = (e: MessageEvent) => { if (e.source === el.contentWindow && e.origin === origin()) hub.received(id, e.data) }
+    const onMessage = (e: MessageEvent) => { if (e.source === el.contentWindow && hub.accepts(id, e.origin)) hub.received(id, e.data) }
     addEventListener('message', onMessage)
     hub.attach(id, f, pane?.url)
     return () => { removeEventListener('message', onMessage); hub.detach(id, f) }
   }, [hub, id, hub.available]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (hub.available === false) {
+  // The list hasn't said yet: nothing, rather than a toolbar that may not work or a "no" that may be wrong.
+  if (hub.available === undefined) return <div className="insp-body pv" aria-busy="true" />
+  if (hub.available !== true) {
     return (
       <div className="insp-body pv">
         <InspectorEmpty icon={ICON.globe} title="Preview isn’t on the web yet" action={<DownloadAppChip label="The Mac app has Preview" machines={machines} />}>

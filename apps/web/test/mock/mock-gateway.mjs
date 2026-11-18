@@ -23,7 +23,7 @@ const arg = (name, fallback) => {
   return i > 0 ? process.argv[i + 1] : fallback;
 };
 
-export function startMock({ port = 8788, fixture = new URL("./demo.jsonl", import.meta.url).pathname, delayMs = 15, previewScript } = {}) {
+export function startMock({ port = 8788, fixture = new URL("./demo.jsonl", import.meta.url).pathname, delayMs = 15, previewScript, previews = true } = {}) {
   const events = loadFixture(fixture);
   const sessions = new Map(); // id → { info, rec }
   const account_ = accountRoutes(); // local addition: the edge's account routes (./account.mjs)
@@ -51,7 +51,7 @@ export function startMock({ port = 8788, fixture = new URL("./demo.jsonl", impor
     const account = bearer(req);
     if (await account_.handle(req, res, path, account, json)) return;
     if (!account) return json(res, 401, { error: "missing or invalid key" });
-    if (path === "/v1/sessions" && req.method === "GET") return json(res, 200, { sessions: [...sessions.values()].filter((s) => s.info.account === account).map(summary) });
+    if (path === "/v1/sessions" && req.method === "GET") return json(res, 200, { sessions: [...sessions.values()].filter((s) => s.info.account === account).map(summary), ...(previews ? { preview: true } : {}) });
     if (path === "/v1/sessions" && req.method === "POST") {
       let body = "";
       for await (const c of req) body += c;
@@ -87,6 +87,7 @@ export function startMock({ port = 8788, fixture = new URL("./demo.jsonl", impor
     }
     if (m[2] === "/preview") {
       if (req.method !== "POST") return json(res, 405, { error: "method not allowed" });
+      if (!previews) return json(res, 503, { error: "previews are not configured" });
       let body = "";
       for await (const c of req) body += c;
       let port;

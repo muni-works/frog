@@ -71,10 +71,6 @@ export function displayAddress(url: string | undefined): string {
   return path === '/' ? host : host + path
 }
 
-/** Whether a gateway error means it has no previews at all (zest sandbox/src/router.ts: 503
- * "previews are not configured"), rather than this one page failing. */
-const unconfigured = (e: unknown) => (e as { status?: unknown })?.status === 503
-
 /** What the engine gets when the web preview can't do something the Mac can. */
 export const NO_SCREENSHOT = "the web preview can't take screenshots yet; use read to see the page"
 
@@ -114,8 +110,8 @@ export class PreviewHub {
   mentionInDraft = false
   /** Bumped when the engine asks a preview for something, so the inspector brings it forward. */
   attention = 0
-  /** Whether the gateway serves previews: unknown until a mint (or `probe`) says. Off in
-   * production until the gateway has a preview host, and then the tab says so plainly. */
+  /** Whether the gateway serves previews, as GET /v1/sessions says (CloudEngine.setPreviews):
+   * unknown until the list answers. Only `true` shows the pane; `false` says so plainly. */
   available: boolean | undefined = undefined
   /** The last back/forward asked for, so the next commit moves through history, not onto it. */
   private moving = new Map<string, 'back' | 'forward' | 'reload'>()
@@ -133,21 +129,26 @@ export class PreviewHub {
 
   state(id: string): PreviewState { return this.states.get(id) ?? { title: '', loading: false, pages: 0, index: -1, length: 0 } }
 
-  /** Ask the gateway once whether it serves previews at all (minting doesn't wake the sandbox). */
-  async probe() {
-    if (this.available !== undefined || this.probing) return
-    this.probing = true
-    try { await this.previewURL(3000); this.setAvailable(true) } catch (e) { if (unconfigured(e)) this.setAvailable(false) } finally { this.probing = false }
+  setAvailable(on: boolean) { if (this.available !== on) { this.available = on; this.changed() } }
+
+  /** Whether a message from pane `id`'s iframe came from the page it was minted for: its origin
+   * must be the minted preview origin. A page outside the sandbox (no minted origin) is never
+   * listened to, so another site can't mention elements or answer the engine's calls. */
+  accepts(id: string, origin: string): boolean {
+    const o = this.origins.get(id)
+    return !!o && o.preview === origin
   }
-  private probing = false
-  private setAvailable(on: boolean) { if (this.available !== on) { this.available = on; this.changed() } }
+
+  /** Where postMessage into pane `id` may go: its minted preview origin, or nowhere. */
+  target(id: string): string | undefined { return this.origins.get(id)?.preview }
   private patch(id: string, p: Partial<PreviewState>) { this.states.set(id, { ...this.state(id), ...p }); this.changed() }
 
   /** The iframe for `id` mounted: start at `url` if nothing's loaded yet, then answer what waited for it. */
   attach(id: string, frame: Frame, url?: string) {
     this.frames.set(id, frame)
     const s = this.state(id)
-    if (s.src) frame.load(s.src)
+    if (s.src && s.url && this.expired(id, s.url)) void this.load(id, s.url)
+    else if (s.src) frame.load(s.src)
     else if (url && !s.url) void this.load(id, url)
     if (this.inspecting) frame.post({ frog: 1, type: 'inspect', on: true })
     const run = this.parked.filter((p) => p.req.id === id || this.frames.size === 1)
@@ -165,9 +166,9 @@ export class PreviewHub {
     if (local) {
       try {
         src = (await this.previewURL(local.port)).replace(/\/$/, '') + local.path
-        this.setAvailable(true)
       } catch (e) {
-        if (unconfigured(e)) this.setAvailable(false)
+        // A 503 here (no preview host) while the list says previews are on is this load failing,
+        // not the feature going away: availability is the list's alone, so the tab doesn't flap.
         return this.failed(id, e instanceof Error ? e.message : String(e))
       }
       this.origins.set(id, { preview: new URL(src).origin, local: `http://localhost:${local.port}` })
@@ -190,9 +191,19 @@ export class PreviewHub {
     return m.url
   }
 
+  /** Whether pane `id` shows a sandbox page whose link is past (or near) its expiry. */
+  private expired(id: string, url: string): boolean {
+    const local = localTarget(url)
+    if (!local || !this.origins.has(id)) return false
+    const hit = this.minted.get(local.port)
+    return !hit || hit.expires - MINT_MARGIN_MS <= this.now()
+  }
+
   reload(id: string) {
     const s = this.state(id)
     if (s.error && s.url) return void this.load(id, s.url)
+    // The link is good for hours, not forever: past it, mint a fresh one rather than reload a 404.
+    if (s.url && this.expired(id, s.url)) return void this.load(id, s.url)
     this.patch(id, { loading: true, error: undefined })
     // A page outside the sandbox has no capture script to ask: load it again from here.
     if (!this.origins.has(id) && s.src) return this.frames.get(id)?.load(s.src)

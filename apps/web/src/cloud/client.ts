@@ -56,6 +56,19 @@ export function friendly(e: unknown): string {
   return raw && raw.length < 120 && !/[{}<>]/.test(raw) ? `${raw[0].toUpperCase()}${raw.slice(1).replace(/\.?$/, ".")}` : "Frog Cloud couldn't do that. Try again.";
 }
 
+/** What GET /v1/sessions says. */
+export interface SessionIndex {
+  sessions: SessionSummary[];
+  /** The gateway serves previews of the sandbox's dev servers. */
+  preview: boolean;
+}
+
+/** GET /v1/sessions's body: `preview` counts only when it's exactly `true`. */
+export function sessionIndex(json: unknown): SessionIndex {
+  const o = (json ?? {}) as { sessions?: unknown; preview?: unknown };
+  return { sessions: Array.isArray(o.sessions) ? (o.sessions as SessionSummary[]) : [], preview: o.preview === true };
+}
+
 export class Gateway {
   readonly origin: string;
   private readonly fetch: typeof fetch;
@@ -87,7 +100,13 @@ export class Gateway {
   }
 
   async list(): Promise<SessionSummary[]> {
-    return (await this.req<{ sessions: SessionSummary[] }>("GET", "/v1/sessions")).sessions;
+    return (await this.index()).sessions;
+  }
+
+  /** The session list and whether this gateway serves previews (zest: `preview` is true only
+   * when the sandbox has a preview host; an older gateway leaves it out, which means no). */
+  async index(): Promise<SessionIndex> {
+    return sessionIndex(await this.req<unknown>("GET", "/v1/sessions"));
   }
 
   get(id: string): Promise<SessionSummary> {
