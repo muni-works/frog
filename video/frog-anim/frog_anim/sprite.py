@@ -19,7 +19,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
-from .mark import CH, CW, HEAD_W, MARK, SMILE, X0, Y0, FROWN_FLIP, Palette
+from .mark import CH, CW, HEAD, HEAD_W, MARK, SMILE, X0, Y0, FROWN_FLIP, Palette
 from .motion import Move
 
 SS = 2  # supersample
@@ -109,7 +109,10 @@ def sprite(head_px: float, pose: str = "sit", blink: bool = False, wink: bool = 
         anchor = (512, 802)
 
     # the head: the mark's own shapes
-    d.ellipse([*P(216, 344), *P(808, 802)], fill=SKIN)
+    # the mark's head: ellipse at (512, 568), rx 296, ry 224 above the centre line and 234 below
+    hx, hy, hrx, top, bottom = HEAD
+    d.chord([*P(hx - hrx, hy - top), *P(hx + hrx, hy + top)], 180, 360, fill=SKIN)
+    d.chord([*P(hx - hrx, hy - bottom), *P(hx + hrx, hy + bottom)], 0, 180, fill=SKIN)
     for cx in (360, 664): ell(cx, 352, 120, 120, SKIN)
     for cx, cy, r in ((290, 469, 18), (262, 523, 11), (742, 463, 16), (772, 510, 10), (323, 541, 30), (701, 541, 30)):
         ell(cx, cy, r, r, SPOT)

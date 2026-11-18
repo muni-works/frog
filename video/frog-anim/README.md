@@ -5,8 +5,8 @@ named parameters (action or mood, size, position, facing, colours, seed). It is 
 animated frog (`video/hype-reel/`), pulled out so other videos, the site and design work can use
 it without copying the reel. CPU only: PIL and numpy draw, ffmpeg encodes. No models, no GPU.
 
-The head is the locked mark (`apps/web/public/frog-mark.svg`, colours from `design/tokens.json`
-`mark-*`); the moods are FrogKit's `FrogFace` loops, transcribed keyframe for keyframe, so a video
+The head is the locked mark (`apps/web/public/frog-mark.svg`: its outline of two half-ellipses,
+eye bumps, spots, smile, pupils and glints; colours from `design/tokens.json` `mark-*`); the moods are FrogKit's `FrogFace` loops, transcribed keyframe for keyframe, so a video
 frog moves the way the apps' activity frog does. `tests/` checks both against their sources.
 
 ## Run
@@ -141,7 +141,7 @@ Deterministic frames (same parameters, same hash, also in a fresh process), ever
 several sizes and both bodies, nothing clipped by the canvas, CLI outputs' dimensions, frame counts
 and alpha, the mark against its sources. With `FROG_ANIM_REEL_BEFORE=<frames rendered by the reel
 before the move>` and the reel's `footage/` present, it also renders 15 reel frames and checks they
-are pixel-identical.
+match except for the head outline, which now follows the mark (a thin band of edge pixels).
 
 ## Next consumers (not built)
 

@@ -55,6 +55,15 @@ class Mark(unittest.TestCase):
         pts = tuple((float(x), float(y)) for x, y in re.findall(r"([\d.]+) ([\d.]+)", d))
         self.assertEqual(SMILE, pts)
 
+    @unittest.skipUnless((REPO / "apps/web/public/frog-mark.svg").exists(), "not in the frog repo")
+    def test_head_matches_svg(self):
+        from frog_anim.mark import HEAD
+        svg = (REPO / "apps/web/public/frog-mark.svg").read_text()
+        m = re.search(r'M(\d+) (\d+) A(\d+) (\d+) 0 0 1 (\d+) \d+ A(\d+) (\d+)', svg)
+        x0, cy, rx, top, x1, rx2, bottom = map(int, m.groups())
+        self.assertEqual(HEAD, ((x0 + x1) // 2, cy, rx, top, bottom))
+        self.assertEqual(rx, rx2)
+
     @unittest.skipUnless((REPO / "design/tokens.json").exists(), "not in the frog repo")
     def test_colours_match_tokens(self):
         rows = mark_tokens(json.loads((REPO / "design/tokens.json").read_text()))
@@ -258,13 +267,17 @@ class Reel(unittest.TestCase):
     FRAMES = (60, 85, 90, 99, 101, 300, 420, 520, 640, 820, 870, 940, 1010, 1050, 1080)
 
     def test_reel_matches_before(self):
+        """The reel through the package matches the reel before the move, except the head outline."""
         with tempfile.TemporaryDirectory() as d:
             subprocess.run([sys.executable, str(REEL / "comp.py"), d, ",".join(map(str, self.FRAMES))],
                            check=True, cwd=REEL, env={**os.environ, "NPROC": "2"}, capture_output=True)
             for f in self.FRAMES:
-                a = np.asarray(Image.open(Path(BEFORE) / f"{f:04d}.png"))
-                b = np.asarray(Image.open(Path(d) / f"{f:04d}.png"))
-                self.assertTrue(np.array_equal(a, b), f"frame {f} differs")
+                a = np.asarray(Image.open(Path(BEFORE) / f"{f:04d}.png")).astype(int)
+                b = np.asarray(Image.open(Path(d) / f"{f:04d}.png")).astype(int)
+                changed = np.abs(a - b).max(axis=2) > 0
+                # Against frames from before the move (1d4cf479) the only change is the head's
+                # outline, corrected to the mark's two half-ellipses: a thin band of edge pixels.
+                self.assertLess(changed.sum(), 0.002 * changed.size, f"frame {f}: {changed.sum()} px changed")
 
 
 if __name__ == "__main__":

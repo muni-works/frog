@@ -40,6 +40,9 @@ TOKENS = {"mark-skin": MARK.skin, "mark-spot": MARK.spot, "mark-ink": MARK.ink, 
 
 # The sprite canvas, in the mark's grid units: x -260..1284, y 60..1640 (room for the body).
 X0, Y0, CW, CH = -260, 60, 1544, 1580
+# The head: an ellipse centred (512, 568), rx 296, ry 224 on top and 234 below (the SVG's
+# `M216 568 A296 224 ... A296 234 ...`, FrogKit's `silhouette`): (cx, cy, rx, ry_top, ry_bottom).
+HEAD = (512, 568, 296, 224, 234)
 HEAD_W = 592          # the head ellipse's width (216..808): `size`/`head_px` is this many pixels
 FEET = (512, 1195)    # where the full-body frog rests (between its feet)
 HEAD_FEET = (512, 802)  # the head's bottom centre: the head-only anchor, FrogKit's `FrogMark.feet`
