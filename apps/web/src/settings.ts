@@ -2,12 +2,13 @@
 // URLs, the old `?settings=` deep links, and the theme Appearance keeps. No React here, so the
 // routing and the theme are testable on their own.
 
-/** The web's sections, in sidebar order. The Mac-only ones (General, Permissions, MCP,
- *  Shortcuts, Energy, Lend) aren't shown on the web at all. */
+/** The web's sections, in the spec's order (its sections table). The Mac-only ones (General,
+ *  Permissions, MCP, Shortcuts, Energy, Lend) aren't shown on the web at all. Account is where
+ *  Settings first opens. */
 export const SECTIONS = [
-  { id: 'account', label: 'Account' },
   { id: 'appearance', label: 'Appearance' },
   { id: 'models', label: 'Models' },
+  { id: 'account', label: 'Account' },
   { id: 'billing', label: 'Billing' },
 ] as const
 

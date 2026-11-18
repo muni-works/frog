@@ -67,7 +67,9 @@ export interface SettingsProps {
 /** One section. */
 export function SettingsPage(p: SettingsProps) {
   const scroller = useRef<HTMLDivElement>(null)
-  useEffect(() => { scroller.current?.scrollTo?.(0, 0) }, [p.section])
+  // A new section starts at its top, unless Billing was opened for its code field, which has the
+  // cursor (and the browser has scrolled it into view).
+  useEffect(() => { if (!p.focusCoupon) scroller.current?.scrollTo?.(0, 0) }, [p.section]) // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <main className="main docs-main settings-main">
       <div className="titlebar">{p.bar}</div>

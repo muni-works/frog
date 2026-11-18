@@ -117,7 +117,10 @@ export default function App() {
     if (path === null || (location.pathname === path && !asked)) return
     const state = mode === 'threads' ? null : { back: viewPath ?? '/' }
     // Bare /docs and /settings name a page: replace them, so Back doesn't land on them again.
-    if (asked || docsSlugOf(location.pathname) === '' || settingsSectionOf(location.pathname) === '') history.replaceState(state, '', path + (q.size ? `?${q}` : ''))
+    // Settings without a key (signed out from it, or a /settings link signed out) is the app:
+    // replaced too, so Back doesn't land on it and bounce.
+    const stale = mode !== 'settings' && settingsSectionOf(location.pathname) !== null && !keyNow.current
+    if (asked || stale || docsSlugOf(location.pathname) === '' || settingsSectionOf(location.pathname) === '') history.replaceState(state, '', path + (q.size ? `?${q}` : ''))
     else history.pushState(state, '', path)
   }, [view, mode, docPage, section])
   useEffect(() => {
@@ -146,10 +149,12 @@ export default function App() {
   const openSettings = (s?: Section, opts?: { coupon?: boolean }) => {
     if (!keyNow.current) return
     if (s) setSection(s)
+    // Only that visit takes the cursor: a later plain one to Billing doesn't.
     if (opts?.coupon) setCouponAsk((n) => n + 1)
+    else setCouponAsk(0)
     enter('settings')
   }
-  const backToApp = () => setMode('threads')
+  const backToApp = () => { setCouponAsk(0); setMode('threads') }
   /** Somewhere in Threads mode (a session, a new one): leaves the other modes on the way. */
   const go = (v: View) => { setMode('threads'); setView(v) }
   // Escape is Back to app, after any menu or palette open over the page has closed.
@@ -266,7 +271,7 @@ export default function App() {
   const signalKey = JSON.stringify(signals)
   useAlerts(useMemo(() => signals, [signalKey]), useCallback((id: string) => { setMode('threads'); setView({ kind: 'session', id }) }, [])) // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => setDrawer(false), [view, mode, docPage])
+  useEffect(() => setDrawer(false), [view, mode, docPage, section])
   // The sidebar folds away on wide screens (⌘\\), as on the Mac; remembered per browser.
   const [collapsed, setCollapsedState] = useState(() => { try { return localStorage.getItem('frog.sidebarCollapsed') === '1' } catch { return false } })
   const setCollapsed = (v: boolean) => { setCollapsedState(v); try { localStorage.setItem('frog.sidebarCollapsed', v ? '1' : '0') } catch { /* private mode */ } }

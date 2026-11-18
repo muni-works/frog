@@ -6,12 +6,14 @@
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { createElement as h } from "react";
+import { createElement as h, useState } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { byText, click, closeHarness, find, hasClass, key, mount, shownText, act, dispatch, type HostNode, type Page } from "./app-harness.ts";
 import { redeem } from "./mock/account.mjs";
 import TestRenderer from "react-test-renderer";
-import { Coupon, creditRowLabel, SettingsPage } from "../src/ui/Settings.tsx";
+import { Coupon, creditRowLabel, SettingsPage, SettingsSidebar } from "../src/ui/Settings.tsx";
+import { Shell, type ShellMode } from "../src/ui/Docs.tsx";
+import { Inspector } from "../src/ui/Inspector.tsx";
 import { sectionOfQuery, settingsSectionOf } from "../src/settings.ts";
 
 after(closeHarness);
@@ -78,7 +80,7 @@ test("⌘, opens Settings mode on Account: the sidebar is Back to app and the se
   await key(",");
   assert.equal(p.path(), "/settings/account");
   assert.equal(sectionShown(p), "Account");
-  assert.match(shownText(side(p)), /Back to app esc Account Appearance Models Billing/);
+  assert.match(shownText(side(p)), /Back to app esc Appearance Models Account Billing/);
   assert.equal(find(p, (n) => n.props.role === "dialog"), undefined, "no settings overlay");
   p.unmount();
 });
@@ -163,10 +165,15 @@ test("Billing opened for a code puts the cursor in the field; a plain visit does
   await act(async () => { r.update(h(Coupon, { apiKey: "k", focus: 2 })); });
   assert.deepEqual(seen, ["Coupon code", "Coupon code"], "asked again (the card's link a second time): again");
   r.unmount();
+  // A later plain visit mounts it again with no request (openSettings resets it): no cursor.
+  await act(async () => { r = TestRenderer.create(h(Coupon, { apiKey: "k", focus: 0 }), { createNodeMock: mock as never }); });
+  assert.equal(seen.length, 2, "a plain visit after the card's doesn't take the cursor");
+  r.unmount();
   // And the App hands the request through: openSettings(..., { coupon: true }) bumps what
   // SettingsPage gets as focusCoupon.
   const src = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
-  assert.match(src, /if \(opts\?\.coupon\) setCouponAsk\(\(n\) => n \+ 1\)/);
+  assert.match(src, /if \(opts\?\.coupon\) setCouponAsk\(\(n\) => n \+ 1\)\n\s*else setCouponAsk\(0\)/);
+  assert.match(src, /const backToApp = \(\) => \{ setCouponAsk\(0\);/);
   assert.match(src, /focusCoupon=\{couponAsk\}/);
 });
 
@@ -341,4 +348,63 @@ test("settings paths and ?settings= links", () => {
   assert.equal(sectionOfQuery("?settings=account"), "account");
   assert.equal(sectionOfQuery("?settings=whatever"), "account");
   assert.equal(sectionOfQuery("?x=1"), null);
+});
+
+// ---------- the shell keeps the thread, the drawer, and history ----------
+
+let mounts = 0;
+function Draft() {
+  const [draft, setDraft] = useState("");
+  useState(() => { mounts++; return 0; });
+  return h("textarea", { "aria-label": "Message Frog", value: draft, onChange: (e: { target: { value: string } }) => setDraft(e.target.value) });
+}
+const thread = { changes: [], panes: {} } as unknown as Parameters<typeof Inspector>[0]["thread"];
+const noop = () => {};
+const frame = (mode: ShellMode) => h(Shell, {
+  mode, className: "win",
+  brand: h("div", { className: "brand" }, "Frog"),
+  side: { threads: h("nav", null, "the thread list"), docs: null, settings: h(SettingsSidebar, { current: "appearance", onBack: noop, onOpen: noop }) },
+  main: { threads: h("main", { className: "main" }, h(Draft)), docs: null, settings: h(SettingsPage, { section: "appearance", account: null, onOpen: noop, onSignOut: noop }) },
+  inspector: h(Inspector, { thread, hasPr: false, onClose: noop, onCommit: noop, send: noop }),
+});
+
+test("entering and leaving Settings mode keeps the thread mounted, its draft and the right sidebar's tab", () => {
+  mounts = 0;
+  let r!: TestRenderer.ReactTestRenderer;
+  act(() => { r = TestRenderer.create(frame("threads")); });
+  const box = () => r.root.findByProps({ "aria-label": "Message Frog" });
+  const tab = (name: string) => r.root.findAll((n) => n.props.role === "tab" && n.children.includes(name))[0];
+  act(() => { box().props.onChange({ target: { value: "half-typed" } }); });
+  act(() => { tab("Terminal").props.onClick(); });
+  act(() => { r.update(frame("settings")); });
+  assert.equal(r.root.findAll((n) => typeof n.props.className === "string" && n.props.className.includes("settings-page")).length, 1, "the section shows");
+  assert.deepEqual(r.root.findAll((n) => n.props.className === "shell-keep").map((n) => n.props.style.display), ["none", "none", "none"], "thread list, thread and right sidebar hidden");
+  act(() => { r.update(frame("threads")); });
+  assert.equal(box().props.value, "half-typed");
+  assert.equal(tab("Terminal").props["aria-selected"], true);
+  assert.equal(mounts, 1, "never unmounted, so a running turn keeps running");
+  act(() => r.unmount());
+});
+
+test("in Settings, picking a section closes the phone drawer", async () => {
+  const p = await signedIn("/settings/account");
+  await click(find(p, (n) => n.type === "button" && n.props.className === "burger"));
+  const win = () => p.root.root.findAll((n) => typeof n.type === "string" && typeof n.props.className === "string" && n.props.className.startsWith("win"))[0].props.className as string;
+  assert.match(win(), /\bdrawer\b/);
+  await click(btn(p, "Billing"));
+  assert.doesNotMatch(win(), /\bdrawer\b/);
+  p.unmount();
+});
+
+test("signed out at /settings/<x>, or signing out from Settings, replaces the URL, so Back doesn't bounce", async () => {
+  const p = await mount("/settings/billing");
+  assert.equal(p.path(), "/");
+  assert.equal(p.pushes(), 0, "replaced, not pushed");
+  p.unmount();
+  const q = await signedIn("/settings/account");
+  const before = q.pushes();
+  await click(btn(q, "Sign out"));
+  assert.equal(q.path(), "/");
+  assert.equal(q.pushes(), before, "signing out from Settings replaces the settings entry");
+  q.unmount();
 });

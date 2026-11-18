@@ -53,7 +53,7 @@ const nodeMock = (host?: { type?: unknown; props?: Record<string, unknown> }) =>
   return el;
 };
 
-export interface Page { root: ReactTestRenderer; calls: Call[]; storage: MemStorage; path: () => string; unmount: () => void }
+export interface Page { root: ReactTestRenderer; calls: Call[]; storage: MemStorage; path: () => string; pushes: () => number; unmount: () => void }
 
 /** Mounts the App at `path` with `storage` in localStorage. */
 export async function mount(path: string, { storage = {}, respond, globals = {} }: { storage?: Record<string, string>; respond?: Responder; globals?: Record<string, unknown> } = {}): Promise<Page> {
@@ -62,7 +62,9 @@ export async function mount(path: string, { storage = {}, respond, globals = {} 
   const url = new URL(path, "https://frog.toys");
   const loc = { get pathname() { return url.pathname; }, get search() { return url.search; }, get origin() { return url.origin; }, get href() { return url.href; }, assign(u: string) { loc.assigned = u; }, reload() {}, assigned: "" as string };
   let state: unknown = null;
-  const hist = { get state() { return state; }, pushState(s: unknown, _t: string, p: string) { state = s; const n = new URL(p, url); url.pathname = n.pathname; url.search = n.search; }, replaceState(s: unknown, _t: string, p: string) { hist.pushState(s, _t, p); } };
+  let pushes = 0;
+  const go = (s: unknown, p: string) => { state = s; const n = new URL(p, url); url.pathname = n.pathname; url.search = n.search; };
+  const hist = { get state() { return state; }, pushState(s: unknown, _t: string, p: string) { pushes++; go(s, p); }, replaceState(s: unknown, _t: string, p: string) { go(s, p); } };
   const local = new MemStorage();
   for (const [k, v] of Object.entries(storage)) local.setItem(k, v);
   const calls: Call[] = [];
@@ -92,7 +94,7 @@ export async function mount(path: string, { storage = {}, respond, globals = {} 
   let root!: ReactTestRenderer;
   await act(async () => { root = TestRenderer.create(h(A), { createNodeMock: (e) => nodeMock(e as never) }); });
   await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
-  return { root, calls, storage: local, path: () => url.pathname + url.search, unmount: () => act(() => root.unmount()) };
+  return { root, calls, storage: local, path: () => url.pathname + url.search, pushes: () => pushes, unmount: () => act(() => root.unmount()) };
 }
 
 /** All the text under a node, squashed. */
