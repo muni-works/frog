@@ -72,10 +72,10 @@ test("the sidebar and the inspector have no corner radius or shadow at desktop w
   }
 });
 
-test("each column has a hairline in --line on its inner edge, and no other border", () => {
+test("each column has a hairline in --edge on its inner edge, and no other border", () => {
   const side = cascade(rules, ".side"), insp = cascade(rules, ".insp");
-  assert.equal(side.get("border-right"), "1px solid var(--line)");
-  assert.equal(insp.get("border-left"), "1px solid var(--line)");
+  assert.equal(side.get("border-right"), "1px solid var(--edge)");
+  assert.equal(insp.get("border-left"), "1px solid var(--edge)");
   for (const k of ["border", "border-left", "border-top", "border-bottom"]) {
     const v = side.get(k);
     assert.ok(v === undefined || zero(v), `.side sets ${k}: ${v}`);
@@ -86,6 +86,42 @@ test("each column has a hairline in --line on its inner edge, and no other borde
   }
   // The inspector's stored width is its outer width, hairline included.
   assert.equal(insp.get("box-sizing"), "border-box");
+});
+
+test("--edge is the column hairlines' token and nothing else's", () => {
+  // The whole stylesheet, every width: only the sidebar's right and the inspector's left use it.
+  const all = app.replace(/\/\*[\s\S]*?\*\//g, "");
+  const uses = [...all.matchAll(/([^{}]+)\{([^{}]*var\(--edge\)[^{}]*)\}/g)]
+    .flatMap((m) => m[2].split(";").filter((d) => d.includes("var(--edge)")).map((d) => `${m[1].trim()} { ${d.trim()} }`));
+  assert.deepEqual(uses, [".side { border-right: 1px solid var(--edge) }", ".insp { border-left: 1px solid var(--edge) }"]);
+  // And it's quieter than --line in both themes (closer to the --sidebar fill).
+  const tokens = read("../src/tokens.css");
+  assert.match(tokens, /--edge:\s*#ededed;/);
+  assert.match(tokens, /--edge:\s*#1a1a1a;/);
+});
+
+test("the sidebar's grip straddles its hairline and yields like the inspector's", () => {
+  const grip = cascade(rules, ".side-grip");
+  const left = parseFloat(grip.get("left") ?? "0"), width = parseFloat(grip.get("width") ?? "0");
+  // The grip is a zero-width sibling at the sidebar's outer edge: the hairline is at -1…0.
+  assert.equal(left + width / 2, -0.5);
+  assert.ok(-left >= 4 && left + width >= 4, `grip spans ${left}…${left + width}`);
+  assert.equal(cascade(rules, ".side").get("width"), "var(--side-w, 270px)");
+  assert.equal(cascade(rules, ".side").get("box-sizing"), "border-box");
+});
+
+test("the conversation keeps 360px: the sidebar shrinks first, down to its 220 minimum", () => {
+  const side = cascade(rules, ".side"), main = cascade(rules, "main.main"), insp = cascade(rules, ".insp");
+  assert.equal(side.get("min-width"), "220px");
+  assert.ok(Number(side.get("flex-shrink")) >= 1e5, `the sidebar gives way first: flex-shrink ${side.get("flex-shrink")}`);
+  assert.equal(main.get("flex"), "1 1 360px", "the conversation asks for 360 before it grows");
+  assert.equal(insp.get("flex"), "none", "the inspector keeps its width");
+});
+
+test("no grip on phones, and none while the sidebar is folded away", () => {
+  const all = app.replace(/\/\*[\s\S]*?\*\//g, "");
+  assert.match(all, /\.win\.collapsed\s*>\s*\.side-grip[^{]*\{[^}]*display:\s*none/);
+  assert.match(all, /@media\s*\(max-width:\s*760px\)\s*\{[^{}]*\.side-grip[^{}]*\{\s*display:\s*none/);
 });
 
 test("the columns are filled with --sidebar at every width", () => {
