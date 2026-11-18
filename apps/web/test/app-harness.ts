@@ -2,13 +2,15 @@
 // the docs bundle's import.meta.glob, and a few browser globals are stubbed here. Every fetch is
 // recorded, so a test can say which calls a page made (and with which key).
 import { createServer, type ViteDevServer } from "vite";
-import { createElement as h } from "react";
+import { createElement as h, Profiler } from "react";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 export interface Call { url: string; method: string; auth: string | null; body?: string }
-export type Responder = (url: string, init: RequestInit) => { status?: number; body: unknown } | undefined
+type Reply = { status?: number; body: unknown } | undefined
+/** A reply, or a promise of one: a test can hold a request open (a slow POST) and answer it later. */
+export type Responder = (url: string, init: RequestInit) => Reply | Promise<Reply>
 
 class MemStorage {
   m = new Map<string, string>();
@@ -55,8 +57,11 @@ const nodeMock = (host?: { type?: unknown; props?: Record<string, unknown> }) =>
 
 export interface Page { root: ReactTestRenderer; calls: Call[]; storage: MemStorage; path: () => string; pushes: () => number; unmount: () => void }
 
+/** Called after every commit with the page as it then is (a React Profiler round the App). */
+export type OnCommit = (root: ReactTestRenderer) => void
+
 /** Mounts the App at `path` with `storage` in localStorage. */
-export async function mount(path: string, { storage = {}, respond, globals = {} }: { storage?: Record<string, string>; respond?: Responder; globals?: Record<string, unknown> } = {}): Promise<Page> {
+export async function mount(path: string, { storage = {}, respond, globals = {}, onCommit, concurrent = false }: { storage?: Record<string, string>; respond?: Responder; globals?: Record<string, unknown>; onCommit?: OnCommit; /** A concurrent root, as main.tsx's createRoot: updates batch everywhere, not only in handlers. */ concurrent?: boolean } = {}): Promise<Page> {
   const A = await app();
   const g = globalThis as Record<string, unknown>;
   const url = new URL(path, "https://frog.toys");
@@ -85,14 +90,15 @@ export async function mount(path: string, { storage = {}, respond, globals = {} 
       const s = String(u);
       const headers = (init.headers ?? {}) as Record<string, string>;
       calls.push({ url: s, method: init.method ?? "GET", auth: headers.authorization ?? null, body: typeof init.body === "string" ? init.body : undefined });
-      const r = respond?.(s, init) ?? { status: 404, body: { error: { code: "not_found", message: "Not here." } } };
+      const r = (await respond?.(s, init)) ?? { status: 404, body: { error: { code: "not_found", message: "Not here." } } };
       const status = r.status ?? 200;
-      return { ok: status >= 200 && status < 300, status, json: async () => r.body } as Response;
+      return { ok: status >= 200 && status < 300, status, json: async () => r.body, text: async () => (r.body === undefined ? "" : JSON.stringify(r.body)) } as Response;
     },
   });
   setGlobals(g, { window: g, ...globals });
   let root!: ReactTestRenderer;
-  await act(async () => { root = TestRenderer.create(h(A), { createNodeMock: (e) => nodeMock(e as never) }); });
+  const tree = onCommit ? h(Profiler, { id: "app", onRender: () => { if (root) onCommit(root) } }, h(A)) : h(A)
+  await act(async () => { root = TestRenderer.create(tree, { createNodeMock: (e) => nodeMock(e as never), unstable_isConcurrent: concurrent } as Parameters<typeof TestRenderer.create>[1]); });
   await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
   return { root, calls, storage: local, path: () => url.pathname + url.search, pushes: () => pushes, unmount: () => act(() => root.unmount()) };
 }

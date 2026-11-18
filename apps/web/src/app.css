@@ -308,16 +308,6 @@ button.sgroup:hover .chev2, button.sgroup:focus-visible .chev2, button.sgroup[ar
 .ask-block:hover .hover-row, .hover-row:focus-within, .hover-row.waiting { opacity: 1; }
 .hover-row.waiting .icon-plate { opacity: 0; }
 .ask-block:hover .hover-row.waiting .icon-plate { opacity: 1; }
-/* Starting a sandbox: three quiet steps, the current one spinning. */
-.starting ol { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 7px; font-size: 12.5px; }
-.starting li { display: flex; align-items: center; gap: 9px; color: var(--faint); transition: color .25s; }
-.starting li.now { color: var(--fg); }
-.starting li.done { color: var(--muted); }
-.starting-g { width: 14px; height: 14px; flex: none; border-radius: 50%; display: grid; place-items: center; box-sizing: border-box; border: 1.5px solid var(--line-strong); }
-.starting li.done .starting-g { border: 0; background: var(--frog-pad); color: var(--frog); }
-.starting li.now .starting-g { border-color: var(--frog-pad); border-top-color: var(--frog); animation: spin 1s linear infinite; }
-.starting-t { font-size: 11.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
-@media (prefers-reduced-motion: reduce) { .starting li.now .starting-g { animation: none; border-color: var(--frog); } }
 .ctx { position: relative; display: inline-flex; }
 .ctx-ring { width: 28px; height: 28px; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; cursor: pointer; padding: 0; }
 .ctx-ring:hover { background: var(--hover); }
@@ -496,7 +486,7 @@ body { font-family: var(--font-sans); }
 
 /* Reduced motion: every looping animation stops (spinners keep their frog-coloured arc, still). */
 @media (prefers-reduced-motion: reduce) {
-  .sym.ring, .sg-run, .starting li.now .starting-g, .tool-spin, .caret, .term .cursor, .thinking, .thinking-dot, .beta-pill i { animation: none !important; }
+  .sym.ring, .sg-run, .tool-spin, .caret, .term .cursor, .thinking, .thinking-dot, .beta-pill i { animation: none !important; }
   .thinking { background: none; color: var(--muted); }
 }
 
