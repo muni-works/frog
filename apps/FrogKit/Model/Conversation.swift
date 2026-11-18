@@ -90,9 +90,28 @@ final class Conversation {
     /// The current progress update began. The UI uses this only to describe an in-flight
     /// request and animate its current stage; it never changes the engine's completion count.
     private(set) var progressSince: Date?
+    /// The running turn's token pulse and output count (see `LivePulse`).
+    @ObservationIgnored let pulse = LivePulse()
     /// A `Present` call's blocks so far, while its arguments stream; gone once its item starts.
     private(set) var presentPreview: Present?
     private(set) var permission: PermissionRequest?
+    /// When the permission card went up, for the live row's "waited 6s".
+    @ObservationIgnored private(set) var permissionAt: Date?
+    /// When the question went up (an `Ask`, or the engine's quiet call).
+    @ObservationIgnored private(set) var questionAt: Date?
+    /// A question anchored on an item this transcript draws (a think or an answer): it draws
+    /// under that row, not after the turn. An `Ask` call's question is its own step's.
+    func drawsQuestionInline(_ q: Question) -> Bool {
+        guard !q.item.isEmpty, let item = turns.last?.items.first(where: { $0.id == q.item }) else { return false }
+        return item.kind == .reasoning || item.kind == .message
+    }
+
+    /// When whatever is waiting on the person went up.
+    var waitingSince: Date? {
+        if permission != nil { return permissionAt }
+        if question != nil { return questionAt }
+        return nil
+    }
     /// An MCP server waiting on the user.
     private(set) var elicitation: Elicitation?
     /// The model's open `Ask`.
@@ -775,6 +794,8 @@ final class Conversation {
             sessionChanged?()
         }
         defer { reportLive() }
+        // The turn line's timeline takes a few events (never the deltas), after they're applied.
+        defer { recordTimeline(env) }
         switch env.event {
         case .turnStarted(let n, let input, let images, let more):
             next = nil
@@ -799,6 +820,7 @@ final class Conversation {
                 pendingMessages.removeFirst(min(taken, pendingMessages.count))
             }
             if !replaying { userStopped = false }
+            pulse.start(turn: n)
             // A replayed turn ran long ago — unless it's still open, when another frog
             // process is running it and `synced` will show it as busy here too.
             if replaying {
@@ -833,13 +855,21 @@ final class Conversation {
                 if item.startedAt == nil { item.startedAt = at }
             }
         case .itemDelta(let id, let delta):
+            // Tokens arriving now (not a history being read in) keep the live row's dot breathing.
+            if !replaying {
+                switch delta {
+                case .text, .reasoning: pulse.tick(at: Date(timeIntervalSince1970: Double(env.created) / 1000))
+                default: break
+                }
+            }
             if case .text(let t) = delta, appendLive(id, t) {
                 if progress != nil { progress = nil }
                 return
             }
             upsert(id) { item in
                 switch delta {
-                case .text(let t), .reasoning(let t): item.text += t
+                case .text(let t): item.text += t
+                case .reasoning(let t, let thought): item.text += t; item.think(thought)
                 case .output(let t): item.output += t
                 case .imagePreview(let image, _, _, _): item.imagePreview = image
                 }
@@ -856,17 +886,22 @@ final class Conversation {
                 case .message(let t):
                     state.kind = .message
                     state.text = t
-                case .reasoning(let t):
+                case .reasoning(let t, let meta):
                     state.kind = .reasoning
                     state.text = t
+                    state.thoughts = meta.thoughts ?? []
+                    state.thinkMs = meta.thinkMs
                 case .toolCall(let r):
                     state.kind = .tool(name: r.name, arg: r.arg)
                     state.result = r
                     if state.subagent?.endedAt == nil { state.subagent?.endedAt = Date() }
                 }
             }
+            if case .reasoning(_, let meta) = item { settleThought(id, thinkMs: meta.thinkMs, completed: at) }
             if case .toolCall = item, isNews(env) { stepsDone += 1 }
             changesVersion += 1
+        case .outputTokens(let turn, let output, let soFar, let slow, let cached):
+            pulse.tokens(turn: turn, output: output, soFar: soFar, slow: slow, cached: cached)
         case .itemGisted(let item, let gist):
             // A finished call's one-line summary, from the engine's side-model. It lands on the
             // row itself, so it survives a replay and a reload: nothing is cached here.
@@ -897,6 +932,7 @@ final class Conversation {
             if presentPreview != nil { presentPreview = nil }
         case .permissionRequest(let req):
             permission = req
+            permissionAt = Date(timeIntervalSince1970: Double(env.created) / 1000)
             if isNews(env) {
                 FrogSounds.shared.play(.drip)
                 Conversation.effects?.asked(self, req)
@@ -920,9 +956,10 @@ final class Conversation {
             if elicitation?.id == id { elicitation = nil }
         case .question(let q):
             question = q
+            questionAt = Date(timeIntervalSince1970: Double(env.created) / 1000)
             if isNews(env) { FrogSounds.shared.play(.drip) }
             if progress != nil { progress = nil }
-        case .questionResolved(let id):
+        case .questionResolved(let id, _, _):
             if question?.id == id { question = nil }
         case .toolProgress(let id, let p):
             upsert(id) { $0.progress = p }
@@ -1130,10 +1167,15 @@ final class Conversation {
             }
         }
         for d in merged {
+            switch d.delta {
+            case .text, .reasoning: pulse.tick()
+            default: break
+            }
             if case .text(let t) = d.delta, appendLive(d.id, t) { continue }
             upsert(d.id) { item in
                 switch d.delta {
-                case .text(let t), .reasoning(let t): item.text += t
+                case .text(let t): item.text += t
+                case .reasoning(let t, let thought): item.text += t; item.think(thought)
                 case .output(let t): item.output += t
                 case .imagePreview: break
                 }
@@ -1274,6 +1316,40 @@ final class Conversation {
     /// transcript's structure reads changes (see `LiveText`). False when the item isn't a
     /// running message already in `turns`, or when the append is one the structure must see;
     /// then the caller writes through `upsert`, which also starts the live buffer.
+    /// A think finished: how long it thought (see `ItemState.thoughtMs`). Items are kept in the
+    /// order they started, so the first message or tool call after it in its turn is the answer
+    /// it led to; one that starts later still can only be later than its completion.
+    private func settleThought(_ id: String, thinkMs: UInt64?, completed: Date) {
+        guard let (ti, ii) = itemAt[id], turns.indices.contains(ti), turns[ti].items.indices.contains(ii),
+              let start = turns[ti].items[ii].startedAt else { return }
+        var end = completed
+        if let thinkMs {
+            end = min(start.addingTimeInterval(Double(thinkMs) / 1000), completed)
+        } else if let next = turns[ti].items[(ii + 1)...].first(where: { item in
+            if case .tool = item.kind { return item.startedAt != nil }
+            return item.kind == .message && item.startedAt != nil
+        }), let at = next.startedAt {
+            end = min(at, completed)
+        }
+        turns[ti].items[ii].thoughtMs = UInt64(max(0, (end.timeIntervalSince(start) * 1000).rounded()))
+    }
+
+    private func recordTimeline(_ env: Envelope) {
+        switch env.event {
+        case .turnStarted(let n, _, _, _):
+            guard let i = turns.lastIndex(where: { $0.number == n }) else { return }
+            turns[i].timeline.record(env)
+        case .turnEnded(let n, _, _):
+            guard let i = turns.lastIndex(where: { $0.number == n }) else { return }
+            turns[i].timeline.record(env)
+        case .itemStarted, .itemCompleted, .permissionResolved, .questionResolved, .itemsDiscarded:
+            guard let i = turns.indices.last else { return }
+            turns[i].timeline.record(env)
+        default:
+            return
+        }
+    }
+
     private func appendLive(_ id: String, _ t: String) -> Bool {
         guard Self.streamsLive else { return false }
         guard let (ti, ii) = itemAt[id], turns.indices.contains(ti), turns[ti].items.indices.contains(ii) else { return false }
