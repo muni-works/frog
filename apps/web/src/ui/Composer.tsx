@@ -453,7 +453,7 @@ export function Composer(p: ComposerProps) {
   })()
 
   const where = tray.where.kind === 'cloud' ? tray.where : null
-  const whereName = p.repo || 'No repo'
+  const whereName = p.repo || 'Scratch sandbox'
   const model = p.model ? modelName(p.model) : 'Default model'
   const modelPlace = placeOf(p.model ? spec(p.model) : null)
   const signedOut = !!p.onSignIn
@@ -535,7 +535,7 @@ export function Composer(p: ComposerProps) {
                 onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); const r = typed ?? list[0]; if (r) pick(r) } }} />
             </label>
             {typed && !list.includes(typed) && <button type="button" role="menuitem" onClick={() => pick(typed)}><I d={P.cloud} />{typed}<span className="cz-r">from GitHub</span></button>}
-            {!q && <button type="button" role="menuitemradio" aria-checked={!p.repo} onClick={() => pick(undefined)}><I d={P.cloud} />No repo{tick(!p.repo)}</button>}
+            {!q && <button type="button" role="menuitemradio" aria-checked={!p.repo} onClick={() => pick(undefined)}><I d={P.cloud} />Scratch sandbox{tick(!p.repo)}</button>}
             {list.length > 0 && <div className="cz-menu-h">Your repos</div>}
             <div className="cz-list">
               {list.map((r) => (
