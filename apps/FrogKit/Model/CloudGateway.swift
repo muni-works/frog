@@ -5,7 +5,12 @@ import Foundation
 /// protocol as `frog --serve`. So a cloud session is a `Conversation` with a `CloudLink`.
 struct CloudGateway: Sendable {
     /// `FROG_GATEWAY` points it elsewhere, such as a local zest gateway (`dev/run.sh`).
+    #if DEBUG
+    /// Flow tests point it at a local fake Frog Cloud (FakeFrogCloud) too.
+    nonisolated(unsafe) static var origin = ProcessInfo.processInfo.environment["FROG_GATEWAY"].flatMap(URL.init(string:)) ?? URL(string: "https://api.frog.toys")!
+    #else
     static let origin = ProcessInfo.processInfo.environment["FROG_GATEWAY"].flatMap(URL.init(string:)) ?? URL(string: "https://api.frog.toys")!
+    #endif
     static let protocolVersion = 1
     static let client = "frog-mac/0.1.0"
 
