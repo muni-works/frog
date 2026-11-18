@@ -152,10 +152,10 @@ extension VisualWidget {
 }
 
 extension View {
-    /// A drag that starts in the visual is the visual's. SwiftUI hands the mouse events AppKit
-    /// sends the web view to the gestures of the views around it too, so the window root's
-    /// `WindowDragGesture` (`RootView`) moved the window while a slider in the page was
-    /// dragged. A child's gesture wins over its ancestors', so this one, which does nothing,
+    /// A drag that starts in a web view in the transcript (a visual, an MCP app) is the page's.
+    /// SwiftUI hands the mouse events AppKit sends the web view to the gestures of the views
+    /// around it too, so the window root's `WindowDragGesture` (`RootView`) moved the window
+    /// while a slider in the page was dragged. A child's gesture wins over its ancestors', so this one, which does nothing,
     /// keeps them out; the web view still gets every event from AppKit. (Mac only: on iOS a
     /// SwiftUI gesture is a recognizer that could take touches from the page.)
     @ViewBuilder

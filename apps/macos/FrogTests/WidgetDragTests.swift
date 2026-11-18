@@ -5,10 +5,11 @@ import WebKit
 import XCTest
 @testable import Frog
 
-/// A drag that starts inside a visual (`WidgetCard`) is the visual's: its slider moves and the
-/// window doesn't. The window root drags the window from any empty space (`WindowDragGesture`,
-/// `RootView`), and SwiftUI hands the events AppKit sends the visual's web view to the gestures
-/// around it too, so dragging a slider in a visual moved the window.
+/// A drag that starts inside a web view in the transcript (a visual's `WidgetCard`, an MCP
+/// app's `McpAppCard`) is the page's: its slider moves and the window doesn't. The window root
+/// drags the window from any empty space (`WindowDragGesture`, `RootView`), and SwiftUI hands
+/// the events AppKit sends the web view to the gestures around it too, so dragging a slider in
+/// a visual moved the window.
 ///
 /// A synthetic drag doesn't start a real window drag in a test (`WindowDragFallThroughTests`),
 /// so the root here carries a counting `DragGesture` where the app has `WindowDragGesture`: an
@@ -30,16 +31,12 @@ final class WidgetDragTests: XCTestCase {
 
     /// The test host is an inactive app, where AppKit holds a press back from a view that won't
     /// take the first mouse (a web view doesn't); in the app the window is key. For this test
-    /// the visual's web view takes it.
+    /// web views take it.
     private func acceptFirstMouse() -> () -> Void {
-        let sel = #selector(NSView.acceptsFirstMouse(for:))
+        guard let m = class_getInstanceMethod(WKWebView.self, #selector(NSView.acceptsFirstMouse(for:))) else { return {} }
         let yes: @convention(block) (NSView, NSEvent?) -> Bool = { _, _ in true }
-        class_addMethod(WidgetWKWebView.self, sel, imp_implementationWithBlock(yes), "c@:@")
-        return {
-            if let m = class_getInstanceMethod(WKWebView.self, sel) {
-                class_replaceMethod(WidgetWKWebView.self, sel, method_getImplementation(m), method_getTypeEncoding(m))
-            }
-        }
+        let old = method_setImplementation(m, imp_implementationWithBlock(yes))
+        return { method_setImplementation(m, old) }
     }
 
     private func pump(_ seconds: TimeInterval) {
@@ -61,16 +58,30 @@ final class WidgetDragTests: XCTestCase {
     </body></html>
     """
 
+    private let conversation = Conversation(folder: URL(fileURLWithPath: "/tmp/demo"), link: nil, replay: false, session: "demo")
+
     func testSliderDragStaysInVisual() async throws {
+        let widget = VisualWidget(title: "Sampling temperature", code: "", html: html)
+        try await assertDragStays(in: WidgetCard(widget: widget, conversation: conversation), "visual")
+    }
+
+    func testSliderDragStaysInMcpApp() async throws {
+        let file = FileManager.default.temporaryDirectory.appending(path: "frog-mcp-drag-\(UUID().uuidString).html")
+        try html.write(to: file, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let app = AppView(server: "demo", tool: "sample", uri: "ui://demo/sample", html: file.path, result: "")
+        let item = ItemState(id: "app", kind: .tool(name: "sample", arg: ""), done: true)
+        try await assertDragStays(in: McpAppCard(name: "sample", item: item, app: app, conversation: conversation), "MCP app")
+    }
+
+    /// Drags on empty space and on the slider at the top left of `card`'s page.
+    private func assertDragStays(in card: some View, _ what: String) async throws {
         let restore = acceptFirstMouse()
         defer { restore() }
-        let folder = URL(fileURLWithPath: "/tmp/demo")
-        let conversation = Conversation(folder: folder, link: nil, replay: false, session: "demo")
-        let widget = VisualWidget(title: "Sampling temperature", code: "", html: html)
         let rootDrags = Count()
         let root = VStack(spacing: 0) {
             Color.clear.frame(height: 100)
-            WidgetCard(widget: widget, conversation: conversation).frame(width: 600)
+            card.frame(width: 600)
             Color.clear
         }
         .frame(width: 800, height: 600)
@@ -90,13 +101,13 @@ final class WidgetDragTests: XCTestCase {
         w.orderFrontRegardless()
         defer { w.close() }
         pump(1.0)
-        let web = try XCTUnwrap(find(WidgetWKWebView.self, in: w.contentView!), "no web view")
+        let web = try XCTUnwrap(find(WKWebView.self, in: w.contentView!), "\(what): no web view")
         var loaded = false
         for _ in 0..<50 where !loaded {
             loaded = (try? await web.evaluateJavaScript("document.getElementById('r') != null") as? Bool) == true
             pump(0.1)
         }
-        XCTAssertTrue(loaded, "the visual never loaded")
+        XCTAssertTrue(loaded, "\(what): the page never loaded")
         pump(0.5) // the "Drawing…" cover goes once the page reports its height
 
         /// A press at `at` (window coordinates), a drag of 200 points right in steps, a release.
@@ -118,15 +129,15 @@ final class WidgetDragTests: XCTestCase {
 
         // The rig reaches the root: a drag on empty space is the root's.
         drag(at: CGPoint(x: 20, y: 20))
-        XCTAssertGreaterThan(rootDrags.n, 0, "a drag on empty space never reached the root's gesture")
+        XCTAssertGreaterThan(rootDrags.n, 0, "\(what): a drag on empty space never reached the root's gesture")
 
         // The slider's thumb, at the page's top left: the slider takes it, the root doesn't.
         rootDrags.n = 0
         let f = web.convert(web.bounds, to: nil)
-        XCTAssertEqual(w.contentView!.hitTest(CGPoint(x: f.minX + 28, y: f.maxY - 28)), web, "the press doesn't land on the web view")
+        XCTAssertEqual(w.contentView!.hitTest(CGPoint(x: f.minX + 28, y: f.maxY - 28)), web, "\(what): the press doesn't land on the web view")
         drag(at: CGPoint(x: f.minX + 28, y: f.maxY - 28))
         let value = try await web.evaluateJavaScript("document.getElementById('r').value") as? String
-        XCTAssertGreaterThan(Int(value ?? "") ?? 0, 20, "the slider didn't take the drag")
-        XCTAssertEqual(rootDrags.n, 0, "a drag on the visual's slider reached the window root's gesture (which moves the window)")
+        XCTAssertGreaterThan(Int(value ?? "") ?? 0, 20, "\(what): the slider didn't take the drag")
+        XCTAssertEqual(rootDrags.n, 0, "\(what): a drag on the page's slider reached the window root's gesture (which moves the window)")
     }
 }
