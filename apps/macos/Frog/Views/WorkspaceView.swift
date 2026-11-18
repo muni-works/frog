@@ -26,6 +26,9 @@ struct WorkspaceView: View {
     /// The peek came from the pointer at the window's left edge: it goes when the pointer
     /// moves out over the page.
     @State private var peekByHover = false
+    /// The sidebar's width, as last dragged (`savedSidebarWidth`).
+    @AppStorage(WorkspaceView.sidebarWidthKey) private var sidebarWidthRaw = Double(WorkspaceView.sessionsWidth)
+    private var sidebarWidth: CGFloat { Self.clampSidebar(sidebarWidthRaw) }
     /// This view's window, so the sidebar can bring an already-open conversation forward.
     @State private var window: NSWindow?
     @State private var renamingTitle = false
@@ -47,6 +50,7 @@ struct WorkspaceView: View {
     private struct LayoutInputs: Equatable {
         var size: CGSize
         var sessions: Bool
+        var sidebar: CGFloat
         var layout: PaneLayout
         var panes: [PaneInputs]
     }
@@ -60,7 +64,17 @@ struct WorkspaceView: View {
         var hasRail: Bool
     }
 
+    /// The sidebar's default width; dragged between `minSessions` and `maxSessions`, kept under
+    /// `sidebarWidthKey` beside the inspector's.
     static let sessionsWidth: CGFloat = 250
+    static let minSessions: CGFloat = 220
+    static let maxSessions: CGFloat = 400
+    static let sidebarWidthKey = "sidebarWidth"
+    static func clampSidebar(_ w: Double) -> CGFloat {
+        min(maxSessions, max(minSessions, w > 0 ? CGFloat(w) : sessionsWidth))
+    }
+    /// The width last dragged to, else the default.
+    static var savedSidebarWidth: CGFloat { clampSidebar(UserDefaults.standard.double(forKey: sidebarWidthKey)) }
     static let button: CGFloat = 36
     /// Room between the timeline rail and the inspector's hairline (or the pane's edge), and
     /// above the rail and a split pane's header.
@@ -70,6 +84,9 @@ struct WorkspaceView: View {
     static let trafficLights: CGFloat = 84
     /// The strip at the window's left edge that peeks the collapsed sidebar on hover.
     static let peekEdge: CGFloat = 6
+    /// The toolbar's own inset at the window's trailing edge: the inspector's tabs in the title
+    /// row are this much narrower than its column, so they start at its hairline.
+    static let toolbarTrailing: CGFloat = 8
     /// Narrowest a column may get; a card that would squeeze it further stays folded.
     static let minColumn: CGFloat = 520
     /// Split panes accept narrower columns: that's the point of splitting.
@@ -77,8 +94,6 @@ struct WorkspaceView: View {
     /// Hysteresis: a card that's docked stays docked until the column would lose this much more,
     /// so dragging a window edge near a threshold doesn't flicker the layout.
     static let slack: CGFloat = 40
-    /// Room a split pane's instruments leave for its header.
-    static let headerClearance: CGFloat = PaneView.headerHeight + 8
 
     init(panes: Panes, sessionsOpen: Bool = true) {
         self.panes = panes
@@ -112,7 +127,7 @@ struct WorkspaceView: View {
     /// The session list's width, its hairline included: where the panes start. Collapsed, it's
     /// gone.
     private func extent(sessions open: Bool) -> CGFloat {
-        open ? Self.sessionsWidth : 0
+        open ? sidebarWidth : 0
     }
 
     /// What a pane's right edge keeps from its conversation: the inspector when docked, and the
@@ -146,9 +161,8 @@ struct WorkspaceView: View {
     private func placement(_ pane: Pane, sessions open: Bool, changes: Bool) -> (frame: CGRect, insets: EdgeInsets) {
         let r = panes.layout.frames(in: region(sessions: open), maximizing: panes.maximized)[pane.id] ?? .zero
         if r == .zero { return (r, EdgeInsets()) }
-        // Split panes have a header to keep clear of.
-        let top = panes.isSplit ? Self.headerClearance + Self.inset : 0
-        return (r, EdgeInsets(top: top, leading: 0, bottom: 0, trailing: extent(changes: changes, pane, paneWidth: r.width)))
+        // No pane has a header, split or not: every pane's top is the line under the title bar.
+        return (r, EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: extent(changes: changes, pane, paneWidth: r.width)))
     }
 
     private func placement(_ pane: Pane) -> (frame: CGRect, insets: EdgeInsets) {
@@ -166,7 +180,7 @@ struct WorkspaceView: View {
     }
 
     private var layoutInputs: LayoutInputs {
-        LayoutInputs(size: canvasSize, sessions: showSessions, layout: panes.layout, panes: panes.items.map {
+        LayoutInputs(size: canvasSize, sessions: showSessions, sidebar: sidebarWidth, layout: panes.layout, panes: panes.items.map {
             PaneInputs(id: $0.id, shows: $0.conversation.map(ObjectIdentifier.init), changes: $0.showChanges, hasChanges: $0.hasTabs, hasRail: $0.hasRail)
         })
     }
@@ -393,34 +407,41 @@ struct WorkspaceView: View {
         panes.split(s, on: edge, window: window)
     }
 
+    /// One pane, placed: its frame, its clip, and its part in the documentation's cover.
+    private func paneCell(_ pane: Pane, number: Int?, stripInTitleRow: Bool) -> some View {
+        let place = placement(pane)
+        return PaneView(
+            pane: pane,
+            panes: panes,
+            number: number,
+            insets: place.insets,
+            underTitleBar: place.frame.minY < 0.5,
+            stripInTitleRow: stripInTitleRow,
+            trailingEdge: place.frame.maxX >= canvasSize.width - 0.5,
+            changesDocked: docked.changes.contains(pane.id),
+            toggleChanges: { toggleChanges(pane) },
+            window: window
+        )
+        // Exactly its frame: content that wants more is cut at the pane's own edge, never
+        // centered out over its neighbors (the rail and text of one pane over the next).
+        // Open at the top for a pane under the title bar: its inspector's column runs up
+        // under it.
+        .frame(width: max(0, place.frame.width), height: max(0, place.frame.height), alignment: .topLeading)
+        .clipShape(TitleBarClip(open: place.frame.minY < 0.5))
+        .offset(x: place.frame.minX, y: place.frame.minY)
+        // Under the documentation, still mounted: its turn keeps running and its
+        // scroll, draft and inspector are there when you come back.
+        .allowsHitTesting(!inDocs)
+        .accessibilityHidden(inDocs)
+        .transition(.opacity.combined(with: .scale(scale: 0.98)))
+    }
+
     var body: some View {
         let numbers = panes.numbers
+        let corner = cornerInspector?.id
         ZStack(alignment: .topLeading) {
             ForEach(Array(panes.items.enumerated()), id: \.element.id) { i, pane in
-                let place = placement(pane)
-                PaneView(
-                    pane: pane,
-                    panes: panes,
-                    number: panes.isSplit ? i + 1 : nil,
-                    insets: place.insets,
-                    underTitleBar: place.frame.minY < 0.5,
-                    trailingEdge: place.frame.maxX >= canvasSize.width - 0.5,
-                    changesDocked: docked.changes.contains(pane.id),
-                    toggleChanges: { toggleChanges(pane) },
-                    window: window
-                )
-                // Exactly its frame: content that wants more is cut at the pane's own edge, never
-                // centered out over its neighbors (the rail and text of one pane over the next).
-                // Open at the top for a pane under the title bar: its inspector's column runs up
-                // under it.
-                .frame(width: max(0, place.frame.width), height: max(0, place.frame.height), alignment: .topLeading)
-                .clipShape(TitleBarClip(open: place.frame.minY < 0.5))
-                .offset(x: place.frame.minX, y: place.frame.minY)
-                // Under the documentation, still mounted: its turn keeps running and its
-                // scroll, draft and inspector are there when you come back.
-                .allowsHitTesting(!inDocs)
-                .accessibilityHidden(inDocs)
-                .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                paneCell(pane, number: panes.isSplit ? i + 1 : nil, stripInTitleRow: corner == pane.id)
             }
 
             docsLayer
@@ -481,7 +502,7 @@ struct WorkspaceView: View {
         // A hover peek goes when the pointer moves out over the page.
         .onContinuousHover(coordinateSpace: .named(Self.canvasSpace)) { phase in
             guard peekByHover, peekSessions, case .active(let p) = phase,
-                  p.x > Self.sessionsWidth + Tokens.Space.row * 3 else { return }
+                  p.x > sidebarWidth + Tokens.Space.row * 3 else { return }
             peekSessions = false
         }
         .onChange(of: peekSessions) { if !peekSessions { peekByHover = false } }
@@ -541,6 +562,8 @@ struct WorkspaceView: View {
             split: panes.canSplit ? { split(nil, $0 == .vertical ? .bottom : .right) } : nil,
             closePane: panes.isSplit ? { panes.close(focused) } : nil,
             focusPane: panes.isSplit ? { panes.focus(step: $0) } : nil,
+            toggleMaximize: panes.isSplit ? { panes.toggleMaximized(focused) } : nil,
+            maximized: panes.maximizedPane != nil,
             sidebarOrder: sidebarOrder,
             openSidebarSession: { openInFocused($0) },
             showDocs: { showDocs() }
@@ -610,7 +633,7 @@ struct WorkspaceView: View {
             if sessionsVisible {
                 ToolbarItem(placement: .navigation) {
                     SidebarTitleRow(docs: inDocs, peeking: peekSessions, toggle: toggleSessions)
-                        .frame(width: Self.sessionsWidth - Self.trafficLights)
+                        .frame(width: sidebarWidth - Self.trafficLights)
                 }
                 .sharedBackgroundVisibility(.hidden)
             } else {
@@ -653,23 +676,31 @@ struct WorkspaceView: View {
                     .help("Inspector: changes, terminal, preview (⌥⌘0)")
                     .disabled(focused.conversation == nil || inDocs)
             }
-            if controlsInset > 0 {
-                ToolbarItem(placement: .primaryAction) { Color.clear.frame(width: controlsInset, height: 1) }
-                    .sharedBackgroundVisibility(.hidden)
+            // The top-right inspector's tabs, over its column: the controls sit left of it.
+            if let corner = cornerInspector, let c = corner.conversation {
+                ToolbarItem(placement: .primaryAction) {
+                    PaneArea(conversation: c, height: 0, width: .constant(corner.cardWidth),
+                             collapse: { toggleChanges(corner) },
+                             folder: corner.workspace.isChat ? nil : corner.workspace.folder)
+                        .strip
+                        .frame(width: max(0, corner.cardWidth - Self.toolbarTrailing))
+                }
+                .sharedBackgroundVisibility(.hidden)
             }
         }
     }
 
-    /// Room the controls leave at the right, so they sit left of a docked inspector at the
-    /// window's top-right.
-    private var controlsInset: CGFloat {
-        guard !inDocs else { return 0 }
+    /// The pane whose docked inspector stands at the window's top-right: its tabs are in the
+    /// title row, at the toolbar's trailing end. (Another pane's inspector, in a split, keeps
+    /// its tabs on its first row: the toolbar's items run in one row from each end.)
+    private var cornerInspector: Pane? {
+        guard !inDocs else { return nil }
         let corner = panes.items.first { pane in
             let f = placement(pane).frame
             return f.minY < 0.5 && f.maxX >= canvasSize.width - 0.5
         }
-        guard let corner, docked.changes.contains(corner.id), corner.hasTabs else { return 0 }
-        return corner.cardWidth
+        guard let corner, docked.changes.contains(corner.id), corner.hasTabs else { return nil }
+        return corner
     }
 
     // MARK: Columns
@@ -689,8 +720,17 @@ struct WorkspaceView: View {
                     SessionList(workspace: workspace, maxHeight: room, titleRow: false) { toggleSessions() }
                 }
             }
-            .frame(width: Self.sessionsWidth)
+            .frame(width: sidebarWidth)
             .flushColumn(trailing: true, floating: peekSessions)
+            // Drag its hairline to resize it, as the inspector's.
+            .overlay(alignment: .trailing) {
+                if docked.sessions {
+                    ColumnGrip(width: Binding(get: { sidebarWidth }, set: { sidebarWidthRaw = Double($0) }),
+                               range: Self.minSessions...Self.maxSessions, reset: Self.sessionsWidth, growsLeft: false,
+                               help: "Drag to resize the sidebar, double-click to reset")
+                        .offset(x: ColumnGrip.reach)
+                }
+            }
             .transition(.move(edge: .leading))
         }
     }
@@ -699,7 +739,7 @@ struct WorkspaceView: View {
 extension View {
     /// A flush column (docs/design/flush): the sidebar's fill, square, from the top of the space
     /// it's given to the bottom, running up under the title bar when `underTitleBar`, with a
-    /// `Tokens.line` hairline on the edges it shares with the page. Floating (a peek, or an
+    /// `Tokens.edge` hairline on the edges it shares with the page. Floating (a peek, or an
     /// inspector the window is too narrow to dock) it keeps its shadow.
     func flushColumn(leading: Bool = false, trailing: Bool = false, floating: Bool = false,
                      underTitleBar: Bool = true) -> some View {
@@ -707,10 +747,10 @@ extension View {
         return frame(maxHeight: .infinity, alignment: .top)
             .background { Tokens.sidebar.ignoresSafeArea(edges: up) }
             .overlay(alignment: .leading) {
-                if leading { Tokens.line.frame(width: 1).ignoresSafeArea(edges: up).allowsHitTesting(false) }
+                if leading { Tokens.edge.frame(width: 1).ignoresSafeArea(edges: up).allowsHitTesting(false) }
             }
             .overlay(alignment: .trailing) {
-                if trailing { Tokens.line.frame(width: 1).ignoresSafeArea(edges: up).allowsHitTesting(false) }
+                if trailing { Tokens.edge.frame(width: 1).ignoresSafeArea(edges: up).allowsHitTesting(false) }
             }
             .shadow(color: .black.opacity(floating ? 0.35 : 0), radius: 24, y: 10)
     }
