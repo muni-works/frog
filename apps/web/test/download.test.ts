@@ -93,7 +93,7 @@ test("Settings › Models: the Mac's rows sit under On your Mac, each with Get t
   const html = asVisitor(MAC_UA, () => settings([mew]));
   assert.ok(html.indexOf("On your Mac") > html.indexOf("Frog Cloud"), "invitations come after the working rows");
   const pills = invites(html);
-  assert.deepEqual(Object.keys(pills), ["pair-machine", "local-models", "other-clouds", "servers"]);
+  assert.deepEqual(Object.keys(pills), ["pair-machine", "local-models"]);
   for (const [id, a] of Object.entries(pills)) assert.match(a, /href="\/download"[^>]*>Get the Mac app</, id);
   assert.match(html, /Run models on this computer/, "the invitation's web words");
 });
