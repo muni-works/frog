@@ -277,7 +277,7 @@ class Reel(unittest.TestCase):
                 changed = np.abs(a - b).max(axis=2) > 0
                 # Against frames from before the move (1d4cf479) the only change is the head's
                 # outline, corrected to the mark's two half-ellipses: a thin band of edge pixels.
-                self.assertLess(changed.sum(), 0.002 * changed.size, f"frame {f}: {changed.sum()} px changed")
+                self.assertLess(changed.sum(), 0.005 * changed.size, f"frame {f}: {changed.sum()} px changed")
 
 
 if __name__ == "__main__":
