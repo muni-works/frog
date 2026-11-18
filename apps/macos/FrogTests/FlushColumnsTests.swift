@@ -62,6 +62,9 @@ final class FlushColumnsTests: XCTestCase {
             return [c.redComponent, c.greenComponent, c.blueComponent].map { Int(($0 * 255).rounded()) }
         }
 
+        /// A gray's level, 0–255 (the brightest channel where there's colour).
+        func gray(_ x: CGFloat, _ y: CGFloat) -> Int { rgb(x, y).max() ?? 0 }
+
         /// Pixels in a rect (points) with any colour to them, at full resolution.
         func colored(in r: CGRect) -> Int {
             let s = CGFloat(rep.pixelsWide) / size.width
@@ -233,5 +236,85 @@ final class FlushColumnsTests: XCTestCase {
         Library.shared.stage(sessions: sessions, live: ["a": .running, "b": .unread, "c": .waiting, "d": .running])
         XCTAssertTrue(toggle.needsYou)
         XCTAssertEqual(toggle.live.map(\.session.id), ["c", "a", "d", "b"], "waiting, then running (newest first), then unread")
+    }
+
+    // MARK: Split panes: no header pills, inspectors on the sidebar's first row
+
+    /// Two panes, both showing a conversation with changes, pane 1 focused. Wide enough (drawn
+    /// offscreen, so no screen clamps it) for both inspectors to dock beside the sidebar.
+    private func splitShot(inspectors: Bool, width: CGFloat = 2600, name: String = #function) throws -> (Shot, Panes) {
+        try shoot({ panes in
+            try showConversation(panes, inspector: inspectors)
+            panes.split(nil, on: .right, window: nil)
+            panes.items[1].workspace.testShow(try Self.conversationWithChanges(folder))
+            panes.items[1].showChanges = inspectors
+            panes.focus(panes.items[0])
+        }, width: width, name: name)
+    }
+
+    /// The boundary between the two panes: they share what's right of the docked sidebar evenly.
+    private func middle(_ shot: Shot) -> CGFloat {
+        WorkspaceView.sessionsWidth + (shot.size.width - WorkspaceView.sessionsWidth) / 2
+    }
+
+    /// A row of controls' vertical centre: the topmost control in an x range (by its focus ring).
+    private func firstRow(_ shot: Shot, from x0: CGFloat, to x1: CGFloat) -> CGFloat? {
+        shot.controls.filter { $0.minX >= x0 - 0.5 && $0.maxX <= x1 + 0.5 && $0.height < 60 }
+            .min { $0.minY < $1.minY }?.midY
+    }
+
+    /// Split, no pane has a header: no control at the top of either transcript, where the
+    /// number, state and model pill stood.
+    func testSplitPanesHaveNoHeaderPill() throws {
+        let (shot, panes) = try splitShot(inspectors: false)
+        defer { panes.stopAll() }
+        XCTAssertTrue(panes.isSplit)
+        let mid = middle(shot), W = shot.size.width
+        let tops = [CGRect(x: WorkspaceView.sessionsWidth + 1, y: 0, width: mid - WorkspaceView.sessionsWidth - 60, height: 100),
+                    CGRect(x: mid + 1, y: 0, width: W - mid - 60, height: 100)]
+        let pills = shot.controls.filter { c in tops.contains { $0.intersects(c) } }
+        XCTAssertEqual(pills, [], "controls at the top of a split pane: its header pill is still there")
+    }
+
+    /// Every inspector's tab strip, split or not, sits on one line with the sidebar's first row
+    /// (New session), right under the title bar.
+    func testInspectorStripsShareTheSidebarsFirstRow() throws {
+        let (single, one) = try shoot { try showConversation($0, inspector: true) }
+        defer { one.stopAll() }
+        let card = one.items[0].cardWidth
+        let sidebar = try XCTUnwrap(firstRow(single, from: 0, to: WorkspaceView.sessionsWidth), "the sidebar's first row")
+        let alone = try XCTUnwrap(firstRow(single, from: single.size.width - card, to: single.size.width), "the inspector's strip")
+        XCTAssertEqual(alone, sidebar, accuracy: 1, "unsplit: the inspector's strip and the sidebar's first row")
+
+        let (split, two) = try splitShot(inspectors: true)
+        defer { two.stopAll() }
+        XCTAssertTrue(two.items.allSatisfy { $0.showChanges })
+        let mid = middle(split), W = split.size.width
+        let left = try XCTUnwrap(firstRow(split, from: mid - card, to: mid), "pane 1's inspector strip")
+        let right = try XCTUnwrap(firstRow(split, from: W - card, to: W), "pane 2's inspector strip")
+        let splitSidebar = try XCTUnwrap(firstRow(split, from: 0, to: WorkspaceView.sessionsWidth))
+        XCTAssertEqual(left, sidebar, accuracy: 1, "split: pane 1's strip and the sidebar's first row")
+        XCTAssertEqual(right, sidebar, accuracy: 1, "split: pane 2's strip and the sidebar's first row")
+        XCTAssertEqual(splitSidebar, sidebar, accuracy: 1, "the sidebar's first row doesn't move when split")
+    }
+
+    /// With no header to tint, the focused pane still reads as the focused one: the other
+    /// pane's composer steps back (its placeholder and stroke dimmer).
+    func testFocusedPaneStillStandsOut() throws {
+        let (shot, panes) = try splitShot(inspectors: false)
+        defer { panes.stopAll() }
+        XCTAssertTrue(panes.focused === panes.items[0])
+        let mid = middle(shot), W = shot.size.width, h = shot.size.height
+        func brightest(_ r: CGRect) -> Int {
+            var m = 0
+            for y in stride(from: r.minY, to: r.maxY, by: 1) {
+                for x in stride(from: r.minX, to: r.maxX, by: 2) { m = max(m, shot.gray(x, y)) }
+            }
+            return m
+        }
+        // The composers: the bottom 150 pt of each pane's column.
+        let focused = brightest(CGRect(x: WorkspaceView.sessionsWidth + 40, y: h - 150, width: mid - WorkspaceView.sessionsWidth - 120, height: 145))
+        let other = brightest(CGRect(x: mid + 40, y: h - 150, width: W - mid - 120, height: 145))
+        XCTAssertGreaterThan(focused - other, 30, "the focused pane's composer (\(focused)) should stand out from the other's (\(other))")
     }
 }

@@ -18,6 +18,10 @@ struct FrogWindow {
     let split: ((Axis) -> Void)?
     let closePane: (() -> Void)?
     let focusPane: ((Int) -> Void)?
+    /// Fill the window with the focused pane, or put the layout back; nil unless split.
+    let toggleMaximize: (() -> Void)?
+    /// The focused pane fills the window (`toggleMaximize` puts the layout back).
+    var maximized = false
     /// The sidebar's conversations, as its top-level rows (the started-by children are nested
     /// under their parents and don't count), for the quick-switch shortcuts (⌘1…9, ⇧⌘]/⇧⌘[).
     let sidebarOrder: [SessionInfo]
@@ -189,6 +193,9 @@ struct FrogCommands: Commands {
             Button("Close Pane") { window?.closePane?() }
                 .keyboardShortcut("w", modifiers: [.command, .control])
                 .disabled(window?.closePane == nil)
+            Button(window?.maximized == true ? "Restore Panes" : "Maximize Pane") { window?.toggleMaximize?() }
+                .keyboardShortcut(.return, modifiers: [.command, .shift])
+                .disabled(window?.toggleMaximize == nil)
             Button("Next Pane") { window?.focusPane?(1) }
                 .keyboardShortcut("]")
                 .disabled(window?.focusPane == nil)

@@ -77,8 +77,6 @@ struct WorkspaceView: View {
     /// Hysteresis: a card that's docked stays docked until the column would lose this much more,
     /// so dragging a window edge near a threshold doesn't flicker the layout.
     static let slack: CGFloat = 40
-    /// Room a split pane's instruments leave for its header.
-    static let headerClearance: CGFloat = PaneView.headerHeight + 8
 
     init(panes: Panes, sessionsOpen: Bool = true) {
         self.panes = panes
@@ -146,9 +144,8 @@ struct WorkspaceView: View {
     private func placement(_ pane: Pane, sessions open: Bool, changes: Bool) -> (frame: CGRect, insets: EdgeInsets) {
         let r = panes.layout.frames(in: region(sessions: open), maximizing: panes.maximized)[pane.id] ?? .zero
         if r == .zero { return (r, EdgeInsets()) }
-        // Split panes have a header to keep clear of.
-        let top = panes.isSplit ? Self.headerClearance + Self.inset : 0
-        return (r, EdgeInsets(top: top, leading: 0, bottom: 0, trailing: extent(changes: changes, pane, paneWidth: r.width)))
+        // No pane has a header, split or not: every pane's top is the line under the title bar.
+        return (r, EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: extent(changes: changes, pane, paneWidth: r.width)))
     }
 
     private func placement(_ pane: Pane) -> (frame: CGRect, insets: EdgeInsets) {
@@ -541,6 +538,8 @@ struct WorkspaceView: View {
             split: panes.canSplit ? { split(nil, $0 == .vertical ? .bottom : .right) } : nil,
             closePane: panes.isSplit ? { panes.close(focused) } : nil,
             focusPane: panes.isSplit ? { panes.focus(step: $0) } : nil,
+            toggleMaximize: panes.isSplit ? { panes.toggleMaximized(focused) } : nil,
+            maximized: panes.maximizedPane != nil,
             sidebarOrder: sidebarOrder,
             openSidebarSession: { openInFocused($0) },
             showDocs: { showDocs() }
