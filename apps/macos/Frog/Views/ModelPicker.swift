@@ -96,8 +96,7 @@ struct ModelMenu: View {
     /// A cloud model waiting on the project's permission.
     @State private var asking: ModelIdentity?
     @AppStorage(ModelMenu.showCloudKey) private var showCloud = true
-    @AppStorage("settingsTab") private var settingsTab = "general"
-    @Environment(\.openSettings) private var openSettings
+    @Environment(\.showSettings) private var showSettings
     @State private var filter = ""
 
     static let showCloudKey = "showCloudModels"
@@ -217,9 +216,8 @@ struct ModelMenu: View {
             // person said no and the question is real.
             case .notAllowed: asking = m
             case .overCap:
-                settingsTab = "billing"
                 close()
-                openSettings()
+                showSettings?("usage")
             // Signed out: sign in (GitHub, in the browser), then the chat moves to it.
             case .needsKey(ProviderID.cloudName):
                 let pick = pick
@@ -273,9 +271,8 @@ struct ModelMenu: View {
             }
             Rectangle().fill(Tokens.line).frame(height: 1)
             Button {
-                settingsTab = "models"
                 close()
-                openSettings()
+                showSettings?("models")
             } label: {
                 Text("Manage…")
                     .frame(maxWidth: .infinity, alignment: .leading)

@@ -6,8 +6,7 @@ struct ModelStateAction: View {
     @State private var downloads = ModelDownloads.shared
     @Environment(\.addProviderKey) private var addKey
     @Environment(\.askCloudPermission) private var askCloud
-    @Environment(\.openSettings) private var openSettings
-    @AppStorage("settingsTab") private var settingsTab = "general"
+    @Environment(\.showSettings) private var showSettings
 
     var body: some View {
         switch model.state {
@@ -31,8 +30,7 @@ struct ModelStateAction: View {
             if let askCloud { button("Allow…") { askCloud(model) } }
         case .overCap:
             button("Raise Cap…") {
-                settingsTab = "models"
-                openSettings()
+                showSettings?("models")
             }
         case .ready, .wontFit, .unreachable:
             EmptyView()

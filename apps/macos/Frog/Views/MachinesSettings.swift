@@ -12,7 +12,7 @@ struct MachinesSettings: View {
     @State private var account = CloudAccount.shared
     @State private var pairing = false
     @AppStorage(ModelMenu.showCloudKey) private var showCloud = true
-    @AppStorage("settingsTab") private var settingsTab = "general"
+    @Environment(\.showSettings) private var showSettings
 
     var body: some View {
         NavigationStack(path: $stack) {
@@ -32,7 +32,7 @@ struct MachinesSettings: View {
                         LabeledContent("Credit") {
                             HStack {
                                 Text(credit).monospacedDigit()
-                                Button("Add credit…") { settingsTab = "billing" }
+                                Button("Add credit…") { showSettings?("billing") }
                             }
                         }
                     }
