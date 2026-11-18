@@ -3,8 +3,10 @@
 // turn's start. A port of the engine's reference (crates/frog-engine/src/timeline.rs); both must
 // pass docs/design/transcript/timeline.json.
 //
-// - A reasoning item is thinking from its start for its `think_ms` (an older log: until it
-//   completed, which overstates it); a message is writing; a tool call is a tool.
+// - A reasoning item is thinking from its start for its `think_ms`. An older log has none: it
+//   thinks until the first message or tool call logged after it in the turn starts, or until it
+//   completed if that's sooner (#441; its completion alone overstates it, since it completes only
+//   once the whole reply is in). A message is writing; a tool call is a tool.
 // - `permission_resolved` / `question_resolved` with `asked`: waiting, from `asked` to the event's
 //   `created`, cut out of its own tool's segment. Different items' segments can overlap.
 // - `items_discarded`: those items are dropped (a retried call's partial reply).
@@ -37,20 +39,25 @@ export function segments(all: TimedEvent[], now?: number): Segment[] {
   const end = ended?.created ?? Math.max(now ?? 0, events[events.length - 1].created)
   const at = (t: number) => Math.min(Math.max(t, t0), Math.max(end, t0)) - t0
 
-  const open = new Map<string, { kind: SegmentKind; start: number }>()
+  // Where each message or tool call started, in log order: an older reasoning item's end.
+  const answers = events.flatMap((e, i) => (e.event === 'item_started' && (e.kind?.type === 'message' || e.kind?.type === 'tool_call') ? [{ i, at: e.created }] : []))
+  const open = new Map<string, { kind: SegmentKind; start: number; began: number }>()
   const out: Segment[] = []
   const waits: Segment[] = []
   const discarded: string[] = []
-  for (const e of events) {
+  for (const [i, e] of events.entries()) {
     if (e.event === 'item_started' && e.id) {
       const t = e.kind?.type
-      open.set(e.id, { kind: t === 'reasoning' ? 'thinking' : t === 'message' ? 'writing' : 'tool', start: e.created })
+      open.set(e.id, { kind: t === 'reasoning' ? 'thinking' : t === 'message' ? 'writing' : 'tool', start: e.created, began: i })
     } else if (e.event === 'item_completed' && e.id) {
       const o = open.get(e.id)
       if (!o) continue
       open.delete(e.id)
       const it = e.item as { type?: string; think_ms?: number } | undefined
-      const stop = it?.type === 'reasoning' && it.think_ms != null ? Math.min(o.start + it.think_ms, e.created) : e.created
+      const next = answers.find((a) => a.i > o.began)
+      const stop = it?.type !== 'reasoning' ? e.created
+        : it.think_ms != null ? Math.min(o.start + it.think_ms, e.created)
+        : next ? Math.min(next.at, e.created) : e.created
       out.push({ kind: o.kind, start_ms: at(o.start), end_ms: at(stop), item: e.id })
     } else if ((e.event === 'permission_resolved' || e.event === 'question_resolved') && e.asked != null) {
       waits.push({ kind: 'waiting', start_ms: at(e.asked), end_ms: at(e.created), ...(typeof e.item === 'string' ? { item: e.item } : {}) })
@@ -78,6 +85,12 @@ export function segments(all: TimedEvent[], now?: number): Segment[] {
   const key = (s: Segment) => s.item ?? ''
   return cut.sort((a, b) => a.start_ms - b.start_ms || ORDER.indexOf(a.kind) - ORDER.indexOf(b.kind)
     || (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0) || a.end_ms - b.end_ms)
+}
+
+/** How long each reasoning item thought, in start order: its thinking segment's length. What
+ * "Thought for Ns" says (engine timeline.rs `thinking`). */
+export function thinking(all: TimedEvent[], now?: number): { item: string; ms: number }[] {
+  return segments(all, now).filter((s) => s.kind === 'thinking').map((s) => ({ item: s.item ?? '', ms: s.end_ms - s.start_ms }))
 }
 
 /** How long each kind took, as wall time covered (overlapping tools count once). */

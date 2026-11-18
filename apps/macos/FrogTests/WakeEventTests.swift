@@ -72,6 +72,25 @@ final class WakeEventTests: XCTestCase {
         XCTAssertEqual(TurnLead(TurnState(number: 1, input: "<resumed> what happened?")).opener, .prompt)
     }
 
+    /// A turn the credit wall resumed (Op::Continue's note, echoed as the turn's input) drew as a
+    /// user bubble. It's the web's one line, same words (apps/web/src/wall.ts resumedLine).
+    func testACreditResumeIsOneLineNotAUserBubble() {
+        let note = "<resumed after $5.00 of Frog Cloud credit was added; your previous turn stopped when credit ran out, between steps; continue where you left off>"
+        let lead = TurnLead(TurnState(number: 7, input: note))
+        XCTAssertEqual(lead.opener, .resumed("$5.00 added. Frog picked up where it stopped."))
+        XCTAssertTrue(lead.wakes.isEmpty)
+        let bare = "<resumed after Frog Cloud credit was added; your previous turn stopped when credit ran out, between steps; continue where you left off>"
+        XCTAssertEqual(TurnLead(TurnState(number: 7, input: bare)).opener, .resumed("Credit added. Frog picked up where it stopped."))
+        // Anything else is still what it was: typed text, a malformed amount, the app's own resume.
+        for input in [
+            "<resumed after $5 of Frog Cloud credit was added; x; continue where you left off>",
+            "<resumed after Frog Cloud credit was added; x; continue where you left off> and then?",
+        ] {
+            XCTAssertEqual(TurnLead(TurnState(number: 7, input: input)).opener, .prompt, input)
+        }
+        XCTAssertNil(TurnLead.resumedLine("<resumed after the app updated; your previous turn was suspended; continue>"))
+    }
+
     /// The bug: a monitor-done turn rendered as a user bubble. It leads with event rows.
     func testAWakeTurnLeadsWithEventRowsNotAUserBubble() {
         let wake = TurnState(number: 13, input: "<monitor-done id=mon-1 status=timeout polls=7>\nno match after 590s.\n</monitor-done>")

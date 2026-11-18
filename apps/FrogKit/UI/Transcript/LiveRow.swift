@@ -182,6 +182,15 @@ struct LiveRow: View {
     }
 
     var body: some View {
+        if conversation.startCovers(turn), let start = conversation.start {
+            // A new cloud session still starting: the same row, saying how far it's got.
+            StartRow(start: start)
+        } else {
+            live
+        }
+    }
+
+    private var live: some View {
         TimelineView(.periodic(from: .now, by: 1)) { ctx in
             let pulse = conversation.pulse
             let state = LiveState.of(turn, waiting: waiting, lastToken: pulse.lastTokenAt, now: ctx.date)

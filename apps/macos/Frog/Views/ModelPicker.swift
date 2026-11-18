@@ -95,11 +95,11 @@ struct ModelMenu: View {
     @State private var problem: String?
     /// A cloud model waiting on the project's permission.
     @State private var asking: ModelIdentity?
-    @AppStorage(ModelMenu.showCloudKey) private var showCloud = true
-    @AppStorage("settingsTab") private var settingsTab = "general"
-    @Environment(\.openSettings) private var openSettings
+    @Environment(\.showSettings) private var showSettings
     @State private var filter = ""
 
+    /// "Show cloud models in the picker" was cut (board 7): signed in they show, signed out the
+    /// rows say "Sign in". `Workspace.dropRemovedSettings` forgets a stored "off".
     static let showCloudKey = "showCloudModels"
 
     /// Frog Cloud also lists the small models the engine uses for side jobs (titles, images),
@@ -179,7 +179,6 @@ struct ModelMenu: View {
     }
 
     private var cloudRows: [Row] {
-        guard showCloud else { return [] }
         var list = listed.map(workspace.allowing).filter(\.place.isFrogCloud)
         if preset == nil, let current, current.hasPrefix("cloud/"), !list.contains(where: { $0.spec == current }) {
             list.insert(workspace.identity(current), at: 0)
@@ -217,9 +216,8 @@ struct ModelMenu: View {
             // person said no and the question is real.
             case .notAllowed: asking = m
             case .overCap:
-                settingsTab = "billing"
                 close()
-                openSettings()
+                showSettings?("usage")
             // Signed out: sign in (GitHub, in the browser), then the chat moves to it.
             case .needsKey(ProviderID.cloudName):
                 let pick = pick
@@ -273,9 +271,8 @@ struct ModelMenu: View {
             }
             Rectangle().fill(Tokens.line).frame(height: 1)
             Button {
-                settingsTab = "models"
                 close()
-                openSettings()
+                showSettings?("models")
             } label: {
                 Text("Manage…")
                     .frame(maxWidth: .infinity, alignment: .leading)

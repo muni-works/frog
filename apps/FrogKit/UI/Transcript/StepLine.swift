@@ -603,7 +603,9 @@ struct ThoughtLineView: View {
             guard let start = item.startedAt else { return "Thought" }
             return Verbs.Live.fill(Verbs.Live.stopped, time: LiveStats.clock((item.endedAt ?? .now).timeIntervalSince(start)))
         }
-        let secs = item.thinkMs.map { Double($0) / 1000 } ?? item.duration
+        // How long it thought (`thoughtMs`, set as it completes), else the engine's figure or the
+        // item's own times (an item that never went through a conversation).
+        let secs = item.thoughtMs.map { Double($0) / 1000 } ?? item.thinkMs.map { Double($0) / 1000 } ?? item.duration
         return secs.map { Verbs.Live.fill(Verbs.Live.thought, time: LiveStats.clock(max(1, $0))) } ?? "Thought"
     }
 

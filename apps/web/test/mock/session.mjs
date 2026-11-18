@@ -48,11 +48,19 @@ export class Recorded {
     return this.log.length ? this.log[this.log.length - 1].seq : 0;
   }
 
-  /** Play the recorded turn, pausing at each permission_request until someone answers it. */
-  async play(input, delayMs = 15) {
+  /** Play the recorded turn, pausing at each permission_request until someone answers it (or
+   *  answering it at once with `autoAllow`). `stop` (local addition, the credit wall): end the turn
+   *  with `stop.reason` after the item `stop.after` completes, or before anything when it's null. */
+  async play(input, delayMs = 15, { autoAllow = false, stop = undefined } = {}) {
     this.turn += 1;
     const turn = this.turn;
+    const end = () => this.emit({ event: "turn_ended", turn, reason: stop.reason, usage: stop.usage });
+    if (stop && stop.after === null) {
+      this.emit({ event: "turn_started", turn, input });
+      return end();
+    }
     for (const e of this.events) {
+      if (stop && e.event === "turn_ended") return end();
       if (e.event === "turn_started") {
         this.emit({ ...e, turn, input });
         continue;
@@ -60,10 +68,13 @@ export class Recorded {
       if (e.event === "permission_request") {
         const id = `${e.id}-t${turn}`;
         this.emit({ ...e, id });
+        if (autoAllow) { this.permission({ id, decision: "allow" }); continue; }
         await new Promise((resolve) => (this.waiting = { id, resolve }));
         continue;
       }
+      if (stop && e.event === "titled") continue;
       this.emit("turn" in e ? { ...e, turn } : e);
+      if (stop && e.event === "item_completed" && e.id === stop.after) return end();
       if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
     }
   }

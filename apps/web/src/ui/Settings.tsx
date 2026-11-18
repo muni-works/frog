@@ -1,17 +1,19 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
 import { notifyOn, notifySupported, setNotify } from '../alerts'
 import { billingHistory, billingPortal, createKey, CouponError, firstName, listKeys, PLANS, portalErrorMessage, redeemCoupon, revokeKey, TOP_UPS, type Account, type CreditRow, type KeyInfo, type Provider } from '../auth'
 import { friendly } from '../cloud/client'
 import { canPull, catalogModel, displayName, memoryLine, runningLine, usesLine, type Machine } from '../machines'
+import type { Mode } from '../cloud/protocol'
 import { modelName, placeColor, usdPerM, type Model } from '../models'
-import { savedTheme, SECTIONS, setTheme, THEMES, type Section, type Theme } from '../settings'
-import { DownloadAppChip } from './DownloadChip'
+import { savedDensity, savedTheme, SECTIONS, setDensity, setTheme, webRows, webWords, type Density, type Section, type SettingRow, type Theme } from '../settings'
+import { InvitePill } from './DownloadChip'
 import { ICON, Icon } from './icons'
 import { creditLine, dollars } from './Overlays'
 
 // Settings mode (docs/design/app-shell.md): the shell's sidebar becomes the section list with
-// Back to app, and the main area shows one section. What the old overlay had is all here, a
-// section per page: Account, Appearance (new on the web), Models and Billing.
+// Back to app, and the main area shows one section. The sections and their rows come from
+// design/settings.json, the list the Mac draws too: each row the web can do is drawn by RENDER
+// below, and each of the Mac's rows (platform invite) is an invitation under "On your Mac".
 
 /** Back to app, then one row per section. */
 export function SettingsSidebar({ current, onBack, onOpen }: { current: Section; onBack: () => void; onOpen: (s: Section) => void }) {
@@ -62,44 +64,137 @@ export interface SettingsProps {
   onSubscribe?: (plan: string) => Promise<void>
   /** A code was redeemed: the new balance, so the sidebar's credit updates. */
   onRedeemed?: (r: { added_cents: number; credit_cents: number }) => void
+  /** Permissions › New sessions start in: the same choice as the new session's composer. */
+  newMode?: Mode
+  onNewMode?: (m: Mode) => void
+  /** Models › New conversations use: a pinned model id, or null for the last one picked. */
+  pinnedModel?: string | null
+  onPinModel?: (id: string | null) => void
 }
 
 /** One section. */
 export function SettingsPage(p: SettingsProps) {
   const scroller = useRef<HTMLDivElement>(null)
+  // Models › a machine's own page, until Back or another section.
+  const [machine, setMachine] = useState<string | null>(p.machine ?? null)
+  useEffect(() => { if (p.section !== 'models') setMachine(null) }, [p.section])
   // A new section starts at its top, unless Billing was opened for its code field, which has the
   // cursor (and the browser has scrolled it into view).
-  useEffect(() => { if (!p.focusCoupon) scroller.current?.scrollTo?.(0, 0) }, [p.section]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (!p.focusCoupon) scroller.current?.scrollTo?.(0, 0) }, [p.section, machine]) // eslint-disable-line react-hooks/exhaustive-deps
+  const open = p.section === 'models' ? (p.machines ?? []).find((m) => m.id === machine) : undefined
   return (
     <main className="main docs-main settings-main">
       <div className="titlebar">{p.bar}</div>
       <div className="scroll" ref={scroller}>
         <div className="col settings-page" aria-label={SECTIONS.find((s) => s.id === p.section)?.label}>
-          {p.section === 'account' && <AccountSection {...p} />}
-          {p.section === 'appearance' && <AppearanceSection />}
-          {p.section === 'models' && <ModelsSettings account={p.account} machines={p.machines ?? []} machine={p.machine} onBilling={() => p.onOpen('billing')} />}
-          {p.section === 'billing' && <BillingSection {...p} />}
+          {open
+            ? <MachinePage machine={open} machines={p.machines ?? []} onBack={() => setMachine(null)} />
+            : <SectionView {...p} onMachine={setMachine} />}
         </div>
       </div>
     </main>
   )
 }
 
+type Ctx = SettingsProps & { onMachine: (id: string) => void; historyStamp?: number }
+
+/** A row: label and description from the list, the control on the right. */
+function Row({ row, children }: { row: SettingRow; children?: ReactNode }) {
+  const { label, description } = webWords(row)
+  return (
+    <div className="set-row" data-row={row.id}>
+      <div style={{ flex: 1, minWidth: 0 }}><b>{label}</b>{description && <div className="det wrap">{description}</div>}</div>
+      {children}
+    </div>
+  )
+}
+
+/** The rows the web draws, by id. Each returns its row (or rows); a row drawn inside another's
+ *  block (the code field is in the credit card, as on the Mac) is in DRAWN_BY instead. A test holds
+ *  this to the list: every web row has a renderer and no renderer is for a row the web leaves out. */
+export const RENDER: Record<string, (row: SettingRow, p: Ctx) => ReactNode> = {
+  notifications: (row) => notifySupported() ? <Notify row={row} /> : null,
+  theme: (row) => <ThemeRow row={row} />,
+  density: (row) => <DensityRow row={row} />,
+  'default-model': (row, p) => <DefaultModel row={row} {...p} />,
+  machines: (_, p) => <Machines machines={p.machines ?? []} onOpen={p.onMachine} />,
+  'frog-cloud': (_, p) => <FrogCloud account={p.account} onBilling={() => p.onOpen('billing')} />,
+  'default-mode': (row, p) => <DefaultMode row={row} mode={p.newMode ?? 'auto'} onMode={p.onNewMode} />,
+  'cloud-sandbox': (row) => <Row row={row}><span className="det">Always on</span></Row>,
+  shortcuts: () => <Shortcuts />,
+  profile: (_, p) => <Profile {...p} />,
+  'sign-ins': (_, p) => <Logins account={p.account} onConnect={p.onConnect} />,
+  devices: (_, p) => p.apiKey ? <Keys apiKey={p.apiKey} /> : null,
+  plan: (_, p) => <Subscription account={p.account} apiKey={p.apiKey} onSubscribe={p.onSubscribe} />,
+  credit: (_, p) => <Credit {...p} />,
+  'credit-history': (_, p) => p.apiKey ? <History key={p.historyStamp} apiKey={p.apiKey} /> : null,
+  prices: (_, p) => <Prices models={p.models ?? []} />,
+}
+export const DRAWN_BY: Record<string, string> = { coupon: 'credit' }
+
+/** Rows run under their group's label, in groups the page's rules draw; Billing's blocks aren't rows. */
+const UNGROUPED = new Set(['profile', 'plan', 'credit', 'credit-history', 'prices'])
+
+/** A section: its title, the rows that work here, then the Mac's rows as invitations. */
+function SectionView(p: SettingsProps & { onMachine: (id: string) => void }) {
+  // A redeemed code shows in the credit history at once.
+  const [stamp, setStamp] = useState(0)
+  const ctx: Ctx = { ...p, historyStamp: stamp, onRedeemed: (r) => { setStamp((n) => n + 1); p.onRedeemed?.(r) } }
+  const { rows, invites } = webRows(p.section)
+  const drawn = rows.filter((r) => !DRAWN_BY[r.id])
+  const groups = new Set(drawn.map((r) => r.group ?? ''))
+  // Consecutive rows of one group share a group block, under its label when the page has several.
+  const runs: { group: string; rows: SettingRow[] }[] = []
+  for (const r of drawn) {
+    const g = r.group ?? ''
+    if (runs.at(-1)?.group === g && !UNGROUPED.has(r.id) && !UNGROUPED.has(runs.at(-1)!.rows[0].id)) runs.at(-1)!.rows.push(r)
+    else runs.push({ group: g, rows: [r] })
+  }
+  return (<>
+    <h2>{SECTIONS.find((s) => s.id === p.section)?.label}</h2>
+    {runs.map((run, i) => (
+      <Fragment key={run.rows[0].id}>
+        {run.group && groups.size > 1 && runs[i - 1]?.group !== run.group && <div className="set-h">{run.group}</div>}
+        {UNGROUPED.has(run.rows[0].id)
+          ? run.rows.map((r) => <Fragment key={r.id}>{RENDER[r.id]?.(r, ctx)}</Fragment>)
+          : <div className="set-group">{run.rows.map((r) => <Fragment key={r.id}>{RENDER[r.id]?.(r, ctx)}</Fragment>)}</div>}
+      </Fragment>
+    ))}
+    <Invites rows={invites} section={p.section} machines={p.machines} />
+  </>)
+}
+
+/** The Mac's rows, at the foot under one label: same words, and the pill where the control would be. */
+function Invites({ rows, section, machines }: { rows: SettingRow[]; section: Section; machines?: Machine[] }) {
+  if (!rows.length) return null
+  return (<>
+    <div className="set-h">On your Mac</div>
+    <div className="set-group set-invites">
+      {rows.map((r) => <Row key={r.id} row={r}><InvitePill section={section} machines={machines} /></Row>)}
+    </div>
+  </>)
+}
+
+/** A segmented choice, frog-drawn: two to four options on a line. */
+function Seg<T extends string>({ label, options, value, onPick }: { label: string; options: { id: string; label: string }[]; value: T; onPick: (v: T) => void }) {
+  return (
+    <div className="topup-amts set-seg" role="radiogroup" aria-label={label}>
+      {options.map((o) => <button key={o.id} type="button" role="radio" aria-checked={value === o.id} className={value === o.id ? 'on' : ''} onClick={() => onPick(o.id as T)}>{o.label}</button>)}
+    </div>
+  )
+}
+
 // ---------- Account ----------
 
-function AccountSection({ account, apiKey, onConnect, onSignOut }: SettingsProps) {
+/** Name, email and Sign out. */
+function Profile({ account, onSignOut }: SettingsProps) {
   return (<>
-    <h2>Account</h2>
     <div className="f-account">
       <span className="mark" style={{ width: 28, height: 28 }} />
       <div className="grow"><div className="name"><b>{account?.name ?? firstName(account) ?? 'Signed in'}</b>{account?.handle && <span className="f-badge">GitHub</span>}</div><div className="detail">{[account?.handle && `@${account.handle}`, account?.email].filter(Boolean).join(' · ')}</div></div>
       <div className="acts"><button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={onSignOut}>Sign out</button></div>
     </div>
     <p className="det wrap">Cloud sessions belong to your account, so they show up on every device you sign in on.</p>
-    <div className="set-h">Sign-ins</div>
-    <div className="set-group"><Logins account={account} onConnect={onConnect} /></div>
-    {apiKey && <Keys apiKey={apiKey} />}
-    {notifySupported() && (<><div className="set-h">Notifications</div><div className="set-group"><Notify /></div></>)}
   </>)
 }
 
@@ -117,12 +212,12 @@ function Logins({ account, onConnect }: { account: Account | null; onConnect?: (
   ))
 }
 
-function Notify() {
+function Notify({ row }: { row: SettingRow }) {
   const [on, setOn] = useState(notifyOn())
   return (
-    <label className="set-row">
-      <div style={{ flex: 1 }}><b>Notifications</b><div className="det wrap">When a session needs you or finishes while Frog is in the background.</div></div>
-      <input type="checkbox" role="switch" checked={on} onChange={async (e) => setOn(await setNotify(e.target.checked))} />
+    <label className="set-row" data-row={row.id}>
+      <div style={{ flex: 1 }}><b>{row.label}</b><div className="det wrap">{row.description}</div></div>
+      <input type="checkbox" role="switch" aria-label={row.label} checked={on} onChange={async (e) => setOn(await setNotify(e.target.checked))} />
     </label>
   )
 }
@@ -140,8 +235,7 @@ function Keys({ apiKey }: { apiKey: string }) {
   useEffect(() => { load() }, [apiKey]) // eslint-disable-line react-hooks/exhaustive-deps
   const live = (keys ?? []).filter((k) => !k.revoked)
   return (<>
-    <div className="set-h">Devices and keys</div>
-    <div className="set-group set-keys">
+    <div className="set-keys">
       {!keys && !error && <div className="set-row det">Loading…</div>}
       {live.map((k) => (
         <div key={k.id} className="set-row">
@@ -175,51 +269,104 @@ function Keys({ apiKey }: { apiKey: string }) {
 // ---------- Appearance ----------
 
 /** The theme, kept in this browser: System follows the device. */
-function AppearanceSection() {
+function ThemeRow({ row }: { row: SettingRow }) {
   const [theme, setThemeState] = useState<Theme>(() => savedTheme())
-  const pick = (t: Theme) => { setThemeState(t); setTheme(t) }
+  return <Row row={row}><Seg label={row.label} options={row.options!} value={theme} onPick={(t: Theme) => { setThemeState(t); setTheme(t) }} /></Row>
+}
+
+/** Compact tightens the transcript's gaps, kept in this browser. */
+function DensityRow({ row }: { row: SettingRow }) {
+  const [d, setD] = useState<Density>(() => savedDensity())
+  return <Row row={row}><Seg label={row.label} options={row.options!} value={d} onPick={(v: Density) => { setD(v); setDensity(v) }} /></Row>
+}
+
+// ---------- Models ----------
+
+/** New conversations use: the last model picked, or one model every time. */
+function DefaultModel({ row, models = [], pinnedModel, onPinModel }: { row: SettingRow } & SettingsProps) {
+  const value = pinnedModel && models.some((m) => m.id === pinnedModel) ? pinnedModel : ''
+  return (
+    <Row row={row}>
+      <select className="f-pill invite-pill set-menu" aria-label={row.label} value={value} onChange={(e) => onPinModel?.(e.target.value || null)} disabled={!onPinModel}>
+        <option value="">The last model I used</option>
+        {models.map((m) => <option key={m.id} value={m.id}>{modelName(m.id)}</option>)}
+      </select>
+    </Row>
+  )
+}
+
+// ---------- Permissions ----------
+
+/** New sessions start in: the selected mode's one line under the label. Yolo asks first, as the
+ *  composer does. */
+function DefaultMode({ row, mode, onMode }: { row: SettingRow; mode: Mode; onMode?: (m: Mode) => void }) {
+  const [confirm, setConfirm] = useState(false)
+  const picked = row.options!.find((o) => o.id === mode) ?? row.options![0]
   return (<>
-    <h2>Appearance</h2>
-    <div className="set-group">
-      <div className="set-row">
-        <div style={{ flex: 1 }}><b>Theme</b><div className="det wrap">System follows your device's light or dark setting.</div></div>
-        <div className="topup-amts set-seg" role="radiogroup" aria-label="Theme">
-          {THEMES.map((t) => <button key={t.id} type="button" role="radio" aria-checked={theme === t.id} className={theme === t.id ? 'on' : ''} onClick={() => pick(t.id)}>{t.label}</button>)}
-        </div>
-      </div>
+    <div className="set-row" data-row={row.id}>
+      <div style={{ flex: 1, minWidth: 0 }}><b>{row.label}</b><div className="det wrap">{picked.description}</div></div>
+      <Seg label={row.label} options={row.options!} value={mode} onPick={(m: Mode) => { if (m === 'yolo' && mode !== 'yolo') setConfirm(true); else { setConfirm(false); onMode?.(m) } }} />
     </div>
+    {confirm && (
+      <div className="set-row" role="alertdialog" aria-label="Start new sessions in Yolo?">
+        <div style={{ flex: 1 }} className="det wrap">Every new session runs every step without asking. It's your sandbox; nothing is pushed unless you ask.</div>
+        <button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => { setConfirm(false); onMode?.('yolo') }}>Start in Yolo</button>
+        <button type="button" className="f-btn f-btn--plain f-btn--small" onClick={() => setConfirm(false)}>Cancel</button>
+      </div>
+    )}
   </>)
+}
+
+// ---------- Shortcuts ----------
+
+/** The web's own keys, read-only. */
+export const WEB_SHORTCUTS: [string, [string, string][]][] = [
+  ['Conversation', [['Send', '↩'], ['New line', '⇧↩'], ['Stop the turn', 'Esc'], ['Last message again', '↑'], ['Permission mode', '⌘.']]],
+  ['Answer a request', [['Allow', '⌘↩'], ['Deny', '⌘.']]],
+  ['App', [['Command palette', '⌘K'], ['New session', '⌘N'], ['Settings', '⌘,'], ['Show or hide the sidebar', '⌘\\'], ['Back to app', 'Esc']]],
+]
+
+function Shortcuts() {
+  return WEB_SHORTCUTS.map(([group, keys]) => (
+    <Fragment key={group}>
+      <div className="set-h">{group}</div>
+      <div className="set-group">
+        {keys.map(([what, k]) => <div key={what} className="set-row"><div style={{ flex: 1 }}>{what}</div><span className="det mono">{k}</span></div>)}
+      </div>
+    </Fragment>
+  ))
 }
 
 // ---------- Billing ----------
 
-function BillingSection({ account, apiKey, models = [], focusCoupon, onTopUp, onSubscribe, onRedeemed }: SettingsProps) {
-  // A redeemed code shows in the credit history at once.
-  const [stamp, setStamp] = useState(0)
-  return (<>
-    <h2>Billing</h2>
-    <Subscription account={account} apiKey={apiKey} onSubscribe={onSubscribe} />
+/** Usage credit: the balance, Add credit and the code field, one card as on the Mac. */
+function Credit({ account, apiKey, focusCoupon, onTopUp, onRedeemed }: SettingsProps) {
+  return (
     <div className="bill-card">
       <div className="bill-h"><b>Usage credit</b><b className="num">{creditLine(account)}</b></div>
       <div className="det wrap">{account?.subscription
         ? account.subscription.over ? 'Your plan’s allowance is used up, so turns are paying from credit at the prices below until it resets.' : 'Used only past your plan’s allowance, at the prices below.'
         : 'Each turn pays from credit at the model’s prices below.'}</div>
       {onTopUp && <TopUp onTopUp={onTopUp} />}
-      {apiKey && <Coupon apiKey={apiKey} focus={focusCoupon} onRedeemed={(r) => { setStamp((n) => n + 1); onRedeemed?.(r) }} />}
+      {apiKey && <Coupon apiKey={apiKey} focus={focusCoupon} onRedeemed={onRedeemed} />}
     </div>
-    {apiKey && <History key={stamp} apiKey={apiKey} />}
-    {models.length > 0 && (
-      <div className="set-prices">
-        <div className="set-price-h"><span>Model</span><span>Input</span><span>Cached</span><span>Output</span></div>
-        {models.map((m) => (
-          <div key={m.id} className="set-price">
-            <span>{modelName(m.id)}</span><span>{perM(m.input)}</span><span>{perM(m.cached)}</span><span>{perM(m.output)}</span>
-          </div>
-        ))}
-        <div className="det">Per million tokens.</div>
-      </div>
-    )}
-  </>)
+  )
+}
+
+/** Prices per model, per million tokens. */
+function Prices({ models }: { models: Model[] }) {
+  if (!models.length) return null
+  return (
+    <div className="set-prices">
+      <div className="set-price-h"><span>Model</span><span>Input</span><span>Cached</span><span>Output</span></div>
+      {models.map((m) => (
+        <div key={m.id} className="set-price">
+          <span>{modelName(m.id)}</span><span>{perM(m.input)}</span><span>{perM(m.cached)}</span><span>{perM(m.output)}</span>
+        </div>
+      ))}
+      <div className="det">Per million tokens.</div>
+    </div>
+  )
 }
 
 /** The plan and its allowance, or (without one) the plans to pick from. */
@@ -349,36 +496,29 @@ function perM(p: number | null) {
 
 // ---------- Models ----------
 
-/** Settings › Models, as on the Mac: your machines (every node, This Mac included, the same
- *  row), a page per machine, then Frog Cloud. Pairing happens in the Mac app. */
-export function ModelsSettings({ account, machines, machine, onBilling }: { account: Account | null; machines: Machine[]; machine?: string; onBilling: () => void }) {
-  const [open, setOpen] = useState<string | null>(machine ?? null)
-  const d = machines.find((m) => m.id === open)
-  if (d) return <MachinePage machine={d} machines={machines} onBack={() => setOpen(null)} />
+/** Your machines, every node (This Mac included) the same row; each opens its page. */
+function Machines({ machines, onOpen }: { machines: Machine[]; onOpen: (id: string) => void }) {
+  if (!machines.length) return <div className="set-row det">No machines yet.</div>
+  return machines.map((m) => (
+    <button key={m.id} type="button" className="set-row set-machine" onClick={() => onOpen(m.id)}>
+      <div style={{ flex: 1, minWidth: 0 }}><b>{m.name}</b>{m.thisMac && <span className="det" style={{ marginLeft: 6 }}>This Mac</span>}<div className="det">{m.hardware}</div></div>
+      <span className={m.model ? '' : 'det'}>{runningLine(m)}</span>
+      <span className="cz-dot" style={{ background: placeColor('local'), opacity: m.online ? 1 : 0.25 }} aria-hidden="true" />
+      <span className="det">›</span>
+    </button>
+  ))
+}
+
+/** Frog Cloud: who's signed in and the credit, with Add credit in Billing. */
+function FrogCloud({ account, onBilling }: { account: Account | null; onBilling: () => void }) {
   return (<>
-    <h2>Models</h2>
-    <div className="set-h">Machines</div>
-    <div className="set-group">
-      {machines.map((m) => (
-        <button key={m.id} type="button" className="set-row set-machine" onClick={() => setOpen(m.id)}>
-          <div style={{ flex: 1, minWidth: 0 }}><b>{m.name}</b>{m.thisMac && <span className="det" style={{ marginLeft: 6 }}>This Mac</span>}<div className="det">{m.hardware}</div></div>
-          <span className={m.model ? '' : 'det'}>{runningLine(m)}</span>
-          <span className="cz-dot" style={{ background: placeColor('local'), opacity: m.online ? 1 : 0.25 }} aria-hidden="true" />
-          <span className="det">›</span>
-        </button>
-      ))}
-      <div className="set-row"><div style={{ flex: 1 }}><b>Pair a machine</b><div className="det wrap">Machines you pair show here, with their models. <a href="/mac">Get the Mac app</a></div></div><DownloadAppChip label="Pair machines in the Mac app" machines={machines} /></div>
-    </div>
-    <div className="set-h">Frog Cloud</div>
-    <div className="set-group">
-      <div className="set-row"><div style={{ flex: 1 }}>Account</div><span className="det">{[account?.name ?? firstName(account), account?.email].filter(Boolean).join(' · ') || 'Signed in'}</span></div>
-      <div className="set-row"><div style={{ flex: 1 }}>Credit</div><span className="num">{creditLine(account).replace(/ credit$/, '')}</span><button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={onBilling}>Add credit…</button></div>
-    </div>
+    <div className="set-row"><div style={{ flex: 1 }}>Account</div><span className="det">{[account?.name ?? firstName(account), account?.email].filter(Boolean).join(' · ') || 'Signed in'}</span></div>
+    <div className="set-row"><div style={{ flex: 1 }}>Credit</div><span className="num">{creditLine(account).replace(/ credit$/, '')}</span><button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={onBilling}>Add credit…</button></div>
   </>)
 }
 
-/** A machine's page: status and memory, its models, and the node. Read-only on the web: what the
- *  Mac app does here (stop a model, rename or unpair the node) is a chip, not a dead button. */
+/** A machine's page: status and memory, its models, then what the Mac app does here (rename or
+ *  unpair it, share it) as invitations. Read-only on the web. */
 function MachinePage({ machine: d, machines, onBack }: { machine: Machine; machines: readonly Machine[]; onBack: () => void }) {
   const used = d.freeBytes == null || !d.totalBytes ? 0 : 1 - Math.min(d.freeBytes, d.totalBytes) / d.totalBytes
   return (<>
@@ -403,17 +543,11 @@ function MachinePage({ machine: d, machines, onBack }: { machine: Machine; machi
             {catalogModel(m.id) && <div className="det">{usesLine(catalogModel(m.id)!)}</div>}
           </div>
           {m.loaded && d.decode ? <span className="det">{Math.round(d.decode)} tok/s</span> : null}
-          {m.loaded && <DownloadAppChip label="Stop it in the Mac app" machines={machines} />}
           {!m.loaded && canPull() && <button type="button" className="f-btn f-btn--bordered f-btn--small" disabled>Delete</button>}
         </div>
       ))}
       {canPull() && <div className="set-row"><button type="button" className="f-btn f-btn--bordered f-btn--small" disabled>Download a model…</button></div>}
     </div>
-    <div className="set-h">Node</div>
-    <div className="set-group">
-      <label className="set-row"><div style={{ flex: 1 }}>Share with my other machines</div><input type="checkbox" role="switch" checked disabled /></label>
-      <div className="set-row"><div style={{ flex: 1 }}>Name</div><span>{d.name}</span><DownloadAppChip label="Rename it in the Mac app" machines={machines} /></div>
-      {!d.thisMac && <div className="set-row"><DownloadAppChip label={`Unpair ${d.name} in the Mac app`} machines={machines} /></div>}
-    </div>
+    <Invites rows={webRows('models', 'machine').invites} section="models" machines={[...machines]} />
   </>)
 }
