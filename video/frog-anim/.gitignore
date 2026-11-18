@@ -1,0 +1,9 @@
+# rendered output stays out of git; contact-sheets/*.png are the only checked-in renders
+out/
+*.mp4
+*.webm
+*.mov
+*.gif
+*.apng
+__pycache__/
+*.egg-info/
