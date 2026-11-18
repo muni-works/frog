@@ -9,15 +9,13 @@ struct UserFooter: View {
     @State private var failure: String?
     /// The provider of the sign-in that failed, for Try Again.
     @State private var lastProvider: String?
-    @AppStorage("settingsTab") private var settingsTab = "general"
-    @Environment(\.openSettings) private var openSettings
+    @Environment(\.showSettings) private var showSettings
 
     var body: some View {
         Group {
             if let me = account.me {
                 Button {
-                    settingsTab = "billing"
-                    openSettings()
+                    showSettings?("billing")
                 } label: {
                     row(avatar: me.handle.map { "https://github.com/\($0).png?size=56" } ?? me.image, title: Self.firstName(me) ?? "Signed in", detail: Self.creditLine(me), warn: me.credit_cents <= 0 && me.subscription == nil)
                 }

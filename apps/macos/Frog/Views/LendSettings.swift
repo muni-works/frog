@@ -1,63 +1,8 @@
 import SwiftUI
 
-/// Settings › Lend: let your other Macs run models on this one.
-struct LendSettings: View {
-    @ObservedObject private var lender = MacLender.shared
-    @State private var pairing = false
 
-    var body: some View {
-        Form {
-            Section {
-                Toggle("Lend this Mac", isOn: $lender.enabled)
-                Text("Your other Macs can run models on this one. Only machines you pair with a code can use it, and only while Frog is open. It uses this Mac's GPU and memory while they do, and it never keeps this Mac awake.")
-                    .font(.frog(size: 12))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Section {
-                Toggle("Keep lending on battery", isOn: $lender.onBattery)
-                    .help("Off: lending pauses when you unplug and resumes on power.")
-                LabeledContent("Status") { status }
-            }
-            .disabled(!lender.enabled)
-            Section {
-                HStack {
-                    Text("Pair another Mac with this one by typing a code on it.")
-                        .font(.frog(size: 12))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Pair a Mac…") { pairing = true }
-                        .disabled(lender.state != .running)
-                }
-            }
-        }
-        .formStyle(.grouped)
-        .sheet(isPresented: $pairing) { PairCodeSheet() }
-    }
-
-    @ViewBuilder private var status: some View {
-        switch lender.state {
-        case .off: Text("Off").foregroundStyle(.secondary)
-        case .starting: Text("Starting…").foregroundStyle(.secondary)
-        case .running: Label("Lending on port \(String(MacLender.port))", systemImage: "circle.fill")
-            .labelStyle(StatusDot())
-        case .paused(let why): Text(why).foregroundStyle(.secondary)
-        case .failed(let why): Text(why).foregroundStyle(.red)
-        }
-    }
-}
-
-private struct StatusDot: LabelStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        HStack(spacing: 6) {
-            Circle().fill(.green).frame(width: 7, height: 7)
-            configuration.title
-        }
-    }
-}
-
-/// The 6-digit code from `POST /pair/open`, big, with this Mac's fingerprint and a countdown.
-private struct PairCodeSheet: View {
+/// Pair a Mac with this one: a code typed on the other Mac (Settings › Models › This Mac).
+struct PairCodeSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var window: MacLender.PairWindow?
     @State private var failure: String?

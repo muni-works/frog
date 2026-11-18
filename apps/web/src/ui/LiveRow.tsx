@@ -5,6 +5,7 @@ import type { Model } from '../models'
 import { TurnLine, TurnPanel, paceFromCounts } from './TurnGraph'
 import { CopyButton } from './Transcript'
 import { OUTLINE_MAX, STALL_AT, liveRow, rateOf, secs, stalledLabel, type LiveRow } from './rows'
+import { BOOT, SteadyWords, startWords, useSteady, type StartInfo } from './Opening'
 
 // Phase 2 of the unified transcript (docs/design/transcript/spec.md, "The thinking row and the
 // stats line"): one live row at the end of the running turn, its stats 2 under it, and the
@@ -134,7 +135,7 @@ export function ThinkingLine({ e, label }: { e: Entry; label: string }) {
 
 /** The stats (spec, "The stats line"): time after the first second, tokens, tokens per second,
  * in meta. A count of streamed pieces is never shown as exact: no decimals, "so far" on hover. */
-function Stats({ info, row, rate, quiet, now, graph }: { info: LiveInfo; row: LiveRow; rate: number | null; quiet: number; now: number; graph?: ReactNode }) {
+function Stats({ info, row, rate, quiet, now, graph, keep }: { info: LiveInfo; row: LiveRow; rate: number | null; quiet: number; now: number; graph?: ReactNode; /** Hold the line's height while it has nothing to say. */ keep?: boolean }) {
   const took = now - info.startedAt
   const parts: string[] = []
   const hover: string[] = []
@@ -153,7 +154,7 @@ function Stats({ info, row, rate, quiet, now, graph }: { info: LiveInfo; row: Li
     if (row.kind === 'writing' && quiet >= STALL_AT) parts.push(stalledLabel(quiet).replace(/^No/, 'no'))
   }
   if (info.firstOutputAt != null) hover.push(`First token after ${(Math.max(0, info.firstOutputAt - info.startedAt) / 1000).toFixed(1)} seconds`)
-  if (!parts.length && !graph) return null
+  if (!parts.length && !graph) return keep ? <div className="live-stats" aria-hidden="true">{'\u00a0'}</div> : null
   return (
     <div className="live-stats">
       <span className="live-figures" title={hover.join('\n') || undefined}>
@@ -166,9 +167,12 @@ function Stats({ info, row, rate, quiet, now, graph }: { info: LiveInfo; row: Li
 
 /** The end of the running turn: the live row and its stats, or the stats alone under an answer
  * that's writing. */
-export function LiveTail({ entries, tl, waiting, waitItem, models = [] }: { entries: Entry[]; tl?: TimedEvent[]; waiting: boolean; /** The step a card now up belongs to. */ waitItem?: string; models?: Model[] }) {
+export function LiveTail({ entries, tl, waiting, waitItem, models = [], start }: { entries: Entry[]; tl?: TimedEvent[]; waiting: boolean; /** The step a card now up belongs to. */ waitItem?: string; models?: Model[]
+  /** A new session still starting (ui/Opening.tsx): this row says how far it's got, then carries
+   * on as the first turn's live row, the same row. */
+  start?: StartInfo }) {
   const info = useContext(LiveContext)
-  const now = useNow()
+  const now = useNow(start ? 250 : 1000)
   // Signs of life in the viewer's clock: the engine's times can be skewed against ours.
   const life = useRef({ pulse: -1, at: Date.now() })
   if (info && info.pulse !== life.current.pulse) life.current = { pulse: info.pulse, at: Date.now() }
@@ -183,6 +187,18 @@ export function LiveTail({ entries, tl, waiting, waitItem, models = [] }: { entr
   useEffect(() => { setReady(false); const t = setTimeout(() => setReady(true), 600); return () => clearTimeout(t) }, [row.item, row.kind])
   const button = useRef<HTMLButtonElement>(null)
   const [panel, setPanel] = useState(false)
+  // The start's words cross-fade, at most one change per 1.2 s, as does the hand-over to the
+  // turn's first words; after that the row cuts between steps as always (spec, "The row").
+  const sw = start ? startWords(start, now) : null
+  const [handing, setHanding] = useState(!!start)
+  if (start && !handing) setHanding(true)
+  const plain = { verb: row.label, object: row.object, failed: false }
+  const steady = useSteady(sw ?? plain, BOOT.dwellMs, handing)
+  const handed = !start && handing && steady.now.verb === plain.verb && steady.now.object === plain.object
+  useEffect(() => { if (!handed) return; const t = setTimeout(() => setHanding(false), 300); return () => clearTimeout(t) }, [handed])
+  // Nothing for the first 600 ms of a start (its height is kept); once shown, it stays shown.
+  const seen = useRef(!start)
+  if (start && now - start.since >= BOOT.quietMs) seen.current = true
   if (!info) return null
 
   const quiet = now - life.current.at
@@ -194,10 +210,12 @@ export function LiveTail({ entries, tl, waiting, waitItem, models = [] }: { entr
   const segs = segments([...(tl ?? []), ...up], now)
   const total = Math.max(1, now - info.startedAt)
   const pace = paceFromCounts(samples.current, info.startedAt, now)
-  const graph = segs.length ? <TurnLine segs={segs} total={total} pace={pace} entries={entries} onOpen={() => setPanel(true)} /> : undefined
+  const graph = segs.length && !start ? <TurnLine segs={segs} total={total} pace={pace} entries={entries} onOpen={() => setPanel(true)} /> : undefined
   const stats = (
     <>
-      <Stats info={info} row={row} rate={rate} quiet={quiet} now={now} graph={graph} />
+      {start
+        ? !sw?.failed && <Stats info={{ ...info, startedAt: start.since, live: null, firstOutputAt: null }} row={row} rate={null} quiet={0} now={now} keep />
+        : <Stats info={info} row={row} rate={rate} quiet={quiet} now={now} graph={graph} keep={row.kind !== 'writing'} />}
       {panel && <TurnPanel segs={segs} total={total} entries={entries} models={models} live pace={pace} onClose={() => setPanel(false)} />}
     </>
   )
@@ -205,21 +223,24 @@ export function LiveTail({ entries, tl, waiting, waitItem, models = [] }: { entr
 
   // Thinking (and the pause before it) can stall; a step or a card is held still on purpose. At
   // 30 s the engine asks the person (Keep waiting / Stop the turn), and the card waits like any.
-  const thinking = row.kind === 'thinking'
+  const thinking = !start && row.kind === 'thinking'
   const stalled = thinking && quiet >= STALL_AT
-  const state = row.kind === 'waiting' ? 'waiting' : stalled ? 'stalled' : thinking && quiet < 1500 && info.pulse > 0 ? 'on' : 'still'
+  const state = sw?.failed ? 'failed' : row.kind === 'waiting' && !start ? 'waiting' : stalled ? 'stalled' : thinking && quiet < 1500 && info.pulse > 0 ? 'on' : 'still'
   const item = thinking && row.item ? entries.find((e) => e.id === row.item) : undefined
   const words: ReactNode = (
     <>
       <span className="line-mark" aria-hidden="true"><span className="live-dot" /></span>
-      <span className="live-label">{stalled ? stalledLabel(quiet) : row.label}</span>
-      {row.object && <span className={`line-obj${row.mono ? ' mono' : ''}`}>{row.object}</span>}
+      {handing ? <SteadyWords s={steady} /> : <>
+        <span className="live-label">{stalled ? stalledLabel(quiet) : row.label}</span>
+        {row.object && <span className={`line-obj${row.mono ? ' mono' : ''}`}>{row.object}</span>}
+      </>}
       {thinking && item && !stalled && !open && <ThoughtFade text={ready ? row.thought : ''} />}
       {item && <span className="live-chev" aria-hidden="true">›</span>}
+      {sw?.failed && start?.onRetry && <button type="button" className="line-link start-retry" onClick={start.onRetry}>{BOOT.retry}</button>}
     </>
   )
   return (
-    <div className="live-row" data-row="live" data-kind={row.kind} data-state={state} role="status">
+    <div className="live-row" data-row="live" data-kind={start ? 'start' : row.kind} data-state={state} data-ready={seen.current ? undefined : 'false'} role="status">
       <div className="line-plate">
         {item
           ? <button ref={button} type="button" className="line live" aria-expanded={open} onClick={() => setOpen(!open)}>{words}</button>

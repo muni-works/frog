@@ -90,6 +90,9 @@ final class CloudAccount {
         keyLoaded = true
     }
 
+    /// A staged account (snapshots) never goes to the network.
+    var isStaged: Bool { unstaged != nil }
+
     func unstage() {
         guard let u = unstaged else { return }
         (me, key, keyLoaded) = (u.me, u.key, u.loaded)
@@ -110,6 +113,9 @@ final class CloudAccount {
     }
 
     func refresh() async {
+        #if DEBUG
+        if isStaged { return }
+        #endif
         if !keyLoaded { await reloadKey() }
         guard let key else { me = nil; error = nil; return }
         loading = true
@@ -120,6 +126,92 @@ final class CloudAccount {
         } catch {
             self.error = error.localizedDescription
         }
+    }
+
+    // MARK: Devices and keys, credit added, codes (as Settings on the web has them)
+
+    /// A signed-in app or a key made for the CLI or a tool (`/v1/keys`).
+    struct KeyInfo: Decodable, Identifiable, Hashable {
+        let id: String
+        let name: String?
+        let kind: String?
+        let created: String
+        let last_used: String?
+        let revoked: Bool?
+        /// The key this app is using.
+        let current: Bool?
+    }
+    private struct Keys: Decodable { let keys: [KeyInfo] }
+    struct NewKey: Decodable { let key: String; let id: String }
+    private struct OK: Decodable {}
+
+    /// Credit added: a top-up, a redeemed code, or another kind the edge lists.
+    struct CreditRow: Decodable, Hashable {
+        let kind: String?
+        let code: String?
+        let at: String
+        let amount_micro_usd: Double?
+        let added_cents: Double?
+        let status: String?
+        var dollars: Double { amount_micro_usd.map { $0 / 1e6 } ?? added_cents.map { $0 / 100 } ?? 0 }
+        /// What it was: nothing more for a top-up, the code for a coupon, else its kind.
+        var label: String {
+            switch kind {
+            case nil, "topup": ""
+            case "coupon": code.map { "Code \($0)" } ?? "Code"
+            case let k?: k.replacingOccurrences(of: "_", with: " ")
+            }
+        }
+    }
+    private struct History: Decodable { let topups: [CreditRow] }
+
+    struct Redeemed: Decodable { let added_cents: Double; let credit_cents: Double }
+    /// The edge's own words for a code it didn't take ("That code has expired").
+    struct CouponError: LocalizedError { let message: String; var errorDescription: String? { message } }
+    private struct ErrorBody: Decodable { struct E: Decodable { let message: String }; let error: E }
+
+    func keys() async throws -> [KeyInfo] {
+        #if DEBUG
+        if isStaged { return [] }
+        #endif
+        guard let key else { throw CloudError.rejected }
+        return try await call(Keys.self, "/v1/keys", key: key).keys
+    }
+
+    func createKey(_ name: String) async throws -> NewKey {
+        guard let key else { throw CloudError.rejected }
+        return try await call(NewKey.self, "/v1/keys", key: key, body: ["name": name])
+    }
+
+    func revokeKey(_ id: String) async throws {
+        guard let key else { throw CloudError.rejected }
+        _ = try await call(OK.self, "/v1/keys/\(id)/revoke", key: key, body: [:])
+    }
+
+    func history() async throws -> [CreditRow] {
+        #if DEBUG
+        if isStaged { return [] }
+        #endif
+        guard let key else { throw CloudError.rejected }
+        return try await call(History.self, "/v1/billing/history", key: key).topups
+    }
+
+    /// Redeems a code for Frog Cloud credit; a refusal throws the edge's message.
+    func redeem(_ code: String) async throws -> Redeemed {
+        guard let key else { throw CloudError.rejected }
+        var request = URLRequest(url: Self.origin.appending(path: "/v1/coupons/redeem"), timeoutInterval: 15)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["code": code])
+        let (data, response) = try await URLSession.shared.data(for: request)
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            if let e = try? JSONDecoder().decode(ErrorBody.self, from: data) { throw CouponError(message: e.error.message) }
+            throw http.statusCode == 401 ? CloudError.rejected : CloudError.status(http.statusCode)
+        }
+        let r = try JSONDecoder().decode(Redeemed.self, from: data)
+        await refresh()
+        return r
     }
 
     /// Leaves for Stripe Checkout: a plan, or credit in whole dollars.
