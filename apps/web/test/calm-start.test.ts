@@ -11,6 +11,8 @@
 //     back to the new-session page
 //   - a follow-up sent during the POST was queued under the placeholder's id and never sent
 //   - a delivered message was drawn twice for a commit (the outbox was pruned in an effect)
+//   - a repo session's title flipped from your message to the repo's name
+
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { act, closeHarness, dispatch, find, hasClass, mount, shownText, type HostNode, type OnCommit, type Page } from "./app-harness.ts";
@@ -111,7 +113,7 @@ test("the sent message is one node from Send, through the session's id, to its f
   w.p.unmount();
 });
 
-test("the composer stays the same, focused, with what you're typing, when the id arrives", async () => {
+test("the composer stays the same, with what you're typing, when the id arrives", async () => {
   const w = await world();
   await type(w.p, "Make a tiny pomodoro timer");
   await enter(w.p);
@@ -248,5 +250,43 @@ test("a message is never drawn twice: it leaves the outbox in the commit its tur
   await act(async () => { ws.emit({ event: "turn_started", turn: 2, input: "and a sound" }); });
   await tick(40);
   assert.equal(worst, 1, "two bubbles for one message in some commit");
+  w.p.unmount();
+});
+
+test("a repo session: the same message node, composer and title when the id arrives", async () => {
+  const w = await world();
+  const pick = w.p.root.root.find((n) => typeof n.props.onRepo === "function" && typeof n.props.onSend === "function");
+  await act(async () => { (pick.props.onRepo as (r: string) => void)("ecto/pond"); });
+  await tick();
+  await type(w.p, "Fix the flaky test");
+  await enter(w.p);
+  const title = () => shownText(find(w.p, (n) => n.type === "b" && n.props.title === "Double-click to rename")!);
+  const node = inst(bubbles(w.p)[0]);
+  const composer = inst(box(w.p));
+  assert.equal(title(), "Fix the flaky test");
+  assert.ok(statusRows(w.p).includes("Starting a sandbox for ecto/pond"), statusRows(w.p).join(" | "));
+  // zest titles a repo session with the repo until the engine names it.
+  await w.answer({ status: 201, body: { ...summary({ repo: "ecto/pond", title: "ecto/pond", branch: "frog/pond-012345" }), ws: "wss://x" } });
+  await act(async () => { dispatch("focus", {}); });
+  await tick();
+  assert.equal(title(), "Fix the flaky test", "not the repo's name");
+  assert.equal(inst(bubbles(w.p)[0]), node);
+  assert.equal(inst(box(w.p)), composer);
+  w.p.unmount();
+});
+
+test("a failed POST's placeholder can be deleted: it was never on the gateway", async () => {
+  const w = await world();
+  await type(w.p, "Fix the flaky test");
+  await enter(w.p);
+  await w.answer({ status: 503, body: { error: "Frog Cloud is busy." } });
+  const menu = find(w.p, (n) => n.type === "button" && n.props["aria-label"] === "Session menu");
+  await act(async () => { (menu!.props.onClick as () => void)(); });
+  const del = find(w.p, (n) => n.type === "button" && shownText(n) === "Delete session");
+  await act(async () => { (del!.props.onClick as () => void)(); });
+  await tick();
+  assert.ok(!w.p.calls.some((c) => c.method === "DELETE"), "no DELETE for an id the gateway never gave");
+  assert.equal(bubbles(w.p).length, 0, "gone, back to a new session");
+  assert.ok(!shownText(w.p.root.root as unknown as HostNode).includes("Couldn't delete"));
   w.p.unmount();
 });

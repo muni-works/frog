@@ -5,7 +5,7 @@ import { after, before, mock, test } from "node:test";
 import assert from "node:assert/strict";
 import { createElement as h } from "react";
 import TestRenderer, { act } from "react-test-renderer";
-import { BOOT, BootRow, bootWords, firstTitle, provisional, undelivered, withOpening, type Opening } from "../src/ui/Opening.tsx";
+import { BOOT, BootRow, STUCK_MS, bootWords, firstTitle, provisional, stuck, undelivered, withOpening, type Opening } from "../src/ui/Opening.tsx";
 import { emptyThread } from "../src/engine/thread.ts";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -72,6 +72,26 @@ test("shown once, Try again's new clock doesn't hide it again", async () => {
   await act(() => { r.update(h(BootRow, { since: Date.now() })); });
   assert.equal(row(r).props["data-ready"], "true");
   r.unmount();
+});
+
+test("up 30 s with no turn: the row says Frog didn't pick it up, with Try again", async () => {
+  const since = Date.now();
+  let r!: TestRenderer.ReactTestRenderer;
+  await act(() => { r = TestRenderer.create(h(BootRow, { since, upSince: since + 8000, onRetry: () => {} })); });
+  await advance(8000 + STUCK_MS - 500);
+  assert.ok(text(row(r)).startsWith("Starting a sandbox"));
+  await advance(1000);
+  assert.ok(text(row(r)).includes("Failed Frog didn't pick this up."), text(row(r)));
+  assert.ok(r.root.find((n) => n.type === "button" && text(n) === BOOT.retry));
+  r.unmount();
+});
+
+test("stuck: up for 30 s with no turn and no other failure", () => {
+  const o = op({ runningAt: 0 });
+  assert.equal(stuck(o, STUCK_MS - 1), false);
+  assert.equal(stuck(o, STUCK_MS), true);
+  assert.equal(stuck({ ...o, failed: "x" }, STUCK_MS), false, "a failure already says why");
+  assert.equal(stuck(op(), 10 * STUCK_MS), false, "not up yet");
 });
 
 test("words: starting, with the repo when there is one; failed with the reason", () => {

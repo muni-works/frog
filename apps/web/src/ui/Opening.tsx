@@ -25,9 +25,16 @@ export interface Opening {
   at: number
   /** The session as listed, so a list refresh that hasn't caught up can't drop it. */
   row: SessionSummary
-  /** POST /v1/sessions failed: why, in words. */
+  /** It couldn't start (the POST failed, or no turn came): why, in words. */
   failed?: string
+  /** When the gateway first said the sandbox is up. */
+  runningAt?: number
 }
+
+/** Up for this long with no turn: the engine didn't pick the first message up. */
+export const STUCK_MS = 30_000
+/** Up, no turn, for too long: Try again sends the message again rather than starting over. */
+export const stuck = (o: Opening, now = Date.now()) => !o.failed && o.runningAt != null && now - o.runningAt >= STUCK_MS
 
 /** The words a first message titles its session with until the engine names it. */
 export const firstTitle = (text: string) => (text.length > 60 ? text.slice(0, 57) + '…' : text)
@@ -57,6 +64,7 @@ export const BOOT = {
   object: (repo?: string) => (repo ? `a sandbox for ${repo}` : 'a sandbox'),
   failed: 'Failed',
   retry: 'Try again',
+  stuck: "Frog didn't pick this up.",
   /** Nothing for this long: a quick start never shows the row. */
   quietMs: 600,
   /** At most one change this often. */
@@ -88,16 +96,17 @@ function useSteady(value: Words, dwell: number) {
 }
 
 function Phrase({ w }: { w: Words }) {
-  return <><span className={`live-label${w.failed ? ' boot-failed' : ''}`}>{w.verb}</span> <span className="line-obj">{w.object}</span></>
+  return <><span className={`live-label${w.failed ? ' boot-failed' : ''}`}>{w.verb}</span> <span className="line-obj" title={w.object}>{w.object}</span></>
 }
 
 /** The row under the sent message while the sandbox boots: the live row's place and look, held
  * still. Invisible for the first 600 ms (its space is kept, so nothing moves when it shows),
  * then "Starting a sandbox"; the seconds from 5 s; failed, the reason and Try again, in place. */
-export function BootRow({ since, repo, error, onRetry }: { since: number; repo?: string; error?: string | null; onRetry?: () => void }) {
+export function BootRow({ since, repo, error, upSince, onRetry }: { since: number; repo?: string; error?: string | null; /** When the gateway said it's up (no turn yet). */ upSince?: number; onRetry?: () => void }) {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 250); return () => clearInterval(t) }, [])
-  const words = useSteady(bootWords({ repo, error }), BOOT.dwellMs)
+  const late = upSince != null && now - upSince >= STUCK_MS
+  const words = useSteady(bootWords({ repo, error: error ?? (late ? BOOT.stuck : null) }), BOOT.dwellMs)
   // Shown once, it stays shown: Try again restarts the clock, not the 600 ms.
   const shown = useRef(false)
   if (now - since >= BOOT.quietMs) shown.current = true

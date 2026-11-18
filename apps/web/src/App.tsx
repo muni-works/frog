@@ -17,7 +17,7 @@ import { Inspector } from './ui/Inspector'
 import { usePreviewHub } from './ui/PreviewPane'
 import type { PreviewHub } from './preview'
 import { SessionList } from './ui/SessionList'
-import { BootRow, firstTitle, provisional, undelivered, withOpening, type Opening } from './ui/Opening'
+import { BootRow, firstTitle, stuck, provisional, undelivered, withOpening, type Opening } from './ui/Opening'
 import { useMachines } from './machines'
 import { creditLine, Palette, type Command } from './ui/Overlays'
 import { SettingsPage, SettingsRow, SettingsSidebar } from './ui/Settings'
@@ -258,7 +258,7 @@ export default function App() {
   const ct = current ? thread(current.id) : null
   // Still opening: no turn yet. Its sent message and status row stand in (ui/Opening.tsx).
   const op = current && ct && ct.turns.length === 0 ? opening[current.id] : undefined
-  const failedStart = !!op && (!!op.failed || current?.state === 'error')
+  const failedStart = !!op && (!!op.failed || current?.state === 'error' || stuck(op))
   // "Try it on your own code": once per account, after its first finished turn without GitHub.
   const tag = account ? accountTag(account) : null
   // Read in render, not an effect: a first render with no memo would claim the card again.
@@ -300,8 +300,9 @@ export default function App() {
   // The open session's own changes show in the list at once, not at the next poll.
   useEffect(() => { refreshSessions() }, [ct?.running, ct?.turns.length]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (current && compacting[current.id] && (ct?.marks ?? []).length >= compacting[current.id]) setCompacting(({ [current.id]: _, ...rest }) => rest) }, [current, ct?.marks, compacting]) // eslint-disable-line react-hooks/exhaustive-deps
-  // A session without a repo is listed as "New session" until the engine names it: its first message reads better.
-  const title = (s: SessionSummary) => keptTitle(s.id, thread(s.id).title, s.title === 'New session' && firsts.current[s.id] ? firsts.current[s.id] : s.title)
+  // Until the engine names it, the gateway lists a session as its repo or "New session": its first
+  // message, when this tab sent it, reads better and doesn't change when the id arrives.
+  const title = (s: SessionSummary) => keptTitle(s.id, thread(s.id).title, firsts.current[s.id] && (s.title === 'New session' || s.title === s.repo) ? firsts.current[s.id] : s.title)
   // The turn ended: what was queued goes as the next turn, one Submit with the rest as `more`.
   const fresh = useRef(once<object>()).current
   useEffect(() => {
@@ -318,7 +319,7 @@ export default function App() {
   }, [current, ct, opening])
   // While a new sandbox boots, its state (running, or error and why) is read every 2 s rather than
   // at the list's 10 s, so a boot that failed says so on the status row soon after.
-  const booting = current && !current.id.startsWith(PENDING) && op && !op.failed && current.state !== 'error' ? current.id : null
+  const booting = current && !current.id.startsWith(PENDING) && op && !op.failed && !op.runningAt && current.state !== 'error' ? current.id : null
   useEffect(() => {
     if (!booting || !cloud) return
     const t = setInterval(() => {
@@ -329,6 +330,12 @@ export default function App() {
     }, 2000)
     return () => clearInterval(t)
   }, [booting, cloud, setSessions])
+  // When the gateway first says the sandbox is up. No turn 30 s after that and the status row says
+  // the engine didn't pick the message up (zest only reports errors from the boot itself).
+  const upId = op && !op.failed && !op.runningAt && current?.state === 'running' ? current.id : null
+  useEffect(() => {
+    if (upId) setOpening((all) => (all[upId] && !all[upId].runningAt ? { ...all, [upId]: { ...all[upId], runningAt: Date.now() } } : all))
+  }, [upId])
   // Alerts: the tab title's badge and background notifications, from every streamed session.
   // Recomputed per frame (cheap), but handed on only when a signal actually changed.
   const signals = useMemo(() => sessions.map((s) => {
@@ -407,7 +414,7 @@ export default function App() {
   const [pending, setPending] = useState<string | null>(null)
   // Without GitHub a new session is a scratch sandbox, so its ideas are things to build, not repo chores.
   const starterChips = useMemo(() => pickStarters(3, !key || !account?.handle).map((text) => ({ text })), [key, account?.handle])
-  const start = useCallback(async (text: string, repo?: string, images: Image[] = [], base?: string, slot?: string) => {
+  const start = useCallback(async (text: string, repo?: string, images: Image[] = [], base?: string, slot?: string, before?: Promise<unknown>) => {
     if (!cloud) return
     // Open the session at once, as a placeholder, and adopt the real one when the gateway
     // answers: starting a conversation should feel instant, not wait on a round trip. The view,
@@ -420,6 +427,7 @@ export default function App() {
     setOpening((o) => ({ ...o, [temp]: { text, images, repo, base, at, row } }))
     setView({ kind: 'session', id: temp })
     try {
+      await before // Try again: the failed sandbox goes first, so it doesn't count against the running limit
       const s = await cloud.gateway.create({ ...(repo ? { repo } : {}), ...(repo && base ? { base } : {}), ...(chosenModel ? { model: spec(chosenModel) } : {}) })
       slots.current[s.id] = slots.current[temp]
       firsts.current[s.id] = firsts.current[temp]
@@ -433,20 +441,29 @@ export default function App() {
       cloud.send(s.id, { op: 'submit', text, ...(images.length ? { images } : {}) }) // queued until the session's socket is live
     } catch (e) {
       // Said in place, on the status row, with Try again: the message stays where it is.
-      setOpening((o) => (o[temp] ? { ...o, [temp]: { ...o[temp], failed: `Couldn't start a sandbox: ${friendly(e)}` } } : o))
+      const why = `Couldn't start a sandbox: ${friendly(e)}`
+      setOpening((o) => (o[temp] ? { ...o, [temp]: { ...o[temp], failed: why, row: { ...o[temp].row, state: 'error', error: why } } } : o))
     }
   }, [cloud, setSessions, chosenModel, newMode])
   /** A session that couldn't start, started again in place: the same message, the same composer. */
   const retry = useCallback((id: string, text?: string, images: Image[] = []) => {
     const o = opening[id]
-    if (!o) return
+    if (!o || !cloud) return
+    if (stuck(o)) {
+      // The sandbox is up but no turn started: the message (or what you typed instead) again, to the same session.
+      const next = { text: text ?? o.text, images: text === undefined ? o.images : images }
+      setOpening((all) => ({ ...all, [id]: { ...o, ...next, runningAt: Date.now() } }))
+      cloud.send(id, { op: 'submit', text: next.text, ...(next.images.length ? { images: next.images } : {}) })
+      return
+    }
     setOpening(({ [id]: _, ...rest }) => rest)
+    let gone: Promise<unknown> | undefined
     if (!id.startsWith(PENDING)) {
       // Its sandbox failed to boot: a fresh one, and this one goes (it holds nothing yet).
       setSessions((all) => all.filter((x) => x.id !== id))
-      cloud?.gateway.remove(id).catch(() => { /* gone already, or it'll be in the list to delete */ })
+      gone = cloud.gateway.remove(id).catch(() => { /* gone already, or it'll be in the list to delete */ })
     }
-    start(text ?? o.text, o.repo, text === undefined ? o.images : images, o.base, slots.current[id] ?? id)
+    start(text ?? o.text, o.repo, text === undefined ? o.images : images, o.base, slots.current[id] ?? id, gone)
   }, [opening, cloud, setSessions, start])
   useEffect(() => { if (pending && cloud) { setPending(null); start(pending) } }, [pending, cloud, start])
 
@@ -468,7 +485,8 @@ export default function App() {
   const remove = async (s: SessionSummary) => {
     if (!confirm(`Delete "${title(s)}"? Its sandbox, changes and conversation are gone for good.`)) return
     try {
-      await cloud?.gateway.remove(s.id)
+      // A placeholder whose POST failed exists only here.
+      if (!s.id.startsWith(PENDING)) await cloud?.gateway.remove(s.id)
       setOpening(({ [s.id]: _, ...rest }) => rest)
       setSessions((all) => all.filter((x) => x.id !== s.id))
       setView((v) => (v.kind === 'session' && v.id === s.id ? { kind: 'new' } : v))
@@ -727,7 +745,7 @@ export default function App() {
                 <div className="ghost-line" style={{ width: '54%' }} />
               </div>
             )}
-            <Transcript thread={op ? provisional(ct, op) : ct} boot={op && <BootRow since={op.at} repo={op.repo} error={op.failed ?? (current.state === 'error' ? (current.error ? plainError(current.error) : "The sandbox couldn't start.") : null)} onRetry={() => retry(current.id)} />} models={models} credit={account ? creditLine(account).replace(/ credit$/, '') : undefined} onDecide={(a, o) => decide(current.id, a, o)}
+            <Transcript thread={op ? provisional(ct, op) : ct} boot={op && <BootRow since={op.at} repo={op.repo} upSince={op.runningAt} error={op.failed ?? (current.state === 'error' ? (current.error ? plainError(current.error) : "The sandbox couldn't start.") : null)} onRetry={() => retry(current.id)} />} models={models} credit={account ? creditLine(account).replace(/ credit$/, '') : undefined} onDecide={(a, o) => decide(current.id, a, o)}
               onAnswer={(choices, other) => ct.question && cloud?.send(current.id, { op: 'answer', id: ct.question.id, choices, ...(other ? { other } : {}) })}
               onElicit={(action, content) => ct.elicitation && cloud?.send(current.id, { op: 'elicit', id: ct.elicitation.id, action, ...(content ? { content } : {}) })}
               onRetry={() => send(current.id, 'Try that again.')}
