@@ -44,7 +44,7 @@ struct ComposerView: View {
     @State var focused = false
     @State var gitIndex = GitIndex.shared
     @Environment(\.switchFolder) var switchFolder
-    @Environment(\.openSettings) var openSettings
+    @Environment(\.showSettings) var showSettings
 
     /// What `ComposerModel.State` keeps that nothing else here does.
     struct TrayLocal {

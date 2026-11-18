@@ -262,10 +262,18 @@ final class Panes {
     /// documentation. Switching only flips this: the panes stay as they are underneath, so
     /// coming back finds the same thread, scroll position, draft and inspector tab, and a
     /// running turn never notices.
-    enum ShellMode: Equatable { case threads, docs }
+    enum ShellMode: Equatable { case threads, docs, settings }
     private(set) var mode = ShellMode.threads
     /// The documentation page last shown, for the life of the window.
     private(set) var docsPage: String?
+    /// The settings section last shown, for the life of the window; Account the first time.
+    private(set) var settingsSection = "account"
+
+    /// Settings mode (⌘,), on `section` (an id or an old tab name) if given, else the last one.
+    func showSettings(_ section: String? = nil) {
+        if let s = SettingsCatalog.bundled.section(named: section) { settingsSection = s }
+        mode = .settings
+    }
 
     /// Documentation mode, on `slug` if given, else on the page last shown.
     func showDocs(_ slug: String? = nil) {
