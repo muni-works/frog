@@ -154,7 +154,7 @@ Built from the same spec, tokens and verb table, and measured against the web wi
 metrics: [`metrics/mac-1280.json`](metrics/mac-1280.json) against
 [`metrics/web-1280.json`](metrics/web-1280.json), diff in
 [`metrics/diff-web-mac-1280.txt`](metrics/diff-web-mac-1280.txt). Every row's kind, x, top, height
-and font size match within 1 point; two rows differ in their words, both on purpose (below).
+and font size match within 1 point, and every row's words match (`match: 12 rows`, exit 0).
 
 | Piece | Mac file |
 | --- | --- |
@@ -181,12 +181,8 @@ and font size match within 1 point; two rows differ in their words, both on purp
 
 ### Where the Mac and the web still differ
 
-- **The thought line** reads "Thought for 1s" on the Mac and "Thought" on the web. Each keeps
-  today's words until phase 2 replaces the row (the spec's settled row is "Thought for 31s").
-- **The footer's cost**: the Mac knows the model's list price and shows "· <$0.01"; the parity
-  gateway serves no models, so the web can't price the turn there. In a real session both price it,
-  but in different words for small sums: the web's `money()` says "<1¢" and "12¢", the Mac's
-  `ModelStats.money` "<$0.01". Costs are dollars, so the web's cents are the ones to change.
+- The thought line ("Thought for 1s", the spec's settled row) and the footer's cost ("<$0.01", in
+  dollars) used to differ; the web now says both the Mac's way (ce603ee7), and the dump matches.
 - **A result that repeats its line** ("Moved to /tmp/demo" under "Moved to /tmp/demo") is dropped
   on the Mac, as before; the web shows it twice. Worth porting to the web.
 - **The phone** keeps one gutter and no inset: its prose (`MessageText+UIKit`) has no indent yet, so
