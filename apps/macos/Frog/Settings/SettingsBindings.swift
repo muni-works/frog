@@ -24,8 +24,9 @@ enum SettingsBindings {
     /// Rows that lay themselves out (their own hairlines, or Billing's cards).
     static let ownLayout: Set<String> = ownLabel.union(["plan", "credit", "credit-history", "prices"])
 
-    /// The machines Models lists (snapshots seed their own).
+    /// The machines Models lists, and the spend and energy Usage shows (snapshots bring their own).
     @MainActor static var devices = Devices.shared
+    @MainActor static var stats = ModelStats.shared
 
     /// A row's control, or nil if the Mac has none for it.
     @MainActor
@@ -68,7 +69,7 @@ enum SettingsBindings {
         case "spent": AnyView(SpentRow(row: row))
         case "monthly-cap": AnyView(CapRow(row: row))
         case "show-energy": AnyView(ToggleRow(row: row, key: ModelStats.energyKey, fallback: false))
-        case "energy-chart": AnyView(EnergyRows())
+        case "energy-chart": AnyView(EnergyRows(stats: stats))
         // Account
         case "profile": AnyView(ProfileRows())
         case "sign-ins": AnyView(SignInsRows())

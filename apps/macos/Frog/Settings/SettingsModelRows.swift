@@ -307,7 +307,7 @@ struct PairMacRow: View {
 /// Spent this week and this month, at each model's prices.
 struct SpentRow: View {
     let row: SettingsCatalog.Row
-    @State private var stats = ModelStats.shared
+    @State private var stats = SettingsBindings.stats
     var body: some View {
         SettingsRow(row) {
             SettingsValue("\(ModelStats.spent(stats.spentThisWeek)) this week · \(ModelStats.spent(stats.spentThisMonth)) this month")
@@ -378,7 +378,8 @@ struct EnergyRows: View {
             Link("How it's measured, and every bench run", destination: URL(string: "https://frog.toys/energy")!)
                 .font(.frog(size: 12)).padding(.top, 8)
         }
-        .task { await stats.backfillEnergy() }
+        // The session logs are this Mac's; a snapshot's own stats stay as they were made.
+        .task { if stats === ModelStats.shared { await stats.backfillEnergy() } }
     }
 
     private func name(_ spec: String) -> String { ModelIdentity.of(spec, in: []).name }
