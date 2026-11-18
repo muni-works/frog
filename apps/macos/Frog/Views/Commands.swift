@@ -42,11 +42,18 @@ extension FocusedValues {
 @MainActor
 final class StagedWindow: ObservableObject {
     static let shared = StagedWindow()
-    @Published var window: FrogWindow? {
-        // A key `FrogCommands` reads through @AppStorage, which re-evaluates its body for sure.
-        didSet { UserDefaults.standard.set(UserDefaults.standard.integer(forKey: Self.tickKey) + 1, forKey: Self.tickKey) }
+    /// A flow test wants the window it hosts staged here (WorkspaceView does it while true).
+    var capturing = false
+    @Published var window: FrogWindow?
+
+    /// What the menu bar reads from a window's offer, as one comparable value: the window
+    /// re-stages itself only when this changes.
+    static func key(_ w: FrogWindow) -> String {
+        [String(describing: ObjectIdentifier(w.workspace)), String(describing: ObjectIdentifier(w.state)),
+         "\(w.sessionsShown)", "\(w.changesShown)", "\(w.maximized)", "\(w.split != nil)", "\(w.closePane != nil)",
+         w.workspace.conversation.map { String(describing: ObjectIdentifier($0)) } ?? "-",
+         w.sidebarOrder.map(\.id).joined(separator: ",")].joined(separator: "|")
     }
-    static let tickKey = "flowStagedWindowTick"
 }
 #endif
 
@@ -57,13 +64,12 @@ struct FrogCommands: Commands {
     @FocusedValue(\.frogWindow) private var focusedWindow
     #if DEBUG
     @ObservedObject private var staged = StagedWindow.shared
-    @AppStorage(StagedWindow.tickKey) private var stagedTick = 0
     #endif
     @Environment(\.openWindow) private var openWindow
     @AppStorage("compactSidebar") private var compactSidebar = false
 
     #if DEBUG
-    private var window: FrogWindow? { _ = stagedTick; return focusedWindow ?? staged.window }
+    private var window: FrogWindow? { focusedWindow ?? staged.window }
     #else
     private var window: FrogWindow? { focusedWindow }
     #endif

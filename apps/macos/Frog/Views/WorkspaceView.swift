@@ -103,6 +103,25 @@ struct WorkspaceView: View {
 
     private var focused: Pane { panes.focused }
 
+    /// What this window offers the menu bar.
+    private var frogWindow: FrogWindow {
+        FrogWindow(
+            workspace: workspace, state: focused.ui,
+            toggleSessions: toggleSessions, toggleChanges: { toggleChanges(focused) },
+            showTerminal: showTerminal, showPreview: showPreview, toggleInspect: toggleInspect,
+            sessionsShown: sessionsVisible, changesShown: changesVisible(focused),
+            newChat: newSession,
+            split: panes.canSplit ? { split(nil, $0 == .vertical ? .bottom : .right) } : nil,
+            closePane: panes.isSplit ? { panes.close(focused) } : nil,
+            focusPane: panes.isSplit ? { panes.focus(step: $0) } : nil,
+            toggleMaximize: panes.isSplit ? { panes.toggleMaximized(focused) } : nil,
+            maximized: panes.maximizedPane != nil,
+            sidebarOrder: sidebarOrder,
+            openSidebarSession: { openInFocused($0) },
+            showDocs: { showDocs() }
+        )
+    }
+
     /// The sidebar's conversations as its top-level rows, in the order its groups show them:
     /// pins, then one group per project folder (newest activity first), then chats — the
     /// started-by children are nested under their parents and don't count. What the
@@ -553,21 +572,14 @@ struct WorkspaceView: View {
                 panes.items.forEach { $0.peekChanges = false }
             }
         }
-        .focusedSceneValue(\.frogWindow, FrogWindow(
-            workspace: workspace, state: focused.ui,
-            toggleSessions: toggleSessions, toggleChanges: { toggleChanges(focused) },
-            showTerminal: showTerminal, showPreview: showPreview, toggleInspect: toggleInspect,
-            sessionsShown: sessionsVisible, changesShown: changesVisible(focused),
-            newChat: newSession,
-            split: panes.canSplit ? { split(nil, $0 == .vertical ? .bottom : .right) } : nil,
-            closePane: panes.isSplit ? { panes.close(focused) } : nil,
-            focusPane: panes.isSplit ? { panes.focus(step: $0) } : nil,
-            toggleMaximize: panes.isSplit ? { panes.toggleMaximized(focused) } : nil,
-            maximized: panes.maximizedPane != nil,
-            sidebarOrder: sidebarOrder,
-            openSidebarSession: { openInFocused($0) },
-            showDocs: { showDocs() }
-        ))
+        .focusedSceneValue(\.frogWindow, frogWindow)
+        #if DEBUG
+        // Flow tests: a test host never has a key window, so the menu bar acts on this one
+        // when a test asks (`StagedWindow`). Off otherwise.
+        .onChange(of: StagedWindow.key(frogWindow), initial: true) {
+            if StagedWindow.shared.capturing { StagedWindow.shared.window = frogWindow }
+        }
+        #endif
         // ⌘L and friends ask for the composer: that's a way back to the thread.
         .onChange(of: focused.ui.focusComposerRequest) { if inDocs { panes.backToApp() } }
         .animation(Motion.quick(reduced: reduceMotion), value: panes.mode)

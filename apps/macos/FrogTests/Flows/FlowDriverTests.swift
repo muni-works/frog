@@ -70,6 +70,8 @@ final class FlowDriverTests: XCTestCase {
 
     /// The title menu offers Rename… only once the conversation has a session.
     func testTitleMenuRenameNeedsASession() throws {
+        w.workspace.testShow(Conversation(folder: folder, link: nil, replay: false, session: nil))
+        w.pump(0.3)
         let menu = try XCTUnwrap(w.menu(.text("New Conversation")))
         XCTAssertEqual(menu.titles, ["Rename…"])
         XCTAssertFalse(menu.isEnabled("Rename…"))
@@ -85,7 +87,7 @@ final class FlowDriverTests: XCTestCase {
         menu.choose("Delete…")
         XCTAssertNotNil(w.element(.text("Its log moves to the Trash.")), "the dialog asks")
         XCTAssertFalse(w.window.attachedSheet?.isSeenByUser ?? false, "its sheet stays hidden")
-        w.press(.button("Cancel"))
+        w.press(.sheetButton("Cancel"))
         XCTAssertTrue(w.waitUntil { self.w.find(.text("Its log moves to the Trash.")) == nil }, "the dialog went")
         XCTAssertEqual(w.conversation?.sessionID, "flow-delete-cancel", "the conversation is still open")
     }
