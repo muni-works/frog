@@ -1,5 +1,5 @@
 {
- "about": "The turn's timeline (crates/frog-engine/src/timeline.rs, the reference). Each case: one turn's events in wire form (envelopes, as the session log keeps them) and the segments they make, in ms from turn_started's created, sorted by start, kind (thinking, tool, waiting, writing), item. Both apps compute segments from the events they hold and run these cases. All synthetic.",
+ "about": "The turn's timeline (crates/frog-engine/src/timeline.rs, the reference). Each case: one turn's events in wire form (envelopes, as the session log keeps them) and the segments they make, in ms from turn_started's created, sorted by start, kind (thinking, tool, waiting, writing), item. Both apps compute segments from the events they hold and run these cases. All synthetic. `thinking` (on every case with reasoning): each reasoning item's thinking length in ms, in start order: what its \"Thought for Ns\" says. Older logs (no `think_ms`) think until the first message or tool call logged after them, or their own completion if sooner.",
  "cases": [
   {
    "name": "thinking, then a reply",
@@ -84,10 +84,16 @@
      "end_ms": 3000,
      "item": "m1"
     }
+   ],
+   "thinking": [
+    {
+     "item": "r1",
+     "ms": 2000
+    }
    ]
   },
   {
-   "name": "an older log's thinking runs until the item completed",
+   "name": "an older log's reasoning then a reply: thinks until the reply starts",
    "events": [
     {
      "seq": 1,
@@ -159,7 +165,7 @@
     {
      "kind": "thinking",
      "start_ms": 100,
-     "end_ms": 3000,
+     "end_ms": 2100,
      "item": "r1"
     },
     {
@@ -169,7 +175,425 @@
      "item": "m1"
     }
    ],
-   "about": "Without think_ms the item's completion is the only end there is; it overstates the thinking."
+   "about": "Without think_ms the item's completion is the only end there is; it overstates the thinking.",
+   "thinking": [
+    {
+     "item": "r1",
+     "ms": 2000
+    }
+   ]
+  },
+  {
+   "name": "an older log's reasoning then a tool call: thinks until it completed",
+   "about": "The tool call starts at dispatch, after the call (and the reasoning) completed: the completion is the end.",
+   "events": [
+    {
+     "seq": 1,
+     "session": "s",
+     "created": 1794900000000,
+     "event": "turn_started",
+     "turn": 1,
+     "input": "go"
+    },
+    {
+     "seq": 2,
+     "session": "s",
+     "created": 1794900000100,
+     "event": "item_started",
+     "id": "r1",
+     "kind": {
+      "type": "reasoning"
+     }
+    },
+    {
+     "seq": 3,
+     "session": "s",
+     "created": 1794900000900,
+     "event": "item_completed",
+     "id": "r1",
+     "item": {
+      "type": "reasoning",
+      "text": "…"
+     }
+    },
+    {
+     "seq": 4,
+     "session": "s",
+     "created": 1794900001000,
+     "event": "item_started",
+     "id": "t1",
+     "kind": {
+      "type": "tool_call",
+      "name": "Bash",
+      "arg": "x"
+     }
+    },
+    {
+     "seq": 5,
+     "session": "s",
+     "created": 1794900004000,
+     "event": "item_completed",
+     "id": "t1",
+     "item": {
+      "type": "tool_call",
+      "name": "Bash",
+      "arg": "x",
+      "input": {},
+      "outcome": "ok",
+      "output": "ok",
+      "display": null
+     }
+    },
+    {
+     "seq": 6,
+     "session": "s",
+     "created": 1794900004100,
+     "event": "turn_ended",
+     "turn": 1,
+     "reason": {
+      "type": "complete"
+     },
+     "usage": {
+      "input_tokens": 10,
+      "output_tokens": 20,
+      "model_calls": 1
+     }
+    }
+   ],
+   "segments": [
+    {
+     "kind": "thinking",
+     "start_ms": 100,
+     "end_ms": 900,
+     "item": "r1"
+    },
+    {
+     "kind": "tool",
+     "start_ms": 1000,
+     "end_ms": 4000,
+     "item": "t1"
+    }
+   ],
+   "thinking": [
+    {
+     "item": "r1",
+     "ms": 800
+    }
+   ]
+  },
+  {
+   "name": "an older log's reasoning alone: thinks until it completed",
+   "events": [
+    {
+     "seq": 1,
+     "session": "s",
+     "created": 1794900000000,
+     "event": "turn_started",
+     "turn": 1,
+     "input": "go"
+    },
+    {
+     "seq": 2,
+     "session": "s",
+     "created": 1794900000100,
+     "event": "item_started",
+     "id": "r1",
+     "kind": {
+      "type": "reasoning"
+     }
+    },
+    {
+     "seq": 3,
+     "session": "s",
+     "created": 1794900001500,
+     "event": "item_completed",
+     "id": "r1",
+     "item": {
+      "type": "reasoning",
+      "text": "…"
+     }
+    },
+    {
+     "seq": 4,
+     "session": "s",
+     "created": 1794900001600,
+     "event": "turn_ended",
+     "turn": 1,
+     "reason": {
+      "type": "complete"
+     },
+     "usage": {
+      "input_tokens": 10,
+      "output_tokens": 20,
+      "model_calls": 1
+     }
+    }
+   ],
+   "segments": [
+    {
+     "kind": "thinking",
+     "start_ms": 100,
+     "end_ms": 1500,
+     "item": "r1"
+    }
+   ],
+   "thinking": [
+    {
+     "item": "r1",
+     "ms": 1400
+    }
+   ]
+  },
+  {
+   "name": "an older log's two reasoning items before a tool call: each ends at its own completion",
+   "about": "Two calls: the first only reasoned; the tool call that follows the second starts after both completed, so it ends neither.",
+   "events": [
+    {
+     "seq": 1,
+     "session": "s",
+     "created": 1794900000000,
+     "event": "turn_started",
+     "turn": 1,
+     "input": "go"
+    },
+    {
+     "seq": 2,
+     "session": "s",
+     "created": 1794900000100,
+     "event": "item_started",
+     "id": "r1",
+     "kind": {
+      "type": "reasoning"
+     }
+    },
+    {
+     "seq": 3,
+     "session": "s",
+     "created": 1794900000700,
+     "event": "item_completed",
+     "id": "r1",
+     "item": {
+      "type": "reasoning",
+      "text": "…"
+     }
+    },
+    {
+     "seq": 4,
+     "session": "s",
+     "created": 1794900000900,
+     "event": "item_started",
+     "id": "r2",
+     "kind": {
+      "type": "reasoning"
+     }
+    },
+    {
+     "seq": 5,
+     "session": "s",
+     "created": 1794900001800,
+     "event": "item_completed",
+     "id": "r2",
+     "item": {
+      "type": "reasoning",
+      "text": "…"
+     }
+    },
+    {
+     "seq": 6,
+     "session": "s",
+     "created": 1794900001900,
+     "event": "item_started",
+     "id": "t1",
+     "kind": {
+      "type": "tool_call",
+      "name": "Bash",
+      "arg": "x"
+     }
+    },
+    {
+     "seq": 7,
+     "session": "s",
+     "created": 1794900002900,
+     "event": "item_completed",
+     "id": "t1",
+     "item": {
+      "type": "tool_call",
+      "name": "Bash",
+      "arg": "x",
+      "input": {},
+      "outcome": "ok",
+      "output": "ok",
+      "display": null
+     }
+    },
+    {
+     "seq": 8,
+     "session": "s",
+     "created": 1794900003000,
+     "event": "turn_ended",
+     "turn": 1,
+     "reason": {
+      "type": "complete"
+     },
+     "usage": {
+      "input_tokens": 10,
+      "output_tokens": 20,
+      "model_calls": 1
+     }
+    }
+   ],
+   "segments": [
+    {
+     "kind": "thinking",
+     "start_ms": 100,
+     "end_ms": 700,
+     "item": "r1"
+    },
+    {
+     "kind": "thinking",
+     "start_ms": 900,
+     "end_ms": 1800,
+     "item": "r2"
+    },
+    {
+     "kind": "tool",
+     "start_ms": 1900,
+     "end_ms": 2900,
+     "item": "t1"
+    }
+   ],
+   "thinking": [
+    {
+     "item": "r1",
+     "ms": 600
+    },
+    {
+     "item": "r2",
+     "ms": 900
+    }
+   ]
+  },
+  {
+   "name": "an older log's reasoning, a reply, then more reasoning: each ends at the reply after it",
+   "about": "The first reasoning ends when the reply starts; the second, started after the reply, ends at its own completion.",
+   "events": [
+    {
+     "seq": 1,
+     "session": "s",
+     "created": 1794900000000,
+     "event": "turn_started",
+     "turn": 1,
+     "input": "go"
+    },
+    {
+     "seq": 2,
+     "session": "s",
+     "created": 1794900000100,
+     "event": "item_started",
+     "id": "r1",
+     "kind": {
+      "type": "reasoning"
+     }
+    },
+    {
+     "seq": 3,
+     "session": "s",
+     "created": 1794900001100,
+     "event": "item_started",
+     "id": "m1",
+     "kind": {
+      "type": "message"
+     }
+    },
+    {
+     "seq": 4,
+     "session": "s",
+     "created": 1794900001500,
+     "event": "item_completed",
+     "id": "r1",
+     "item": {
+      "type": "reasoning",
+      "text": "…"
+     }
+    },
+    {
+     "seq": 5,
+     "session": "s",
+     "created": 1794900001500,
+     "event": "item_completed",
+     "id": "m1",
+     "item": {
+      "type": "message",
+      "text": "ok"
+     }
+    },
+    {
+     "seq": 6,
+     "session": "s",
+     "created": 1794900001600,
+     "event": "item_started",
+     "id": "r2",
+     "kind": {
+      "type": "reasoning"
+     }
+    },
+    {
+     "seq": 7,
+     "session": "s",
+     "created": 1794900002600,
+     "event": "item_completed",
+     "id": "r2",
+     "item": {
+      "type": "reasoning",
+      "text": "…"
+     }
+    },
+    {
+     "seq": 8,
+     "session": "s",
+     "created": 1794900002700,
+     "event": "turn_ended",
+     "turn": 1,
+     "reason": {
+      "type": "complete"
+     },
+     "usage": {
+      "input_tokens": 10,
+      "output_tokens": 20,
+      "model_calls": 1
+     }
+    }
+   ],
+   "segments": [
+    {
+     "kind": "thinking",
+     "start_ms": 100,
+     "end_ms": 1100,
+     "item": "r1"
+    },
+    {
+     "kind": "writing",
+     "start_ms": 1100,
+     "end_ms": 1500,
+     "item": "m1"
+    },
+    {
+     "kind": "thinking",
+     "start_ms": 1600,
+     "end_ms": 2600,
+     "item": "r2"
+    }
+   ],
+   "thinking": [
+    {
+     "item": "r1",
+     "ms": 1000
+    },
+    {
+     "item": "r2",
+     "ms": 1000
+    }
+   ]
   },
   {
    "name": "think_ms past the item's completion is cut at the completion",
@@ -226,6 +650,12 @@
      "start_ms": 100,
      "end_ms": 1000,
      "item": "r1"
+    }
+   ],
+   "thinking": [
+    {
+     "item": "r1",
+     "ms": 900
     }
    ]
   },
@@ -318,6 +748,12 @@
      "start_ms": 1000,
      "end_ms": 4000,
      "item": "t1"
+    }
+   ],
+   "thinking": [
+    {
+     "item": "r1",
+     "ms": 700
     }
    ]
   },
@@ -1017,6 +1453,12 @@
      "end_ms": 2500,
      "item": "r2"
     }
+   ],
+   "thinking": [
+    {
+     "item": "r2",
+     "ms": 1000
+    }
    ]
   },
   {
@@ -1342,6 +1784,12 @@
      "start_ms": 0,
      "end_ms": 600,
      "item": "t1"
+    }
+   ],
+   "thinking": [
+    {
+     "item": "r1",
+     "ms": 400
     }
    ]
   },

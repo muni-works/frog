@@ -7,6 +7,8 @@ struct TurnLead: Equatable {
     enum Opener: Equatable {
         case prompt
         case sessionMessages([SessionMessage])
+        /// A turn resumed after Frog Cloud credit was added: one quiet line, never a bubble.
+        case resumed(String)
         case none
     }
 
@@ -16,6 +18,11 @@ struct TurnLead: Equatable {
     init(_ turn: TurnState) {
         wakes = turn.wakes.flatMap { WakeEvent.parse($0) ?? [WakeEvent(kind: .note, id: "", attributes: [], body: $0)] }
         var input = turn.input
+        if turn.images.isEmpty, let line = Self.resumedLine(input) {
+            // The engine's echo of the continue note the credit wall sent, as on the web.
+            opener = .resumed(line)
+            return
+        }
         if turn.images.isEmpty, let started = WakeEvent.parse(input) {
             wakes += started
             input = ""
@@ -36,6 +43,17 @@ struct TurnLead: Equatable {
         }
     }
 
+    /// The one line a turn resumed after a Frog Cloud top-up shows in place of its input, or nil
+    /// for any other input. The input is the engine's echo of `Op::Continue { note }` as the web's
+    /// credit wall writes it (apps/web/src/wall.ts resumeNote / resumedLine): same words.
+    static func resumedLine(_ input: String) -> String? {
+        guard input.hasPrefix("<resumed after "), input.hasSuffix("; continue where you left off>"),
+              let m = input.wholeMatch(of: #/<resumed after (?:\$(\d+\.\d\d) of )?Frog Cloud credit was added; [^>]*; continue where you left off>/#)
+        else { return nil }
+        if let amount = m.1 { return "$\(amount) added. Frog picked up where it stopped." }
+        return "Credit added. Frog picked up where it stopped."
+    }
+
     /// Turn inputs the engine writes itself (`protocol.rs` CONTINUE_NOTE / SUSPENDED_NOTE,
     /// `background.rs` dropped pieces after a restart).
     static func isEngineNote(_ input: String) -> Bool {
@@ -49,6 +67,26 @@ struct TurnLead: Equatable {
 /// A turn the engine started on background wakes alone: one compact line per wake (glyph,
 /// id, what it was, how it ended, a link to the job's log), on the left like the session
 /// message card, never as a user bubble. The model's answer follows as usual.
+/// A resumed turn's line (the web's `.turn-note`): meta type, muted, a small frog dot, at the
+/// turn's left edge.
+struct ResumedLine: View {
+    let text: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(Tokens.accent)
+                .frame(width: 6, height: 6)
+            Text(text)
+                .font(.frog(size: Tokens.Transcript.meta.size, weight: Tokens.Transcript.meta.weight))
+                .foregroundStyle(Tokens.textSecondary)
+        }
+        .frame(minHeight: Tokens.Transcript.meta.line)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+}
+
 struct WakeEventRows: View {
     let events: [WakeEvent]
     let jobs: [String: BackgroundJob]

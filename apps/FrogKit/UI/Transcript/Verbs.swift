@@ -95,4 +95,20 @@ enum Verbs {
             template.replacingOccurrences(of: "{time}", with: time).replacingOccurrences(of: "{n}", with: String(n))
         }
     }
+
+    /// A new cloud session's start on the live row, before its first turn (verbs.json `start`).
+    enum Start {
+        static let reserving = "Reserving a sandbox"
+        static let booting = "Booting it"
+        /// `{repo}` is filled in.
+        static let cloning = "Booting it and cloning {repo}"
+        static let engine = "Starting Frog"
+        /// The one red word (`warn`); the reason follows in muted.
+        static let failed = "Failed"
+        /// Up for 30 s with no turn: the engine didn't pick the message up.
+        static let stuck = "Frog didn't pick this up."
+        static let retry = "Try again"
+
+        static func cloning(_ repo: String) -> String { cloning.replacingOccurrences(of: "{repo}", with: repo) }
+    }
 }

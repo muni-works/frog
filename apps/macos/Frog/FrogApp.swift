@@ -25,6 +25,7 @@ struct FrogApp: App {
             Task { @MainActor in MacLender.shared.start() }
         }
         Conversation.effects = MacEffects.shared
+        Conversation.decided = { Funnel.decided(tool: $0.name, $1) }
         Conversation.logReader = { id, after in
             // The durable half of the session log (what a dead engine left behind), read the
             // same way the phone bridge reads it.
@@ -95,10 +96,7 @@ struct FrogApp: App {
         .defaultLaunchBehavior(.suppressed)
         .restorationBehavior(.disabled)
 
-        Settings {
-            SettingsView()
-                .containerBackground(FrogCanvas.color, for: .window)
-        }
+        // No Settings scene: Settings is a mode of the window (⌘,, FrogCommands), not a window.
     }
 }
 

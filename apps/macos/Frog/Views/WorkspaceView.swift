@@ -118,7 +118,8 @@ struct WorkspaceView: View {
             maximized: panes.maximizedPane != nil,
             sidebarOrder: sidebarOrder,
             openSidebarSession: { openInFocused($0) },
-            showDocs: { showDocs() }
+            showDocs: { showDocs() },
+            showSettings: { showSettings($0) }
         )
     }
 
@@ -365,6 +366,8 @@ struct WorkspaceView: View {
     // MARK: Documentation
 
     private var inDocs: Bool { panes.mode == .docs }
+    /// Documentation or Settings: the panes stay mounted under the page, out of reach.
+    private var inMode: Bool { panes.mode != .threads }
     private var docs: AppDocs? { AppDocs.bundled }
     /// The page on screen: the one last shown, else the first.
     private var docsPage: AppDocs.Page? { docs?.page(panes.docsPage) ?? docs?.pages.first }
@@ -372,13 +375,13 @@ struct WorkspaceView: View {
     /// Documentation mode, on a page if given. The panes stay mounted underneath; only the
     /// keyboard leaves the composer, so typing doesn't land in a draft you can't see.
     private func showDocs(_ slug: String? = nil) {
-        if !inDocs { window?.makeFirstResponder(nil) }
+        if !inMode { window?.makeFirstResponder(nil) }
         panes.showDocs(slug ?? panes.docsPage ?? docs?.pages.first?.slug)
     }
 
     /// Back to the thread, the composer taking the keyboard back.
     private func backToApp() {
-        guard inDocs else { return }
+        guard inMode else { return }
         panes.backToApp()
         focused.ui.focusComposer()
     }
@@ -392,6 +395,35 @@ struct WorkspaceView: View {
             })
         }
         return out
+    }
+
+    // MARK: Settings
+
+    /// Settings mode, on a section if given (an id or an old tab name), else the last one.
+    private func showSettings(_ section: String? = nil) {
+        if !inMode { window?.makeFirstResponder(nil) }
+        panes.showSettings(section)
+    }
+
+    private var settingsCommands: [PaletteCommand] {
+        var out = [PaletteCommand(id: "settings", title: "Settings", subtitle: "⌘,", symbol: "gearshape") { showSettings() }]
+        for s in SettingsCatalog.bundled.sections {
+            out.append(PaletteCommand(id: "settings-\(s.id)", title: s.label, subtitle: "Settings", symbol: "gearshape") { showSettings(s.id) })
+        }
+        return out
+    }
+
+    /// The section, opaque over the panes right of the sidebar.
+    @ViewBuilder
+    private var settingsLayer: some View {
+        if panes.mode == .settings {
+            SettingsSectionView(section: panes.settingsSection,
+                                machine: Binding(get: { panes.settingsMachine }, set: { panes.settingsMachine = $0 }))
+                .padding(.leading, extent(sessions: docked.sessions))
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .background(FrogCanvas.color)
+                .transition(.opacity)
+        }
     }
 
     /// The page, opaque over the panes right of the sidebar.
@@ -450,8 +482,8 @@ struct WorkspaceView: View {
         .offset(x: place.frame.minX, y: place.frame.minY)
         // Under the documentation, still mounted: its turn keeps running and its
         // scroll, draft and inspector are there when you come back.
-        .allowsHitTesting(!inDocs)
-        .accessibilityHidden(inDocs)
+        .allowsHitTesting(!inMode)
+        .accessibilityHidden(inMode)
         .transition(.opacity.combined(with: .scale(scale: 0.98)))
     }
 
@@ -464,6 +496,7 @@ struct WorkspaceView: View {
             }
 
             docsLayer
+            settingsLayer
 
             GeometryReader { geo in
                 sessions(room: max(120, geo.size.height))
@@ -474,6 +507,7 @@ struct WorkspaceView: View {
             .environment(\.startConversation) { panes.start($1, in: $0, pane: focused) }
             .environment(\.paneNumbers, numbers)
             .environment(\.showDocs) { showDocs() }
+            .environment(\.showSettings) { showSettings($0) }
 
             // Collapsed: the pointer at the left edge brings the list out over the page.
             if !sessionsVisible {
@@ -488,7 +522,7 @@ struct WorkspaceView: View {
                     }
             }
 
-            ForEach(inDocs ? [] : panes.layout.dividers(in: region(sessions: docked.sessions), maximizing: panes.maximized)) { d in
+            ForEach(inMode ? [] : panes.layout.dividers(in: region(sessions: docked.sessions), maximizing: panes.maximized)) { d in
                 PaneDividerHandle(divider: d, resizing: $resizing) { t in
                     panes.moveDivider(d, to: t, minimum: panes.minimum(paneWidth: Self.minPane, forToolPanes: Self.minToolPane, beside: d))
                 } equalize: {
@@ -505,7 +539,7 @@ struct WorkspaceView: View {
                     CommandPalette(commands: workspace.commands(showChanges: Binding(
                         get: { focused.showChanges },
                         set: { _ in toggleChanges(focused) }
-                    )) + docsCommands) {
+                    )) + docsCommands + settingsCommands) {
                         focused.ui.paletteShown = false
                     }
                     .padding(.top, 80)
@@ -528,6 +562,18 @@ struct WorkspaceView: View {
         .onGeometryChange(for: CGSize.self, of: \.size) { canvasSize = $0 }
         .onGeometryChange(for: CGPoint.self, of: { $0.frame(in: .global).origin }) { canvasOrigin = $0 }
         .environment(\.paneDragger, dragger)
+        // Every "open Settings on…" in the window (the composer's Billing, the footer, the model
+        // menu's Manage) lands on Settings mode here.
+        .environment(\.showSettings) { showSettings($0) }
+        // A turn's energy popover: History is Settings › Usage.
+        .environment(\.showEnergyHistory) { showSettings("usage") }
+        // ⌘, with no window, or a frog://settings/<section> link: the front window takes it, or
+        // this one if it's the one that just opened for it.
+        .onReceive(NotificationCenter.default.publisher(for: SettingsRequest.name)) { _ in
+            guard window?.isKeyWindow == true || NSApp.keyWindow == nil else { return }
+            if let s = SettingsRequest.take() { showSettings(s) }
+        }
+        .onAppear { if let s = SettingsRequest.take() { showSettings(s) } }
         .onAppear { dragger.onDrop = { perform($0, at: $1) } }
         .animation(.easeOut(duration: 0.15), value: dragger.active)
         .onChange(of: layoutInputs, initial: true) { old, new in
@@ -561,7 +607,7 @@ struct WorkspaceView: View {
         .onChange(of: workspace.selection) { peekSessions = false }
         .onChange(of: panes.focusedID) { peekSessions = false }
         .onExitCommand {
-            if inDocs {
+            if inMode {
                 backToApp()
             } else if let maxed = panes.maximizedPane {
                 panes.toggleMaximized(maxed)
@@ -581,7 +627,7 @@ struct WorkspaceView: View {
         }
         #endif
         // ⌘L and friends ask for the composer: that's a way back to the thread.
-        .onChange(of: focused.ui.focusComposerRequest) { if inDocs { panes.backToApp() } }
+        .onChange(of: focused.ui.focusComposerRequest) { if inMode { panes.backToApp() } }
         .animation(Motion.quick(reduced: reduceMotion), value: panes.mode)
         // The phone asked for a conversation: here if this pane is a blank chat, else beside it,
         // so nothing on screen is replaced.
@@ -644,7 +690,7 @@ struct WorkspaceView: View {
             // inspector.
             if sessionsVisible {
                 ToolbarItem(placement: .navigation) {
-                    SidebarTitleRow(docs: inDocs, peeking: peekSessions, toggle: toggleSessions)
+                    SidebarTitleRow(docs: inMode, peeking: peekSessions, toggle: toggleSessions)
                         .frame(width: sidebarWidth - Self.trafficLights)
                 }
                 .sharedBackgroundVisibility(.hidden)
@@ -653,7 +699,7 @@ struct WorkspaceView: View {
                     SidebarToggle(toggle: toggleSessions, open: openInFocused)
                 }
                 .sharedBackgroundVisibility(.hidden)
-                if !inDocs {
+                if !inMode {
                     ToolbarItem(placement: .navigation) {
                         Button(action: newSession) {
                             Image(systemName: "square.and.pencil").frame(width: 28, height: 24).contentShape(.rect)
@@ -676,7 +722,7 @@ struct WorkspaceView: View {
                         Button("Split Down") { split(nil, .bottom) }
                     }
                     .help("Split pane (⌘\\)")
-                    .disabled(!panes.canSplit || inDocs)
+                    .disabled(!panes.canSplit || inMode)
             }
             ToolbarItem(placement: .primaryAction) {
                 Button("Commands", systemImage: "command") { focused.ui.paletteShown.toggle() }
@@ -686,7 +732,7 @@ struct WorkspaceView: View {
             ToolbarItem(placement: .primaryAction) {
                 Button("Inspector", systemImage: "sidebar.right") { toggleChanges(focused) }
                     .help("Inspector: changes, terminal, preview (⌥⌘0)")
-                    .disabled(focused.conversation == nil || inDocs)
+                    .disabled(focused.conversation == nil || inMode)
             }
             // The top-right inspector's tabs, over its column: the controls sit left of it.
             if let corner = cornerInspector, let c = corner.conversation {
@@ -706,7 +752,7 @@ struct WorkspaceView: View {
     /// title row, at the toolbar's trailing end. (Another pane's inspector, in a split, keeps
     /// its tabs on its first row: the toolbar's items run in one row from each end.)
     private var cornerInspector: Pane? {
-        guard !inDocs else { return nil }
+        guard !inMode else { return nil }
         let corner = panes.items.first { pane in
             let f = placement(pane).frame
             return f.minY < 0.5 && f.maxX >= canvasSize.width - 0.5
@@ -723,7 +769,10 @@ struct WorkspaceView: View {
     private func sessions(room: CGFloat) -> some View {
         if sessionsVisible {
             Group {
-                if inDocs {
+                if panes.mode == .settings {
+                    SettingsSidebar(selected: panes.settingsSection, maxHeight: room,
+                                    open: { showSettings($0) }, back: backToApp)
+                } else if inDocs {
                     DocsSidebar(docs: docs, selected: docsPage?.slug, maxHeight: room, titleRow: false,
                                 open: { showDocs($0) }, back: backToApp, collapse: toggleSessions)
                 } else {
@@ -782,6 +831,7 @@ struct TitleBarClip: Shape {
 extension WorkspaceView {
     private var windowTitle: String {
         if panes.mode == .docs { return "Documentation" }
+        if panes.mode == .settings { return "Settings" }
         // The mirror (see `Workspace.currentTitle`), not the conversation: the root body
         // reading the streaming conversation re-evaluated per delta to redraw a title that
         // only changes when the engine names the session.
@@ -799,7 +849,7 @@ extension WorkspaceView {
     /// mirror, not the streaming conversation.
     @ViewBuilder
     private var titleBar: some View {
-        if panes.mode == .docs {
+        if panes.mode != .threads {
             Text(windowTitle).font(.frog(size: 13, weight: .semibold)).lineLimit(1).fixedSize()
         } else {
             threadTitleBar

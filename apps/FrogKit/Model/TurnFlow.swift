@@ -442,8 +442,10 @@ enum TurnFooter {
 }
 
 extension ItemState {
-    /// How long the step took, when the engine said when it started and ended.
+    /// How long the step took, when the engine said when it started and ended. A think's is how
+    /// long it thought (`thoughtMs`): its completion comes only once the whole reply is in.
     var duration: TimeInterval? {
+        if kind == .reasoning, let thoughtMs { return Double(thoughtMs) / 1000 }
         guard let startedAt, let endedAt else { return nil }
         return endedAt.timeIntervalSince(startedAt)
     }

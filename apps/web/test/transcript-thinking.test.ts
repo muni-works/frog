@@ -142,14 +142,15 @@ test("a finished think settles to 'Thought for Ns'; an old log reads 'Thought'; 
   assert.equal(thoughtLabel({ ...done, thinkMs: 400 }), "Thought for 1s", "never 'for 0s'");
   assert.equal(thoughtLabel({ ...done, thinkMs: undefined }), "Thought");
   assert.equal(thoughtLabel({ ...done, done: false, started: 1000, thinkMs: undefined }, 13_000), "Stopped after 12s");
-  const t = run([
-    { event: "turn_started", turn: 1, input: "go" },
-    { event: "item_started", id: "r1", kind: { type: "reasoning" } },
-    { event: "item_completed", id: "r1", item: { type: "reasoning", text: "Plan the change.\n\nThen write it.", think_ms: 15_000 } },
-    { event: "item_started", id: "m1", kind: { type: "message" } },
-    { event: "item_completed", id: "m1", item: { type: "message", text: "Done." } },
-    { event: "turn_ended", turn: 1, reason: { type: "complete" } },
-  ]);
+  // In the engine's order and times: the reasoning completes only once the whole reply is in.
+  const t = ([
+    [0, { event: "turn_started", turn: 1, input: "go" }],
+    [100, { event: "item_started", id: "r1", kind: { type: "reasoning" } }],
+    [15_100, { event: "item_started", id: "m1", kind: { type: "message" } }],
+    [16_000, { event: "item_completed", id: "r1", item: { type: "reasoning", text: "Plan the change.\n\nThen write it.", think_ms: 15_000 } }],
+    [16_000, { event: "item_completed", id: "m1", item: { type: "message", text: "Done." } }],
+    [16_100, { event: "turn_ended", turn: 1, reason: { type: "complete" } }],
+  ] as [number, Event][]).reduce((x, [at, e]) => reduce(x, env(e, at)), emptyThread);
   const html = page(t);
   assert.match(html, /data-kind="thought"[\s\S]*?class="line-verb">Thought for 15s</);
   assert.doesNotMatch(html, /data-row="live"/, "an ended turn has no live row");
@@ -161,7 +162,8 @@ test("the stats: time after the first second, tokens never with decimals, tok/s;
   assert.equal(text(html, "live-stats"), "31s · 1,212 tokens");
   assert.match(html, /title="[^"]*Written 1,212 tokens so far/, "the hover says 'so far' while it is a count");
   assert.match(html, /title="[^"]*Read 11,900 tokens from cache/, "cache from the engine's figure");
-  assert.equal(text(tail([r], info({ startedAt: Date.now() - 400 })), "live-stats"), null, "no time in the first second");
+  // The line keeps its height with nothing in it, so the row doesn't grow when the time shows.
+  assert.equal((text(tail([r], info({ startedAt: Date.now() - 400 })), "live-stats") ?? "").trim(), "", "no time in the first second");
   const waiting = tail([tool("t1", "Bash", "cargo test")], info({ startedAt: Date.now() - 39_000, askedAt: Date.now() - 6_000 }), true);
   assert.match(waiting, /data-state="waiting"/, "amber only when waiting on a person");
   assert.equal(text(waiting, "live-label"), "Waiting for you");
