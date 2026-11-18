@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import type { Entry } from '../engine/thread'
 import { CopyButton } from './Transcript'
-import { OFFER_STOP_AT, OUTLINE_MAX, SLOW_FOR, STALL_AT, isSlow, liveRow, rateOf, secs, stalledLabel, type LiveRow } from './rows'
+import { OUTLINE_MAX, STALL_AT, liveRow, rateOf, secs, stalledLabel, type LiveRow } from './rows'
 
 // Phase 2 of the unified transcript (docs/design/transcript/spec.md, "The thinking row and the
 // stats line"): one live row at the end of the running turn, its stats 2 under it, and the
@@ -13,16 +13,13 @@ import { OFFER_STOP_AT, OUTLINE_MAX, SLOW_FOR, STALL_AT, isSlow, liveRow, rateOf
 export interface LiveInfo {
   /** When the running turn started (engine time). */
   startedAt: number
-  live: { output: number; soFar: boolean } | null
+  live: { output: number; soFar: boolean; slow: boolean; cached: number | null } | null
   pulse: number
   firstOutputAt: number | null
   askedAt: number | null
-  /** The model's usual rate (the latest call's tokens per second from `status`). */
-  speed: number | null
   activity: string | null
   /** A card outside the turn (an MCP elicitation) is waiting on a person. */
   waitingElsewhere: boolean
-  onStop?: () => void
 }
 export const LiveContext = createContext<LiveInfo | null>(null)
 
@@ -134,7 +131,7 @@ export function ThinkingLine({ e, label }: { e: Entry; label: string }) {
 
 /** The stats (spec, "The stats line"): time after the first second, tokens, tokens per second,
  * in meta. A count of streamed pieces is never shown as exact: no decimals, "so far" on hover. */
-function Stats({ info, row, rate, slow, quiet, now }: { info: LiveInfo; row: LiveRow; rate: number | null; slow: boolean; quiet: number; now: number }) {
+function Stats({ info, row, rate, quiet, now }: { info: LiveInfo; row: LiveRow; rate: number | null; quiet: number; now: number }) {
   const took = now - info.startedAt
   const parts: string[] = []
   const hover: string[] = []
@@ -146,7 +143,10 @@ function Stats({ info, row, rate, slow, quiet, now }: { info: LiveInfo; row: Liv
       parts.push(`${info.live.output.toLocaleString('en-US')} tokens`)
       hover.push(`Written ${info.live.output.toLocaleString('en-US')} tokens${info.live.soFar ? ' so far' : ''}${rate != null ? ` at ${rate} tokens per second` : ''}`)
     }
-    if (rate != null && rate > 0) parts.push(slow ? `slow · ${rate} tok/s` : `${rate} tok/s`)
+    if (rate != null && rate > 0) parts.push(`${rate} tok/s`)
+    // Slow is the engine's word for it (#426), shown while the latest count says so.
+    if (info.live?.slow) parts.push('Slow')
+    if (info.live?.cached) hover.push(`Read ${info.live.cached.toLocaleString('en-US')} tokens from cache`)
     if (row.kind === 'writing' && quiet >= STALL_AT) parts.push(stalledLabel(quiet).replace(/^No/, 'no'))
   }
   if (info.firstOutputAt != null) hover.push(`First token after ${(Math.max(0, info.firstOutputAt - info.startedAt) / 1000).toFixed(1)} seconds`)
@@ -171,9 +171,6 @@ export function LiveTail({ entries, waiting }: { entries: Entry[]; waiting: bool
   if (info && turn.current !== info.startedAt) { turn.current = info.startedAt; samples.current = [] }
   const out = info?.live?.output
   if (out != null && samples.current[samples.current.length - 1]?.output !== out) samples.current = [...samples.current.slice(-40), { at: Date.now(), output: out }]
-  const slowSince = useRef<number | null>(null)
-  const [snooze, setSnooze] = useState(0)
-  useEffect(() => { setSnooze(0) }, [info?.pulse])
   const row = liveRow(entries, { waiting: waiting || !!info?.waitingElsewhere, activity: info?.activity ?? null })
   const [open, setOpen] = useOpen(row.kind === 'thinking' ? row.item : undefined)
   const [ready, setReady] = useState(false)
@@ -183,17 +180,13 @@ export function LiveTail({ entries, waiting }: { entries: Entry[]; waiting: bool
 
   const quiet = now - life.current.at
   const rate = rateOf(samples.current, now)
-  const slowNow = isSlow(rate, info.speed)
-  if (slowNow) slowSince.current ??= now
-  else slowSince.current = null
-  const slow = slowNow && now - (slowSince.current ?? now) >= SLOW_FOR
-  const stats = <Stats info={info} row={row} rate={rate} slow={slow} quiet={quiet} now={now} />
+  const stats = <Stats info={info} row={row} rate={rate} quiet={quiet} now={now} />
   if (row.kind === 'writing') return <div className="live-tail" data-row="stats">{stats}</div>
 
-  // Thinking (and the pause before it) can stall; a step or a card is held still on purpose.
+  // Thinking (and the pause before it) can stall; a step or a card is held still on purpose. At
+  // 30 s the engine asks the person (Keep waiting / Stop the turn), and the card waits like any.
   const thinking = row.kind === 'thinking'
   const stalled = thinking && quiet >= STALL_AT
-  const offerStop = stalled && !!info.onStop && quiet >= OFFER_STOP_AT + snooze
   const state = row.kind === 'waiting' ? 'waiting' : stalled ? 'stalled' : thinking && quiet < 1500 && info.pulse > 0 ? 'on' : 'still'
   const item = thinking && row.item ? entries.find((e) => e.id === row.item) : undefined
   const words: ReactNode = (
@@ -211,12 +204,6 @@ export function LiveTail({ entries, waiting }: { entries: Entry[]; waiting: bool
         {item
           ? <button ref={button} type="button" className="line live" aria-expanded={open} onClick={() => setOpen(!open)}>{words}</button>
           : <div className="line live">{words}</div>}
-        {offerStop && (
-          <span className="live-acts">
-            <button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => setSnooze(quiet)}>Keep waiting</button>
-            <button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={info.onStop}>Stop</button>
-          </span>
-        )}
       </div>
       {open && item && <Outline e={item} live onClose={() => { setOpen(false); button.current?.focus() }} />}
       {stats}

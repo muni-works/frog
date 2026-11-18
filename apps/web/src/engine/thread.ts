@@ -88,7 +88,7 @@ export interface Thread {
   compacting: boolean
   /** The running turn's output tokens from `output_tokens`; `soFar` while part of it is a count of
    * streamed pieces. Null until the engine says (older engines never do). */
-  live?: { output: number; soFar: boolean } | null
+  live?: { output: number; soFar: boolean; slow: boolean; cached: number | null } | null
   /** Bumped by every streamed piece and token count, so the stats line can tell output from
    * silence by when this last changed (in the viewer's clock, not the engine's). */
   pulse?: number
@@ -150,7 +150,8 @@ function apply(t: Thread, ev: Event, created: number): Thread {
       const d = ev.delta
       if (t.activity) t = { ...t, activity: null }
       if (d.type === 'image_preview') return t
-      t = { ...t, pulse: (t.pulse ?? 0) + 1, firstOutputAt: t.firstOutputAt ?? (d.type === 'output' ? null : created) }
+      // First token: the first reasoning or text delta (wire contract), not a tool's output.
+      t = { ...t, pulse: (t.pulse ?? 0) + 1, firstOutputAt: t.firstOutputAt ?? (d.type === 'reasoning' || d.type === 'text' ? created : null) }
       const next = patch(t, ev.id, (e) => {
         if (d.type === 'output') return { ...e, output: e.output + d.text }
         // The thought line is shown verbatim and kept until the engine sends another.
@@ -180,7 +181,8 @@ function apply(t: Thread, ev: Event, created: number): Thread {
     }
     case 'output_tokens':
       // Live only, for the running turn's stats; an older turn's count is its footer's.
-      return t.running ? { ...t, live: { output: ev.output, soFar: !!ev.so_far }, pulse: (t.pulse ?? 0) + 1, firstOutputAt: t.firstOutputAt ?? created } : t
+      // `cached` comes only when a call ends: keep the last one through the next call's counts.
+      return t.running ? { ...t, live: { output: ev.output, soFar: !!ev.so_far, slow: !!ev.slow, cached: ev.cached ?? t.live?.cached ?? null }, pulse: (t.pulse ?? 0) + 1 } : t
     case 'permission_request':
       return { ...t, askedAt: created, ask: { id: ev.id, item: ev.item, name: ev.name, arg: ev.arg, always: ev.always, preview: ev.preview, reason: ev.reason } }
     case 'status':

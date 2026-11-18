@@ -262,10 +262,8 @@ function AskCard({ ask, onDecide }: { ask: Ask; onDecide: Decide }) {
 
 const NO_MODELS: Model[] = []
 
-export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, models = NO_MODELS, outbox = [], onResend, onEdit, waiting, onContinue, onPrompt, onShowChange, onStop, credit }: {
+export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, models = NO_MODELS, outbox = [], onResend, onEdit, waiting, onContinue, onPrompt, onShowChange, credit }: {
   thread: Thread
-  /** Stop the running turn: offered on the live row once it has been quiet for 30 s. */
-  onStop?: () => void
   /** The account's credit left, for the turn-cost card. */
   credit?: string
   onDecide: Decide
@@ -305,13 +303,10 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
   }), [])
   const has = { retry: !!onRetry, edit: !!onEdit, cont: !!onContinue }
   // The live row's fast-changing inputs, through context so the memoized turns don't redraw.
-  const stop = useRef(onStop)
-  stop.current = onStop
   const live = useMemo<LiveInfo>(() => ({
     startedAt: thread.startedAt, live: thread.live ?? null, pulse: thread.pulse ?? 0, firstOutputAt: thread.firstOutputAt ?? null,
-    askedAt: thread.askedAt ?? null, speed: thread.speed ?? null, activity: thread.activity?.text ?? null, waitingElsewhere: !!thread.elicitation,
-    onStop: onStop ? () => stop.current?.() : undefined,
-  }), [thread.startedAt, thread.live, thread.pulse, thread.firstOutputAt, thread.askedAt, thread.speed, thread.activity, thread.elicitation, !!onStop])
+    askedAt: thread.askedAt ?? null, activity: thread.activity?.text ?? null, waitingElsewhere: !!thread.elicitation,
+  }), [thread.startedAt, thread.live, thread.pulse, thread.firstOutputAt, thread.askedAt, thread.activity, thread.elicitation])
   return (
     <LiveContext.Provider value={live}>
       {(thread.marks ?? []).filter((m) => m.after === 0).map((m, i) => <Mark key={`m0-${i}`} m={m} />)}
@@ -373,7 +368,15 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
   // One entry as its row. `data-row` says what it is (prose, line, box), and the gaps between
   // rows come from that alone (transcript.css): lines touch, prose to lines is `activity`, a box
   // is a `block` from anything.
+  // The engine's quiet-call question (#426) is anchored on the reasoning or message streaming: the
+  // card goes after that entry's own row (none while it's the live row), a block like any card.
   const draw = (e: Entry, entries: Entry[], n: number): ReactNode => {
+    if (question?.item === e.id && e.kind !== 'tool') return (
+      <>{drawOne(e, entries, n)}<div data-row="box"><QuestionCard q={question} onAnswer={cb.onAnswer} /></div></>
+    )
+    return drawOne(e, entries, n)
+  }
+  const drawOne = (e: Entry, entries: Entry[], n: number): ReactNode => {
     if (e.kind === 'reasoning') {
       // While it thinks, the live row is the think (LiveRow); it settles here as one line.
       if (!e.done && live && running) return null

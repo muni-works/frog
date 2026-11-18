@@ -150,8 +150,10 @@ See the PR for the full list. In short:
 
 ## Phase 2 (web): the thinking row and the stats line
 
-Built against the engine's wire shapes from #420 (`thought` on reasoning deltas, `thoughts` and
-`think_ms` on the finished item, the live `output_tokens` event). Its cases,
+Built against the engine's wire shapes from #420 and #426, as the transcript manager's wire contract
+gives them (`thought` on reasoning deltas, `thoughts` and `think_ms` on the finished item, the live
+`output_tokens` event with `so_far`, `slow` and `cached`, and the quiet call as an ordinary
+`question`). Its cases,
 [`thoughts.json`](thoughts.json), are loaded by `apps/web/test/transcript-thinking.test.ts`: every
 `streams` case is replayed through the reducer and the row must show each delta's `thought`
 verbatim and keep it until the next.
@@ -181,12 +183,13 @@ verbatim and keep it until the next.
   Tokens are the engine's `output_tokens`; the hover says "so far" while `so_far` is set. The rate
   is the change in that figure over the last 4 s of the viewer's clock, never with a decimal.
   Waiting: time and "waited 6s".
-- **Slow**: under a quarter of the usual rate for 5 s, the stats say "slow · 9 tok/s". Nothing
-  turns orange.
+- **Slow**: the stats say "Slow" while the engine's latest count carries `slow`. The web never
+  works it out itself. Nothing turns orange.
 - **Stalled**: no output (no streamed piece and no token count) for 10 s while thinking, and the
-  row says "No output for 12s" with the dot grey and still. At 30 s it offers Keep waiting and
-  Stop; Keep waiting asks again after another 30 s, Stop interrupts the turn. A step or a card is
-  never called stalled: a command can be quiet for minutes on purpose.
+  row says "No output for 12s" with the dot grey and still. At 30 s the engine asks (its quiet
+  call: "Keep waiting" / "Stop the turn"), drawn as a question card after the streaming think or
+  answer, or after the turn when nothing has streamed (`item: ""`); the row then waits on you. A
+  token withdraws it. A step or a card is never called stalled: a command can be quiet for minutes.
 - **Settled**: "Thought for 31s" from `think_ms`, opening to the outline: one line per shown
   thought (twelve, then "3 more"), a line opening its paragraph, "Show all N characters" for the
   whole text in its own scrolling box with Copy. Stopped mid-think: "Stopped after 46s" (to when
@@ -201,14 +204,9 @@ verbatim and keep it until the next.
 - **Old logs** (no `think_ms`, no `thoughts`) read "Thought" and open straight to the full text.
   The length is never derived from the item's own times: `item_completed` comes after the whole
   reply. A short scratch thought alone between replies still folds away there, as before.
-- **The usual rate** for "slow" is the latest call's speed from `status` (`tokens_per_sec`). There
-  is no per-model history on the wire. No `status` speed: never slow.
-- **The 30 s offer** is drawn on the row itself (Keep waiting, Stop), not as a second question card:
-  #411's quiet-child question is the engine's, for children; a stalled model call has no engine
-  question. Same two answers, same wording.
-- **Hover**: time, tokens (with "so far"), first-token time (from the turn start to the first
-  streamed piece). "Read 12,400 tokens, 11,900 from cache" is **left out**: input and cache figures
-  only arrive with `turn_ended`, not while it runs.
+- **Hover**: time, tokens (with "so far"), first-token time (the first reasoning or text delta
+  minus the turn's start), and "Read 11,900 tokens from cache" once a call has ended (`cached`). The
+  total read isn't on the wire while it runs, so only the cached part shows.
 - **The rail** (board 5's marks spaced by time) and **pace in the opened header** are left out of
   phase 2; the spec marks the rail optional, and the pace curve is phase 3's.
 - **Parallel steps** count only the steps still running; the nouns are in `verbs.json` (`counts`).
@@ -221,4 +219,4 @@ verbatim and keep it until the next.
 and phase 2 adds two under the ask card, the live row "Waiting for you" 16 below the card and its
 stats 2 below that (`diff-p1-p2-1280.txt`). 1280 and 1600 match (`diff-p2-1280-1600.txt`).
 Captures: `captures/p2-*` (`capture-p2.sh`): thinking, thinking opened, two reads at once, an
-answer writing with its stats, waiting on a card, and stalled with Stop offered.
+answer writing with its stats, waiting on a card, stalled ("No output for 12s"), and the engine's quiet call at 30 s.

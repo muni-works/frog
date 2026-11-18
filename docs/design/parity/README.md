@@ -116,8 +116,8 @@ All lengths are points (CSS px on the web), rounded to 0.1.
   `thought` and `fold`: the parts verb, gist, object and result joined by one space ("Edited
   src/retry.rs +3 −2", "4 steps 2.2s"). For `footer`: as drawn, with " · " between parts. For
   `card`: its title. For `live`: the label, object and thought joined by one space ("Editing
-  src/retry.rs", "Waiting for you"). For `stats`: as drawn, with every run of digits written `#`,
-  since the figures tick (`#s · waited #s`).
+  src/retry.rs", "Waiting for you"). For `stats`: as drawn, with every duration written `#s` ("2m 5s" too)
+  and every other run of digits `#`, since the figures tick (`#s · waited #s`).
 - `x`: the left edge of the row's first visible character, minus the column's text edge (the
   column's left plus its gutter). 0 means on the shared left edge. A right-aligned bubble's x is
   wherever its text starts.

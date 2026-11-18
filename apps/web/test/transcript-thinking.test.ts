@@ -49,10 +49,16 @@ test("a finished think keeps the engine's outline and how long it thought; an ol
 test("output_tokens reaches the running turn, so_far and all, and a provider figure replaces the count", () => {
   let t = thinking();
   t = reduce(t, env({ event: "output_tokens", turn: 1, output: 120, so_far: true }));
-  assert.deepEqual(t.live, { output: 120, soFar: true });
+  assert.deepEqual(t.live, { output: 120, soFar: true, slow: false, cached: null });
   // Ephemeral events carry their own seq like deltas do; the replay gate must not drop them.
   t = reduce(t, env({ event: "output_tokens", turn: 1, output: 131 }));
-  assert.deepEqual(t.live, { output: 131, soFar: false });
+  assert.deepEqual(t.live, { output: 131, soFar: false, slow: false, cached: null });
+  // #426: `slow` rides so_far counts; `cached` comes when a call ends and holds through the next.
+  t = reduce(t, env({ event: "output_tokens", turn: 1, output: 140, so_far: true, slow: true }));
+  assert.equal(t.live?.slow, true);
+  t = reduce(t, env({ event: "output_tokens", turn: 1, output: 150, cached: 9000 }));
+  t = reduce(t, env({ event: "output_tokens", turn: 1, output: 160, so_far: true }));
+  assert.deepEqual(t.live, { output: 160, soFar: true, slow: false, cached: 9000 }, "slow goes with the next count; cached stays");
   assert.ok((t.pulse ?? 0) >= 2, "a count is a sign of life");
   t = run([{ event: "turn_ended", turn: 1, reason: { type: "complete" } }, { event: "output_tokens", turn: 1, output: 999 }], t);
   assert.notEqual(t.live?.output, 999, "an idle session takes no live count");
@@ -81,7 +87,7 @@ const verbs = JSON.parse(readFileSync(new URL("../../../docs/design/transcript/v
 const tool = (id: string, name: string, arg: string, done = false): Entry => ({ id, kind: "tool", text: "", name, arg, output: "", done, ...(done ? { outcome: "ok" as const } : {}) });
 const noop = () => {};
 const page = (t: Thread) => renderToStaticMarkup(createElement(Transcript, { thread: t, onDecide: noop, onAnswer: noop, onElicit: noop }));
-const info = (over: Partial<LiveInfo> = {}): LiveInfo => ({ startedAt: Date.now() - 31_000, live: null, pulse: 1, firstOutputAt: null, askedAt: null, speed: null, activity: null, waitingElsewhere: false, ...over });
+const info = (over: Partial<LiveInfo> = {}): LiveInfo => ({ startedAt: Date.now() - 31_000, live: null, pulse: 1, firstOutputAt: null, askedAt: null, activity: null, waitingElsewhere: false, ...over });
 const tail = (entries: Entry[], i: LiveInfo, waiting = false) => renderToStaticMarkup(createElement(LiveContext.Provider, { value: i }, createElement(LiveTail, { entries, waiting })));
 const text = (html: string, cls: string) => {
   // The stats nest a span per part: read to their div's end.
@@ -147,17 +153,19 @@ test("a finished think settles to 'Thought for Ns'; an old log reads 'Thought'; 
 
 test("the stats: time after the first second, tokens never with decimals, tok/s; a card's wait", () => {
   const r: Entry = { id: "r1", kind: "reasoning", text: "", output: "", done: false };
-  const html = tail([r], info({ live: { output: 1212, soFar: true } }));
+  const html = tail([r], info({ live: { output: 1212, soFar: true, slow: false, cached: 11_900 } }));
   assert.equal(text(html, "live-stats"), "31s · 1,212 tokens");
   assert.match(html, /title="[^"]*Written 1,212 tokens so far/, "the hover says 'so far' while it is a count");
+  assert.match(html, /title="[^"]*Read 11,900 tokens from cache/, "cache from the engine's figure");
   assert.equal(text(tail([r], info({ startedAt: Date.now() - 400 })), "live-stats"), null, "no time in the first second");
   const waiting = tail([tool("t1", "Bash", "cargo test")], info({ startedAt: Date.now() - 39_000, askedAt: Date.now() - 6_000 }), true);
   assert.match(waiting, /data-state="waiting"/, "amber only when waiting on a person");
   assert.equal(text(waiting, "live-label"), "Waiting for you");
   assert.equal(text(waiting, "live-stats"), "39s · waited 6s");
-  const writing = tail([{ id: "m", kind: "message", text: "The jitter", output: "", done: false }], info({ live: { output: 40, soFar: true } }));
+  const writing = tail([{ id: "m", kind: "message", text: "The jitter", output: "", done: false }], info({ live: { output: 40, soFar: true, slow: true, cached: null } }));
   assert.doesNotMatch(writing, /data-row="live"/, "an answer writing has no row");
   assert.match(writing, /data-row="stats"/, "only its stats, under the text");
+  assert.match(writing, /Slow/, "slow when the engine says so, never computed");
 });
 
 test("the outline: a line per shown thought, twelve then 'N more', and the full text a click away", () => {
@@ -174,12 +182,24 @@ test("the outline: a line per shown thought, twelve then 'N more', and the full 
   assert.match(live, /class="outline-line now"[^>]*>Two</, "the newest line in fg while live");
 });
 
-test("tokens per second over the last seconds, whole numbers; slow is under a quarter of usual", async () => {
-  const { rateOf, isSlow } = await import("../src/ui/rows.ts");
+test("tokens per second over the last seconds, whole numbers", async () => {
+  const { rateOf } = await import("../src/ui/rows.ts");
   assert.equal(rateOf([{ at: 0, output: 0 }], 500), null, "not before a second of samples");
   assert.equal(rateOf([{ at: 0, output: 0 }, { at: 1000, output: 29 }, { at: 2000, output: 58 }], 2000), 29);
   assert.equal(rateOf([{ at: 0, output: 0 }, { at: 3000, output: 100 }], 3000), 33, "never a decimal");
-  assert.equal(isSlow(9, 58), true);
-  assert.equal(isSlow(20, 58), false);
-  assert.equal(isSlow(9, null), false, "no usual rate, never slow");
+});
+
+test("the engine's quiet-call question shows as a card after its think, and the row waits on you", () => {
+  const q = { event: "question" as const, id: "q1", item: "r1", question: "The model has sent nothing for 30 s.", options: [{ label: "Keep waiting" }, { label: "Stop the turn" }], multi: false, allow_other: false };
+  let t = run([...[{ event: "turn_started", turn: 1, input: "go" }, { event: "item_started", id: "r1", kind: { type: "reasoning" } }] as Event[], q]);
+  let html = page(t);
+  assert.match(html, /Keep waiting[\s\S]*Stop the turn/, "the card, with the engine's two answers");
+  assert.match(html, /data-row="live" data-kind="waiting"/);
+  // Nothing streamed yet: an empty item still draws the card (after the turn).
+  t = run([{ event: "turn_started", turn: 1, input: "go" }, { ...q, item: "" }]);
+  html = page(t);
+  assert.match(html, /Stop the turn/);
+  // Any token withdraws it.
+  t = reduce(t, env({ event: "question_resolved", id: "q1", choices: [] }));
+  assert.doesNotMatch(page(t), /Stop the turn/);
 });

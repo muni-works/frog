@@ -16,7 +16,8 @@ for look in light dark; do
     WEB_SHOT_WAIT=10400 node $SHOT $LIVE $HERE/p2-steps-$w-$look.png $w $h $look >/dev/null
     WEB_SHOT_WAIT=15800 WEB_SHOT_SCROLL='.live-tail' node $SHOT $LIVE $HERE/p2-writing-$w-$look.png $w $h $look >/dev/null
     WEB_SHOT_WAIT=21500 WEB_SHOT_SCROLL='.live-row' WEB_SHOT_CLICK='.thought .line' node $SHOT $LIVE $HERE/p2-waiting-$w-$look.png $w $h $look >/dev/null
-    WEB_SHOT_WAIT=32500 node $SHOT $STALL $HERE/p2-stalled-$w-$look.png $w $h $look >/dev/null
+    WEB_SHOT_WAIT=15000 node $SHOT $STALL $HERE/p2-stalled-$w-$look.png $w $h $look >/dev/null
+    WEB_SHOT_WAIT=37000 node $SHOT $STALL $HERE/p2-quiet-call-$w-$look.png $w $h $look >/dev/null
     print "$look $w"
   done
 done

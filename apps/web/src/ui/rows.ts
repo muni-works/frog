@@ -260,8 +260,5 @@ export function rateOf(samples: { at: number; output: number }[], now: number, w
   return Math.round(((last.output - first.output) * 1000) / (now - first.at))
 }
 
-/** Slow (spec, "The row"): under a quarter of the model's usual rate for five seconds. */
-export const SLOW_FOR = 5000
+/** No output for this long while thinking: the row says so (the engine asks at 30 s). */
 export const STALL_AT = 10_000
-export const OFFER_STOP_AT = 30_000
-export const isSlow = (rate: number | null, usual: number | null | undefined) => rate != null && !!usual && usual > 0 && rate < usual / 4

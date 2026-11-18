@@ -183,7 +183,6 @@
 .tx .live-chev { color: var(--faint); opacity: 0; transition: opacity .12s; }
 .tx .line-plate:hover .live-chev, .tx .line.live:focus-visible .live-chev { opacity: 1; color: var(--fg); }
 .tx .line[aria-expanded="true"] .live-chev { opacity: 1; transform: rotate(90deg); }
-.tx .live-acts { display: flex; gap: var(--space-tight); flex: none; }
 .tx .live-stats {
   margin-top: var(--gap-stats); font-size: var(--tx-meta-size); line-height: var(--tx-meta-line);
   color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;

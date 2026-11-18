@@ -7,7 +7,8 @@
 //
 //   full   a think with thought lines, two reads at once, a failing test run, prose writing, an
 //          edit, then a permission card that stays open (Waiting for you)
-//   stall  a think that goes quiet after 3 s: "No output for 10s", Stop and Keep waiting at 30 s
+//   stall  a think that goes quiet after 3 s: "No output for 10s", then at ~33 s the engine's quiet
+//          call (#426): a question with Keep waiting / Stop the turn
 //   think  a long think that keeps going (the cross-fade and the stats ticking)
 import { createServer } from "node:http";
 import { accept } from "../../../apps/web/test/mock/ws.mjs";
@@ -59,9 +60,10 @@ function script() {
     shown.push({ text: thoughts[i % thoughts.length], start, end: start + p.length - 2, ms: i * 1400 + 1300 });
   }
   const thinkEnd = 600 + n * 1400;
-  for (let ms = 600; ms < thinkEnd; ms += 250) at(ms, { event: "output_tokens", turn: 1, output: (tokens = Math.round(((ms - 600) / 1000) * 58)), so_far: true });
+  for (let ms = 600; ms < thinkEnd; ms += 250) at(ms, { event: "output_tokens", turn: 1, output: (tokens = Math.round(((ms - 600) / 1000) * 58)), so_far: true, ...(mode === "think" && ms > 8000 && ms < 14000 ? { slow: true } : {}) });
+  if (mode === "stall") at(thinkEnd + 30_000, { event: "question", id: "quiet1", item: "r1", question: "The model has sent nothing for 30 s.", options: [{ label: "Keep waiting" }, { label: "Stop the turn" }], multi: false, allow_other: false });
   if (mode !== "full") return out.sort((a, b) => a[0] - b[0]);
-  at(thinkEnd, { event: "output_tokens", turn: 1, output: (tokens += 6) });
+  at(thinkEnd, { event: "output_tokens", turn: 1, output: (tokens += 6), cached: 11_900 });
   at(thinkEnd + 100, { event: "item_completed", id: "r1", item: { type: "reasoning", text, thoughts: shown, think_ms: thinkEnd - 600 } });
   let t = thinkEnd + 200;
   at(t, { event: "item_started", id: "t1", kind: { type: "tool_call", name: "Read", arg: "src/retry.rs" } });
@@ -109,6 +111,12 @@ server.on("upgrade", (req, socket) => {
   conn.onmessage = (text) => {
     let v;
     try { v = JSON.parse(text); } catch { return; }
+    // The quiet call's answers: Stop the turn ends it; Keep waiting just withdraws the card.
+    if (v?.op === "answer") {
+      conn.send(JSON.stringify({ seq: 8999, session: id, created: Date.now(), event: "question_resolved", id: v.id, choices: v.choices ?? [] }));
+      if (!(v.choices ?? []).includes("Stop the turn")) return;
+      v = { op: "interrupt" };
+    }
     if (v?.op === "interrupt") {
       timers.forEach(clearTimeout);
       conn.send(JSON.stringify({ seq: 9000, session: id, created: Date.now(), event: "turn_ended", turn: 1, reason: { type: "cancelled" } }));

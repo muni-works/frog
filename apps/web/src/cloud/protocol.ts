@@ -184,8 +184,10 @@ export type Event =
   | { event: "error"; message?: string }
   | { event: "idle" }
   /** The turn's output tokens so far, for the stats line (live only, at most 4 a second).
-   * `so_far`: part of it is counted from streamed pieces, so never show it as exact. */
-  | { event: "output_tokens"; turn: number; output: number; so_far?: boolean };
+   * `so_far`: part of it is counted from streamed pieces, so never show it as exact. `slow` (#426,
+   * only on so_far counts): the call is slow; say so, never compute it. `cached` (#426, only when a
+   * call ends): input tokens read from cache this turn so far. */
+  | { event: "output_tokens"; turn: number; output: number; so_far?: boolean; slow?: boolean; cached?: number };
 
 export type Envelope = { seq: number; session: string; created: number } & Event;
 
