@@ -8767,12 +8767,22 @@ fn turn_timing(evs: &[Envelope]) -> TurnTiming {
 }
 
 /// A logged event with what differs from run to run (clock, session id, generated ids,
-/// timing) taken out.
+/// timing) taken out. `seq` too: the live token count (`output_tokens`, never logged) goes out
+/// on a clock, so how many seq numbers it takes between logged events varies.
 fn stable(env: &Envelope) -> Value {
     fn scrub(v: &mut Value) {
         match v {
             Value::Object(m) => {
-                for k in ["created", "session", "timing", "tokens_per_sec"] {
+                for k in [
+                    "created",
+                    "session",
+                    "timing",
+                    "tokens_per_sec",
+                    "seq",
+                    "pace",
+                    "think_ms",
+                    "asked",
+                ] {
                     m.remove(k);
                 }
                 m.values_mut().for_each(scrub);
