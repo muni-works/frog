@@ -151,6 +151,8 @@ struct TurnView: View, Equatable {
                 ForEach(Array(delivered.enumerated()), id: \.offset) { _, message in
                     EventLineView(event: EventLine(message: message))
                 }
+            case .resumed(let line):
+                ResumedLine(text: line)
             case .none:
                 EmptyView()
             case .prompt:
