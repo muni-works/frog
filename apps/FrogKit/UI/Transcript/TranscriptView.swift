@@ -396,10 +396,11 @@ struct TranscriptView: View {
     /// (`-FrogMetrics`) need every row laid out, so they get a plain stack.
     @ViewBuilder
     private var stackRows: some View {
+        // `scrollTargetLayout` goes on the stack itself: on the `if` it reports nothing.
         if TranscriptMetrics.enabled {
-            VStack(alignment: .leading, spacing: 0) { rowsContent }
+            VStack(alignment: .leading, spacing: 0) { rowsContent }.scrollTargetLayout()
         } else {
-            LazyVStack(alignment: .leading, spacing: 0) { rowsContent }
+            LazyVStack(alignment: .leading, spacing: 0) { rowsContent }.scrollTargetLayout()
         }
     }
 
@@ -443,7 +444,6 @@ struct TranscriptView: View {
     private var transcript: some View {
         ScrollView {
             stackRows
-            .scrollTargetLayout()
             .coordinateSpace(.named(Self.content))
             .environment(\.turnSpace, space)
             .environment(\.transcriptEdge, edge)
@@ -458,17 +458,6 @@ struct TranscriptView: View {
             .contentMargins(0, for: .scrollContent)
         }
         .scrollContentBackground(.hidden)
-        // The pane's width decides the gutter, and whether marks hang in it (`TranscriptEdge`).
-        .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { w in
-            paneWidth = w
-            if TranscriptMetrics.enabled {
-                let e = TranscriptEdge.of(paneWidth: w)
-                TranscriptMetrics.shared.pane = w
-                TranscriptMetrics.shared.gutter = e.gutter
-                TranscriptMetrics.shared.indent = e.indent
-                TranscriptMetrics.shared.column = min(TurnSpace.measure, w - 2 * e.gutter)
-            }
-        }
         .scrollPosition($position, anchor: .top)
         // The system's scroll-edge blur is hidden (see ScrollBackdropClear), so fade the
         // content out under the toolbar instead of letting it run into the title.
@@ -487,6 +476,17 @@ struct TranscriptView: View {
         .overlay {
             if conversation.turns.isEmpty, !conversation.busy, !conversation.replaying, conversation.failure == nil {
                 EmptyTranscript(conversation: conversation)
+            }
+        }
+        // The pane's width decides the gutter, and whether marks hang in it (`TranscriptEdge`).
+        .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { w in
+            paneWidth = w
+            if TranscriptMetrics.enabled {
+                let e = TranscriptEdge.of(paneWidth: w)
+                TranscriptMetrics.shared.pane = w
+                TranscriptMetrics.shared.gutter = e.gutter
+                TranscriptMetrics.shared.indent = e.indent
+                TranscriptMetrics.shared.column = min(TurnSpace.measure, w - 2 * e.gutter)
             }
         }
     }
