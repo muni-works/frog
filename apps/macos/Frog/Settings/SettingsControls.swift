@@ -159,6 +159,8 @@ struct FrogSegmented: View {
         .padding(2)
         .background(Tokens.raised, in: .rect(cornerRadius: 9))
         .fixedSize()
+        // A group named for the row, each option by its own name ("Light", not "Theme").
+        .accessibilityElement(children: .contain)
         .accessibilityLabel(label)
     }
 }

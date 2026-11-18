@@ -192,11 +192,9 @@ struct MachineSettingsPage: View {
                     if d.totalBytes > 0 { MachineMemoryBar(device: d).padding(.vertical, SettingsLook.rowPad) }
                 }
                 MachineModelsSections(device: d, devices: devices)
-                let rows = catalog.macRows(in: "models", page: "machine")
-                ForEach(Array(Set(rows.compactMap(\.group)).sorted().reversed()), id: \.self) { g in
-                    SettingsGroupLabel(text: g == "This Mac" && d.role != .thisMac ? "This machine" : g == "Machines" ? "Name" : g)
-                    SettingsRows { ForEach(rows.filter { $0.group == g }) { SettingsBindings.view(for: $0) } }
-                }
+                // Its name and sharing, under one label.
+                SettingsGroupLabel(text: d.role == .thisMac ? "This Mac" : "This machine")
+                SettingsRows { ForEach(catalog.macRows(in: "models", page: "machine")) { SettingsBindings.view(for: $0) } }
             }
             .environment(\.settingsMachine, deviceID)
             // Balanced: Devices counts its watchers.
