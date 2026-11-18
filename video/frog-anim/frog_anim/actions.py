@@ -11,6 +11,7 @@ The two building blocks the reel itself calls, `rest()` and `hop()`, are the ree
 and `hop` (video/hype-reel/comp.py) without its beat clock: the caller says when it blinks."""
 from __future__ import annotations
 
+import math
 import random
 from dataclasses import dataclass, field
 from typing import Callable
@@ -32,6 +33,8 @@ def rest(img: Image.Image, t: float, x: float, y: float, size: float, pose: str 
     """The frog resting with its anchor at (x, y), `size` px head width. `land` is when it last
     touched down (for the squash). The reel's `frog_at`, with `blink` passed in."""
     sq = squash_at(t, land)
+    if mirror and body is not None:  # facing left mirrors the body's sway and tilt too
+        body = Move(-body.tx, body.ty, body.sx, body.sy, -body.rotation)
     spr = sprite(size, pose, blink=blink, wink=wink, look=look, label=label,
                  **_extra(eyes, frown, palette, font, mirror))
     place(img, spr, x, y, squash=sq, rot=rot, clip_y=clip_y, **({"body": body, "unit": size / HEAD_W} if body else {}))
@@ -51,6 +54,7 @@ def hop(img: Image.Image, t: float, t0: float, t1: float, p0: tuple[float, float
         return True
     x, y, rot, dx = hop_path(t, t0, t1, p0, p1, height)
     lx = 0.4 * (1 if dx > 0 else -1 if dx < 0 else 0) if dx else 0
+    if mirror: lx = -lx  # the sprite is flipped after drawing; keep it looking where it goes
     spr = sprite(size, "hop", look=(lx, -0.5), **_extra(None, False, palette, font, mirror))
     place(img, spr, x, y + size * 0.9, rot=rot)
     return True
@@ -171,13 +175,21 @@ def _hop(img, t, c):
 
 
 def _hop_in(img, t, c):
-    """hops in from off the edge it faces away from and lands with a squash (the reel's entrances).
-    Plays once: 0.25 s empty, the hop, then it sits."""
+    """hops in from off the edge behind it and lands with a squash (the reel's entrances).
+    Plays once: 0.25 s empty, the hop, then it sits. The flight leans into the hop and
+    straightens to land (the reel's hop() leans along the arc, which on a small canvas pushes
+    its head off the far side at touchdown)."""
     t0, t1 = 0.25, 0.25 + 0.42
-    sx = -1 if not c.mirror else 1
-    start = (c.x + sx * (c.x + c.size * 1.4), c.y - c.size * 0.2)
-    hop(img, t, t0, t1, start, (c.x, c.y), c.size, height=c.size * 1.6, blink=BLINK(t + c.phase),
-        palette=c.palette, mirror=c.mirror)
+    if t < t0: return
+    if t >= t1:
+        rest(img, t, c.x, c.y, c.size, "sit", land=t1, blink=BLINK(t + c.phase), palette=c.palette, mirror=c.mirror)
+        return
+    way = -1 if c.mirror else 1
+    start = (-c.size * 1.2, c.y) if not c.mirror else (2 * c.x + c.size * 1.2, c.y)
+    x, y, _, _ = hop_path(t, t0, t1, start, (c.x, c.y), c.size * 0.4)
+    k = (t - t0) / (t1 - t0)
+    rot = -way * 30 * math.sin(math.pi * k)  # PIL turns counter-clockwise: lean forward
+    place(img, sprite(c.size, "hop", look=(0.4, -0.5), **_extra(None, False, c.palette, None, c.mirror)), x, y, rot=rot)
 
 
 def _peek(img, t, c):

@@ -1,6 +1,6 @@
 """frog-anim tests (stdlib unittest).
 
-    cd video/frog-anim && uv run --no-project --with pillow==12.0.0 --with numpy==2.3.4 python -m unittest -v
+    cd video/frog-anim && uv run --no-project --with pillow==12.0.0 --with numpy==2.3.4 python -m unittest discover -s tests -v
 
 The reel comparison (test_reel_matches_before) runs only when FROG_ANIM_REEL_BEFORE points at a
 directory of the reel's frames rendered before the move, and the reel's footage/ exists."""
@@ -113,24 +113,45 @@ class Actions(unittest.TestCase):
         self.assertEqual(im.getpixel((0, 0)), (1, 2, 3))
 
     def test_frog_stays_on_canvas(self):
-        """No action's frog is cut by the canvas edge in the default layout (peek and hop-in enter
-        from off-canvas on purpose and are skipped)."""
+        """No action's frog is cut by the canvas edge in the default layout, facing either way.
+        peek rises over the bottom edge and hop-in enters over the edge behind it, on purpose:
+        only that edge is exempt for them."""
         for name, act in ACTIONS.items():
-            if name in ("peek", "hop-in"): continue
-            lay = layout(240, 240, act.body)
-            for i in range(24):
-                a = np.asarray(render_frame(name, act.loop * i / 24, lay))[..., 3]
-                edges = np.concatenate([a[0], a[-1], a[:, 0], a[:, -1]])
-                self.assertEqual(edges.max(), 0, f"{name} touches the edge at frame {i}")
+            for facing in ("right", "left"):
+                lay = layout(240, 240, act.body)
+                for i in range(24):
+                    a = np.asarray(render_frame(name, act.loop * i / 24, lay, facing=facing))[..., 3]
+                    edges = {"top": a[0], "bottom": a[-1], "left": a[:, 0], "right": a[:, -1]}
+                    if name == "peek": edges.pop("bottom")
+                    if name == "hop-in": edges.pop("left" if facing == "right" else "right")
+                    for side, px in edges.items():
+                        self.assertEqual(px.max(), 0, f"{name} facing {facing} touches the {side} edge at frame {i}")
 
-    def test_facing_left_mirrors(self):
-        lay = layout(200, 200)
-        r = np.asarray(render_frame("wave", 0, lay))
-        l = np.asarray(render_frame("wave", 0, lay, facing="left"))
-        self.assertFalse(np.array_equal(r, l))
-        # the left-facing frog is the right-facing one flipped, give or take a pixel of rounding
-        best = min(np.abs(np.roll(r[:, ::-1], s, axis=1).astype(int) - l).mean() for s in (-1, 0, 1))
-        self.assertLess(best, 0.5)
+    def test_facing_left_mirrors_every_action(self):
+        """Facing left is facing right flipped, give or take a pixel of rounding and resampling, for every action
+        (carry's label excepted: it must still read left to right, below)."""
+        for name, act in ACTIONS.items():
+            if name == "carry": continue
+            lay = layout(200, 200, act.body)
+            for t in (act.loop * 0.3, act.loop * 0.45):
+                r = np.asarray(render_frame(name, t, lay))
+                l = np.asarray(render_frame(name, t, lay, facing="left"))
+                # shape check: after the best +-1 px shift, few of the frog's pixels disagree on
+                # coverage (bicubic rotation of a flipped sprite resamples edges a hair differently)
+                ra, la = r[..., 3] > 127, l[..., 3] > 127
+                off = min(np.count_nonzero(np.roll(ra[:, ::-1], (dy, dx), axis=(0, 1)) ^ la)
+                          for dx in (-1, 0, 1) for dy in (-1, 0, 1))
+                tol = 0.06 if name in ("hop", "hop-in") else 0.02  # rotated mid-air: thin limbs land on different pixels
+                self.assertLess(off, tol * max(1, la.sum()), f"{name} at {t:.2f} s")
+
+    def test_carry_label_reads_the_same_facing_left(self):
+        lay = layout(400, 400, "full", size=150)
+        top, bot = int(lay.y - (1195 - 930) / 592 * 150), int(lay.y - (1195 - 1000) / 592 * 150)
+        r = np.asarray(render_frame("carry", 2.0, lay, label="ABC"))[top:bot, 120:280].astype(int)
+        l = np.asarray(render_frame("carry", 2.0, lay, label="ABC", facing="left"))[top:bot, 120:280].astype(int)
+        same = min(np.abs(np.roll(r, s, axis=1) - l).mean() for s in (-1, 0, 1))
+        flipped = np.abs(r[:, ::-1] - l).mean()
+        self.assertLess(same, flipped / 3)
 
     def test_transparent_edges_are_not_darkened(self):
         """On a transparent canvas the frog's edge pixels keep the skin colour (alpha-composited,

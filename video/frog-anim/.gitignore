@@ -7,3 +7,4 @@ out/
 *.apng
 __pycache__/
 *.egg-info/
+build/

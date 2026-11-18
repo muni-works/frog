@@ -88,7 +88,12 @@ def sprite(head_px: float, pose: str = "sit", blink: bool = False, wink: bool = 
             d.rounded_rectangle([*P(x0, y0), *P(x1, y1)], radius=40 * s, fill=WELL, outline=EDGE, width=max(1, int(5 * s)))
             if label:
                 f = _font(font if font is not None else default_font(), max(8, int(104 * s)))
-                d.text(P(512, 965), label, font=f, fill=FG, anchor="mm")
+                if not mirror:
+                    d.text(P(512, 965), label, font=f, fill=FG, anchor="mm")
+                else:  # drawn flipped (the canvas is symmetric about x 512), so the final flip rights it
+                    lay = Image.new("RGBA", im.size, (0, 0, 0, 0))
+                    ImageDraw.Draw(lay).text(P(512, 965), label, font=f, fill=FG, anchor="mm")
+                    im.alpha_composite(ImageOps.mirror(lay)); d = ImageDraw.Draw(im)
             ell(x0, 965, 66, 78, SKIN); ell(x1, 965, 66, 78, SKIN)
         else:
             ell(512, 964, 143, 143, PAPER)
