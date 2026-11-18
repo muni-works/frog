@@ -121,5 +121,5 @@ test("the model menu keeps its machine rows when they already have the app", () 
   // A paired This Mac suppresses the chip, so the rows are what's left to show.
   const html = composer([mew, mac]);
   assert.ok(!html.includes("/download"), `the chip showed to someone with the app: ${html}`);
-  assert.match(html, /Qwen3-4B/, html);
+  assert.match(html, /Qwen3 4B/, html);
 });
