@@ -1,1 +1,1 @@
-export function startMock(opts?: { port?: number; fixture?: string; delayMs?: number; previewScript?: string }): Promise<{ port: number; close(): Promise<void> }>;
+export function startMock(opts?: { port?: number; fixture?: string; delayMs?: number; previewScript?: string; /** false: an older gateway, no `preview` flag and no preview host. */ previews?: boolean }): Promise<{ port: number; close(): Promise<void> }>;

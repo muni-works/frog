@@ -283,6 +283,9 @@ final class QuitGuard: NSObject, NSApplicationDelegate {
     /// its tests, and its runner exits "code 0 before establishing connection" if this quits
     /// while one is open.
     func applicationWillFinishLaunching(_ notification: Notification) {
+        // A capture run off-screen (`-FrogOffscreen`): a parity or metrics run on someone's Mac
+        // doesn't cover their screen.
+        if UserDefaults.standard.bool(forKey: "FrogOffscreen") { Snapshot.stayInBackground() }
         // Session rows name models as the picker does (see `ModelIdentity.rowName`).
         ModelIdentity.rowName = { Workspace.modelName($0) }
         guard !SingleInstance.isTesting, let id = Bundle.main.bundleIdentifier else { return }

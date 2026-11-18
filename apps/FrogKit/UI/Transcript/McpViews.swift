@@ -303,6 +303,7 @@ struct McpAppCard: View {
             }
             if FileManager.default.fileExists(atPath: app.html) {
                 AppWebView(app: app, input: item.result?.input ?? .object([:]), conversation: conversation, height: $height)
+                    .keepsDrags()
                     .frame(height: height)
                     .clipShape(.rect(cornerRadius: TurnSpace.Card.radius))
                     

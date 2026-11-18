@@ -15,7 +15,74 @@ export const paths = {
   json: join(ROOT, "design/tokens.json"),
   css: join(ROOT, "apps/web/src/tokens.css"),
   swift: join(ROOT, "apps/FrogKit/UI/Basics/Tokens.swift"),
+  verbs: join(ROOT, "docs/design/transcript/verbs.json"),
+  verbsSwift: join(ROOT, "apps/FrogKit/UI/Transcript/Verbs.swift"),
 };
+
+/** Verbs.swift: the transcript's verb table (docs/design/transcript/verbs.json), the one list the
+ * web's rows.ts reads too. */
+export function renderVerbs(v) {
+  const q = (s) => JSON.stringify(s);
+  const look = (t) => `Look(tool: ${q(t.tool)}, live: ${q(t.live)}, past: ${q(t.past)}, created: ${t.created ? q(t.created) : "nil"}, object: .${t.object})`;
+  const rows = v.tools.flatMap((t) => [t.tool, ...(t.aliases ?? [])].map((name) => `        ${q(name.toLowerCase())}: ${look(t)},`)).join("\n");
+  return `// frog — generated from docs/design/transcript/verbs.json by design/generate.mjs; edit the JSON, not this file.
+
+/// The transcript's verbs (docs/design/transcript/spec.md, "Lines"): one table for the Mac and the
+/// web, keyed by the engine's tool name, lowercased (aliases included).
+enum Verbs {
+    /// How a line sets what the step acted on.
+    enum Object: String {
+        /// Mono: a command's first line.
+        case command
+        /// Mono: the path as the tool was given it.
+        case path
+        /// Mono: what was searched for.
+        case pattern
+        /// The URL's host.
+        case host
+        /// The argument as words.
+        case text
+        /// Mono: the tool's own name, for a tool this table doesn't know.
+        case tool
+        /// The verb is the whole line.
+        case none
+
+        /// Code, paths, commands and tool names are mono; words aren't.
+        var mono: Bool { [.command, .path, .pattern, .tool].contains(self) }
+    }
+
+    struct Look: Equatable {
+        let tool: String
+        /// A running step's verb.
+        let live: String
+        /// A finished step's verb.
+        let past: String
+        /// A finished step's verb when it created the file (Write).
+        let created: String?
+        let object: Object
+    }
+
+    /// A failed step's verb, set in \`warn\`.
+    static let failed = ${q(v.states.failed.verb)}
+    /// A denied step's verb, and its result.
+    static let denied = ${q(v.states.denied.verb)}
+    static let deniedResult = ${q(v.states.denied.result)}
+
+    /// A tool the table doesn't know (an MCP call).
+    static let unknownLive = ${q(v.unknown.live)}
+    static let unknownPast = ${q(v.unknown.past)}
+
+    static let table: [String: Look] = [
+${rows}
+    ]
+
+    /// The verbs for an engine tool name, any casing; an unknown tool is "Called" + its name.
+    static func look(_ name: String) -> Look {
+        table[name.lowercased()] ?? Look(tool: name, live: unknownLive, past: unknownPast, created: nil, object: .${v.unknown.object})
+    }
+}
+`;
+}
 
 /** "#rrggbb" or "rgba(r, g, b, a)" → [r, g, b, a], channels 0...255, alpha 0...1. */
 export function parseColor(s) {
@@ -196,12 +263,13 @@ enum PlexFonts {
 }
 
 export const load = () => JSON.parse(readFileSync(paths.json, "utf8"));
-export const render = (t = load()) => ({ css: renderCss(t), swift: renderSwift(t) });
+export const loadVerbs = () => JSON.parse(readFileSync(paths.verbs, "utf8"));
+export const render = (t = load(), v = loadVerbs()) => ({ css: renderCss(t), swift: renderSwift(t), verbsSwift: renderVerbs(v) });
 
 /** Files that differ from what the JSON generates. */
 export function drift(t = load()) {
   const out = render(t);
-  return ["css", "swift"].filter((k) => readFileSync(paths[k], "utf8") !== out[k]).map((k) => paths[k]);
+  return ["css", "swift", "verbsSwift"].filter((k) => readFileSync(paths[k], "utf8") !== out[k]).map((k) => paths[k]);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
@@ -216,6 +284,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     const out = render();
     writeFileSync(paths.css, out.css);
     writeFileSync(paths.swift, out.swift);
-    console.log(`wrote ${paths.css}\nwrote ${paths.swift}`);
+    writeFileSync(paths.verbsSwift, out.verbsSwift);
+    console.log(`wrote ${paths.css}\nwrote ${paths.swift}\nwrote ${paths.verbsSwift}`);
   }
 }

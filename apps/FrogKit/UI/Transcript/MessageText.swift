@@ -10,6 +10,8 @@ struct MessageText: NSViewRepresentable {
     let blocks: [MarkdownBlock]
     /// Still arriving: reveal it at a reading pace, inking in (see `InkReveal`).
     var streaming = false
+    /// Where this view sits in the transcript column, for the parity metrics (nil: not measured).
+    var metricsOrigin: CGPoint? = nil
 
     func makeNSView(context: Context) -> MessageTextView {
         let view = MessageTextView(usingTextLayoutManager: false)
@@ -42,7 +44,9 @@ struct MessageText: NSViewRepresentable {
         view.updating = true
         defer { view.updating = false }
         view.reveal.streaming = streaming
-        view.show(blocks)
+        view.show(blocks, indent: context.environment.transcriptEdge.indent)
+        view.metricsOrigin = context.environment.metricsHidden ? nil : metricsOrigin
+        if metricsOrigin != nil { DispatchQueue.main.async { view.reportMetrics() } }
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView view: MessageTextView, context: Context) -> CGSize? {
@@ -53,6 +57,9 @@ struct MessageText: NSViewRepresentable {
 
 final class MessageTextView: NSTextView, @MainActor NSLayoutManagerDelegate {
     private var shown: [MarkdownBlock] = []
+    /// Prose indents by this in a narrow pane (`TranscriptEdge`); code and tables don't.
+    private var indent: CGFloat = 0
+    var metricsOrigin: CGPoint?
     /// Where each shown block's text sits in the storage, separator included.
     private var ranges: [NSRange] = []
     /// The code blocks laid over their attachments, in order. Nil until the block comes near
@@ -99,15 +106,17 @@ final class MessageTextView: NSTextView, @MainActor NSLayoutManagerDelegate {
 
     // MARK: Content
 
-    func show(_ blocks: [MarkdownBlock]) {
-        guard blocks != shown, let storage = textStorage else { return }
+    func show(_ blocks: [MarkdownBlock], indent: CGFloat = 0) {
+        let reindent = indent != self.indent
+        guard blocks != shown || reindent, let storage = textStorage else { return }
+        self.indent = indent
         // Blocks before the first difference are untouched; everything after is rebuilt.
-        let keep = zip(blocks, shown).prefix(while: { $0 == $1 }).count
+        let keep = reindent ? 0 : zip(blocks, shown).prefix(while: { $0 == $1 }).count
         let from = keep < ranges.count ? ranges[keep].location : storage.length
         let tail = NSMutableAttributedString()
         var newRanges = Array(ranges.prefix(keep))
         for (i, block) in blocks.enumerated().dropFirst(keep) {
-            let piece = MessageStyle.piece(block, after: i == 0 ? nil : blocks[i - 1])
+            let piece = MessageStyle.piece(block, after: i == 0 ? nil : blocks[i - 1], indent: indent)
             newRanges.append(NSRange(location: from + tail.length, length: piece.length))
             tail.append(piece)
         }
@@ -198,6 +207,58 @@ final class MessageTextView: NSTextView, @MainActor NSLayoutManagerDelegate {
         return min(full, ceil(written))
     }
 
+    /// Each block as a row of the parity metrics: a paragraph, heading, quote or list item is
+    /// `prose`, a code block or table `code` (docs/design/parity/README.md, "Metrics").
+    func reportMetrics() {
+        guard let origin = metricsOrigin, let layout = layoutManager, let container = textContainer,
+              let storage = textStorage else { return }
+        layout.ensureLayout(for: container)
+        let key = "text-\(ObjectIdentifier(self).hashValue)"
+        for (i, block) in shown.enumerated() where i < ranges.count {
+            var range = ranges[i]
+            // Drop the newline that separates it from the block before.
+            if i > 0, range.length > 0 { range = NSRange(location: range.location + 1, length: range.length - 1) }
+            guard range.length > 0, NSMaxRange(range) <= storage.length else { continue }
+            let glyphs = layout.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            guard glyphs.length > 0 else { continue }
+            var kind = TranscriptMetrics.Kind.prose
+            var text = (storage.string as NSString).substring(with: range)
+            var firstChar = range.location
+            switch block {
+            case .code(_, let code): kind = .code; text = code
+            case .table: kind = .code
+            case .bullet:
+                // The marker isn't the item's words: they start after its tab.
+                let tab = (text as NSString).range(of: "\t")
+                if tab.location != NSNotFound {
+                    firstChar += tab.location + 1
+                    text = (text as NSString).substring(from: tab.location + 1)
+                }
+            case .rule: continue
+            default: break
+            }
+            let first = layout.lineFragmentRect(forGlyphAt: glyphs.location, effectiveRange: nil)
+            let last = layout.lineFragmentRect(forGlyphAt: NSMaxRange(glyphs) - 1, effectiveRange: nil)
+            let box: CGRect
+            if kind == .prose {
+                // Every prose line is one fixed line box: the block starts a line above its
+                // first line's bottom (the line fragment also holds the paragraph's gap above).
+                let line = MessageStyle.lineBox
+                box = CGRect(x: 0, y: first.maxY - line, width: container.size.width, height: last.maxY - first.maxY + line)
+            } else {
+                box = layout.boundingRect(forGlyphRange: glyphs, in: container)
+            }
+            let g = layout.glyphIndexForCharacter(at: firstChar)
+            let fragment = layout.lineFragmentRect(forGlyphAt: g, effectiveRange: nil)
+            let x = fragment.minX + layout.location(forGlyphAt: g).x
+            let font = storage.attribute(.font, at: firstChar, effectiveRange: nil) as? NSFont
+            let k = "\(key)-\(i)"
+            TranscriptMetrics.shared.set(k, kind: kind, text: text,
+                                         box: box.offsetBy(dx: origin.x, dy: origin.y), fontSize: font?.pointSize ?? 0)
+            TranscriptMetrics.shared.setFirst(k, x: origin.x + (kind == .code ? box.minX : x))
+        }
+    }
+
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         if let container = textContainer, container.containerSize.width != newSize.width {
@@ -254,7 +315,7 @@ final class MessageTextView: NSTextView, @MainActor NSLayoutManagerDelegate {
         }
         cell.placeholder = codeViews[index] == nil
         let lines = max(1, cell.code.reduce(into: 1) { n, c in if c == "\n" { n += 1 } })
-        let key = CodeKey(lines: lines, titled: !cell.language.isEmpty, line: MessageStyle.lineHeight)
+        let key = CodeKey(lines: lines, titled: !cell.language.isEmpty, line: TurnSpace.current.line)
         if let height = Self.codeHeights[key] { return height }
         let width: CGFloat = 600
         Self.sizer.rootView = CodeOverlay(language: cell.language.isEmpty ? "" : "x",
@@ -455,8 +516,10 @@ final class InlineCodeLayoutManager: NSLayoutManager {
                     guard run.length > 0 else { break }
                     let span = boundingRect(forGlyphRange: run, in: container)
                     let baseline = fragment.minY + location(forGlyphAt: run.location).y
-                    let rect = NSRect(x: span.minX - Self.pad, y: baseline - font.ascender - 1,
-                                      width: span.width + Self.pad * 2, height: font.ascender - font.descender + 2)
+                    // The words are padded in the line (`MessageStyle.codePad`: room before the
+                    // run, and a kern on its last character that `span` already includes).
+                    let rect = NSRect(x: span.minX - MessageStyle.codePad, y: baseline - font.ascender - Self.pad,
+                                      width: span.width + MessageStyle.codePad, height: font.ascender - font.descender + Self.pad * 2)
                     NSBezierPath(roundedRect: rect.offsetBy(dx: origin.x, dy: origin.y),
                                  xRadius: Self.radius, yRadius: Self.radius).fill()
                     g = NSMaxRange(run)
@@ -471,36 +534,84 @@ final class InlineCodeLayoutManager: NSLayoutManager {
 /// message reads with the transcript's rhythm: taller line height within a paragraph, room
 /// between paragraphs, more above a heading, and list items tighter than paragraphs.
 enum MessageStyle {
-    /// The density setting's scale, as `piece` is built on a text-queue (AppKit) thread at times.
-    static var lineHeight: CGFloat { TurnSpace.current.line }
+    /// Every line of prose is one fixed box (`Tokens.Transcript.body`, 14 / 22), as on the web:
+    /// a paragraph of two lines is 44 tall, and the gap between two is `paragraph` exactly.
+    static let lineBox: CGFloat = Tokens.Transcript.body.line
+    /// Prose stops here (`Layout.prose`); code and tables use the whole column.
+    static let measure: CGFloat = Tokens.Transcript.Layout.prose
+    /// Inline code's plate pads its words this much each side, inside the line (the web's
+    /// `.md code` padding), so a paragraph that opens with code starts 4 in.
+    static let codePad: CGFloat = TurnSpace.Inset.tight
 
-    static var body: NSFont { .systemFont(ofSize: TurnType.body) }
+    /// The body face: IBM Plex Sans, like the rest of the transcript (SF until the fonts load).
+    static var body: NSFont { plex(TurnType.body) }
 
+    static func plex(_ size: CGFloat, weight: NSFont.Weight = .regular) -> NSFont {
+        guard PlexFonts.registered, let base = NSFont(name: "IBM Plex Sans", size: size) else {
+            return .systemFont(ofSize: size, weight: weight)
+        }
+        guard weight != .regular else { return base }
+        // IBMPlexSans.ttf is a variable font: a weight is a point on its `wght` axis (a weight
+        // trait on the descriptor resolves to the regular face).
+        let value: Double = switch weight {
+        case .medium: 500
+        case .semibold: 600
+        case .bold, .heavy, .black: 700
+        default: 400
+        }
+        let wght = 0x7767_6874 // 'wght'
+        let d = base.fontDescriptor.addingAttributes([.variation: [NSNumber(value: wght): NSNumber(value: value)]])
+        return NSFont(descriptor: d, size: size) ?? base
+    }
+
+    static func mono(_ size: CGFloat) -> NSFont {
+        guard PlexFonts.registered, let f = NSFont(name: "IBM Plex Mono", size: size) else {
+            return .monospacedSystemFont(ofSize: size, weight: .regular)
+        }
+        return f
+    }
+
+    /// A prose paragraph's style: the fixed line box, glyphs centred in it as CSS does.
     static func paragraph(_ configure: (NSMutableParagraphStyle) -> Void = { _ in }) -> NSMutableParagraphStyle {
         let p = NSMutableParagraphStyle()
-        p.lineSpacing = lineHeight
+        p.minimumLineHeight = lineBox
+        p.maximumLineHeight = lineBox
         configure(p)
         return p
+    }
+
+    /// Prose's measure and indent on a paragraph style (code and tables keep the column).
+    private static func prose(_ p: NSMutableParagraphStyle, indent: CGFloat) {
+        p.firstLineHeadIndent += indent
+        p.headIndent += indent
+        p.tailIndent = measure + indent
+    }
+
+    /// Raises glyphs to the middle of the fixed line box: TextKit puts a taller line's extra
+    /// room above the text, CSS splits it.
+    static func centring(_ font: NSFont) -> CGFloat {
+        let natural = ceil(font.ascender - font.descender)
+        return max(0, (lineBox - natural) / 2).rounded(.down)
     }
 
     /// One block, preceded by the newline that separates it from the one before (nil: it's
     /// first). Its gap depends on that block (see `TurnSpace.Scale.gap`); streaming rebuilds
     /// from the first block that changed, so a block is never left with a stale neighbor.
-    static func piece(_ block: MarkdownBlock, after previous: MarkdownBlock?) -> NSAttributedString {
+    static func piece(_ block: MarkdownBlock, after previous: MarkdownBlock?, indent: CGFloat = 0) -> NSAttributedString {
         let out = NSMutableAttributedString()
         if previous != nil { out.append(NSAttributedString(string: "\n", attributes: [.font: body])) }
         let gap = TurnSpace.current.gap(block, after: previous)
         switch block {
         case .paragraph(let s):
-            out.append(inline(s, font: body, style: paragraph { $0.paragraphSpacingBefore = gap }))
+            out.append(inline(s, font: body, style: paragraph { $0.paragraphSpacingBefore = gap; prose($0, indent: indent) }))
         case .heading(let level, let s):
-            let font = NSFont.systemFont(ofSize: TurnType.heading(level), weight: .semibold)
-            out.append(inline(s, font: font, style: paragraph { $0.paragraphSpacingBefore = gap }))
-        case .bullet(let indent, let marker, let s):
+            let font = plex(TurnType.heading(level), weight: .semibold)
+            out.append(inline(s, font: font, style: paragraph { $0.paragraphSpacingBefore = gap; prose($0, indent: indent) }))
+        case .bullet(let level, let marker, let s):
             // A fixed marker column: the marker right-aligned to it, the text after it, wrapped
             // lines hanging under the text. A nested list steps in by one column.
-            let lead = CGFloat(indent) * TurnType.markerColumn
-            let mark = TurnType.marker(marker, indent: indent)
+            let lead = CGFloat(level) * TurnType.markerColumn
+            let mark = TurnType.marker(marker, indent: level)
             let markFont = NSFont.monospacedDigitSystemFont(ofSize: TurnType.body, weight: .regular)
             let markWidth = ceil((mark as NSString).size(withAttributes: [.font: markFont]).width)
             let head = lead + max(TurnType.markerColumn, markWidth + TurnType.markerGap)
@@ -510,7 +621,8 @@ enum MessageStyle {
                 // measured width, not a leading tab, so a copied list reads "• item").
                 $0.firstLineHeadIndent = head - TurnType.markerGap - markWidth
                 $0.headIndent = head
-                $0.tabStops = [NSTextTab(textAlignment: .left, location: head)]
+                $0.tabStops = [NSTextTab(textAlignment: .left, location: head + indent)]
+                prose($0, indent: indent)
             }
             // A bullet is a small glyph: in the text's own color it weighs what a number does in
             // secondary.
@@ -525,7 +637,7 @@ enum MessageStyle {
             block.setValue(100, type: .percentageValueType, for: .width)
             block.setWidth(gap, type: .absoluteValueType, for: .padding, edge: .minY)
             block.setWidth(TurnSpace.Inset.roomy, type: .absoluteValueType, for: .padding, edge: .minX)
-            let text = inline(s, font: body, style: paragraph { $0.textBlocks = [block] })
+            let text = inline(s, font: body, style: paragraph { $0.textBlocks = [block]; prose($0, indent: indent) })
             text.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, range: NSRange(location: 0, length: text.length))
             out.append(text)
         case .rule:
@@ -569,7 +681,9 @@ enum MessageStyle {
         attachment.attachmentCell = CodeAttachmentCell(language: language, code: code)
         let text = NSMutableAttributedString(attachment: attachment)
         let whole = NSRange(location: 0, length: text.length)
-        text.addAttribute(.paragraphStyle, value: paragraph { $0.lineSpacing = 0; $0.paragraphSpacingBefore = gap }, range: whole)
+        let style = NSMutableParagraphStyle()
+        style.paragraphSpacingBefore = gap
+        text.addAttribute(.paragraphStyle, value: style, range: whole)
         text.addAttribute(.frogCode, value: code, range: whole)
         return text
     }
@@ -580,7 +694,7 @@ enum MessageStyle {
         table.numberOfColumns = max(columns, 1)
         table.collapsesBorders = true
         table.setWidth(gap, type: .absoluteValueType, for: .margin, edge: .minY)
-        let font = NSFont.systemFont(ofSize: TurnType.small)
+        let font = plex(TurnType.small)
         let out = NSMutableAttributedString()
         for (r, row) in ([header] + rows).enumerated() {
             for c in 0..<columns {
@@ -598,7 +712,7 @@ enum MessageStyle {
                 let style = NSMutableParagraphStyle()
                 style.textBlocks = [cell]
                 style.alignment = a == .center ? .center : a == .trailing ? .right : .left
-                let text = inline(row[safe: c] ?? "", font: r == 0 ? .systemFont(ofSize: TurnType.small, weight: .semibold) : font, style: style)
+                let text = inline(row[safe: c] ?? "", font: r == 0 ? plex(TurnType.small, weight: .semibold) : font, style: style)
                 out.append(text)
                 // Every cell is its own paragraph; the message's last cell ends the table.
                 if !(r == rows.count && c == columns - 1) { out.append(NSAttributedString(string: "\n", attributes: [.paragraphStyle: style])) }
@@ -611,6 +725,9 @@ enum MessageStyle {
     static func inline(_ s: String, font: NSFont, style: NSParagraphStyle) -> NSMutableAttributedString {
         let parsed = Markdown.inline(s)
         let out = NSMutableAttributedString()
+        // Prose sits in a fixed line box (`paragraph`): centre its glyphs in it.
+        let fixed = style.maximumLineHeight > 0
+        var style = style
         for run in parsed.runs {
             let text = String(parsed[run.range].characters)
             var f = font
@@ -622,12 +739,11 @@ enum MessageStyle {
                     // rescans…**" with a full stop) reads as a false heading in bold, fighting
                     // the paragraph. Headings and table headers keep their semibold, set at
                     // the font level.
-                    f = NSFont.systemFont(ofSize: font.pointSize, weight: .medium)
-                    traits.insert(.bold)
+                    f = plex(font.pointSize, weight: .medium)
                 }
                 if intent.contains(.emphasized) { traits.insert(.italic) }
                 if intent.contains(.code) {
-                    f = .monospacedSystemFont(ofSize: font.pointSize - 1, weight: .regular)
+                    f = mono(font.pointSize - 1)
                     attrs[.frogInlineCode] = true
                 }
                 if intent.contains(.strikethrough) { attrs[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
@@ -638,8 +754,27 @@ enum MessageStyle {
             }
             if let link = run.link { attrs[.link] = link }
             attrs[.font] = f
-            out.append(NSAttributedString(string: text, attributes: attrs))
+            if fixed { attrs[.baselineOffset] = centring(f) }
+            let code = attrs[.frogInlineCode] != nil
+            if code {
+                // The plate's padding is room in the line: before the code (on the character
+                // before it, or the paragraph's first indent when it opens with code) and after.
+                if out.length > 0 {
+                    out.addAttribute(.kern, value: codePad, range: NSRange(location: out.length - 1, length: 1))
+                } else if let p = style.mutableCopy() as? NSMutableParagraphStyle {
+                    p.firstLineHeadIndent += codePad
+                    style = p
+                    attrs[.paragraphStyle] = p
+                }
+            }
+            let piece = NSMutableAttributedString(string: text, attributes: attrs)
+            if code, piece.length > 0 {
+                piece.addAttribute(.kern, value: codePad, range: NSRange(location: piece.length - 1, length: 1))
+            }
+            out.append(piece)
         }
+        // A paragraph that opened with code: every run takes the shifted first indent.
+        out.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: out.length))
         return out
     }
 }

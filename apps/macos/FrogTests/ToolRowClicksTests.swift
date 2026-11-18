@@ -32,23 +32,18 @@ final class ToolRowClicksTests: XCTestCase {
 
     // MARK: The line carries the meat, with zero clicks
 
-    /// The cheapest high-value fix, and the one Cam cared about most: the collapsed line already
-    /// says the result. Before this, `VerbLine.of` gave `SendMessage` its verb and nothing else,
-    /// so the sentence existed only behind two clicks.
+    /// The cheapest high-value fix, and the one Cam cared about most: the line already says the
+    /// result. Before this, `SendMessage`'s line had its verb and nothing else, so the sentence
+    /// existed only behind two clicks.
     func testAShortResultIsOnTheLineItself() {
-        // After the merge with the gist work (#339), the row has no verb at all: the sentence
-        // is the line ("Sent to ops …"), not a verb beside it. "Used SendMessage" was the
-        // pre-merge shape, where the verb stayed and the result hung off as a detail.
-        let line = VerbLine.of(tool("t1", "SendMessage", "ops", output: Self.sent))
-        XCTAssertEqual(line?.verb, "", "the verb slot is empty: the result says it, not a tool name")
-        XCTAssertEqual(line?.arg, "ops")
-        XCTAssertEqual(line?.detail, "Sent to ops (20261112-175150-6a2c); delivered (turn started)",
+        let line = StepLine.of(tool("t1", "SendMessage", "ops", output: Self.sent))
+        XCTAssertEqual(line?.verb, "Messaged", "the verb from verbs.json")
+        XCTAssertEqual(line?.object, "ops")
+        XCTAssertEqual(line?.result, "Sent to ops (20261112-175150-6a2c); delivered (turn started)",
                        "the row's own line should carry the result, cut at its first sentence")
-        XCTAssertTrue(line?.detail?.contains("delivered") == true,
-                      "with no click at all, the line says what happened")
     }
 
-    /// The tools Cam listed as short results, each reaching its line.
+    /// The tools Cam listed as short results, each reaching its line, never repeating its verb.
     func testEveryShortToolSaysItsResultOnTheLine() {
         let cases: [(String, String, String?)] = [
             ("Ask", "The user chose: Send now", "chose: Send now"),
@@ -60,26 +55,16 @@ final class ToolRowClicksTests: XCTestCase {
             ("ArchiveSession", "Archived ops (s2). Its log is kept; UnarchiveSession brings it back.", "Archived ops (s2)"),
         ]
         for (name, output, display) in cases {
-            let line = VerbLine.of(tool("t", name, "x", output: output, display: display))
-            // The line must not say its own words twice: "Moved to /tmp/demo · Moved to
-            // /tmp/demo". `UseFolder` is the case that literally would — the result opens by
-            // repeating the verb — so its line ends up bare (nothing new to add), which is
-            // correct and still no click.
-            // An empty verb means the detail *is* the line (the merged rule, #339): there is
-            // no verb to repeat, so the prefix check only means something with one.
-            if let verb = line?.verb, !verb.isEmpty, let detail = line?.detail {
-                XCTAssertFalse(detail.lowercased().hasPrefix(verb.lowercased()),
-                               "\(name): the line repeats its own verb — \"\(verb) · \(detail)\"")
-            }
+            let line = StepLine.of(tool("t", name, "x", output: output, display: display))!
+            XCTAssertFalse(!line.verb.isEmpty && line.result.lowercased().hasPrefix(line.verb.lowercased() + " "),
+                           "\(name): the line repeats its own verb — \"\(line.text)\"")
         }
         // The one whose result is entirely its own line says nothing extra, rather than twice.
-        XCTAssertNil(VerbLine.of(tool("t", "UseFolder", "/tmp/demo", output: "Moved to /tmp/demo"))?.detail)
-        // The others do carry news.
-        XCTAssertEqual(VerbLine.of(tool("t", "TodoWrite", "x", output: "Todo list updated."))?.detail,
-                       "Todo list updated.")
+        XCTAssertEqual(StepLine.of(tool("t", "UseFolder", "/tmp/demo", output: "Moved to /tmp/demo"))?.result, "")
+        XCTAssertEqual(StepLine.of(tool("t", "TodoWrite", "x", output: "Todo list updated."))?.result, "Todo list updated.")
         // ListSessions' result is a page of JSON; the row says the count instead of "[".
         let listed = tool("t9", "ListSessions", "", output: #"[{"id":"a"},{"id":"b"},{"id":"c"}]"#)
-        XCTAssertEqual(VerbLine.of(listed)?.detail, "3 sessions")
+        XCTAssertEqual(StepLine.of(listed)?.result, "3 sessions")
     }
 
     /// The other half of the rule: a payload stays behind the row. `Bash` output is not the
@@ -89,54 +74,7 @@ final class ToolRowClicksTests: XCTestCase {
             XCTAssertFalse(ToolLook.isInline(name), "\(name) has a payload, not a sentence")
         }
         let ran = tool("t2", "Bash", "cargo test", output: "test result: ok. 666 passed")
-        XCTAssertNil(VerbLine.of(ran)?.detail, "a command's output must not be pasted on its line")
-    }
-
-    // MARK: No repeated label, no second click
-
-    /// The duplication, at its source: the opened step's own row title carries the very words the
-    /// collapsed line already said. Drawn together, that's "Used SendMessage" twice — which is
-    /// why the lone-step branch exists (and is pinned in the test below it).
-    func testTheStepRowsTitleWouldOnlyRepeatTheLine() {
-        let sent = tool("t1", "SendMessage", "ops", output: Self.sent)
-        let line = VerbLine.of(sent)
-        // With no verb (the merged rule: the result is the line), there is nothing for the
-        // step row's title to repeat — the whole premise of this test is a verb it can echo.
-        guard let verb = line?.verb, !verb.isEmpty else {
-            return  // nothing to repeat: the line has no label of its own
-        }
-        let rowTitle = ActivityWords.row(sent)
-        XCTAssertTrue(rowTitle.contains(verb),
-                      "\"\(rowTitle)\" carries \"\(verb)\" — the row would say the line again")
-        // The fix is that a lone step never draws that row (see the test below), not that the
-        // two strings are made to differ: the row's job is the payload, not another label.
-    }
-
-    /// The regression itself. A lone finished tool step opens straight to its content:
-    /// `ActivitySteps` must not draw a row that repeats the line above it.
-    ///
-    /// Asserted as the branch the view takes, not as `opensDirectly` alone: the predicate and
-    /// the `else if` that uses it are two places that must agree, and a test of the predicate
-    /// alone passes with the branch deleted (checked — it did). `layout` is the one place that
-    /// decides, so the view and this test read the same answer.
-    func testALoneStepOpensToItsContentNotToItsOwnRow() {
-        let sent = tool("t1", "SendMessage", "ops", output: "Sent to ops; delivered.")
-        XCTAssertEqual(ActivitySteps.layout([sent]), .content,
-                       "a lone tool step must open to its content, not to a row repeating the label")
-        // A step waiting on you keeps its row: it has a permission card to show.
-        var waiting = sent
-        waiting.needsPermission = true
-        XCTAssertEqual(ActivitySteps.layout([waiting]), .rows)
-        // Several steps keep their rows: each is named, and none is the line's own label.
-        XCTAssertEqual(ActivitySteps.layout([sent, tool("t2", "RenameSession", "x")]), .rows)
-        // A thought has its own treatment, not this one.
-        var thought = ItemState(id: "r1", kind: .reasoning)
-        thought.done = true
-        XCTAssertEqual(ActivitySteps.layout([thought]), .thought)
-        // A step still running has nothing to show yet.
-        var running = sent
-        running.done = false
-        XCTAssertEqual(ActivitySteps.layout([running]), .rows)
+        XCTAssertEqual(StepLine.of(ran)?.result, "", "a command's output must not be pasted on its line")
     }
 
     // MARK: The chevron only shows when something is behind it

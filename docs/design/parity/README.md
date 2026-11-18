@@ -75,7 +75,16 @@ node docs/design/parity/diff-metrics.mjs web.json mac.json
 
 [`metrics.mjs`](metrics.mjs) is the web's dumper (headless Chrome, like `web-shot.mjs`;
 `METRICS_STORAGE` seeds localStorage, e.g. `{"frog.inspector":"1"}`). The Mac writes the same file
-(to build: a `-FrogMetrics <path>` launch argument beside `-FrogSnapshot`).
+with `-FrogMetrics <path>` beside `-FrogSnapshot`; [`mac-metrics.sh`](mac-metrics.sh) replays the
+fixture off-screen at 1280 × 800, writes `../transcript/metrics/mac-1280.json` and diffs it against
+the web's:
+
+```bash
+docs/design/parity/mac-metrics.sh [out.json] [WxH] [look] [web.json]
+```
+
+It needs the parity build (`capture.sh` makes it) with an engine that replays with the log's own
+times and carries `tests` (`FROG_PREBUILT_DIR`).
 
 ### Format (`frog-transcript-metrics/1`)
 
@@ -111,6 +120,9 @@ All lengths are points (CSS px on the web), rounded to 0.1.
   - `live`: the live row at the end of a running turn (spec phase 2: "Thinking", a step, "Waiting
     for you"), measured on its 24-tall plate row
   - `stats`: the stats under the live row, or under an answer that is writing (phase 2)
+  - `turnline`: the turn line at the right end of the footer or the stats (phase 3), measured on its
+    200 × 16 box: `x` is its left edge, `text` is empty and `fontSize` 0. It follows the row it
+    ends.
 - `text`: the row's visible words, whitespace collapsed to single spaces and trimmed. It leaves out
   hover actions, receipts (ticks, "just now"), the copy and retry icons and marks. For `line`,
   `thought` and `fold`: the parts verb, gist, object and result joined by one space ("Edited

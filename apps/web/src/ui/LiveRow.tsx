@@ -1,5 +1,8 @@
 import { createContext, useContext, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import type { Entry } from '../engine/thread'
+import { segments, type TimedEvent } from '../engine/timeline'
+import type { Model } from '../models'
+import { TurnLine, TurnPanel, paceFromCounts } from './TurnGraph'
 import { CopyButton } from './Transcript'
 import { OUTLINE_MAX, STALL_AT, liveRow, rateOf, secs, stalledLabel, type LiveRow } from './rows'
 
@@ -117,7 +120,7 @@ export function ThinkingLine({ e, label }: { e: Entry; label: string }) {
   const [open, setOpen] = useOpen(e.id)
   const row = useRef<HTMLButtonElement>(null)
   return (
-    <div className="line-row thought" data-row="line" data-kind="thought">
+    <div className="line-row thought" data-row="line" data-kind="thought" data-item={e.id}>
       <div className="line-plate">
         <button ref={row} type="button" className="line" aria-expanded={open} onClick={() => setOpen(!open)}>
           <span className="line-mark chev" aria-hidden="true">›</span>
@@ -131,7 +134,7 @@ export function ThinkingLine({ e, label }: { e: Entry; label: string }) {
 
 /** The stats (spec, "The stats line"): time after the first second, tokens, tokens per second,
  * in meta. A count of streamed pieces is never shown as exact: no decimals, "so far" on hover. */
-function Stats({ info, row, rate, quiet, now }: { info: LiveInfo; row: LiveRow; rate: number | null; quiet: number; now: number }) {
+function Stats({ info, row, rate, quiet, now, graph }: { info: LiveInfo; row: LiveRow; rate: number | null; quiet: number; now: number; graph?: ReactNode }) {
   const took = now - info.startedAt
   const parts: string[] = []
   const hover: string[] = []
@@ -150,17 +153,20 @@ function Stats({ info, row, rate, quiet, now }: { info: LiveInfo; row: LiveRow; 
     if (row.kind === 'writing' && quiet >= STALL_AT) parts.push(stalledLabel(quiet).replace(/^No/, 'no'))
   }
   if (info.firstOutputAt != null) hover.push(`First token after ${(Math.max(0, info.firstOutputAt - info.startedAt) / 1000).toFixed(1)} seconds`)
-  if (!parts.length) return null
+  if (!parts.length && !graph) return null
   return (
-    <div className="live-stats" title={hover.join('\n') || undefined}>
-      {parts.map((p, i) => <span key={i}>{i > 0 && <span className="dot" aria-hidden="true"> · </span>}{p}</span>)}
+    <div className="live-stats">
+      <span className="live-figures" title={hover.join('\n') || undefined}>
+        {parts.map((p, i) => <span key={i}>{i > 0 && <span className="dot" aria-hidden="true"> · </span>}{p}</span>)}
+      </span>
+      {graph}
     </div>
   )
 }
 
 /** The end of the running turn: the live row and its stats, or the stats alone under an answer
  * that's writing. */
-export function LiveTail({ entries, waiting }: { entries: Entry[]; waiting: boolean }) {
+export function LiveTail({ entries, tl, waiting, waitItem, models = [] }: { entries: Entry[]; tl?: TimedEvent[]; waiting: boolean; /** The step a card now up belongs to. */ waitItem?: string; models?: Model[] }) {
   const info = useContext(LiveContext)
   const now = useNow()
   // Signs of life in the viewer's clock: the engine's times can be skewed against ours.
@@ -176,11 +182,25 @@ export function LiveTail({ entries, waiting }: { entries: Entry[]; waiting: bool
   const [ready, setReady] = useState(false)
   useEffect(() => { setReady(false); const t = setTimeout(() => setReady(true), 600); return () => clearTimeout(t) }, [row.item, row.kind])
   const button = useRef<HTMLButtonElement>(null)
+  const [panel, setPanel] = useState(false)
   if (!info) return null
 
   const quiet = now - life.current.at
   const rate = rateOf(samples.current, now)
-  const stats = <Stats info={info} row={row} rate={rate} quiet={quiet} now={now} />
+  // The turn line at the stats' right end while live (spec, "The turn line"): the segments so far,
+  // the open one growing to now, and the pace from the running counts, a second a bucket.
+  // A card still up is a wait growing to now, cut out of its step like an answered one.
+  const up = waiting && info.askedAt != null ? [{ created: now, event: 'permission_resolved', asked: info.askedAt, ...(waitItem ? { item: waitItem } : {}) }] : []
+  const segs = segments([...(tl ?? []), ...up], now)
+  const total = Math.max(1, now - info.startedAt)
+  const pace = paceFromCounts(samples.current, info.startedAt, now)
+  const graph = segs.length ? <TurnLine segs={segs} total={total} pace={pace} entries={entries} onOpen={() => setPanel(true)} /> : undefined
+  const stats = (
+    <>
+      <Stats info={info} row={row} rate={rate} quiet={quiet} now={now} graph={graph} />
+      {panel && <TurnPanel segs={segs} total={total} entries={entries} models={models} live pace={pace} onClose={() => setPanel(false)} />}
+    </>
+  )
   if (row.kind === 'writing') return <div className="live-tail" data-row="stats">{stats}</div>
 
   // Thinking (and the pause before it) can stall; a step or a card is held still on purpose. At
