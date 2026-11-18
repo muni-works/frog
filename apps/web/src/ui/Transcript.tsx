@@ -3,6 +3,7 @@ import type { FileDiff, Image } from '../cloud/protocol'
 import type { Ask, Entry, Question, Thread } from '../engine/thread'
 import { type Model } from '../models'
 import { ElicitationCard, QuestionCard } from './AskCards'
+import type { StartInfo } from './Opening'
 import { Markdown } from './Markdown'
 import { Hunks } from './Diff'
 import { ICON } from './icons'
@@ -262,7 +263,7 @@ function AskCard({ ask, onDecide }: { ask: Ask; onDecide: Decide }) {
 
 const NO_MODELS: Model[] = []
 
-export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, models = NO_MODELS, outbox = [], onResend, onEdit, waiting, onContinue, onPrompt, onShowChange, credit, boot }: {
+export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, models = NO_MODELS, outbox = [], onResend, onEdit, waiting, onContinue, onPrompt, onShowChange, credit, start }: {
   thread: Thread
   /** The account's credit left, for the turn-cost card. */
   credit?: string
@@ -285,8 +286,8 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
   onPrompt?: (text: string) => void
   /** An edit line's "Show in Changes": open the inspector on Changes. */
   onShowChange?: (path: string) => void
-  /** A new session's status row (ui/Opening.tsx), in the live row's place until its first turn runs. */
-  boot?: ReactNode
+  /** A new session still starting (ui/Opening.tsx): the live row says how far it's got. */
+  start?: StartInfo
 }) {
   // The live turn is the last one by position: turn numbers can repeat after a resume.
   const lastIdx = thread.turns.length - 1
@@ -315,7 +316,7 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
       {/* The first turn keeps its node from Send on: drawn first from the sent message
           (ui/Opening.tsx), then from the engine's turn, whatever number the engine gives it. */}
       {thread.turns.map((turn, ti) => (<Fragment key={ti === 0 ? 'first' : `${ti}-${turn.turn}`}>
-        <TurnView turn={turn} live={ti === lastIdx} tail={ti === lastIdx ? boot : undefined} ask={ti === lastIdx ? thread.ask : null} question={ti === lastIdx ? thread.question : null}
+        <TurnView turn={turn} live={ti === lastIdx} start={ti === lastIdx ? start : undefined} ask={ti === lastIdx ? thread.ask : null} question={ti === lastIdx ? thread.question : null}
           running={ti === lastIdx && thread.running} models={models} credit={credit} cb={cb} hasRetry={has.retry} hasEdit={has.edit} hasContinue={has.cont} />
         {(thread.marks ?? []).filter((m) => m.after === ti + 1).map((m, k) => <Mark key={`m${ti}-${k}`} m={m} />)}
       </Fragment>))}
@@ -365,8 +366,8 @@ function rows(entries: Entry[], ask: Ask | null, question: Question | null) {
 /** One turn. Memoized: the reducer keeps untouched turns the same object, so while the last
  * turn streams the others don't redraw (or re-parse their markdown). Only the live turn gets
  * the session's ask, question and running state. */
-const TurnView = memo(function TurnView({ turn, live, ask, question, running, models, credit, cb, hasRetry, hasEdit, hasContinue, tail }: {
-  turn: Turn; live: boolean; ask: Ask | null; question: Question | null; running: boolean; models: Model[]; tail?: ReactNode
+const TurnView = memo(function TurnView({ turn, live, ask, question, running, models, credit, cb, hasRetry, hasEdit, hasContinue, start }: {
+  turn: Turn; live: boolean; ask: Ask | null; question: Question | null; running: boolean; models: Model[]; start?: StartInfo
   credit?: string; cb: TurnCallbacks; hasRetry: boolean; hasEdit: boolean; hasContinue: boolean
 }) {
   // One entry as its row. `data-row` says what it is (prose, line, box), and the gaps between
@@ -436,8 +437,8 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
           answer={[...turn.entries].reverse().find((e) => e.kind === 'message')?.text ?? ''}
           onRetry={live && !running && hasRetry ? cb.onRetry : undefined} />
       )}
-      {live && !running && tail}
-      {live && running && <LiveTail entries={turn.entries} tl={turn.tl} waiting={!!ask || !!question} waitItem={ask?.item ?? question?.item} models={models} />}
+      {/* One row from Send on: a new session's start, then the turn's live row (the same node). */}
+      {live && (running || start) && <LiveTail entries={turn.entries} tl={turn.tl} waiting={!!ask || !!question} waitItem={ask?.item ?? question?.item} models={models} start={running ? undefined : start} />}
       </div>
       {/* How the turn ended stays with the turn: stopping a later one doesn't clear it. */}
       {/* A think stopped mid-way already says so on its own line ("Stopped after 12s"). */}

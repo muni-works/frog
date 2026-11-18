@@ -1,11 +1,14 @@
-// The new session's status row and helpers (ui/Opening.tsx): the transcript spec's motion rule
-// for a changing line (nothing for 600 ms, a cross-fade, at most one change per 1.2 s), the clock
-// from 5 s, and the pieces App uses to keep one view from Send to the first turn.
+// A new session's start on the live row (LiveRow.tsx `LiveTail` given `start`, its words from
+// ui/Opening.tsx): the transcript spec's motion rule for a changing line (nothing for 600 ms, a
+// cross-fade, at most one change per 1.2 s), the thinking row's clock (from the first second, the
+// line's height kept before it), the hand-over to the turn's own row in place, and the helpers App
+// uses to keep one view from Send to the first turn.
 import { after, before, mock, test } from "node:test";
 import assert from "node:assert/strict";
 import { createElement as h } from "react";
 import TestRenderer, { act } from "react-test-renderer";
-import { BOOT, BootRow, STUCK_MS, bootWords, firstTitle, provisional, stuck, undelivered, withOpening, type Opening } from "../src/ui/Opening.tsx";
+import { BOOT, STUCK_MS, firstTitle, provisional, startWords, stuck, undelivered, withOpening, type Opening, type StartInfo } from "../src/ui/Opening.tsx";
+import { LiveContext, LiveTail, type LiveInfo } from "../src/ui/LiveRow.tsx";
 import { emptyThread } from "../src/engine/thread.ts";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -14,76 +17,130 @@ import { emptyThread } from "../src/engine/thread.ts";
 before(() => mock.timers.enable({ apis: ["setTimeout", "setInterval", "Date"] }));
 after(() => mock.timers.reset());
 
-const text = (n: TestRenderer.ReactTestInstance | string): string => typeof n === "string" ? n : n.children.map(text).join("");
-/** The clock under the row, from the rendered output. */
-const clock = (r: TestRenderer.ReactTestRenderer): string | null => {
-  const m = JSON.stringify(r.toJSON()).match(/"className":"live-figures"\},"children":\["([^"]*)"\]/);
-  return m ? m[1] : null;
-};
-const row = (r: TestRenderer.ReactTestRenderer) => r.root.find((n) => n.type === "div" && n.props["data-row"] === "live");
+type R = TestRenderer.ReactTestRenderer;
+type I = TestRenderer.ReactTestInstance;
+const text = (n: I | string): string => typeof n === "string" ? n : n.children.map(text).join("");
 // In steps: one long tick doesn't run node's mocked setInterval for every period it covers.
 const advance = async (ms: number) => { for (let left = ms; left > 0; left -= 250) await act(() => { mock.timers.tick(Math.min(250, left)); }); };
+const cls = (c: RegExp) => (n: I) => typeof n.props.className === "string" && c.test(n.props.className);
+const rowOf = (r: R) => r.root.find((n) => n.type === "div" && n.props["data-row"] === "live");
+const layers = (r: R) => r.root.findAll((n) => n.type === "span" && cls(/^tf\b/)(n)).map((n) => [n.props.className as string, text(n)]);
+/** The words as shown: the layer fading in, or the plain label. */
+const words = (r: R) => {
+  const now = r.root.findAll((n) => n.type === "span" && cls(/^tf( tf-now)?$/)(n));
+  return now.length ? text(now[now.length - 1]) : text(r.root.find((n) => n.type === "span" && n.props.className === "live-label"));
+};
+const stats = (r: R) => r.root.findAll((n) => n.type === "div" && n.props.className === "live-stats");
+const clock = (r: R): string | null => { const f = r.root.findAll((n) => n.type === "span" && n.props.className === "live-figures"); return f.length ? text(f[0]) : null; };
+const node = (n: I) => (n as unknown as { _fiber: { stateNode: unknown } })._fiber.stateNode;
+const INFO = (over: Partial<LiveInfo> = {}): LiveInfo => ({ startedAt: Date.now(), live: null, pulse: 0, firstOutputAt: null, askedAt: null, activity: null, waitingElsewhere: false, ...over });
+const tail = (start: StartInfo | undefined, info = INFO()) => h(LiveContext.Provider, { value: info }, h(LiveTail, { entries: [], waiting: false, start }));
+const at = (over: Partial<StartInfo> = {}): StartInfo => ({ since: Date.now(), stage: "reserving", ...over });
 
-test("the row keeps its place but shows nothing for the first 600 ms", async () => {
-  let r!: TestRenderer.ReactTestRenderer;
-  await act(() => { r = TestRenderer.create(h(BootRow, { since: Date.now() })); });
-  assert.equal(row(r).props["data-ready"], "false");
-  assert.equal(text(row(r)), "Starting a sandbox", "its words are there (its height is kept), just not shown");
+test("nothing for the first 600 ms (its height is kept), then the start's first stage", async () => {
+  let r!: R;
+  await act(() => { r = TestRenderer.create(tail(at())); });
+  assert.equal(rowOf(r).props["data-ready"], "false");
+  assert.equal(rowOf(r).props["data-kind"], "start");
+  assert.equal(words(r), "Reserving a sandbox");
+  assert.equal(stats(r).length, 1, "the stats line is there from the start, so nothing moves when the time shows");
   await advance(500);
-  assert.equal(row(r).props["data-ready"], "false");
+  assert.equal(rowOf(r).props["data-ready"], "false");
   await advance(250);
-  assert.equal(row(r).props["data-ready"], "true");
+  assert.equal(rowOf(r).props["data-ready"], undefined);
   r.unmount();
 });
 
-test("the seconds show from 5 s, not before", async () => {
-  let r!: TestRenderer.ReactTestRenderer;
-  await act(() => { r = TestRenderer.create(h(BootRow, { since: Date.now(), repo: "ecto/pond" })); });
-  await advance(4750);
+test("the stats line carries the time from the first second, as the thinking row's does", async () => {
+  let r!: R;
+  await act(() => { r = TestRenderer.create(tail(at({ stage: "booting", repo: "ecto/pond" }))); });
   assert.equal(clock(r), null);
-  await advance(500);
-  assert.equal(clock(r), "5s");
-  assert.ok(text(row(r)).startsWith("Starting a sandbox for ecto/pond"));
+  await advance(1250);
+  assert.equal(clock(r), "1s");
+  assert.equal(words(r), "Booting it and cloning ecto/pond");
+  assert.ok(!JSON.stringify(r.toJSON()).includes("tokens"), "no tokens or speed before the model starts");
   r.unmount();
 });
 
-test("a change waits out 1.2 s since the last, then cross-fades: the old words out, the new in", async () => {
-  const since = Date.now();
-  let r!: TestRenderer.ReactTestRenderer;
-  await act(() => { r = TestRenderer.create(h(BootRow, { since })); });
+test("stages replace each other in place: at most one change per 1.2 s, cross-fading", async () => {
+  const s = at();
+  let r!: R;
+  await act(() => { r = TestRenderer.create(tail(s)); });
   await advance(300);
-  await act(() => { r.update(h(BootRow, { since, error: "Couldn't clone ecto/pond.", onRetry: () => {} })); });
+  await act(() => { r.update(tail({ ...s, stage: "booting" })); });
   await advance(600);
-  assert.equal(text(row(r)), "Starting a sandbox", "held: under 1.2 s since it showed");
+  assert.equal(words(r), "Reserving a sandbox", "held: under 1.2 s since it showed");
   await advance(400);
-  const layers = r.root.findAll((n) => typeof n.props.className === "string" && /^tf\b/.test(n.props.className));
-  assert.deepEqual(layers.map((n) => [n.props.className, text(n)]), [["tf tf-was", "Starting a sandbox"], ["tf tf-now", "Failed Couldn't clone ecto/pond."]]);
-  assert.equal(row(r).props["data-state"], "failed");
-  assert.ok(r.root.find((n) => n.type === "button" && text(n) === BOOT.retry), "Try again");
+  assert.deepEqual(layers(r), [["tf tf-was", "Reserving a sandbox"], ["tf tf-now", "Booting it"]]);
+  await act(() => { r.update(tail({ ...s, stage: "engine" })); });
+  await advance(1300);
+  assert.equal(words(r), "Starting Frog");
+  assert.equal(r.root.findAll((n) => n.type === "li" || n.type === "svg").length, 0, "no list, no ticks");
+  r.unmount();
+});
+
+test("a stage that fails turns the row into the error with Try again, in place", async () => {
+  const s = at({ stage: "booting" });
+  let r!: R;
+  let tries = 0;
+  await act(() => { r = TestRenderer.create(tail(s)); });
+  await advance(2000);
+  await act(() => { r.update(tail({ ...s, error: "Couldn't clone ecto/pond.", onRetry: () => { tries++; } })); });
+  await advance(1300);
+  assert.equal(words(r), "Failed Couldn't clone ecto/pond.");
+  assert.equal(rowOf(r).props["data-state"], "failed");
   assert.equal(clock(r), null, "no clock on a failure");
+  const again = r.root.find((n) => n.type === "button" && text(n) === BOOT.retry);
+  await act(() => { (again.props.onClick as () => void)(); });
+  assert.equal(tries, 1);
+  r.unmount();
+});
+
+test("up 30 s with no turn: the row says Frog didn't pick it up", async () => {
+  const s = at({ stage: "engine" });
+  let r!: R;
+  await act(() => { r = TestRenderer.create(tail({ ...s, upSince: s.since + 8000, onRetry: () => {} })); });
+  await advance(8000 + STUCK_MS - 500);
+  assert.equal(words(r), "Starting Frog");
+  await advance(1500);
+  assert.equal(words(r), "Failed Frog didn't pick this up.");
+  r.unmount();
+});
+
+test("the first turn takes over the same row: no new node, the words cross-fade, the height holds", async () => {
+  let r!: R;
+  await act(() => { r = TestRenderer.create(tail(at({ stage: "engine" }))); });
+  await advance(3000);
+  const row = node(rowOf(r));
+  await act(() => { r.update(tail(undefined, INFO({ startedAt: Date.now() }))); });
+  await advance(50);
+  assert.equal(node(rowOf(r)), row, "the same row");
+  assert.deepEqual(layers(r).slice(0, 2), [["tf tf-was", "Starting Frog"], ["tf tf-now", "Thinking"]]);
+  assert.equal(stats(r).length, 1, "the stats line holds its height in the turn's first second");
+  assert.equal(rowOf(r).props["data-kind"], "thinking");
+  await advance(500);
+  assert.equal(layers(r).length, 0, "nothing of the start is left");
+  assert.equal(words(r), "Thinking", "then it is the plain live row");
   r.unmount();
 });
 
 test("shown once, Try again's new clock doesn't hide it again", async () => {
-  let r!: TestRenderer.ReactTestRenderer;
-  await act(() => { r = TestRenderer.create(h(BootRow, { since: Date.now(), error: "x", onRetry: () => {} })); });
+  let r!: R;
+  await act(() => { r = TestRenderer.create(tail(at({ error: "x", onRetry: () => {} }))); });
   await advance(2000);
-  assert.equal(row(r).props["data-ready"], "true");
-  await act(() => { r.update(h(BootRow, { since: Date.now() })); });
-  assert.equal(row(r).props["data-ready"], "true");
+  assert.equal(rowOf(r).props["data-ready"], undefined);
+  await act(() => { r.update(tail(at())); });
+  assert.equal(rowOf(r).props["data-ready"], undefined);
   r.unmount();
 });
 
-test("up 30 s with no turn: the row says Frog didn't pick it up, with Try again", async () => {
-  const since = Date.now();
-  let r!: TestRenderer.ReactTestRenderer;
-  await act(() => { r = TestRenderer.create(h(BootRow, { since, upSince: since + 8000, onRetry: () => {} })); });
-  await advance(8000 + STUCK_MS - 500);
-  assert.ok(text(row(r)).startsWith("Starting a sandbox"));
-  await advance(1000);
-  assert.ok(text(row(r)).includes("Failed Frog didn't pick this up."), text(row(r)));
-  assert.ok(r.root.find((n) => n.type === "button" && text(n) === BOOT.retry));
-  r.unmount();
+test("words: each stage, Failed with the reason, and the 30 s rule", () => {
+  assert.deepEqual(startWords({ stage: "reserving" }), { verb: "Reserving a sandbox", object: "", failed: false });
+  assert.deepEqual(startWords({ stage: "booting" }), { verb: "Booting it", object: "", failed: false });
+  assert.deepEqual(startWords({ stage: "booting", repo: "ecto/pond" }), { verb: "Booting it and cloning ecto/pond", object: "", failed: false });
+  assert.deepEqual(startWords({ stage: "engine" }), { verb: "Starting Frog", object: "", failed: false });
+  assert.deepEqual(startWords({ stage: "booting", error: "No access." }), { verb: "Failed", object: "No access.", failed: true });
+  assert.equal(startWords({ stage: "engine", upSince: 0 }, STUCK_MS).object, "Frog didn't pick this up.");
 });
 
 test("stuck: up for 30 s with no turn and no other failure", () => {
@@ -94,11 +151,6 @@ test("stuck: up for 30 s with no turn and no other failure", () => {
   assert.equal(stuck(op(), 10 * STUCK_MS), false, "not up yet");
 });
 
-test("words: starting, with the repo when there is one; failed with the reason", () => {
-  assert.deepEqual(bootWords({}), { verb: "Starting", object: "a sandbox", failed: false });
-  assert.deepEqual(bootWords({ repo: "ecto/pond" }), { verb: "Starting", object: "a sandbox for ecto/pond", failed: false });
-  assert.deepEqual(bootWords({ repo: "ecto/pond", error: "No access." }), { verb: "Failed", object: "No access.", failed: true });
-});
 
 const op = (over: Partial<Opening> = {}): Opening => ({ text: "hi", images: [], at: 0, row: { id: "pending-1", title: "hi", repo: "", branch: "", state: "starting", updated: 0 }, ...over });
 

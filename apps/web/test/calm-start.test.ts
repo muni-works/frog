@@ -157,19 +157,30 @@ test("the title stays your message when the gateway lists the session as New ses
   w.p.unmount();
 });
 
-test("one status row while it boots, saying only what the gateway knows", async () => {
+test("one status row, the live row, its words following what the gateway says", async () => {
   const w = await world();
   await type(w.p, "Make a tiny pomodoro timer");
   await enter(w.p);
   const rows = () => statusRows(w.p).filter((t) => !/^(Make a tiny|Ada)/.test(t));
-  assert.deepEqual(rows(), ["Starting a sandbox"], "one row before the id");
+  /** The row's words as shown (the layer fading in, not the one fading out). */
+  const said = () => { const l = w.p.root.root.findAll((n) => n.type === "span" && typeof n.props.className === "string" && /^tf( tf-now)?$/.test(n.props.className)); return l.length ? shownText(l[l.length - 1] as unknown as HostNode) : ""; };
+  assert.equal(rows().length, 1, "one row before the id");
+  assert.equal(said(), "Reserving a sandbox");
   await w.answer({ status: 201, body: { ...summary(), ws: "wss://x" } });
-  assert.deepEqual(rows(), ["Starting a sandbox"], "the same one row after the id: no Sending line");
+  await tick(1300);
+  assert.equal(rows().length, 1, "still one row after the id: no Sending line");
+  assert.equal(said(), "Booting it");
   await act(async () => { FakeWS.all.at(-1)!.welcome(); });
-  await tick();
+  await tick(1300);
   // zest welcomes before wake() is done: a live socket is not a booted sandbox.
-  assert.deepEqual(rows(), ["Starting a sandbox"], "a live socket changes nothing");
+  assert.equal(said(), "Booting it", "a live socket changes nothing");
   assert.ok(!shownText(w.p.root.root as unknown as HostNode).includes("Connecting"), "no Connecting… in the title bar");
+  w.list.splice(0, w.list.length, summary({ state: "running" }));
+  w.state.s = summary({ state: "running" });
+  await act(async () => { dispatch("focus", {}); });
+  await tick(1300);
+  assert.equal(said(), "Starting Frog", "running: the engine is up, the turn is next");
+  assert.ok(!shownText(w.p.root.root as unknown as HostNode).includes("starting the sandbox"), "nothing under the bubble says it again");
   w.p.unmount();
 });
 
@@ -264,12 +275,14 @@ test("a repo session: the same message node, composer and title when the id arri
   const node = inst(bubbles(w.p)[0]);
   const composer = inst(box(w.p));
   assert.equal(title(), "Fix the flaky test");
-  assert.ok(statusRows(w.p).includes("Starting a sandbox for ecto/pond"), statusRows(w.p).join(" | "));
+  assert.ok(statusRows(w.p).some((t) => t.includes("Reserving a sandbox")), statusRows(w.p).join(" | "));
   // zest titles a repo session with the repo until the engine names it.
   await w.answer({ status: 201, body: { ...summary({ repo: "ecto/pond", title: "ecto/pond", branch: "frog/pond-012345" }), ws: "wss://x" } });
   await act(async () => { dispatch("focus", {}); });
   await tick();
   assert.equal(title(), "Fix the flaky test", "not the repo's name");
+  await tick(1300);
+  assert.ok(statusRows(w.p).some((t) => t.includes("Booting it and cloning ecto/pond")), statusRows(w.p).join(" | "));
   assert.equal(inst(bubbles(w.p)[0]), node);
   assert.equal(inst(box(w.p)), composer);
   w.p.unmount();

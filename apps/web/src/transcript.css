@@ -202,18 +202,18 @@
 .tx .thought-full { align-self: stretch; display: flex; flex-direction: column; gap: var(--space-tight); margin-top: var(--space-tight); }
 .tx .thought-full > .thought-body { max-height: 320px; overflow: auto; background: var(--well); border-radius: var(--radius-nested); padding: var(--space-row) var(--space-card); }
 
-/* A new session's status row (ui/Opening.tsx): the live row held still. Its space is there from
- * Send; it shows after 600 ms, over 240 ms. Failed, the dot greys and only the verb is red. */
-.tx .live-row.boot { transition: opacity 240ms ease; }
-.tx .live-row.boot[data-ready="false"] { opacity: 0; }
-.tx .live-row.boot .boot-words { flex: 0 1 auto; }
-.tx .live-row.boot .boot-failed { color: var(--warn); }
-.tx .live-row.boot[data-state="failed"] .live-dot { background: var(--faint); }
-.tx .live-row.boot .boot-retry { flex: none; margin-left: var(--space-tight); }
+/* A new session's start on the live row (ui/Opening.tsx): its space is there from Send; it shows
+ * after 600 ms, over 240 ms. Failed, the dot greys and only the verb is red. */
+.tx .live-row[data-kind="start"] { transition: opacity 240ms ease; }
+.tx .live-row[data-ready="false"] { opacity: 0; }
+.tx .live-row .start-words { flex: 0 1 auto; }
+.tx .live-row .start-failed { color: var(--warn); }
+.tx .live-row[data-state="failed"] .live-dot { background: var(--faint); }
+.tx .live-row .start-retry { flex: none; margin-left: var(--space-tight); }
 
 @media (prefers-reduced-motion: reduce) {
   .tx [data-state="on"] .live-dot, .tx .tool-spin, .tx .caret { animation: none; }
-  .tx .live-row.boot { transition: none; }
+  .tx .live-row[data-kind="start"] { transition: none; }
   .tx .live-thought > .tf.tf-was { display: none; }
   .tx .live-thought > .tf.tf-now { animation: none; }
 }

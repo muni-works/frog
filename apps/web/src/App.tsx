@@ -17,7 +17,7 @@ import { Inspector } from './ui/Inspector'
 import { usePreviewHub } from './ui/PreviewPane'
 import type { PreviewHub } from './preview'
 import { SessionList } from './ui/SessionList'
-import { BootRow, firstTitle, stuck, provisional, undelivered, withOpening, type Opening } from './ui/Opening'
+import { firstTitle, stuck, provisional, undelivered, withOpening, type Opening } from './ui/Opening'
 import { useMachines } from './machines'
 import { creditLine, Palette, type Command } from './ui/Overlays'
 import { SettingsPage, SettingsRow, SettingsSidebar } from './ui/Settings'
@@ -745,7 +745,8 @@ export default function App() {
                 <div className="ghost-line" style={{ width: '54%' }} />
               </div>
             )}
-            <Transcript thread={op ? provisional(ct, op) : ct} boot={op && <BootRow since={op.at} repo={op.repo} upSince={op.runningAt} error={op.failed ?? (current.state === 'error' ? (current.error ? plainError(current.error) : "The sandbox couldn't start.") : null)} onRetry={() => retry(current.id)} />} models={models} credit={account ? creditLine(account).replace(/ credit$/, '') : undefined} onDecide={(a, o) => decide(current.id, a, o)}
+            <Transcript thread={op ? provisional(ct, op) : ct} start={op && { since: op.at, stage: current.id.startsWith(PENDING) ? 'reserving' : current.state === 'running' ? 'engine' : 'booting', repo: op.repo, upSince: op.runningAt, onRetry: () => retry(current.id),
+              error: op.failed ?? (current.state === 'error' ? (current.error ? plainError(current.error) : "The sandbox couldn't start.") : null) }} models={models} credit={account ? creditLine(account).replace(/ credit$/, '') : undefined} onDecide={(a, o) => decide(current.id, a, o)}
               onAnswer={(choices, other) => ct.question && cloud?.send(current.id, { op: 'answer', id: ct.question.id, choices, ...(other ? { other } : {}) })}
               onElicit={(action, content) => ct.elicitation && cloud?.send(current.id, { op: 'elicit', id: ct.elicitation.id, action, ...(content ? { content } : {}) })}
               onRetry={() => send(current.id, 'Try that again.')}
