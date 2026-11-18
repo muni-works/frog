@@ -109,36 +109,85 @@ has the same four parts: the short answer, what you'll see, what to do, the sett
 
 ## Settings
 
+Revised 2026-11-18 from the settings canvas ("Frog settings, one shell", boards 1 to 7): the Mac
+and the web show the same nine sections, drawn the same way from one list of rows.
+
 ### Layout
 
-- Sidebar: Back to app; then one row per section. No search in the first version.
-- Main area: the section title, then its settings as rows: label on the left, control on
-  the right, a hairline between rows, a muted one-line description under a label where one
-  is needed. Groups inside a section get a muted 12px label.
-- Controls are frog-drawn: the pill, the segmented capsule, the toggle and the text field
-  already in the tokens. No system `Form`, `TabView` or grouped-list styling on the Mac.
+- Sidebar: Back to app (esc does the same); then one row per section. No search in the first
+  version.
+- Main area, capped at 720 (the transcript's measure) and centred like it, 40 above:
+  - **Title**: 17/22 semibold, one per page, no icon.
+  - **Group label**: 12/17 semibold, muted, 22 above and 4 below; only when a page has more
+    than one group.
+  - **Row**: label left, control right, 11 above and below, a hairline between rows and none
+    after the last. No card behind a row.
+  - **Label**: 14/20 regular, sentence case, no colon; says what turning it on does.
+    **Description**: 12/17 faint, one or two lines under the label; may link to its docs page.
+  - Under 760 wide the control wraps below its label and takes the full width.
+- Six controls, frog-drawn from the tokens, no system `Form`, `TabView` or grouped list:
+  - **Toggle**: on or off, takes effect at once, green when on.
+  - **Segmented**: two to four choices that fit on a line.
+  - **Pill menu**: five or more choices, or names that vary in length.
+  - **Field**: one short value; saves on return or blur, no Save button.
+  - **Button**: bordered, small; red text only for something that can't be undone, and it
+    asks first.
+  - **Value**: a read-only fact where a control would be, in muted text.
+- Only Billing uses cards, for the plan and credit blocks.
+- No "new" badges anywhere.
 
 ### Sections
 
-The Mac has nine tabs today (General, Models, Billing, Energy, Lend, Permissions, MCP,
-Appearance, Shortcuts). The web has three (Account, Models, Billing). The shell has one
-list; a section that doesn't apply on a platform isn't shown there.
-
-| Section | Mac | Web | Today |
+| Section | Was | Works on both | On the web, an invitation |
 | --- | --- | --- | --- |
-| General | yes | no | `GeneralSettings` |
-| Appearance | yes | yes | `AppearanceSettings`; new on web |
-| Models | yes | yes | `MachinesSettings`; web `ModelsSettings` |
-| Permissions | yes | no | `PermissionSettings` |
-| MCP | yes | no | `MCPSettings` |
-| Shortcuts | yes | no | `ShortcutSettings` |
-| Energy | yes | no | `EnergySettings` |
-| Lend | yes | no | `LendSettings` |
-| Account | yes | yes | web Account tab; on the Mac this is in `UserFooter` and Billing today |
-| Billing | yes | yes | `BillingSettings`; web Billing tab |
+| General | General | Notifications | Open files in your editor; Frog on iPhone |
+| Appearance | Appearance | Theme, Density, Detail, Playful frog, Frog sounds | none |
+| Models | Models, Machines, Lend | Default model, your machines | Pair a machine; run models on this computer; rename or unpair; share with other machines; your own keys; a server of your own |
+| Permissions | Permissions | The mode new sessions start in | Work in folders on your computer; use other apps |
+| Connections | MCP | The server list and each one's state | Sign in to a server |
+| Shortcuts | Shortcuts | Each app's own keys, read-only | none |
+| Usage | Energy, and spend and the cap from Models | Spend this week and month, a monthly cap, energy | Measured energy for this Mac |
+| Account | the Mac's footer and Billing | Name, email, Sign out, sign-ins, devices and keys | none |
+| Billing | Billing | Plan, credit, a code, credit added, prices | none |
 
-- Links that open a settings tab keep working: `?settings=account|billing` on the web
-  (Stripe and api.frog.toys land there) opens Settings mode on that section.
+Lend folds into Models: "Lend this Mac" was the same switch as "Share with my other machines".
+
+### One list of rows
+
+- `design/settings.json` lists every section and row, in order: id, section, group, label,
+  description, control, options, and platform. Both apps read it (the web imports it, the Mac
+  bundles it, as with `catalog/local-models.json`), so a setting added once appears on both.
+  Each app keeps its own bindings and storage. `apps/web/test/settings-rows.test.ts` holds it
+  to this spec.
+- **platform**: `both` works on the Mac and the web; `invite` works on the Mac and is an
+  invitation on the web; `mac` is about the Mac app itself and never shows on the web; `web` is
+  a fact only the web needs (cloud sessions are always sandboxed).
+- **notYet**: a row that belongs on a platform but can't work there yet, with the reason. That
+  app leaves it out rather than draw a control that does nothing.
+- **when**: shown only while the named toggle is on.
+- **web**: the label and description an invitation uses on the web, where they differ.
+- The four permission-mode explanations are the selected mode's one-line description, not
+  rows of their own.
+
+### Invitations on the web
+
+- An invitation is a real row: the same label and description as on the Mac (or the row's
+  `web` words), never greyed out, no lock icon.
+- A section's working rows come first; its invitations sit under one "On your Mac" group label
+  at the foot.
+- Where the control would be, one bordered pill, "Get the Mac app", the download chip's link.
+  When the account already has a Mac it reads "Open in Frog for Mac" and opens
+  `frog://settings/<section>`. When the visitor isn't on a Mac (a phone, Windows, Linux) there
+  is no pill and the row says "On a Mac".
+- Rows about the Mac app itself (pausing agents for updates, lending on battery, pairing a Mac,
+  provider model lists, always-allowed commands, config.toml) never show on the web.
+
+### Links
+
+- `frog.toys/settings/<section>` and `frog://settings/<section>` open that section. An old
+  section name (`mcp`, `energy`, `lend`) opens the section it became.
+- `?settings=account|billing` on the web (Stripe and api.frog.toys land there) still opens
+  Settings mode on that section.
 - A setting's row can link to its documentation page, and a documentation page can link to
   the setting. Both are plain links between the two modes.
 
@@ -166,8 +215,9 @@ list; a section that doesn't apply on a platform isn't shown there.
 2. **Documentation.** `docs/app/`, the manifest, the markdown reader on the Mac, the
    route on the web, the pages above, the generated reference pages and their test.
 3. **docs.frog.toys.** Signed-out access, stable URLs, first-request HTML, the domain.
-4. **Settings.** Move sections into the shell one at a time, Billing and Account first
-   since both apps have them, then remove the Mac's Settings window and the web's overlay.
+4. **Settings.** This spec and `design/settings.json`; then the web's nine sections and
+   invitations; then the Mac in three steps: the shell mode and the shared row views, the
+   sections moving over, and removing the Settings window.
 
 Each step can ship by itself. Steps 2 and 4 don't depend on each other.
 
@@ -186,6 +236,5 @@ Each step can ship by itself. Steps 2 and 4 don't depend on each other.
 
 - **Where the web's signed-out docs are served from.** The web app's hosting isn't in this
   repo; first-request HTML may need a build step that renders the pages.
-- **Whether Energy and Lend stay their own sections** or fold into Models on the Mac.
 - **Mac window size.** Settings as a mode uses the main window's size. A small window
   makes for narrow settings rows; the minimum window width may need to rise.
