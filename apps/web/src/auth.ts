@@ -127,8 +127,29 @@ export const listKeys = async (key: string) => (await call<{ keys: KeyInfo[] }>(
 /** A new API key, shown once. */
 export const createKey = (key: string, name: string) => call<{ key: string; id: string }>('/v1/keys', { method: 'POST', body: JSON.stringify({ name }) }, key)
 export const revokeKey = (key: string, id: string) => call<{ ok: true }>(`/v1/keys/${encodeURIComponent(id)}/revoke`, { method: 'POST', body: '{}' }, key)
+/** A row of credit history: a top-up, a redeemed code (`kind: "coupon"` with its `code`), or a kind
+ *  this build doesn't know yet, which is shown plainly rather than dropped. */
+export interface CreditRow { kind?: string; code?: string; at: string; amount_micro_usd?: number; added_cents?: number; status?: string }
 export const billingHistory = async (key: string) =>
-  (await call<{ topups: { at: string; amount_micro_usd: number; status: string }[] }>('/v1/billing/history', {}, key)).topups
+  (await call<{ topups: CreditRow[] }>('/v1/billing/history', {}, key)).topups
+
+/** Why a code wasn't redeemed: the edge's code (unknown_code, already_redeemed, expired, used_up,
+ *  not_eligible, slow_down) and its plain sentence, which is what's shown. */
+export class CouponError extends Error {
+  constructor(readonly status: number, readonly code: string, message: string) { super(message) }
+}
+
+/** Redeems a coupon code for Frog Cloud credit. Throws a CouponError with the edge's message. */
+export async function redeemCoupon(key: string, code: string): Promise<{ code: string; added_cents: number; credit_cents: number }> {
+  const res = await fetch(API + '/v1/coupons/redeem', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
+    body: JSON.stringify({ code }),
+  })
+  const json = await res.json().catch(() => null)
+  if (!res.ok) throw new CouponError(res.status, json?.error?.code ?? 'unavailable', json?.error?.message ?? "Couldn't redeem that code. Try again.")
+  return json
+}
 
 /** Leaves for Stripe's portal: change or cancel the plan, or the card. Throws an AuthError
  * (409 stale_subscription, 400 no_customer/no_subscription, 401 invalid_key) instead of

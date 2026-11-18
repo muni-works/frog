@@ -40,11 +40,14 @@ export async function closeHarness() { await server?.close(); server = null; App
 
 const listeners = new Map<string, Set<(e: unknown) => void>>();
 export function dispatch(type: string, e: Record<string, unknown>) {
-  for (const f of [...(listeners.get(type) ?? [])]) f({ preventDefault() {}, stopPropagation() {}, ...e });
+  for (const f of [...(listeners.get(type) ?? [])]) f({ preventDefault() {}, stopPropagation() {}, target: { closest: () => null }, ...e });
 }
 
-const nodeMock = () => {
-  const el: Record<string, unknown> = { style: {}, getContext: () => null, focus() {}, blur() {}, scrollTo() {}, scrollIntoView() {}, addEventListener() {}, removeEventListener() {}, setSelectionRange() {},
+/** What took the focus, by its aria-label (or tag), newest last. */
+export const focused: string[] = [];
+
+const nodeMock = (host?: { type?: unknown; props?: Record<string, unknown> }) => {
+  const el: Record<string, unknown> = { style: {}, getContext: () => null, focus() { focused.push(String(host?.props?.["aria-label"] ?? host?.type ?? "?")); }, blur() {}, scrollTo() {}, scrollIntoView() {}, addEventListener() {}, removeEventListener() {}, setSelectionRange() {},
     getBoundingClientRect: () => ({ top: 0, left: 0, right: 0, bottom: 0, width: 0, height: 0 }), querySelector: () => null, querySelectorAll: () => [], contains: () => false,
     closest: () => null, scrollTop: 0, scrollHeight: 0, clientHeight: 0, offsetHeight: 0, value: "", selectionStart: 0, selectionEnd: 0, dataset: {}, classList: { add() {}, remove() {}, toggle() {}, contains: () => false } };
   return el;
@@ -53,7 +56,7 @@ const nodeMock = () => {
 export interface Page { root: ReactTestRenderer; calls: Call[]; storage: MemStorage; path: () => string; unmount: () => void }
 
 /** Mounts the App at `path` with `storage` in localStorage. */
-export async function mount(path: string, { storage = {}, respond }: { storage?: Record<string, string>; respond?: Responder } = {}): Promise<Page> {
+export async function mount(path: string, { storage = {}, respond, globals = {} }: { storage?: Record<string, string>; respond?: Responder; globals?: Record<string, unknown> } = {}): Promise<Page> {
   const A = await app();
   const g = globalThis as Record<string, unknown>;
   const url = new URL(path, "https://frog.toys");
@@ -63,7 +66,9 @@ export async function mount(path: string, { storage = {}, respond }: { storage?:
   const local = new MemStorage();
   for (const [k, v] of Object.entries(storage)) local.setItem(k, v);
   const calls: Call[] = [];
-  listeners.clear();
+  // Not cleared between mounts: ui/layers.ts installs its Escape listener once per process, and an
+  // unmounted page removes its own listeners.
+  focused.length = 0;
   setGlobals(g, {
     location: loc, history: hist, localStorage: local, sessionStorage: new MemStorage(),
     addEventListener: (t: string, f: (e: unknown) => void) => { if (!listeners.has(t)) listeners.set(t, new Set()); listeners.get(t)!.add(f); },
@@ -83,9 +88,9 @@ export async function mount(path: string, { storage = {}, respond }: { storage?:
       return { ok: status >= 200 && status < 300, status, json: async () => r.body } as Response;
     },
   });
-  setGlobals(g, { window: g });
+  setGlobals(g, { window: g, ...globals });
   let root!: ReactTestRenderer;
-  await act(async () => { root = TestRenderer.create(h(A), { createNodeMock: nodeMock }); });
+  await act(async () => { root = TestRenderer.create(h(A), { createNodeMock: (e) => nodeMock(e as never) }); });
   await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
   return { root, calls, storage: local, path: () => url.pathname + url.search, unmount: () => act(() => root.unmount()) };
 }

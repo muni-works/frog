@@ -2,7 +2,7 @@
 // ModelsParityTests draws. `?view=picker|settings|machine&theme=light|dark`. Dev only (vite dev).
 import { createRoot } from 'react-dom/client'
 import { Composer } from '../src/ui/Composer'
-import { Settings } from '../src/ui/Overlays'
+import { SettingsPage } from '../src/ui/Settings'
 import type { Machine } from '../src/machines'
 import type { Model } from '../src/models'
 import '../src/tokens.css'
@@ -33,5 +33,5 @@ const view = q.get('view') ?? 'picker'
 createRoot(document.getElementById('root')!).render(
   view === 'picker'
     ? <div style={{ padding: '340px 24px 24px', maxWidth: 720 }}><Composer model="glm-5.3-flash" models={models} machines={machines} openModels onModel={() => {}} onManage={() => {}} /></div>
-    : <Settings account={account} tab="Models" machines={machines} machine={view === 'machine' ? 'n1' : undefined} onSignOut={() => {}} onClose={() => {}} />,
+    : <div className="win"><SettingsPage section="models" account={account} machines={machines} machine={view === 'machine' ? 'n1' : undefined} onOpen={() => {}} onSignOut={() => {}} /></div>,
 )

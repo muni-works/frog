@@ -101,3 +101,14 @@ test("/docs/<slug> serves the app's page, like /s/<id>; other paths stay 404", a
   const miss = await worker.fetch(new Request("https://frog.toys/docs/a/b"), { ASSETS });
   assert.equal(miss.status, 404);
 });
+
+test("/settings/<section> serves the app's page, like /docs/<slug>; deeper paths stay 404", async () => {
+  const seen = [];
+  const ASSETS = { fetch: async (u) => { seen.push(new URL(u).pathname); return new Response("<!doctype html>app"); } };
+  for (const path of ["/settings/billing", "/settings/account/", "/settings"]) {
+    const r = await worker.fetch(new Request(`https://frog.toys${path}`), { ASSETS });
+    assert.equal(r.status, 200, path);
+  }
+  assert.deepEqual(seen, ["/", "/", "/"]);
+  assert.equal((await worker.fetch(new Request("https://frog.toys/settings/a/b"), { ASSETS })).status, 404);
+});

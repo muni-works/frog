@@ -61,6 +61,8 @@ async function shoot(shot, look) {
   await call("Page.enable");
   await call("Runtime.enable");
   const storage = { "frog.newModel": "glm-5.3-flash", ...(shot.storage ?? {}) };
+  // Each shot is its own mock account, so one shot's redeemed code doesn't change the next.
+  if (storage["frog.key"]) storage["frog.key"] += `-${shot.name}-${look}`;
   await call("Page.addScriptToEvaluateOnNewDocument", { source: `try { localStorage.clear(); for (const [k, v] of Object.entries(${JSON.stringify(storage)})) localStorage.setItem(k, v) } catch {}` });
   await call("Page.navigate", { url: ORIGIN + (shot.path ?? "/") });
   await sleep(2500);
