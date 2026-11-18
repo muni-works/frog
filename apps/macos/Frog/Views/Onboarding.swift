@@ -254,8 +254,7 @@ struct BiggerModelLine: View {
     let conversation: Conversation
     @State private var closed = false
     @State private var asking: ModelIdentity?
-    @Environment(\.openSettings) private var openSettings
-    @AppStorage("settingsTab") private var settingsTab = "general"
+    @Environment(\.showSettings) private var showSettings
 
     /// Windows under this are small (see the engine's compact mode).
     static let smallWindow: UInt64 = 16_384
@@ -318,8 +317,7 @@ struct BiggerModelLine: View {
                         .foregroundStyle(cloud.place.color)
                 } else {
                     Button("use Frog Cloud") {
-                        settingsTab = "models"
-                        openSettings()
+                        showSettings?("models")
                     }
                     .buttonStyle(.link)
                 }

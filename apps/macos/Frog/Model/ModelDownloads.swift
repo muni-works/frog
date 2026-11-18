@@ -73,16 +73,19 @@ final class ModelDownloads {
     func download(_ repo: String) {
         guard tasks[repo] == nil else { return }
         states[repo] = .downloading(fraction: 0)
+        Funnel.track("model_download_started")
         tasks[repo] = Task {
             do {
                 try await fetch(repo)
                 progress[repo] = nil
                 states[repo] = .done
+                Funnel.track("model_download_finished", ["ok": true])
             } catch is CancellationError {
                 progress[repo] = nil
                 states[repo] = nil
             } catch {
                 states[repo] = .failed(error.localizedDescription)
+                Funnel.track("model_download_finished", ["ok": false])
             }
             tasks[repo] = nil
         }

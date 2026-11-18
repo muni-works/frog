@@ -96,6 +96,22 @@ ${v.live ? `
             template.replacingOccurrences(of: "{time}", with: time).replacingOccurrences(of: "{n}", with: String(n))
         }
     }
+` : ""}${v.start ? `
+    /// A new cloud session's start on the live row, before its first turn (verbs.json \`start\`).
+    enum Start {
+        static let reserving = ${q(v.start.reserving)}
+        static let booting = ${q(v.start.booting)}
+        /// \`{repo}\` is filled in.
+        static let cloning = ${q(v.start.cloning)}
+        static let engine = ${q(v.start.engine)}
+        /// The one red word (\`warn\`); the reason follows in muted.
+        static let failed = ${q(v.start.failed)}
+        /// Up for 30 s with no turn: the engine didn't pick the message up.
+        static let stuck = ${q(v.start.stuck)}
+        static let retry = ${q(v.start.retry)}
+
+        static func cloning(_ repo: String) -> String { cloning.replacingOccurrences(of: "{repo}", with: repo) }
+    }
 ` : ""}}
 `;
 }

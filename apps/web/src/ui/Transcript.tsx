@@ -3,13 +3,15 @@ import type { FileDiff, Image } from '../cloud/protocol'
 import type { Ask, Entry, Question, Thread } from '../engine/thread'
 import { type Model } from '../models'
 import { ElicitationCard, QuestionCard } from './AskCards'
+import type { StartInfo } from './Opening'
 import { Markdown } from './Markdown'
 import { Hunks } from './Diff'
 import { ICON } from './icons'
 import { endError } from '../store'
+import { resumedLine } from '../wall'
 import { TurnFooter } from './TurnFooter'
 import { WidgetCard } from './Widget'
-import { foldRuns, foldTime, lineOf, opensItself, rememberOpen, thoughtLabel, type Step } from './rows'
+import { foldRuns, foldTime, lineOf, opensItself, rememberOpen, thinkMsOf, thoughtLabel, type Step } from './rows'
 import { LiveContext, LiveTail, ThinkingLine, type LiveInfo } from './LiveRow'
 
 // Draws a folded Thread: the user's message, tool lines, "Decided" steps (reasoning items),
@@ -262,7 +264,7 @@ function AskCard({ ask, onDecide }: { ask: Ask; onDecide: Decide }) {
 
 const NO_MODELS: Model[] = []
 
-export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, models = NO_MODELS, outbox = [], onResend, onEdit, waiting, onContinue, onPrompt, onShowChange, credit }: {
+export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, models = NO_MODELS, outbox = [], onResend, onEdit, waiting, onContinue, onPrompt, onShowChange, credit, start }: {
   thread: Thread
   /** The account's credit left, for the turn-cost card. */
   credit?: string
@@ -285,6 +287,8 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
   onPrompt?: (text: string) => void
   /** An edit line's "Show in Changes": open the inspector on Changes. */
   onShowChange?: (path: string) => void
+  /** A new session still starting (ui/Opening.tsx): the live row says how far it's got. */
+  start?: StartInfo
 }) {
   // The live turn is the last one by position: turn numbers can repeat after a resume.
   const lastIdx = thread.turns.length - 1
@@ -310,8 +314,10 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
   return (
     <LiveContext.Provider value={live}>
       {(thread.marks ?? []).filter((m) => m.after === 0).map((m, i) => <Mark key={`m0-${i}`} m={m} />)}
-      {thread.turns.map((turn, ti) => (<Fragment key={`${ti}-${turn.turn}`}>
-        <TurnView turn={turn} live={ti === lastIdx} ask={ti === lastIdx ? thread.ask : null} question={ti === lastIdx ? thread.question : null}
+      {/* The first turn keeps its node from Send on: drawn first from the sent message
+          (ui/Opening.tsx), then from the engine's turn, whatever number the engine gives it. */}
+      {thread.turns.map((turn, ti) => (<Fragment key={ti === 0 ? 'first' : `${ti}-${turn.turn}`}>
+        <TurnView turn={turn} live={ti === lastIdx} start={ti === lastIdx ? start : undefined} ask={ti === lastIdx ? thread.ask : null} question={ti === lastIdx ? thread.question : null}
           running={ti === lastIdx && thread.running} models={models} credit={credit} cb={cb} hasRetry={has.retry} hasEdit={has.edit} hasContinue={has.cont} />
         {(thread.marks ?? []).filter((m) => m.after === ti + 1).map((m, k) => <Mark key={`m${ti}-${k}`} m={m} />)}
       </Fragment>))}
@@ -361,8 +367,8 @@ function rows(entries: Entry[], ask: Ask | null, question: Question | null) {
 /** One turn. Memoized: the reducer keeps untouched turns the same object, so while the last
  * turn streams the others don't redraw (or re-parse their markdown). Only the live turn gets
  * the session's ask, question and running state. */
-const TurnView = memo(function TurnView({ turn, live, ask, question, running, models, credit, cb, hasRetry, hasEdit, hasContinue }: {
-  turn: Turn; live: boolean; ask: Ask | null; question: Question | null; running: boolean; models: Model[]
+const TurnView = memo(function TurnView({ turn, live, ask, question, running, models, credit, cb, hasRetry, hasEdit, hasContinue, start }: {
+  turn: Turn; live: boolean; ask: Ask | null; question: Question | null; running: boolean; models: Model[]; start?: StartInfo
   credit?: string; cb: TurnCallbacks; hasRetry: boolean; hasEdit: boolean; hasContinue: boolean
 }) {
   // One entry as its row. `data-row` says what it is (prose, line, box), and the gaps between
@@ -383,7 +389,7 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
       // An older log has no length: a short scratch thought alone between replies folds away.
       if (e.thinkMs == null && !e.thoughts && foldedThought(entries, n)) return null
       // An empty thought has nothing to open, and a blank reply nothing to read: neither draws.
-      return e.text.trim() ? <ThinkingLine e={e} label={thoughtLabel(e, turn.reason?.type === 'cancelled' ? turn.endAt : undefined)} /> : null
+      return e.text.trim() ? <ThinkingLine e={e} label={thoughtLabel(e, turn.reason?.type === 'cancelled' ? turn.endAt : undefined, thinkMsOf(turn, e.id))} /> : null
     }
     if (e.kind === 'message' && e.done && !e.text.trim()) return null
     if (e.kind === 'message') return <div className="say" data-row="prose" data-item={e.id}><Markdown text={e.text} />{!e.done && <span className="caret" />}</div>
@@ -403,6 +409,8 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
   }
   return (
     <div className="turn">
+      {/* A turn the credit wall resumed (Op::Continue with wall.ts's note) is one quiet line, not a message. */}
+      {resumedLine(turn.input) ? <div className="turn-note" data-row="resumed" role="status">{resumedLine(turn.input)}</div> : (
       <div className="ask-block">
         {/* A blank message (whitespace, no images) draws no empty bubble. */}
         {/* The receipts and actions sit beside the last bubble, not under it, so the prompt is a
@@ -422,7 +430,7 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
             )}
           </div>
         ))}
-      </div>
+      </div>)}
       <div className="reply-block">
       {foldRuns(rows(turn.entries, ask, question)).map((r) => r.kind === 'fold'
         ? <Fold key={r.id} steps={r.steps.map((x) => x.e)} render={(e) => <ToolLine key={e.id} e={e} onShowChange={cb.onShowChange} />} />
@@ -432,7 +440,8 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
           answer={[...turn.entries].reverse().find((e) => e.kind === 'message')?.text ?? ''}
           onRetry={live && !running && hasRetry ? cb.onRetry : undefined} />
       )}
-      {live && running && <LiveTail entries={turn.entries} tl={turn.tl} waiting={!!ask || !!question} waitItem={ask?.item ?? question?.item} models={models} />}
+      {/* One row from Send on: a new session's start, then the turn's live row (the same node). */}
+      {live && (running || start) && <LiveTail entries={turn.entries} tl={turn.tl} waiting={!!ask || !!question} waitItem={ask?.item ?? question?.item} models={models} start={running ? undefined : start} />}
       </div>
       {/* How the turn ended stays with the turn: stopping a later one doesn't clear it. */}
       {/* A think stopped mid-way already says so on its own line ("Stopped after 12s"). */}

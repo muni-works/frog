@@ -29,6 +29,8 @@ struct FrogWindow {
     let openSidebarSession: (SessionInfo) -> Void
     /// Documentation mode in this window (Help › Frog Documentation).
     let showDocs: () -> Void
+    /// Settings mode in this window (⌘,), on a section or the last one.
+    let showSettings: (String?) -> Void
 }
 
 extension FocusedValues {
@@ -207,6 +209,18 @@ struct FrogCommands: Commands {
                 .keyboardShortcut("k")
                 .disabled(window == nil)
             Divider()
+        }
+
+        // ⌘, is Settings mode in the front window (docs/design/app-shell.md); with no window
+        // open, a new one opens on it.
+        CommandGroup(replacing: .appSettings) {
+            Button("Settings…") {
+                if let window { window.showSettings(nil) } else {
+                    SettingsRequest.pending = "account"
+                    newWindow()
+                }
+            }
+            .keyboardShortcut(",")
         }
 
         // Help › Frog Documentation: the pages that ship with this build, in the window.

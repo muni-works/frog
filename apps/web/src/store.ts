@@ -5,6 +5,7 @@ import type { EndReason, Envelope, RepoList, SessionSummary } from './cloud/prot
 import { CloudEngine } from './engine/cloud'
 import { emptyThread, reduce, type Thread } from './engine/thread'
 import { diffIds } from './live'
+import { noteSessions } from './track'
 
 // Sessions belong to the account and come from the gateway (GET /v1/sessions); what
 // happens inside one comes only from its event stream. Nothing here is made up.
@@ -77,7 +78,9 @@ export function useSessions(cloud: CloudEngine | null) {
       const index = await cloud.gateway.index()
       // Whether this gateway serves previews: the Preview tab and the engine's preview tools follow it.
       cloud.setPreviews(index.preview)
-      setSessions(index.sessions.sort((a, b) => b.updated - a.updated))
+      const list = index.sessions.sort((a, b) => b.updated - a.updated)
+      setSessions(list)
+      noteSessions(list)
       setLoaded(true)
       setError(null)
     } catch (e) {

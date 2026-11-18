@@ -6,12 +6,17 @@
 //   GET  /v1/keys, POST /v1/keys, POST /v1/keys/:id/revoke
 //   GET  /v1/billing/history  a top-up (and redeemed codes)
 //   POST /v1/coupons/redeem   see redeem() below
+//   POST /v1/billing/topup    {amount, return} → {url: <return>/?session_id=cs_mock_…}: no Stripe;
+//                             the credit lands 1.5 s later, as the webhook's would
+//   POST /v1/mock/credit      {cents}: sets the balance (mock only, for the credit wall)
 // Mock data only: the prices and amounts here are not Frog Cloud's.
 import { randomBytes } from "node:crypto";
 
 const MODELS = [
   { id: "glm-5.3-flash", context_length: 131072, pricing: { prompt: "0.00000004", completion: "0.0000004", input_cache_read: "0.00000001" } },
   { id: "deepseek-v4.1-flash", context_length: 131072, pricing: { prompt: "0.00000008", completion: "0.0000006" } },
+  // The recorded turn's model (demo.jsonl), priced so a played turn costs 6¢ (MOCK_TURN_CENTS).
+  { id: "qwen3-coder-next", context_length: 262144, pricing: { prompt: "0.0002", completion: "0.002" } },
 ];
 
 const G = 2 ** 30;
@@ -56,6 +61,21 @@ export function accountRoutes() {
         return json(res, 200, { ok: true }), true;
       }
       if (path === "/v1/billing/history" && req.method === "GET") return json(res, 200, { topups: a.history }), true;
+      if (path === "/v1/billing/topup" && req.method === "POST") {
+        const b = (await body(req)) ?? {};
+        const micro = Number(b.amount);
+        if (![5, 10, 25, 50, 100].map((d) => d * 1e6).includes(micro)) return json(res, 400, { error: { code: "invalid_amount", message: "amount must be a top-up" } }), true;
+        if (typeof b.return !== "string") return json(res, 400, { error: { code: "invalid_return", message: "return must be an allowed web app origin" } }), true;
+        setTimeout(() => {
+          a.account.credit_cents += micro / 1e4;
+          a.history.unshift({ kind: "topup", at: new Date().toISOString(), amount_micro_usd: micro, status: "succeeded" });
+        }, 1500);
+        return json(res, 200, { url: `${b.return.replace(/\/+$/, "")}/?session_id=cs_mock_${randomBytes(6).toString("hex")}` }), true;
+      }
+      if (path === "/v1/mock/credit" && req.method === "POST") {
+        a.account.credit_cents = Number(((await body(req)) ?? {}).cents) || 0;
+        return json(res, 200, { account: a.account }), true;
+      }
       if (path === "/v1/coupons/redeem" && req.method === "POST") {
         const r = redeem(a, ((await body(req)) ?? {}).code);
         return json(res, r.status, r.body), true;

@@ -131,9 +131,10 @@ See the PR for the full list. In short:
   API at the gateway (`VITE_API=`).
 - **The prompt's receipts** sit beside the last bubble so the block gap stays 16. At phone width
   there's no room beside it, so they show under it on tap, over the gap.
-- **Thought line** reads "Thought for 1s" (the spec's settled row): the engine's `think_ms` when it
-  sends one, otherwise the item's own times, as the engine's timeline and the Mac read an older
-  log. Phase 2 replaces the rest of it.
+- **Thought line** reads "Thought for 1s" (the spec's settled row). The figure is the item's
+  thinking segment from the turn's timeline (engine `timeline.rs` `thinking`, #441): `think_ms`
+  when the engine sends it; in an older log, from its start until the first message or tool call
+  logged after it starts, or its completion if that's sooner. Phase 2 replaces the rest of it.
 - **Parity with the Mac**: on #424's fixture the web's and the Mac's 1280 dumps match, 12 rows within
   1 pt (#424 commits `diff-web-mac-1280.txt` with the Mac dump).
 - **A failed read opens** to its error. A successful read has nothing to open (spec).
@@ -188,6 +189,10 @@ and font size match within 1 point, and every row's words match (`match: 12 rows
 - **The phone** keeps one gutter and no inset: its prose (`MessageText+UIKit`) has no indent yet, so
   `TranscriptEdge` applies on the Mac only. The phone does get the new lines, folds, footer and
   bubble from FrogKit.
+- **"Thought for Ns"** is how long the think ran (`ItemState.thoughtMs`, set as it completes):
+  `think_ms` cut at its completion, or in an older log, until the first message or tool call
+  logged after it starts, or its completion if sooner (#441). The turn line's thinking segments
+  use the same rule; `TurnLineTests` runs every case's `thinking` in timeline.json.
 - **Thoughts between steps** don't draw on the Mac (as before) and so don't break a fold; on the
   web a thought line breaks the run.
 
@@ -273,9 +278,10 @@ verbatim and keep it until the next.
 
 ### Decided beyond the spec, or left out
 
-- **Old logs** (no `think_ms`, no `thoughts`) read "Thought" and open straight to the full text.
-  The length is never derived from the item's own times: `item_completed` comes after the whole
-  reply. A short scratch thought alone between replies still folds away there, as before.
+- **Old logs** (no `think_ms`, no `thoughts`) read "Thought for Ns" with the timeline's figure
+  (#441): the think ends where its answer or tool call starts, or at its completion if sooner. It
+  is never simply started to completed: `item_completed` comes after the whole reply. They open
+  straight to the full text. A short scratch thought alone between replies still folds away there.
 - **Hover**: time, tokens (with "so far"), first-token time (the first reasoning or text delta
   minus the turn's start), and "Read 11,900 tokens from cache" once a call has ended (`cached`). The
   total read isn't on the wire while it runs, so only the cached part shows.

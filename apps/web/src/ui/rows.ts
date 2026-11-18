@@ -2,7 +2,8 @@
 // spec.md, phase 1: "Lines", "Failure", "Test runs", "Measure and the left edge"). The words come
 // from docs/design/transcript/verbs.json, the one verb list the Mac reads too.
 import verbs from '../../../../docs/design/transcript/verbs.json'
-import type { Entry } from '../engine/thread'
+import type { Entry, Thread } from '../engine/thread'
+import { thinking } from '../engine/timeline'
 import type { FileDiff } from '../cloud/protocol'
 
 export type ObjectFormat = 'command' | 'path' | 'pattern' | 'host' | 'text' | 'tool' | 'none'
@@ -237,10 +238,11 @@ export function liveRow(entries: Entry[], o: { waiting: boolean; activity: strin
 
 /** A finished think's line: "Thought for 31s" from the engine's think_ms (an older log: the item's
  * own times); "Stopped after 12s" when the turn was stopped mid-think; plain "Thought" with no times. */
-export function thoughtLabel(e: Entry, stoppedAt?: number): string {
+export function thoughtLabel(e: Entry, stoppedAt?: number, segmentMs?: number | null): string {
   if (!e.done && stoppedAt != null && e.started != null) return fill(LIVE.stopped, { time: secs(stoppedAt - e.started) })
-  // An older log has no think_ms: the item's own times, as the engine's timeline and the Mac read it.
-  const ms = e.thinkMs ?? (e.done && e.started != null && e.ended != null && e.ended >= e.started ? e.ended - e.started : null)
+  // The turn's thinking segment when there is one (#441: an older log's think ends where its
+  // answer or tool call starts); then think_ms; then, with no turn events, the item's own times.
+  const ms = segmentMs ?? e.thinkMs ?? (e.done && e.started != null && e.ended != null && e.ended >= e.started ? e.ended - e.started : null)
   if (ms != null) return fill(LIVE.thought, { time: secs(Math.max(1000, ms)) })
   return 'Thought'
 }
@@ -262,3 +264,9 @@ export function rateOf(samples: { at: number; output: number }[], now: number, w
 
 /** No output for this long while thinking: the row says so (the engine asks at 30 s). */
 export const STALL_AT = 10_000
+
+/** How long a reasoning item thought, by the turn's timeline (engine timeline.rs `thinking`):
+ * the figure "Thought for Ns" says. Null when the turn kept no events for it. */
+export function thinkMsOf(turn: Thread['turns'][number], id: string): number | null {
+  return thinking(turn.tl ?? []).find((t) => t.item === id)?.ms ?? null
+}
