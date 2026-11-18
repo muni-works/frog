@@ -13,9 +13,9 @@ final class FlowDriverTests: XCTestCase {
 
     override func setUpWithError() throws {
         executionTimeAllowance = 120
-        try FlowWindow.requireScreen()
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         w = FlowWindow(folder: folder)
+        try w.requireReadable()
     }
 
     override func tearDown() {
@@ -91,3 +91,15 @@ final class FlowDriverTests: XCTestCase {
     }
 }
 
+
+/// On CI a flow test that can't read its window fails rather than skips (`requireReadable`), so
+/// a green run means the flows ran. This one says so on its own, by name.
+@MainActor
+final class FlowWindowCanaryTests: XCTestCase {
+    func testTheHostedWindowIsReadable() throws {
+        let w = FlowWindow(folder: URL(fileURLWithPath: NSTemporaryDirectory()))
+        defer { w.close() }
+        try w.requireReadable()
+        XCTAssertNotNil(w.find(.button("Commands")))
+    }
+}

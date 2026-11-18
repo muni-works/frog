@@ -53,19 +53,29 @@ final class FlowWindow {
         window.orderInForTest()
         HiddenMenus.reset()
         pump(0.5)
-        if !waitUntil(timeout: 5, { self.axWindow != nil }) {
-            XCTFail("the hosted window never showed in the accessibility tree", file: file, line: line)
-        }
+        readable = waitUntil(timeout: 5) { self.axWindow != nil }
     }
 
-    /// Skips the test while the Mac's screen is locked: macOS then counts no window as on
-    /// screen, so the accessibility tree has none to read (seen 2026-11-18: every window came back
-    /// as the bare app element until the screen was unlocked).
-    nonisolated static func requireScreen() throws {
+    /// The window is in the accessibility tree, so the flow can be driven. Sometimes it isn't:
+    /// seen 2026-11-18 while the Mac's screen was locked, when the app's window list came back
+    /// holding only the app element. `requireReadable()` skips the test then, saying why.
+    private(set) var readable = false
+
+    /// What macOS said about the screen and the window, for a skip or failure message.
+    var screenState: String {
         let session = CGSessionCopyCurrentDictionary() as? [String: Any] ?? [:]
-        if (session["CGSSessionScreenIsLocked"] as? Bool) == true {
-            throw XCTSkip("the screen is locked: macOS lists no windows to accessibility, so a flow can't be driven")
-        }
+        let locked = (session["CGSSessionScreenIsLocked"] as? Bool) == true
+        return "screen locked: \(locked), display asleep: \(CGDisplayIsAsleep(CGMainDisplayID()) != 0), "
+            + "window on the active space: \(window.isOnActiveSpace), occlusion: \(window.occlusionState.rawValue)"
+    }
+
+    /// Skips the test when the window can't be read (see `readable`); fails instead on CI, where
+    /// a skip would turn a run that drove nothing green.
+    func requireReadable(file: StaticString = #filePath, line: UInt = #line) throws {
+        guard !readable else { return }
+        let why = "the hosted window isn't in the accessibility tree (\(screenState))"
+        if TestRunner.isCI { XCTFail(why, file: file, line: line) }
+        throw XCTSkip(why)
     }
 
     /// A new window on a fresh workspace in `folder`.
@@ -149,8 +159,23 @@ final class FlowWindow {
         guard let e = element(q, file: file, line: line) else { return }
         if !e.enabled { XCTFail("\(q) is disabled", file: file, line: line); return }
         let err = e.perform(kAXPressAction)
-        if err != .success { XCTFail("pressing \(q) failed: \(err.rawValue)", file: file, line: line) }
+        if err != .success, !clickSheetButton(e.label ?? e.title) {
+            XCTFail("pressing \(q) failed: \(err.rawValue)", file: file, line: line)
+        }
         pump()
+    }
+
+    /// An alert's button, clicked as the AppKit button it is (its AX press can be refused while
+    /// the sheet settles).
+    private func clickSheetButton(_ title: String?) -> Bool {
+        guard let title, let sheet = window.attachedSheet else { return false }
+        func find(_ v: NSView) -> NSButton? {
+            if let b = v as? NSButton, b.title == title { return b }
+            return v.subviews.lazy.compactMap(find).first
+        }
+        guard let button = sheet.contentView.flatMap(find) else { return false }
+        button.performClick(nil)
+        return true
     }
 
     /// Types into a text field (its whole value becomes `text`) and, with `submit`, presses

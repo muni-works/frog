@@ -42,7 +42,11 @@ extension FocusedValues {
 @MainActor
 final class StagedWindow: ObservableObject {
     static let shared = StagedWindow()
-    @Published var window: FrogWindow?
+    @Published var window: FrogWindow? {
+        // A key `FrogCommands` reads through @AppStorage, which re-evaluates its body for sure.
+        didSet { UserDefaults.standard.set(UserDefaults.standard.integer(forKey: Self.tickKey) + 1, forKey: Self.tickKey) }
+    }
+    static let tickKey = "flowStagedWindowTick"
 }
 #endif
 
@@ -53,12 +57,13 @@ struct FrogCommands: Commands {
     @FocusedValue(\.frogWindow) private var focusedWindow
     #if DEBUG
     @ObservedObject private var staged = StagedWindow.shared
+    @AppStorage(StagedWindow.tickKey) private var stagedTick = 0
     #endif
     @Environment(\.openWindow) private var openWindow
     @AppStorage("compactSidebar") private var compactSidebar = false
 
     #if DEBUG
-    private var window: FrogWindow? { focusedWindow ?? staged.window }
+    private var window: FrogWindow? { _ = stagedTick; return focusedWindow ?? staged.window }
     #else
     private var window: FrogWindow? { focusedWindow }
     #endif
