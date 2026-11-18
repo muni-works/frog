@@ -3,12 +3,16 @@
 // engine's reference on every case in docs/design/transcript/timeline.json.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { segments, totals } from "../src/engine/timeline.ts";
 
-const cases = JSON.parse(readFileSync(new URL("../../../docs/design/transcript/timeline.json", import.meta.url), "utf8")).cases;
+// The engine's cases land with #420 (#427 adds the 18th). Until they're on main the tests that run
+// them skip and say why; once they are, they run.
+const CASES = new URL("../../../docs/design/transcript/timeline.json", import.meta.url);
+const NO_CASES = existsSync(CASES) ? false : "timeline.json isn't here yet: it lands with the engine's #420";
+const cases = NO_CASES ? [] : JSON.parse(readFileSync(CASES, "utf8")).cases;
 
-test("every timeline case: the web's segments equal the engine's", () => {
+test("every timeline case: the web's segments equal the engine's", { skip: NO_CASES }, () => {
   assert.ok(cases.length >= 8);
   for (const c of cases) assert.deepEqual(segments(c.events), c.segments, c.name);
 });
@@ -72,7 +76,7 @@ test("waterfall rows are named like their lines", () => {
 // segments from the turn's kept events (so a reload, which rebuilds the thread, draws the same).
 import { emptyThread, reduce } from "../src/engine/thread.ts";
 
-test("the thread keeps enough of each turn to draw its timeline after a reload", () => {
+test("the thread keeps enough of each turn to draw its timeline after a reload", { skip: NO_CASES }, () => {
   for (const c of cases) {
     const t = c.events.reduce((x: typeof emptyThread, e: never) => reduce(x, e), emptyThread);
     const turn = t.turns.at(-1);
