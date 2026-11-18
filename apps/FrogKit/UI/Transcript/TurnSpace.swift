@@ -122,7 +122,8 @@ enum TurnSpace {
         guard case .segment(let segment) = previous else { return s.block }
         switch segment {
         case .text: return writing ? s.gaps.stats : s.activity
-        case .activity: return 0
+        // Lines touch; a card that needs you is a box, a block from the row under it.
+        case .activity: return segment.waiting ? s.block : 0
         case .visual, .notice: return s.block
         }
     }
