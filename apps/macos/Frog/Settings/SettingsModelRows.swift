@@ -195,7 +195,9 @@ struct MachineSettingsPage: View {
                 }
             }
             .environment(\.settingsMachine, deviceID)
+            // Balanced: Devices counts its watchers.
             .onAppear { devices.start() }
+            .onDisappear { devices.stop() }
         } else {
             SettingsPage(title: "Machine") {
                 SettingsRow("This machine isn't paired anymore") { Button("Back", action: back).buttonStyle(SettingsButtonStyle()) }
