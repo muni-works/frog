@@ -44,3 +44,9 @@ python3 docs/testing/feature-map/coverage.py --check  # what CI runs (FeatureMap
 `--check` fails when a test names a flow that isn't in the map, a `test_` name breaks the
 rule, two flows share an id, or `flow_tests` is stale. It runs inside the Mac test suite
 (`FeatureMapTests`), so it's part of CI's `macos-app` job.
+
+## Corrections
+
+When a test shows a flow was read wrong, the flow is fixed here and says so in `corrected`.
+A flow a test now drives that the first reading called `hard` is `automatable: yes`, with the
+old reading kept in `automatable_v070`.
