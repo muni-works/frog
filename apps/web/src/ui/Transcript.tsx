@@ -143,7 +143,7 @@ export function ToolLine({ e, diff, onShowChange, startOpen }: { e: Entry; diff?
   const lines = output ? clip(output).split('\n') : []
   const tail = all || lines.length <= TAIL ? lines : lines.slice(-TAIL)
   return (
-    <div className="line-row" data-row="line" data-kind={line.kind} data-state={line.state}>
+    <div className="line-row" data-row="line" data-kind={line.kind} data-state={line.state} data-item={e.id}>
       <div className="line-plate">
         <button type="button" className="line" aria-expanded={opens ? shown : undefined} aria-disabled={opens ? undefined : true}
           title={line.title || undefined} onClick={() => { if (opens) { rememberOpen(e.id, !shown); setOpen(!shown) } }}>
@@ -199,7 +199,7 @@ function Fold({ steps, render }: { steps: Entry[]; render: (e: Entry) => ReactNo
   const [open, setOpen] = useState(false)
   const time = foldTime(steps)
   return (
-    <div className="line-row fold" data-row="line" data-kind="fold" data-state="ok">
+    <div className="line-row fold" data-row="line" data-kind="fold" data-state="ok" data-steps={steps.map((s) => s.id).join(' ')}>
       <div className="line-plate">
         <button type="button" className="line" aria-expanded={open} onClick={() => setOpen(!open)}>
           <span className="line-mark chev" aria-hidden="true">›</span>
@@ -386,7 +386,7 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
       return e.text.trim() ? <ThinkingLine e={e} label={thoughtLabel(e, turn.reason?.type === 'cancelled' ? turn.endAt : undefined)} /> : null
     }
     if (e.kind === 'message' && e.done && !e.text.trim()) return null
-    if (e.kind === 'message') return <div className="say" data-row="prose"><Markdown text={e.text} />{!e.done && <span className="caret" />}</div>
+    if (e.kind === 'message') return <div className="say" data-row="prose" data-item={e.id}><Markdown text={e.text} />{!e.done && <span className="caret" />}</div>
     if (question?.item === e.id) return <div data-row="box"><QuestionCard q={question} onAnswer={cb.onAnswer} /></div>
     const asking = ask?.item === e.id ? ask : null
     const diff = e.diff ?? asking?.preview
@@ -428,11 +428,11 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
         ? <Fold key={r.id} steps={r.steps.map((x) => x.e)} render={(e) => <ToolLine key={e.id} e={e} onShowChange={cb.onShowChange} />} />
         : <Fragment key={r.id}>{draw(r.e, turn.entries, r.n)}</Fragment>)}
       {turn.usage && (turn.reason?.type === 'complete' || turn.reason?.type === 'denied') && (
-        <TurnFooter usage={turn.usage} models={models} pinned={false} credit={credit}
+        <TurnFooter usage={turn.usage} turn={turn} models={models} pinned={false} credit={credit}
           answer={[...turn.entries].reverse().find((e) => e.kind === 'message')?.text ?? ''}
           onRetry={live && !running && hasRetry ? cb.onRetry : undefined} />
       )}
-      {live && running && <LiveTail entries={turn.entries} waiting={!!ask || !!question} />}
+      {live && running && <LiveTail entries={turn.entries} tl={turn.tl} waiting={!!ask || !!question} waitItem={ask?.item ?? question?.item} models={models} />}
       </div>
       {/* How the turn ended stays with the turn: stopping a later one doesn't clear it. */}
       {/* A think stopped mid-way already says so on its own line ("Stopped after 12s"). */}
