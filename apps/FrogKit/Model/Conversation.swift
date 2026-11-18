@@ -86,6 +86,10 @@ final class Conversation {
     private(set) var busy = true
     /// The Frog Cloud session this shows, when its engine is a sandbox (`CloudLink`).
     var cloudSession: String?
+    /// A new Frog Cloud session still starting (`CloudStart`): its first message is the first
+    /// turn, and that turn's live row says how far the start has got until the engine starts
+    /// the turn. Gone once the row has handed over.
+    private(set) var start: CloudStart?
     private(set) var progress: EngineProgress?
     /// The current progress update began. The UI uses this only to describe an in-flight
     /// request and animate its current stage; it never changes the engine's completion count.
@@ -413,6 +417,50 @@ final class Conversation {
         turns.append(TurnState(number: nil, input: text, images: images, sentAt: .now))
         busy = true
         link?.send(.submit(text, images: images))
+    }
+
+    /// A new cloud session's first message (`CloudStart`): drawn as the first turn now and sent
+    /// now, not queued behind the link's first idle. The link holds it until the socket is live
+    /// (as the web does), and the engine's `turn_started` for it hands the row over.
+    func open(_ start: CloudStart) {
+        self.start = start
+        turns.append(TurnState(number: nil, input: start.text, sentAt: start.since))
+        busy = true
+        link?.send(.submit(start.text, images: []))
+    }
+
+    /// A fresh start for a first turn whose start failed: the same turn (its text may be what
+    /// was typed instead), a new `start`, and the message sent again.
+    func restart(_ start: CloudStart) {
+        guard let i = turns.indices.first, turns[i].number == nil, !turns[i].finished else { return }
+        turns[i].input = start.text
+        self.start = start
+        busy = true
+        link?.send(.submit(start.text, images: []))
+    }
+
+    /// The start failed: the row says why, and nothing is running.
+    func startFailed(_ why: String) {
+        guard let start, start.handedAt == nil else { return }
+        start.fail(why)
+        busy = false
+    }
+
+    /// The sandbox is up but no turn came: the first message (or what was typed instead) goes
+    /// again, to the same session, as the same first turn.
+    func resendStart(_ text: String? = nil) {
+        guard let start, start.handedAt == nil, let i = turns.indices.first, turns[i].number == nil else { return }
+        let text = text ?? turns[i].input
+        turns[i].input = text
+        start.resent()
+        busy = true
+        link?.send(.submit(text, images: []))
+    }
+
+    /// Whether `turn`'s live row is the start's (`CloudStart`): the first turn, until the row has
+    /// handed over to the turn's own.
+    func startCovers(_ turn: TurnState) -> Bool {
+        start != nil && turn.id == turns.first?.id
     }
 
     /// The engine is free: everything queued goes as the next turn, together, in order, each
@@ -814,6 +862,17 @@ final class Conversation {
                 turns.append(TurnState(number: n, input: input, images: images, more: more, startedAt: at))
             }
             panes.currentTurn = n
+            // A new cloud session's first turn: the start's row hands over to the turn's own,
+            // the same row, once it has shown "Thinking" (no more than one change per 1.2 s).
+            if !replaying, let s = start, s.handedAt == nil {
+                s.handOver(to: Verbs.Live.thinking, at: .now)
+                let wait = s.settleDelay(after: .now)
+                Task { [weak self, weak s] in
+                    try? await Task.sleep(for: .seconds(wait))
+                    guard let self, let s, self.start === s else { return }
+                    self.start = nil
+                }
+            }
             // A delivered turn takes every message waiting in the engine's inbox (the first as
             // its input, the rest as `more`).
             // A wake turn takes the messages queued behind it too, as `more`.
@@ -1110,6 +1169,9 @@ final class Conversation {
                 // ended — either way there's nothing to stay busy for.
                 if replayOnStart, busy, turns.last?.finished == false { return }
             }
+            // A new cloud session's link idles once caught up, before the sandbox has booted:
+            // its first message is still on its way to the engine, so it stays busy.
+            if let s = start, s.handedAt == nil, !s.failed, turns.last?.number == nil, turns.last?.finished == false { return }
             busy = false
             awaitingCommand = false
             if progress != nil { progress = nil }

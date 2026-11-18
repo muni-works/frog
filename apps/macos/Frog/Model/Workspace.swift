@@ -355,13 +355,90 @@ final class Workspace {
         let repo: String? = if let repo { repo } else {
             await Task.detached(priority: .userInitiated) { CloudSessions.githubRepo(of: folder) }.value
         }
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, let gateway = CloudSessions.shared.gateway else {
+            do {
+                guard let s = try await CloudSessions.shared.create(repo: repo) else { return }
+                cloudTarget = nil
+                openCloud(s.id)
+            } catch {
+                raceError = CloudFailure.text(error, doing: "start a Frog Cloud session")
+            }
+            return
+        }
+        // One conversation from Send to its first turn (`CloudStart`, the web's #447): the
+        // message is the first turn at once, and its live row says how far the start has got.
+        let start = CloudStart(text: text, repo: repo)
+        let link = PendingCloudLink()
+        let c = Conversation(folder: folder, link: link, replay: false)
+        start.onRetry = { [weak self, weak c] in
+            guard let self, let c else { return }
+            self.retryStart(c)
+        }
+        cloudTarget = nil
+        incoming?.stop(reason: "open superseded")
+        incoming = c
+        show(c)
+        c.open(start)
+        await boot(c, start, link, gateway)
+    }
+
+    /// The start's POST, then its session's state until the engine is up (`CloudStart`).
+    private func boot(_ c: Conversation, _ start: CloudStart, _ link: PendingCloudLink, _ gateway: CloudGateway) async {
+        let s: CloudGateway.Session
         do {
-            guard let s = try await CloudSessions.shared.create(repo: repo) else { return }
-            cloudTarget = nil
-            openCloud(s.id)
-            if !text.isEmpty { conversation?.submit(text) }
+            s = try await gateway.create(repo: start.repo, model: nil)
         } catch {
-            raceError = CloudFailure.text(error, doing: "start a Frog Cloud session")
+            c.startFailed(CloudFailure.text(error, doing: "start a Frog Cloud session"))
+            return
+        }
+        guard c.start === start else { return }
+        start.session = s.id
+        c.cloudSession = s.id
+        link.attach(CloudLink(gateway: gateway, session: s.id))
+        if conversation === c {
+            selection = s.id
+            currentSession = s.id
+        }
+        Task { await CloudSessions.shared.refresh() }
+        observe(s, c, start)
+        // While it boots, its state every 2 s rather than at the list's 15 s, so a boot that
+        // failed says so soon after.
+        while c.start === start, !start.failed, start.handedAt == nil, start.stage != .engine, !c.stopping {
+            try? await Task.sleep(for: .seconds(2))
+            guard c.start === start, !start.failed, start.handedAt == nil, !c.stopping else { return }
+            if let now = try? await gateway.session(s.id) { observe(now, c, start) }
+        }
+    }
+
+    /// What the gateway says of a starting session, on its row.
+    private func observe(_ s: CloudGateway.Session, _ c: Conversation, _ start: CloudStart) {
+        switch s.state {
+        case "running": start.reached(.engine)
+        case "error": c.startFailed(CloudFailure.session(s.error))
+        default: start.reached(.booting)
+        }
+    }
+
+    /// Try again on a start that failed: the sandbox is up but no turn came, so the message (or
+    /// `text`, typed instead) goes again to the same session; otherwise a fresh sandbox, in
+    /// place, and the failed one goes (it holds nothing yet).
+    func retryStart(_ c: Conversation, text: String? = nil) {
+        guard let old = c.start, old.handedAt == nil, let link = c.link as? PendingCloudLink,
+              let gateway = CloudSessions.shared.gateway else { return }
+        if old.stuck(at: .now) { return c.resendStart(text) }
+        guard old.failed else { return }
+        let start = CloudStart(text: text ?? c.turns.first?.input ?? old.text, repo: old.repo)
+        start.onRetry = old.onRetry
+        link.reset()
+        c.cloudSession = nil
+        c.restart(start)
+        Task {
+            if let id = old.session {
+                // First, so it doesn't count against the running limit.
+                try? await gateway.remove(id)
+            }
+            await boot(c, start, link, gateway)
         }
     }
 
