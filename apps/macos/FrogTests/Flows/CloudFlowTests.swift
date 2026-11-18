@@ -13,7 +13,9 @@ final class CloudFlowTests: FlowTestCase {
         cloud.account.creditCents = credit
         cloud.install(signedIn: signedIn)
         if signedIn {
+            // Staged first, so closing the window puts back the account as it was.
             CloudAccount.noKeychain = true
+            CloudAccount.shared.stage(nil)
             refreshAccountNow()
         }
         try open(signedOut: !signedIn)
@@ -33,6 +35,10 @@ final class CloudFlowTests: FlowTestCase {
 
     override func tearDown() {
         super.tearDown()
+        if let cloud {
+            XCTAssertNotEqual(CloudAccount.shared.key, cloud.issuedKey, "the fake account outlived the test")
+            XCTAssertNotEqual(CloudAccount.shared.me?.name, cloud.account.name)
+        }
         cloud?.uninstall()
         cloud = nil
         Library.shared.cloudChanged([])

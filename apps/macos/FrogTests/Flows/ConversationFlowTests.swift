@@ -313,6 +313,11 @@ final class ComposerAndTitleFlowTests: FlowTestCase {
     /// Delete… → Move to Trash: the log goes to the Trash and the pane starts afresh.
     func test_delete_from_title() throws {
         try open(sharedHome: true)
+        // The Trash, as Library.delete uses it: a scratch folder here, not the user's.
+        let trash = engine.folder.deletingLastPathComponent().appending(path: "Trash")
+        try FileManager.default.createDirectory(at: trash, withIntermediateDirectories: true)
+        Library.trash = { try? FileManager.default.moveItem(at: $0, to: trash.appending(path: $0.lastPathComponent)) }
+        defer { Library.trash = nil }
         startConversation()
         let id = try XCTUnwrap(c?.sessionID)
         let log = engine.sessionsDir.appending(path: "\(id).jsonl")
@@ -322,10 +327,6 @@ final class ComposerAndTitleFlowTests: FlowTestCase {
         w.press(.sheetButton("Move to Trash"))
         expect("the log left the sessions folder") { !FileManager.default.fileExists(atPath: log.path) }
         expect("the pane shows a fresh conversation") { self.c?.sessionID != id }
-        // Out of the Trash again: it's the developer's own (wherever macOS keeps it for this file).
-        guard let trash = try? FileManager.default.url(for: .trashDirectory, in: .userDomainMask, appropriateFor: log, create: false) else { return }
-        for name in (try? FileManager.default.contentsOfDirectory(atPath: trash.path)) ?? [] where name.hasPrefix(id) {
-            try? FileManager.default.removeItem(at: trash.appending(path: name))
-        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: trash.appending(path: "\(id).jsonl").path), "the log went to the Trash")
     }
 }

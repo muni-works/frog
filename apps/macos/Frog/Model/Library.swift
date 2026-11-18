@@ -233,10 +233,20 @@ final class Library {
 
     /// Delete a session: its log goes to the Trash (recoverable from there) and its row leaves
     /// the list. Archiving first stops anything queued for it.
+    #if DEBUG
+    /// Flow tests: where a deleted session's log goes instead of the user's Trash (which a test
+    /// host can neither see nor clean up).
+    nonisolated(unsafe) static var trash: ((URL) -> Void)?
+    #endif
+
     func delete(_ id: String) {
         setArchived(id, true)
         let log = FrogPaths.sessions.appending(path: "\(id).jsonl")
+        #if DEBUG
+        if let trash = Self.trash { trash(log) } else { try? FileManager.default.trashItem(at: log, resultingItemURL: nil) }
+        #else
         try? FileManager.default.trashItem(at: log, resultingItemURL: nil)
+        #endif
         archived.remove(id)
         UserDefaults.standard.set(Array(archived), forKey: "archivedSessions")
         onOrderInvalidated?()
