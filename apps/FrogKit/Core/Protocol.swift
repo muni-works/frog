@@ -446,12 +446,26 @@ struct TurnUsage: Decodable, Sendable {
     var servedBy: ServedBy?
     /// Per-call timing; only its cache counts are read, for logs from before `cachedTokens`.
     var timing: Timing?
+    /// Output tokens per fixed bucket of the turn (`tokens[i]` streamed in
+    /// `[i*bucketMs, (i+1)*bucketMs)` from its start): the turn line's pace curve. Absent before
+    /// #420, and when nothing streamed.
+    var pace: Pace?
+
+    struct Pace: Decodable, Sendable, Equatable {
+        var bucketMs: UInt64
+        var tokens: [UInt64]
+    }
 
     struct Timing: Decodable, Sendable {
         struct Call: Decodable, Sendable { var cachedTokens: UInt64? }
         var calls: [Call]?
         /// The turn's wall time (the footer's time). Absent in older logs.
         var wallMs: UInt64?
+        var prefillMs: UInt64?
+        var decodeMs: UInt64?
+        var thinkMs: UInt64?
+        var toolMs: UInt64?
+        var userMs: UInt64?
     }
 
     /// Input tokens read from the cache: as the engine totaled them, else summed from the calls.
@@ -1021,7 +1035,9 @@ enum Event: Decodable, Sendable {
     /// A retried model call's partial items (message/reasoning that streamed before the
     /// stream failed); drop them from the turn.
     case itemsDiscarded(ids: [String])
-    case permissionResolved(id: String, decision: Decision)
+    /// `item`: the tool call that asked (for a subagent's card, the parent's Task call);
+    /// `asked`: unix ms when the card went up. Both absent in old logs (no wait segment).
+    case permissionResolved(id: String, decision: Decision, item: String? = nil, asked: Int64? = nil)
     case compacted(tokensBefore: UInt64, tokensAfter: UInt64, kept: KeptSummary?)
     /// Compaction failed and the history can't fit the window: the session is stuck; the
     /// rescue is `Op.continueSession` (a carried-forward session). The raw payload is in the
@@ -1044,7 +1060,7 @@ enum Event: Decodable, Sendable {
     case elicitationDone(id: String)
     case question(Question)
     /// Answered or dismissed (an interrupt dismisses it), by any client.
-    case questionResolved(id: String)
+    case questionResolved(id: String, item: String? = nil, asked: Int64? = nil)
     case toolProgress(id: String, ToolProgress)
     case appResult(id: String, result: JSONValue?, error: String?)
     /// Auto mode's classifier let tool call `item` run without asking.
@@ -1144,7 +1160,7 @@ extension Event {
         case urgency, body, prs
         /// The MCP server list and a sign-in's outcome.
         case servers, server, tools
-        case output, soFar
+        case output, soFar, asked
     }
 
     init(from decoder: Decoder) throws {
@@ -1192,7 +1208,8 @@ extension Event {
         case "items_discarded":
             self = .itemsDiscarded(ids: try c.decode([String].self, forKey: .ids))
         case "permission_resolved":
-            self = .permissionResolved(id: try c.decode(String.self, forKey: .id), decision: try c.decode(Decision.self, forKey: .decision))
+            self = .permissionResolved(id: try c.decode(String.self, forKey: .id), decision: try c.decode(Decision.self, forKey: .decision),
+                                       item: try c.decodeIfPresent(String.self, forKey: .item), asked: try c.decodeIfPresent(Int64.self, forKey: .asked))
         case "compacted":
             self = .compacted(
                 tokensBefore: try c.decode(UInt64.self, forKey: .tokensBefore),
@@ -1227,7 +1244,8 @@ extension Event {
         case "question":
             self = .question(try Question(from: decoder))
         case "question_resolved":
-            self = .questionResolved(id: try c.decode(String.self, forKey: .id))
+            self = .questionResolved(id: try c.decode(String.self, forKey: .id), item: try c.decodeIfPresent(String.self, forKey: .item),
+                                     asked: try c.decodeIfPresent(Int64.self, forKey: .asked))
         case "elicitation_done":
             self = .elicitationDone(id: try c.decode(String.self, forKey: .id))
         case "tool_progress":
