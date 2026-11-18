@@ -158,8 +158,10 @@ final class SnapshotTests: XCTestCase {
         let usage = try JSONDecoder.frog.decode(TurnUsage.self, from: Data(#"{"input_tokens":12400,"output_tokens":380,"model_calls":2,"model":"vercel/anthropic/claude-opus-5.5-fast","energy":{"local_wh":0.021,"remote_wh":2.96,"idle_w":11.6}}"#.utf8))
         let energy = try XCTUnwrap(usage.energy)
         for (look, name) in [(NSAppearance.Name.darkAqua, "dark"), (.aqua, "light")] {
+            // History, as the window wires it (Settings › Usage).
             try render(EnergyCard(energy: energy, usage: usage).fixedSize().frame(maxHeight: .infinity, alignment: .top)
-                        .background(Color(nsColor: .windowBackgroundColor)),
+                        .background(Color(nsColor: .windowBackgroundColor))
+                        .environment(\.showEnergyHistory) {},
                        size: CGSize(width: 290, height: 520), to: "energy-card-\(name)", appearance: look)
             try render(PriceCard(cost: 0.214, usage: usage, listed: .init(spec: usage.model ?? "", input: 15, output: 75)).fixedSize().frame(maxHeight: .infinity, alignment: .top)
                         .background(Color(nsColor: .windowBackgroundColor)),

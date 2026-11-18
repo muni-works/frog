@@ -115,15 +115,8 @@ struct EnergyCard: View {
                         .foregroundStyle(Color.accentColor)
                 }
                 Spacer()
-                #if os(macOS)
-                SettingsLink {
-                    Label("History", systemImage: "chart.bar.xaxis")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color.accentColor)
-                }
-                .buttonStyle(.plain)
-                .simultaneousGesture(TapGesture().onEnded { UserDefaults.standard.set("energy", forKey: "settingsTab") })
-                #else
+                // The Mac sets this to Settings › Usage (Settings is a mode of its window); the
+                // phone, to its history sheet.
                 if let showEnergyHistory {
                     Button { showEnergyHistory() } label: {
                         Label("History", systemImage: "chart.bar.xaxis")
@@ -132,7 +125,6 @@ struct EnergyCard: View {
                     }
                     .buttonStyle(.plain)
                 }
-                #endif
             }
         }
         .padding(16)
