@@ -15040,6 +15040,120 @@ async fn turns_keep_their_pace_and_stream_a_live_count() {
     assert_eq!(last_cached, Some(usage.cached_tokens));
 }
 
+/// Runs `text` and presses Stop as soon as an ask goes up (a permission card or a question),
+/// after `ms`; returns the turn's events.
+async fn stop_on_ask(h: &mut Handle, text: &str, ms: u64) -> Vec<Envelope> {
+    h.ops
+        .send(Op::Submit {
+            text: text.into(),
+            images: Vec::new(),
+            more: Vec::new(),
+        })
+        .unwrap();
+    let mut evs = Vec::new();
+    loop {
+        let env = h.events.recv().await.unwrap();
+        if matches!(
+            env.event,
+            Event::PermissionRequest { .. } | Event::Question { .. }
+        ) {
+            tokio::time::sleep(Duration::from_millis(ms)).await;
+            h.ops.send(Op::Interrupt).unwrap();
+        }
+        let ended = matches!(env.event, Event::TurnEnded { .. });
+        evs.push(env);
+        if ended {
+            return evs;
+        }
+    }
+}
+
+fn first_tool_call(evs: &[Envelope]) -> String {
+    evs.iter()
+        .find_map(|e| match &e.event {
+            Event::ItemStarted {
+                id,
+                kind: ItemKind::ToolCall { .. },
+            } => Some(id.clone()),
+            _ => None,
+        })
+        .unwrap()
+}
+
+/// Stop while a permission card is up: the card closes (it didn't run) with its tool call and
+/// when it asked, so the clients put it away and the timeline has the wait, to the end.
+#[tokio::test]
+async fn a_stopped_turn_closes_its_open_card_with_the_wait() {
+    let script = vec![reply(
+        vec![Block::ToolUse {
+            id: "w1".into(),
+            name: "Write".into(),
+            input: json!({ "file_path": "/frog-timeline-test/never.txt", "content": "x" }),
+        }],
+        Stop::ToolUse,
+    )];
+    let mut h = engine(script, true);
+    let evs = stop_on_ask(&mut h, "write it", 60).await;
+    let item = first_tool_call(&evs);
+    let (decision, asked, closed) = evs
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::PermissionResolved {
+                decision,
+                item: Some(i),
+                asked: Some(a),
+                ..
+            } if *i == item => Some((*decision, *a, e.created)),
+            _ => None,
+        })
+        .expect("the open card is closed with its tool call and when it asked");
+    assert_eq!(decision, Decision::Deny);
+    assert!(closed - asked >= 50, "waited {}ms", closed - asked);
+    let waits: Vec<_> = crate::timeline::segments(&evs)
+        .into_iter()
+        .filter(|s| s.kind == crate::timeline::SegmentKind::Waiting)
+        .collect();
+    assert_eq!(waits.len(), 1, "{waits:?}");
+    assert_eq!(waits[0].item.as_deref(), Some(item.as_str()));
+}
+
+/// The same for the model's own `Ask`: Stop dismisses it, and the dismissal carries the wait.
+#[tokio::test]
+async fn a_stopped_turn_closes_its_open_question_with_the_wait() {
+    let mut h = engine(vec![reply(vec![ask_call()], Stop::ToolUse)], true);
+    h.ops
+        .send(Op::SetClientCaps {
+            irc: false,
+            panes: false,
+            ask: true,
+            sessions: false,
+        })
+        .unwrap();
+    while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+    let evs = stop_on_ask(&mut h, "fix it", 60).await;
+    let item = first_tool_call(&evs);
+    let (answer, asked) = evs
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::QuestionResolved {
+                answer,
+                item: Some(i),
+                asked: Some(a),
+                ..
+            } if *i == item => Some((answer.clone(), *a)),
+            _ => None,
+        })
+        .expect("the dismissal names its tool call and when it asked");
+    assert!(answer.dismissed());
+    assert!(asked > 0);
+    let waits: Vec<_> = crate::timeline::segments(&evs)
+        .into_iter()
+        .filter(|s| s.kind == crate::timeline::SegmentKind::Waiting)
+        .collect();
+    assert_eq!(waits.len(), 1, "{waits:?}");
+    assert_eq!(waits[0].item.as_deref(), Some(item.as_str()));
+}
+
 /// A permission prompt is a timed wait in the log: the resolved event names the tool call and
 /// when it asked, and the timeline draws it.
 #[tokio::test]

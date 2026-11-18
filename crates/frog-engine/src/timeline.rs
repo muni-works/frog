@@ -13,7 +13,11 @@
 //!   it completes only when the whole reply is in); a message is writing; a tool call is a tool.
 //! - `permission_resolved` / `question_resolved` with `asked` and `item`: waiting, from `asked`
 //!   to the event's `created`. The wait is cut out of its tool's segment, so one item's
-//!   segments never overlap; different items' segments can (tools that ran together).
+//!   segments never overlap; different items' segments can (tools that ran together). A turn
+//!   stopped with an ask still up closes it then (a card as denied, a question as dismissed),
+//!   with both, so that wait ends at the stop. A question the engine raises itself (a quiet
+//!   child or a quiet model call, see `child_watch`) blocks nothing, the work goes on whatever
+//!   the answer, so it carries neither and draws no wait.
 //! - `items_discarded`: those items' segments are dropped (a retried call's partial reply).
 //! - An item still open at the end (a cancelled turn, or a live one) ends at the turn's end:
 //!   `turn_ended`'s `created`, or the last event's.

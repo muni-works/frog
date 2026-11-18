@@ -536,8 +536,8 @@ pub enum Event {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         item: Option<String>,
         /// When the request was sent (unix ms); the envelope's `created` is when it was
-        /// answered. Together: the wait, for the turn's timeline. Absent in older logs and on
-        /// a withdrawal.
+        /// answered, or when the turn was stopped with it still up (then `deny`). Together:
+        /// the wait, for the turn's timeline. Absent in older logs and on a withdrawal.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         asked: Option<i64>,
     },

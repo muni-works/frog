@@ -445,7 +445,9 @@ impl Asker {
     }
 
     /// Close question `id` (answered, or withdrawn with an empty answer because the child
-    /// spoke, ended, or was stopped), so every client drops its card.
+    /// spoke, ended, or was stopped), so every client drops its card. No `item` or `asked`:
+    /// nothing waits on a watcher's question (the child or call runs on whatever the answer),
+    /// so the timeline draws no wait for it.
     pub(crate) fn close(&self, id: &str, answer: crate::protocol::Answer) {
         let Some(shared) = self.shared.upgrade() else {
             return;
@@ -508,6 +510,10 @@ impl Shared {
 struct Shared {
     cancel: Mutex<CancellationToken>,
     pending: Mutex<HashMap<String, oneshot::Sender<Decision>>>,
+    /// The asks this turn is blocked on (permission cards and the model's `Ask`), by id: the
+    /// tool call that asked and when (unix ms). A turn that ends with one still open (Stop)
+    /// closes it with these, so the timeline has the wait (see `close_open_asks`).
+    waits: Mutex<HashMap<String, (String, i64)>>,
     /// A note the user sent with a permission answer, by request id, until the
     /// agent picks it up.
     notes: Mutex<HashMap<String, String>>,
@@ -797,6 +803,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
     let shared = Arc::new(Shared {
         cancel: Default::default(),
         pending: Default::default(),
+        waits: Default::default(),
         notes: Default::default(),
         questions: Default::default(),
         watching: Default::default(),
@@ -1299,7 +1306,23 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                 _ = token.cancelled() => Err(Interrupted.into()),
                 _ = drain_deadline(shared.clone()) => Err(Interrupted.into()),
             };
-            shared.pending.lock().unwrap().clear();
+            // A card still open when the turn ends (Stop) didn't run: say so, with the wait.
+            let cards: Vec<String> = shared
+                .pending
+                .lock()
+                .unwrap()
+                .drain()
+                .map(|(id, _)| id)
+                .collect();
+            for id in cards {
+                let wait = shared.waits.lock().unwrap().remove(&id);
+                agent.emit(Event::PermissionResolved {
+                    id,
+                    decision: Decision::Deny,
+                    item: wait.as_ref().map(|w| w.0.clone()),
+                    asked: wait.map(|w| w.1),
+                });
+            }
             // A question still open when the turn ends (interrupted) was dismissed; say so,
             // so clients put the card away.
             // A child watcher's question isn't this turn's: it stays open, and is shown again.
@@ -1317,13 +1340,15 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                 ids
             };
             for id in open {
+                let wait = shared.waits.lock().unwrap().remove(&id);
                 agent.emit(Event::QuestionResolved {
                     id,
                     answer: Default::default(),
-                    item: None,
-                    asked: None,
+                    item: wait.as_ref().map(|w| w.0.clone()),
+                    asked: wait.map(|w| w.1),
                 });
             }
+            shared.waits.lock().unwrap().clear();
             shared.reshow_watching();
             shared.panes.set_in_turn(false);
             // A drain (app update) ends the turn suspended, never cancelled: the ack tells
@@ -2366,6 +2391,18 @@ impl Agent {
 
     fn emit(&self, event: Event) {
         self.shared.journal.emit(event);
+    }
+
+    /// A blocking ask (permission card or the model's `Ask`) goes up now, for tool call
+    /// `item`: remember it until it's answered, and say when (unix ms).
+    fn open_wait(&self, id: &str, item: &str) -> i64 {
+        let asked = now_ms();
+        self.shared
+            .waits
+            .lock()
+            .unwrap()
+            .insert(id.into(), (item.into(), asked));
+        asked
     }
 
     /// This engine's question path, for a child's watcher (see `child_watch`).
