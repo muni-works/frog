@@ -16,7 +16,7 @@ const keyed = (p: Page) => p.calls.filter((c) => c.auth !== null);
 test("signed out, the sidebar shows New session, the quiet line, the chip, Documentation and Sign in, and no Search", async () => {
   const p = await mount("/");
   const s = shownText(side(p));
-  for (const t of ["New session", "Your sessions appear here once you sign in, on this and your other devices.", "Get the Mac app", "Documentation", "Sign in", "$1 of Frog Cloud credit free when you connect GitHub"])
+  for (const t of ["New session", "Your sessions appear here once you sign in, on this and your other devices.", "Get the Mac app", "Documentation", "Sign in", "25¢ of Frog Cloud credit free, $1 when you connect GitHub"])
     assert.ok(s.includes(t), `sidebar has "${t}": ${s}`);
   assert.ok(!/\bSearch\b/.test(s), `no Search row signed out: ${s}`);
   // In order: the chip slot sits directly above Documentation, and Sign in is last.

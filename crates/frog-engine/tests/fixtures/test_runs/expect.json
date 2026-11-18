@@ -1,0 +1,246 @@
+{
+ "about": "What crates/frog-engine/src/test_run.rs must make of each output here: the `tests` a completed command item carries, or null for none. Every file not named lookalike_* is a real run's output, recorded from throwaway projects the way frog's Bash tool keeps it (stdout, then stderr, trailing whitespace trimmed, `[exit code N]` when nonzero), with the project path shortened to /work. *_truncated went through the Bash tool's 30 000-byte truncate_middle; cargo_cut_off is `cargo test 2>&1 | head -n 20`. lookalike_* are written by hand to look like summaries and must yield nothing. Recorded 2026-11-17 with cargo 1.98.1, go 1.27.1, pytest 9.2.0, vitest 3.2.7, jest 29.",
+ "expect": {
+  "cargo_compile_error": null,
+  "cargo_cut_off": null,
+  "cargo_fail": {
+   "runner": "cargo",
+   "passed": 3,
+   "failed": 3,
+   "total": 6,
+   "failed_names": [
+    "tests::adds",
+    "tests::adds_zero",
+    "outer_add"
+   ]
+  },
+  "cargo_fail_color": {
+   "runner": "cargo",
+   "passed": 3,
+   "failed": 3,
+   "total": 6,
+   "failed_names": [
+    "tests::adds",
+    "tests::adds_zero",
+    "outer_add"
+   ]
+  },
+  "cargo_fail_fast": {
+   "runner": "cargo",
+   "passed": 1,
+   "failed": 2,
+   "total": 3,
+   "failed_names": [
+    "tests::adds",
+    "tests::adds_zero"
+   ]
+  },
+  "cargo_fail_q": {
+   "runner": "cargo",
+   "passed": 3,
+   "failed": 3,
+   "total": 6,
+   "failed_names": [
+    "tests::adds",
+    "tests::adds_zero",
+    "outer_add"
+   ]
+  },
+  "cargo_fail_warnings": {
+   "runner": "cargo",
+   "passed": 3,
+   "failed": 3,
+   "total": 6,
+   "failed_names": [
+    "tests::adds",
+    "tests::adds_zero",
+    "outer_add"
+   ]
+  },
+  "cargo_pass": {
+   "runner": "cargo",
+   "passed": 6,
+   "failed": 0,
+   "total": 6
+  },
+  "cargo_pass_color": {
+   "runner": "cargo",
+   "passed": 6,
+   "failed": 0,
+   "total": 6
+  },
+  "cargo_pass_q": {
+   "runner": "cargo",
+   "passed": 6,
+   "failed": 0,
+   "total": 6
+  },
+  "cargo_then_pytest": null,
+  "cargo_truncated": null,
+  "go_fail": null,
+  "go_fail_v": {
+   "runner": "go",
+   "passed": 2,
+   "failed": 2,
+   "total": 4,
+   "failed_names": [
+    "TestAdd",
+    "TestDouble"
+   ]
+  },
+  "go_pass": null,
+  "go_pass_v": {
+   "runner": "go",
+   "passed": 4,
+   "failed": 0,
+   "total": 4
+  },
+  "jest_fail": {
+   "runner": "jest",
+   "passed": 2,
+   "failed": 2,
+   "total": 4,
+   "failed_names": [
+    "shapes › adds",
+    "doubles zero"
+   ]
+  },
+  "jest_fail_color": {
+   "runner": "jest",
+   "passed": 2,
+   "failed": 2,
+   "total": 4,
+   "failed_names": [
+    "shapes › adds",
+    "doubles zero"
+   ]
+  },
+  "jest_pass": {
+   "runner": "jest",
+   "passed": 4,
+   "failed": 0,
+   "total": 4
+  },
+  "jest_pass_color": {
+   "runner": "jest",
+   "passed": 4,
+   "failed": 0,
+   "total": 4
+  },
+  "jest_pass_silent": {
+   "runner": "jest",
+   "passed": 4,
+   "failed": 0,
+   "total": 4
+  },
+  "lookalike_cargo_bad_sum": null,
+  "lookalike_cargo_grep": null,
+  "lookalike_cargo_result_only": null,
+  "lookalike_go_text": null,
+  "lookalike_jest_more_after": null,
+  "lookalike_jest_readme": null,
+  "lookalike_prose": null,
+  "lookalike_pytest_middle": null,
+  "lookalike_vitest_bad_sum": null,
+  "pytest_collection_error": null,
+  "pytest_fail": {
+   "runner": "pytest",
+   "passed": 4,
+   "failed": 3,
+   "total": 7,
+   "failed_names": [
+    "tests/test_shapes.py::test_add",
+    "tests/test_shapes.py::test_positive[1]",
+    "tests/test_shapes.py::test_uses_db"
+   ]
+  },
+  "pytest_fail_color": {
+   "runner": "pytest",
+   "passed": 4,
+   "failed": 3,
+   "total": 7,
+   "failed_names": [
+    "tests/test_shapes.py::test_add",
+    "tests/test_shapes.py::test_positive[1]",
+    "tests/test_shapes.py::test_uses_db"
+   ]
+  },
+  "pytest_fail_q": {
+   "runner": "pytest",
+   "passed": 4,
+   "failed": 3,
+   "total": 7,
+   "failed_names": [
+    "tests/test_shapes.py::test_add",
+    "tests/test_shapes.py::test_positive[1]",
+    "tests/test_shapes.py::test_uses_db"
+   ]
+  },
+  "pytest_none_selected": null,
+  "pytest_pass": {
+   "runner": "pytest",
+   "passed": 6,
+   "failed": 0,
+   "total": 6
+  },
+  "pytest_pass_color": {
+   "runner": "pytest",
+   "passed": 6,
+   "failed": 0,
+   "total": 6
+  },
+  "pytest_pass_q": {
+   "runner": "pytest",
+   "passed": 6,
+   "failed": 0,
+   "total": 6
+  },
+  "pytest_truncated": {
+   "runner": "pytest",
+   "passed": 1499,
+   "failed": 1,
+   "total": 1500,
+   "failed_names": [
+    "tests/test_big.py::test_layout_engine_handles_every_case[1234]"
+   ]
+  },
+  "vitest_fail": {
+   "runner": "vitest",
+   "passed": 2,
+   "failed": 2,
+   "total": 4,
+   "failed_names": [
+    "shapes.test.js > shapes > adds",
+    "sizes.test.js > doubles zero"
+   ]
+  },
+  "vitest_fail_color": {
+   "runner": "vitest",
+   "passed": 2,
+   "failed": 2,
+   "total": 4,
+   "failed_names": [
+    "shapes.test.js > shapes > adds",
+    "sizes.test.js > doubles zero"
+   ]
+  },
+  "vitest_pass": {
+   "runner": "vitest",
+   "passed": 4,
+   "failed": 0,
+   "total": 4
+  },
+  "vitest_pass_ci": {
+   "runner": "vitest",
+   "passed": 4,
+   "failed": 0,
+   "total": 4
+  },
+  "vitest_pass_color": {
+   "runner": "vitest",
+   "passed": 4,
+   "failed": 0,
+   "total": 4
+  }
+ }
+}

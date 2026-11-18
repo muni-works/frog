@@ -1,0 +1,11 @@
+--- FAIL: TestAdd (0.00s)
+    --- FAIL: TestAdd/two (0.00s)
+        shapes_test.go:8: two
+FAIL
+FAIL	example.com/gomod/shapes	0.100s
+--- FAIL: TestDouble (0.00s)
+    sizes_test.go:5: double
+FAIL
+FAIL	example.com/gomod/sizes	0.117s
+FAIL
+[exit code 1]

@@ -299,7 +299,7 @@ impl Renderer {
             Event::ItemDelta { id, delta } => {
                 self.streamed.insert(id);
                 match delta {
-                    Delta::Reasoning { text } if self.show_thinking => {
+                    Delta::Reasoning { text, .. } if self.show_thinking => {
                         self.enter(State::Thinking);
                         self.write(&text, true);
                     }
@@ -355,7 +355,7 @@ impl Renderer {
                         }
                     }
                 }
-                Item::Reasoning { text } if self.show_thinking && !self.streamed.contains(&id) => {
+                Item::Reasoning { text, .. } if self.show_thinking && !self.streamed.contains(&id) => {
                     self.enter(State::Thinking);
                     self.write(&text, true);
                 }

@@ -1,0 +1,62 @@
+
+running 4 tests
+test tests::slow ... ignored
+test tests::adds_zero ... ok
+test tests::adds ... ok
+test tests::squares ... ok
+
+test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 2 tests
+test outer_add ... ok
+test outer_square ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 1 test
+test src/lib.rs - square (line 3) ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+.F.sF..E                                                                 [100%]
+==================================== ERRORS ====================================
+________________________ ERROR at setup of test_uses_db ________________________
+
+    @pytest.fixture
+    def db():
+>       raise RuntimeError("no database")
+E       RuntimeError: no database
+
+tests/test_shapes.py:16: RuntimeError
+=================================== FAILURES ===================================
+___________________________________ test_add ___________________________________
+
+>   def test_add(): assert add(2, 2) == 5
+                    ^^^^^^^^^^^^^^^^^^^^^
+E   assert 4 == 5
+E    +  where 4 = add(2, 2)
+
+tests/test_shapes.py:7: AssertionError
+_______________________________ test_positive[1] _______________________________
+
+n = 1
+
+    @pytest.mark.parametrize("n", [1, 2, 3])
+>   def test_positive(n): assert square(n) > 1
+                          ^^^^^^^^^^^^^^^^^^^^
+E   assert 1 > 1
+E    +  where 1 = square(1)
+
+tests/test_shapes.py:12: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_shapes.py::test_add - assert 4 == 5
+FAILED tests/test_shapes.py::test_positive[1] - assert 1 > 1
+ERROR tests/test_shapes.py::test_uses_db - RuntimeError: no database
+2 failed, 4 passed, 1 skipped, 1 error in 0.01s
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.00s
+     Running unittests src/lib.rs (/work/tp/debug/deps/shapes-bd6bb5950cfecc60)
+     Running tests/outer.rs (/work/tp/debug/deps/outer-b85b311d5e33327e)
+   Doc-tests shapes
+[exit code 1]

@@ -80,6 +80,9 @@ fn worth_a_stand_in(e: &anyhow::Error) -> bool {
 /// keeps coming back between attempts.
 const MAX_FAILOVERS: u32 = 4;
 
+/// The live token count goes out at most this often while a call streams.
+const TOKENS_EVERY: Duration = Duration::from_millis(250);
+
 impl Agent {
     /// The stand-in an earlier call left in place, while it is still fresh.
     fn detour(&self) -> Option<StandIn> {
@@ -282,7 +285,9 @@ impl Agent {
                 total: None,
             });
             let mut started = false;
+            let sent = Instant::now();
             let mut streamed = Streamed {
+                sent: Some(sent),
                 no_think: think == Some(false),
                 think_budget,
                 message: message.clone(),
@@ -290,7 +295,6 @@ impl Agent {
                 reusable,
                 ..Default::default()
             };
-            let sent = Instant::now();
             // A call in flight: `Status.waiting` reports it, so a session waiting on a slow
             // or dead model says so instead of looking merely busy. Published, because the
             // client learns state from events and this is the only moment the wait begins.
@@ -362,6 +366,20 @@ impl Agent {
                     if quiet {
                         return;
                     }
+                    // The live token count: every streamed piece, sent on at most four
+                    // times a second (see `pace`).
+                    let chars = match &e {
+                        StreamEvent::Text(s) | StreamEvent::Thinking(s) => s.chars().count(),
+                        StreamEvent::ToolArgs { chunk, .. } => chunk.chars().count(),
+                        _ => 0,
+                    };
+                    if chars > 0 {
+                        streamed.pace.piece(ms(now.duration_since(sent)), chars);
+                    }
+                    let count = chars > 0
+                        && streamed
+                            .tokens_sent
+                            .is_none_or(|t| now.duration_since(t) >= TOKENS_EVERY);
                     match e {
                         StreamEvent::Thinking(text) => {
                             let id = streamed.reasoning.get_or_insert_with(|| {
@@ -372,9 +390,11 @@ impl Agent {
                                 });
                                 id
                             });
+                            let at = now.duration_since(sent).as_millis() as u64;
+                            let thought = streamed.thoughts.push(&text, at);
                             self.emit(Event::ItemDelta {
                                 id: id.clone(),
-                                delta: Delta::Reasoning { text },
+                                delta: Delta::Reasoning { text, thought },
                             });
                         }
                         StreamEvent::ToolCall(name) => {
@@ -420,6 +440,15 @@ impl Agent {
                                 });
                             }
                         }
+                    }
+                    // After the piece's own item and delta, so a client has drawn them.
+                    if count {
+                        streamed.tokens_sent = Some(now);
+                        self.emit(Event::OutputTokens {
+                            turn: self.active_turn.unwrap_or_default(),
+                            output: self.turn_usage.output_tokens + streamed.pace.approx(),
+                            so_far: true,
+                        });
                     }
                 })
                 .await;
