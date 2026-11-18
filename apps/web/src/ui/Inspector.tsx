@@ -143,7 +143,7 @@ export function Inspector({ thread, onCommit, onPr, hasPr, send, onClose, machin
           )}
         </div>
       )}
-      {pane === 'preview' && preview && <PreviewPane hub={preview} pane={previews[previews.length - 1]} send={send} />}
+      {pane === 'preview' && preview && <PreviewPane hub={preview} pane={previews[previews.length - 1]} send={send} machines={machines} />}
       {pane === 'preview' && !preview && (
         <div className="insp-body">
           <InspectorEmpty icon={ICON.globe} title="Preview isn't here yet" action={<DownloadAppChip label="The Mac app has Preview" machines={machines} />}>

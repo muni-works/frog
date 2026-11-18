@@ -11,7 +11,9 @@ import { startMock } from "./mock/mock-gateway.mjs";
 import { Gateway } from "../src/cloud/client.ts";
 import type { Envelope, Op } from "../src/cloud/protocol.ts";
 import { CloudEngine } from "../src/engine/cloud.ts";
-import { addressURL, localTarget, NO_SCREENSHOT, PreviewHub, type Frame } from "../src/preview.ts";
+import { addressURL, displayAddress, localTarget, NO_SCREENSHOT, PreviewHub, type Frame } from "../src/preview.ts";
+import { GatewayError } from "../src/cloud/client.ts";
+import { DEVICES, fitDevice } from "../src/ui/PreviewPane.tsx";
 import { Inspector } from "../src/ui/Inspector.tsx";
 
 const PREVIEW = "https://abc.frog-preview.dev";
@@ -48,6 +50,97 @@ test("addresses and sandbox URLs read as the Mac reads them", () => {
   assert.deepEqual(localTarget("http://0.0.0.0:8000/"), { port: 8000, path: "/" });
   assert.equal(localTarget("https://example.com/"), null);
   assert.equal(localTarget("file:///workspace/repo/index.html"), null);
+});
+
+test("the address field takes a URL, a bare port or host:port", () => {
+  assert.equal(addressURL("3000"), "http://localhost:3000");
+  assert.equal(addressURL(" 3000 "), "http://localhost:3000");
+  assert.equal(addressURL("127.0.0.1:4321/docs"), "http://127.0.0.1:4321/docs");
+  assert.equal(addressURL("example.com/a"), "http://example.com/a");
+  assert.equal(addressURL("http://localhost:5173/x?y=1"), "http://localhost:5173/x?y=1");
+});
+
+test("the address shows plainly: host and path, the port kept, no scheme or lone slash", () => {
+  assert.equal(displayAddress("http://localhost:5173/"), "localhost:5173");
+  assert.equal(displayAddress("http://localhost:5173"), "localhost:5173");
+  assert.equal(displayAddress("http://localhost:3000/pond?x=1"), "localhost:3000/pond?x=1");
+  assert.equal(displayAddress("https://example.com/docs/"), "example.com/docs/");
+  assert.equal(displayAddress("about:preview"), "about:preview");
+  assert.equal(displayAddress(undefined), "");
+});
+
+test("device sizes: Fit fills, the others keep their shape and scale down, never up", () => {
+  assert.deepEqual(DEVICES.map((d) => d.label), ["Fit", "Phone", "Tablet", "Desktop"]);
+  assert.equal(fitDevice("fit", 400, 500), null);
+  assert.deepEqual(fitDevice("phone", 1000, 1000), { width: 390, height: 844, scale: 1 });
+  const t = fitDevice("tablet", 400, 500)!;
+  assert.ok(t.width <= 400 && t.height <= 500 && Math.abs(t.height / t.width - 1180 / 820) < 1e-9);
+  const d = fitDevice("desktop", 400, 500)!;
+  assert.equal(d.width, 400);
+  assert.equal(fitDevice("phone", 0, 500), null);
+});
+
+test("a gateway without previews makes the hub unavailable; one that mints makes it available", async () => {
+  const off = new PreviewHub(() => {}, async () => { throw new GatewayError(503, "previews are not configured"); });
+  assert.equal(off.available, undefined);
+  await off.probe();
+  assert.equal(off.available, false);
+  const loadOff = new PreviewHub(() => {}, async () => { throw new GatewayError(503, "previews are not configured"); });
+  await loadOff.load("p1", "http://localhost:3000/");
+  assert.equal(loadOff.available, false);
+  // A dead dev server is a failed page, not a missing feature.
+  const dead = new PreviewHub(() => {}, async () => { throw new GatewayError(502, "nothing is listening"); });
+  await dead.probe();
+  assert.equal(dead.available, undefined);
+  const { hub, minted } = rig();
+  await hub.probe();
+  assert.equal(hub.available, true);
+  await hub.load("p1", "http://localhost:3000/");
+  assert.deepEqual(minted, [3000], "the probe's mint is reused");
+});
+
+test("back and forward follow the page's history; stop ends a load", async () => {
+  const { hub, frame, posted } = rig();
+  hub.attach("p1", frame);
+  await hub.load("p1", "http://localhost:5173/");
+  const nav = (path: string) => hub.received("p1", msg({ type: "navigated", url: `${PREVIEW}${path}` }));
+  nav("/");
+  assert.equal(hub.canBack("p1"), false);
+  nav("/a");
+  nav("/b");
+  assert.equal(hub.canBack("p1"), true);
+  assert.equal(hub.canForward("p1"), false);
+  hub.back("p1");
+  assert.deepEqual(posted.at(-1), { frog: 1, type: "back" });
+  nav("/a");
+  assert.equal(hub.canForward("p1"), true);
+  hub.forward("p1");
+  assert.deepEqual(posted.at(-1), { frog: 1, type: "forward" });
+  nav("/b");
+  assert.equal(hub.canForward("p1"), false);
+  hub.back("p1"); nav("/a");
+  nav("/c");
+  assert.equal(hub.canForward("p1"), false, "a new page drops what was ahead");
+  hub.reload("p1");
+  assert.equal(hub.state("p1").loading, true);
+  hub.stop("p1");
+  assert.deepEqual(posted.at(-1), { frog: 1, type: "stop" });
+  assert.equal(hub.state("p1").loading, false);
+  nav("/c");
+  assert.equal(hub.canBack("p1"), true, "a reload stays put in history");
+  assert.equal(hub.canForward("p1"), false);
+});
+
+test("reload of a page outside the sandbox loads it again from here; Frog can't pick on it", async () => {
+  const { hub, frame, loads, posted } = rig();
+  hub.attach("p1", frame);
+  await hub.load("p1", "https://example.com/");
+  hub.reload("p1");
+  assert.deepEqual(loads, ["https://example.com/", "https://example.com/"]);
+  assert.ok(!posted.some((m) => m.type === "reload"));
+  assert.equal(hub.drivable("p1"), false);
+  await hub.load("p1", "http://localhost:5173/");
+  assert.equal(hub.drivable("p1"), true);
 });
 
 test("a sandbox URL loads through the gateway's preview host, minted once per port", async () => {
@@ -304,11 +397,24 @@ test("the Inspector's Preview tab is a live pane: toolbar, address and the hint"
   const html = renderToStaticMarkup(createElement(Inspector, { thread, hasPr: false, onClose: noop, onCommit: noop, send: noop, preview: hub, pane: "preview" }));
   assert.match(html, /aria-label="Reload"/);
   assert.match(html, /placeholder="URL or port"/);
-  assert.match(html, /value="http:\/\/localhost:5173\/"/);
-  assert.match(html, /aria-label="Inspect"/);
+  assert.match(html, /value="localhost:5173"/);
+  assert.match(html, /aria-label="Pick an element"/);
+  assert.match(html, /aria-label="Back"/);
+  assert.match(html, /aria-label="Forward"/);
+  assert.match(html, /aria-label="Device size"/);
+  assert.match(html, /aria-label="Open in browser"/);
+  assert.match(html, /aria-label="More"/);
+  assert.ok(!/role="radio"/.test(html), "device size is one menu button, not three loose buttons");
   assert.match(html, /<iframe[^>]*sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads"/);
   assert.ok(!/allow-top-navigation/.test(html), "a preview can't navigate the app away");
   assert.ok(!/The Mac app has Preview/.test(html));
   const empty = renderToStaticMarkup(createElement(Inspector, { thread: { ...thread, panes: {} }, hasPr: false, onClose: noop, onCommit: noop, send: noop, preview: hub, pane: "preview" }));
-  assert.match(empty, /Run your dev server, then enter its URL, or ask Frog to open it\./);
+  assert.match(empty, /class="insp-empty"/);
+  assert.match(empty, /Nothing to preview yet/);
+  assert.match(empty, /Run your dev server, then enter its URL or port, or ask Frog to open it\./);
+  hub.available = false;
+  const off = renderToStaticMarkup(createElement(Inspector, { thread, hasPr: false, onClose: noop, onCommit: noop, send: noop, preview: hub, pane: "preview" }));
+  assert.match(off, /Preview isn’t on the web yet/);
+  assert.match(off, /The Mac app has Preview/);
+  assert.ok(!/pv-bar/.test(off), "no toolbar that can't do anything");
 });

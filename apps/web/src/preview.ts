@@ -32,6 +32,10 @@ export interface PreviewState {
   error?: string
   /** Pages committed, so Back knows whether there's somewhere to go. */
   pages: number
+  /** Where in its history the page is (0 = the first page committed), and how many it has, so
+   * Back and Forward know whether there's somewhere to go. -1 before anything commits. */
+  index: number
+  length: number
 }
 
 const LOCAL = /^https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]):(\d{1,5})(\/.*)?$/i
@@ -53,6 +57,23 @@ export function addressURL(raw: string): string | null {
   if (s.startsWith(':')) return `http://localhost${s}`
   return `http://${s}`
 }
+
+/** The page's address as the address field shows it: host and path, port kept, no scheme and no
+ * lone trailing slash (`http://localhost:5173/` → `localhost:5173`). Not a URL: as is. */
+export function displayAddress(url: string | undefined): string {
+  if (!url) return ''
+  const m = url.match(/^https?:\/\/(.*)$/i)
+  if (!m) return url
+  const rest = m[1]
+  const slash = rest.indexOf('/')
+  if (slash < 0) return rest
+  const host = rest.slice(0, slash), path = rest.slice(slash)
+  return path === '/' ? host : host + path
+}
+
+/** Whether a gateway error means it has no previews at all (zest sandbox/src/router.ts: 503
+ * "previews are not configured"), rather than this one page failing. */
+const unconfigured = (e: unknown) => (e as { status?: unknown })?.status === 503
 
 /** What the engine gets when the web preview can't do something the Mac can. */
 export const NO_SCREENSHOT = "the web preview can't take screenshots yet; use read to see the page"
@@ -93,6 +114,11 @@ export class PreviewHub {
   mentionInDraft = false
   /** Bumped when the engine asks a preview for something, so the inspector brings it forward. */
   attention = 0
+  /** Whether the gateway serves previews: unknown until a mint (or `probe`) says. Off in
+   * production until the gateway has a preview host, and then the tab says so plainly. */
+  available: boolean | undefined = undefined
+  /** The last back/forward asked for, so the next commit moves through history, not onto it. */
+  private moving = new Map<string, 'back' | 'forward' | 'reload'>()
 
   constructor(
     private send: (op: Op) => void,
@@ -105,7 +131,16 @@ export class PreviewHub {
   subscribe = (f: () => void) => { this.listeners.add(f); return () => { this.listeners.delete(f) } }
   private changed() { this.version++; this.listeners.forEach((f) => f()) }
 
-  state(id: string): PreviewState { return this.states.get(id) ?? { title: '', loading: false, pages: 0 } }
+  state(id: string): PreviewState { return this.states.get(id) ?? { title: '', loading: false, pages: 0, index: -1, length: 0 } }
+
+  /** Ask the gateway once whether it serves previews at all (minting doesn't wake the sandbox). */
+  async probe() {
+    if (this.available !== undefined || this.probing) return
+    this.probing = true
+    try { await this.previewURL(3000); this.setAvailable(true) } catch (e) { if (unconfigured(e)) this.setAvailable(false) } finally { this.probing = false }
+  }
+  private probing = false
+  private setAvailable(on: boolean) { if (this.available !== on) { this.available = on; this.changed() } }
   private patch(id: string, p: Partial<PreviewState>) { this.states.set(id, { ...this.state(id), ...p }); this.changed() }
 
   /** The iframe for `id` mounted: start at `url` if nothing's loaded yet, then answer what waited for it. */
@@ -130,7 +165,9 @@ export class PreviewHub {
     if (local) {
       try {
         src = (await this.previewURL(local.port)).replace(/\/$/, '') + local.path
+        this.setAvailable(true)
       } catch (e) {
+        if (unconfigured(e)) this.setAvailable(false)
         return this.failed(id, e instanceof Error ? e.message : String(e))
       }
       this.origins.set(id, { preview: new URL(src).origin, local: `http://localhost:${local.port}` })
@@ -157,10 +194,28 @@ export class PreviewHub {
     const s = this.state(id)
     if (s.error && s.url) return void this.load(id, s.url)
     this.patch(id, { loading: true, error: undefined })
+    // A page outside the sandbox has no capture script to ask: load it again from here.
+    if (!this.origins.has(id) && s.src) return this.frames.get(id)?.load(s.src)
+    this.moving.set(id, 'reload')
     this.frames.get(id)?.post({ frog: 1, type: 'reload' })
   }
 
-  back(id: string) { this.frames.get(id)?.post({ frog: 1, type: 'back' }) }
+  back(id: string) { this.moving.set(id, 'back'); this.frames.get(id)?.post({ frog: 1, type: 'back' }) }
+  forward(id: string) { this.moving.set(id, 'forward'); this.frames.get(id)?.post({ frog: 1, type: 'forward' }) }
+
+  /** Stop a load: before the gateway answers, forget it; after, ask the page to stop. */
+  stop(id: string) {
+    const s = this.state(id)
+    if (!s.loading) return
+    if (!s.src) this.patch(id, { loading: false, url: this.committed.get(id) })
+    else { this.frames.get(id)?.post({ frog: 1, type: 'stop' }); this.patch(id, { loading: false }) }
+  }
+
+  /** Whether Back and Forward have somewhere to go. */
+  canBack(id: string) { return this.state(id).index > 0 }
+  canForward(id: string) { const s = this.state(id); return s.index >= 0 && s.index < s.length - 1 }
+  /** Whether the page is a dev server in the sandbox, which Frog can read, drive and pick from. */
+  drivable(id: string) { return this.origins.has(id) && !!this.state(id).src }
 
   /** The page's browser URL, for Open in Browser. */
   browserURL(id: string): string | undefined {
@@ -223,7 +278,11 @@ export class PreviewHub {
         return this.pick(id, typeof m.token === 'string' ? m.token : '@element', typeof m.context === 'string' ? m.context : undefined)
       case 'navigated': {
         // The Mac's noteURL: reported when the committed page changes (not when a load starts).
-        this.patch(id, { pages: this.state(id).pages + 1, ...(url ? { url } : {}) })
+        const s = this.state(id), move = this.moving.get(id)
+        this.moving.delete(id)
+        const index = move === 'back' ? Math.max(0, s.index - 1) : move === 'forward' ? Math.min(s.length - 1, s.index + 1) : move === 'reload' ? Math.max(0, s.index) : s.index + 1
+        const length = move ? Math.max(s.length, index + 1) : index + 1
+        this.patch(id, { pages: s.pages + 1, index, length, ...(url ? { url } : {}) })
         if (!url || url === this.committed.get(id)) return
         this.committed.set(id, url)
         return this.report({ id, kind: 'navigated', message: url, url })

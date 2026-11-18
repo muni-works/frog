@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Lily pad</title>
+    <style>
+      body { margin: 0; font: 15px/1.5 system-ui, sans-serif; background: #f6f7f2; color: #1d2a1f; }
+      header { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; background: #fff; border-bottom: 1px solid #e3e6dc; }
+      header b { font-size: 17px; }
+      nav a { margin-left: 14px; color: #3d6b45; text-decoration: none; }
+      main { padding: 28px 20px; max-width: 720px; margin: 0 auto; }
+      h1 { font-size: 28px; margin: 0 0 8px; }
+      .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-top: 20px; }
+      .card { background: #fff; border-radius: 10px; padding: 14px; border: 1px solid #e3e6dc; }
+      button { margin-top: 18px; padding: 9px 16px; border: 0; border-radius: 8px; background: #3d6b45; color: #fff; font: inherit; }
+    </style>
+  </head>
+  <body>
+    <header><b>Lily pad</b><nav><a href="#">Pond</a><a href="#">Frogs</a><a href="#">About</a></nav></header>
+    <main>
+      <h1>A pond for every frog</h1>
+      <p>Book a lily pad by the hour. Quiet ones near the reeds, sunny ones in the middle.</p>
+      <div class="cards"><div class="card"><b>Reed corner</b><br />Shade, 2 frogs</div><div class="card"><b>Open water</b><br />Sun, 4 frogs</div><div class="card"><b>Old log</b><br />Views, 1 frog</div></div>
+      <button type="button">Book a pad</button>
+    </main>
+  </body>
+</html>
