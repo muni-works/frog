@@ -33,6 +33,8 @@ class FlowTestCase: XCTestCase {
     }
 
     override func tearDown() {
+        // A card left up would stay in the Dock badge's count for the rest of the run.
+        if let c = w?.conversation, c.permission != nil { c.answer(.deny); w.pump(0.3) }
         w?.close()
         engine?.stop()
         w = nil
@@ -77,7 +79,7 @@ final class ConversationFlowTests: FlowTestCase {
         XCTAssertNil(engine.file("made-by-frog"), "nothing ran before the answer")
         w.press(.id("permission.allow"))
         expect("the command ran") { self.engine.file("made-by-frog") != nil }
-        expect("the turn went on to the answer") { self.w.shows("Made it.") }
+        expect("the turn went on to the answer") { self.c?.turns.last?.finished == true && self.engine.log(self.c?.sessionID).contains("Made it.") }
         XCTAssertNil(w.find(.id("permission.allow")), "the card went")
     }
 
@@ -106,7 +108,7 @@ final class ConversationFlowTests: FlowTestCase {
         more.choose(startingWith: "Allow all edits")
         expect("the first command ran") { self.engine.file("first") != nil }
         expect("the second ran without asking") { self.engine.file("second") != nil }
-        expect("the turn finished") { self.w.shows("Both made.") }
+        expect("the turn finished") { self.c?.turns.last?.finished == true && self.engine.log(self.c?.sessionID).contains("Both made.") }
     }
 
     func test_deny_with_note() throws {
@@ -188,7 +190,7 @@ final class ConversationFlowTests: FlowTestCase {
         engine.model.add(
             .reply(.tool("Task", ["description": "find the parser", "prompt": "QUIET-CHILD: find the parser"])),
             .after("QUIET-CHILD", .silent),
-            .after("stopped", .text("Carried on without it."))
+            .afterTool(.text("Carried on without it."))
         )
         w.send("delegate it")
     }
@@ -203,7 +205,8 @@ final class ConversationFlowTests: FlowTestCase {
         try quietChild()
         w.element(Self.option("Stop it and carry on"), timeout: 30)
         w.press(Self.option("Stop it and carry on"))
-        expect("the parent carried on", timeout: 30) { self.w.shows("Carried on without it.") }
+        expect("the parent carried on", timeout: 30) { self.engine.log(self.c?.sessionID).contains("Carried on without it.") }
+        XCTAssertNil(w.find(Self.option("Keep waiting")), "the question went")
     }
 }
 

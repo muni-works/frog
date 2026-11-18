@@ -56,8 +56,10 @@ final class FlowDriverTests: XCTestCase {
     }
 
     /// A shortcut nothing enables isn't taken: ⌥⌘Z (Undo Last Turn) with no turn to undo.
-    func testADisabledShortcutIsNotTaken() {
-        XCTAssertFalse(w.shortcut("z", [.command, .option]))
+    func testADisabledShortcutIsNotTaken() throws {
+        let undo = try XCTUnwrap(w.menuBarItem(["Edit", "Undo Last Turn"]))
+        XCTAssertFalse(undo.isEnabled, "nothing to undo in a fresh conversation (\(undo.title))")
+        XCTAssertFalse(w.shortcut("z", [.command, .option]), "taken by \(w.lastShortcutItem ?? "nothing")")
     }
 
     func test_toggle_changes_from_palette() {

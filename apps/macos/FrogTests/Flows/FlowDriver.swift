@@ -36,6 +36,8 @@ final class FlowWindow {
     private var restores: [() -> Void] = []
 
     private var opened: OpenedBox?
+    /// The menu item the last `shortcut` reached, for a failure message.
+    private(set) var lastShortcutItem: String?
     /// What the window asked to open, newest last.
     var openedURLs: [URL] { opened?.urls ?? [] }
     var workspace: Workspace { panes.focused.workspace }
@@ -48,7 +50,7 @@ final class FlowWindow {
     init(panes: Panes, size: CGSize = CGSize(width: 1300, height: 820), signedOut: Bool = true, file: StaticString = #filePath, line: UInt = #line) {
         self.panes = panes
         Self.isolate(&restores, signedOut: signedOut)
-        StagedWindow.shared.capturing = true
+        StagedWindow.shared.capturing = ObjectIdentifier(panes)
         let opened = OpenedBox()
         self.opened = opened
         // Links and pages the window opens (a SwiftUI `Link`, `openURL`) are caught: no browser.
@@ -96,7 +98,7 @@ final class FlowWindow {
     }
 
     func close() {
-        StagedWindow.shared.capturing = false
+        StagedWindow.shared.capturing = nil
         StagedWindow.shared.window = nil
         window.close()
         panes.stopAll()
@@ -111,10 +113,17 @@ final class FlowWindow {
         // first read (started when it's first used) can land after staging.
         CloudAccount.noKeychain = true
         if signedOut { CloudAccount.shared.stage(nil) }
-        Library.shared.cloudChanged([])
+        // An empty session list: earlier tests in the host can leave rows (cloud ones included,
+        // from the real account), and a flow's sidebar must be its own.
+        Library.shared.stage(sessions: [])
         let offer = Devices.shared.hideOffer
         Devices.shared.hideOffer = true
-        restores.append { CloudAccount.shared.unstage(); CloudAccount.noKeychain = false; Devices.shared.hideOffer = offer }
+        restores.append {
+            CloudAccount.shared.unstage()
+            CloudAccount.noKeychain = false
+            Library.shared.unstage()
+            Devices.shared.hideOffer = offer
+        }
     }
 
     // MARK: Time
@@ -305,7 +314,9 @@ final class FlowWindow {
                                            windowNumber: window.windowNumber, context: nil, characters: key,
                                            charactersIgnoringModifiers: key, isARepeat: false, keyCode: 0)
         else { return false }
-        let taken = Self.enabledItem(for: event, in: NSApp.mainMenu) != nil && (NSApp.mainMenu?.performKeyEquivalent(with: event) ?? false)
+        let item = Self.enabledItem(for: event, in: NSApp.mainMenu)
+        lastShortcutItem = item.map { "\($0.menu?.title ?? "") › \($0.title)" }
+        let taken = item != nil && (NSApp.mainMenu?.performKeyEquivalent(with: event) ?? false)
         pump()
         return taken
     }
