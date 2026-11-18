@@ -64,10 +64,12 @@ struct WidgetCard: View {
             .frame(maxHeight: fill ? .infinity : 480)
         } else if fill {
             WidgetWebView(html: widget.html, height: .constant(0), onPrompt: ask, inline: false, onReady: { fullReady = true })
+                .keepsDrags()
                 .overlay { if !fullReady { cover } }
                 .onDisappear { fullReady = false }
         } else {
             WidgetWebView(html: widget.html, height: $height, onPrompt: ask, onReady: { ready = true })
+                .keepsDrags()
                 .frame(height: height)
                 .overlay { if !ready { cover } }
                 .animation(.easeOut(duration: 0.2), value: ready)
@@ -146,6 +148,23 @@ extension VisualWidget {
         let s = title.replacingOccurrences(of: "[_-]+", with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespaces)
         return s.prefix(1).uppercased() + s.dropFirst()
+    }
+}
+
+extension View {
+    /// A drag that starts in a web view in the transcript (a visual, an MCP app) is the page's.
+    /// SwiftUI hands the mouse events AppKit sends the web view to the gestures of the views
+    /// around it too, so the window root's `WindowDragGesture` (`RootView`) moved the window
+    /// while a slider in the page was dragged. A child's gesture wins over its ancestors', so this one, which does nothing,
+    /// keeps them out; the web view still gets every event from AppKit. (Mac only: on iOS a
+    /// SwiftUI gesture is a recognizer that could take touches from the page.)
+    @ViewBuilder
+    func keepsDrags() -> some View {
+        #if os(macOS)
+        gesture(DragGesture(minimumDistance: 0))
+        #else
+        self
+        #endif
     }
 }
 

@@ -5,7 +5,9 @@
 #   docs/design/parity/capture.sh            # both looks
 #   LOOKS=dark docs/design/parity/capture.sh # just one
 #
-# Needs: Xcode + xcodegen, npm deps in apps/web and Google Chrome. The Mac app renders its own
+# Needs: Xcode + xcodegen, npm deps in apps/web and Google Chrome. The engine must replay with the
+# log's own times and carry `tests` (muni-works/frog#420 and this branch's replay.rs): point
+# FROG_PREBUILT_DIR at such a build until /Applications/Frog.app has one. The Mac app renders its own
 # window (-FrogSnapshot), so no Screen Recording permission. It builds its own copy of the app (toys.frog.parity) with a throwaway
 # HOME, and the engine binaries from a scratch copy of /Applications/Frog.app's (FROG_PREBUILT_DIR,
 # or set it yourself), never the bundle it builds.
@@ -53,14 +55,18 @@ mac_shot() {
     # The session's log where the sidebar reads it, so its row shows, as on the web.
     mkdir -p "$home/.local/share/frog/sessions"
     cp "$home/parity.jsonl" "$home/.local/share/frog/sessions/20261111-120000-parity.jsonl"
-    defaults delete $ID >/dev/null 2>&1 || true
     rm -rf ~/Library/Saved\ Application\ State/$ID.savedState
     local style=(-NSRequiresAquaSystemAppearance YES); [[ $look == dark ]] && style=(-AppleInterfaceStyle Dark)
     rm -f "$HERE/mac-$look.png"
     # The app draws its own window to the PNG and quits (-FrogSnapshot): no Screen Recording.
+    # Off-screen (-FrogOffscreen) and never activated, so a run doesn't cover your work; at the
+    # web's size (1280×800), comfortable, with no remote bridge (its Keychain write hangs under
+    # a throwaway HOME). Its transcript rows also land in mac-$look.json (-FrogMetrics).
     HOME="$home" "$APP/Contents/MacOS/Frog" -FrogFolder "$home/code/lilypad" -FrogReplay "$home/parity.jsonl" \
-        -FrogReplaySpeed 2 -FrogSnapshot "$HERE/mac-$look.png" -FrogSnapshotDelay ${PARITY_MAC_WAIT:-12} \
-        -ApplePersistenceIgnoreState YES -importedLegacyDefaults YES -autoArchiveChats NO -archivedSessions "()" $style >/dev/null 2>&1 || true
+        -FrogReplaySpeed 4 -FrogSnapshotSize ${PARITY_SIZE:-1280x800} -FrogOffscreen YES \
+        -FrogSnapshot "$HERE/mac-$look.png" -FrogMetrics "$WORK/mac-$look.json" -FrogSnapshotDelay ${PARITY_MAC_WAIT:-14} \
+        -ApplePersistenceIgnoreState YES -importedLegacyDefaults YES -autoArchiveChats NO -archivedSessions "()" \
+        -NSAppSleepDisabled YES -remoteEnabled NO -density comfortable -verbosity normal -showEnergy NO -verbosityBySession "{}" $style >/dev/null 2>&1 || true
     [[ -s $HERE/mac-$look.png ]] || { print -u2 "capture.sh: the Mac app didn't write mac-$look.png"; exit 1; }
 }
 for look in $LOOKS; do mac_shot $look; done

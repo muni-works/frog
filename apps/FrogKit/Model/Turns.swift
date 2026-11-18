@@ -70,6 +70,29 @@ struct ItemState: Identifiable {
     /// When the engine started and finished it, for "Thought for 2s" and the live line.
     var startedAt: Date?
     var endedAt: Date?
+    /// A think, in the engine's words (docs/design/transcript/spec.md, phase 2): the thought line
+    /// it shows now, the lines shown so far with when they showed (live), and once it finishes
+    /// the engine's own list (with each line's paragraph) and how long it thought.
+    var thought: String?
+    var shownThoughts: [ShownThought] = []
+    var thoughts: [Item.Thought] = []
+    var thinkMs: UInt64?
+    /// How long it thought, what "Thought for Ns" says: `think_ms` cut at its completion, or in an
+    /// older log, until the first message or tool call logged after it starts, or its completion
+    /// if that's sooner (timeline.rs's `thinking`, #441). Set when it completes.
+    var thoughtMs: UInt64?
+
+    struct ShownThought: Equatable {
+        var text: String
+        var at: Date
+    }
+
+    /// A new thought line arrived with a reasoning delta: shown verbatim, kept for the outline.
+    mutating func think(_ line: String?, at: Date = .now) {
+        guard let line, line != thought else { return }
+        thought = line
+        shownThoughts.append(ShownThought(text: line, at: at))
+    }
 
     init(id: String, kind: Kind, text: String = "", output: String = "", result: Item.ToolResult? = nil,
          imagePreview: ToolImage? = nil, done: Bool = false, needsPermission: Bool = false,
@@ -148,7 +171,8 @@ struct SubagentRun {
         case .itemDelta(let id, let delta):
             upsert(id) { item in
                 switch delta {
-                case .text(let t), .reasoning(let t): item.text += t
+                case .text(let t): item.text += t
+                case .reasoning(let t, let thought): item.text += t; item.think(thought)
                 case .output(let t): item.output += t
                 case .imagePreview(let image, _, _, _): item.imagePreview = image
                 }
@@ -159,7 +183,9 @@ struct SubagentRun {
                 state.done = true
                 switch item {
                 case .message(let t): state.kind = .message; state.text = t
-                case .reasoning(let t): state.kind = .reasoning; state.text = t
+                case .reasoning(let t, let meta):
+                    state.kind = .reasoning; state.text = t
+                    state.thoughts = meta.thoughts ?? []; state.thinkMs = meta.thinkMs
                 case .toolCall(let r): state.kind = .tool(name: r.name, arg: r.arg); state.result = r
                 }
             }
@@ -198,6 +224,8 @@ struct TurnState: Identifiable {
     /// Background wakes delivered with this turn, ahead of its input (`wakes_delivered`).
     var wakes: [String] = []
     var items: [ItemState] = []
+    /// The events that time its thinking, tools, waits and writing (the turn line's strip).
+    var timeline = TurnTimeline()
     var end: EndReason?
     var usage: TurnUsage?
     var startedAt: Date?
@@ -214,4 +242,62 @@ struct TurnState: Identifiable {
     /// Bumped whenever any turn's `chapterTitle` lands, so a memo of chapter titles knows to
     /// redo them (a title arrives on an earlier turn, which a key on the last turn misses).
     @MainActor static var chapterTitles = 0
+}
+
+/// The running turn's pulse: when a token last arrived and the output tokens so far, outside
+/// `Conversation.turns`, so a token ticks only the live row and its stats, not every row's
+/// equality check (the same move as `LiveText`).
+@Observable
+final class LivePulse {
+    /// The turn it's counting, by number.
+    private(set) var turn: UInt64?
+    /// When the turn's first and latest tokens (text, reasoning or tool arguments) arrived.
+    private(set) var firstTokenAt: Date?
+    private(set) var lastTokenAt: Date?
+    /// The engine's output tokens for the turn (`output_tokens`), and whether that's a count of
+    /// what has arrived (never shown as exact) or the providers' figure.
+    private(set) var output: UInt64?
+    private(set) var soFar = false
+    /// The engine says the stream is slow (#426): the stats say "Slow". Never computed here.
+    private(set) var slow = false
+    /// Tokens read from cache, from the last call that ended (kept through the next call's counts).
+    private(set) var cached: UInt64?
+    /// The counts as they arrived (this Mac's clock), for the speed over the last few seconds.
+    @ObservationIgnored private var samples: [(at: Date, output: UInt64)] = []
+
+    /// Tokens per second over the last few seconds (the web's `rateOf`), nil until two seconds
+    /// of counts. A count of pieces is approximate: never a decimal.
+    func rate(at now: Date, window: TimeInterval = 4) -> Int? {
+        guard let last = samples.last else { return nil }
+        let first = samples.first { $0.at >= now.addingTimeInterval(-window) } ?? last
+        guard last.at.timeIntervalSince(first.at) >= 2, now > first.at else { return nil }
+        return Int((Double(last.output) - Double(first.output)) / now.timeIntervalSince(first.at))
+    }
+
+    func start(turn: UInt64) {
+        self.turn = turn
+        firstTokenAt = nil
+        lastTokenAt = nil
+        output = nil
+        soFar = false
+        slow = false
+        cached = nil
+        samples = []
+    }
+
+    func tick(at: Date = .now) {
+        if firstTokenAt == nil { firstTokenAt = at }
+        // At most a few writes a second: the row reads it to the second.
+        if let last = lastTokenAt, at.timeIntervalSince(last) < 0.25 { return }
+        lastTokenAt = at
+    }
+
+    func tokens(turn: UInt64, output: UInt64, soFar: Bool, slow: Bool = false, cached: UInt64? = nil) {
+        if self.turn != turn { start(turn: turn) }
+        if samples.last?.output != output { samples = Array((samples + [(Date(), output)]).suffix(40)) }
+        self.output = output
+        self.soFar = soFar
+        self.slow = slow
+        if let cached { self.cached = cached }
+    }
 }

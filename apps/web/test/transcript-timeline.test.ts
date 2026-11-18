@@ -114,3 +114,28 @@ test("the footer ends in the turn line and has no cost popover any more (the pan
   assert.match(html, /class="pace"/);
   assert.doesNotMatch(html, /turn-card/);
 });
+
+// "Thought for Ns" says the same figure as the thinking segment (#441): for an older log's think
+// (no think_ms), until the first message or tool call after it starts, or its completion if
+// sooner; never just started to completed, which overstates it.
+import { thinking } from "../src/engine/timeline.ts";
+import { thoughtLabel, thinkMsOf } from "../src/ui/rows.ts";
+
+test("every case's thinking: the label reads each reasoning item's figure, through the reducer", { skip: NO_CASES }, () => {
+  let checked = 0;
+  for (const c of cases) {
+    if (!c.thinking) continue;
+    assert.deepEqual(thinking(c.events), c.thinking, `${c.name}: thinking`);
+    const t = c.events.reduce((x: typeof emptyThread, e: never) => reduce(x, e), emptyThread);
+    const turn = t.turns.at(-1)!;
+    for (const want of c.thinking as { item: string; ms: number }[]) {
+      const e = turn.entries.find((x: { id: string }) => x.id === want.item)!;
+      if (!e.done) continue;
+      const s = Math.max(1, Math.round(want.ms / 1000));
+      assert.equal(thinkMsOf(turn, e.id), want.ms, `${c.name}: ${want.item}'s ms`);
+      assert.equal(thoughtLabel(e, undefined, thinkMsOf(turn, e.id)), `Thought for ${s}s`, `${c.name}: ${want.item}'s label`);
+      checked++;
+    }
+  }
+  assert.ok(checked >= 8, `checked ${checked} labels`);
+});

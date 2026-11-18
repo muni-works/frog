@@ -32,6 +32,8 @@ const mint = async (): Promise<{ url: string; expires: number }> => {
   return { url: sample, expires: Date.now() + 3_600_000 }
 }
 const hub = new PreviewHub(() => {}, mint)
+// What GET /v1/sessions says (CloudEngine.setPreviews in the app).
+hub.setAvailable(state !== 'unavailable')
 if (state === 'mention') { hub.mention = '@button.book'; hub.mentionInDraft = true }
 
 const paneless = state === 'empty' || state === 'unavailable'
