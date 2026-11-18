@@ -11,6 +11,7 @@ final class FakeFrogCloudTests: XCTestCase {
 
     override func setUp() async throws {
         cloud = try FakeFrogCloud()
+        CloudAccount.noKeychain = true
         CloudAccount.shared.stage(nil)
         cloud.install()
     }
@@ -18,6 +19,7 @@ final class FakeFrogCloudTests: XCTestCase {
     override func tearDown() async throws {
         cloud.uninstall()
         CloudAccount.shared.unstage()
+        CloudAccount.noKeychain = false
         Library.shared.cloudChanged([])
     }
 

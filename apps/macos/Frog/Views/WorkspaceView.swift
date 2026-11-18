@@ -872,6 +872,7 @@ extension WorkspaceView {
         .menuIndicator(.hidden)
         .fixedSize()
         .help("Rename, archive or delete this conversation")
+        .accessibilityIdentifier("title.menu")
     }
 
     @ViewBuilder

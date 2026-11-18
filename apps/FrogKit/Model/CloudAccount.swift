@@ -17,6 +17,9 @@ final class CloudAccount {
     #if DEBUG
     /// Flow tests point the account at a local fake Frog Cloud (FakeFrogCloud).
     nonisolated(unsafe) static var origin = URL(string: "https://api.frog.toys")!
+    /// Flow tests: never read the login Keychain (the test host shares the developer's), so the
+    /// only key is `keyProvider`'s.
+    nonisolated(unsafe) static var noKeychain = false
     /// Flow tests: a staged account still refreshes, because `origin` is a local fake Frog Cloud
     /// (FakeFrogCloud sets this while installed). Snapshots leave it off: staged stays offline.
     nonisolated(unsafe) static var stagedRefreshes = false
@@ -24,12 +27,6 @@ final class CloudAccount {
     nonisolated(unsafe) static var openURL: (@MainActor (URL) -> Void)?
     #else
     static let origin = URL(string: "https://api.frog.toys")!
-    #endif
-
-    #if DEBUG
-    /// Flow tests: never read the login Keychain (the test host shares the developer's), so the
-    /// only key is `keyProvider`'s.
-    nonisolated(unsafe) static var noKeychain = false
     #endif
 
     struct Window: Decodable, Hashable {

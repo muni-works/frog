@@ -36,6 +36,7 @@ final class FakeFrogCloud {
     private let server: TinyHTTP
     private var restores: [() -> Void] = []
     private let issued = "fake-cloud-key-\(UUID().uuidString.prefix(6))"
+    var issuedKey: String { issued }
     private let code = "fake-code"
 
     var origin: URL { URL(string: "http://127.0.0.1:\(server.port)")! }
