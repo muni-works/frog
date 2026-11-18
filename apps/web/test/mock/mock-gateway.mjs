@@ -18,12 +18,17 @@ import { loadFixture, Recorded } from "./session.mjs";
 import { okPort, previewTarget, previewURL, servePreview, upgradePreview } from "./preview.mjs";
 import { accountRoutes } from "./account.mjs";
 
+/** What a played turn of demo.jsonl costs at account.mjs's qwen3-coder-next prices (120 in, 18 out). */
+const MOCK_TURN_CENTS = 6;
+/** The usage a turn stopped on credit reports: the one model call that ran before the refusal. */
+const STOPPED_USAGE = { context_tokens: null, input_tokens: 120, output_tokens: 18, model_calls: 1, tokens_per_sec: null, timing: { wall_ms: 700, prefill_ms: 0, decode_ms: 0, think_ms: 0, tool_ms: 0, user_ms: 0, classifier_ms: 0, compact_ms: 0, other_ms: 0 }, model: "cloud/qwen3-coder-next" };
+
 const arg = (name, fallback) => {
   const i = process.argv.indexOf(`--${name}`);
   return i > 0 ? process.argv[i + 1] : fallback;
 };
 
-export function startMock({ port = 8788, fixture = new URL("./demo.jsonl", import.meta.url).pathname, delayMs = 15, previewScript } = {}) {
+export function startMock({ port = 8788, fixture = new URL("./demo.jsonl", import.meta.url).pathname, delayMs = 15, previewScript, autoAllow = false } = {}) {
   const events = loadFixture(fixture);
   const sessions = new Map(); // id → { info, rec }
   const account_ = accountRoutes(); // local addition: the edge's account routes (./account.mjs)
@@ -137,7 +142,16 @@ export function startMock({ port = 8788, fixture = new URL("./demo.jsonl", impor
         return;
       }
       s.info.updated = Date.now();
-      if (v.op === "submit") void s.rec.play(typeof v.text === "string" ? v.text : "", delayMs);
+      // Local addition (the credit wall): a turn plays only on credit, each costs MOCK_TURN_CENTS,
+      // and one that can't pay for itself stops after its tool call with billing_limit, as the
+      // engine does when the edge refuses its next model call. Op::Continue plays like a submit.
+      if (v.op === "submit" || v.op === "continue") {
+        const input = v.op === "submit" ? (typeof v.text === "string" ? v.text : "") : typeof v.note === "string" ? v.note : "<resumed after the app restarted; your previous turn was interrupted; continue>";
+        const a = account_.accounts(s.info.account).account;
+        const stop = a.credit_cents >= MOCK_TURN_CENTS ? undefined : { after: a.credit_cents > 0 ? "i2" : null, reason: { type: "billing_limit", window: "credit", reason: "out of credit" }, usage: a.credit_cents > 0 ? { ...STOPPED_USAGE } : undefined };
+        a.credit_cents = stop ? Math.min(0, a.credit_cents - MOCK_TURN_CENTS) : a.credit_cents - MOCK_TURN_CENTS;
+        void s.rec.play(input, delayMs, { autoAllow, stop });
+      }
       else if (v.op === "permission" && typeof v.id === "string") s.rec.permission(v);
       // A preview pane the client asked for: the engine opens it and the client loads its URL.
       else if (v.op === "pane_open" && v.kind === "preview") s.rec.emit({ event: "pane_opened", id: `p${(s.panes = (s.panes ?? 0) + 1)}`, kind: "preview", title: v.url ?? "preview", ...(v.url ? { url: v.url } : {}) });
@@ -149,6 +163,6 @@ export function startMock({ port = 8788, fixture = new URL("./demo.jsonl", impor
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const { port } = await startMock({ port: Number(arg("port", 8788)), ...(arg("fixture") ? { fixture: arg("fixture") } : {}), previewScript: arg("preview-script") ?? new URL("../../public/preview.js", import.meta.url).pathname });
+  const { port } = await startMock({ port: Number(arg("port", 8788)), ...(arg("fixture") ? { fixture: arg("fixture") } : {}), previewScript: arg("preview-script") ?? new URL("../../public/preview.js", import.meta.url).pathname, autoAllow: process.argv.includes("--auto-allow") });
   console.log(`mock gateway on http://127.0.0.1:${port} (any bearer key is an account)`);
 }

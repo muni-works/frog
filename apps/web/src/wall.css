@@ -1,0 +1,26 @@
+/* The credit wall and its warning (onboarding funnel, board 3). Tokens only. */
+
+.wall { padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; border: 1px solid var(--notice); overflow: visible; }
+.wall-t { font-size: 15px; line-height: 20px; font-weight: 600; }
+.wall .det.wrap { font-size: 12.5px; line-height: 18px; }
+.wall-amts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.wall-amt { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 9px; background: transparent; color: var(--fg); font: inherit; text-align: left; cursor: pointer; font-variant-numeric: tabular-nums; }
+.wall-amt b { font-size: 14px; line-height: 20px; font-weight: 600; }
+.wall-amt span { color: var(--muted); font-size: 11.5px; line-height: 16px; }
+.wall-amt:hover { background: var(--hover); }
+.wall-amt.on { border-color: var(--frog); }
+.wall-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.wall-row .det.wrap { flex: 1; min-width: 160px; }
+.wall-code { padding-left: 0; }
+.wall .coupon { padding-top: 0; border-top: 0; }
+@media (max-width: 480px) { .wall-amts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+.credit-warn { display: flex; align-items: center; gap: 8px; margin-top: 6px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; font-size: 11.5px; line-height: 16px; color: var(--muted); }
+.credit-warn-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--notice); flex: none; }
+.credit-warn-text { flex: 1; min-width: 0; }
+.credit-warn-add { background: none; border: 0; padding: 0; font: inherit; color: var(--fg); white-space: nowrap; cursor: pointer; }
+.credit-warn-add:hover { text-decoration: underline; }
+
+/* A resumed turn's one line, in place of its input (wall.ts resumedLine). */
+.turn-note { font-size: 12px; line-height: 17px; color: var(--muted); }
+.turn-note::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--frog); margin-right: 8px; vertical-align: 1px; }

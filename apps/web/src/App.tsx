@@ -33,6 +33,10 @@ import { SignedOutSide } from './ui/SignedOut'
 import { docsPath, docsSlugOf } from './docs/docs'
 import { accountTag, connectCard, finishedTurn, loadMemo, saveMemo, type CardMemo } from './connectCard'
 import { ConnectCard } from './ui/ConnectCard'
+import { CreditWall } from './ui/CreditWall'
+import { CreditWarning, useLastAdded } from './ui/CreditWarning'
+import { useWallResume } from './ui/wallResume'
+import { averageTurn } from './wall'
 
 /** `pick`: open the composer's repo menu (back from sign-in, or ⌘K Connect a repo). */
 /** Placeholder session ids, shown while POST /v1/sessions is in flight. */
@@ -344,6 +348,19 @@ export default function App() {
     const t = [3000, 8000].map((ms) => setTimeout(() => me(k).then(setAccount).catch(() => undefined), ms))
     return () => t.forEach(clearTimeout)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ---------- the credit wall (wall.ts) ----------
+  // The account's average turn, over every session this browser holds.
+  const avgTurn = useMemo(() => averageTurn(sessions.map((s) => thread(s.id)), models), [sessions, threads, models]) // eslint-disable-line react-hooks/exhaustive-deps
+  const lastAdded = useLastAdded(DEV_KEY ? undefined : key ?? undefined, account)
+  // Pay and resume: a code resumes at once; Stripe comes back to the bare origin, and this reopens
+  // the session and resumes once the credit is in (ui/wallResume.ts).
+  const wall = useWallResume({
+    session: current?.id ?? null, thread: ct, send: (id, op) => cloud?.send(id, op),
+    fetchMe: key && !DEV_KEY ? () => me(key) : null, onAccount: setAccount,
+    openSession: (id) => { setMode('threads'); setView({ kind: 'session', id }) },
+    storage: globalThis.sessionStorage, search: globalThis.location?.search,
+  })
 
   // Sign-in: finish a GitHub or Google round trip if the URL has one, else check the saved key.
   useEffect(() => {
@@ -712,22 +729,10 @@ export default function App() {
               <ConnectCard onConnect={() => leave(null, 'github', key, true)} onDismiss={() => remember({ done: true })} />
             )}
             {paused && (
-              <section className="cardx outs" aria-label="Out of credit">
-                <b style={{ fontSize: 15 }}>You're out of Frog Cloud credit</b>
-                <div className="det wrap" style={{ marginTop: -4 }}>Nothing is lost. The sandbox, the changes and this conversation stay put.</div>
-                <div className="out" style={{ borderColor: 'var(--frog)' }}>
-                  <div style={{ flex: 1 }}><b>Add credit</b><div className="det wrap">Top up and pay per token, or pick a plan with a weekly allowance. Then keep going here.</div></div>
-                  <button type="button" className="f-btn f-btn--prominent" onClick={() => openSettings('billing')}>Billing</button>
-                </div>
-                <div className="out" style={{ borderColor: 'var(--line)' }}>
-                  <div style={{ flex: 1 }}><b>Finish on your Mac</b><div className="det wrap">Frog for Mac runs local models for free.</div></div>
-                  <a className="f-btn f-btn--bordered" href="/mac" style={{ textDecoration: 'none' }}>Get it</a>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <button type="button" className="f-btn f-btn--plain" onClick={() => openSettings('billing', { coupon: true })}>Have a code?</button>
-                  <button type="button" className="f-btn f-btn--plain" onClick={() => send(current.id, 'Keep going.')}>I added credit, keep going</button>
-                </div>
-              </section>
+              <CreditWall thread={ct} models={models} avg={avgTurn} apiKey={!DEV_KEY ? key : undefined}
+                onTopUp={!DEV_KEY ? (d) => { wall.leaving(d, account?.credit_cents ?? 0); return topUp(key, d).catch((e) => { wall.stayed(); throw e }) } : undefined}
+                onRedeemed={(r) => { setAccount((a) => (a ? { ...a, credit_cents: r.credit_cents } : a)); refreshAccount(); wall.redeemed(r) }}
+                waiting={wall.waiting ? { text: wall.waiting, onResume: wall.resumeByHand(account?.credit_cents ?? 0) } : null} />
             )}
           </div></div>
           <div className="dock">
@@ -740,7 +745,7 @@ export default function App() {
                 ))}
               </div>
             )}
-            <Composer key={current.id} session autoFocus usage={account ? { sub: account.subscription ?? null, credit: creditLine(account).replace(/ credit$/, ''), onBilling: () => openSettings('billing'), onOpen: refreshAccount } : undefined} context={ct.context} compacting={!!compacting[current.id]}
+            {!paused && <Composer key={current.id} session autoFocus usage={account ? { sub: account.subscription ?? null, credit: creditLine(account).replace(/ credit$/, ''), onBilling: () => openSettings('billing'), onOpen: refreshAccount } : undefined} context={ct.context} compacting={!!compacting[current.id]}
               onCompact={(focus) => { setCompacting((c) => ({ ...c, [current.id]: (ct.marks ?? []).length + 1 })); cloud?.send(current.id, { op: 'compact', ...(focus ? { focus } : {}) }) }} chips={ct.next && !ct.running ? [{ text: ct.next.text, send: true, act: ct.next.act }] : undefined} state={ct.running || opening[current.id] ? 'working' : paused ? 'paused' : 'idle'} startedAt={ct.startedAt} speed={ct.speed} waiting={!!(ct.ask || ct.question || ct.elicitation)}
               repo={current.repo} branch={current.branch} pr={current.pr} adds={adds} dels={dels}
               model={idOf(ct.model)} models={models} machines={machines} onManage={() => openSettings('models')} onModel={(id) => cloud?.send(current.id, { op: 'set_model', spec: spec(id) })}
@@ -750,7 +755,8 @@ export default function App() {
               asking={mode === 'threads' && !!ct.ask}
               onSend={(text, images) => (ct.running || opening[current.id]
                 ? setQueue((all) => ({ ...all, [current.id]: [...(all[current.id] ?? []), { text, images }] }))
-                : send(current.id, text, images))} onStop={() => cloud?.send(current.id, { op: 'interrupt' })} onGit={() => push(current)} />
+                : send(current.id, text, images))} onStop={() => cloud?.send(current.id, { op: 'interrupt' })} onGit={() => push(current)} />}
+            {!paused && <CreditWarning account={account} addedCents={lastAdded} avg={avgTurn} onAdd={() => openSettings('billing')} />}
           </div>
         </>)}
 
@@ -768,6 +774,7 @@ export default function App() {
                 onConnectGithub={key && account && !account.handle && !DEV_KEY ? (text) => leave(text || null, 'github', key) : undefined}
                 model={chosenModel} models={models} machines={machines} onManage={() => openSettings('models')} onModel={setNewModel} mode={newMode} onMode={setNewMode}
                 onSend={(text, images) => { setDraft(undefined); start(text, view.repo, images, view.base) }} />
+              <CreditWarning account={account} addedCents={lastAdded} avg={avgTurn} onAdd={() => openSettings('billing')} />
             </div>
           </div>
         )}
