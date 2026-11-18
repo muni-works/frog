@@ -31,6 +31,8 @@ import { DOCS, VERSION } from './docs/bundle'
 import { ChipSlot, useMacAppChip } from './ui/ChipSlot'
 import { SignedOutSide } from './ui/SignedOut'
 import { docsPath, docsSlugOf } from './docs/docs'
+import { accountTag, connectCard, finishedTurn, loadMemo, saveMemo, type CardMemo } from './connectCard'
+import { ConnectCard } from './ui/ConnectCard'
 
 /** `pick`: open the composer's repo menu (back from sign-in, or ⌘K Connect a repo). */
 /** Placeholder session ids, shown while POST /v1/sessions is in flight. */
@@ -248,6 +250,16 @@ export default function App() {
   const live = useMemo(() => (current && !current.id.startsWith(PENDING) ? [current.id] : []), [current])
   const { thread, threads } = useThreads(cloud, live)
   const ct = current ? thread(current.id) : null
+  // "Try it on your own code": once per account, after its first finished turn without GitHub.
+  const tag = account ? accountTag(account) : null
+  // Read in render, not an effect: a first render with no memo would claim the card again.
+  const [cardTick, setCardTick] = useState(0)
+  const cardMemo = useMemo(() => (tag ? loadMemo(globalThis.localStorage, tag) : null), [tag, cardTick]) // eslint-disable-line react-hooks/exhaustive-deps
+  const card = current && ct && account && tag && !DEV_KEY
+    ? connectCard(cardMemo, { github: !!account.handle, session: current.id, finished: !current.id.startsWith(PENDING) && finishedTurn(ct) })
+    : { show: false, claim: false }
+  const remember = useCallback((m: CardMemo) => { if (!tag) return; saveMemo(globalThis.localStorage, tag, m); setCardTick((n) => n + 1) }, [tag])
+  useEffect(() => { if (card.claim && current) remember({ session: current.id }) }, [card.claim, current?.id, remember]) // eslint-disable-line react-hooks/exhaustive-deps
   // The open session's preview panes. When the engine asks one for something with the
   // inspector closed, it opens on Preview, as the Mac brings its pane forward.
   const preview = current && cloud && !current.id.startsWith(PENDING) ? cloud.preview(current.id) : undefined
@@ -370,7 +382,8 @@ export default function App() {
 
 
   const [pending, setPending] = useState<string | null>(null)
-  const starterChips = useMemo(() => pickStarters(3, !key).map((text) => ({ text })), [key])
+  // Without GitHub a new session is a scratch sandbox, so its ideas are things to build, not repo chores.
+  const starterChips = useMemo(() => pickStarters(3, !key || !account?.handle).map((text) => ({ text })), [key, account?.handle])
   const start = useCallback(async (text: string, repo?: string, images: Image[] = [], base?: string) => {
     if (!cloud) return
     // Open the session at once, as a placeholder, and swap in the real one when the gateway
@@ -695,6 +708,9 @@ export default function App() {
             )}
             {/* A sandbox that couldn't start says so here, by the composer, not above the conversation. */}
             {current.state === 'error' && <div role="status" className="banner warn"><span style={{ flex: 1 }}>{current.error ? plainError(current.error) : "The sandbox couldn't start."}</span><button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => remove(current)}>Delete</button></div>}
+            {card.show && !paused && key && (
+              <ConnectCard onConnect={() => leave(null, 'github', key, true)} onDismiss={() => remember({ done: true })} />
+            )}
             {paused && (
               <section className="cardx outs" aria-label="Out of credit">
                 <b style={{ fontSize: 15 }}>You're out of Frog Cloud credit</b>

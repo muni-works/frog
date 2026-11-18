@@ -77,10 +77,10 @@ test("removing a queued chip removes that follow-up", () => {
   act(() => r.unmount());
 });
 
-test("the where menu, signed in: filter, No repo, your repos, more access, Branch", () => {
+test("the where menu, signed in: filter, Scratch sandbox, your repos, more access, Branch", () => {
   const s = html({ pickRepo: true, onRepo: noop, repo: "ecto/pond", repos: ["ecto/pond", "ecto/loon"], install: "https://github.com/apps/frog/installations/new" });
   assert.match(s, /placeholder="Search repos, or paste a GitHub URL"/);
-  assert.match(s, />No repo</);
+  assert.match(s, />Scratch sandbox</);
   assert.match(s, /Your repos/);
   assert.match(s, /ecto\/loon/);
   assert.match(s, /Give Frog access to more repos/);

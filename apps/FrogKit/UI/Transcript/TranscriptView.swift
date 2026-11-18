@@ -190,8 +190,17 @@ struct TranscriptView: View {
                         return follow(proxy)
                     }
                     if following, conversation.busy, growth > 0, let live = liveAnswer,
-                       let top = live.first ? track.lastTurnTop : track.answerTop(live.item),
-                       top < new.visibleTop + growth + topInset + 4 {
+                       let answer = track.answerFrame(live.item),
+                       case let top = live.first ? track.lastTurnTop : answer.minY,
+                       top < new.visibleTop + growth + topInset + 4,
+                       // Long by its own laid-out size: from where it starts to where the answer
+                       // ends, plus the fixed space under the last row, taller than what the view
+                       // shows. The growth above can't say so alone: right after a turn goes in,
+                       // the lazy stack reports a content height that counts rows it hasn't laid
+                       // out by estimate, hundreds of points that are gone a frame later, and a
+                       // one-line answer stopped following and left the view short of the end.
+                       // (The end row's position carries the same estimate, so it can't stand in.)
+                       answer.maxY + space.turn + TurnSpace.bottom - top > new.visibleHeight - topInset - 4 {
                         // Keeping to the bottom would push the answer's start above the top:
                         // stop at its start instead (the prompt, when it's the turn's first
                         // words), and read from there. Only for an answer: a turn of tool calls
@@ -365,6 +374,8 @@ struct TranscriptView: View {
         let below: CGFloat
         /// The top of the visible area, in content coordinates.
         let visibleTop: CGFloat
+        /// How tall the visible area is above the composer.
+        let visibleHeight: CGFloat
         /// The whole visible area is below the end of the content.
         let pastEnd: Bool
 
@@ -377,6 +388,7 @@ struct TranscriptView: View {
             // scrolled to it over and over.
             below = max(0, g.contentSize.height - (g.visibleRect.maxY - g.contentInsets.bottom))
             visibleTop = g.visibleRect.minY
+            visibleHeight = g.visibleRect.height - g.contentInsets.bottom
             atBottom = below <= 24
         }
     }
@@ -1121,14 +1133,14 @@ final class ScrollTrack {
     @ObservationIgnored var followPending = false
     /// Where the last turn starts, in the content.
     @ObservationIgnored var lastTurnTop: CGFloat = .infinity
-    /// Where the answer being written starts, in the content (reported by its row).
-    @ObservationIgnored var answer: (item: String, top: CGFloat)?
+    /// Where the answer being written is, in the content (reported by its row, laid out).
+    @ObservationIgnored var answer: (item: String, frame: CGRect)?
     /// The view is near the top of what's built (see `TranscriptView.nearTop`).
     @ObservationIgnored var atTop = false
     /// It has been at the end once: it opened.
     @ObservationIgnored var openedAtEnd = false
-    func answerTop(_ item: String) -> CGFloat? {
-        answer?.item == item ? answer?.top : nil
+    func answerFrame(_ item: String) -> CGRect? {
+        answer?.item == item ? answer?.frame : nil
     }
 
     func park(at contentHeight: CGFloat) {

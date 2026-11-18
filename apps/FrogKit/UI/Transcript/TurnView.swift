@@ -211,9 +211,10 @@ struct TurnView: View, Equatable {
             .equatable()
             .modifier(FadeIn(enabled: running))
             .background {
-                // The answer being written: where it starts, so a long one stops there.
+                // The answer being written: where it starts and ends, so a long one stops at
+                // its start.
                 if running, segment.id == liveAnswerID, let track {
-                    Color.clear.onGeometryChange(for: CGFloat.self, of: { $0.frame(in: .named(TranscriptView.content)).minY }) {
+                    Color.clear.onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named(TranscriptView.content)) }) {
                         track.answer = (segment.id, $0)
                     }
                 }
