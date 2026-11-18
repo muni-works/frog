@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { COARSE_POINTER, downloadChipShown, isPhone } from './download'
+import { COARSE_POINTER, downloadChipShown, hasThisMac, inviteFor, isMacVisitor, isPhone, type Invite } from './download'
 
 /** The platform gate, kept current: a tablet with a mouse, or a phone rotated. */
 export function usePhone(): boolean {
@@ -43,4 +43,21 @@ export function DownloadAppChip({ label, machines = [], phone, className = 'f-pi
       {label}
     </a>
   )
+}
+
+/** Where an invitation row's control would be (docs/design/app-shell.md, Invitations): one
+ *  bordered pill, "Get the Mac app" (the chip's /download); "Open in Frog for Mac" on that
+ *  section when the account already has a Mac; off a Mac, no pill and the words "On a Mac". */
+export function InvitePill({ section, machines = [], invite }: {
+  section: string
+  machines?: readonly { thisMac?: boolean }[]
+  /** Override the platform gate (tests). Default: this browser and the account's machines. */
+  invite?: Invite
+}) {
+  usePhone() // re-read the gate when the pointer changes
+  const which = invite ?? inviteFor({ mac: isMacVisitor(), thisMac: hasThisMac(machines) })
+  if (which === 'elsewhere') return <span className="det invite-elsewhere">On a Mac</span>
+  return which === 'open'
+    ? <a className="f-pill invite-pill" href={`frog://settings/${section}`} style={{ textDecoration: 'none' }}>Open in Frog for Mac</a>
+    : <a className="f-pill invite-pill" href="/download" title="Download Frog for Mac" style={{ textDecoration: 'none' }}>Get the Mac app</a>
 }

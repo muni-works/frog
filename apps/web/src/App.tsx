@@ -21,7 +21,7 @@ import { Starting } from './ui/Starting'
 import { useMachines } from './machines'
 import { creditLine, Palette, type Command } from './ui/Overlays'
 import { SettingsPage, SettingsRow, SettingsSidebar } from './ui/Settings'
-import { SECTIONS, sectionOfQuery, setTheme, settingsPath, settingsSectionOf, toggledTheme, type Section } from './settings'
+import { pinModel, pinnedModel, rememberPick, SECTIONS, sectionOfQuery, setTheme, settingsPath, settingsSectionOf, startingModel, toggledTheme, type Section } from './settings'
 import { Transcript } from './ui/Transcript'
 import { safeHref } from './ui/href'
 import { askLine } from './ui/ask'
@@ -193,9 +193,12 @@ export default function App() {
   const [renaming, setRenaming] = useState<string | null>(null)
   // What a new session starts with: null model = the gateway's default.
   // Kept across reloads (and the GitHub round trip), so what you picked signed out still holds.
-  const [newModel, setNewModelState] = useState<string | null>(() => { try { return localStorage.getItem('frog.newModel') } catch { return null } })
+  // Settings › Models › New conversations use: a pinned model, else the last one picked here.
+  const [newModel, setNewModelState] = useState<string | null>(() => startingModel())
+  const [pinned, setPinnedState] = useState<string | null>(() => pinnedModel())
+  const setPinned = (m: string | null) => { pinModel(m); setPinnedState(m); setNewModelState(startingModel()) }
   const [newMode, setNewModeState] = useState<Mode>(() => { try { return (localStorage.getItem('frog.newMode') as Mode) || 'auto' } catch { return 'auto' } })
-  const setNewModel = (m: string | null) => { setNewModelState(m); try { if (m) localStorage.setItem('frog.newModel', m); else localStorage.removeItem('frog.newModel') } catch { /* private mode */ } }
+  const setNewModel = (m: string | null) => { setNewModelState(m); rememberPick(m) }
   const setNewMode = (m: Mode) => { setNewModeState(m); try { localStorage.setItem('frog.newMode', m) } catch { /* private mode */ } }
   const toastTimer = useRef(0)
 
@@ -597,6 +600,7 @@ export default function App() {
       settings: key && <SettingsSidebar current={section} onBack={backToApp} onOpen={(x) => openSettings(x)} /> }}
       main={{ docs: <DocsPage pages={DOCS} slug={docPage} onOpen={openDocs} bar={<><Burger />{collapsed && sideToggle(false)}</>} />,
       settings: key && <SettingsPage section={section} account={account} apiKey={!DEV_KEY ? key : undefined} models={models} machines={machines} focusCoupon={couponAsk}
+        newMode={newMode} onNewMode={setNewMode} pinnedModel={pinned} onPinModel={setPinned}
         bar={<><Burger />{collapsed && sideToggle(false)}</>} onOpen={(x) => openSettings(x)}
         onTopUp={!DEV_KEY ? (d) => topUp(key, d) : undefined} onSubscribe={!DEV_KEY ? (p) => subscribe(key, p) : undefined} onConnect={!DEV_KEY ? (p) => leave(null, p, key, false) : undefined}
         onSignOut={() => { if (!DEV_KEY) signOut(key); signedOut() }}
