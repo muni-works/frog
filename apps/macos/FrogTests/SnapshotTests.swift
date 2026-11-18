@@ -134,6 +134,25 @@ final class SnapshotTests: XCTestCase {
         print("snapshots: \(outDir.path)")
     }
 
+    /// Phase 3's turn line at the footer's right end (`turn-line`), and the turn panel it opens
+    /// (`turn-panel`), from the parity fixture.
+    func testRenderTurnLineAndPanel() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let c = Conversation(preview: URL(fileURLWithPath: "/tmp/lilypad"))
+        try events(root.appending(path: "docs/design/parity/fixture.jsonl")).forEach(c.ingest)
+        let turn = try XCTUnwrap(c.turns.first)
+        try render(transcript(c), size: CGSize(width: 1030, height: 1300), to: "turn-line", settle: 1)
+        let focus = TurnFocus()
+        try render(TurnPanel(turn: turn, conversation: c) {}
+                    .environment(\.turnFocus, focus)
+                    .padding(32)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .background(Color(nsColor: .windowBackgroundColor)),
+                   size: CGSize(width: 900, height: 560), to: "turn-panel", settle: 0.6)
+        print("snapshots: \(outDir.path)")
+    }
+
     /// The popovers behind a turn's cost and energy hints, for a hosted model's turn.
     func testRenderTurnCostCards() throws {
         let usage = try JSONDecoder.frog.decode(TurnUsage.self, from: Data(#"{"input_tokens":12400,"output_tokens":380,"model_calls":2,"model":"vercel/anthropic/claude-opus-5.5-fast","energy":{"local_wh":0.021,"remote_wh":2.96,"idle_w":11.6}}"#.utf8))

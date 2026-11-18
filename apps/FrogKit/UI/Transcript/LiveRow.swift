@@ -179,8 +179,14 @@ struct LiveRow: View {
             let stats = stats(at: ctx.date)
             VStack(alignment: .leading, spacing: space.gaps.stats) {
                 if let state { row(state, at: ctx.date) }
+                // The stats, and the turn line growing at their right end (spec phase 3).
+                // (Not for a turn reopened long after: it has no clock to read either.)
                 if !stats.text.isEmpty {
-                    StatsLine(stats: stats)
+                    HStack(spacing: TurnSpace.Inset.row) {
+                        StatsLine(stats: stats)
+                        Spacer(minLength: 0)
+                        TurnLine(turn: turn, live: true)
+                    }
                 }
                 if open, let id = state?.reasoningID, let think = turn.items.first(where: { $0.id == id }) {
                     ThinkingOutline(item: think, live: true)
