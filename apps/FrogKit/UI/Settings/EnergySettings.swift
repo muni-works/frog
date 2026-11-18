@@ -47,13 +47,13 @@ struct EnergySettings: View {
                     .fixedSize()
                 }
 
-                chart
+                EnergyChart(buckets: buckets, days: days)
                     .frame(height: 170)
                     .padding(.top, 4)
 
                 HStack(spacing: 16) {
-                    Legend(hatched: false, text: "This Mac, measured")
-                    Legend(hatched: true, text: "Data center, estimated")
+                    EnergyLegend(hatched: false, text: "This Mac, measured")
+                    EnergyLegend(hatched: true, text: "Data center, estimated")
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -84,12 +84,26 @@ struct EnergySettings: View {
         #endif
     }
 
-    private var summary: String {
+    private var summary: String { Self.summary(days: days, mac: total.mac, dataCenter: total.dataCenter) }
+
+    /// "In the last 24 hours · 3 g CO₂e · a phone charged 4 times", or that nothing was.
+    static func summary(days: Bool, mac: Double, dataCenter: Double) -> String {
+        let total = (mac: mac, dataCenter: dataCenter)
         let span = days ? "the last 10 days" : "the last 24 hours"
         guard total.mac + total.dataCenter > 0 else { return "Nothing recorded in \(span)" }
         let g = TurnCostCopy.grams(total.mac + total.dataCenter)
         return "In \(span) · \(g) CO₂e · \(TurnCostCopy.phone(total.mac + total.dataCenter))"
     }
+
+    private func name(_ spec: String) -> String { ModelIdentity.of(spec, in: []).name }
+}
+
+/// The bars: this Mac measured, the data center estimated, per hour or per day.
+struct EnergyChart: View {
+    let buckets: [ModelStats.EnergyBucket]
+    let days: Bool
+
+    var body: some View { chart }
 
     private var chart: some View {
         Chart {
@@ -130,11 +144,10 @@ struct EnergySettings: View {
         return end.addingTimeInterval(-24 * 3600)...end
     }
 
-    private func name(_ spec: String) -> String { ModelIdentity.of(spec, in: []).name }
 }
 
 /// A model's line: how much, how many Wh a turn, and where its numbers come from.
-private struct ModelEnergyRow: View {
+struct ModelEnergyRow: View {
     let spec: String
     let name: String
     let days: Bool
@@ -169,7 +182,7 @@ private struct ModelEnergyRow: View {
     }
 }
 
-private struct Legend: View {
+struct EnergyLegend: View {
     let hatched: Bool
     let text: String
 

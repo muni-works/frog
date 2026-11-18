@@ -397,7 +397,8 @@ struct WorkspaceView: View {
     @ViewBuilder
     private var settingsLayer: some View {
         if panes.mode == .settings {
-            SettingsSectionView(section: panes.settingsSection)
+            SettingsSectionView(section: panes.settingsSection,
+                                machine: Binding(get: { panes.settingsMachine }, set: { panes.settingsMachine = $0 }))
                 .padding(.leading, extent(sessions: docked.sessions))
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .background(FrogCanvas.color)

@@ -76,6 +76,8 @@ struct SettingsSidebar: View {
 /// One section: its title, then its rows under their group labels, from the list.
 struct SettingsSectionView: View {
     let section: String
+    /// Models › a machine's page, if one is open.
+    var machine: Binding<String?> = .constant(nil)
     var catalog = SettingsCatalog.bundled
 
     private var title: String { catalog.sections.first { $0.id == section }?.label ?? "Settings" }
@@ -90,20 +92,28 @@ struct SettingsSectionView: View {
     }
 
     var body: some View {
-        if let legacy = SettingsBindings.legacy(section) {
-            legacy
+        if section == "models", let id = machine.wrappedValue {
+            MachineSettingsPage(deviceID: id) { machine.wrappedValue = nil }
+                .id(id)
         } else {
             let runs = runs
             let labelled = Set(runs.map(\.group)).count > 1
             SettingsPage(title: title) {
                 ForEach(Array(runs.enumerated()), id: \.offset) { _, run in
-                    if labelled, let g = run.group { SettingsGroupLabel(text: g) }
-                    SettingsRows {
+                    if labelled, let g = run.group, !run.rows.allSatisfy({ SettingsBindings.ownLabel.contains($0.id) }) {
+                        SettingsGroupLabel(text: g)
+                    }
+                    if run.rows.allSatisfy({ SettingsBindings.ownLayout.contains($0.id) }) {
                         ForEach(run.rows) { r in SettingsBindings.view(for: r) }
+                    } else {
+                        SettingsRows {
+                            ForEach(run.rows) { r in SettingsBindings.view(for: r) }
+                        }
                     }
                 }
             }
             .id(section)
+            .environment(\.openMachine) { machine.wrappedValue = $0 }
         }
     }
 }

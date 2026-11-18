@@ -6,20 +6,30 @@ import SwiftUI
 /// here is for a row the list doesn't give the Mac).
 enum SettingsBindings {
     /// Rows drawn inside another row's block, not on their own.
-    static let drawnBy: [String: String] = ["mcp-sign-in": "mcp-servers"]
+    static let drawnBy: [String: String] = [
+        "mcp-sign-in": "mcp-servers",
+        // A machine's models are on its page, which the machines list opens.
+        "local-models": "machines",
+        // A provider's models open from its row (Models).
+        "provider-models": "other-clouds",
+        // The chart is this Mac's measured energy.
+        "measured-energy": "energy-chart",
+        // The code field is in the credit card, as on the web.
+        "coupon": "credit",
+    ]
 
-    /// Sections still drawn by their old view while they move over (a few at a time).
-    @MainActor
-    static func legacy(_ section: String) -> AnyView? {
-        switch section {
-        case "models": AnyView(MachinesSettings())
-        case "usage": AnyView(EnergySettings())
-        case "account", "billing": AnyView(BillingSettings())
-        default: nil
-        }
-    }
+    /// Rows that draw their own group label, since they may have nothing to show (other clouds
+    /// and servers, while adding them is hidden and none are connected).
+    static let ownLabel: Set<String> = ["other-clouds", "servers"]
+    /// Rows that lay themselves out (their own hairlines, or Billing's cards).
+    static let ownLayout: Set<String> = ownLabel.union(["plan", "credit", "credit-history", "prices"])
 
-    static let legacySections: Set<String> = ["models", "usage", "account", "billing"]
+    /// The machines Models lists, and the spend and energy Usage shows (snapshots bring their own).
+    @MainActor static var devices = Devices.shared
+    @MainActor static var stats = ModelStats.shared
+    /// Off in snapshots: no row starts the engine, probes a server or calls the edge while it
+    /// renders (one did, and hung a full test run).
+    @MainActor static var loads = true
 
     /// A row's control, or nil if the Mac has none for it.
     @MainActor
@@ -47,6 +57,31 @@ enum SettingsBindings {
         case "mcp-config": AnyView(SettingsRow(row) { OpenConfigButton() })
         // Shortcuts
         case "shortcuts": AnyView(ShortcutRows())
+        // Models
+        case "default-model": AnyView(DefaultModelRow(row: row))
+        case "machines": AnyView(MachinesRows())
+        case "pair-machine": AnyView(PairMachineRow(row: row))
+        case "frog-cloud": AnyView(FrogCloudRows())
+        case "other-clouds": AnyView(OtherCloudsRows(row: row))
+        case "servers": AnyView(ServersRows(row: row))
+        case "machine-name": AnyView(MachineNameRow(row: row))
+        case "share-models": AnyView(ShareRow(row: row))
+        case "lend-battery": AnyView(LendBatteryRow(row: row))
+        case "pair-mac": AnyView(PairMacRow(row: row))
+        // Usage
+        case "spent": AnyView(SpentRow(row: row))
+        case "monthly-cap": AnyView(CapRow(row: row))
+        case "show-energy": AnyView(ToggleRow(row: row, key: ModelStats.energyKey, fallback: false))
+        case "energy-chart": AnyView(EnergyRows(stats: stats))
+        // Account
+        case "profile": AnyView(ProfileRows())
+        case "sign-ins": AnyView(SignInsRows())
+        case "devices": AnyView(DevicesRows())
+        // Billing
+        case "plan": AnyView(PlanBlock())
+        case "credit": AnyView(CreditBlock())
+        case "credit-history": AnyView(CreditHistoryRows())
+        case "prices": AnyView(PricesRows(row: row))
         default: nil
         }
     }
@@ -283,7 +318,7 @@ private struct MCPServersRows: View {
                 SettingsRow(s.name, description: detail(s)) { state(s) }
             }
         }
-        .task { await load() }
+        .task { guard SettingsBindings.loads else { return }; await load() }
     }
 
     private func detail(_ s: MCPStatus) -> String? {

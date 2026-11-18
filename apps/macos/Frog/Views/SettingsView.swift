@@ -381,7 +381,7 @@ struct ModelSettings: View {
 
 /// Which cloud models show in the picker: search every connected provider's catalog and turn
 /// models on or off.
-private struct CatalogSheet: View {
+struct CatalogSheet: View {
     /// Just this provider's models (nil: every connected provider's).
     var provider: ProviderInfo? = nil
     @State private var store = ProviderStore.shared
@@ -629,7 +629,7 @@ struct KeySheet: View {
 }
 
 /// Add a server on your network (a GPU box running Ollama, vLLM, llama.cpp or LM Studio).
-private struct ServerSheet: View {
+struct ServerSheet: View {
     let added: () -> Void
     @State private var name = ""
     @State private var url = ""

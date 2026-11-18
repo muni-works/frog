@@ -27,7 +27,6 @@ final class SwitchAwayTests: XCTestCase {
         for key in ["newMessageModelPolicy", "defaultModel"] {
             defaults[key] = UserDefaults.standard.object(forKey: key)
         }
-        UserDefaults.standard.set("fixed", forKey: "newMessageModelPolicy")
         UserDefaults.standard.set("cloud/qwen3-coder-next", forKey: "defaultModel")
     }
 
