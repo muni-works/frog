@@ -205,6 +205,7 @@ struct TranscriptView: View {
                         // stop past the laid-out end, a blank transcript until you scroll.
                         #if DEBUG
                         DiagLog.note("branch answer-start top \(top)")
+                        DiagLog.parks += 1
                         #endif
                         following = false
                         track.park(at: old.contentHeight)

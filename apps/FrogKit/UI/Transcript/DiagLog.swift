@@ -6,6 +6,9 @@ import Foundation
 enum DiagLog {
     nonisolated(unsafe) private static var ring: [String] = []
     nonisolated(unsafe) private static var seq = 0
+    /// Parks at an answer's start taken, and (with the fix) ones the old check would have taken.
+    nonisolated(unsafe) static var parks = 0
+    nonisolated(unsafe) static var declined = 0
     private static let lock = NSLock()
     nonisolated static func note(_ s: @autoclosure () -> String) {
         let line = s()

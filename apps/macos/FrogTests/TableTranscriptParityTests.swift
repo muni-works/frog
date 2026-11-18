@@ -227,6 +227,8 @@ final class TableTranscriptParityTests: XCTestCase {
                 print("DIAG idle table=\(table) cpu2s=\(String(format: "%.2f", cpu)) follows+=\(TranscriptProbe.follows - f0) rows+=\(TranscriptProbe.rowBodies - r0) turns+=\(TranscriptProbe.turnBodies - t0)")
             }
             send(c, #""item_delta","id":"live","delta":{"type":"text","text":"\n\nlast-line"}"#)
+            defer { print("DIAG counters table=\(table) parks=\(DiagLog.parks) declined=\(DiagLog.declined)"); DiagLog.parks = 0; DiagLog.declined = 0 }
+            Self.stage = "final waits table=\(table)"
             XCTAssertTrue(wait() { self.drawnText().contains("last-line") },
                           "table \(table): the streamed words are drawn")
             XCTAssertTrue(wait() { self.atEnd() },
