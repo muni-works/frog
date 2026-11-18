@@ -11,7 +11,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Account } from '../auth'
 import type { Op } from '../cloud/protocol'
 import type { Thread } from '../engine/thread'
-import { resumeNote, savePending, shouldResume, stoppedTurn, takePending, type Added, type PendingTopUp } from '../wall'
+import { clearPending, peekPending, resumeNote, savePending, shouldResume, stoppedTurn, type Added, type PendingTopUp } from '../wall'
 
 export interface WallResumeDeps {
   /** The open session and its thread. */
@@ -34,11 +34,13 @@ export function useWallResume({ session, thread, send, fetchMe, onAccount, openS
   const [added, setAdded] = useState<Added | null>(null)
   const [waiting, setWaiting] = useState<string | null>(null)
   const resumed = useRef(new Set<string>())
-  const [back] = useState(() => ({ pending: storage ? takePending(storage) : null, paid: new URLSearchParams(search ?? '').has('session_id') }))
+  // Read in the initializer (React may call it twice), cleared in the effect (which may run twice).
+  const [back] = useState(() => ({ pending: storage ? peekPending(storage) : null, paid: new URLSearchParams(search ?? '').has('session_id') }))
 
   useEffect(() => {
     const p = back.pending
     if (!p) return
+    if (storage) clearPending(storage)
     openSession(p.session)
     if (!back.paid || !fetchMe) return
     setWaiting('Payment received. Waiting for the credit to arrive…')
@@ -75,7 +77,7 @@ export function useWallResume({ session, thread, send, fetchMe, onAccount, openS
       savePending(storage, p)
     },
     /** Checkout didn't open: forget the note. */
-    stayed() { if (storage) takePending(storage) },
+    stayed() { if (storage) clearPending(storage) },
     /** A code was redeemed from the wall. */
     redeemed(r: { added_cents: number; credit_cents: number }) {
       const turn = thread ? stoppedTurn(thread) : null

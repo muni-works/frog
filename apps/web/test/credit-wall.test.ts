@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { createElement as h } from "react";
+import { createElement as h, StrictMode } from "react";
 import TestRenderer, { act } from "react-test-renderer";
 import type { Account } from "../src/auth.ts";
 import type { EndReason, Op } from "../src/cloud/protocol.ts";
@@ -62,6 +62,8 @@ test("the warning line: what's left and Add credit, the estimate only with five 
   assert.deepEqual(onAdd, ["billing"]);
   act(() => { r.update(h(CreditWarning, { account: acct(20), addedCents: 100, avg: 0.06, onAdd: () => {} })); });
   assert.match(all(r), /^20¢ of credit left, about 3 turns at your average/);
+  act(() => { r.update(h(CreditWarning, { account: acct(3), addedCents: 100, avg: 0.06, onAdd: () => {} })); });
+  assert.match(all(r), /^3¢ of credit left, less than a turn at your average/, "never \"about 0 turns\"");
   act(() => { r.update(h(CreditWarning, { account: acct(21), addedCents: 100, avg: 0.06, onAdd: () => {} })); });
   assert.equal(r.toJSON(), null, "above 20% left: no line");
   r.unmount();
@@ -139,10 +141,11 @@ function harness(deps: Partial<WallResumeDeps> & { thread: Thread }) {
   let props: WallResumeDeps = { session: "s1", send: (session, op) => sent.push({ session, op }), fetchMe: null, onAccount: (a) => accounts.push(a), openSession: (id) => opened.push(id), pollMs: 1, pollTries: 5, ...deps };
   const Probe = (p: WallResumeDeps) => { api = useWallResume(p); return null };
   let r!: TestRenderer.ReactTestRenderer;
-  act(() => { r = TestRenderer.create(h(Probe, props)); });
+  // Under StrictMode, as main.tsx renders the App: initializers and effects run twice in dev.
+  act(() => { r = TestRenderer.create(h(StrictMode, null, h(Probe, props)), { unstable_isConcurrent: true } as never); });
   return {
     sent, opened, accounts, get api() { return api },
-    update(next: Partial<WallResumeDeps>) { props = { ...props, ...next }; act(() => { r.update(h(Probe, props)); }); },
+    update(next: Partial<WallResumeDeps>) { props = { ...props, ...next }; act(() => { r.update(h(StrictMode, null, h(Probe, props))); }); },
     unmount: () => act(() => r.unmount()),
   };
 }
@@ -192,6 +195,20 @@ test("back from Stripe: the session reopens, and the turn resumes once the webho
   assert.equal(w.api.waiting, null);
   assert.equal(storage.m.size, 0, "the note is used up");
   w.unmount();
+});
+
+test("the Checkout note is never cleared while rendering (StrictMode runs initializers twice; the second would find nothing)", () => {
+  const storage = mem();
+  savePending(storage, { session: "s1", turn: 6, cents: 500, before: 0, at: Date.now() });
+  let rendering = false;
+  let clearedInRender = 0;
+  const spy = { ...storage, removeItem: (k: string) => { if (rendering) clearedInRender++; storage.removeItem(k) } };
+  const Probe = (p: WallResumeDeps) => { rendering = true; try { useWallResume(p) } finally { rendering = false } return null };
+  let r!: TestRenderer.ReactTestRenderer;
+  act(() => { r = TestRenderer.create(h(Probe, { session: null, thread: stopped(6), send: () => {}, fetchMe: null, onAccount: () => {}, openSession: () => {}, storage: spy, search: "" })); });
+  assert.equal(clearedInRender, 0);
+  assert.equal(storage.m.size, 0, "cleared, in the effect");
+  act(() => r.unmount());
 });
 
 test("back from Stripe without the credit: the wall says so, and Resume by hand needs credit", async () => {

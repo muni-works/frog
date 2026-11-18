@@ -68,6 +68,7 @@ export function aboutTurns(dollars: number, avg: number | null): number | null {
 
 /** "about 80 turns", "about 1,600", "about 1 turn". `short` drops the noun (the amount tiles). */
 export function turnsLine(n: number, short = false): string {
+  if (n < 1) return short ? 'under 1' : 'less than a turn'
   const num = n.toLocaleString('en-US')
   return short ? `about ${num}` : `about ${num} turn${n === 1 ? '' : 's'}`
 }
@@ -147,16 +148,28 @@ export function savePending(s: Pick<Storage, 'setItem'>, p: PendingTopUp) {
   try { s.setItem(PENDING_KEY, JSON.stringify(p)) } catch { /* private mode: no auto-resume */ }
 }
 
-/** Reads and clears it; null when absent, malformed or stale. */
-export function takePending(s: Pick<Storage, 'getItem' | 'removeItem'>, now = Date.now()): PendingTopUp | null {
+/** Reads it without clearing it (safe to call twice, as React's StrictMode does with state
+ *  initializers); null when absent, malformed or stale. */
+export function peekPending(s: Pick<Storage, 'getItem'>, now = Date.now()): PendingTopUp | null {
   let raw: string | null = null
-  try { raw = s.getItem(PENDING_KEY); s.removeItem(PENDING_KEY) } catch { return null }
+  try { raw = s.getItem(PENDING_KEY) } catch { return null }
   if (!raw) return null
   try {
     const p = JSON.parse(raw) as PendingTopUp
     if (typeof p.session !== 'string' || typeof p.turn !== 'number' || typeof p.cents !== 'number' || typeof p.before !== 'number') return null
     return now - p.at <= PENDING_TTL_MS ? p : null
   } catch { return null }
+}
+
+export function clearPending(s: Pick<Storage, 'removeItem'>) {
+  try { s.removeItem(PENDING_KEY) } catch { /* nothing to clear */ }
+}
+
+/** Reads and clears it. */
+export function takePending(s: Pick<Storage, 'getItem' | 'removeItem'>, now = Date.now()): PendingTopUp | null {
+  const p = peekPending(s, now)
+  clearPending(s)
+  return p
 }
 
 /** Credit added from the wall, waiting to resume its session's stopped turn. */
