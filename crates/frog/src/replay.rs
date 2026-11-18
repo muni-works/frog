@@ -25,6 +25,10 @@ struct Player {
     speed: f64,
     status: Status,
     ops: mpsc::UnboundedReceiver<Op>,
+    /// The recorded time of the event being played: what it and anything emitted with it are
+    /// stamped with, so a step that took 9 s reads 9 s however fast the replay runs (gaps are
+    /// scaled and clamped). None before the first event: now.
+    at: Option<i64>,
 }
 
 enum Interrupted {
@@ -38,7 +42,7 @@ impl Player {
         let env = Envelope {
             seq: self.seq,
             session: self.session.clone(),
-            created: chrono::Utc::now().timestamp_millis(),
+            created: self.at.unwrap_or_else(|| chrono::Utc::now().timestamp_millis()),
             event,
         };
         if let Ok(line) = serde_json::to_string(&env) {
@@ -144,6 +148,7 @@ pub async fn run(spec: &str, speed: f64, ask: bool) -> Result<()> {
     let mut p = Player {
         session: header.id.clone(),
         seq: 0,
+        at: None,
         speed: speed.max(0.1),
         status: Status {
             model: header.model.clone(),
@@ -255,6 +260,7 @@ async fn play(p: &mut Player, events: &[Envelope], ask: bool) -> Result<(), Inte
     for env in events {
         let gap = ((env.created - prev) as f64).clamp(0.0, 1500.0);
         prev = env.created;
+        p.at = Some(env.created);
         match &env.event {
             Event::TurnStarted { turn: n, .. } => {
                 turn = *n;
