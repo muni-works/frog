@@ -11,7 +11,7 @@ import { startMock } from "./mock/mock-gateway.mjs";
 import { Gateway } from "../src/cloud/client.ts";
 import type { Envelope, Op } from "../src/cloud/protocol.ts";
 import { CloudEngine } from "../src/engine/cloud.ts";
-import { addressURL, displayAddress, localTarget, NO_SCREENSHOT, PreviewHub, type Frame } from "../src/preview.ts";
+import { addressURL, displayAddress, localTarget, NO_SCREENSHOT, pageLink, PreviewHub, type Frame } from "../src/preview.ts";
 import { GatewayError, sessionIndex } from "../src/cloud/client.ts";
 import { DEVICES, fitDevice } from "../src/ui/PreviewPane.tsx";
 import { Inspector } from "../src/ui/Inspector.tsx";
@@ -199,28 +199,27 @@ test("an older gateway's link is the page: the path goes on it, and every load m
   assert.equal(hub.accepts("p1", PREVIEW), true, "no `origin` field: the link's own");
 });
 
-test("an entry link enters, then the page asked for loads; the landing on / isn't reported", async () => {
+test("an entry link carries the page as `next`, so it lands there in one load", async () => {
   const { hub, frame, loads, minted, ops } = rig(undefined, { entry: true });
-  hub.attach("p1", frame, "http://localhost:5173/about?x=1");
+  hub.attach("p1", frame, "http://localhost:5173/about?x=1#top");
   await settle();
-  assert.deepEqual(loads, [`${PREVIEW}/__frog/enter?t=1`]);
+  assert.deepEqual(loads, [`${PREVIEW}/__frog/enter?t=1&next=%2Fabout%3Fx%3D1%23top`]);
   assert.equal(hub.accepts("p1", PREVIEW), true, "the minted `origin`");
-  hub.received("p1", msg({ type: "navigated", url: `${PREVIEW}/` }));
-  hub.received("p1", msg({ type: "title", message: "Home" }));
+  hub.received("p1", msg({ type: "navigated", url: `${PREVIEW}/about?x=1#top` }));
   hub.loaded("p1");
-  assert.deepEqual(loads.at(-1), `${PREVIEW}/about?x=1`, "with the owner cookie set, the page itself");
-  assert.equal(hub.state("p1").loading, true);
-  assert.equal(ops("pane_report").length, 0, "nothing from the landing reaches the engine");
-  hub.received("p1", msg({ type: "navigated", url: `${PREVIEW}/about?x=1` }));
-  hub.loaded("p1");
+  assert.equal(loads.length, 1, "no second load");
   assert.equal(hub.state("p1").loading, false);
-  assert.deepEqual(ops("pane_report").at(-1), { op: "pane_report", id: "p1", kind: "navigated", message: "http://localhost:5173/about?x=1", url: "http://localhost:5173/about?x=1" });
-  assert.deepEqual(minted, [5173]);
-  // At `/`, the landing is the page: no second load.
+  assert.deepEqual(ops("pane_report").at(-1), { op: "pane_report", id: "p1", kind: "navigated", message: "http://localhost:5173/about?x=1#top", url: "http://localhost:5173/about?x=1#top" });
   await hub.load("p1", "http://localhost:5173/");
-  hub.loaded("p1");
-  assert.deepEqual(loads.at(-1), `${PREVIEW}/__frog/enter?t=2`);
-  assert.equal(hub.state("p1").loading, false);
+  assert.deepEqual(loads.at(-1), `${PREVIEW}/__frog/enter?t=2`, "`/` needs no next");
+  assert.deepEqual(minted, [5173, 5173]);
+});
+
+test("pageLink: next on an entry link, the path on an older gateway's", () => {
+  assert.equal(pageLink(`${PREVIEW}/__frog/enter?t=abc`, "/"), `${PREVIEW}/__frog/enter?t=abc`);
+  assert.equal(pageLink(`${PREVIEW}/__frog/enter?t=abc`, "/a b?c=&d#e"), `${PREVIEW}/__frog/enter?t=abc&next=%2Fa+b%3Fc%3D%26d%23e`);
+  assert.equal(new URL(pageLink(`${PREVIEW}/__frog/enter?t=abc`, "/a b?c=&d#e")).searchParams.get("next"), "/a b?c=&d#e");
+  assert.equal(pageLink(`${PREVIEW}/`, "/x?y"), `${PREVIEW}/x?y`);
 });
 
 test("Open in Browser mints its own entry link; a page outside the sandbox opens as is", async () => {
@@ -229,8 +228,9 @@ test("Open in Browser mints its own entry link; a page outside the sandbox opens
   hub.attach("p1", frame, "http://localhost:5173/");
   await settle();
   assert.equal(hub.canOpen("p1"), true);
-  assert.equal(await hub.browserURL("p1"), `${PREVIEW}/__frog/enter?t=2`);
-  assert.notEqual(loads[0], `${PREVIEW}/__frog/enter?t=2`, "never the iframe's spent link");
+  hub.received("p1", msg({ type: "navigated", url: `${PREVIEW}/cart` }));
+  assert.equal(await hub.browserURL("p1"), `${PREVIEW}/__frog/enter?t=2&next=%2Fcart`, "the page the pane is on now");
+  assert.ok(!loads.includes(`${PREVIEW}/__frog/enter?t=2&next=%2Fcart`), "never the iframe's spent link");
   assert.deepEqual(minted, [5173, 5173]);
   await hub.load("p1", "https://example.com/x");
   assert.equal(await hub.browserURL("p1"), "https://example.com/x");
@@ -243,7 +243,7 @@ test("a gateway error page in the frame enters again with a fresh link, once", a
   hub.received("p1", msg({ type: "load_failed", message: "Open this preview from Frog. Only the session's owner can view it." }));
   await settle();
   assert.deepEqual(minted, [5173, 5173]);
-  assert.equal(loads.at(-1), `${PREVIEW}/__frog/enter?t=2`);
+  assert.equal(loads.at(-1), `${PREVIEW}/__frog/enter?t=2&next=%2Fa`);
   assert.equal(hub.state("p1").error, undefined, "not failed yet");
   hub.received("p1", msg({ type: "load_failed", message: "Open this preview from Frog. Only the session's owner can view it." }));
   await settle();
@@ -518,6 +518,12 @@ test("Gateway.preview mints a host that serves the sandbox's dev server with the
   assert.equal(enter.status, 302);
   assert.equal(enter.location, "/");
   assert.match(enter.cookie ?? "", /^__Host-frog_preview=[^;]+; Path=\/; HttpOnly; Secure; SameSite=None; Partitioned$/);
+  // `next` lands on a plain same-origin path, anything else on `/` (each entry is a fresh mint).
+  for (const [next, land] of [["/a?b=1#c", "/a?b=1#c"], ["//evil.example/", "/"], ["/\\evil.example", "/"], ["https://evil.example/", "/"], ["a", "/"], ["", "/"]]) {
+    const u = new URL((await gw.preview(s.id, devPort)).url);
+    u.searchParams.set("next", next);
+    assert.equal((await get(mock.port, host, u.pathname + u.search)).location, land, JSON.stringify(next));
+  }
   const html = await get(mock.port, host, "/", enter.cookie!.split(";")[0]);
   assert.equal(html.body, `<!doctype html><html><head><script src="/__frog/preview.js"></script><title>localhost:${devPort}</title></head><body>hi</body></html>`);
   const script = await get(mock.port, host, "/__frog/preview.js");

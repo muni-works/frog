@@ -78,8 +78,17 @@ const REQUEST_GIVE_UP_MS = 18_000 // the engine waits 20s
 const NAVIGATE_WAIT_MS = 15_000
 const MINT_MARGIN_MS = 10 * 60_000
 /** Where a minted link enters the preview (zest sandbox/src/preview.ts ENTER_PATH): a one-minute
- * token that sets the preview host's owner cookie and lands on `/`. */
+ * token that sets the preview host's owner cookie and lands on `next`, a same-origin path. */
 export const ENTER_PATH = '/__frog/enter'
+
+/** The URL that opens `path` from a minted link: the entry link with `next`, or (an older
+ * gateway, whose link is the page itself) the path on it. */
+export function pageLink(url: string, path: string): string {
+  const u = new URL(url)
+  if (u.pathname !== ENTER_PATH) return url.replace(/\/$/, '') + path
+  if (path !== '/') u.searchParams.set('next', path)
+  return u.toString()
+}
 
 /** What the gateway mints for a sandbox port. `url` is a one-minute entry link (never reused);
  * `origin` is the preview's own origin; `expires` is when the label behind both dies (8 h). */
@@ -103,8 +112,6 @@ export class PreviewHub {
   private parked: { req: PaneRequest; run: () => void }[] = []
   /** Per pane, the label it entered with: its origin and when it dies. */
   private labels = new Map<string, { origin: string; expires: number }>()
-  /** Per pane, the path to load once the entry link has landed on `/` (it can't go anywhere else). */
-  private entering = new Map<string, string>()
   /** Panes that already minted again after a gateway error page, so one bad link isn't a loop. */
   private retried = new Set<string>()
   private listeners = new Set<() => void>()
@@ -179,7 +186,6 @@ export class PreviewHub {
 
   private async open(id: string, url: string) {
     this.patch(id, { url, loading: true, error: undefined })
-    this.entering.delete(id)
     const local = localTarget(url)
     let src: string
     if (local) {
@@ -194,11 +200,7 @@ export class PreviewHub {
       }
       if (this.state(id).url !== url) return // superseded while minting
       const origin = m.origin ?? new URL(m.url).origin
-      const entry = new URL(m.url).pathname === ENTER_PATH
-      // An entry link lands on `/`; the page asked for follows once it has (see `loaded`). An
-      // older gateway's link is the page itself.
-      src = entry ? m.url : m.url.replace(/\/$/, '') + local.path
-      if (entry && local.path !== '/') this.entering.set(id, local.path)
+      src = pageLink(m.url, local.path)
       this.labels.set(id, { origin, expires: m.expires })
       this.origins.set(id, { preview: origin, local: `http://localhost:${local.port}` })
     } else if (/^https?:\/\//i.test(url)) {
@@ -253,13 +255,13 @@ export class PreviewHub {
   canOpen(id: string) { return !!this.state(id).src }
 
   /** A URL for Open in Browser: a sandbox page gets its own fresh entry link (a new tab has no
-   * owner cookie, and the iframe's link is spent), which lands on the dev server's `/`. */
+   * owner cookie, and the iframe's link is spent), landing on the page the pane shows. */
   async browserURL(id: string): Promise<string | undefined> {
     const s = this.state(id)
     const local = s.url && this.origins.has(id) ? localTarget(s.url) : null
     if (!local) return s.src
     const m = await this.mint(local.port)
-    return new URL(m.url).pathname === ENTER_PATH ? m.url : m.url.replace(/\/$/, '') + local.path
+    return pageLink(m.url, local.path)
   }
 
   setInspecting(on: boolean) {
@@ -281,9 +283,6 @@ export class PreviewHub {
   loaded(id: string) {
     const s = this.state(id)
     if (s.error) return
-    // The entry link landed on `/` with the owner cookie set: now the page that was asked for.
-    const path = this.entering.get(id), o = this.origins.get(id)
-    if (path && o) { this.entering.delete(id); return this.frames.get(id)?.load(o.preview + path) }
     this.patch(id, { loading: false })
     if (this.inspecting) this.frames.get(id)?.post({ frog: 1, type: 'inspect', on: true })
     const w = this.waiters.get(id)
@@ -301,8 +300,6 @@ export class PreviewHub {
   received(id: string, raw: unknown) {
     if (!raw || typeof raw !== 'object' || (raw as { frog?: unknown }).frog !== 1) return
     const m = this.fromPreview(id, raw as Record<string, unknown>) as Record<string, unknown>
-    // The entry's own landing on `/` isn't the page anyone asked for: only its failure counts.
-    if (this.entering.has(id) && m.type !== 'load_failed') return
     const text = typeof m.message === 'string' ? m.message : ''
     const url = typeof m.url === 'string' ? m.url : undefined
     switch (m.type) {

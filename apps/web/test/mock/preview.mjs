@@ -5,7 +5,8 @@
 // origin here too. Labels aren't signed: `<session hex>-<port>`.
 //
 // Owner-only, as zest 3642f57: the minted `url` is a one-minute entry link,
-// `<origin>/__frog/enter?t=<token>`, that sets the host's owner cookie and 302s to `/`. Without the
+// `<origin>/__frog/enter?t=<token>[&next=/path]`, that sets the host's owner cookie and 302s to
+// `next` when it's a plain same-origin path, else `/` (zest 947a8ee). Without the
 // cookie every request gets a 403 error page, except the capture script (so that page can say so).
 import { request as httpRequest } from "node:http";
 import { connect } from "node:net";
@@ -68,10 +69,13 @@ export function servePreview(req, res, target, { script, exists }) {
   const label = `${target.session.slice(2)}-${target.port}`;
   const path = req.url.split("?")[0];
   if (path === ENTER_PATH) {
-    const t = new URL(req.url, "http://mock").searchParams.get("t") ?? "";
+    const q = new URL(req.url, "http://mock").searchParams;
+    const t = q.get("t") ?? "";
+    const next = q.get("next") ?? "";
+    const land = /^\/(?![\/\\])[^\x00-\x1f\x7f]*$/.test(next) ? next : "/";
     const e = entries.get(t);
     if (!e || e.label !== label || e.expires < Date.now()) return page(res, 403, "This preview link has expired. Reload the preview in Frog.");
-    return res.writeHead(302, { location: "/", "cache-control": "no-store", "set-cookie": `${GATE_COOKIE}=${gate(label)}; Path=/; HttpOnly; Secure; SameSite=None; Partitioned` }).end();
+    return res.writeHead(302, { location: land, "cache-control": "no-store", "set-cookie": `${GATE_COOKIE}=${gate(label)}; Path=/; HttpOnly; Secure; SameSite=None; Partitioned` }).end();
   }
   if (path !== SCRIPT_PATH && !cookies(req).some(([k, v]) => k === GATE_COOKIE && v === gate(label))) return page(res, 403, "Open this preview from Frog. Only the session's owner can view it.");
   if (path === SCRIPT_PATH) {
