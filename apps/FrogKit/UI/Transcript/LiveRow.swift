@@ -189,9 +189,7 @@ struct LiveRow: View {
             if let state {
                 VStack(alignment: .leading, spacing: space.gaps.stats) {
                     row(state, at: ctx.date)
-                    if !stats.text.isEmpty {
-                        StatsLine(stats: stats)
-                    }
+                    statsLine(stats)
                     if open, let id = state.reasoningID, let think = turn.items.first(where: { $0.id == id }) {
                         ThinkingOutline(item: think, live: true)
                             .padding(.leading, edge.indent)
@@ -204,12 +202,24 @@ struct LiveRow: View {
                 // start (the scroll code) counts that space and nothing else.
                 Color.clear.frame(height: 0)
                     .overlay(alignment: .topLeading) {
-                        if !stats.text.isEmpty {
-                            StatsLine(stats: stats)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .offset(y: space.gaps.stats)
-                        }
+                        statsLine(stats)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .offset(y: space.gaps.stats)
                     }
+            }
+        }
+    }
+
+    /// The stats, and the turn line growing at their right end (spec phase 3). The line shows
+    /// once the turn has a segment, even before the stats have a figure (as on the web).
+    @ViewBuilder
+    private func statsLine(_ stats: LiveStats) -> some View {
+        let segments = !turn.timeline.segments(now: .now).isEmpty
+        if !stats.text.isEmpty || segments {
+            HStack(spacing: TurnSpace.Inset.row) {
+                if !stats.text.isEmpty { StatsLine(stats: stats) }
+                Spacer(minLength: 0)
+                if segments { TurnLine(turn: turn, live: true) }
             }
         }
     }

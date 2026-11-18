@@ -220,6 +220,8 @@ struct TurnState: Identifiable {
     /// Background wakes delivered with this turn, ahead of its input (`wakes_delivered`).
     var wakes: [String] = []
     var items: [ItemState] = []
+    /// The events that time its thinking, tools, waits and writing (the turn line's strip).
+    var timeline = TurnTimeline()
     var end: EndReason?
     var usage: TurnUsage?
     var startedAt: Date?

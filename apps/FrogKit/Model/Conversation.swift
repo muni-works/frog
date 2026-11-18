@@ -794,6 +794,8 @@ final class Conversation {
             sessionChanged?()
         }
         defer { reportLive() }
+        // The turn line's timeline takes a few events (never the deltas), after they're applied.
+        defer { recordTimeline(env) }
         switch env.event {
         case .turnStarted(let n, let input, let images, let more):
             next = nil
@@ -956,7 +958,7 @@ final class Conversation {
             questionAt = Date(timeIntervalSince1970: Double(env.created) / 1000)
             if isNews(env) { FrogSounds.shared.play(.drip) }
             if progress != nil { progress = nil }
-        case .questionResolved(let id):
+        case .questionResolved(let id, _, _):
             if question?.id == id { question = nil }
         case .toolProgress(let id, let p):
             upsert(id) { $0.progress = p }
@@ -1313,6 +1315,22 @@ final class Conversation {
     /// transcript's structure reads changes (see `LiveText`). False when the item isn't a
     /// running message already in `turns`, or when the append is one the structure must see;
     /// then the caller writes through `upsert`, which also starts the live buffer.
+    private func recordTimeline(_ env: Envelope) {
+        switch env.event {
+        case .turnStarted(let n, _, _, _):
+            guard let i = turns.lastIndex(where: { $0.number == n }) else { return }
+            turns[i].timeline.record(env)
+        case .turnEnded(let n, _, _):
+            guard let i = turns.lastIndex(where: { $0.number == n }) else { return }
+            turns[i].timeline.record(env)
+        case .itemStarted, .itemCompleted, .permissionResolved, .questionResolved, .itemsDiscarded:
+            guard let i = turns.indices.last else { return }
+            turns[i].timeline.record(env)
+        default:
+            return
+        }
+    }
+
     private func appendLive(_ id: String, _ t: String) -> Bool {
         guard Self.streamsLive else { return false }
         guard let (ti, ii) = itemAt[id], turns.indices.contains(ti), turns[ti].items.indices.contains(ii) else { return false }

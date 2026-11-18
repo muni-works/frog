@@ -247,6 +247,8 @@ struct TranscriptEdge: Equatable {
     var gutter: CGFloat
     /// How far text rows start in from the column's edge: 0, or the hang in a narrow pane.
     var indent: CGFloat
+    /// Under 420 wide the turn line drops its curve and keeps the strip (spec phase 3).
+    var narrowLine = false
 
     static let hang = TranscriptEdge(gutter: Tokens.Transcript.Layout.gutter, indent: 0)
 
@@ -256,7 +258,7 @@ struct TranscriptEdge: Equatable {
     static func of(paneWidth: CGFloat) -> TranscriptEdge {
         let L = Tokens.Transcript.Layout.self
         let gutter = paneWidth < insetBelow ? L.gutterNarrow : L.gutter
-        return TranscriptEdge(gutter: gutter, indent: gutter < L.hang ? L.hang : 0)
+        return TranscriptEdge(gutter: gutter, indent: gutter < L.hang ? L.hang : 0, narrowLine: paneWidth < 420)
     }
 }
 
@@ -354,6 +356,7 @@ struct StepLineView: View {
     }
 
     @Environment(\.transcriptEdge) private var edge
+    @Environment(\.turnFocus) private var focus
     private var edgeIndent: CGFloat { edge.indent }
 
     private func row(_ line: StepLine) -> some View {
@@ -362,7 +365,7 @@ struct StepLineView: View {
             SelfOpening.remember(item.id, open: !open)
             withAnimation(.snappy(duration: 0.2)) { open.toggle() }
         } label: {
-            LineFrame(hovered: hovered && opens(line)) {
+            LineFrame(hovered: (hovered && opens(line)) || focus?.scrubbed == item.id) {
                 Image(systemName: ToolLook.icon(line.name)).font(.frog(size: 11))
             } content: {
                 words(line)

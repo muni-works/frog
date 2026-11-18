@@ -278,7 +278,7 @@ struct TurnView: View, Equatable {
                 if let end = turn.end {
                     // An unpinned footer keeps its place and fades in on hover, so it neither
                     // covers the answer nor shifts what's below.
-                    EndView(reason: end, usage: turn.usage, answer: answer, hovering: hovering)
+                    EndView(reason: end, usage: turn.usage, turn: turn, answer: answer, hovering: hovering)
                         // Set off from the answer above it (see `TurnSpace`): the turn's last
                         // line reads as a caption, not as one more paragraph.
                         .padding(.top, isFooter(end) ? space.footer : 0)
