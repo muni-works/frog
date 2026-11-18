@@ -34,6 +34,9 @@ pub enum Fail {
     Hang { secs: u64 },
     /// A bug: the call panics, taking the engine's work loop with it. For the dead-child tests.
     Panic,
+    /// `text` streams, then nothing for `secs`, then the call goes on with the next scripted
+    /// response: a stream that stalls mid-reply and recovers. For the quiet-call tests.
+    Pause { text: String, secs: u64 },
 }
 
 impl Fail {
@@ -268,6 +271,10 @@ impl Client {
                     .into());
                 }
                 Fail::Panic => panic!("scripted provider panic (a test's injected bug)"),
+                Fail::Pause { text, secs } => {
+                    on(StreamEvent::Text(text));
+                    tokio::time::sleep(Duration::from_secs(secs)).await;
+                }
             }
         }
         let r = self

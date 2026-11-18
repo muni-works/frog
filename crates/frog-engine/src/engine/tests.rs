@@ -488,6 +488,9 @@ async fn text_turn_lifecycle() {
             "status",
             "item_started",
             "item_delta",
+            // The live token count while it streams, then the provider's figure.
+            "output_tokens",
+            "output_tokens",
             "item_completed",
             // The first turn's end names the session (headless title fallback).
             "titled",
@@ -513,10 +516,10 @@ async fn text_turn_lifecycle() {
         })
         .expect("the turn's end is followed by a status");
     assert!(after.waiting.is_none(), "still waiting after the turn: {after:?}");
-    assert!(matches!(
-        &evs[6].event,
+    assert!(evs.iter().any(|e| matches!(
+        &e.event,
         Event::Titled { title } if title == "hi"
-    ));
+    )));
     let seqs: Vec<u64> = evs.iter().map(|e| e.seq).collect();
     assert!(
         seqs.windows(2).all(|w| w[1] == w[0] + 1),
@@ -1855,11 +1858,11 @@ async fn a_broken_body_stream_is_retryable_and_a_connect_failure_is_not() {
         "{broken:#}"
     );
     assert!(retryable(&(broken.into())));
-    // Connect: the request never got anywhere — a dead server, not a broken reply.
-    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let dead = l.local_addr().unwrap();
-    drop(l);
-    let refused = http.get(format!("http://{dead}/v1")).send().await.unwrap_err();
+    // Connect: the request never got anywhere — a dead server, not a broken reply. Port 1:
+    // privileged, so no test (they all bind :0, an ephemeral port) can be listening there. A
+    // port freed by dropping a listener could be taken by a parallel test first, and then
+    // the request is sent and broken instead of refused.
+    let refused = http.get("http://127.0.0.1:1/v1").send().await.unwrap_err();
     assert!(
         refused.is_connect() && !refused.is_decode() && !refused.is_body(),
         "{refused:#}"
@@ -5416,7 +5419,7 @@ async fn json_mode_turn_runs_the_action_and_shows_the_answer() {
             _ => None,
         })
         .collect();
-    assert!(matches!(items[0], Item::Reasoning { text } if text == "check the file"));
+    assert!(matches!(items[0], Item::Reasoning { text, .. } if text == "check the file"));
     assert!(
         matches!(items[1], Item::ToolCall { name, outcome: ToolOutcome::Ok, .. } if name == "Glob")
     );
@@ -5977,7 +5980,7 @@ async fn an_interrupt_dismisses_the_question() {
                 asked = Some(id);
                 h.ops.send(Op::Interrupt).unwrap();
             }
-            Event::QuestionResolved { id, answer } => {
+            Event::QuestionResolved { id, answer, .. } => {
                 assert_eq!(Some(id), asked);
                 assert!(answer.dismissed());
             }
@@ -8764,12 +8767,22 @@ fn turn_timing(evs: &[Envelope]) -> TurnTiming {
 }
 
 /// A logged event with what differs from run to run (clock, session id, generated ids,
-/// timing) taken out.
+/// timing) taken out. `seq` too: the live token count (`output_tokens`, never logged) goes out
+/// on a clock, so how many seq numbers it takes between logged events varies.
 fn stable(env: &Envelope) -> Value {
     fn scrub(v: &mut Value) {
         match v {
             Value::Object(m) => {
-                for k in ["created", "session", "timing", "tokens_per_sec"] {
+                for k in [
+                    "created",
+                    "session",
+                    "timing",
+                    "tokens_per_sec",
+                    "seq",
+                    "pace",
+                    "think_ms",
+                    "asked",
+                ] {
                     m.remove(k);
                 }
                 m.values_mut().for_each(scrub);
@@ -14866,3 +14879,237 @@ async fn a_sidecar_that_cannot_run_ends_the_turn_with_its_reason() {
 
 #[path = "tests_children.rs"]
 mod children;
+
+/// The thought line rides on the reasoning deltas and the completed item lists what showed:
+/// the first finished paragraph's line goes out at once, a list paragraph after it changes
+/// nothing, and the item carries the line with its paragraph's range and how long it thought.
+#[tokio::test]
+async fn reasoning_deltas_carry_the_thought_line() {
+    let thought = |t: &str| Block::Thinking {
+        text: t.into(),
+        signature: None,
+    };
+    let script = vec![reply(
+        vec![
+            thought("Let me check the tests first.\n\n"),
+            thought("- one\n- two\n\n"),
+            thought("Still writing this"),
+            text("Done."),
+        ],
+        Stop::End,
+    )];
+    let mut h = engine(script, false);
+    let evs = run(&mut h, "check").await;
+    let thoughts: Vec<Option<&str>> = evs
+        .iter()
+        .filter_map(|e| match &e.event {
+            Event::ItemDelta {
+                delta: Delta::Reasoning { thought, .. },
+                ..
+            } => Some(thought.as_deref()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(thoughts, [Some("Check the tests first"), None, None]);
+    let item = evs
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::ItemCompleted {
+                item: Item::Reasoning {
+                    thoughts, think_ms, ..
+                },
+                ..
+            } => Some((thoughts.clone(), *think_ms)),
+            _ => None,
+        })
+        .expect("a completed reasoning item");
+    assert_eq!(
+        item.0,
+        [crate::thought::ShownThought {
+            text: "Check the tests first".into(),
+            start: 0,
+            end: 29,
+            ms: 0,
+        }]
+    );
+    assert!(item.1.is_some(), "a streamed reasoning has a length");
+}
+
+/// A Bash command whose output ends in a test runner's summary carries its counts; any other
+/// command carries none.
+#[tokio::test]
+async fn bash_test_runs_carry_their_counts() {
+    let bash = |id: &str, command: &str| Block::ToolUse {
+        id: id.into(),
+        name: "Bash".into(),
+        input: json!({ "command": command }),
+    };
+    let script = vec![
+        reply(
+            vec![
+                bash(
+                    "b1",
+                    "echo 'tests/test_a.py ..F'; echo '==== 1 failed, 2 passed in 0.01s ===='",
+                ),
+                bash("b2", "echo hello"),
+            ],
+            Stop::ToolUse,
+        ),
+        reply(vec![text("ran")], Stop::End),
+    ];
+    let mut h = engine(script, false);
+    let evs = run(&mut h, "run the tests").await;
+    let tests: Vec<Option<crate::test_run::TestRun>> = evs
+        .iter()
+        .filter_map(|e| match &e.event {
+            Event::ItemCompleted {
+                item: Item::ToolCall { name, tests, .. },
+                ..
+            } if name == "Bash" => Some(tests.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        tests,
+        [
+            Some(crate::test_run::TestRun {
+                runner: "pytest".into(),
+                passed: 2,
+                failed: 1,
+                total: 3,
+                failed_names: vec![],
+            }),
+            None
+        ]
+    );
+}
+
+/// A turn's pace lands on `turn_ended`, adding up to the provider's output count, and the
+/// live count goes out while it streams (`so_far`) and settles on the provider's figure.
+#[tokio::test]
+async fn turns_keep_their_pace_and_stream_a_live_count() {
+    let script = vec![reply(
+        vec![
+            Block::Thinking {
+                text: "Checking the parser first.\n\n".into(),
+                signature: None,
+            },
+            text("Here is the answer."),
+        ],
+        Stop::End,
+    )];
+    let mut h = engine(script, false);
+    let evs = run(&mut h, "go").await;
+    let usage = evs
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::TurnEnded { usage, .. } => Some(usage.clone()),
+            _ => None,
+        })
+        .unwrap();
+    let pace = usage.pace.expect("a turn that streamed keeps its pace");
+    assert_eq!(pace.bucket_ms, 1000);
+    assert_eq!(pace.tokens.iter().sum::<u32>() as u64, usage.output_tokens);
+    let live: Vec<(u64, bool)> = evs
+        .iter()
+        .filter_map(|e| match &e.event {
+            Event::OutputTokens { output, so_far, .. } => Some((*output, *so_far)),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        live.first().is_some_and(|l| l.1),
+        "a counted figure while streaming: {live:?}"
+    );
+    assert_eq!(live.last(), Some(&(usage.output_tokens, false)));
+    // The provider's figures carry what the turn read from cache, for the stats tooltip; the
+    // counted ones don't, and no call here has a usual rate yet, so none is slow.
+    for e in &evs {
+        if let Event::OutputTokens {
+            so_far, slow, cached, ..
+        } = &e.event
+        {
+            assert_eq!(cached.is_some(), !so_far);
+            assert!(!slow);
+        }
+    }
+    let last_cached = evs.iter().rev().find_map(|e| match &e.event {
+        Event::OutputTokens { cached, .. } => *cached,
+        _ => None,
+    });
+    assert_eq!(last_cached, Some(usage.cached_tokens));
+}
+
+/// A permission prompt is a timed wait in the log: the resolved event names the tool call and
+/// when it asked, and the timeline draws it.
+#[tokio::test]
+async fn permission_waits_are_timed() {
+    let script = vec![
+        reply(
+            // A write outside the session's folder always asks; it's denied, so nothing is
+            // written.
+            vec![Block::ToolUse {
+                id: "w1".into(),
+                name: "Write".into(),
+                input: json!({ "file_path": "/frog-timeline-test/never.txt", "content": "x" }),
+            }],
+            Stop::ToolUse,
+        ),
+        reply(vec![text("ok")], Stop::End),
+    ];
+    let mut h = engine(script, true);
+    h.ops
+        .send(Op::Submit {
+            text: "write it".into(),
+            images: Vec::new(),
+            more: Vec::new(),
+        })
+        .unwrap();
+    let mut evs = Vec::new();
+    loop {
+        let env = h.events.recv().await.unwrap();
+        if let Event::PermissionRequest { id, .. } = &env.event {
+            tokio::time::sleep(Duration::from_millis(60)).await;
+            h.ops
+                .send(Op::Permission {
+                    id: id.clone(),
+                    decision: Decision::Deny,
+                    note: None,
+                })
+                .unwrap();
+        }
+        let ended = matches!(env.event, Event::TurnEnded { .. });
+        evs.push(env);
+        if ended {
+            break;
+        }
+    }
+    let item = evs
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::ItemStarted {
+                id,
+                kind: ItemKind::ToolCall { .. },
+            } => Some(id.clone()),
+            _ => None,
+        })
+        .unwrap();
+    let (asked, answered) = evs
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::PermissionResolved {
+                item: Some(i),
+                asked: Some(a),
+                ..
+            } if *i == item => Some((*a, e.created)),
+            _ => None,
+        })
+        .expect("the resolved permission names its tool call and when it asked");
+    assert!(answered - asked >= 50, "waited {}ms", answered - asked);
+    let waits: Vec<_> = crate::timeline::segments(&evs)
+        .into_iter()
+        .filter(|s| s.kind == crate::timeline::SegmentKind::Waiting)
+        .collect();
+    assert_eq!(waits.len(), 1);
+    assert_eq!(waits[0].item.as_deref(), Some(item.as_str()));
+}

@@ -608,9 +608,19 @@ pub fn forward(
                 card,
             });
         }
-        Event::PermissionResolved { id, decision } => {
+        Event::PermissionResolved {
+            id,
+            decision,
+            item: _,
+            asked,
+        } => {
             reg.unrelay(&id);
-            reg.emit(Event::PermissionResolved { id, decision });
+            reg.emit(Event::PermissionResolved {
+                id,
+                decision,
+                item: Some(item.clone()),
+                asked,
+            });
         }
         inner => reg.emit(Event::Subagent {
             item: item.clone(),

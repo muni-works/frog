@@ -478,6 +478,7 @@ impl Agent {
                 widget: None,
                 images: Vec::new(),
                 app: None,
+                tests: None,
             },
         });
     }

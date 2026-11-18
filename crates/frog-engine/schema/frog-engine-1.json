@@ -511,6 +511,13 @@
             "text": {
               "type": "string"
             },
+            "thought": {
+              "description": "The thought line (see [`crate::thought`]), on the delta where it changes: at most\nonce every 1.2 s. Absent on every other delta; a client keeps the last one it got.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "type": {
               "const": "reasoning",
               "type": "string"
@@ -1413,6 +1420,14 @@
         },
         {
           "properties": {
+            "asked": {
+              "description": "When the request was sent (unix ms); the envelope's `created` is when it was\nanswered. Together: the wait, for the turn's timeline. Absent in older logs and on\na withdrawal.",
+              "format": "int64",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
             "created": {
               "format": "int64",
               "type": "integer"
@@ -1426,6 +1441,13 @@
             },
             "id": {
               "type": "string"
+            },
+            "item": {
+              "description": "The tool call it gated (the request's `item`), so a log reader can place the wait\nwithout the request, which isn't kept. Absent in older logs and on a withdrawal.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "seq": {
               "format": "uint64",
@@ -1449,6 +1471,13 @@
         {
           "description": "The user answered (or dismissed) a [`Event::Question`].",
           "properties": {
+            "asked": {
+              "format": "int64",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
             "choices": {
               "items": {
                 "type": "string"
@@ -1465,6 +1494,13 @@
             },
             "id": {
               "type": "string"
+            },
+            "item": {
+              "description": "As on [`Event::PermissionResolved`]: the tool call that asked, and when (unix ms).",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "other": {
               "type": [
@@ -3601,6 +3637,64 @@
             "created"
           ],
           "type": "object"
+        },
+        {
+          "description": "The turn's output tokens so far, for the stats line: at most four times a second while\na call streams, and once when each call ends. While a call streams the count is\napproximate (`so_far`: show it as \"so far\", never as exact; see [`crate::pace`]); when\nthe call ends the provider's figure replaces it (`so_far` false). Live only: the\nfinished figure is `turn_ended`'s `usage.output_tokens`.",
+          "properties": {
+            "cached": {
+              "description": "Input tokens the turn has read from the provider's cache so far, for the stats\ntooltip. Only when a call ends (`so_far` false), from the provider's figure.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "created": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "event": {
+              "const": "output_tokens",
+              "type": "string"
+            },
+            "output": {
+              "description": "Every finished call's figure from the provider, plus the streaming call's count.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "seq": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session": {
+              "type": "string"
+            },
+            "slow": {
+              "description": "The streaming call is slow: over the last 5 s it streamed under a quarter of this\nmodel's usual rate (the median of its finished calls this session; none yet means\nnever slow). Only on `so_far` counts; absent means not slow.",
+              "type": "boolean"
+            },
+            "so_far": {
+              "description": "Part of `output` is counted from streamed pieces, not reported by the provider.",
+              "type": "boolean"
+            },
+            "turn": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "event",
+            "turn",
+            "output",
+            "seq",
+            "session",
+            "created"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -3827,6 +3921,14 @@
         },
         {
           "properties": {
+            "asked": {
+              "description": "When the request was sent (unix ms); the envelope's `created` is when it was\nanswered. Together: the wait, for the turn's timeline. Absent in older logs and on\na withdrawal.",
+              "format": "int64",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
             "decision": {
               "$ref": "#/$defs/Decision"
             },
@@ -3836,6 +3938,13 @@
             },
             "id": {
               "type": "string"
+            },
+            "item": {
+              "description": "The tool call it gated (the request's `item`), so a log reader can place the wait\nwithout the request, which isn't kept. Absent in older logs and on a withdrawal.",
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [
@@ -3848,6 +3957,13 @@
         {
           "description": "The user answered (or dismissed) a [`Event::Question`].",
           "properties": {
+            "asked": {
+              "format": "int64",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
             "choices": {
               "items": {
                 "type": "string"
@@ -3860,6 +3976,13 @@
             },
             "id": {
               "type": "string"
+            },
+            "item": {
+              "description": "As on [`Event::PermissionResolved`]: the tool call that asked, and when (unix ms).",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "other": {
               "type": [
@@ -5235,6 +5358,49 @@
             "event"
           ],
           "type": "object"
+        },
+        {
+          "description": "The turn's output tokens so far, for the stats line: at most four times a second while\na call streams, and once when each call ends. While a call streams the count is\napproximate (`so_far`: show it as \"so far\", never as exact; see [`crate::pace`]); when\nthe call ends the provider's figure replaces it (`so_far` false). Live only: the\nfinished figure is `turn_ended`'s `usage.output_tokens`.",
+          "properties": {
+            "cached": {
+              "description": "Input tokens the turn has read from the provider's cache so far, for the stats\ntooltip. Only when a call ends (`so_far` false), from the provider's figure.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "event": {
+              "const": "output_tokens",
+              "type": "string"
+            },
+            "output": {
+              "description": "Every finished call's figure from the provider, plus the streaming call's count.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "slow": {
+              "description": "The streaming call is slow: over the last 5 s it streamed under a quarter of this\nmodel's usual rate (the median of its finished calls this session; none yet means\nnever slow). Only on `so_far` counts; absent means not slow.",
+              "type": "boolean"
+            },
+            "so_far": {
+              "description": "Part of `output` is counted from streamed pieces, not reported by the provider.",
+              "type": "boolean"
+            },
+            "turn": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "event",
+            "turn",
+            "output"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -5373,6 +5539,22 @@
             "text": {
               "type": "string"
             },
+            "think_ms": {
+              "description": "How long the reasoning streamed, in ms: its first delta to the first answer text\nor tool call (`item_completed` comes only when the whole reply is in). Absent in\nolder logs.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "thoughts": {
+              "description": "The thought lines the thinking row showed while this streamed, in order, each with\nits paragraph's range in `text` (see [`crate::thought`]). Empty in older logs and\nfor reasoning that never showed a line.",
+              "items": {
+                "$ref": "#/$defs/ShownThought"
+              },
+              "type": "array"
+            },
             "type": {
               "const": "reasoning",
               "type": "string"
@@ -5457,6 +5639,17 @@
                 }
               ],
               "description": "Set for Present: validated blocks, ready to draw."
+            },
+            "tests": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TestRun"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Set for a Bash command whose output ends in a test runner's summary (cargo test,\npytest, go test -v, vitest, jest): the counts and failing names. Absent when the\noutput wasn't recognised with confidence, and in older logs (see `test_run`)."
             },
             "type": {
               "const": "tool_call",
@@ -6743,6 +6936,29 @@
         }
       ]
     },
+    "Pace": {
+      "description": "Output tokens per bucket over a turn, from its start: `tokens[i]` streamed in\n`[i * bucket_ms, (i + 1) * bucket_ms)`. Tokens per second in a bucket is\n`tokens[i] * 1000 / bucket_ms`. Trailing quiet buckets are dropped, so the last bucket is\nthe last one with output; the turn's length is `usage.timing.wall_ms`.",
+      "properties": {
+        "bucket_ms": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tokens": {
+          "items": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "bucket_ms",
+        "tokens"
+      ],
+      "type": "object"
+    },
     "PaneAction": {
       "description": "What the engine can ask a preview pane to do.",
       "enum": [
@@ -6953,6 +7169,39 @@
         }
       ]
     },
+    "ShownThought": {
+      "description": "One line the thinking row showed, as the completed reasoning item carries it.",
+      "properties": {
+        "end": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "ms": {
+          "description": "When it was shown, in ms after the item's first reasoning arrived.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "start": {
+          "description": "The paragraph it came from, as a half-open range into the item's `text`, in UTF-16 code\nunits (JavaScript string indices; Swift's `String.utf16` view).",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "text": {
+          "description": "The line, exactly as it was shown.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "start",
+        "end",
+        "ms"
+      ],
+      "type": "object"
+    },
     "Side": {
       "properties": {
         "label": {
@@ -7097,6 +7346,45 @@
         "tool_mode",
         "tier",
         "todos"
+      ],
+      "type": "object"
+    },
+    "TestRun": {
+      "description": "A test run's counts, as the completed command item carries them (`tests`).",
+      "properties": {
+        "failed": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "failed_names": {
+          "description": "The failing tests, as the runner names them, in its order. May be shorter than\n`failed` when the runner didn't print every name (or the output was cut); never longer.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "passed": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "runner": {
+          "description": "`cargo`, `pytest`, `go`, `vitest` or `jest`.",
+          "type": "string"
+        },
+        "total": {
+          "description": "Tests that ran: `passed + failed`. Skipped, ignored and filtered tests aren't counted.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "runner",
+        "passed",
+        "failed",
+        "total"
       ],
       "type": "object"
     },
@@ -7425,6 +7713,17 @@
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
+        },
+        "pace": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Pace"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Output tokens over the turn in fixed buckets, for the turn line's curve (see\n[`crate::pace`]). Absent when nothing streamed, and in every turn before it was kept:\nsuch a turn has no pace data."
         },
         "ran_on": {
           "anyOf": [

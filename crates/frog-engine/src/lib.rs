@@ -61,9 +61,13 @@ pub mod subagent;
 pub mod summary;
 #[cfg(test)]
 mod test_watchdog;
+pub mod test_run;
 mod text_filter;
 pub mod thinking;
+pub mod thought;
+pub mod timeline;
 pub mod next;
+pub mod pace;
 pub mod title;
 pub mod tools;
 pub mod widget;

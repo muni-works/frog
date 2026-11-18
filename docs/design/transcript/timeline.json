@@ -1,0 +1,1308 @@
+{
+ "about": "The turn's timeline (crates/frog-engine/src/timeline.rs, the reference). Each case: one turn's events in wire form (envelopes, as the session log keeps them) and the segments they make, in ms from turn_started's created, sorted by start, kind (thinking, tool, waiting, writing), item. Both apps compute segments from the events they hold and run these cases. All synthetic.",
+ "cases": [
+  {
+   "name": "thinking, then a reply",
+   "events": [
+    {
+     "seq": 1,
+     "session": "s",
+     "created": 1794900000000,
+     "event": "turn_started",
+     "turn": 1,
+     "input": "go"
+    },
+    {
+     "seq": 2,
+     "session": "s",
+     "created": 1794900000100,
+     "event": "item_started",
+     "id": "r1",
+     "kind": {
+      "type": "reasoning"
+     }
+    },
+    {
+     "seq": 3,
+     "session": "s",
+     "created": 1794900002100,
+     "event": "item_started",
+     "id": "m1",
+     "kind": {
+      "type": "message"
+     }
+    },
+    {
+     "seq": 4,
+     "session": "s",
+     "created": 1794900003000,
+     "event": "item_completed",
+     "id": "r1",
+     "item": {
+      "type": "reasoning",
+      "text": "The parser is slow.\n\n",
+      "think_ms": 2000
+     }
+    },
+    {
+     "seq": 5,
+     "session": "s",
+     "created": 1794900003000,
+     "event": "item_completed",
+     "id": "m1",
+     "item": {
+      "type": "message",
+      "text": "Done."
+     }
+    },
+    {
+     "seq": 6,
+     "session": "s",
+     "created": 1794900003100,
+     "event": "turn_ended",
+     "turn": 1,
+     "reason": {
+      "type": "complete"
+     },
+     "usage": {
+      "input_tokens": 10,
+      "output_tokens": 20,
+      "model_calls": 1
+     }
+    }
+   ],
+   "segments": [
+    {
+     "kind": "thinking",
+     "start_ms": 100,
+     "end_ms": 2100,
+     "item": "r1"
+    },
+    {
+     "kind": "writing",
+     "start_ms": 2100,
+     "end_ms": 3000,
+     "item": "m1"
+    }
+   ]
+  },
+  {
+   "name": "an older log's thinking runs until the item completed",
+   "events": [
+    {
+     "seq": 1,
+     "session": "s",
+     "created": 1794900000000,
+     "event": "turn_started",
+     "turn": 1,
+     "input": "go"
+    },
+    {
+     "seq": 2,
+     "session": "s",
+     "created": 1794900000100,
+     "event": "item_started",
+     "id": "r1",
+     "kind": {
+      "type": "reasoning"
+     }
+    },
+    {
+     "seq": 3,
+     "session": "s",
+     "created": 1794900002100,
+     "event": "item_started",
+     "id": "m1",
+     "kind": {
+      "type": "message"
+     }
+    },
+    {
+     "seq": 4,
+     "session": "s",
+     "created": 1794900003000,
+     "event": "item_completed",
+     "id": "r1",
+     "item": {
+      "type": "reasoning",
+      "text": "The parser is slow.\n\n"
+     }
+    },
+    {
+     "seq": 5,
+     "session": "s",
+     "created": 1794900003000,
+     "event": "item_completed",
+     "id": "m1",
+     "item": {
+      "type": "message",
+      "text": "Done."
+     }
+    },
+    {
+     "seq": 6,
+     "session": "s",
+     "created": 1794900003100,
+     "event": "turn_ended",
+     "turn": 1,
+     "reason": {
+      "type": "complete"
+     },
+     "usage": {
+      "input_tokens": 10,
+      "output_tokens": 20,
+      "model_calls": 1
+     }
+    }
+   ],
+   "segments": [
+    {
+     "kind": "thinking",
+     "start_ms": 100,
+     "end_ms": 3000,
+     "item": "r1"
+    },
+    {
+     "kind": "writing",
+     "start_ms": 2100,
+     "end_ms": 3000,
+     "item": "m1"
+    }
+   ],
+   "about": "Without think_ms the item's completion is the only end there is; it overstates the thinking."
+  },
+  {
+   "name": "think_ms past the item's completion is cut at the completion",
+   "events": [
+    {
+     "seq": 1,
+     "session": "s",
+     "created": 1794900000000,
+     "event": "turn_started",
+     "turn": 1,
+     "input": "go"
+    },
+    {
+     "seq": 2,
+     "session": "s",
+     "created": 1794900000100,
+     "event": "item_started",
+     "id": "r1",
+     "kind": {
+      "type": "reasoning"
+     }
+    },
+    {
+     "seq": 3,
+     "session": "s",
+     "created": 1794900001000,
+     "event": "item_completed",
+     "id": "r1",
+     "item": {
+      "type": "reasoning",
+      "text": "The parser is slow.\n\n",
+      "think_ms": 5000
+     }
+    },
+    {
+     "seq": 4,
+     "session": "s",
+     "created": 1794900001100,
+     "event": "turn_ended",
+     "turn": 1,
+     "reason": {
+      "type": "complete"
+     },
+     "usage": {
+      "input_tokens": 10,
+      "output_tokens": 20,
+      "model_calls": 1
+     }
+    }
+   ],
+   "segments": [
+    {
+     "kind": "thinking",
+     "start_ms": 100,
+     "end_ms": 1000,
+     "item": "r1"
+    }
+   ]
+  },
+  {
+   "name": "a tool call",
+   "events": [
+    {
+     "seq": 1,
+     "session": "s",
+     "created": 1794900000000,
+     "event": "turn_started",
+     "turn": 1,
+     "input": "go"
+    },
+    {
+     "seq": 2,
+     "session": "s",
+     "created": 1794900000100,
+     "event": "item_started",
+     "id": "r1",
+     "kind": {
+      "type": "reasoning"
+     }
+    },
+    {
+     "seq": 3,
+     "session": "s",
+     "created": 1794900000900,
+     "event": "item_completed",
+     "id": "r1",
+     "item": {
+      "type": "reasoning",
+      "text": "The parser is slow.\n\n",
+      "think_ms": 700
+     }
+    },
+    {
+     "seq": 4,
+     "session": "s",
+     "created": 1794900001000,
+     "event": "item_started",
+     "id": "t1",
+     "kind": {
+      "type": "tool_call",
+      "name": "Bash",
+      "arg": "x"
+     }
+    },
+    {
+     "seq": 5,
+     "session": "s",
+     "created": 1794900004000,
+     "event": "item_completed",
+     "id": "t1",
+     "item": {
+      "type": "tool_call",
+      "name": "Bash",
+      "arg": "x",
+      "input": {},
+      "outcome": "ok",
+      "output": "ok",
+      "display": null
+     }
+    },
+    {
+     "seq": 6,
+     "session": "s",
+     "created": 1794900004100,
+     "event": "turn_ended",
+     "turn": 1,
+     "reason": {
+      "type": "complete"
+     },
+     "usage": {
+      "input_tokens": 10,
+      "output_tokens": 20,
+      "model_calls": 1
+     }
+    }
+   ],
+   "segments": [
+    {
+     "kind": "thinking",
+     "start_ms": 100,
+     "end_ms": 800,
+     "item": "r1"
+    },
+    {
+     "kind": "tool",
+     "start_ms": 1000,
+     "end_ms": 4000,
+     "item": "t1"
+    }
+   ]
+  },
+  {
+   "name": "a permission wait is cut out of its tool",
+   "events": [
+    {
+     "seq": 1,
+     "session": "s",
+     "created": 1794900000000,
+     "event": "turn_started",
+     "turn": 1,
+     "input": "go"
+    },
+    {
+     "seq": 2,
+     "session": "s",
+     "created": 1794900001000,
+     "event": "item_started",
+     "id": "t1",
+     "kind": {
+      "type": "tool_call",
+      "name": "Bash",
+      "arg": "x"
+     }
+    },
+    {
+     "seq": 3,
+     "session": "s",
+     "created": 1794900006500,
+     "event": "permission_resolved",
+     "id": "p2",
+     "decision": "allow",
+     "item": "t1",
+     "asked": 1794900001500
+    },
+    {
+     "seq": 4,
+     "session": "s",
+     "created": 1794900007000,
+     "event": "item_completed",
+     "id": "t1",
+     "item": {
+      "type": "tool_call",
+      "name": "Bash",
+      "arg": "x",
+      "input": {},
+      "outcome": "ok",
+      "output": "ok",
+      "display": null
+     }
+    },
+    {
+     "seq": 5,
+     "session": "s",
+     "created": 1794900007100,
+     "event": "turn_ended",
+     "turn": 1,
+     "reason": {
+      "type": "complete"
+     },
+     "usage": {
+      "input_tokens": 10,
+      "output_tokens": 20,
+      "model_calls": 1
+     }
+    }
+   ],
+   "segments": [
+    {
+     "kind": "tool",
+     "start_ms": 1000,
+     "end_ms": 1500,
+     "item": "t1"
+    },
+    {
+     "kind": "waiting",
+     "start_ms": 1500,
+     "end_ms": 6500,
+     "item": "t1"
+    },
+    {
+     "kind": "tool",
+     "start_ms": 6500,
+     "end_ms": 7000,
+     "item": "t1"
+    }
+   ]
+  },
+  {
+   "name": "an older log's permission has no ask time and draws no wait",
+   "events": [
+    {
+     "seq": 1,
+     "session": "s",
+     "created": 1794900000000,
+     "event": "turn_started",
+     "turn": 1,
+     "input": "go"
+    },
+    {
+     "seq": 2,
+     "session": "s",
+     "created": 1794900001000,
+     "event": "item_started",
+     "id": "t1",
+     "kind": {
+      "type": "tool_call",
+      "name": "Bash",
+      "arg": "x"
+     }
+    },
+    {
+     "seq": 3,
+     "session": "s",
+     "created": 1794900006500,
+     "event": "permission_resolved",
+     "id": "p2",
+     "decision": "allow"
+    },
+    {
+     "seq": 4,
+     "session": "s",
+     "created": 1794900007000,
+     "event": "item_completed",
+     "id": "t1",
+     "item": {
+      "type": "tool_call",
+      "name": "Bash",
+      "arg": "x",
+      "input": {},
+      "outcome": "ok",
+      "output": "ok",
+      "display": null
+     }
+    },
+    {
+     "seq": 5,
+     "session": "s",
+     "created": 1794900007100,
+     "event": "turn_ended",
+     "turn": 1,
+     "reason": {
+      "type": "complete"
+     },
+     "usage": {
+      "input_tokens": 10,
+      "output_tokens": 20,
+      "model_calls": 1
+     }
+    }
+   ],
+   "segments": [
+    {
+     "kind": "tool",
+     "start_ms": 1000,
+     "end_ms": 7000,
+     "item": "t1"
+    }
+   ]
+  },
+  {
+   "name": "a question is a wait too",
+   "events": [
+    {
+     "seq": 1,
+     "session": "s",
+     "created": 1794900000000,
+     "event": "turn_started",
+     "turn": 1,
+     "input": "go"
+    },
+    {
+     "seq": 2,
+     "session": "s",
+     "created": 1794900000500,
+     "event": "item_started",
+     "id": "t1",
+     "kind": {
+      "type": "tool_call",
+      "name": "Ask",
+      "arg": "x"
+     }
+    },
+    {
+     "seq": 3,
+     "session": "s",
+     "created": 1794900009500,
+     "event": "question_resolved",
+     "id": "q2",
+     "choices": [
+      "Yes"
+     ],
+     "item": "t1",
+     "asked": 1794900000600
+    },
+    {
+     "seq": 4,
+     "session": "s",
+     "created": 1794900009600,
+     "event": "item_completed",
+     "id": "t1",
+     "item": {
+      "type": "tool_call",
+      "name": "Ask",
+      "arg": "x",
+      "input": {},
+      "outcome": "ok",
+      "output": "ok",
+      "display": null
+     }
+    },
+    {
+     "seq": 5,
+     "session": "s",
+     "created": 1794900009700,
+     "event": "turn_ended",
+     "turn": 1,
+     "reason": {
+      "type": "complete"
+     },
+     "usage": {
+      "input_tokens": 10,
+      "output_tokens": 20,
+      "model_calls": 1
+     }
+    }
+   ],
+   "segments": [
+    {
+     "kind": "tool",
+     "start_ms": 500,
+     "end_ms": 600,
+     "item": "t1"
+    },
+    {
+     "kind": "waiting",
+     "start_ms": 600,
+     "end_ms": 9500,
+     "item": "t1"
+    },
+    {
+     "kind": "tool",
+     "start_ms": 9500,
+     "end_ms": 9600,
+     "item": "t1"
+    }
+   ]
+  },
+  {
+   "name": "two waits in one tool",
+   "events": [
+    {
+     "seq": 1,
+     "session": "s",
+     "created": 1794900000000,
+     "event": "turn_started",
+     "turn": 1,
+     "input": "go"
+    },
+    {
+     "seq": 2,
+     "session": "s",
+     "created": 1794900000000,
+     "event": "item_started",
+     "id": "t1",
+     "kind": {
+      "type": "tool_call",
+      "name": "Bash",
+      "arg": "x"
+     }
+    },
+    {
+     "seq": 3,
+     "session": "s",
+     "created": 1794900002000,
+     "event": "permission_resolved",
+     "id": "p2",
+     "decision": "allow",
+     "item": "t1",
+     "asked": 1794900001000
+    },
+    {
+     "seq": 4,
+     "session": "s",
+     "created": 1794900005000,
+     "event": "permission_resolved",
+     "id": "p3",
+     "decision": "allow",
+     "item": "t1",
+     "asked": 1794900003000
+    },
+    {
+     "seq": 5,
+     "session": "s",
+     "created": 1794900006000,
+     "event": "item_completed",
+     "id": "t1",
+     "item": {
+      "type": "tool_call",
+      "name": "Bash",
+      "arg": "x",
+      "input": {},
+      "outcome": "ok",
+      "output": "ok",
+      "display": null
+     }
+    },
+    {
+     "seq": 6,
+     "session": "s",
+     "created": 1794900006000,
+     "event": "turn_ended",
+     "turn": 1,
+     "reason": {
+      "type": "complete"
+     },
+     "usage": {
+      "input_tokens": 10,
+      "output_tokens": 20,
+      "model_calls": 1
+     }
+    }
+   ],
+   "segments": [
+    {
+     "kind": "tool",
+     "start_ms": 0,
+     "end_ms": 1000,
+     "item": "t1"
+    },
+    {
+     "kind": "waiting",
+     "start_ms": 1000,
+     "end_ms": 2000,
+     "item": "t1"
+    },
+    {
+     "kind": "tool",
+     "start_ms": 2000,
+     "end_ms": 3000,
+     "item": "t1"
+    },
+    {
+     "kind": "waiting",
+     "start_ms": 3000,
+     "end_ms": 5000,
+     "item": "t1"
+    },
+    {
+     "kind": "tool",
+     "start_ms": 5000,
+     "end_ms": 6000,
+     "item": "t1"
+    }
+   ]
+  },
+  {
+   "name": "tools that ran together overlap",
+   "events": [
+    {
+     "seq": 1,
+     "session": "s",
+     "created": 1794900000000,
+     "event": "turn_started",
+     "turn": 1,
+     "input": "go"
+    },
+    {
+     "seq": 2,
+     "session": "s",
+     "created": 1794900001000,
+     "event": "item_started",
+     "id": "t1",
+     "kind": {
+      "type": "tool_call",
+      "name": "Task",
+      "arg": "x"
+     }
+    },
+    {
+     "seq": 3,
+     "session": "s",
+     "created": 1794900002000,
+     "event": "item_started",
+     "id": "t2",
+     "kind": {
+      "type": "tool_call",
+      "name": "Read",
+      "arg": "x"
+     }
+    },
+    {
+     "seq": 4,
+     "session": "s",
+     "created": 1794900003000,
+     "event": "item_completed",
+     "id": "t2",
+     "item": {
+      "type": "tool_call",
+      "name": "Read",
+      "arg": "x",
+      "input": {},
+      "outcome": "ok",
+      "output": "ok",
+      "display": null
+     }
+    },
+    {
+     "seq": 5,
+     "session": "s",
+     "created": 1794900005000,
+     "event": "item_completed",
+     "id": "t1",
+     "item": {
+      "type": "tool_call",
+      "name": "Task",
+      "arg": "x",
+      "input": {},
+      "outcome": "ok",
+      "output": "ok",
+      "display": null
+     }
+    },
+    {
+     "seq": 6,
+     "session": "s",
+     "created": 1794900005100,
+     "event": "turn_ended",
+     "turn": 1,
+     "reason": {
+      "type": "complete"
+     },
+     "usage": {
+      "input_tokens": 10,
+      "output_tokens": 20,
+      "model_calls": 1
+     }
+    }
+   ],
+   "segments": [
+    {
+     "kind": "tool",
+     "start_ms": 1000,
+     "end_ms": 5000,
+     "item": "t1"
+    },
+    {
+     "kind": "tool",
+     "start_ms": 2000,
+     "end_ms": 3000,
+     "item": "t2"
+    }
+   ]
+  },
+  {
+   "name": "a subagent's wait belongs to its Task call",
+   "events": [
+    {
+     "seq": 1,
+     "session": "s",
+     "created": 1794900000000,
+     "event": "turn_started",
+     "turn": 1,
+     "input": "go"
+    },
+    {
+     "seq": 2,
+     "session": "s",
+     "created": 1794900001000,
+     "event": "item_started",
+     "id": "t1",
+     "kind": {
+      "type": "tool_call",
+      "name": "Task",
+      "arg": "x"
+     }
+    },
+    {
+     "seq": 3,
+     "session": "s",
+     "created": 1794900004000,
+     "event": "permission_resolved",
+     "id": "p2",
+     "decision": "allow",
+     "item": "t1",
+     "asked": 1794900002000
+    },
+    {
+     "seq": 4,
+     "session": "s",
+     "created": 1794900008000,
+     "event": "item_completed",
+     "id": "t1",
+     "item": {
+      "type": "tool_call",
+      "name": "Task",
+      "arg": "x",
+      "input": {},
+      "outcome": "ok",
+      "output": "ok",
+      "display": null
+     }
+    },
+    {
+     "seq": 5,
+     "session": "s",
+     "created": 1794900008000,
+     "event": "turn_ended",
+     "turn": 1,
+     "reason": {
+      "type": "complete"
+     },
+     "usage": {
+      "input_tokens": 10,
+      "output_tokens": 20,
+      "model_calls": 1
+     }
+    }
+   ],
+   "segments": [
+    {
+     "kind": "tool",
+     "start_ms": 1000,
+     "end_ms": 2000,
+     "item": "t1"
+    },
+    {
+     "kind": "waiting",
+     "start_ms": 2000,
+     "end_ms": 4000,
+     "item": "t1"
+    },
+    {
+     "kind": "tool",
+     "start_ms": 4000,
+     "end_ms": 8000,
+     "item": "t1"
+    }
+   ]
+  },
+  {
+   "name": "a withdrawn card with no item or time draws nothing",
+   "events": [
+    {
+     "seq": 1,
+     "session": "s",
+     "created": 1794900000000,
+     "event": "turn_started",
+     "turn": 1,
+     "input": "go"
+    },
+    {
+     "seq": 2,
+     "session": "s",
+     "created": 1794900001000,
+     "event": "item_started",
+     "id": "t1",
+     "kind": {
+      "type": "tool_call",
+      "name": "Bash",
+      "arg": "x"
+     }
+    },
+    {
+     "seq": 3,
+     "session": "s",
+     "created": 1794900002000,
+     "event": "permission_resolved",
+     "id": "p2",
+     "decision": "allow"
+    },
+    {
+     "seq": 4,
+     "session": "s",
+     "created": 1794900003000,
+     "event": "item_completed",
+     "id": "t1",
+     "item": {
+      "type": "tool_call",
+      "name": "Bash",
+      "arg": "x",
+      "input": {},
+      "outcome": "ok",
+      "output": "ok",
+      "display": null
+     }
+    },
+    {
+     "seq": 5,
+     "session": "s",
+     "created": 1794900003000,
+     "event": "turn_ended",
+     "turn": 1,
+     "reason": {
+      "type": "complete"
+     },
+     "usage": {
+      "input_tokens": 10,
+      "output_tokens": 20,
+      "model_calls": 1
+     }
+    }
+   ],
+   "segments": [
+    {
+     "kind": "tool",
+     "start_ms": 1000,
+     "end_ms": 3000,
+     "item": "t1"
+    }
+   ]
+  },
+  {
+   "name": "a retried call's discarded items are dropped",
+   "events": [
+    {
+     "seq": 1,
+     "session": "s",
+     "created": 1794900000000,
+     "event": "turn_started",
+     "turn": 1,
+     "input": "go"
+    },
+    {
+     "seq": 2,
+     "session": "s",
+     "created": 1794900000100,
+     "event": "item_started",
+     "id": "r1",
+     "kind": {
+      "type": "reasoning"
+     }
+    },
+    {
+     "seq": 3,
+     "session": "s",
+     "created": 1794900000800,
+     "event": "item_started",
+     "id": "m1",
+     "kind": {
+      "type": "message"
+     }
+    },
+    {
+     "seq": 4,
+     "session": "s",
+     "created": 1794900000900,
+     "event": "items_discarded",
+     "ids": [
+      "r1",
+      "m1"
+     ]
+    },
+    {
+     "seq": 5,
+     "session": "s",
+     "created": 1794900001500,
+     "event": "item_started",
+     "id": "r2",
+     "kind": {
+      "type": "reasoning"
+     }
+    },
+    {
+     "seq": 6,
+     "session": "s",
+     "created": 1794900002500,
+     "event": "item_completed",
+     "id": "r2",
+     "item": {
+      "type": "reasoning",
+      "text": "The parser is slow.\n\n",
+      "think_ms": 1000
+     }
+    },
+    {
+     "seq": 7,
+     "session": "s",
+     "created": 1794900002600,
+     "event": "turn_ended",
+     "turn": 1,
+     "reason": {
+      "type": "complete"
+     },
+     "usage": {
+      "input_tokens": 10,
+      "output_tokens": 20,
+      "model_calls": 1
+     }
+    }
+   ],
+   "segments": [
+    {
+     "kind": "thinking",
+     "start_ms": 1500,
+     "end_ms": 2500,
+     "item": "r2"
+    }
+   ]
+  },
+  {
+   "name": "an item still open when the turn is cancelled ends with it",
+   "events": [
+    {
+     "seq": 1,
+     "session": "s",
+     "created": 1794900000000,
+     "event": "turn_started",
+     "turn": 1,
+     "input": "go"
+    },
+    {
+     "seq": 2,
+     "session": "s",
+     "created": 1794900001000,
+     "event": "item_started",
+     "id": "t1",
+     "kind": {
+      "type": "tool_call",
+      "name": "Bash",
+      "arg": "x"
+     }
+    },
+    {
+     "seq": 3,
+     "session": "s",
+     "created": 1794900004000,
+     "event": "turn_ended",
+     "turn": 1,
+     "reason": {
+      "type": "cancelled"
+     },
+     "usage": {
+      "input_tokens": 10,
+      "output_tokens": 20,
+      "model_calls": 1
+     }
+    }
+   ],
+   "segments": [
+    {
+     "kind": "tool",
+     "start_ms": 1000,
+     "end_ms": 4000,
+     "item": "t1"
+    }
+   ]
+  },
+  {
+   "name": "a live turn ends at its last event",
+   "events": [
+    {
+     "seq": 1,
+     "session": "s",
+     "created": 1794900000000,
+     "event": "turn_started",
+     "turn": 1,
+     "input": "go"
+    },
+    {
+     "seq": 2,
+     "session": "s",
+     "created": 1794900002000,
+     "event": "item_started",
+     "id": "m1",
+     "kind": {
+      "type": "message"
+     }
+    },
+    {
+     "seq": 3,
+     "session": "s",
+     "created": 1794900002500,
+     "event": "item_delta",
+     "id": "m1",
+     "delta": {
+      "type": "text",
+      "text": "Do"
+     }
+    }
+   ],
+   "segments": [
+    {
+     "kind": "writing",
+     "start_ms": 2000,
+     "end_ms": 2500,
+     "item": "m1"
+    }
+   ]
+  },
+  {
+   "name": "events before turn_started are ignored",
+   "events": [
+    {
+     "seq": 1,
+     "session": "s",
+     "created": 1794899995000,
+     "event": "model_changed",
+     "model": "cloud/x"
+    },
+    {
+     "seq": 2,
+     "session": "s",
+     "created": 1794899996000,
+     "event": "item_started",
+     "id": "old",
+     "kind": {
+      "type": "message"
+     }
+    },
+    {
+     "seq": 3,
+     "session": "s",
+     "created": 1794900000000,
+     "event": "turn_started",
+     "turn": 1,
+     "input": "go"
+    },
+    {
+     "seq": 4,
+     "session": "s",
+     "created": 1794900000100,
+     "event": "item_started",
+     "id": "m1",
+     "kind": {
+      "type": "message"
+     }
+    },
+    {
+     "seq": 5,
+     "session": "s",
+     "created": 1794900000400,
+     "event": "item_completed",
+     "id": "m1",
+     "item": {
+      "type": "message",
+      "text": "Done."
+     }
+    },
+    {
+     "seq": 6,
+     "session": "s",
+     "created": 1794900000500,
+     "event": "turn_ended",
+     "turn": 1,
+     "reason": {
+      "type": "complete"
+     },
+     "usage": {
+      "input_tokens": 10,
+      "output_tokens": 20,
+      "model_calls": 1
+     }
+    }
+   ],
+   "segments": [
+    {
+     "kind": "writing",
+     "start_ms": 100,
+     "end_ms": 400,
+     "item": "m1"
+    }
+   ]
+  },
+  {
+   "name": "segments that start together sort by kind",
+   "events": [
+    {
+     "seq": 1,
+     "session": "s",
+     "created": 1794900000000,
+     "event": "turn_started",
+     "turn": 1,
+     "input": "go"
+    },
+    {
+     "seq": 2,
+     "session": "s",
+     "created": 1794900000000,
+     "event": "item_started",
+     "id": "t1",
+     "kind": {
+      "type": "tool_call",
+      "name": "Bash",
+      "arg": "x"
+     }
+    },
+    {
+     "seq": 3,
+     "session": "s",
+     "created": 1794900000000,
+     "event": "item_started",
+     "id": "r1",
+     "kind": {
+      "type": "reasoning"
+     }
+    },
+    {
+     "seq": 4,
+     "session": "s",
+     "created": 1794900000500,
+     "event": "item_completed",
+     "id": "r1",
+     "item": {
+      "type": "reasoning",
+      "text": "The parser is slow.\n\n",
+      "think_ms": 400
+     }
+    },
+    {
+     "seq": 5,
+     "session": "s",
+     "created": 1794900000600,
+     "event": "item_completed",
+     "id": "t1",
+     "item": {
+      "type": "tool_call",
+      "name": "Bash",
+      "arg": "x",
+      "input": {},
+      "outcome": "ok",
+      "output": "ok",
+      "display": null
+     }
+    },
+    {
+     "seq": 6,
+     "session": "s",
+     "created": 1794900000600,
+     "event": "turn_ended",
+     "turn": 1,
+     "reason": {
+      "type": "complete"
+     },
+     "usage": {
+      "input_tokens": 10,
+      "output_tokens": 20,
+      "model_calls": 1
+     }
+    }
+   ],
+   "segments": [
+    {
+     "kind": "thinking",
+     "start_ms": 0,
+     "end_ms": 400,
+     "item": "r1"
+    },
+    {
+     "kind": "tool",
+     "start_ms": 0,
+     "end_ms": 600,
+     "item": "t1"
+    }
+   ]
+  },
+  {
+   "name": "a turn with no items has no segments",
+   "events": [
+    {
+     "seq": 1,
+     "session": "s",
+     "created": 1794900000000,
+     "event": "turn_started",
+     "turn": 1,
+     "input": "go"
+    },
+    {
+     "seq": 2,
+     "session": "s",
+     "created": 1794900000300,
+     "event": "turn_ended",
+     "turn": 1,
+     "reason": {
+      "type": "complete"
+     },
+     "usage": {
+      "input_tokens": 10,
+      "output_tokens": 20,
+      "model_calls": 1
+     }
+    }
+   ],
+   "segments": []
+  }
+ ]
+}
