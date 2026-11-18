@@ -53,8 +53,16 @@ export type ItemKind = { type: "message" } | { type: "reasoning" } | { type: "to
 
 export type Item =
   | { type: "message"; text: string }
-  /** `think_ms`: how long the reasoning streamed (engine #420); absent in older logs. */
-  | { type: "reasoning"; text: string; think_ms?: number }
+  | {
+      type: "reasoning";
+      text: string;
+      /** The thought lines the thinking row showed, in order, each with its paragraph's range in
+       * `text` (UTF-16 indices). Absent in older logs and when nothing was ever shown. */
+      thoughts?: ShownThought[];
+      /** How long the reasoning streamed, in ms (first reasoning delta to the first answer text
+       * or tool call). Absent in older logs: never derive it from the item's own times. */
+      think_ms?: number;
+    }
   | {
       type: "tool_call";
       name: string;
@@ -74,12 +82,21 @@ export type Item =
  * `failed`, never longer, and is absent when empty. */
 export interface TestRun { runner: string; passed: number; failed: number; total: number; failed_names?: string[] }
 
+/** thought.rs `ShownThought`: a line the thinking row showed, its paragraph `[start, end)` in the
+ * reasoning text, and when it showed (ms after the item's first reasoning). */
+export interface ShownThought { text: string; start: number; end: number; ms: number }
+
+/** pace.rs `Pace`: output tokens streamed in each `bucket_ms` from the turn's start. */
+export interface Pace { bucket_ms: number; tokens: number[] }
+
 /** widget.rs `Widget`: a Visualize result. `html` is the sandboxed document to load as is. */
 export interface Widget { title: string; code: string; html: string }
 
 export type Delta =
   | { type: "text"; text: string }
-  | { type: "reasoning"; text: string }
+  /** `thought`: the thinking row's line, on the delta where it changes (at most every 1.2 s).
+   * Absent on every other delta: keep the last one. Shown verbatim. */
+  | { type: "reasoning"; text: string; thought?: string }
   | { type: "output"; text: string }
   | { type: "image_preview" };
 
@@ -120,6 +137,8 @@ export interface TurnUsage {
   timing?: { wall_ms: number; prefill_ms: number; decode_ms: number; think_ms?: number; tool_ms: number } | null;
   /** Who served a Frog Cloud turn: `frog` (its own GPUs) or a third party. Absent when unknown. */
   served_by?: ServedBy | null;
+  /** Output tokens over the turn in buckets, for the turn line's curve. Absent: no pace data. */
+  pace?: Pace | null;
 }
 
 /** protocol.rs `ServedBy`. */
@@ -139,7 +158,8 @@ export type Event =
   /** A finished tool call's one-line gist, from the engine's side-model. Durable. */
   | { event: "item_gisted"; item: string; gist: string }
   | { event: "permission_request"; id: string; item: string; name: string; arg: string; always: string; preview?: FileDiff; reason?: string }
-  | { event: "permission_resolved"; id: string; decision: Decision }
+  /** `item` and `asked` (unix ms) place the wait on the turn's timeline; absent in older logs. */
+  | { event: "permission_resolved"; id: string; decision: Decision; item?: string; asked?: number }
   | { event: "titled"; title: string }
   | { event: "compacted"; tokens_before: number; tokens_after: number }
   | { event: "compaction_failed"; detail?: string }
@@ -147,7 +167,7 @@ export type Event =
   | { event: "next_suggested"; turn: number; text: string; act?: boolean }
   | { event: "status"; model: string; mode: Mode; context_tokens: number | null; context_window: number; todos?: Todo[]; vision?: boolean; tokens_per_sec?: number | null }
   | { event: "question"; id: string; item: string; question: string; options: { label: string; detail?: string }[]; multi?: boolean; allow_other?: boolean }
-  | { event: "question_resolved"; id: string; choices?: string[]; other?: string }
+  | { event: "question_resolved"; id: string; choices?: string[]; other?: string; item?: string; asked?: number }
   | { event: "elicitation"; id: string; server: string; message: string; schema?: ElicitSchema; url?: string }
   | { event: "elicitation_done"; id: string }
   | { event: "pane_opened"; id: string; kind: "terminal" | "preview"; title: string; cwd?: string; url?: string }
@@ -162,7 +182,12 @@ export type Event =
   | { event: "model_changed"; model: string }
   | { event: "mode_changed"; mode: Mode }
   | { event: "error"; message?: string }
-  | { event: "idle" };
+  | { event: "idle" }
+  /** The turn's output tokens so far, for the stats line (live only, at most 4 a second).
+   * `so_far`: part of it is counted from streamed pieces, so never show it as exact. `slow` (#426,
+   * only on so_far counts): the call is slow; say so, never compute it. `cached` (#426, only when a
+   * call ends): input tokens read from cache this turn so far. */
+  | { event: "output_tokens"; turn: number; output: number; so_far?: boolean; slow?: boolean; cached?: number };
 
 export type Envelope = { seq: number; session: string; created: number } & Event;
 

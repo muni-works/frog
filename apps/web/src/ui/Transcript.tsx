@@ -10,6 +10,7 @@ import { endError } from '../store'
 import { TurnFooter } from './TurnFooter'
 import { WidgetCard } from './Widget'
 import { foldRuns, foldTime, lineOf, opensItself, rememberOpen, thoughtLabel, type Step } from './rows'
+import { LiveContext, LiveTail, ThinkingLine, type LiveInfo } from './LiveRow'
 
 // Draws a folded Thread: the user's message, tool lines, "Decided" steps (reasoning items),
 // streamed replies, and a diff card per edit with Allow ⌘↩ / Deny ⌘. while it waits.
@@ -222,21 +223,6 @@ function foldedThought(entries: Entry[], n: number): boolean {
   return entries.slice(a, b + 1).every((x) => x.kind === 'reasoning' && x.done && x.text.trim().length <= 200 && !x.text.trim().includes('\n\n'))
 }
 
-function ThoughtLine({ text, label }: { text: string; label: string }) {
-  const [open, setOpen] = useState(false)
-  return (
-    <div className="line-row thought" data-row="line" data-kind="thought">
-      <div className="line-plate">
-        <button type="button" className="line" aria-expanded={open} onClick={() => setOpen(!open)}>
-          <span className="line-mark chev" aria-hidden="true">›</span>
-          <span className="line-verb">{label}</span>
-        </button>
-      </div>
-      {open && <div className="thought-body">{text}</div>}
-    </div>
-  )
-}
-
 export type DecideOpts = { always?: boolean; note?: string }
 type Decide = (allow: boolean, opts?: DecideOpts) => void
 
@@ -316,8 +302,13 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
     onShowChange: onShowChange ? (p) => latest.current.onShowChange?.(p) : undefined,
   }), [])
   const has = { retry: !!onRetry, edit: !!onEdit, cont: !!onContinue }
+  // The live row's fast-changing inputs, through context so the memoized turns don't redraw.
+  const live = useMemo<LiveInfo>(() => ({
+    startedAt: thread.startedAt, live: thread.live ?? null, pulse: thread.pulse ?? 0, firstOutputAt: thread.firstOutputAt ?? null,
+    askedAt: thread.askedAt ?? null, activity: thread.activity?.text ?? null, waitingElsewhere: !!thread.elicitation,
+  }), [thread.startedAt, thread.live, thread.pulse, thread.firstOutputAt, thread.askedAt, thread.activity, thread.elicitation])
   return (
-    <>
+    <LiveContext.Provider value={live}>
       {(thread.marks ?? []).filter((m) => m.after === 0).map((m, i) => <Mark key={`m0-${i}`} m={m} />)}
       {thread.turns.map((turn, ti) => (<Fragment key={`${ti}-${turn.turn}`}>
         <TurnView turn={turn} live={ti === lastIdx} ask={ti === lastIdx ? thread.ask : null} question={ti === lastIdx ? thread.question : null}
@@ -328,9 +319,6 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
         <QuestionCard q={thread.question} onAnswer={onAnswer} />
       )}
       {thread.elicitation && <ElicitationCard e={thread.elicitation} onReply={onElicit} />}
-      {thread.running && thread.activity && !thread.ask && !thread.question && !thread.elicitation && (
-        <div className={`thinking${thread.activity.warn ? ' warn' : ''}`} role="status"><span className="thinking-dot" aria-hidden="true" />{thread.activity.text}</div>
-      )}
       {outbox.map((m) => (
         <div key={`out-${m.id}`} className="turn">
           <div className={`me${m.state === 'failed' ? ' failed' : ''}`}>
@@ -346,7 +334,7 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
           {m.state === 'failed' && <div className="me-fail">Frog didn't pick this up · <button type="button" onClick={() => onResend?.(m.id)}>Try again</button></div>}
         </div>
       ))}
-    </>
+    </LiveContext.Provider>
   )
 }
 
@@ -380,10 +368,23 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
   // One entry as its row. `data-row` says what it is (prose, line, box), and the gaps between
   // rows come from that alone (transcript.css): lines touch, prose to lines is `activity`, a box
   // is a `block` from anything.
+  // The engine's quiet-call question (#426) is anchored on the reasoning or message streaming: the
+  // card goes after that entry's own row (none while it's the live row), a block like any card.
   const draw = (e: Entry, entries: Entry[], n: number): ReactNode => {
-    if (e.kind === 'reasoning' && foldedThought(entries, n)) return null
-    // An empty thought has nothing to open, and a blank reply nothing to read: neither draws.
-    if (e.kind === 'reasoning') return e.text.trim() ? <ThoughtLine text={e.text} label={thoughtLabel(e)} /> : null
+    if (question?.item === e.id && e.kind !== 'tool') return (
+      <>{drawOne(e, entries, n)}<div data-row="box"><QuestionCard q={question} onAnswer={cb.onAnswer} /></div></>
+    )
+    return drawOne(e, entries, n)
+  }
+  const drawOne = (e: Entry, entries: Entry[], n: number): ReactNode => {
+    if (e.kind === 'reasoning') {
+      // While it thinks, the live row is the think (LiveRow); it settles here as one line.
+      if (!e.done && live && running) return null
+      // An older log has no length: a short scratch thought alone between replies folds away.
+      if (e.thinkMs == null && !e.thoughts && foldedThought(entries, n)) return null
+      // An empty thought has nothing to open, and a blank reply nothing to read: neither draws.
+      return e.text.trim() ? <ThinkingLine e={e} label={thoughtLabel(e, turn.reason?.type === 'cancelled' ? turn.endAt : undefined)} /> : null
+    }
     if (e.kind === 'message' && e.done && !e.text.trim()) return null
     if (e.kind === 'message') return <div className="say" data-row="prose"><Markdown text={e.text} />{!e.done && <span className="caret" />}</div>
     if (question?.item === e.id) return <div data-row="box"><QuestionCard q={question} onAnswer={cb.onAnswer} /></div>
@@ -396,6 +397,8 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
     )
     if (asking) return <div data-row="box"><AskCard ask={asking} onDecide={cb.onDecide} /></div>
     if (e.widget && e.outcome === 'ok') return <div data-row="box"><WidgetCard widget={e.widget} onPrompt={cb.onPrompt} /></div>
+    // A step still running is the live row ("Editing src/retry.rs"); it becomes a line when done.
+    if (!e.done && live && running) return null
     return <ToolLine e={e} diff={diff} onShowChange={cb.onShowChange} />
   }
   return (
@@ -429,9 +432,11 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
           answer={[...turn.entries].reverse().find((e) => e.kind === 'message')?.text ?? ''}
           onRetry={live && !running && hasRetry ? cb.onRetry : undefined} />
       )}
+      {live && running && <LiveTail entries={turn.entries} waiting={!!ask || !!question} />}
       </div>
       {/* How the turn ended stays with the turn: stopping a later one doesn't clear it. */}
-      {turn.reason?.type === 'cancelled' && <div className="turn-note">Stopped</div>}
+      {/* A think stopped mid-way already says so on its own line ("Stopped after 12s"). */}
+      {turn.reason?.type === 'cancelled' && !(turn.entries.at(-1)?.kind === 'reasoning' && !turn.entries.at(-1)?.done) && <div className="turn-note">Stopped</div>}
       {/* A denied step ends the turn: say so in words (the engine's own sentence when it sends one). */}
       {endNote(turn.reason) && <div className="det wrap turn-note">{endNote(turn.reason)}</div>}
       {/* Any other ending that isn't a finished answer says so, never silence. */}
