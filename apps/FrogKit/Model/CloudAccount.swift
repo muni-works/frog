@@ -26,6 +26,12 @@ final class CloudAccount {
     static let origin = URL(string: "https://api.frog.toys")!
     #endif
 
+    #if DEBUG
+    /// Flow tests: never read the login Keychain (the test host shares the developer's), so the
+    /// only key is `keyProvider`'s.
+    nonisolated(unsafe) static var noKeychain = false
+    #endif
+
     struct Window: Decodable, Hashable {
         let kind: String
         let used: Double
