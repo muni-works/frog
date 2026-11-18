@@ -65,7 +65,7 @@ struct ProfileRows: View {
                 SettingsRow("Frog Cloud") { ProgressView().controlSize(.small) }
             }
         }
-        .task { await account.refresh() }
+        .task { guard SettingsBindings.loads else { return }; await account.refresh() }
     }
 
     /// Forgets this Mac's Frog Cloud key, as signing out on the web forgets the browser's.
@@ -152,7 +152,7 @@ struct DevicesRows: View {
                     }
                 }
             }
-            .task { await load() }
+            .task { guard SettingsBindings.loads else { return }; await load() }
         }
     }
 
@@ -315,6 +315,7 @@ struct CreditHistoryRows: View {
             }
         }
         .task(id: stamp.value) {
+            guard SettingsBindings.loads else { return }
             guard account.signedIn else { return }
             rows = (try? await account.history()) ?? []
         }
@@ -342,7 +343,7 @@ struct PricesRows: View {
                 Text(row.description ?? "").font(.frog(size: 12)).foregroundStyle(Tokens.textTertiary).padding(.top, 4)
             }
         }
-        .task { await store.loadCatalog() }
+        .task { guard SettingsBindings.loads else { return }; await store.loadCatalog() }
     }
 
     private func per(_ d: Double?) -> String { d.map { String(format: "$%.2f", $0) } ?? "—" }

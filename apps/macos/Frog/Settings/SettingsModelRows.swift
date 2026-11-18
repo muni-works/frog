@@ -32,7 +32,7 @@ struct DefaultModelRow: View {
                 ForEach(ready, id: \.spec) { m in Button(m.name) { defaultModel = m.spec } }
             }
         }
-        .task { models = await Models.load() }
+        .task { guard SettingsBindings.loads else { return }; models = await Models.load() }
     }
 }
 
@@ -94,7 +94,7 @@ struct FrogCloudRows: View {
                 }
             }
         }
-        .task { await account.ensureKey(); await account.refresh() }
+        .task { guard SettingsBindings.loads else { return }; await account.ensureKey(); await account.refresh() }
     }
 }
 
@@ -130,7 +130,7 @@ struct OtherCloudsRows: View {
             }
             }
         }
-        .task { await store.load() }
+        .task { guard SettingsBindings.loads else { return }; await store.load() }
         .sheet(item: $keyFor) { KeySheet(provider: $0) }
         .sheet(item: $choosing) { CatalogSheet(provider: $0) }
     }
@@ -164,7 +164,7 @@ struct ServersRows: View {
             }
             }
         }
-        .task { await store.load(); await store.probe() }
+        .task { guard SettingsBindings.loads else { return }; await store.load(); await store.probe() }
         .sheet(isPresented: $adding) { ServerSheet { Task { await store.probe() } } }
     }
 }
@@ -379,7 +379,7 @@ struct EnergyRows: View {
                 .font(.frog(size: 12)).padding(.top, 8)
         }
         // The session logs are this Mac's; a snapshot's own stats stay as they were made.
-        .task { if stats === ModelStats.shared { await stats.backfillEnergy() } }
+        .task { guard SettingsBindings.loads else { return }; if stats === ModelStats.shared { await stats.backfillEnergy() } }
     }
 
     private func name(_ spec: String) -> String { ModelIdentity.of(spec, in: []).name }
