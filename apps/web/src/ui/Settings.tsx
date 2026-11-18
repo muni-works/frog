@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { notifyOn, notifySupported, setNotify } from '../alerts'
 import { billingHistory, billingPortal, createKey, CouponError, firstName, listKeys, PLANS, portalErrorMessage, redeemCoupon, revokeKey, TOP_UPS, type Account, type CreditRow, type KeyInfo, type Provider } from '../auth'
 import { friendly } from '../cloud/client'
-import { canPull, displayName, memoryLine, runningLine, type Machine } from '../machines'
+import { canPull, catalogModel, displayName, memoryLine, runningLine, usesLine, type Machine } from '../machines'
 import { modelName, placeColor, usdPerM, type Model } from '../models'
 import { savedTheme, SECTIONS, setTheme, THEMES, type Section, type Theme } from '../settings'
 import { DownloadAppChip } from './DownloadChip'
@@ -398,7 +398,10 @@ function MachinePage({ machine: d, machines, onBack }: { machine: Machine; machi
       {d.models.map((m) => (
         <div key={m.hash} className="set-row">
           <span className="radio" aria-hidden="true" style={{ borderColor: m.loaded ? placeColor('local') : 'var(--line-strong)' }}>{m.loaded && <span style={{ background: placeColor('local') }} />}</span>
-          <div style={{ flex: 1 }}>{displayName(m.name)}{m.quant && <span className="det" style={{ marginLeft: 6 }}>{m.quant}</span>}</div>
+          <div style={{ flex: 1 }} title={[catalogModel(m.id)?.source.repo ?? m.id, m.quant].filter(Boolean).join(' · ')}>
+            {displayName(m.id || m.name)}
+            {catalogModel(m.id) && <div className="det">{usesLine(catalogModel(m.id)!)}</div>}
+          </div>
           {m.loaded && d.decode ? <span className="det">{Math.round(d.decode)} tok/s</span> : null}
           {m.loaded && <DownloadAppChip label="Stop it in the Mac app" machines={machines} />}
           {!m.loaded && canPull() && <button type="button" className="f-btn f-btn--bordered f-btn--small" disabled>Delete</button>}

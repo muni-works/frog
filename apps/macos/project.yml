@@ -36,6 +36,10 @@ targets:
         type: folder
         buildPhase: resources
         group: Docs
+      # The local model catalog (catalog/local-models.json): the engine and the web read it too.
+      - path: ../../catalog/local-models.json
+        buildPhase: resources
+        group: Catalog
       # Shared with the iOS app and its extensions (see FrogKit/README.md).
       - path: ../FrogKit
         excludes: ["README.md"]

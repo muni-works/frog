@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { displayName, machineModels, memoryLine, places, runningLine, tag, type Machine } from '../src/machines'
+import { catalogModel, displayName, localCatalog, machineModels, memoryLine, places, runningLine, tag, usesLine, type Machine } from '../src/machines'
+import { modelName } from '../src/models'
 
 const mac: Machine = { id: 'this-mac', name: 'studio', thisMac: true, hardware: 'M4 Max · 64 GB unified', online: true, model: null, totalBytes: 64 * 2 ** 30, freeBytes: 40 * 2 ** 30,
   models: [{ id: 'mlx-community/Qwen3-8B-4bit', name: 'Qwen3-8B-4bit', hash: 'aaaaaaaaaaaa11', loaded: false }] }
@@ -25,9 +26,18 @@ test('offline machines offer nothing', () => {
 })
 
 test('lines speak tok/s and memory', () => {
-  assert.equal(runningLine(mew), 'Qwen3-4B · 58 tok/s')
+  assert.equal(runningLine(mew), 'Qwen3 4B · 58 tok/s')
   assert.equal(runningLine(mac), 'idle')
   assert.equal(runningLine({ ...mew, online: false }), 'offline')
   assert.equal(memoryLine(mew), '18 GB of 24 GB used')
-  assert.equal(displayName('mlx-community/Qwen3-8B-MLX-4bit'), 'Qwen3-8B')
+  assert.equal(displayName('mlx-community/Qwen3-8B-MLX-4bit'), 'Qwen3 8B')
+})
+
+test('names come from the shared catalog, as on the Mac', () => {
+  assert.equal(displayName('mlx-community/Qwen3-32B-4bit'), 'Qwen3 32B')
+  assert.deepEqual(machineModels([mac, mew]).map((r) => r.name), ['Qwen3 4B', 'Qwen3 8B'])
+  const q32 = catalogModel('mlx-community/Qwen3-32B-4bit')!
+  assert.equal(usesLine(q32), 'Coding, uses tools, reasons · 32K context')
+  // Frog Cloud's models carry Frog Cloud's names.
+  assert.deepEqual(localCatalog.filter((m) => m.cloud).map((m) => modelName(m.cloud!)), localCatalog.filter((m) => m.cloud).map((m) => m.name))
 })

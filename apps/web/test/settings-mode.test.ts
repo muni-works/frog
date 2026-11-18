@@ -216,7 +216,7 @@ test("Models: the machines list and a machine page, and Frog Cloud's credit", as
   const p = await signedIn("/settings/models");
   assert.match(shownText(page(p)!), /Machines mew .*RTX 3090.*Frog Cloud Account .*Credit \$12\.78/);
   await click(find(p, (n) => n.type === "button" && hasClass("set-machine")(n)));
-  assert.match(shownText(page(p)!), /‹ Models mew Status Ready Hardware RTX 3090 · 24 GB VRAM .*Qwen3-4B .*58 tok\/s/);
+  assert.match(shownText(page(p)!), /‹ Models mew Status Ready Hardware RTX 3090 · 24 GB VRAM .*Qwen3 4B .*58 tok\/s/);
   p.unmount();
 });
 

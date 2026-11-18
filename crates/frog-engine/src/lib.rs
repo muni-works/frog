@@ -36,6 +36,7 @@ pub mod message;
 pub mod model_policy;
 pub mod models;
 pub mod named_files;
+pub mod local_models;
 pub mod nodes;
 pub mod open_pr;
 pub mod panes;
