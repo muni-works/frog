@@ -37,13 +37,45 @@ extension FocusedValues {
     @Entry var frogWindow: FrogWindow?
 }
 
+#if DEBUG
+/// Flow tests: the window the menu bar acts on when no window is focused. A test host never has
+/// a key window (it stays in the background), so `@FocusedValue` is nil there; a flow test puts
+/// the hosted window's own `FrogWindow` here, and the menu bar's real items act on it.
+@MainActor
+final class StagedWindow: ObservableObject {
+    static let shared = StagedWindow()
+    /// The panes of the window a flow test hosts: that window stages itself here (any other
+    /// WorkspaceView alive in the test host doesn't).
+    var capturing: ObjectIdentifier?
+    @Published var window: FrogWindow?
+
+    /// What the menu bar reads from a window's offer, as one comparable value: the window
+    /// re-stages itself only when this changes.
+    static func key(_ w: FrogWindow) -> String {
+        [String(describing: ObjectIdentifier(w.workspace)), String(describing: ObjectIdentifier(w.state)),
+         "\(w.sessionsShown)", "\(w.changesShown)", "\(w.maximized)", "\(w.split != nil)", "\(w.closePane != nil)",
+         w.workspace.conversation.map { String(describing: ObjectIdentifier($0)) } ?? "-",
+         w.sidebarOrder.map(\.id).joined(separator: ",")].joined(separator: "|")
+    }
+}
+#endif
+
 /// The menu bar. Everything the app can do lives here with its shortcut, acting on the
 /// focused window, so the app is fully drivable from the keyboard and the menus are the
 /// reference for what exists.
 struct FrogCommands: Commands {
-    @FocusedValue(\.frogWindow) private var window
+    @FocusedValue(\.frogWindow) private var focusedWindow
+    #if DEBUG
+    @ObservedObject private var staged = StagedWindow.shared
+    #endif
     @Environment(\.openWindow) private var openWindow
     @AppStorage("compactSidebar") private var compactSidebar = false
+
+    #if DEBUG
+    private var window: FrogWindow? { focusedWindow ?? staged.window }
+    #else
+    private var window: FrogWindow? { focusedWindow }
+    #endif
 
     private var conversation: Conversation? { window?.workspace.conversation }
 

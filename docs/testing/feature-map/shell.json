@@ -49,8 +49,11 @@
           ],
           "existing_tests_v070": [],
           "coverage_v070": "none",
-          "automatable": "hard",
-          "why_hard": "A SwiftUI .alert with a TextField (or a confirmationDialog) isn't reachable from an offscreen hosting view; needs XCUITest or a seam that sets the private @State."
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/ConversationFlowTests.swift:test_rename_from_title"
+          ],
+          "automatable_v070": "hard"
         },
         {
           "id": "archive-from-title",
@@ -88,8 +91,11 @@
           ],
           "existing_tests_v070": [],
           "coverage_v070": "none",
-          "automatable": "hard",
-          "why_hard": "A SwiftUI .alert with a TextField (or a confirmationDialog) isn't reachable from an offscreen hosting view; needs XCUITest or a seam that sets the private @State."
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/ConversationFlowTests.swift:test_delete_from_title"
+          ],
+          "automatable_v070": "hard"
         },
         {
           "id": "delete-cancel",
@@ -105,8 +111,11 @@
           ],
           "existing_tests_v070": [],
           "coverage_v070": "none",
-          "automatable": "hard",
-          "why_hard": "A SwiftUI .alert with a TextField (or a confirmationDialog) isn't reachable from an offscreen hosting view; needs XCUITest or a seam that sets the private @State."
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/FlowDriverTests.swift:test_delete_cancel"
+          ],
+          "automatable_v070": "hard"
         }
       ]
     },
@@ -1380,7 +1389,10 @@
           ],
           "existing_tests_v070": [],
           "coverage_v070": "none",
-          "automatable": "yes"
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/CloudFlowTests.swift:test_see_low_credit"
+          ]
         }
       ]
     },
@@ -1864,7 +1876,10 @@
           ],
           "existing_tests_v070": [],
           "coverage_v070": "none",
-          "automatable": "yes"
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/ConversationFlowTests.swift:test_interrupt_shortcut"
+          ]
         }
       ]
     },
@@ -2108,7 +2123,10 @@
             "FrogTests/ComposerReducerTests.swift:testEverySharedCase"
           ],
           "coverage_v070": "unit",
-          "automatable": "yes"
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/ConversationFlowTests.swift:test_pick_mode_from_chip"
+          ]
         },
         {
           "id": "confirm-yolo",
@@ -2126,7 +2144,10 @@
             "FrogTests/ComposerReducerTests.swift:testEverySharedCase"
           ],
           "coverage_v070": "unit",
-          "automatable": "yes"
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/ConversationFlowTests.swift:test_confirm_yolo"
+          ]
         },
         {
           "id": "mode-from-menu-bar",
@@ -2143,7 +2164,11 @@
           ],
           "existing_tests_v070": [],
           "coverage_v070": "none",
-          "automatable": "yes"
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/ConversationFlowTests.swift:test_mode_from_menu_bar",
+            "Flows/ConversationFlowTests.swift:test_mode_from_menu_bar__yoloAsksFirst"
+          ]
         }
       ]
     },
@@ -2282,7 +2307,10 @@
           ],
           "existing_tests_v070": [],
           "coverage_v070": "none",
-          "automatable": "yes"
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/ConversationFlowTests.swift:test_mention_a_file"
+          ]
         },
         {
           "id": "mention-from-plus-menu",
@@ -3109,7 +3137,12 @@
           "needs": [],
           "existing_tests_v070": [],
           "coverage_v070": "none",
-          "automatable": "yes"
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/FlowDriverTests.swift:test_open_palette",
+            "Flows/FlowDriverTests.swift:test_open_palette__fromMenuBar",
+            "Flows/FlowDriverTests.swift:test_open_palette__shortcut"
+          ]
         },
         {
           "id": "filter-and-run",
@@ -3170,7 +3203,11 @@
           ],
           "existing_tests_v070": [],
           "coverage_v070": "none",
-          "automatable": "yes"
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/ConversationFlowTests.swift:test_mode_or_model_from_palette",
+            "Flows/ConversationFlowTests.swift:test_mode_or_model_from_palette__yoloAsksFirst"
+          ]
         },
         {
           "id": "session-actions-from-palette",
@@ -3202,7 +3239,10 @@
           ],
           "existing_tests_v070": [],
           "coverage_v070": "none",
-          "automatable": "yes"
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/FlowDriverTests.swift:test_toggle_changes_from_palette"
+          ]
         },
         {
           "id": "docs-from-palette",

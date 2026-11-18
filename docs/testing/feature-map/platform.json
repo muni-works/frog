@@ -1919,8 +1919,11 @@
           ],
           "existing_tests_v070": [],
           "coverage_v070": "none",
-          "automatable": "hard",
-          "why_hard": "CloudAccount.origin (/v1/me, /v1/auth/link, /v1/billing/*) and the sign-in code exchange are hard-coded to https://api.frog.toys with URLSession.shared, so there's no seam to fake the account. Only the gateway (CloudGateway) can be redirected, with FROG_GATEWAY. The loopback return could be driven (CloudSignIn.openBrowser), but the exchange can't. FlushSnapshotTests renders only the signed-in footer from a staged account, not the sign-in."
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/CloudFlowTests.swift:test_sign_in_from_footer"
+          ],
+          "automatable_v070": "hard"
         },
         {
           "id": "sign-in-with-google",
@@ -1957,8 +1960,11 @@
             "FrogTests/SilentFailureTests.swift:testSignInCopy"
           ],
           "coverage_v070": "unit",
-          "automatable": "hard",
-          "why_hard": "CloudSignIn.run's cancel is tested with openBrowser stubbed. The footer and Billing button states need a UI driver."
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/CloudFlowTests.swift:test_cancel_sign_in"
+          ],
+          "automatable_v070": "hard"
         },
         {
           "id": "sign-in-times-out",
@@ -2183,8 +2189,11 @@
           ],
           "existing_tests_v070": [],
           "coverage_v070": "none",
-          "automatable": "hard",
-          "why_hard": "CloudGateway.origin can be pointed at a local gateway with FROG_GATEWAY (and FROG_GATEWAY_KEY for the token), but it's a static let read from the test host's environment, and no mock gateway ships with the Mac tests (the web's vendored mock would need starting and lacks some routes). Workspace.runInCloud and openCloud have no tests. ComposerViewTests.testNewConversationOffersTheLocationPicker only checks that the location chip exists (composer agent's area)."
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/CloudFlowTests.swift:test_start_cloud_session_on_repo"
+          ],
+          "automatable_v070": "hard"
         },
         {
           "id": "cloud-session-errors",

@@ -426,6 +426,7 @@ struct ModeMenu: View {
                     }
                     .padding(.vertical, 6)
                 }
+                .accessibilityIdentifier("mode.\(m.rawValue)")
             }
         }
     }
