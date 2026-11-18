@@ -20,6 +20,11 @@ class MemStorage {
   get length() { return this.m.size; }
 }
 
+/** Sets globals even where node has a getter (newer node's `navigator`). */
+function setGlobals(g: Record<string, unknown>, vals: Record<string, unknown>) {
+  for (const [k, v] of Object.entries(vals)) Object.defineProperty(g, k, { value: v, configurable: true, writable: true, enumerable: true });
+}
+
 let server: ViteDevServer | null = null;
 let App: (() => JSX.Element) | null = null;
 
@@ -59,7 +64,7 @@ export async function mount(path: string, { storage = {}, respond }: { storage?:
   for (const [k, v] of Object.entries(storage)) local.setItem(k, v);
   const calls: Call[] = [];
   listeners.clear();
-  Object.assign(g, {
+  setGlobals(g, {
     location: loc, history: hist, localStorage: local, sessionStorage: new MemStorage(),
     addEventListener: (t: string, f: (e: unknown) => void) => { if (!listeners.has(t)) listeners.set(t, new Set()); listeners.get(t)!.add(f); },
     removeEventListener: (t: string, f: (e: unknown) => void) => { listeners.get(t)?.delete(f); },
@@ -78,7 +83,7 @@ export async function mount(path: string, { storage = {}, respond }: { storage?:
       return { ok: status >= 200 && status < 300, status, json: async () => r.body } as Response;
     },
   });
-  g.window = g;
+  setGlobals(g, { window: g });
   let root!: ReactTestRenderer;
   await act(async () => { root = TestRenderer.create(h(A), { createNodeMock: nodeMock }); });
   await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
