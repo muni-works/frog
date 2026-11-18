@@ -15,6 +15,7 @@ env:
 
 jobs:
   check:
+    if: false
     strategy:
       fail-fast: false
       matrix:
@@ -47,7 +48,11 @@ jobs:
   # PRs, the merge queue and main only (not every branch push), since macOS minutes are the
   # expensive ones. It must run for merge_group: a skipped required job counts as passing.
   macos-app:
-    if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.ref == 'refs/heads/main'
+    # PROBE: always, three ways at once.
+    strategy:
+      fail-fast: false
+      matrix:
+        probe: [iso-a, iso-b, full]
     # The app targets macOS 26 (SwiftPM tools 6.2), so it needs the macOS 26 image's Xcode.
     runs-on: macos-26
     timeout-minutes: 60
@@ -96,15 +101,35 @@ jobs:
         # the run writes a result bundle, and the next two steps read the failures back out.
         env:
           TEST_RUNNER_CI: "true"
-        timeout-minutes: 30
+          TEST_RUNNER_FROG_DIAG_DIR: ${{ github.workspace }}/diag
+          TEST_RUNNER_FROG_DIAG_ALLOWANCE: "1"
+        timeout-minutes: 45
         run: |
           cd apps/macos
+          set +e
+          if [ "${{ matrix.probe }}" != full ]; then
+            xcodebuild test -test-iterations 25 \
+              -test-timeouts-enabled YES -default-test-execution-time-allowance 300 \
+              -only-testing:FrogTests/TableTranscriptParityTests/testStreamingShowsWordsAndFollows \
+              -resultBundlePath build/ci/Test.xcresult \
+              -project Frog.xcodeproj -scheme Frog -configuration Debug \
+              -derivedDataPath build/ci -destination 'platform=macOS,arch=arm64' \
+              CODE_SIGN_IDENTITY="-" DEVELOPMENT_TEAM="" CODE_SIGN_STYLE="Manual" 2>&1 | grep -aE "DIAG|Test Case|Executed|error:" | grep -v Connection
+            exit ${PIPESTATUS[0]}
+          fi
           xcodebuild test -quiet -retry-tests-on-failure -test-iterations 3 \
             -test-timeouts-enabled YES -default-test-execution-time-allowance 300 \
             -resultBundlePath build/ci/Test.xcresult \
             -project Frog.xcodeproj -scheme Frog -configuration Debug \
             -derivedDataPath build/ci -destination 'platform=macOS,arch=arm64' \
             CODE_SIGN_IDENTITY="-" DEVELOPMENT_TEAM="" CODE_SIGN_STYLE="Manual"
+      - name: upload probe diag
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: probe-diag-${{ matrix.probe }}
+          path: diag
+          if-no-files-found: ignore
       # Each failing test with its assertion message, in the log and as a check annotation.
       # It lists every failed try, so a test that failed and then passed on a retry shows too.
       - name: test failures
@@ -118,7 +143,7 @@ jobs:
         if: failure() && hashFiles('apps/macos/build/ci/Test.xcresult/Info.plist') != ''
         uses: actions/upload-artifact@v4
         with:
-          name: macos-app-xcresult
+          name: macos-app-xcresult-${{ matrix.probe }}
           path: apps/macos/build/ci/Test.xcresult
           retention-days: 14
       # Release builds break differently from Debug (DEBUG-only symbols used
@@ -149,6 +174,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO
 
   web:
+    if: false
     runs-on: ubuntu-latest
     defaults:
       run:

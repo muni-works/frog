@@ -17,7 +17,18 @@ final class TableTranscriptParityTests: XCTestCase {
     private var host: NSHostingView<AnyView>!
 
     private var container = TranscriptContainer.table
-    override func setUp() async throws { container = TranscriptContainer.table }
+    private static var slowObserver: CFRunLoopObserver?
+    override func setUp() async throws {
+        container = TranscriptContainer.table
+        // DIAG: a slowed main thread, like a loaded VM's late frames.
+        if Self.slowObserver == nil, let ms = ProcessInfo.processInfo.environment["FROG_SLOW_MS"].flatMap(Double.init), ms > 0 {
+            let o = CFRunLoopObserverCreateWithHandler(nil, CFRunLoopActivity.afterWaiting.rawValue | CFRunLoopActivity.beforeTimers.rawValue, true, 0) { _, _ in
+                usleep(useconds_t(ms * 1000))
+            }
+            CFRunLoopAddObserver(CFRunLoopGetMain(), o, .commonModes)
+            Self.slowObserver = o
+        }
+    }
     override func tearDown() async throws {
         window?.close()
         TranscriptContainer.table = container
@@ -29,7 +40,41 @@ final class TableTranscriptParityTests: XCTestCase {
         let line = #"{"seq":\#(seq),"session":"t","created":1790113417019,"event":\#(event)}"#
         c.ingest(try! JSONDecoder.frog.decode(Envelope.self, from: Data(line.utf8)))
     }
-    private func pump(_ s: TimeInterval) { RunLoop.main.run(until: Date().addingTimeInterval(s)) }
+    nonisolated(unsafe) static var pumps = 0
+    nonisolated(unsafe) static var stage = ""
+    private func pump(_ s: TimeInterval) { Self.pumps += 1; RunLoop.main.run(until: Date().addingTimeInterval(s)) }
+
+    /// DIAG: a background watchdog that writes the follow log to FROG_DIAG_DIR when the test stalls.
+    private func startWatchdog() -> () -> Void {
+        let dir = ProcessInfo.processInfo.environment["FROG_DIAG_DIR"]
+        final class Flag: @unchecked Sendable { var done = false; let lock = NSLock() }
+        let flag = Flag()
+        DiagLog.reset()
+        let started = Date()
+        let t = Thread {
+            var lastPumps = -1, sameFor = 0, dumps = 0
+            while true {
+                Thread.sleep(forTimeInterval: 1)
+                flag.lock.lock(); let d = flag.done; flag.lock.unlock()
+                if d { return }
+                let p = Self.pumps
+                if p == lastPumps { sameFor += 1 } else { sameFor = 0; lastPumps = p }
+                let elapsed = Date().timeIntervalSince(started)
+                if dumps < 4, sameFor >= 10 || elapsed > (ProcessInfo.processInfo.environment["FROG_DIAG_AFTER"].flatMap(Double.init) ?? 25) + Double(dumps * 10) {
+                    dumps += 1
+                    let text = "stall dump \(dumps): elapsed \(Int(elapsed)) s, pumps \(p), pump unchanged for \(sameFor) s, stage \(Self.stage)\n" + DiagLog.dump() + "\n"
+                    print("DIAG WATCHDOG " + text.prefix(400))
+                    if let dir {
+                        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+                        let name = "\(dir)/streaming-\(Int(started.timeIntervalSince1970))-\(dumps).txt"
+                        try? text.write(toFile: name, atomically: true, encoding: .utf8)
+                    }
+                }
+            }
+        }
+        t.start()
+        return { flag.lock.lock(); flag.done = true; flag.lock.unlock() }
+    }
 
     /// Spin the run loop until `condition` holds, giving up after `timeout` (times `TestRunner.slack`
     /// on CI, whose runner is a loaded shared VM). A fixed `pump` is a guess at how long layout and
@@ -43,6 +88,17 @@ final class TableTranscriptParityTests: XCTestCase {
             pump(0.02)
         }
         return condition()
+    }
+
+    private func dumpState(_ why: String) {
+        let c0 = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
+        let f0 = TranscriptProbe.follows, r0 = TranscriptProbe.rowBodies, t0 = TranscriptProbe.turnBodies
+        pump(1)
+        let cpu = Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - c0) / 1e9
+        print("DIAG FAIL \(why) cpu1s=\(String(format: "%.2f", cpu)) follows+=\(TranscriptProbe.follows - f0) rows+=\(TranscriptProbe.rowBodies - r0) turns+=\(TranscriptProbe.turnBodies - t0) mounted=\(TranscriptProbe.mountedKeys.sorted().suffix(6))")
+        for w in NSApp.windows {
+            print("DIAG WIN \(type(of: w)) visible=\(w.isVisible) alpha=\(w.alphaValue) frame=\(w.frame) content=\(w.contentView.map { String(describing: type(of: $0)).prefix(80) } ?? "nil") mine=\(w === window)")
+        }
     }
 
     private static func json(_ s: String) -> String {
@@ -127,7 +183,10 @@ final class TableTranscriptParityTests: XCTestCase {
             let c = open(table: table, turns: 200)
             let target = c.turns[40].id
             jumpBox.id = target
-            XCTAssertTrue(wait() { self.visible.contains(target) },
+            let jt0 = Date()
+            let jok = wait() { self.visible.contains(target) }
+            print("DIAG jump table=\(table) ok=\(jok) dt=\(String(format: "%.2f", Date().timeIntervalSince(jt0))) box=\(String(describing: jumpBox.id)) visibleIdx=\(self.visible.compactMap { v in c.turns.firstIndex { $0.id == v } }) clip=\(self.scrollView?.contentView.bounds ?? .zero) doc=\(self.scrollView?.documentView?.frame.height ?? -1)")
+            XCTAssertTrue(jok,
                           "table \(table): the jumped-to turn is on screen")
             XCTAssertTrue(wait() { !self.atEnd() }, "table \(table): a jump stops following")
             window.close()
@@ -135,17 +194,34 @@ final class TableTranscriptParityTests: XCTestCase {
     }
 
     func testStreamingShowsWordsAndFollows() {
+        if ProcessInfo.processInfo.environment["FROG_DIAG_ALLOWANCE"] != nil { executionTimeAllowance = 60 }
+        let stopWatchdog = startWatchdog()
+        defer { stopWatchdog() }
         for table in [false, true] {
+            Self.stage = "open table=\(table)"
             let c = open(table: table, turns: 30)
             send(c, #""turn_started","turn":99,"input":"go""#)
             send(c, #""item_started","id":"t99","kind":{"type":"tool_call","name":"Bash","arg":"ls"}"#)
             send(c, #""item_completed","id":"t99","item":{"type":"tool_call","name":"Bash","arg":"ls","input":{"command":"ls"},"outcome":"ok","output":"ok","display":null}"#)
             send(c, #""item_started","id":"live","kind":{"type":"message"}"#)
+            Self.stage = "deltas table=\(table)"
             for i in 0..<12 {
                 send(c, #""item_delta","id":"live","delta":{"type":"text","text":"word\#(i) "}"#)
                 // Each delta drawn before the next is sent, so this is a stream and not one buffered
                 // write: wait for the words so far rather than sleeping a guessed interval.
-                wait(timeout: 5) { self.drawnText().contains("word\(i) ") }
+                let t0 = Date()
+                let ok = wait(timeout: 5) { self.drawnText().contains("word\(i) ") }
+                let mtv = self.views(self.host, MessageTextView.self)
+                if !ok { self.dumpState("delta \(i) table=\(table)") }
+                print("DIAG table=\(table) i=\(i) ok=\(ok) dt=\(String(format: "%.2f", Date().timeIntervalSince(t0))) atEnd=\(self.atEnd()) rows=\(mtv.count) follows=\(TranscriptProbe.follows) doc=\(Int(self.scrollView?.documentView?.frame.height ?? -1)) clipMaxY=\(Int(self.scrollView?.contentView.bounds.maxY ?? -1)) last=\(mtv.last.map { String($0.string.suffix(30)) } ?? "-")")
+            }
+            do {
+                // DIAG: is the main thread idle once the words are in, or still updating?
+                let f0 = TranscriptProbe.follows, r0 = TranscriptProbe.rowBodies, t0 = TranscriptProbe.turnBodies
+                let c0 = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
+                pump(2)
+                let cpu = Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - c0) / 1e9
+                print("DIAG idle table=\(table) cpu2s=\(String(format: "%.2f", cpu)) follows+=\(TranscriptProbe.follows - f0) rows+=\(TranscriptProbe.rowBodies - r0) turns+=\(TranscriptProbe.turnBodies - t0)")
             }
             send(c, #""item_delta","id":"live","delta":{"type":"text","text":"\n\nlast-line"}"#)
             XCTAssertTrue(wait() { self.drawnText().contains("last-line") },

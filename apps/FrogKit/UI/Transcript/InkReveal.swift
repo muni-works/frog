@@ -134,6 +134,9 @@ final class InkReveal: NSObject {
     private func grewIfNeeded() {
         let h = writtenHeight() ?? .greatestFiniteMagnitude
         guard h != lastWritten else { return }
+        #if DEBUG
+        DiagLog.note("ink grew \(lastWritten)->\(h) revealed \(revealed)/\(length)")
+        #endif
         lastWritten = h
         view.sizeChanged()
     }
@@ -149,14 +152,25 @@ final class InkReveal: NSObject {
             if !pending || plain { finish() }
             return
         }
-        guard link == nil else { return }
+        guard link == nil, diagTimer == nil else { return }
+        // DIAG: the runner's display link, simulated: 0 never ticks, else ticks at that rate.
+        if let hz = ProcessInfo.processInfo.environment["FROG_INK_HZ"].flatMap(Double.init) {
+            if hz <= 0 { return }
+            last = CACurrentMediaTime()
+            diagTimer = Timer.scheduledTimer(withTimeInterval: 1 / hz, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.tickAt(CACurrentMediaTime()) }
+            }
+            return
+        }
         let l = view.displayLink(target: self, selector: #selector(tick(_:)))
         l.add(to: .main, forMode: .common)
         link = l
         last = CACurrentMediaTime()
     }
 
+    private var diagTimer: Timer?
     private func stop() {
+        diagTimer?.invalidate(); diagTimer = nil
         link?.invalidate()
         link = nil
     }
@@ -171,8 +185,8 @@ final class InkReveal: NSObject {
         hidePen()
     }
 
-    @objc private func tick(_ link: CADisplayLink) {
-        let now = link.targetTimestamp
+    @objc private func tick(_ link: CADisplayLink) { tickAt(link.targetTimestamp) }
+    private func tickAt(_ now: CFTimeInterval) {
         let dt = min(max(now - last, 0), 1.0 / 20)
         last = now
         let total = length

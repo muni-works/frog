@@ -47,7 +47,11 @@ struct MessageText: NSViewRepresentable {
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView view: MessageTextView, context: Context) -> CGSize? {
         let width = proposal.width.flatMap { $0.isFinite ? $0 : nil } ?? 640
-        return CGSize(width: width, height: view.height(for: width))
+        let h = view.height(for: width)
+        #if DEBUG
+        if view.reveal.streaming { DiagLog.note("live sizeThatFits w \(proposal.width.map { "\($0)" } ?? "nil") h \(h) revealed \(view.reveal.revealed)/\(view.textStorage?.length ?? 0)") }
+        #endif
+        return CGSize(width: width, height: h)
     }
 }
 
