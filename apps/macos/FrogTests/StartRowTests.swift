@@ -56,9 +56,9 @@ final class StartRowTests: XCTestCase {
         XCTAssertEqual(at.since, t0 + 1.2)
         // A later change waits a full dwell after the last one shown.
         let more = said + [StartWords.Said(at: t0 + 1.5, words: w("D"))]
-        XCTAssertEqual(StartWords.steady(more, now: t0 + 2.3).now, w("C"))
-        XCTAssertEqual(StartWords.steady(more, now: t0 + 2.4).now, w("D"))
-        XCTAssertEqual(StartWords.steady(more, now: t0 + 2.4).n, 2)
+        XCTAssertEqual(StartWords.steady(more, now: t0 + 2.35).now, w("C"))
+        XCTAssertEqual(StartWords.steady(more, now: t0 + 2.45).now, w("D"))
+        XCTAssertEqual(StartWords.steady(more, now: t0 + 2.45).n, 2)
     }
 
     func testReducedMotionSwapsAtOnce() {
