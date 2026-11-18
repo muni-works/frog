@@ -106,7 +106,10 @@
           "existing_tests_v070": [],
           "coverage_v070": "none",
           "automatable": "hard",
-          "why_hard": "A SwiftUI .alert with a TextField (or a confirmationDialog) isn't reachable from an offscreen hosting view; needs XCUITest or a seam that sets the private @State."
+          "why_hard": "A SwiftUI .alert with a TextField (or a confirmationDialog) isn't reachable from an offscreen hosting view; needs XCUITest or a seam that sets the private @State.",
+          "flow_tests": [
+            "Flows/FlowDriverTests.swift:test_delete_cancel"
+          ]
         }
       ]
     },
@@ -3109,7 +3112,12 @@
           "needs": [],
           "existing_tests_v070": [],
           "coverage_v070": "none",
-          "automatable": "yes"
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/FlowDriverTests.swift:test_open_palette",
+            "Flows/FlowDriverTests.swift:test_open_palette__fromMenuBar",
+            "Flows/FlowDriverTests.swift:test_open_palette__shortcut"
+          ]
         },
         {
           "id": "filter-and-run",
@@ -3202,7 +3210,10 @@
           ],
           "existing_tests_v070": [],
           "coverage_v070": "none",
-          "automatable": "yes"
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/FlowDriverTests.swift:test_toggle_changes_from_palette"
+          ]
         },
         {
           "id": "docs-from-palette",
