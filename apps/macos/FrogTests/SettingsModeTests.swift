@@ -32,8 +32,8 @@ final class SettingsModeTests: XCTestCase {
     /// One source: every row the Mac draws has a control here, and nothing here is for a row the
     /// list doesn't give the Mac (the web's own, or one marked not yet on the Mac).
     func testEveryMacRowHasAControlAndNoneIsExtra() {
-        for s in catalog.sections where !SettingsBindings.legacySections.contains(s.id) {
-            for r in catalog.macRows(in: s.id) where SettingsBindings.drawnBy[r.id] == nil {
+        for s in catalog.sections {
+            for r in catalog.macRows(in: s.id) + catalog.macRows(in: s.id, page: "machine") where SettingsBindings.drawnBy[r.id] == nil {
                 XCTAssertNotNil(SettingsBindings.control(for: r), "\(r.id) has no control on the Mac")
             }
         }
@@ -112,13 +112,25 @@ final class SettingsModeTests: XCTestCase {
     /// The window in Settings mode, one image per redrawn section, dark and light.
     func testRenderSettingsMode() throws {
         for (look, name) in [(NSAppearance.Name.darkAqua, "dark"), (.aqua, "light")] {
-            for section in ["general", "appearance", "permissions", "shortcuts"] {
+            for section in ["general", "appearance", "models", "permissions", "shortcuts", "usage", "account", "billing"] {
+                // Made-up account and machines: no checked-in image carries a real name, email,
+                // credit or machine.
+                CloudAccount.shared.stage(Self.fixtureAccount)
+                let devices = Devices()
+                devices.seed(ModelsParityTests.fixture())
+                SettingsBindings.devices = devices
+                defer { CloudAccount.shared.unstage(); SettingsBindings.devices = Devices.shared }
                 let (panes, _) = panesWithThread()
                 defer { panes.stopAll() }
                 panes.showSettings(section)
                 let (w, host) = window(panes, appearance: look)
                 pump(0.6)
                 try snapshot(host, "mac-settings-\(section)-\(name)")
+                if section == "models" {
+                    panes.settingsMachine = "n1"
+                    pump(0.6)
+                    try snapshot(host, "mac-settings-machine-\(name)")
+                }
                 w.close()
             }
         }
@@ -126,6 +138,10 @@ final class SettingsModeTests: XCTestCase {
     }
 
     // MARK: Helpers
+
+    static let fixtureAccount: CloudAccount.Me = try! JSONDecoder().decode(CloudAccount.Me.self, from: Data("""
+        {"name":"Ada Lovelace","handle":"ada","image":null,"google":null,"email":"ada@example.com","credit_cents":1278,"subscription":null}
+        """.utf8))
 
     private func window(_ panes: Panes, size: CGSize = CGSize(width: 1280, height: 800),
                         appearance: NSAppearance.Name = .darkAqua) -> (NSWindow, NSHostingView<some View>) {

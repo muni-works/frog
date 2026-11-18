@@ -102,9 +102,19 @@ final class Workspace {
     static var startingModel: String? { startingModel() }
 
     static func startingModel(_ d: UserDefaults = .standard, apple: Bool = AppleIntelligence.available) -> String? {
-        if d.string(forKey: "newMessageModelPolicy") == "fixed",
-           let s = d.string(forKey: "defaultModel"), !s.isEmpty { return s }
+        // Settings › Models › New conversations use: one model every time, else the last one.
+        // (The old "New messages use" policy is cut, board 7: a conversation keeps its model.)
+        if let s = d.string(forKey: "defaultModel"), !s.isEmpty { return s }
         return lastUsed(d, apple: apple)
+    }
+
+    /// "New messages use" is gone (board 7), and with it the switch that kept `defaultModel`
+    /// from applying. A model left there while the policy said "last" wasn't in use: forget it,
+    /// so nobody's new conversations change model on update. Runs once at launch.
+    static func dropModelPolicy(_ d: UserDefaults = .standard) {
+        guard let policy = d.string(forKey: "newMessageModelPolicy") else { return }
+        if policy != "fixed" { d.removeObject(forKey: "defaultModel") }
+        d.removeObject(forKey: "newMessageModelPolicy")
     }
 
     /// The model picked last, or Apple Intelligence before anything has been.
@@ -147,8 +157,7 @@ final class Workspace {
         // The model the last turn that actually ran used. A turn that never reached the model
         // (a provider error, a 401, an unreachable server) carries that model in its usage with
         // no calls behind it: inheriting it would hand the next message the same dead model.
-        if UserDefaults.standard.string(forKey: "newMessageModelPolicy") != "fixed",
-           let model = conversation?.turns.reversed()
+        if let model = conversation?.turns.reversed()
             .compactMap({ $0.usage.flatMap { $0.modelCalls > 0 ? $0.model : nil } })
             .first { return model }
         return conversation?.status?.model ?? preferredModel

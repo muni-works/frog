@@ -103,11 +103,26 @@ final class ModelStatsTests: XCTestCase {
         XCTAssertNil(Workspace.startingModel(d, apple: false))
         d.set("tang/mlx-community/Qwen3-8B-4bit", forKey: "lastModel")
         XCTAssertEqual(Workspace.startingModel(d, apple: true), "local/mlx-community/Qwen3-8B-4bit") // saved before the rename
-        // A model fixed in Settings wins over the last pick.
+        // A model fixed in Settings (New conversations use) wins over the last pick.
         d.set("mew/mlx-community/Qwen3-8B-4bit", forKey: "defaultModel")
-        XCTAssertEqual(Workspace.startingModel(d, apple: true), "local/mlx-community/Qwen3-8B-4bit")
-        d.set("fixed", forKey: "newMessageModelPolicy")
         XCTAssertEqual(Workspace.startingModel(d, apple: true), "mew/mlx-community/Qwen3-8B-4bit")
+    }
+
+    /// The cut "New messages use" policy: a default that it kept switched off is forgotten on
+    /// update, one it had switched on stays, and the policy key goes either way.
+    func testDroppingThePolicyKeepsOnlyADefaultThatWasOn() {
+        let off = UserDefaults(suiteName: "frog-policy-\(UUID().uuidString)")!
+        off.set("last", forKey: "newMessageModelPolicy")
+        off.set("cloud/glm-5.3-flash", forKey: "defaultModel")
+        Workspace.dropModelPolicy(off)
+        XCTAssertNil(off.string(forKey: "defaultModel"))
+        XCTAssertNil(off.string(forKey: "newMessageModelPolicy"))
+        let on = UserDefaults(suiteName: "frog-policy-\(UUID().uuidString)")!
+        on.set("fixed", forKey: "newMessageModelPolicy")
+        on.set("cloud/glm-5.3-flash", forKey: "defaultModel")
+        Workspace.dropModelPolicy(on)
+        XCTAssertEqual(on.string(forKey: "defaultModel"), "cloud/glm-5.3-flash")
+        XCTAssertNil(on.string(forKey: "newMessageModelPolicy"))
     }
 
     private func entry(_ spec: String, costIn: Double, costOut: Double, cacheRead: Double? = nil) -> ModelEntry {

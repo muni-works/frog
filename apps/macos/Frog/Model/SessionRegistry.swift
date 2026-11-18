@@ -303,6 +303,7 @@ final class QuitGuard: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard !SingleInstance.isTesting else { return }
         AppTheme.apply()
+        Workspace.dropModelPolicy()
         Snapshot.scheduleIfAsked()
         SingleInstance.listen()
     }

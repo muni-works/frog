@@ -268,10 +268,15 @@ final class Panes {
     private(set) var docsPage: String?
     /// The settings section last shown, for the life of the window; Account the first time.
     private(set) var settingsSection = "account"
+    /// Settings › Models › the machine whose page is open, until Back or another section.
+    var settingsMachine: String?
 
     /// Settings mode (⌘,), on `section` (an id or an old tab name) if given, else the last one.
     func showSettings(_ section: String? = nil) {
-        if let s = SettingsCatalog.bundled.section(named: section) { settingsSection = s }
+        if let s = SettingsCatalog.bundled.section(named: section), s != settingsSection {
+            settingsSection = s
+            settingsMachine = nil
+        }
         mode = .settings
     }
 

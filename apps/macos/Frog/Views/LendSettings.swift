@@ -57,7 +57,7 @@ private struct StatusDot: LabelStyle {
 }
 
 /// The 6-digit code from `POST /pair/open`, big, with this Mac's fingerprint and a countdown.
-private struct PairCodeSheet: View {
+struct PairCodeSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var window: MacLender.PairWindow?
     @State private var failure: String?
