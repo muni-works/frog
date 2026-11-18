@@ -26,7 +26,8 @@ struct DefaultModelRow: View {
 
     var body: some View {
         SettingsRow(row) {
-            FrogPillMenu(title: defaultModel.isEmpty ? "The last model I used" : ModelIdentity.of(defaultModel, in: models).name) {
+            FrogPillMenu(title: defaultModel.isEmpty ? "The last model I used" : ModelIdentity.of(defaultModel, in: models).name,
+                         help: "The model a new conversation starts on; the composer can still change it") {
                 Button(lastLabel) { defaultModel = "" }
                 Divider()
                 ForEach(ready, id: \.spec) { m in Button(m.name) { defaultModel = m.spec } }
@@ -54,8 +55,10 @@ struct MachinesRows: View {
                         .monospacedDigit()
                     }
                     .contentShape(.rect)
+                    .hoverPlate(h: 8, v: 0, radius: 8)
                 }
                 .buttonStyle(.plain)
+                .help("Open \(d.name)'s page: its memory, models and name")
             }
             if let problem = devices.browseProblem {
                 SettingsRow("Can't look for machines", description: problem) { EmptyView() }
@@ -70,7 +73,10 @@ struct PairMachineRow: View {
     let row: SettingsCatalog.Row
     @State private var pairing = false
     var body: some View {
-        SettingsRow(row) { Button("Pair") { pairing = true }.buttonStyle(SettingsButtonStyle()) }
+        SettingsRow(row) {
+            Button("Pair") { pairing = true }.buttonStyle(SettingsButtonStyle())
+                .help("Find machines on your network to pair with this Mac")
+        }
             .sheet(isPresented: $pairing) { PairMachineSheet() }
     }
 }
@@ -94,6 +100,7 @@ struct FrogCloudRows: View {
                     HStack(spacing: 10) {
                         SettingsValue(CloudFormat.dollars(me.credit_cents))
                         Button("Add credit") { showSettings?("billing") }.buttonStyle(SettingsButtonStyle())
+                            .help("Opens Billing")
                     }
                 }
             }
@@ -120,9 +127,9 @@ struct OtherCloudsRows: View {
             ForEach(connected) { p in
                 SettingsRow(p.displayName, description: row.description) {
                     HStack(spacing: 8) {
-                        Button("Models") { choosing = p }
-                        Button("Key") { keyFor = p }
-                        Button("Remove") { Task { await store.setKey("", for: p.id) } }
+                        Button("Models") { choosing = p }.help("Choose which of \(p.displayName)'s models the picker shows")
+                        Button("Key") { keyFor = p }.help("Change the key kept in your Keychain")
+                        Button("Remove") { Task { await store.setKey("", for: p.id) } }.help("Forget \(p.displayName)'s key")
                     }
                     .buttonStyle(SettingsButtonStyle())
                 }
@@ -183,10 +190,8 @@ struct MachineSettingsPage: View {
     var body: some View {
         if let d = devices.list.first(where: { $0.id == deviceID }) {
             SettingsPage(title: d.name) {
-                Button(action: back) { Label("Models", systemImage: "chevron.left").font(.frog(size: 12)) }
-                    .buttonStyle(.plain).foregroundStyle(Tokens.textSecondary)
-                    .padding(.bottom, 6)
-                SettingsRows {
+                // Facts, not controls: no lines between them. Back is the title bar's "Models".
+                SettingsRows(divided: false) {
                     SettingsRow("Status") { SettingsValue(d.statusLine) }
                     SettingsRow("Hardware") { SettingsValue(d.hardwareLine) }
                     if d.totalBytes > 0 { MachineMemoryBar(device: d).padding(.vertical, SettingsLook.rowPad) }
@@ -202,7 +207,7 @@ struct MachineSettingsPage: View {
             .onDisappear { devices.stop() }
         } else {
             SettingsPage(title: "Machine") {
-                SettingsRow("This machine isn't paired anymore") { Button("Back", action: back).buttonStyle(SettingsButtonStyle()) }
+                SettingsRow("This machine isn't paired anymore") { Button("Back to Models", action: back).buttonStyle(SettingsButtonStyle()) }
             }
         }
     }
@@ -226,6 +231,7 @@ struct MachineNameRow: View {
                     }
                     if d.role != .thisMac {
                         Button("Unpair") { confirm = true }.buttonStyle(SettingsButtonStyle(destructive: true))
+                            .help("This Mac forgets \(d.name)'s key; asks first")
                     }
                 }
             }
@@ -254,7 +260,9 @@ struct ShareRow: View {
                     FrogToggle(label: row.label, isOn: $lender.enabled)
                 }
             } else {
-                SettingsRow(row.label, description: "\(d.name) shares itself with every machine you pair it with.") { SettingsValue("Always") }
+                SettingsRow(row.label, description: "\(d.name) shares itself with every machine you pair it with.") {
+                    SettingsValue("Always", help: "Set on \(d.name) itself")
+                }
             }
         }
     }
@@ -298,6 +306,7 @@ struct PairMacRow: View {
         if lender.enabled, devices.list.first(where: { $0.id == id })?.role == .thisMac {
             SettingsRow(row) {
                 Button("Pair a Mac") { pairing = true }.buttonStyle(SettingsButtonStyle()).disabled(lender.state != .running)
+                    .help(lender.state == .running ? "Shows a code to type on the other Mac" : "Waits until sharing has started")
             }
             .sheet(isPresented: $pairing) { PairCodeSheet() }
         }
@@ -312,7 +321,8 @@ struct SpentRow: View {
     @State private var stats = SettingsBindings.stats
     var body: some View {
         SettingsRow(row) {
-            SettingsValue("\(ModelStats.spent(stats.spentThisWeek)) this week · \(ModelStats.spent(stats.spentThisMonth)) this month")
+            SettingsValue("\(ModelStats.spent(stats.spentThisWeek)) this week · \(ModelStats.spent(stats.spentThisMonth)) this month",
+                          help: "Estimated on this Mac from each model's prices; Billing has what Frog Cloud charged")
         }
     }
 }
@@ -324,7 +334,8 @@ struct CapRow: View {
     var body: some View {
         let options = row.options ?? []
         SettingsRow(row) {
-            FrogPillMenu(title: options.first { Double($0.id) == cap }?.label ?? (cap > 0 ? "$\(Int(cap))" : "None")) {
+            FrogPillMenu(title: options.first { Double($0.id) == cap }?.label ?? (cap > 0 ? "$\(Int(cap))" : "None"),
+                         help: "Cloud models pause for the rest of the month at this much") {
                 ForEach(options, id: \.id) { o in Button(o.label) { cap = Double(o.id) ?? 0 } }
             }
         }
@@ -349,12 +360,13 @@ struct EnergyRows: View {
                     FrogSegmented(label: "Period", options: [.init(id: "day", label: "Last 24 hours"), .init(id: "days", label: "Last 10 days")], selection: $period)
                 }
                 SettingsRow("Model") {
-                    FrogPillMenu(title: model.map(name) ?? "All models") {
+                    FrogPillMenu(title: model.map(name) ?? "All models", help: "Show one model's energy, or all of them") {
                         Button("All models") { model = nil }
                         ForEach(stats.energyModels, id: \.self) { spec in Button(name(spec)) { model = spec } }
                     }
                 }
-                VStack(alignment: .leading, spacing: 8) {
+            }
+            VStack(alignment: .leading, spacing: 8) {
                     Text(ModelStats.energy(total.mac + total.dc, estimated: total.dc > 0))
                         .font(.frog(size: 20, weight: .semibold)).monospacedDigit()
                     Text(EnergySettings.summary(days: days, mac: total.mac, dataCenter: total.dc))
@@ -365,11 +377,10 @@ struct EnergyRows: View {
                         EnergyLegend(hatched: true, text: "Data center, estimated")
                     }
                     .font(.frog(size: 12)).foregroundStyle(Tokens.textSecondary)
-                }
-                .padding(.vertical, SettingsLook.rowPad)
             }
+            .padding(.vertical, SettingsLook.rowPad)
             SettingsGroupLabel(text: "By model")
-            SettingsRows {
+            SettingsRows(divided: false) {
                 if stats.energyModels.isEmpty {
                     SettingsRow("Nothing yet", description: "Turns you run with energy measured show up here.") { EmptyView() }
                 }

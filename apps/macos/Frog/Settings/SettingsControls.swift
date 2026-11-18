@@ -6,13 +6,14 @@ import SwiftUI
 
 enum SettingsLook {
     static let column: CGFloat = 720
-    static let top: CGFloat = 40
+    static let top: CGFloat = 28
     static let rowPad: CGFloat = 11
     static let label: CGFloat = 14
     static let description: CGFloat = 12
 }
 
-/// The page: the section's title, then its rows, on the transcript's measure.
+/// The page: its rows, on the transcript's measure. The title bar's breadcrumbs name it, so the
+/// page draws no title of its own; `title` names it for VoiceOver.
 struct SettingsPage<Content: View>: View {
     let title: String
     @ViewBuilder var content: Content
@@ -20,13 +21,10 @@ struct SettingsPage<Content: View>: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                Text(title)
-                    .font(.frog(size: 17, weight: .semibold))
-                    .foregroundStyle(Tokens.text)
-                    .padding(.bottom, 10)
-                    .accessibilityAddTraits(.isHeader)
                 content
             }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(title)
             .frame(maxWidth: SettingsLook.column, alignment: .leading)
             .padding(.horizontal, 32)
             .padding(.top, SettingsLook.top)
@@ -50,15 +48,17 @@ struct SettingsGroupLabel: View {
     }
 }
 
-/// Rows with a hairline between them and none after the last.
+/// Rows with a hairline between them and none after the last. A read-only list (keys, credit
+/// added, prices, a machine's facts) goes without: the lines are for telling controls apart.
 struct SettingsRows<Content: View>: View {
+    var divided = true
     @ViewBuilder var content: Content
     var body: some View {
         Group(subviews: content) { rows in
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(rows) { row in
                     row
-                    if row.id != rows.last?.id {
+                    if divided, row.id != rows.last?.id {
                         Rectangle().fill(Tokens.line).frame(height: 1)
                     }
                 }
@@ -153,6 +153,7 @@ struct FrogSegmented: View {
                         .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
+                .help(o.description ?? o.label)
                 .accessibilityAddTraits(selection == o.id ? [.isButton, .isSelected] : .isButton)
             }
         }
@@ -168,6 +169,8 @@ struct FrogSegmented: View {
 /// Five or more choices, or names of any length: a bordered pill that opens a menu.
 struct FrogPillMenu<Items: View>: View {
     let title: String
+    /// What choosing does, on hover.
+    var help: String? = nil
     @ViewBuilder var items: Items
 
     var body: some View {
@@ -185,6 +188,7 @@ struct FrogPillMenu<Items: View>: View {
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .fixedSize()
+        .help(help ?? title)
     }
 }
 
@@ -228,8 +232,10 @@ struct SettingsButtonStyle: ButtonStyle {
 /// A read-only fact where a control would be.
 struct SettingsValue: View {
     let text: String
-    init(_ text: String) { self.text = text }
+    var help: String?
+    init(_ text: String, help: String? = nil) { self.text = text; self.help = help }
     var body: some View {
         Text(text).font(.frog(size: 13)).foregroundStyle(Tokens.textSecondary).monospacedDigit().lineLimit(1)
+            .help(help ?? "")
     }
 }
