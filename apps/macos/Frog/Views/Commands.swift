@@ -43,7 +43,7 @@ extension FocusedValues {
 struct FrogCommands: Commands {
     @FocusedValue(\.frogWindow) private var window
     @Environment(\.openWindow) private var openWindow
-    @AppStorage("compactSidebar") private var compactSidebar = false
+    @AppStorage("compactSidebar") private var compactSidebar = true
 
     private var conversation: Conversation? { window?.workspace.conversation }
 

@@ -59,7 +59,7 @@ struct SessionList: View {
     @AppStorage("sidebarSort") private var sort = Sort.activity
     /// The tree's scope (Live · Today · All), per window like the grouping.
     @AppStorage("sidebarScope") private var scope = AttentionTree.Scope.live
-    @AppStorage("compactSidebar") private var compactSidebar = false
+    @AppStorage("compactSidebar") private var compactSidebar = true
 
     /// How rows are grouped: by project folder (pins, folders, chats), by day, or not at all.
     enum Grouping: String, CaseIterable {
@@ -741,12 +741,12 @@ struct SessionList: View {
     }
 
     /// Pinned conversations above everything else in every grouping: named rows with their
-    /// live state, the same rows as the rest of the list.
+    /// live state, the same rows as the rest of the list (one line compact, two otherwise).
     @ViewBuilder
     private var pinTiles: some View {
         if !pins.isEmpty {
             compactHeader("Pinned")
-            ForEach(pins) { compactRow($0, depth: 0) }
+            ForEach(pins) { listRow($0) }
             Color.clear.frame(height: 4)
         }
     }
