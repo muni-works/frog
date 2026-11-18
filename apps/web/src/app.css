@@ -45,8 +45,11 @@ a { color: var(--frog); }
 .starters { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
 .titlebar { display: flex; align-items: center; gap: 10px; height: 52px; flex: none; padding: 0 16px; }
 .scroll { flex: 1; overflow-y: auto; display: flex; justify-content: center; padding: 20px 0 12px; } /* the gutter is the column's own (transcript.css) */
-.dock { display: flex; justify-content: center; padding: 6px var(--tx-gutter) 12px; }
-.dock > * { width: 100%; max-width: 720px; } /* the Mac's TurnSpace.measure: one centred column */
+.col { width: 100%; max-width: 720px; display: flex; flex-direction: column; gap: 12px; } /* Settings and Documentation pages; the transcript's own column is .tx (transcript.css) */
+.dock { display: flex; justify-content: center; padding: 6px 0 12px; container: dock / inline-size; }
+/* The Mac's TurnSpace.measure: one centred column, on the transcript's gutter (transcript.css). */
+.dock > * { width: 100%; max-width: 720px; margin-inline: var(--tx-gutter); }
+@container dock (max-width: 479px) { .dock > * { margin-inline: var(--tx-gutter-narrow); } }
 @keyframes blink { 50% { opacity: 0; } }
 .cardx { background: var(--card); border: 0; border-radius: 12px; overflow: hidden; }
 .diff { padding: 8px 14px; background: rgba(127,127,127,.08); font: 12px/18px var(--font-mono); white-space: pre; overflow-x: auto; }
@@ -124,6 +127,10 @@ a { color: var(--frog); }
 .md-table { overflow-x: auto; margin: 0 0 10px; }
 .md table { border-collapse: collapse; font-size: 13px; } .md th, .md td { border: 0; padding: 4px 8px; text-align: left; overflow-wrap: normal; vertical-align: top; } .md th { white-space: nowrap; } .md td { min-width: 4ch; } .md th { background: rgba(127,127,127,.08); }
 
+/* A quiet text button (a code block's Copy; the transcript's footer cost has its own under .tx). */
+.turn-plate { border: 0; background: transparent; color: inherit; font: inherit; padding: 2px 4px; border-radius: 4px; cursor: pointer; }
+.turn-plate:hover { background: var(--hover); color: var(--muted); }
+
 /* questions and MCP prompts */
 .ask-card { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; box-shadow: var(--shadow-float); }
 .ask-options { display: flex; flex-direction: column; gap: 6px; }
@@ -167,6 +174,7 @@ a { color: var(--frog); }
   .titlebar > span { display: none; }
   .scroll { padding: 12px 0 8px; }
   .dock { padding: 4px 8px 8px; padding-bottom: max(8px, env(safe-area-inset-bottom)); }
+  .dock > * { margin-inline: 0; }
   .main.home .home-hero { padding: 12px 16px 44px; }
   .main.home h1 { font-size: 24px; text-align: center; }
   .starters { gap: 6px; }

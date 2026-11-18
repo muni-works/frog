@@ -68,8 +68,10 @@ export type Item =
       tests?: TestRun;
     };
 
-/** A recognised test run: "10 of 11", and the failing tests' names in output order. */
-export interface TestRun { runner: string; passed: number; total: number; failed: string[] }
+/** A recognised test run (the engine's shape, commit 420a7ae2): "passed of total", and the failing
+ * tests' names in output order. `total` = passed + failed; `failed_names` may be shorter than
+ * `failed`, never longer, and is absent when empty. */
+export interface TestRun { runner: string; passed: number; failed: number; total: number; failed_names?: string[] }
 
 /** widget.rs `Widget`: a Visualize result. `html` is the sandboxed document to load as is. */
 export interface Widget { title: string; code: string; html: string }

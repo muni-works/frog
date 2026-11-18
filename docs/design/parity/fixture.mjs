@@ -52,7 +52,7 @@ const said = (id, type, text, ms) => [
   [ms, { event: "item_completed", id, item: { type, text } }],
 ];
 
-const tests = (passed, total, failed = []) => ({ runner: "cargo", passed, total, failed });
+const tests = (passed, total, names = []) => ({ runner: "cargo", passed, failed: total - passed, total, ...(names.length ? { failed_names: names } : {}) });
 const toolT = (id, name, arg, opts) => {
   const [start, done] = tool(id, name, arg, opts);
   if (opts?.tests) done[1].item.tests = opts.tests;

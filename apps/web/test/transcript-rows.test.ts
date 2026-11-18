@@ -100,9 +100,16 @@ test("a failed command starts opened, once; a failed read doesn't open itself", 
   assert.doesNotMatch(draw(step({ id: "ok1", name: "Bash", arg: "ls", output: "a" })), /line-open/);
 });
 
+test("a read has nothing to open, but a failed read opens to its error", () => {
+  assert.doesNotMatch(draw(step({ name: "Read", output: "fn main() {}" })), /aria-expanded/, "a read's line is the whole of it");
+  const failed = renderToStaticMarkup(createElement(ToolLine, { e: step({ id: "fr", name: "Read", arg: "src/gone.rs", outcome: "error", output: "No such file or directory" }), startOpen: true }));
+  assert.match(failed, /aria-expanded="true"/);
+  assert.match(failed, /No such file or directory/);
+});
+
 test("a recognised test run reads 10 of 11 and, opened, names what failed above the output", () => {
   const e = step({ id: "tr", name: "Bash", arg: "cargo test -q upload", outcome: "error", output: "…\ntest result: FAILED. 10 passed; 1 failed",
-    tests: { runner: "cargo", passed: 10, total: 11, failed: ["upload_retries_on_503"] }, started: 0, ended: 9000 });
+    tests: { runner: "cargo", passed: 10, failed: 1, total: 11, failed_names: ["upload_retries_on_503"] }, started: 0, ended: 9000 });
   const html = draw(e);
   assert.equal(part(html, "line-result"), "10 of 11 · 9.0s");
   assert.match(html, /class="line-failing"[^>]*>[\s\S]*upload_retries_on_503/);

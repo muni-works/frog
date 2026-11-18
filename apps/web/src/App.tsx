@@ -210,6 +210,37 @@ export default function App() {
   const repoList = useRepos(cloud)
   const { sessions, loaded: sessionsLoaded, error: listError, setSessions, refresh: refreshSessions } = useSessions(cloud)
   const current = view.kind === 'session' ? sessions.find((s) => s.id === view.id) : undefined
+  // The transcript's scroller: opens at the newest message, or where you were back from
+  // Documentation mode. Stable per session and mode: an inline ref ran on every render and threw
+  // the reader to the end whenever anything set state (opening a fold, Show in Changes).
+  const currentId = current?.id
+  // How tall the transcript was at the last render: you were following if you were at its end.
+  const lastHeight = useRef(0)
+  // Where the scroller was when it last unmounted: the shell remounts it when a column opens (the
+  // inspector, from an edit's Show in Changes), and the same session should keep its place.
+  const lastScroll = useRef<{ id?: string; top: number } | null>(null)
+  const pinScroll = useCallback((el: HTMLDivElement | null) => {
+    if (!el) {
+      if (threadScroll.current) lastScroll.current = { id: currentId, top: threadScroll.current.scrollTop }
+      threadScroll.current = null
+      return
+    }
+    threadScroll.current = el
+    if (mode !== 'threads') return
+    if (savedScroll.current !== null) { el.scrollTop = savedScroll.current; savedScroll.current = null; lastHeight.current = el.scrollHeight; return }
+    const last = lastScroll.current
+    if (last && last.id === currentId) { el.scrollTop = last.top; lastHeight.current = el.scrollHeight; return }
+    el.scrollTop = el.scrollHeight
+    lastHeight.current = el.scrollHeight
+  }, [mode, currentId]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Following: if you were at the end of what was there at the last render (within a line), new
+  // output keeps you at the end; scrolled up, nothing moves you. Checked after every render.
+  useEffect(() => {
+    const el = threadScroll.current
+    if (!el || mode !== 'threads') return
+    if (el.scrollTop + el.clientHeight >= lastHeight.current - 40) el.scrollTop = el.scrollHeight
+    lastHeight.current = el.scrollHeight
+  })
   useEffect(() => setMenuOpen(false), [view])
   // Stream only the open session. Attaching to a session wakes its sandbox, and the sockets
   // reconnect after a sandbox sleeps, so streaming every running session kept them all awake
@@ -632,13 +663,7 @@ export default function App() {
           </div>
         )}
         {view.kind === 'session' && current && ct && (<>
-          <div className="scroll" ref={(el) => {
-            threadScroll.current = el
-            if (!el || mode !== 'threads') return
-            // Back from Documentation mode: where you were. Otherwise the newest message.
-            if (savedScroll.current !== null) { el.scrollTop = savedScroll.current; savedScroll.current = null; return }
-            el.scrollTop = el.scrollHeight
-          }}><div className="col tx">
+          <div className="scroll" ref={pinScroll}><div className="col tx">
             {cs?.state === 'refused' && <div role="status" className="banner warn"><span style={{ flex: 1 }}>Update Frog to continue. This sandbox speaks a different protocol than this page.</span>{safeHref(cs.refused.upgrade) ? <a className="f-btn f-btn--bordered f-btn--small" href={safeHref(cs.refused.upgrade)!.href} style={{ textDecoration: 'none' }}>Update</a> : <button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => location.reload()}>Reload</button>}</div>}
             {cs?.state === 'closed' && cs.code === 4004 && <div role="status" className="banner warn">This session was deleted.</div>}
             {ct.turns.length === 0 && !opening[current.id] && cs?.state !== 'refused' && current.state !== 'error' && (

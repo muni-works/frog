@@ -102,7 +102,7 @@ light and dark, at 1280 and 375:
 
 - `coding-turn-*`: a finished coding turn (thought, a fold, a failed run opened, prose, an edit, a
   passing run, a two-paragraph reply, the footer)
-- `failed-opened-*`: the failed step opened: the failing test named above its last lines
+- `failed-opened-*`: the failed step opened, the failing test named above its last lines
 - `fold-opened-*`: a fold opened, the pointer on one of its steps (hover plate)
 - `long-prose-*`: a long reply: 640 measure, heading, list and code gaps
 
@@ -130,3 +130,14 @@ See the PR for the full list. In short:
 - **The prompt's receipts** sit beside the last bubble so the block gap stays 16. At phone width
   there's no room beside it, so they show under it on tap, over the gap.
 - **Thought line** keeps today's behaviour (phase 2 replaces it), drawn as a line with a chevron.
+- **A failed read opens** to its error. A successful read has nothing to open (spec).
+- **Scrolling** (a fix found while building, in `App.tsx`): the scroller's inline ref ran on every
+  App render and threw the reader to the end whenever any state changed. Opening a fold or a line
+  and Show in Changes all did it. The ref is now stable per session. Following is "you were at the
+  end of the last render's content", and a remount of the same session keeps its place.
+  Checked in the browser (fold, line, Show in Changes stay at 0; at the end, it still follows).
+  No unit test: it lives in App.
+- **The composer's dock** follows the column's gutter (32, or 16 in a pane under 480), so the
+  composer and the transcript share edges. The phone layout keeps its 8.
+- **Test runs** use the engine's shape (`tests: { runner, passed, failed, total, failed_names? }`,
+  transcript-engine commit 420a7ae2). The web never computes a count.

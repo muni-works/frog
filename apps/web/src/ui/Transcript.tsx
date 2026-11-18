@@ -133,7 +133,8 @@ export function ToolLine({ e, diff, onShowChange, startOpen }: { e: Entry; diff?
   const whole = said ? fits(e.display, sessionCount(name, output) ?? output) : false
   const d = diff ?? e.diff
   // What opening shows; nothing for a read, a whole inline result, or a step with nothing behind it.
-  const opens = !whole && line.kind !== 'read' && line.state !== 'run'
+  // A read has nothing to open, unless it failed: then its error is what's behind it.
+  const opens = !whole && (line.kind !== 'read' || line.state === 'failed') && line.state !== 'run'
     && (!!d || !!output || !!e.tests || line.state === 'failed' || !!line.gist || !!line.title)
   // A running command shows its live output under the line, as before.
   const shown = (open && opens) || (line.state === 'run' && !!output)
@@ -166,11 +167,11 @@ export function ToolLine({ e, diff, onShowChange, startOpen }: { e: Entry; diff?
       {shown && (
         <div className="line-open">
           {(line.gist || line.title) && e.arg && <div className="line-arg">{e.arg}</div>}
-          {e.tests && e.tests.failed.length > 0 && (
+          {e.tests?.failed_names?.length ? (
             <div className="line-failing" role="list" aria-label="Failing tests">
-              {e.tests.failed.map((t) => <div key={t} role="listitem">{t}</div>)}
+              {e.tests.failed_names.map((t) => <div key={t} role="listitem">{t}</div>)}
             </div>
-          )}
+          ) : null}
           {d && line.kind === 'edit'
             ? <div className="line-box"><Hunks diff={d} max={40} /></div>
             : INLINE_RESULTS.has(name) || line.kind === 'web'

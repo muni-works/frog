@@ -12,7 +12,7 @@
   --tx-indent: 0px;
   width: 100%; max-width: calc(var(--tx-column) + 2 * var(--tx-gutter-now)); box-sizing: border-box;
   padding-inline: var(--tx-gutter-now);
-  display: flex; flex-direction: column;
+  display: flex; flex-direction: column; gap: 0;
   font-size: var(--tx-body-size); line-height: var(--tx-body-line);
 }
 @container transcript (max-width: 479px) {
@@ -48,11 +48,14 @@
   font-size: var(--tx-meta-size); line-height: var(--tx-meta-line);
 }
 .tx .hover-row .when, .tx .hover-row .sep { font-size: var(--tx-meta-size); color: var(--faint); padding: 0 var(--space-hair); }
-@container transcript (max-width: 479px) {
-  /* No room beside a phone-width bubble: under it, over the gap. */
+@container transcript (max-width: 783px) {
+  /* Beside the bubble only when the column is full width (a 540 bubble leaves 180 of room);
+   * narrower, a long prompt fills the row, so the receipts go under it, over the gap. */
   .tx .me > .hover-row.mine { right: 0; bottom: auto; top: 100%; margin: var(--space-hair) 0 0 0; }
 }
 .tx .turn > .me { align-self: flex-end; }
+/* How a turn ended (a banner, a send that failed) is a block of its own under the turn. */
+.tx .turn > :is(.banner, .me-fail) { margin-top: var(--gap-block); }
 .tx .turn > .me + .hover-row { margin-top: var(--space-tight); }
 
 /* Prose: the body role, capped at 640; code, tables and cards keep the column. */
@@ -107,7 +110,7 @@
 .tx .line-obj.mono { font-family: var(--font-mono); font-size: var(--tx-status-mono); }
 .tx .line-gist { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
 .tx .line-fill { flex: 1; min-width: var(--space-row); }
-.tx .line-result { flex: none; white-space: nowrap; font-size: var(--tx-meta-size); line-height: var(--tx-meta-line); color: var(--faint); font-variant-numeric: tabular-nums; }
+.tx .line-result { flex: 0 1 auto; min-width: 0; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--tx-meta-size); line-height: var(--tx-meta-line); color: var(--faint); font-variant-numeric: tabular-nums; }
 .tx .line-n.add { color: var(--frog); }
 .tx .line-n.del { color: var(--warn); }
 .tx [data-state="run"] > .line-plate .line-verb { color: var(--fg); }
@@ -147,8 +150,8 @@
 }
 .tx .turn-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .tx .turn-model { color: var(--muted); }
-.tx .turn-plate { border: 0; background: transparent; color: inherit; font: inherit; padding: 0; margin: 0; border-radius: var(--radius-plate); cursor: pointer; }
-.tx .turn-plate:hover, .tx .turn-plate[aria-expanded="true"] { color: var(--muted); background: var(--hover); box-shadow: 0 0 0 var(--space-tight) var(--hover); }
+.tx .turn-foot .turn-plate { border: 0; background: transparent; color: inherit; font: inherit; padding: 0; margin: 0; border-radius: var(--radius-plate); cursor: pointer; }
+.tx .turn-foot .turn-plate:hover, .tx .turn-foot .turn-plate[aria-expanded="true"] { color: var(--muted); background: var(--hover); box-shadow: 0 0 0 var(--space-tight) var(--hover); }
 .tx .turn-card { position: absolute; top: calc(100% + var(--space-tight)); left: var(--tx-indent); z-index: 10; width: 280px; display: flex; flex-direction: column; gap: var(--space-row); font-size: var(--tx-status-size); line-height: var(--tx-status-line); color: var(--fg); box-shadow: var(--shadow-float); }
 .tx .turn-card-h { display: flex; justify-content: space-between; font-size: var(--tx-body-size); }
 .tx .turn-card-row { display: flex; gap: var(--space-row); }
