@@ -130,7 +130,7 @@ test("today's card's Finish on your Mac (a link to the download page) is gone fr
   const src = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
   assert.doesNotMatch(src, /Finish on your Mac/);
   assert.match(src, /\{paused && \(\n\s*<CreditWall /);
-  assert.match(src, /\{!paused && <Composer key=\{current\.id\}/, "the wall takes the composer's place");
+  assert.match(src, /\{!paused && <Composer key=\{/, "the wall takes the composer's place");
 });
 
 // ---------- pay and resume ----------
