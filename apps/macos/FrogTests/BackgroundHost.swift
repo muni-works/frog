@@ -99,7 +99,18 @@ final class BackgroundGuard: NSObject, @preconcurrency XCTestObservation {
         center.addObserver(self, selector: #selector(windowChanged), name: NSWindow.didBecomeKeyNotification, object: nil)
     }
 
-    func testCaseWillStart(_ testCase: XCTestCase) { current = testCase }
+    func testCaseWillStart(_ testCase: XCTestCase) {
+        current = testCase
+        // A test that leaves a sidecar of this host's running fails, by name, and the sidecar is
+        // stopped (it would hold its port for the rest of the run, as frog-apple held 8912).
+        let before = Set(SidecarGuard.running().map(\.pid))
+        testCase.addTeardownBlock { @MainActor in
+            let left = SidecarGuard.running().filter { !before.contains($0.pid) }
+            guard !left.isEmpty else { return }
+            for s in left { kill(s.pid, SIGTERM) }
+            XCTFail("Test left a sidecar running: \(left.map { "\(($0.path as NSString).lastPathComponent) (pid \($0.pid))" }.joined(separator: ", ")). Tests run with FROG_SIDECARS=off; a test that needs one sets FROG_SIDECARS=ephemeral and stops it.")
+        }
+    }
     func testCaseDidFinish(_ testCase: XCTestCase) { current = nil }
 
     @objc private func becameActive(_ note: Notification) {
@@ -120,6 +131,30 @@ final class BackgroundGuard: NSObject, @preconcurrency XCTestObservation {
         let message = "Test run left the background: \(what)"
         guard let current else { return print(message) }
         current.record(XCTIssue(type: .assertionFailure, compactDescription: message))
+    }
+}
+
+/// This test host's sidecars: `frog-apple` and `tang-llm` from its own bundle (engines start
+/// them detached, so they aren't the host's children; the bundle path is what ties them to this
+/// run, not another worktree's or the installed app's).
+enum SidecarGuard {
+    static let names = ["frog-apple", "tang-llm"]
+
+    static func isOurs(path: String, bundle: String = Bundle.main.bundlePath) -> Bool {
+        path.hasPrefix(bundle + "/") && names.contains((path as NSString).lastPathComponent)
+    }
+
+    static func running(bundle: String = Bundle.main.bundlePath) -> [(pid: pid_t, path: String)] {
+        let n = proc_listallpids(nil, 0)
+        guard n > 0 else { return [] }
+        var pids = [pid_t](repeating: 0, count: Int(n) + 64)
+        let got = pids.withUnsafeMutableBytes { proc_listallpids($0.baseAddress, Int32($0.count)) }
+        var buf = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+        return pids.prefix(Int(max(got, 0))).compactMap { pid in
+            guard pid > 0, proc_pidpath(pid, &buf, UInt32(buf.count)) > 0 else { return nil }
+            let path = String(cString: buf)
+            return isOurs(path: path, bundle: bundle) ? (pid, path) : nil
+        }
     }
 }
 
@@ -171,6 +206,23 @@ final class TestHomeTests: XCTestCase {
         XCTAssertTrue(TestHome.shouldIsolate(environment: session, loadedImages: launched + [inject]))
         // A test that reads this Mac's real state on purpose.
         XCTAssertFalse(TestHome.shouldIsolate(environment: session.merging(["FROG_LIVE_NODE": "mew"]) { $1 }, loadedImages: launched + [inject]))
+    }
+
+    /// Engines a test opens start no sidecar: their fixed ports are the real app's.
+    func testHostStartsNoSidecars() {
+        XCTAssertEqual(ProcessInfo.processInfo.environment["FROG_SIDECARS"], "off")
+        XCTAssertEqual(Frog.environment["FROG_SIDECARS"], "off", "engines get it too")
+        XCTAssertTrue(SidecarGuard.running().isEmpty, "\(SidecarGuard.running())")
+    }
+
+    /// The guard knows this host's sidecars by their place in its bundle, and nobody else's.
+    func testSidecarGuardMatchesOnlyThisHostsBundle() {
+        let bundle = "/tmp/wt/build/Frog.app"
+        XCTAssertTrue(SidecarGuard.isOurs(path: bundle + "/Contents/Resources/frog-apple", bundle: bundle))
+        XCTAssertTrue(SidecarGuard.isOurs(path: bundle + "/Contents/Resources/tang-llm", bundle: bundle))
+        XCTAssertFalse(SidecarGuard.isOurs(path: "/Applications/Frog.app/Contents/Resources/frog-apple", bundle: bundle))
+        XCTAssertFalse(SidecarGuard.isOurs(path: bundle + "/Contents/Resources/frog", bundle: bundle))
+        XCTAssertFalse(SidecarGuard.isOurs(path: "/tmp/wt/build/Frog.app2/Contents/Resources/frog-apple", bundle: bundle))
     }
 
     /// No Dock icon, no menu bar, not frontmost (`FrogApp.init` under `SingleInstance.isTesting`).

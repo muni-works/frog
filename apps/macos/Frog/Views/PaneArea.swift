@@ -13,19 +13,13 @@ struct PaneArea: View {
     /// Runs one of the composer tray's git actions (`draft_commit`, `open_pr`, `push`); nil
     /// where there's no repo, so the Changes tab shows no Commit or Open PR.
     var git: ((String) -> Void)? = nil
-    @State private var dragStart: CGFloat?
-    @State private var gripHover = false
-    /// Terminal or Preview picked while there's no pane to show (a chat has no folder to open
-    /// a shell in): the tab is still there, with its empty state.
-    @State private var placeholder: PaneKind?
+    /// The strip is in the window's title row (the window's top-right inspector, docked): the
+    /// body starts at the column's top.
+    var stripInTitleRow = false
 
     static let minWidth: CGFloat = 360
     static let maxWidth: CGFloat = 560
     static let defaultWidth: CGFloat = 420
-    /// The grip's hit area straddles the column's hairline: this far out over the page, and
-    /// this far in.
-    static let gripReach: CGFloat = 4
-    static let gripInside: CGFloat = 4
     static let widthKey = "inspectorWidth"
     /// The width last dragged to, else the default.
     static var savedWidth: CGFloat {
@@ -34,6 +28,11 @@ struct PaneArea: View {
     }
 
     private var hub: PaneHub { conversation.panes }
+    /// Terminal or Preview picked with no pane behind it (kept on the hub: see `placeholder`).
+    private var placeholder: PaneKind? {
+        get { hub.placeholder }
+        nonmutating set { hub.placeholder = newValue }
+    }
     /// Any changed file at all. The count would walk every turn's diffs per body pass; the
     /// card's tab list only needs whether there are any (see `Conversation.changesVersion`).
     private var hasChanges: Bool { conversation.changesVersion > 0 && !conversation.sessionChanges.isEmpty }
@@ -69,7 +68,7 @@ struct PaneArea: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            strip
+            if !stripInTitleRow { strip }
             ZStack {
                 switch current {
                 case .tab(.changes):
@@ -109,12 +108,19 @@ struct PaneArea: View {
             }
         }
         .frame(width: width, height: height)
-        .overlay(alignment: .leading) { handle }
+        // The resize grip on its leading edge, straddling the hairline.
+        .overlay(alignment: .leading) {
+            ColumnGrip(width: $width, range: Self.minWidth...Self.maxWidth, reset: Self.defaultWidth, growsLeft: true,
+                       help: "Drag to resize the inspector, double-click to reset")
+                .offset(x: -ColumnGrip.reach)
+        }
         // A pane frog (or a shortcut) brings to the front wins over a tab's empty state.
         .onChange(of: hub.selected) { placeholder = nil }
     }
 
-    private var strip: some View {
+    /// The tabs and the close button. In the column, or in the window's title row (a toolbar
+    /// item: content under the toolbar can't take clicks on macOS 27).
+    var strip: some View {
         HStack(spacing: 2) {
             ForEach(slots, id: \.self) { slot in
                 let paneID: String? = if case .tab(.pane(let id)) = slot { id } else { nil }
@@ -185,37 +191,52 @@ struct PaneArea: View {
         case .tab(.pane(let id)): hub.pane(id)?.kind == .preview ? "globe" : "terminal"
         }
     }
+}
 
-    /// The resize grip on the column's leading edge, straddling its hairline: a bar shows on
-    /// hover (the web's grip), and it takes presses a little out over the page too. It was an
-    /// invisible strip inside the edge, so a press just off it landed on the canvas, which drags
-    /// the window; and its pushed resize cursor could outlive the hover (the column moving away
-    /// from under the pointer).
-    private var handle: some View {
+/// A flush column's resize grip (the inspector's leading edge, the sidebar's trailing one),
+/// straddling its hairline: `reach` out over the page and as far in. A bar shows on hover (the
+/// web's grip); double-click puts the default width back. It takes presses a little out over
+/// the page because a press that misses it lands on the canvas, which drags the window
+/// (WindowDragFallThroughTests).
+struct ColumnGrip: View {
+    @Binding var width: CGFloat
+    let range: ClosedRange<CGFloat>
+    let reset: CGFloat
+    /// The column lies right of the grip (the inspector), so dragging left widens it.
+    let growsLeft: Bool
+    var help = "Drag to resize, double-click to reset"
+    @State private var start: CGFloat?
+    @State private var hovering = false
+
+    static let reach: CGFloat = 4
+
+    var body: some View {
         Color.clear
-            .frame(width: Self.gripReach + Self.gripInside)
+            .frame(width: Self.reach * 2)
             .contentShape(.rect)
             .overlay {
                 Capsule()
                     .fill(Tokens.textTertiary)
                     .frame(width: 3, height: 36)
-                    .opacity(gripHover || dragStart != nil ? 1 : 0)
+                    .opacity(hovering || start != nil ? 1 : 0)
                     .allowsHitTesting(false)
             }
-            .offset(x: -Self.gripReach)
             .pointerStyle(.columnResize)
-            .onHover { gripHover = $0 }
-            .animation(.easeOut(duration: 0.12), value: gripHover)
+            .onHover { hovering = $0 }
+            .animation(.easeOut(duration: 0.12), value: hovering)
             .gesture(
-                DragGesture(minimumDistance: 1).onChanged { g in
-                    let start = dragStart ?? width
-                    dragStart = start
-                    width = min(Self.maxWidth, max(Self.minWidth, start - g.translation.width))
+                // Global: the grip moves with the edge it drags, so its own space would shift
+                // under the pointer.
+                DragGesture(minimumDistance: 1, coordinateSpace: .global).onChanged { g in
+                    let from = start ?? width
+                    start = from
+                    let d = growsLeft ? -g.translation.width : g.translation.width
+                    width = min(range.upperBound, max(range.lowerBound, from + d))
                 }
-                .onEnded { _ in dragStart = nil }
+                .onEnded { _ in start = nil }
             )
-            // Double-click puts the default width back, like the web's grip.
-            .onTapGesture(count: 2) { width = Self.defaultWidth }
+            .onTapGesture(count: 2) { width = reset }
+            .help(help)
     }
 }
 

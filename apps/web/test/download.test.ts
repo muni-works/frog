@@ -7,7 +7,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { COARSE_POINTER, hasThisMac, isPhone, showsDownloadChip } from "../src/ui/download.ts";
 import { DownloadAppChip } from "../src/ui/DownloadChip.tsx";
-import { Settings } from "../src/ui/Overlays.tsx";
+import { SettingsPage } from "../src/ui/Settings.tsx";
 import { Inspector } from "../src/ui/Inspector.tsx";
 import { Composer } from "../src/ui/Composer.tsx";
 import type { Machine } from "../src/machines.ts";
@@ -73,7 +73,7 @@ test("the chip renders nothing on a phone", () => {
 // --- the sites: the disabled affordances are gone, the chip is there ------
 
 const settings = (machines: Machine[], machine?: string) =>
-  renderToStaticMarkup(createElement(Settings, { account: null, tab: "Models" as const, machines, machine, onSignOut: noop, onClose: noop }));
+  renderToStaticMarkup(createElement(SettingsPage, { section: "models" as const, account: null, machines, machine, onOpen: noop, onSignOut: noop }));
 
 test("Settings › Models › Pair a machine points at the Mac app instead of dead-ending", () => {
   const html = settings([mew]);

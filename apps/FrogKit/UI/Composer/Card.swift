@@ -208,7 +208,8 @@ struct ComposerCard<Status: View, Above: View, Field: View, Controls: View>: Vie
         // The 1px stroke sits outside the content, as the board's CSS border does.
         .padding(1)
         .background(Tokens.raised, in: shape)
-        .overlay(shape.strokeBorder(focused ? Tokens.textSecondary : Tokens.lineStrong, lineWidth: 1).allowsHitTesting(false))
+        // At rest the quiet edge the sidebars use; focused, muted.
+        .overlay(shape.strokeBorder(focused ? Tokens.textSecondary : Tokens.edge, lineWidth: 1).allowsHitTesting(false))
         .animation(.easeOut(duration: 0.22), value: showStatus)
     }
 }

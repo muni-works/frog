@@ -2,9 +2,9 @@ import SwiftUI
 
 /// One conversation on the canvas: the transcript, full-bleed within the pane, with the composer
 /// under it; the pane's inspector as a flush, full-height column at its right edge (gone when
-/// folded), and the timeline rail at the transcript's right edge, beside it. When the window is
-/// split, a glass header names the pane and shows whether it's the one menus and the sidebar
-/// act on.
+/// folded), and the timeline rail at the transcript's right edge, beside it. Split, no pane has
+/// a header: the one menus and the sidebar act on is the one whose composer is at full strength
+/// (the others step back), and Maximize Pane (⇧⌘↩) and Close Pane (⌃⌘W) act on it.
 struct PaneView: View {
     let pane: Pane
     let panes: Panes
@@ -13,6 +13,8 @@ struct PaneView: View {
     let insets: EdgeInsets
     /// The pane's top is the window's: its inspector runs up under the title bar.
     var underTitleBar = true
+    /// Its inspector's strip is in the window's title row (it's the window's top-right one).
+    var stripInTitleRow = false
     /// The pane's right edge is the window's: no hairline after its inspector.
     var trailingEdge = true
     let changesDocked: Bool
@@ -25,7 +27,6 @@ struct PaneView: View {
     /// gives way rather than running under the rail.
     @State private var width: CGFloat = 1_200
 
-    static let headerHeight: CGFloat = 32
 
     private var workspace: Workspace { pane.workspace }
     private var ui: WindowState { pane.ui }
@@ -59,7 +60,6 @@ struct PaneView: View {
                 .clipped()
                 .contentMargins(.leading, insets.leading, for: .scrollContent)
                 .contentMargins(.trailing, insets.trailing, for: .scrollContent)
-                .contentMargins(.top, number == nil ? 0 : Self.headerHeight + inset, for: .scrollContent)
 
             GeometryReader { geo in
                 let room = max(120, geo.size.height)
@@ -77,22 +77,13 @@ struct PaneView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
             }
         }
-        // Overlays, not stack members: a wide pill or find bar can't widen the pane (a split
-        // pane's fixed-size pill did, spilling its rail and text over the next pane).
-        .overlay(alignment: .top) {
-            if let number {
-                header(number)
-                    .padding(.leading, insets.leading)
-                    .padding(.trailing, insets.trailing)
-                    .padding(.top, inset)
-            }
-        }
+        // An overlay, not a stack member: a wide find bar can't widen the pane.
         .overlay(alignment: .top) {
             if ui.findShown, let conversation {
                 FindBar(state: ui, turns: conversation.turns)
                     .padding(.leading, insets.leading)
                     .padding(.trailing, insets.trailing)
-                    .padding(.top, inset + (number == nil ? 0 : Self.headerHeight + 8))
+                    .padding(.top, inset)
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
@@ -199,27 +190,6 @@ struct PaneView: View {
         }
     }
 
-    /// When split, each pane gets the activity capsule the toolbar shows for a single pane (what
-    /// it's doing, its model), led by its number (tinted when focused) and with a close button
-    /// on hover.
-    @ViewBuilder
-    private func header(_ number: Int) -> some View {
-        let badge = ActivityViewer.PaneBadge(number: number, focused: focused) { panes.close(pane) }
-        Group {
-            if let c = workspace.conversation {
-                // The words give way in a narrow pane, so the capsule stays inside it.
-                ActivityViewer(workspace: workspace, conversation: c, jump: { ui.jumpTo = $0 }, pane: badge,
-                               labelWidth: max(80, min(300, width - insets.leading - insets.trailing - 340)))
-            }
-        }
-        // The handle: drag it onto another pane's edge to move this pane there; double-click
-        // fills the canvas with this pane (and again, or Escape, puts the layout back).
-        .paneDraggable(.pane(pane.id), title: conversation?.title ?? workspace.name)
-        .onTapGesture(count: 2) { panes.toggleMaximized(pane) }
-        .help("Double-click to \(panes.maximized == pane.id ? "restore" : "maximize") this pane")
-        .opacity(focused ? 1 : 0.8)
-    }
-
     /// The inspector: Changes, and any terminal or preview frog opened, as tabs of one flush,
     /// full-height column at the pane's right edge. Folded, nothing: the toolbar's Inspector
     /// button and ⌥⌘0 bring it back, and the composer's status line carries the counts.
@@ -231,7 +201,8 @@ struct PaneView: View {
                      width: Binding(get: { pane.cardWidth }, set: { pane.cardWidth = $0 }),
                      collapse: { toggleChanges() },
                      folder: pane.workspace.isChat ? nil : pane.workspace.folder,
-                     git: pane.workspace.isChat || pane.workspace.git == nil ? nil : { ui.requestGit($0) })
+                     git: pane.workspace.isChat || pane.workspace.git == nil ? nil : { ui.requestGit($0) },
+                     stripInTitleRow: stripInTitleRow && changesDocked)
                 // The sidebar's column, not glass, and outside any GlassEffectContainer: on
                 // macOS 27 glass around views that take the keyboard (terminal, web view,
                 // buttons) made SwiftUI's focus walk endless, and the app froze in it on a resize
@@ -245,7 +216,6 @@ struct PaneView: View {
     /// The timeline rail, once the conversation has started.
     @ViewBuilder
     private func rail(room: CGFloat, gutter: CGFloat = 0) -> some View {
-        let top = number == nil ? 0 : WorkspaceView.headerClearance
         if let conversation, pane.hasRail {
             TimelineRail(
                 conversation: conversation,
@@ -264,11 +234,10 @@ struct PaneView: View {
                 jump: { ui.jumpTo = $0 }
             )
             // Grows with the conversation instead of standing full height from turn one.
-            .frame(height: TimelineRail.height(for: conversation.turns, room: room - top))
+            .frame(height: TimelineRail.height(for: conversation.turns, room: room))
             .glassEffect(.regular, in: .capsule)
             .glassEffectID("timeline", in: glass)
             .transition(.opacity)
-            .padding(.top, top)
         }
     }
 

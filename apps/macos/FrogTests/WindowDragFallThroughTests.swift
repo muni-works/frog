@@ -112,4 +112,29 @@ final class WindowDragFallThroughTests: XCTestCase {
         drag(w, from: CGPoint(x: ext + (w.contentView!.bounds.width - ext) / 2, y: 450))
         XCTAssertNotEqual(panes.layout, before, "dragging the divider should resize the panes")
     }
+
+    /// Drags the sidebar's grip `offset` points right of its hairline (the column's trailing
+    /// edge, at the default 250); returns the saved width (before, after).
+    private func dragSidebarGrip(at offset: CGFloat) -> (Double, Double) {
+        let saved = UserDefaults.standard.object(forKey: "sidebarWidth")
+        defer { if let saved { UserDefaults.standard.set(saved, forKey: "sidebarWidth") } else { UserDefaults.standard.removeObject(forKey: "sidebarWidth") } }
+        UserDefaults.standard.removeObject(forKey: "sidebarWidth")
+        let (panes, w) = rig()
+        defer { panes.stopAll(); w.close() }
+        let before = UserDefaults.standard.object(forKey: "sidebarWidth") as? Double ?? 250
+        drag(w, from: CGPoint(x: 250 + offset, y: 400), by: 60)
+        return (before, UserDefaults.standard.object(forKey: "sidebarWidth") as? Double ?? 250)
+    }
+
+    /// The sidebar's grip takes a drag on its hairline: dragging right widens the sidebar.
+    func testSidebarGripTakesDragOnHairline() {
+        let (before, after) = dragSidebarGrip(at: -1)
+        XCTAssertGreaterThan(after, before, "dragging the sidebar's grip right should widen it")
+    }
+
+    /// And just outside it, over the page (which would otherwise drag the window).
+    func testSidebarGripTakesDragJustOutsideHairline() {
+        let (before, after) = dragSidebarGrip(at: 3)
+        XCTAssertGreaterThan(after, before, "a press just past the sidebar's hairline should still resize it")
+    }
 }

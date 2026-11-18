@@ -19,13 +19,17 @@ import type { PreviewHub } from './preview'
 import { SessionList } from './ui/SessionList'
 import { Starting } from './ui/Starting'
 import { useMachines } from './machines'
-import { creditLine, Palette, Settings, type Command, type SettingsTab } from './ui/Overlays'
+import { creditLine, Palette, type Command } from './ui/Overlays'
+import { SettingsPage, SettingsRow, SettingsSidebar } from './ui/Settings'
+import { SECTIONS, sectionOfQuery, setTheme, settingsPath, settingsSectionOf, toggledTheme, type Section } from './settings'
 import { Transcript } from './ui/Transcript'
 import { safeHref } from './ui/href'
 import { askLine } from './ui/ask'
 import { sessionMissing, viewAfterArchive } from './ui/guards'
 import { DocsPage, DocsRow, DocsSidebar, Shell, type ShellMode } from './ui/Docs'
 import { DOCS, VERSION } from './docs/bundle'
+import { ChipSlot, useMacAppChip } from './ui/ChipSlot'
+import { SignedOutSide } from './ui/SignedOut'
 import { docsPath, docsSlugOf } from './docs/docs'
 
 /** `pick`: open the composer's repo menu (back from sign-in, or ⌘K Connect a repo). */
@@ -56,11 +60,25 @@ function pathOfView(view: View): string | null {
   return view.kind === 'session' ? (view.id.startsWith(PENDING) ? null : `/s/${view.id}`) : '/'
 }
 
-/** Where "Back to app" goes from a docs URL: the thread it was opened from, kept in the history
- *  entry so a refresh still knows it. */
+/** Where "Back to app" goes from a docs or settings URL: the thread it was opened from, kept in
+ *  the history entry so a refresh still knows it. */
 function backOf(state: unknown): string {
   const back = (state as { back?: unknown } | null)?.back
-  return typeof back === 'string' && docsSlugOf(back) === null ? back : '/'
+  return typeof back === 'string' && docsSlugOf(back) === null && settingsSectionOf(back) === null ? back : '/'
+}
+
+/** A path that's one of the shell's other modes rather than a view. */
+const modePath = (path: string) => docsSlugOf(path) !== null || settingsSectionOf(path) !== null
+
+/** The mode and settings section a first load opens on. Settings needs a key: signed out, a
+ *  /settings URL or a ?settings= link opens the app. */
+function firstMode(signedIn: boolean): { mode: ShellMode; section: Section } {
+  const path = location.pathname
+  const at = settingsSectionOf(path)
+  const asked = sectionOfQuery(location.search)
+  if (docsSlugOf(path) !== null) return { mode: 'docs', section: asked ?? 'account' }
+  if ((at !== null || asked) && signedIn) return { mode: 'settings', section: at || asked || 'account' }
+  return { mode: 'threads', section: 'account' }
 }
 
 const FIRST_DOC = DOCS[0]?.slug ?? ''
@@ -76,55 +94,72 @@ export default function App() {
   const [account, setAccount] = useState<Account | null>(null)
   const [authError, setAuthError] = useState<string | null>(null)
   const [leaving, setLeavingFor] = useState<Provider | null>(null)
+  const keyNow = useRef(key)
+  keyNow.current = key
   // Each conversation has its own URL (/s/<id>), so refresh, back and links return to it.
-  // Documentation mode is the shell showing pages over the same view (/docs/<slug>): the view
-  // (and its thread, socket and draft) stays exactly as it was underneath.
-  const [view, setView] = useState<View>(() => viewOf(docsSlugOf(location.pathname) === null ? location.pathname : backOf(history.state)))
-  const [mode, setMode] = useState<ShellMode>(() => (docsSlugOf(location.pathname) === null ? 'threads' : 'docs'))
-  // The last page, for the life of the window.
+  // Documentation (/docs/<slug>) and Settings (/settings/<section>) are the shell showing pages
+  // over the same view: the view (and its thread, socket and draft) stays as it was underneath.
+  const [view, setView] = useState<View>(() => viewOf(modePath(location.pathname) ? backOf(history.state) : location.pathname))
+  const [first] = useState(() => firstMode(!!key))
+  const [mode, setMode] = useState<ShellMode>(first.mode)
+  // The last page and section, for the life of the window.
   const [docPage, setDocPage] = useState(() => docsSlugOf(location.pathname) || FIRST_DOC)
+  const [section, setSection] = useState<Section>(first.section)
   useEffect(() => {
     // A session still being created (a placeholder id) waits for its real id.
     const viewPath = pathOfView(view)
-    const path = mode === 'docs' ? docsPath(docPage) : viewPath
-    if (path === null || location.pathname === path) return
-    const state = mode === 'docs' ? { back: viewPath ?? '/' } : null
-    // Bare /docs names the first page: replace it, so Back doesn't land on it again.
-    if (docsSlugOf(location.pathname) === '') history.replaceState(state, '', path)
+    const path = mode === 'docs' ? docsPath(docPage) : mode === 'settings' ? settingsPath(section) : viewPath
+    // api.frog.toys/account and /billing (and Stripe) land on ?settings=account|billing: the
+    // section is open now, so the query goes, and anything else in it stays.
+    const q = new URLSearchParams(location.search)
+    const asked = q.has('settings')
+    q.delete('settings')
+    if (path === null || (location.pathname === path && !asked)) return
+    const state = mode === 'threads' ? null : { back: viewPath ?? '/' }
+    // Bare /docs and /settings name a page: replace them, so Back doesn't land on them again.
+    // Settings without a key (signed out from it, or a /settings link signed out) is the app:
+    // replaced too, so Back doesn't land on it and bounce.
+    const stale = mode !== 'settings' && settingsSectionOf(location.pathname) !== null && !keyNow.current
+    if (asked || stale || docsSlugOf(location.pathname) === '' || settingsSectionOf(location.pathname) === '') history.replaceState(state, '', path + (q.size ? `?${q}` : ''))
     else history.pushState(state, '', path)
-  }, [view, mode, docPage])
+  }, [view, mode, docPage, section])
   useEffect(() => {
     const back = () => {
       const slug = docsSlugOf(location.pathname)
       if (slug !== null) { setMode('docs'); setDocPage(slug || FIRST_DOC); return }
+      const at = settingsSectionOf(location.pathname)
+      if (at !== null && keyNow.current) { setMode('settings'); if (at) setSection(at); return }
       setMode('threads')
-      setView(viewOf(location.pathname))
+      setView(viewOf(at !== null ? backOf(history.state) : location.pathname))
     }
     addEventListener('popstate', back)
     return () => removeEventListener('popstate', back)
   }, [])
-  // The transcript's scroll position, kept while Documentation mode hides it.
+  // The transcript's scroll position, kept while another mode hides it.
   const threadScroll = useRef<HTMLDivElement | null>(null)
   const savedScroll = useRef<number | null>(null)
-  const openDocs = (slug?: string) => {
+  const enter = (m: 'docs' | 'settings') => {
     if (mode === 'threads') savedScroll.current = threadScroll.current?.scrollTop ?? null
-    if (slug) setDocPage(slug)
-    setMode('docs')
+    setMode(m)
   }
-  const leaveDocs = () => setMode('threads')
-  /** Somewhere in Threads mode (a session, a new one): leaves Documentation mode on the way. */
+  const openDocs = (slug?: string) => { if (slug) setDocPage(slug); enter('docs') }
+  // Billing's "Have a code?" takes the cursor when the out-of-credit card's link opens it.
+  const [couponAsk, setCouponAsk] = useState(0)
+  /** Settings mode, on a section or the last one. Only with a key. */
+  const openSettings = (s?: Section, opts?: { coupon?: boolean }) => {
+    if (!keyNow.current) return
+    if (s) setSection(s)
+    // Only that visit takes the cursor: a later plain one to Billing doesn't.
+    if (opts?.coupon) setCouponAsk((n) => n + 1)
+    else setCouponAsk(0)
+    enter('settings')
+  }
+  const backToApp = () => { setCouponAsk(0); setMode('threads') }
+  /** Somewhere in Threads mode (a session, a new one): leaves the other modes on the way. */
   const go = (v: View) => { setMode('threads'); setView(v) }
   // Escape is Back to app, after any menu or palette open over the page has closed.
-  useLayer(mode === 'docs', leaveDocs)
+  useLayer(mode !== 'threads', backToApp)
   const [palette, setPalette] = useState(false)
-  // api.frog.toys/account and /billing land here as ?settings=account|billing (as does Stripe).
-  const [settingsTab, setSettingsTab] = useState<SettingsTab>(() => new URLSearchParams(location.search).get('settings') === 'billing' ? 'Billing' : 'Account')
-  const [settings, setSettings] = useState(() => new URLSearchParams(location.search).has('settings'))
-  useEffect(() => {
-    const q = new URLSearchParams(location.search)
-    if (q.has('settings')) { q.delete('settings'); history.replaceState(null, '', location.pathname + (q.size ? `?${q}` : '')) }
-  }, [])
-  const openSettings = (tab: SettingsTab = 'Account') => { setSettingsTab(tab); setSettings(true) }
   // Open or closed, kept per browser like its tab and width.
   const [inspector, setInspectorState] = useState(() => { try { return localStorage.getItem('frog.inspector') === '1' } catch { return false } })
   const setInspector = (v: boolean) => { setInspectorState(v); try { localStorage.setItem('frog.inspector', v ? '1' : '0') } catch { /* private mode */ } }
@@ -164,7 +199,7 @@ export default function App() {
 
   // Signed out, on purpose or because the key stopped working: nothing of the account stays.
   const signedOut = useCallback(() => {
-    signOut(); clearThreads(); setKey(null); setAccount(null); setSettings(false); setView({ kind: 'new' })
+    signOut(); clearThreads(); setKey(null); setAccount(null); setMode('threads'); setView({ kind: 'new' })
   }, [])
   const cloud = useCloud(key, DEV_KEY ? undefined : signedOut)
   const models = useModels(DEV_KEY ? null : key)
@@ -236,7 +271,7 @@ export default function App() {
   const signalKey = JSON.stringify(signals)
   useAlerts(useMemo(() => signals, [signalKey]), useCallback((id: string) => { setMode('threads'); setView({ kind: 'session', id }) }, [])) // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => setDrawer(false), [view, mode, docPage])
+  useEffect(() => setDrawer(false), [view, mode, docPage, section])
   // The sidebar folds away on wide screens (⌘\\), as on the Mac; remembered per browser.
   const [collapsed, setCollapsedState] = useState(() => { try { return localStorage.getItem('frog.sidebarCollapsed') === '1' } catch { return false } })
   const setCollapsed = (v: boolean) => { setCollapsedState(v); try { localStorage.setItem('frog.sidebarCollapsed', v ? '1' : '0') } catch { /* private mode */ } }
@@ -386,18 +421,25 @@ export default function App() {
   const commit = (s: SessionSummary) => commitAsk(s, 'Commit the changes with a clear message.')
   const push = (s: SessionSummary) => !s.repo ? commit(s) : commitAsk(s, s.pr ? `Commit the changes and push to ${s.pr}.` : 'Commit the changes, push the branch and open a pull request.')
 
+  // Signed out: what's in the landing composer, so the sidebar's Sign in takes it along too.
+  const signedOutDraft = useRef('')
+  const noteSignedOutDraft = useCallback((t: string) => { signedOutDraft.current = t }, [])
+  const mac = useMacAppChip(machines)
+  /** Signed out, New session is the landing's composer. */
+  const focusComposer = () => { go({ kind: 'new' }); setDrawer(false); requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>('.dock textarea')?.focus()) }
   const leave = (after: string | null, provider: Provider = 'github', connect?: string, pick = !!connect) => { setLeavingFor(provider); signIn(after ?? undefined, provider, connect, pick).catch(() => setLeavingFor(null)) }
 
   // Keyboard: ⌘K palette, ⌘N new, ⌘, settings, ⌘↩ / ⌘. answer the current ask.
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey)) return
-      if (e.key === 'k') { e.preventDefault(); setPalette((p) => !p) }
       if (e.key === '\\') { e.preventDefault(); setCollapsedState((c) => { try { localStorage.setItem('frog.sidebarCollapsed', c ? '0' : '1') } catch { /* private mode */ } return !c }) }
+      // Signed out there's no palette, no settings and no session to answer: nothing to open.
       if (!key) return
+      if (e.key === 'k') { e.preventDefault(); setPalette((p) => !p) }
       if (e.key === 'n') { e.preventDefault(); setMode('threads'); setView({ kind: 'new' }) }
-      if (e.key === ',') { e.preventDefault(); setSettings(true) }
-      // A permission card hidden under Documentation mode isn't answered from there.
+      if (e.key === ',') { e.preventDefault(); openSettings() }
+      // A permission card hidden under another mode isn't answered from there.
       if (mode !== 'threads') return
       if (current && ct?.ask && e.key === 'Enter') { e.preventDefault(); decide(current.id, true) }
       if (current && ct?.ask && e.key === '.') { e.preventDefault(); decide(current.id, false) }
@@ -409,7 +451,8 @@ export default function App() {
   const commands: Command[] = [
     { id: 'c-new', label: 'New session', hint: '⌘N', run: () => key && go({ kind: 'new' }) },
     { id: 'c-repo', label: 'Connect a repo', run: () => key && go({ kind: 'new', pick: true }) },
-    { id: 'c-settings', label: 'Settings', hint: '⌘,', run: () => key && setSettings(true) },
+    { id: 'c-settings', label: 'Settings', hint: '⌘,', run: () => openSettings() },
+    ...SECTIONS.map((x) => ({ id: `s-${x.id}`, label: x.label, hint: 'Settings', run: () => openSettings(x.id) })),
     { id: 'c-docs', label: 'Documentation', run: () => openDocs() },
     ...DOCS.map((p) => ({ id: `d-${p.slug}`, label: p.title, hint: 'Documentation', run: () => openDocs(p.slug) })),
     ...(current ? [
@@ -419,7 +462,7 @@ export default function App() {
       { id: 'c-delete', label: 'Delete session', run: () => remove(current) },
     ] : []),
     { id: 'c-insp', label: inspector ? 'Hide inspector' : 'Show inspector', run: () => setInspector(!inspector) },
-    { id: 'c-theme', label: 'Toggle dark mode', run: () => { const r = document.documentElement; r.dataset.theme = r.dataset.theme === 'dark' ? 'light' : 'dark' } },
+    { id: 'c-theme', label: 'Toggle dark mode', run: () => setTheme(toggledTheme()) },
   ]
 
   const Nav = () => (
@@ -472,9 +515,51 @@ export default function App() {
     send(id, m.text, m.images)
   }
 
-  if (!key) return (
-    <div className="win">
+  // ---------- signed in ----------
+  const sig = changeSig(ct?.changes ?? [])
+  const done = current ? committed[current.id] : undefined
+  const clean = !!done && done.sig === sig
+  const adds = clean ? 0 : ct?.changes.reduce((n, c) => n + c.added, 0) ?? 0
+  const dels = clean ? 0 : ct?.changes.reduce((n, c) => n + c.removed, 0) ?? 0
+  const paused = ct ? outOfCredits(ct) : false
+  const cs = current ? conn[current.id] : undefined
+
+  return (
+    <Shell mode={mode} className={`win ${drawer ? 'drawer' : ''}${collapsed ? ' collapsed' : ''}`}
+      before={<div className="side-scrim" onClick={() => setDrawer(false)} />}
+      brand={<div className="brand"><Mark /><b style={{ flex: 1 }}>Frog</b><span id="side-acts" className="side-acts" style={mode === 'threads' ? undefined : { display: 'none' }} />{sideToggle(true)}</div>}
+      side={{ threads: !key ? (
+        <SignedOutSide onNew={focusComposer} chip={mac.chip} onDismissChip={mac.dismiss} onDocs={() => openDocs()}
+          onSignIn={(provider) => leave(signedOutDraft.current.trim() || null, provider)} />
+      ) : <>
+        <Nav />
+        <SessionList sessions={sessions} thread={thread} title={title} current={current?.id ?? null} error={listError}
+          onOpen={(id) => { setView({ kind: 'session', id }); setDrawer(false) }} onClear={clear} onSearch={() => setPalette(true)}
+          onRename={(s) => setRenaming(s.id)} onArchive={archive} onDelete={remove} />
+        <ChipSlot chip={mac.chip} onDismiss={mac.dismiss} />
+        <DocsRow onOpen={() => openDocs()} />
+        <SettingsRow onOpen={() => openSettings()} />
+        <button type="button" className="row" onClick={() => openSettings('account')} title="Account">
+          {account?.handle ? <img className="avatar" src={`https://github.com/${encodeURIComponent(account.handle)}.png?size=56`} alt="" width={28} height={28} />
+              : account?.image ? <img className="avatar" src={account.image} alt="" width={28} height={28} referrerPolicy="no-referrer" /> : <Mark size={28} />}
+          <div style={{ flex: 1, textAlign: 'left', minWidth: 0 }}>
+            <b>{firstName(account) ?? (DEV_KEY ? 'Dev key' : 'Signed in')}</b>
+            <div className="det" style={{ color: account && account.credit_cents <= 0 ? 'var(--warn)' : undefined }}>{account ? creditLine(account) : DEV_KEY ? 'local gateway' : ''}</div>
+          </div>
+        </button>
+      </>, docs: <DocsSidebar pages={DOCS} current={docPage} version={VERSION} onBack={backToApp} onOpen={openDocs} />,
+      settings: key && <SettingsSidebar current={section} onBack={backToApp} onOpen={(x) => openSettings(x)} /> }}
+      main={{ docs: <DocsPage pages={DOCS} slug={docPage} onOpen={openDocs} bar={<><Burger />{collapsed && sideToggle(false)}</>} />,
+      settings: key && <SettingsPage section={section} account={account} apiKey={!DEV_KEY ? key : undefined} models={models} machines={machines} focusCoupon={couponAsk}
+        bar={<><Burger />{collapsed && sideToggle(false)}</>} onOpen={(x) => openSettings(x)}
+        onTopUp={!DEV_KEY ? (d) => topUp(key, d) : undefined} onSubscribe={!DEV_KEY ? (p) => subscribe(key, p) : undefined} onConnect={!DEV_KEY ? (p) => leave(null, p, key, false) : undefined}
+        onSignOut={() => { if (!DEV_KEY) signOut(key); signedOut() }}
+        onRedeemed={(r) => { setAccount((a) => (a ? { ...a, credit_cents: r.credit_cents } : a)); refreshAccount() }} />,
+      threads: !key ? (
+      // Signed out: the landing, in the shell. The composer's Sign in keeps what was typed and
+      // sends it after the round trip.
       <main className="main home">
+        {collapsed && <div className="side-float">{sideToggle(false)}</div>}<div className="phone-bar floating"><Burger /><b>Frog</b></div>
         {authError && <div role="status" className="banner warn">Sign-in didn't finish ({authError}). Try again.</div>}
         <div className="home-hero">
           <Pond />
@@ -489,8 +574,8 @@ export default function App() {
           <Trust />
         </div>
         <div className="dock"><div>
-          <Composer onSend={() => {}} onSignIn={(provider, text) => leave(text || null, provider)} autoFocus chips={starterChips}
-            model={chosenModel} models={models} machines={machines} onManage={() => openSettings('Models')} onModel={setNewModel} mode={newMode} onMode={setNewMode} />
+          <Composer onSend={() => {}} onSignIn={(provider, text) => leave(text || null, provider)} autoFocus chips={starterChips} onText={noteSignedOutDraft}
+            model={chosenModel} models={models} machines={machines} onModel={setNewModel} mode={newMode} onMode={setNewMode} />
           {leaving && <div className="det" style={{ textAlign: 'center' }}>Opening {leaving === 'google' ? 'Google' : 'GitHub'}… your message is saved.</div>}
         </div></div>
         <footer className="muni-foot">
@@ -498,38 +583,7 @@ export default function App() {
           <a href="https://muni.works" target="_blank" rel="noreferrer" aria-label="Municipal Robotics"><Muni /></a>
         </footer>
       </main>
-    </div>
-  )
-
-  // ---------- signed in ----------
-  const sig = changeSig(ct?.changes ?? [])
-  const done = current ? committed[current.id] : undefined
-  const clean = !!done && done.sig === sig
-  const adds = clean ? 0 : ct?.changes.reduce((n, c) => n + c.added, 0) ?? 0
-  const dels = clean ? 0 : ct?.changes.reduce((n, c) => n + c.removed, 0) ?? 0
-  const paused = ct ? outOfCredits(ct) : false
-  const cs = current ? conn[current.id] : undefined
-
-  return (
-    <Shell mode={mode} className={`win ${drawer ? 'drawer' : ''}${collapsed ? ' collapsed' : ''}`}
-      before={<div className="side-scrim" onClick={() => setDrawer(false)} />}
-      brand={<div className="brand"><Mark /><b style={{ flex: 1 }}>Frog</b><span id="side-acts" className="side-acts" style={mode === 'threads' ? undefined : { display: 'none' }} />{sideToggle(true)}</div>}
-      side={{ threads: <>
-        <Nav />
-        <SessionList sessions={sessions} thread={thread} title={title} current={current?.id ?? null} error={listError}
-          onOpen={(id) => { setView({ kind: 'session', id }); setDrawer(false) }} onClear={clear} onSearch={() => setPalette(true)}
-          onRename={(s) => setRenaming(s.id)} onArchive={archive} onDelete={remove} />
-        <DocsRow onOpen={() => openDocs()} />
-        <button type="button" className="row" onClick={() => setSettings(true)} title="Settings ⌘,">
-          {account?.handle ? <img className="avatar" src={`https://github.com/${encodeURIComponent(account.handle)}.png?size=56`} alt="" width={28} height={28} />
-              : account?.image ? <img className="avatar" src={account.image} alt="" width={28} height={28} referrerPolicy="no-referrer" /> : <Mark size={28} />}
-          <div style={{ flex: 1, textAlign: 'left', minWidth: 0 }}>
-            <b>{firstName(account) ?? (DEV_KEY ? 'Dev key' : 'Signed in')}</b>
-            <div className="det" style={{ color: account && account.credit_cents <= 0 ? 'var(--warn)' : undefined }}>{account ? creditLine(account) : DEV_KEY ? 'local gateway' : ''}</div>
-          </div>
-        </button>
-      </>, docs: <DocsSidebar pages={DOCS} current={docPage} version={VERSION} onBack={leaveDocs} onOpen={openDocs} /> }}
-      main={{ docs: <DocsPage pages={DOCS} slug={docPage} onOpen={openDocs} bar={<><Burger />{collapsed && sideToggle(false)}</>} />, threads:
+      ) :
       <main className="main">
         {current ? (<div className="titlebar">
           <Burger />
@@ -619,13 +673,16 @@ export default function App() {
                 <div className="det wrap" style={{ marginTop: -4 }}>Nothing is lost. The sandbox, the changes and this conversation stay put.</div>
                 <div className="out" style={{ borderColor: 'var(--frog)' }}>
                   <div style={{ flex: 1 }}><b>Add credit</b><div className="det wrap">Top up and pay per token, or pick a plan with a weekly allowance. Then keep going here.</div></div>
-                  <button type="button" className="f-btn f-btn--prominent" onClick={() => openSettings('Billing')}>Billing</button>
+                  <button type="button" className="f-btn f-btn--prominent" onClick={() => openSettings('billing')}>Billing</button>
                 </div>
                 <div className="out" style={{ borderColor: 'var(--line)' }}>
                   <div style={{ flex: 1 }}><b>Finish on your Mac</b><div className="det wrap">Frog for Mac runs local models for free.</div></div>
                   <a className="f-btn f-btn--bordered" href="/mac" style={{ textDecoration: 'none' }}>Get it</a>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'flex-end' }}><button type="button" className="f-btn f-btn--plain" onClick={() => send(current.id, 'Keep going.')}>I added credit, keep going</button></div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <button type="button" className="f-btn f-btn--plain" onClick={() => openSettings('billing', { coupon: true })}>Have a code?</button>
+                  <button type="button" className="f-btn f-btn--plain" onClick={() => send(current.id, 'Keep going.')}>I added credit, keep going</button>
+                </div>
               </section>
             )}
           </div></div>
@@ -639,10 +696,10 @@ export default function App() {
                 ))}
               </div>
             )}
-            <Composer key={current.id} session autoFocus usage={account ? { sub: account.subscription ?? null, credit: creditLine(account).replace(/ credit$/, ''), onBilling: () => openSettings('Billing'), onOpen: refreshAccount } : undefined} context={ct.context} compacting={!!compacting[current.id]}
+            <Composer key={current.id} session autoFocus usage={account ? { sub: account.subscription ?? null, credit: creditLine(account).replace(/ credit$/, ''), onBilling: () => openSettings('billing'), onOpen: refreshAccount } : undefined} context={ct.context} compacting={!!compacting[current.id]}
               onCompact={(focus) => { setCompacting((c) => ({ ...c, [current.id]: (ct.marks ?? []).length + 1 })); cloud?.send(current.id, { op: 'compact', ...(focus ? { focus } : {}) }) }} chips={ct.next && !ct.running ? [{ text: ct.next.text, send: true, act: ct.next.act }] : undefined} state={ct.running || opening[current.id] ? 'working' : paused ? 'paused' : 'idle'} startedAt={ct.startedAt} speed={ct.speed} waiting={!!(ct.ask || ct.question || ct.elicitation)}
               repo={current.repo} branch={current.branch} pr={current.pr} adds={adds} dels={dels}
-              model={idOf(ct.model)} models={models} machines={machines} onManage={() => openSettings('Models')} onModel={(id) => cloud?.send(current.id, { op: 'set_model', spec: spec(id) })}
+              model={idOf(ct.model)} models={models} machines={machines} onManage={() => openSettings('models')} onModel={(id) => cloud?.send(current.id, { op: 'set_model', spec: spec(id) })}
               mode={ct.mode ?? 'default'} onMode={(mode) => cloud?.send(current.id, { op: 'set_mode', mode })}
               queued={queue[current.id]} restore={restore} vision={ct.vision} insert={preview?.insert} onText={preview ? (t) => preview.noteDraft(t) : undefined}
               onUnqueue={(i) => setQueue((all) => ({ ...all, [current.id]: (all[current.id] ?? []).filter((_, j) => j !== i) }))}
@@ -662,23 +719,22 @@ export default function App() {
               <HowItWorks />
             </div>
             <div className="dock">
-              <Composer usage={account ? { sub: account.subscription ?? null, credit: creditLine(account).replace(/ credit$/, ''), onBilling: () => openSettings('Billing'), onOpen: refreshAccount } : undefined} repo={view.repo} draft={draft} autoFocus pickRepo={view.pick} chips={starterChips}
+              <Composer usage={account ? { sub: account.subscription ?? null, credit: creditLine(account).replace(/ credit$/, ''), onBilling: () => openSettings('billing'), onOpen: refreshAccount } : undefined} repo={view.repo} draft={draft} autoFocus pickRepo={view.pick} chips={starterChips}
                 recent={[...new Set(sessions.map((s) => s.repo).filter(Boolean))]} repos={repoList.repos.map((r) => r.name)} install={repoList.install} onRepo={(repo) => setView({ kind: 'new', repo })} base={view.base} onBase={(base) => setView((v) => (v.kind === 'new' ? { ...v, base } : v))}
                 onConnectGithub={key && account && !account.handle && !DEV_KEY ? (text) => leave(text || null, 'github', key) : undefined}
-                model={chosenModel} models={models} machines={machines} onManage={() => openSettings('Models')} onModel={setNewModel} mode={newMode} onMode={setNewMode}
+                model={chosenModel} models={models} machines={machines} onManage={() => openSettings('models')} onModel={setNewModel} mode={newMode} onMode={setNewMode}
                 onSend={(text, images) => { setDraft(undefined); start(text, view.repo, images, view.base) }} />
             </div>
           </div>
         )}
 
       </main> }}
-      inspector={view.kind === 'session' && current && ct && inspector && (
+      inspector={key && view.kind === 'session' && current && ct && inspector && (
         <Inspector onClose={() => setInspector(false)} thread={ct} branch={current.branch} hasPr={!!current.pr} onCommit={() => commit(current)} onPr={current.repo ? () => push(current) : undefined} machines={machines} send={(op) => cloud?.send(current.id, op)} preview={preview} pane={inspectorTab} />
       )}
       after={<>
-      {palette && <Palette commands={commands} sessions={sessions} onOpen={(id) => go({ kind: 'session', id })} onClose={() => setPalette(false)}
+      {key && palette && <Palette commands={commands} sessions={sessions} onOpen={(id) => go({ kind: 'session', id })} onClose={() => setPalette(false)}
         text={(id) => thread(id).turns.flatMap((u) => [u.input, ...u.entries.filter((e) => e.kind === 'message').map((e) => e.text)]).join('\n')} />}
-      {settings && <Settings account={account} apiKey={key && !DEV_KEY ? key : undefined} tab={settingsTab} models={models} machines={machines} onTopUp={key && !DEV_KEY ? (d) => topUp(key, d) : undefined} onSubscribe={key && !DEV_KEY ? (p) => subscribe(key, p) : undefined} onConnect={key && !DEV_KEY ? (p) => leave(null, p, key, false) : undefined} onSignOut={() => { if (key && !DEV_KEY) signOut(key); signedOut() }} onClose={() => setSettings(false)} />}
       {toast && <div className="toast" role="status">{toast}</div>}
       </>} />
   )

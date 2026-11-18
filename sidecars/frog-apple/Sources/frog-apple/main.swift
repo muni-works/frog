@@ -111,10 +111,26 @@ struct ContextFull: Error, CustomStringConvertible {
     var description: String { message }
 }
 
+/// Why the on-device model can't run right now, in the words the person sees (frog ends the
+/// turn with this line); nil when it can.
+func unavailable() -> String? {
+    switch SystemLanguageModel.default.availability {
+    case .available: return nil
+    case .unavailable(.deviceNotEligible):
+        return "This Mac doesn't support Apple Intelligence. Pick another model."
+    case .unavailable(.appleIntelligenceNotEnabled):
+        return "Apple Intelligence is turned off. Turn it on in System Settings › Apple Intelligence & Siri, or pick another model."
+    case .unavailable(.modelNotReady):
+        return "Apple Intelligence is still downloading its model. Try again in a few minutes, or pick another model."
+    case .unavailable(let other):
+        return "Apple Intelligence isn't available right now (\(other)). Pick another model."
+    }
+}
+
 func chat(_ body: [String: Any], _ res: HTTPServer.Response) async {
     let model = SystemLanguageModel.default
-    guard case .available = model.availability else {
-        res.json(503, ["error": ["message": "Apple Intelligence model unavailable: \(model.availability)"]])
+    if let reason = unavailable() {
+        res.json(503, ["error": ["message": reason]])
         return
     }
     let (instructions, prompt) = split(body["messages"] as? [[String: Any]] ?? [])
@@ -194,10 +210,16 @@ let server = try HTTPServer(port: port) { req, res in
         res.json(401, ["error": ["message": "missing or wrong bearer token"]]); return
     }
     switch (req.method, req.path.split(separator: "?").first.map(String.init) ?? req.path) {
-    case ("GET", "/health"): res.json(200, ["status": "ok"])
+    case ("GET", "/health"):
+        var health: [String: Any] = ["status": "ok"]
+        if let reason = unavailable() { health["unavailable"] = reason }
+        res.json(200, health)
     case ("GET", "/props"): res.json(200, ["n_ctx": ctx, "default_generation_settings": ["n_ctx": ctx]])
     case ("GET", "/v1/models"):
-        res.json(200, ["object": "list", "data": [["id": modelID, "object": "model", "owned_by": "apple", "max_model_len": ctx]]])
+        // `unavailable`: the model can't run, and why (frog checks it before a turn).
+        var model: [String: Any] = ["id": modelID, "object": "model", "owned_by": "apple", "max_model_len": ctx]
+        if let reason = unavailable() { model["unavailable"] = reason }
+        res.json(200, ["object": "list", "data": [model]])
     case ("POST", "/v1/screenshots"), ("POST", "/v1/images/generations"):
         guard let body = (try? JSONSerialization.jsonObject(with: req.body)) as? [String: Any] else {
             res.json(400, ["error": ["message": "invalid JSON"]]); return
@@ -213,8 +235,9 @@ let server = try HTTPServer(port: port) { req, res in
     default: res.json(404, ["error": ["message": "not found"]])
     }
 }
-server.start()
-FileHandle.standardError.write(Data("frog-apple: listening on http://127.0.0.1:\(port) (context \(ctx))\n".utf8))
+server.start {
+    FileHandle.standardError.write(Data("frog-apple: listening on http://127.0.0.1:\(port) (context \(ctx))\n".utf8))
+}
 // Started for the Mac app (whose engines pass `FROG_APP_PID` down), it goes when the app does:
 // it's detached from the engine so later sessions reuse it, which left it running, ppid 1, after
 // the app quit or crashed. Started from the CLI, it outlives the engine as before.

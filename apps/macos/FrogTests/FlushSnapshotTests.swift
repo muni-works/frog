@@ -31,9 +31,14 @@ final class FlushSnapshotTests: XCTestCase {
         try XCTSkipIf(TestRunner.isCI, "display-driven snapshots for docs/design/flush; run locally")
     }
 
+    /// The test host shares the app's defaults: this Mac's sidebar width stays out of the images.
+    private var savedSidebar: Any?
+
     override func setUp() {
         super.setUp()
         executionTimeAllowance = 120
+        savedSidebar = UserDefaults.standard.object(forKey: WorkspaceView.sidebarWidthKey)
+        UserDefaults.standard.removeObject(forKey: WorkspaceView.sidebarWidthKey)
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         func s(_ id: String, _ title: String, ago minutes: Double, repo: String = "frog") -> SessionInfo {
             let t = now - Int64(minutes * 60_000)
@@ -54,6 +59,8 @@ final class FlushSnapshotTests: XCTestCase {
     }
 
     override func tearDown() {
+        if let savedSidebar { UserDefaults.standard.set(savedSidebar, forKey: WorkspaceView.sidebarWidthKey) }
+        else { UserDefaults.standard.removeObject(forKey: WorkspaceView.sidebarWidthKey) }
         Library.shared.unstage()
         CloudAccount.shared.unstage()
         Devices.shared.hideOffer = false
@@ -135,5 +142,51 @@ final class FlushSnapshotTests: XCTestCase {
             try show(panes.items[0], inspector: false)
             panes.items[0].peekChanges = true
         }
+    }
+
+    /// The sidebar dragged wider (340 of 220–400): the header in the title row, the title and
+    /// the panes follow it.
+    func testWideSidebar() throws {
+        let saved = UserDefaults.standard.object(forKey: WorkspaceView.sidebarWidthKey)
+        defer {
+            if let saved { UserDefaults.standard.set(saved, forKey: WorkspaceView.sidebarWidthKey) }
+            else { UserDefaults.standard.removeObject(forKey: WorkspaceView.sidebarWidthKey) }
+        }
+        UserDefaults.standard.set(340.0, forKey: WorkspaceView.sidebarWidthKey)
+        try render("wide-sidebar") { try show($0.items[0], inspector: true) }
+    }
+
+    /// The top-right inspector's tabs are in the title row, beside the toolbar's controls and
+    /// over its column: Changes, Terminal and Preview and the close button, clickable there.
+    func testInspectorTabsInTitleRow() throws {
+        let panes = Panes(Workspace(folder: folder, fresh: true))
+        defer { panes.stopAll() }
+        try show(panes.items[0], inspector: true)
+        let host = NSHostingView(rootView: WorkspaceView(panes: panes).font(.frog(size: 13)).frame(minWidth: 720, minHeight: 480))
+        host.sceneBridgingOptions = [.toolbars, .title]
+        let w = NSWindow(contentRect: CGRect(x: -20_000, y: -20_000, width: 1440, height: 860),
+                         styleMask: [.titled, .resizable, .fullSizeContentView, .closable, .miniaturizable], backing: .buffered, defer: false)
+        w.isReleasedWhenClosed = false
+        w.toolbarStyle = .unified
+        w.contentView = host
+        w.setFrameOrigin(CGPoint(x: -20_000, y: -20_000))
+        w.orderInForTest()
+        defer { w.close() }
+        RunLoop.main.run(until: Date().addingTimeInterval(1.5))
+        let frame = try XCTUnwrap(host.superview)
+        let top = host.safeAreaInsets.top
+        let edge = frame.bounds.width - panes.items[0].cardWidth
+        // Controls (by SwiftUI's focus rings) in the title row, over the inspector's column.
+        var tabs: [CGRect] = []
+        func walk(_ v: NSView) {
+            if String(describing: type(of: v)).contains("FocusRingView") {
+                let r = v.convert(v.bounds, to: frame)
+                let y = frame.isFlipped ? r.minY : frame.bounds.height - r.maxY
+                if y < top, r.minX >= edge - 1 { tabs.append(r) }
+            }
+            v.subviews.forEach(walk)
+        }
+        walk(frame)
+        XCTAssertGreaterThanOrEqual(tabs.count, 4, "the inspector's tabs and close button should be in the title row, over its column (found \(tabs.count))")
     }
 }

@@ -69,7 +69,20 @@ impl Agent {
                 token.cancel();
             });
         }
-        let out = crate::subagent::run(opts, input, stop, forward).await;
+        let label = input["description"].as_str().unwrap_or("").trim();
+        let what = if label.is_empty() {
+            "the subagent".to_string()
+        } else {
+            format!("the subagent “{label}”")
+        };
+        let watch = crate::child_watch::Watch::new(
+            &self.cfg,
+            self.asker(),
+            what,
+            input["prompt"].as_str().unwrap_or(""),
+            id.to_string(),
+        );
+        let out = crate::subagent::run(opts, input, stop, watch, forward).await;
         self.shared.subagents.lock().unwrap().remove(id);
         out
     }
