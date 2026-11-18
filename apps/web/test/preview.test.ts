@@ -11,21 +11,25 @@ import { startMock } from "./mock/mock-gateway.mjs";
 import { Gateway } from "../src/cloud/client.ts";
 import type { Envelope, Op } from "../src/cloud/protocol.ts";
 import { CloudEngine } from "../src/engine/cloud.ts";
-import { addressURL, displayAddress, localTarget, NO_SCREENSHOT, PreviewHub, type Frame } from "../src/preview.ts";
-import { GatewayError } from "../src/cloud/client.ts";
+import { addressURL, displayAddress, localTarget, NO_SCREENSHOT, pageLink, PreviewHub, type Frame } from "../src/preview.ts";
+import { GatewayError, sessionIndex } from "../src/cloud/client.ts";
 import { DEVICES, fitDevice } from "../src/ui/PreviewPane.tsx";
 import { Inspector } from "../src/ui/Inspector.tsx";
 
 const PREVIEW = "https://abc.frog-preview.dev";
 
 /** A hub with a recording engine, a fake gateway and timers that fire when told. */
-function rig(now = { t: 1_000 }) {
+/** `entry`: today's gateway, a one-minute entry link per mint plus `origin`; else an older
+ * gateway's link that is the page itself. */
+function rig(now = { t: 1_000 }, { entry = false } = {}) {
   const sent: Op[] = [];
   const minted: number[] = [];
   const timers: (() => void)[] = [];
   const hub = new PreviewHub(
     (op) => sent.push(op),
-    async (port) => (minted.push(port), { url: `${PREVIEW}/`, expires: now.t + 8 * 3600_000 }),
+    async (port) => (minted.push(port), entry
+      ? { url: `${PREVIEW}/__frog/enter?t=${minted.length}`, origin: PREVIEW, expires: now.t + 8 * 3600_000 }
+      : { url: `${PREVIEW}/`, expires: now.t + 8 * 3600_000 }),
     () => now.t,
     (f) => timers.push(f),
   );
@@ -80,23 +84,61 @@ test("device sizes: Fit fills, the others keep their shape and scale down, never
   assert.equal(fitDevice("phone", 0, 500), null);
 });
 
-test("a gateway without previews makes the hub unavailable; one that mints makes it available", async () => {
+test("availability is the session list's: a mint that fails is a failed load, never the tab going away", async () => {
+  const { hub } = rig();
+  assert.equal(hub.available, undefined, "unknown until the list answers");
+  hub.setAvailable(true);
+  // The list says previews are on but this sandbox's host answers 503: the page failed, the tab stays.
   const off = new PreviewHub(() => {}, async () => { throw new GatewayError(503, "previews are not configured"); });
-  assert.equal(off.available, undefined);
-  await off.probe();
-  assert.equal(off.available, false);
-  const loadOff = new PreviewHub(() => {}, async () => { throw new GatewayError(503, "previews are not configured"); });
-  await loadOff.load("p1", "http://localhost:3000/");
-  assert.equal(loadOff.available, false);
-  // A dead dev server is a failed page, not a missing feature.
-  const dead = new PreviewHub(() => {}, async () => { throw new GatewayError(502, "nothing is listening"); });
-  await dead.probe();
-  assert.equal(dead.available, undefined);
-  const { hub, minted } = rig();
-  await hub.probe();
-  assert.equal(hub.available, true);
-  await hub.load("p1", "http://localhost:3000/");
-  assert.deepEqual(minted, [3000], "the probe's mint is reused");
+  off.setAvailable(true);
+  await off.load("p1", "http://localhost:3000/");
+  assert.equal(off.available, true);
+  assert.equal(off.state("p1").error, "previews are not configured");
+  assert.equal(off.state("p1").loading, false);
+  // A bad port is the gateway's 400, said as it said it.
+  const bad = new PreviewHub(() => {}, async () => { throw new GatewayError(400, "port must be 1024–65535, not the engine's"); });
+  await bad.load("p1", "http://localhost:7070/");
+  assert.match(bad.state("p1").error ?? "", /port must be 1024–65535/);
+  assert.equal(bad.state("p1").src, undefined, "nothing loads");
+});
+
+test("only the minted preview origin is listened to or posted to", async () => {
+  const { hub, frame } = rig();
+  assert.equal(hub.accepts("p1", PREVIEW), false, "nothing minted yet");
+  assert.equal(hub.target("p1"), undefined);
+  hub.attach("p1", frame);
+  await hub.load("p1", "http://localhost:5173/");
+  assert.equal(hub.accepts("p1", PREVIEW), true);
+  assert.equal(hub.target("p1"), PREVIEW);
+  for (const o of ["https://evil.example", "https://frog.toys", "null", `${PREVIEW}.evil.example`, "http://localhost:5173", ""]) assert.equal(hub.accepts("p1", o), false, o);
+  assert.equal(hub.accepts("p2", PREVIEW), false, "another pane's origin is its own");
+  // A page outside the sandbox has no capture script of ours: never heard, never posted to.
+  await hub.load("p1", "https://example.com/");
+  assert.equal(hub.accepts("p1", "https://example.com"), false);
+  assert.equal(hub.target("p1"), undefined);
+});
+
+test("a new iframe always enters with a fresh link; reload mints again only once the label is up", async () => {
+  const now = { t: 1_000 };
+  const { hub, frame, loads, minted, posted } = rig(now, { entry: true });
+  hub.attach("p1", frame, "http://localhost:5173/");
+  await settle();
+  hub.loaded("p1");
+  hub.reload("p1");
+  assert.ok(posted.some((m) => m.type === "reload"), "the owner cookie is set: the page reloads itself");
+  assert.deepEqual(minted, [5173]);
+  // The inspector closed and reopened a minute later: that link is spent, so a new one.
+  hub.detach("p1", frame);
+  hub.attach("p1", frame);
+  await settle();
+  assert.deepEqual(minted, [5173, 5173]);
+  assert.equal(loads.at(-1), `${PREVIEW}/__frog/enter?t=2`);
+  hub.loaded("p1");
+  now.t += 8 * 3600_000; // the 8 h label (and its cookie) is up
+  hub.reload("p1");
+  await settle();
+  assert.deepEqual(minted, [5173, 5173, 5173]);
+  assert.equal(loads.at(-1), `${PREVIEW}/__frog/enter?t=3`);
 });
 
 test("back and forward follow the page's history; stop ends a load", async () => {
@@ -143,7 +185,7 @@ test("reload of a page outside the sandbox loads it again from here; Frog can't 
   assert.equal(hub.drivable("p1"), true);
 });
 
-test("a sandbox URL loads through the gateway's preview host, minted once per port", async () => {
+test("an older gateway's link is the page: the path goes on it, and every load mints afresh", async () => {
   const { hub, frame, loads, minted } = rig();
   hub.attach("p1", frame, "http://localhost:5173/about?x=1");
   await settle();
@@ -151,10 +193,71 @@ test("a sandbox URL loads through the gateway's preview host, minted once per po
   assert.equal(hub.state("p1").url, "http://localhost:5173/about?x=1");
   assert.equal(hub.state("p1").loading, true);
   await hub.load("p1", "http://localhost:5173/");
-  assert.deepEqual(minted, [5173]);
-  assert.equal(hub.browserURL("p1"), `${PREVIEW}/`);
+  assert.deepEqual(minted, [5173, 5173], "no link is reused");
   hub.loaded("p1");
   assert.equal(hub.state("p1").loading, false);
+  assert.equal(hub.accepts("p1", PREVIEW), true, "no `origin` field: the link's own");
+});
+
+test("an entry link carries the page as `next`, so it lands there in one load", async () => {
+  const { hub, frame, loads, minted, ops } = rig(undefined, { entry: true });
+  hub.attach("p1", frame, "http://localhost:5173/about?x=1#top");
+  await settle();
+  assert.deepEqual(loads, [`${PREVIEW}/__frog/enter?t=1&next=%2Fabout%3Fx%3D1%23top`]);
+  assert.equal(hub.accepts("p1", PREVIEW), true, "the minted `origin`");
+  hub.received("p1", msg({ type: "navigated", url: `${PREVIEW}/about?x=1#top` }));
+  hub.loaded("p1");
+  assert.equal(loads.length, 1, "no second load");
+  assert.equal(hub.state("p1").loading, false);
+  assert.deepEqual(ops("pane_report").at(-1), { op: "pane_report", id: "p1", kind: "navigated", message: "http://localhost:5173/about?x=1#top", url: "http://localhost:5173/about?x=1#top" });
+  await hub.load("p1", "http://localhost:5173/");
+  assert.deepEqual(loads.at(-1), `${PREVIEW}/__frog/enter?t=2`, "`/` needs no next");
+  assert.deepEqual(minted, [5173, 5173]);
+});
+
+test("pageLink: next on an entry link, the path on an older gateway's", () => {
+  assert.equal(pageLink(`${PREVIEW}/__frog/enter?t=abc`, "/"), `${PREVIEW}/__frog/enter?t=abc`);
+  assert.equal(pageLink(`${PREVIEW}/__frog/enter?t=abc`, "/a b?c=&d#e"), `${PREVIEW}/__frog/enter?t=abc&next=%2Fa+b%3Fc%3D%26d%23e`);
+  assert.equal(new URL(pageLink(`${PREVIEW}/__frog/enter?t=abc`, "/a b?c=&d#e")).searchParams.get("next"), "/a b?c=&d#e");
+  assert.equal(pageLink(`${PREVIEW}/`, "/x?y"), `${PREVIEW}/x?y`);
+});
+
+test("Open in Browser mints its own entry link; a page outside the sandbox opens as is", async () => {
+  const { hub, frame, loads, minted } = rig(undefined, { entry: true });
+  assert.equal(hub.canOpen("p1"), false);
+  hub.attach("p1", frame, "http://localhost:5173/");
+  await settle();
+  assert.equal(hub.canOpen("p1"), true);
+  hub.received("p1", msg({ type: "navigated", url: `${PREVIEW}/cart` }));
+  assert.equal(await hub.browserURL("p1"), `${PREVIEW}/__frog/enter?t=2&next=%2Fcart`, "the page the pane is on now");
+  assert.ok(!loads.includes(`${PREVIEW}/__frog/enter?t=2&next=%2Fcart`), "never the iframe's spent link");
+  assert.deepEqual(minted, [5173, 5173]);
+  await hub.load("p1", "https://example.com/x");
+  assert.equal(await hub.browserURL("p1"), "https://example.com/x");
+});
+
+test("a gateway error page in the frame enters again with a fresh link, once", async () => {
+  const { hub, frame, loads, minted } = rig(undefined, { entry: true });
+  hub.attach("p1", frame, "http://localhost:5173/a");
+  await settle();
+  hub.received("p1", msg({ type: "load_failed", message: "Open this preview from Frog. Only the session's owner can view it." }));
+  await settle();
+  assert.deepEqual(minted, [5173, 5173]);
+  assert.equal(loads.at(-1), `${PREVIEW}/__frog/enter?t=2&next=%2Fa`);
+  assert.equal(hub.state("p1").error, undefined, "not failed yet");
+  hub.received("p1", msg({ type: "load_failed", message: "Open this preview from Frog. Only the session's owner can view it." }));
+  await settle();
+  assert.deepEqual(minted, [5173, 5173], "the second is the answer");
+  assert.match(hub.state("p1").error ?? "", /Only the session's owner/);
+  // Retry from the user starts a fresh budget, and a page that commits resets it.
+  hub.reload("p1");
+  await settle();
+  hub.loaded("p1");
+  hub.received("p1", msg({ type: "navigated", url: `${PREVIEW}/a` }));
+  hub.received("p1", msg({ type: "load_failed", message: "expired" }));
+  await settle();
+  assert.deepEqual(minted, [5173, 5173, 5173, 5173]);
+  assert.equal(hub.state("p1").error, undefined);
 });
 
 test("what the page says reaches the engine as the Mac's pane_reports, in the sandbox's URLs", async () => {
@@ -263,6 +366,9 @@ test("the tool's open waits for the load, and a dead dev server is the answer", 
 
   hub.request({ call: "n2", id: "p1", action: "navigate", args: { url: "http://localhost:4000/" } });
   await settle();
+  // An error page is entered again once (it may be a spent link), then it's the answer.
+  hub.received("p1", msg({ type: "load_failed", message: "Nothing is answering on port 4000 in the sandbox. Is the dev server running?" }));
+  await settle();
   hub.received("p1", msg({ type: "load_failed", message: "Nothing is answering on port 4000 in the sandbox. Is the dev server running?" }));
   hub.loaded("p1");
   assert.deepEqual(ops("pane_reply").at(-1), { op: "pane_reply", call: "n2", result: null, error: "Nothing is answering on port 4000 in the sandbox. Is the dev server running?" });
@@ -275,14 +381,36 @@ test("the tool's open waits for the load, and a dead dev server is the answer", 
   assert.match(String((ops("pane_reply").at(-1) as { error?: string }).error), /npx serve/);
 });
 
-test("the client tells the engine it hosts preview panes, and routes pane_request to the hub", async () => {
+test("the client says it hosts preview panes only once the gateway serves previews", () => {
+  const sent: Record<string, unknown[]> = {};
+  const fake = { connect: (id: string) => ({ send: (op: unknown) => (sent[id] ??= []).push(op), close() {} }) };
+  const engine = new CloudEngine(fake as unknown as Gateway);
+  const caps = (id: string) => sent[id].filter((o) => (o as Op).op === "set_client_caps");
+  engine.subscribe("s1", 0, () => {});
+  assert.deepEqual(caps("s1"), [{ op: "set_client_caps", ask: true, panes: false }], "unknown: no preview tools yet");
+  const hub = engine.preview("s1");
+  assert.equal(hub.available, undefined);
+  engine.setPreviews(true);
+  assert.deepEqual(caps("s1").at(-1), { op: "set_client_caps", ask: true, panes: true }, "an open session hears the change");
+  assert.equal(hub.available, true);
+  engine.setPreviews(true);
+  assert.equal(caps("s1").length, 2, "the poll repeating itself sends nothing");
+  engine.subscribe("s2", 0, () => {});
+  assert.deepEqual(caps("s2"), [{ op: "set_client_caps", ask: true, panes: true }]);
+  assert.equal(engine.preview("s2").available, true, "a new hub starts with what the list said");
+  engine.setPreviews(false);
+  assert.deepEqual(caps("s1").at(-1), { op: "set_client_caps", ask: true, panes: false });
+  assert.deepEqual(caps("s2").at(-1), { op: "set_client_caps", ask: true, panes: false });
+  assert.equal(hub.available, false);
+});
+
+test("the client routes pane_request to the hub", async () => {
   const sent: unknown[] = [];
   let deliver: ((e: Envelope) => void) | undefined;
   const fake = { connect: (_id: string, h: { onEnvelope: (e: Envelope) => void }) => ((deliver = h.onEnvelope), { send: (op: unknown) => sent.push(op), close() {} }), preview: async () => ({ url: `${PREVIEW}/`, port: 3000, expires: Date.now() + 1e7 }) };
   const engine = new CloudEngine(fake as unknown as Gateway);
   const seen: Envelope[] = [];
   engine.subscribe("s1", 0, (e) => seen.push(e));
-  assert.deepEqual(sent[0], { op: "set_client_caps", ask: true, panes: true });
   deliver!({ seq: 9, session: "s1", created: 0, event: "pane_request", call: "c1", id: "p1", action: "console" } as Envelope);
   assert.deepEqual(sent.at(-1), { op: "pane_reply", call: "c1", result: [] });
   assert.equal(seen.length, 1);
@@ -364,11 +492,11 @@ before(async () => {
 });
 after(async () => { await mock.close(); await new Promise((r) => dev.close(r)); });
 
-const get = (port: number, host: string, path: string) => new Promise<{ status: number; type: string; body: string }>((resolve, reject) => {
-  request({ host: "127.0.0.1", port, path, headers: { host } }, (r) => {
+const get = (port: number, host: string, path: string, cookie?: string) => new Promise<{ status: number; type: string; body: string; location?: string; cookie?: string }>((resolve, reject) => {
+  request({ host: "127.0.0.1", port, path, headers: { host, ...(cookie ? { cookie } : {}) } }, (r) => {
     let body = "";
     r.on("data", (c) => (body += c));
-    r.on("end", () => resolve({ status: r.statusCode ?? 0, type: String(r.headers["content-type"] ?? ""), body }));
+    r.on("end", () => resolve({ status: r.statusCode ?? 0, type: String(r.headers["content-type"] ?? ""), body, location: r.headers.location, cookie: r.headers["set-cookie"]?.[0] }));
   }).on("error", reject).end();
 });
 
@@ -376,10 +504,27 @@ test("Gateway.preview mints a host that serves the sandbox's dev server with the
   const gw = new Gateway({ origin: `http://127.0.0.1:${mock.port}`, token: "acct-a" });
   const s = await gw.create({ repo: "ecto/frog" });
   const devPort = (dev.address() as { port: number }).port;
-  const { url } = await gw.preview(s.id, devPort);
+  const { url, origin } = await gw.preview(s.id, devPort);
   const host = new URL(url).host;
   assert.match(host, /^[0-9a-f]{20}-\d+\.localhost:\d+$/);
-  const html = await get(mock.port, host, "/");
+  assert.equal(origin, new URL(url).origin);
+  assert.equal(new URL(url).pathname, "/__frog/enter");
+  // Owner-only: no cookie, no page (but the capture script, so the error page can say so).
+  const shut = await get(mock.port, host, "/");
+  assert.equal(shut.status, 403);
+  assert.match(shut.body, /<meta name="frog-preview-error" content="Open this preview from Frog/);
+  assert.equal((await get(mock.port, host, "/__frog/enter?t=forged")).status, 403);
+  const enter = await get(mock.port, host, new URL(url).pathname + new URL(url).search);
+  assert.equal(enter.status, 302);
+  assert.equal(enter.location, "/");
+  assert.match(enter.cookie ?? "", /^__Host-frog_preview=[^;]+; Path=\/; HttpOnly; Secure; SameSite=None; Partitioned$/);
+  // `next` lands on a plain same-origin path, anything else on `/` (each entry is a fresh mint).
+  for (const [next, land] of [["/a?b=1#c", "/a?b=1#c"], ["//evil.example/", "/"], ["/\\evil.example", "/"], ["https://evil.example/", "/"], ["a", "/"], ["", "/"]]) {
+    const u = new URL((await gw.preview(s.id, devPort)).url);
+    u.searchParams.set("next", next);
+    assert.equal((await get(mock.port, host, u.pathname + u.search)).location, land, JSON.stringify(next));
+  }
+  const html = await get(mock.port, host, "/", enter.cookie!.split(";")[0]);
   assert.equal(html.body, `<!doctype html><html><head><script src="/__frog/preview.js"></script><title>localhost:${devPort}</title></head><body>hi</body></html>`);
   const script = await get(mock.port, host, "/__frog/preview.js");
   assert.match(script.type, /javascript/);
@@ -390,9 +535,53 @@ test("Gateway.preview mints a host that serves the sandbox's dev server with the
 
 // --- the pane -------------------------------------------------------------------------------
 
+test("sessionIndex reads the preview flag: only `true` is on, and an older gateway without it is off", () => {
+  assert.deepEqual(sessionIndex({ sessions: [], preview: true }), { sessions: [], preview: true });
+  assert.deepEqual(sessionIndex({ sessions: [] }), { sessions: [], preview: false });
+  for (const v of [false, "true", 1, null, {}]) assert.equal(sessionIndex({ sessions: [], preview: v }).preview, false, JSON.stringify(v));
+  assert.deepEqual(sessionIndex(undefined), { sessions: [], preview: false });
+  assert.deepEqual(sessionIndex({ preview: true }).sessions, [], "no sessions field is an empty list");
+});
+
+test("Gateway.index carries the flag from GET /v1/sessions; list stays the sessions alone", async () => {
+  const gw = new Gateway({ origin: `http://127.0.0.1:${mock.port}`, token: "acct-index" });
+  const s = await gw.create({ repo: "ecto/frog" });
+  const idx = await gw.index();
+  assert.equal(idx.preview, true);
+  assert.deepEqual(idx.sessions.map((x) => x.id), [s.id]);
+  assert.deepEqual((await gw.list()).map((x) => x.id), [s.id]);
+  const old = await startMock({ port: 0, delayMs: 1, previews: false });
+  try {
+    const ogw = new Gateway({ origin: `http://127.0.0.1:${old.port}`, token: "acct-index" });
+    const os = await ogw.create({ repo: "ecto/frog" });
+    assert.equal((await ogw.index()).preview, false);
+    await assert.rejects(ogw.preview(os.id, 5173), (e: GatewayError) => e.status === 503);
+  } finally { await old.close(); }
+});
+
+test("the Preview tab shows the pane only when the gateway serves previews", () => {
+  const noop = () => {};
+  const { hub } = rig();
+  const thread = { changes: [], panes: { p1: { id: "p1", kind: "preview", title: "Preview", url: "http://localhost:5173/", closed: false } } } as unknown as Parameters<typeof Inspector>[0]["thread"];
+  const render = () => renderToStaticMarkup(createElement(Inspector, { thread, hasPr: false, onClose: noop, onCommit: noop, send: noop, preview: hub, pane: "preview" }));
+  const unknown = render();
+  assert.ok(!/pv-bar|<iframe/.test(unknown), "no toolbar or page before the list answers");
+  assert.ok(!/isn’t on the web yet/.test(unknown), "and no \"no\" that may be wrong");
+  hub.setAvailable(false);
+  const off = render();
+  assert.match(off, /Preview isn’t on the web yet/);
+  assert.ok(!/pv-bar|<iframe/.test(off));
+  hub.setAvailable(true);
+  const on = render();
+  assert.match(on, /class="pv-bar"/);
+  assert.match(on, /<iframe/);
+  assert.ok(!/isn’t on the web yet/.test(on));
+});
+
 test("the Inspector's Preview tab is a live pane: toolbar, address and the hint", () => {
   const noop = () => {};
   const { hub } = rig();
+  hub.setAvailable(true);
   const thread = { changes: [], panes: { p1: { id: "p1", kind: "preview", title: "Preview", url: "http://localhost:5173/", closed: false } } } as unknown as Parameters<typeof Inspector>[0]["thread"];
   const html = renderToStaticMarkup(createElement(Inspector, { thread, hasPr: false, onClose: noop, onCommit: noop, send: noop, preview: hub, pane: "preview" }));
   assert.match(html, /aria-label="Reload"/);
@@ -412,7 +601,7 @@ test("the Inspector's Preview tab is a live pane: toolbar, address and the hint"
   assert.match(empty, /class="insp-empty"/);
   assert.match(empty, /Nothing to preview yet/);
   assert.match(empty, /Run your dev server, then enter its URL or port, or ask Frog to open it\./);
-  hub.available = false;
+  hub.setAvailable(false);
   const off = renderToStaticMarkup(createElement(Inspector, { thread, hasPr: false, onClose: noop, onCommit: noop, send: noop, preview: hub, pane: "preview" }));
   assert.match(off, /Preview isn’t on the web yet/);
   assert.match(off, /The Mac app has Preview/);

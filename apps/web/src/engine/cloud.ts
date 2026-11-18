@@ -3,7 +3,10 @@ import type { Op } from '../cloud/protocol'
 import { PreviewHub } from '../preview'
 import type { EngineClient } from './client'
 
-const CAPS: Op = { op: 'set_client_caps', ask: true, panes: true }
+/** What this client can do, so the engine offers the model the right tools: questions get a card
+ * here (Ask), and preview panes an iframe onto the sandbox's dev server (PreviewHub) only when the
+ * gateway serves previews; without them the model isn't offered a preview it can't show. */
+export const caps = (previews: boolean): Op => ({ op: 'set_client_caps', ask: true, panes: previews })
 
 /** EngineClient over the Frog Cloud gateway: one websocket per subscribed session. */
 export class CloudEngine implements EngineClient {
@@ -12,6 +15,8 @@ export class CloudEngine implements EngineClient {
   /** Ops sent before the session is subscribed (e.g. the first message of a new session). */
   private early = new Map<string, Op[]>()
   private hubs = new Map<string, PreviewHub>()
+  /** Whether the gateway serves previews: unknown until the session list first answers. */
+  previews: boolean | undefined = undefined
 
   constructor(readonly gateway: Gateway) {}
 
@@ -23,9 +28,7 @@ export class CloudEngine implements EngineClient {
     }
     const conn = this.gateway.connect(session, { onEnvelope: deliver, onReset, onState: (s) => this.watchers.forEach((w) => w(session, s)) }, after)
     this.conns.set(session, conn)
-    // What this client can do, so the engine offers the model the right tools: questions get a
-    // card here (Ask), and preview panes an iframe onto the sandbox's dev server (PreviewHub).
-    conn.send(CAPS)
+    conn.send(caps(this.previews === true))
     for (const op of this.early.get(session) ?? []) conn.send(op) // Connection queues until its handshake
     this.early.delete(session)
     return () => { conn.close(); if (this.conns.get(session) === conn) this.conns.delete(session) }
@@ -37,11 +40,21 @@ export class CloudEngine implements EngineClient {
     else this.early.set(session, [...(this.early.get(session) ?? []), op])
   }
 
+  /** What GET /v1/sessions said about previews. On a change, every hub and every open session's
+   * engine hears it (the engine re-syncs its tools on a repeated set_client_caps). */
+  setPreviews(on: boolean) {
+    if (this.previews === on) return
+    this.previews = on
+    this.hubs.forEach((h) => h.setAvailable(on))
+    this.conns.forEach((c) => c.send(caps(on)))
+  }
+
   /** The session's preview panes: what they report and how the engine's requests get answered. */
   preview(session: string): PreviewHub {
     let hub = this.hubs.get(session)
     if (!hub) {
       hub = new PreviewHub((op) => this.send(session, op), (port) => this.gateway.preview(session, port))
+      if (this.previews !== undefined) hub.setAvailable(this.previews)
       this.hubs.set(session, hub)
     }
     return hub

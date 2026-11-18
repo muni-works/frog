@@ -221,7 +221,7 @@ struct MarkdownView: View {
         VStack(alignment: .leading, spacing: space.block) {
             ForEach(Array(Self.segments(cache.blocks(for: text)).enumerated()), id: \.offset) { _, segment in
                 switch segment {
-                case .text(let blocks): MessageText(blocks: blocks, streaming: streaming)
+                case .text(let blocks): MeasuredText(blocks: blocks, streaming: streaming)
                 case .mermaid(let code): MermaidBlock(code: code)
                 }
             }
@@ -231,6 +231,28 @@ struct MarkdownView: View {
     enum Segment {
         case text([MarkdownBlock])
         case mermaid(String)
+    }
+
+    /// A stretch of text, telling the parity metrics where it sits (`-FrogMetrics`).
+    private struct MeasuredText: View {
+        let blocks: [MarkdownBlock]
+        let streaming: Bool
+        @State private var origin: CGPoint?
+
+        var body: some View {
+            #if os(macOS)
+            MessageText(blocks: blocks, streaming: streaming, metricsOrigin: origin)
+                .background {
+                    if TranscriptMetrics.enabled {
+                        Color.clear.onGeometryChange(for: CGPoint.self, of: { $0.frame(in: .named(TranscriptView.content)).origin }) {
+                            origin = $0
+                        }
+                    }
+                }
+            #else
+            MessageText(blocks: blocks, streaming: streaming)
+            #endif
+        }
     }
 
     static func segments(_ blocks: [MarkdownBlock]) -> [Segment] {
