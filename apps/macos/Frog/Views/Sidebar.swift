@@ -740,25 +740,26 @@ struct SessionList: View {
         }
     }
 
-    /// Pinned conversations, as tiles above everything else in every grouping.
+    /// Pinned conversations above everything else in every grouping: named rows with their
+    /// live state, and the one on screen opened up into a card with what it's saying.
     @ViewBuilder
     private var pinTiles: some View {
         if !pins.isEmpty {
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4), spacing: 6) {
-                ForEach(pins) { s in
+            compactHeader("Pinned")
+            ForEach(pins) { s in
+                if s.id == current {
                     Button { open(s) } label: {
-                        Monogram(session: s, size: 38, selected: s.id == current, live: library.live[s.id])
-                            .frame(maxWidth: .infinity)
+                        ChiefTile(session: s, selected: true, live: library.live[s.id], library: library, role: "Pinned")
                     }
                     .buttonStyle(.plain)
                     .contextMenu { rowMenu(s) }
                     .paneDraggable(.session(s), title: s.displayTitle)
-                    .help(s.displayTitle)
+                    .padding(.vertical, 2)
+                } else {
+                    compactRow(s, depth: 0)
                 }
             }
-            .padding(.horizontal, 4)
-            .padding(.top, 4)
-            .padding(.bottom, 6)
+            Color.clear.frame(height: 4)
         }
     }
 
@@ -1222,6 +1223,8 @@ private struct ChiefTile: View {
     let selected: Bool
     let live: Library.Live?
     @Bindable var library: Library
+    /// What the tooltip calls it: the chief, or an open pinned conversation.
+    var role = "Chief of staff"
 
     var body: some View {
         HStack(spacing: 8) {
@@ -1300,7 +1303,7 @@ private struct ChiefTile: View {
     }
 
     private var helpText: String {
-        var parts = [session.displayTitle, "Chief of staff"]
+        var parts = [session.displayTitle, role]
         if let f = session.folder, !session.isChat { parts.append(f.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")) }
         if !session.model.isEmpty { parts.append(Workspace.modelName(session.model)) }
         return parts.joined(separator: "\n")
