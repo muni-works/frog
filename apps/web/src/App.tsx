@@ -26,6 +26,8 @@ import { askLine } from './ui/ask'
 import { sessionMissing, viewAfterArchive } from './ui/guards'
 import { DocsPage, DocsRow, DocsSidebar, Shell, type ShellMode } from './ui/Docs'
 import { DOCS, VERSION } from './docs/bundle'
+import { ChipSlot, useMacAppChip } from './ui/ChipSlot'
+import { SignedOutSide } from './ui/SignedOut'
 import { docsPath, docsSlugOf } from './docs/docs'
 
 /** `pick`: open the composer's repo menu (back from sign-in, or ⌘K Connect a repo). */
@@ -386,15 +388,22 @@ export default function App() {
   const commit = (s: SessionSummary) => commitAsk(s, 'Commit the changes with a clear message.')
   const push = (s: SessionSummary) => !s.repo ? commit(s) : commitAsk(s, s.pr ? `Commit the changes and push to ${s.pr}.` : 'Commit the changes, push the branch and open a pull request.')
 
+  // Signed out: what's in the landing composer, so the sidebar's Sign in takes it along too.
+  const signedOutDraft = useRef('')
+  const noteSignedOutDraft = useCallback((t: string) => { signedOutDraft.current = t }, [])
+  const mac = useMacAppChip(machines)
+  /** Signed out, New session is the landing's composer. */
+  const focusComposer = () => { go({ kind: 'new' }); setDrawer(false); requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>('.dock textarea')?.focus()) }
   const leave = (after: string | null, provider: Provider = 'github', connect?: string, pick = !!connect) => { setLeavingFor(provider); signIn(after ?? undefined, provider, connect, pick).catch(() => setLeavingFor(null)) }
 
   // Keyboard: ⌘K palette, ⌘N new, ⌘, settings, ⌘↩ / ⌘. answer the current ask.
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey)) return
-      if (e.key === 'k') { e.preventDefault(); setPalette((p) => !p) }
       if (e.key === '\\') { e.preventDefault(); setCollapsedState((c) => { try { localStorage.setItem('frog.sidebarCollapsed', c ? '0' : '1') } catch { /* private mode */ } return !c }) }
+      // Signed out there's no palette, no settings and no session to answer: nothing to open.
       if (!key) return
+      if (e.key === 'k') { e.preventDefault(); setPalette((p) => !p) }
       if (e.key === 'n') { e.preventDefault(); setMode('threads'); setView({ kind: 'new' }) }
       if (e.key === ',') { e.preventDefault(); setSettings(true) }
       // A permission card hidden under Documentation mode isn't answered from there.
@@ -472,9 +481,43 @@ export default function App() {
     send(id, m.text, m.images)
   }
 
-  if (!key) return (
-    <div className="win">
+  // ---------- signed in ----------
+  const sig = changeSig(ct?.changes ?? [])
+  const done = current ? committed[current.id] : undefined
+  const clean = !!done && done.sig === sig
+  const adds = clean ? 0 : ct?.changes.reduce((n, c) => n + c.added, 0) ?? 0
+  const dels = clean ? 0 : ct?.changes.reduce((n, c) => n + c.removed, 0) ?? 0
+  const paused = ct ? outOfCredits(ct) : false
+  const cs = current ? conn[current.id] : undefined
+
+  return (
+    <Shell mode={mode} className={`win ${drawer ? 'drawer' : ''}${collapsed ? ' collapsed' : ''}`}
+      before={<div className="side-scrim" onClick={() => setDrawer(false)} />}
+      brand={<div className="brand"><Mark /><b style={{ flex: 1 }}>Frog</b><span id="side-acts" className="side-acts" style={mode === 'threads' ? undefined : { display: 'none' }} />{sideToggle(true)}</div>}
+      side={{ threads: !key ? (
+        <SignedOutSide onNew={focusComposer} chip={mac.chip} onDismissChip={mac.dismiss} onDocs={() => openDocs()}
+          onSignIn={(provider) => leave(signedOutDraft.current.trim() || null, provider)} />
+      ) : <>
+        <Nav />
+        <SessionList sessions={sessions} thread={thread} title={title} current={current?.id ?? null} error={listError}
+          onOpen={(id) => { setView({ kind: 'session', id }); setDrawer(false) }} onClear={clear} onSearch={() => setPalette(true)}
+          onRename={(s) => setRenaming(s.id)} onArchive={archive} onDelete={remove} />
+        <ChipSlot chip={mac.chip} onDismiss={mac.dismiss} />
+        <DocsRow onOpen={() => openDocs()} />
+        <button type="button" className="row" onClick={() => setSettings(true)} title="Settings ⌘,">
+          {account?.handle ? <img className="avatar" src={`https://github.com/${encodeURIComponent(account.handle)}.png?size=56`} alt="" width={28} height={28} />
+              : account?.image ? <img className="avatar" src={account.image} alt="" width={28} height={28} referrerPolicy="no-referrer" /> : <Mark size={28} />}
+          <div style={{ flex: 1, textAlign: 'left', minWidth: 0 }}>
+            <b>{firstName(account) ?? (DEV_KEY ? 'Dev key' : 'Signed in')}</b>
+            <div className="det" style={{ color: account && account.credit_cents <= 0 ? 'var(--warn)' : undefined }}>{account ? creditLine(account) : DEV_KEY ? 'local gateway' : ''}</div>
+          </div>
+        </button>
+      </>, docs: <DocsSidebar pages={DOCS} current={docPage} version={VERSION} onBack={leaveDocs} onOpen={openDocs} /> }}
+      main={{ docs: <DocsPage pages={DOCS} slug={docPage} onOpen={openDocs} bar={<><Burger />{collapsed && sideToggle(false)}</>} />, threads: !key ? (
+      // Signed out: the landing, in the shell. The composer's Sign in keeps what was typed and
+      // sends it after the round trip.
       <main className="main home">
+        {collapsed && <div className="side-float">{sideToggle(false)}</div>}<div className="phone-bar floating"><Burger /><b>Frog</b></div>
         {authError && <div role="status" className="banner warn">Sign-in didn't finish ({authError}). Try again.</div>}
         <div className="home-hero">
           <Pond />
@@ -489,8 +532,8 @@ export default function App() {
           <Trust />
         </div>
         <div className="dock"><div>
-          <Composer onSend={() => {}} onSignIn={(provider, text) => leave(text || null, provider)} autoFocus chips={starterChips}
-            model={chosenModel} models={models} machines={machines} onManage={() => openSettings('Models')} onModel={setNewModel} mode={newMode} onMode={setNewMode} />
+          <Composer onSend={() => {}} onSignIn={(provider, text) => leave(text || null, provider)} autoFocus chips={starterChips} onText={noteSignedOutDraft}
+            model={chosenModel} models={models} machines={machines} onModel={setNewModel} mode={newMode} onMode={setNewMode} />
           {leaving && <div className="det" style={{ textAlign: 'center' }}>Opening {leaving === 'google' ? 'Google' : 'GitHub'}… your message is saved.</div>}
         </div></div>
         <footer className="muni-foot">
@@ -498,38 +541,7 @@ export default function App() {
           <a href="https://muni.works" target="_blank" rel="noreferrer" aria-label="Municipal Robotics"><Muni /></a>
         </footer>
       </main>
-    </div>
-  )
-
-  // ---------- signed in ----------
-  const sig = changeSig(ct?.changes ?? [])
-  const done = current ? committed[current.id] : undefined
-  const clean = !!done && done.sig === sig
-  const adds = clean ? 0 : ct?.changes.reduce((n, c) => n + c.added, 0) ?? 0
-  const dels = clean ? 0 : ct?.changes.reduce((n, c) => n + c.removed, 0) ?? 0
-  const paused = ct ? outOfCredits(ct) : false
-  const cs = current ? conn[current.id] : undefined
-
-  return (
-    <Shell mode={mode} className={`win ${drawer ? 'drawer' : ''}${collapsed ? ' collapsed' : ''}`}
-      before={<div className="side-scrim" onClick={() => setDrawer(false)} />}
-      brand={<div className="brand"><Mark /><b style={{ flex: 1 }}>Frog</b><span id="side-acts" className="side-acts" style={mode === 'threads' ? undefined : { display: 'none' }} />{sideToggle(true)}</div>}
-      side={{ threads: <>
-        <Nav />
-        <SessionList sessions={sessions} thread={thread} title={title} current={current?.id ?? null} error={listError}
-          onOpen={(id) => { setView({ kind: 'session', id }); setDrawer(false) }} onClear={clear} onSearch={() => setPalette(true)}
-          onRename={(s) => setRenaming(s.id)} onArchive={archive} onDelete={remove} />
-        <DocsRow onOpen={() => openDocs()} />
-        <button type="button" className="row" onClick={() => setSettings(true)} title="Settings ⌘,">
-          {account?.handle ? <img className="avatar" src={`https://github.com/${encodeURIComponent(account.handle)}.png?size=56`} alt="" width={28} height={28} />
-              : account?.image ? <img className="avatar" src={account.image} alt="" width={28} height={28} referrerPolicy="no-referrer" /> : <Mark size={28} />}
-          <div style={{ flex: 1, textAlign: 'left', minWidth: 0 }}>
-            <b>{firstName(account) ?? (DEV_KEY ? 'Dev key' : 'Signed in')}</b>
-            <div className="det" style={{ color: account && account.credit_cents <= 0 ? 'var(--warn)' : undefined }}>{account ? creditLine(account) : DEV_KEY ? 'local gateway' : ''}</div>
-          </div>
-        </button>
-      </>, docs: <DocsSidebar pages={DOCS} current={docPage} version={VERSION} onBack={leaveDocs} onOpen={openDocs} /> }}
-      main={{ docs: <DocsPage pages={DOCS} slug={docPage} onOpen={openDocs} bar={<><Burger />{collapsed && sideToggle(false)}</>} />, threads:
+      ) :
       <main className="main">
         {current ? (<div className="titlebar">
           <Burger />
@@ -672,13 +684,13 @@ export default function App() {
         )}
 
       </main> }}
-      inspector={view.kind === 'session' && current && ct && inspector && (
+      inspector={key && view.kind === 'session' && current && ct && inspector && (
         <Inspector onClose={() => setInspector(false)} thread={ct} branch={current.branch} hasPr={!!current.pr} onCommit={() => commit(current)} onPr={current.repo ? () => push(current) : undefined} machines={machines} send={(op) => cloud?.send(current.id, op)} preview={preview} pane={inspectorTab} />
       )}
       after={<>
-      {palette && <Palette commands={commands} sessions={sessions} onOpen={(id) => go({ kind: 'session', id })} onClose={() => setPalette(false)}
+      {key && palette && <Palette commands={commands} sessions={sessions} onOpen={(id) => go({ kind: 'session', id })} onClose={() => setPalette(false)}
         text={(id) => thread(id).turns.flatMap((u) => [u.input, ...u.entries.filter((e) => e.kind === 'message').map((e) => e.text)]).join('\n')} />}
-      {settings && <Settings account={account} apiKey={key && !DEV_KEY ? key : undefined} tab={settingsTab} models={models} machines={machines} onTopUp={key && !DEV_KEY ? (d) => topUp(key, d) : undefined} onSubscribe={key && !DEV_KEY ? (p) => subscribe(key, p) : undefined} onConnect={key && !DEV_KEY ? (p) => leave(null, p, key, false) : undefined} onSignOut={() => { if (key && !DEV_KEY) signOut(key); signedOut() }} onClose={() => setSettings(false)} />}
+      {key && settings && <Settings account={account} apiKey={key && !DEV_KEY ? key : undefined} tab={settingsTab} models={models} machines={machines} onTopUp={key && !DEV_KEY ? (d) => topUp(key, d) : undefined} onSubscribe={key && !DEV_KEY ? (p) => subscribe(key, p) : undefined} onConnect={key && !DEV_KEY ? (p) => leave(null, p, key, false) : undefined} onSignOut={() => { if (key && !DEV_KEY) signOut(key); signedOut() }} onClose={() => setSettings(false)} />}
       {toast && <div className="toast" role="status">{toast}</div>}
       </>} />
   )
