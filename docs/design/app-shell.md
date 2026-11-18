@@ -142,7 +142,7 @@ and the web show the same nine sections, drawn the same way from one list of row
 | --- | --- | --- | --- |
 | General | General | Notifications | Open files in your editor; Frog on iPhone |
 | Appearance | Appearance | Theme, Density, Detail, Playful frog, Frog sounds | none |
-| Models | Models, Machines, Lend | Default model, your machines, Frog Cloud | Pair a machine; run models on this computer; rename or unpair; share with other machines; your own keys; a server of your own |
+| Models | Models, Machines, Lend | Default model, your machines, Frog Cloud | Pair a machine; run models on this computer; rename or unpair; share with other machines (your own keys and servers wait while the Mac hides adding them) |
 | Permissions | Permissions | The mode new sessions start in | Work in folders on your computer; use other apps |
 | Connections | MCP | The server list and each one's state | Sign in to a server |
 | Shortcuts | Shortcuts | Each app's own keys, read-only | none |
