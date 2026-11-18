@@ -7,6 +7,7 @@ import { Markdown } from './Markdown'
 import { Hunks } from './Diff'
 import { ICON } from './icons'
 import { endError } from '../store'
+import { resumedLine } from '../wall'
 import { TurnFooter } from './TurnFooter'
 import { WidgetCard } from './Widget'
 import { foldRuns, foldTime, lineOf, opensItself, rememberOpen, thinkMsOf, thoughtLabel, type Step } from './rows'
@@ -403,6 +404,8 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
   }
   return (
     <div className="turn">
+      {/* A turn the credit wall resumed (Op::Continue with wall.ts's note) is one quiet line, not a message. */}
+      {resumedLine(turn.input) ? <div className="turn-note" data-row="resumed" role="status">{resumedLine(turn.input)}</div> : (
       <div className="ask-block">
         {/* A blank message (whitespace, no images) draws no empty bubble. */}
         {/* The receipts and actions sit beside the last bubble, not under it, so the prompt is a
@@ -422,7 +425,7 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
             )}
           </div>
         ))}
-      </div>
+      </div>)}
       <div className="reply-block">
       {foldRuns(rows(turn.entries, ask, question)).map((r) => r.kind === 'fold'
         ? <Fold key={r.id} steps={r.steps.map((x) => x.e)} render={(e) => <ToolLine key={e.id} e={e} onShowChange={cb.onShowChange} />} />
