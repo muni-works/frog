@@ -159,16 +159,56 @@
 .tx .turn-foot .hover-acts { margin-left: 0; height: var(--tx-meta-line); align-items: center; }
 .tx .turn-note { padding-left: var(--tx-indent); margin-top: var(--gap-block); font-size: var(--tx-status-size); line-height: var(--tx-status-line); color: var(--muted); white-space: normal; }
 
-/* What Frog is doing (the live row; phase 2 redraws it): quiet, a breathing dot. */
-.tx .thinking {
-  display: inline-flex; align-items: center; gap: var(--space-row); align-self: flex-start; padding-left: var(--tx-indent);
-  font-size: var(--tx-status-size); line-height: var(--tx-status-line);
-  background: linear-gradient(90deg, var(--muted) 0%, var(--muted) 35%, var(--fg) 50%, var(--muted) 65%, var(--muted) 100%) 0 0 / 250% 100%;
-  -webkit-background-clip: text; background-clip: text; color: transparent; animation: shimmer-text 2.4s linear infinite;
+/* The live row (spec, "The row"): one row at the end of the running turn, a line's height, its
+ * dot hung where a line's mark is. "Thinking" in fg, the thought in muted, cross-fading. The stats
+ * sit 2 under it in meta. A step or a card holds still; only thinking breathes. */
+.tx .reply-block > [data-row="line"] + [data-row="live"] { margin-top: 0; }
+.tx .reply-block > [data-row="prose"] + [data-row="live"] { margin-top: var(--gap-activity); }
+.tx .reply-block > [data-row="prose"] + [data-row="stats"] { margin-top: var(--gap-stats); }
+.tx .reply-block > [data-row="live"]:first-child { margin-top: 0; }
+.tx .live-row, .tx .live-tail { padding-left: var(--tx-indent); }
+.tx .line.live { cursor: default; }
+.tx button.line.live { cursor: pointer; }
+.tx .live-label { flex: none; color: var(--fg); white-space: nowrap; }
+.tx .live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--frog); }
+.tx [data-state="on"] .live-dot { animation: breathe 1.6s ease-in-out infinite; }
+.tx [data-state="stalled"] .live-dot { background: var(--faint); }
+.tx [data-state="stalled"] .live-label { color: var(--muted); }
+/* Amber only when Frog is waiting on a person. */
+.tx [data-state="waiting"] .live-dot { background: var(--notice); }
+.tx .live-thought { flex: 1; min-width: 0; display: grid; color: var(--muted); }
+.tx .live-thought > .tf { grid-area: 1 / 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tx .live-thought > .tf.tf-was { animation: tf-out 180ms ease forwards; }
+.tx .live-thought > .tf.tf-now { animation: tf-in 240ms ease both; }
+.tx .live-chev { color: var(--faint); opacity: 0; transition: opacity .12s; }
+.tx .line-plate:hover .live-chev, .tx .line.live:focus-visible .live-chev { opacity: 1; color: var(--fg); }
+.tx .line[aria-expanded="true"] .live-chev { opacity: 1; transform: rotate(90deg); }
+.tx .live-acts { display: flex; gap: var(--space-tight); flex: none; }
+.tx .live-stats {
+  margin-top: var(--gap-stats); font-size: var(--tx-meta-size); line-height: var(--tx-meta-line);
+  color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.tx .thinking.warn { background: none; color: var(--notice); animation: none; }
-.tx .thinking-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--frog); flex: none; animation: breathe 1.6s ease-in-out infinite; }
+.tx .live-tail > .live-stats { margin-top: 0; }
+/* A settled think: its chevron turns to text colour on hover. */
+.tx .thought > .line-plate:hover .line-mark.chev { color: var(--fg); }
+
+/* The thinking opened as an outline: one line per shown thought, newest in fg while live; a line
+ * opens its paragraph; the whole text scrolls in its own box. */
+.tx .outline { display: flex; flex-direction: column; align-items: flex-start; padding: var(--space-tight) 0 var(--space-row); }
+.tx .outline-item { display: flex; flex-direction: column; align-self: stretch; }
+.tx .outline-line {
+  border: 0; background: none; padding: 0; margin: 0; text-align: left; cursor: pointer; align-self: flex-start;
+  font: inherit; font-size: var(--tx-status-size); line-height: var(--tx-status-line); color: var(--muted);
+}
+.tx .outline-line[aria-disabled="true"] { cursor: default; }
+.tx .outline-line:not([aria-disabled="true"]):hover, .tx .outline-line.now { color: var(--fg); }
+.tx .outline-para { font-size: var(--tx-status-size); line-height: var(--tx-status-line); color: var(--muted); white-space: pre-wrap; max-width: var(--tx-prose); padding: var(--space-tight) 0 var(--space-snug); }
+.tx .outline-more { font-size: var(--tx-meta-size); line-height: var(--tx-meta-line); margin-top: var(--space-tight); }
+.tx .thought-full { align-self: stretch; display: flex; flex-direction: column; gap: var(--space-tight); margin-top: var(--space-tight); }
+.tx .thought-full > .thought-body { max-height: 320px; overflow: auto; background: var(--well); border-radius: var(--radius-nested); padding: var(--space-row) var(--space-card); }
+
 @media (prefers-reduced-motion: reduce) {
-  .tx .thinking { animation: none; background: none; color: var(--muted); }
-  .tx .thinking-dot, .tx .tool-spin, .tx .caret { animation: none; }
+  .tx [data-state="on"] .live-dot, .tx .tool-spin, .tx .caret { animation: none; }
+  .tx .live-thought > .tf.tf-was { display: none; }
+  .tx .live-thought > .tf.tf-now { animation: none; }
 }

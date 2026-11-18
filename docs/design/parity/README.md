@@ -108,12 +108,16 @@ All lengths are points (CSS px on the web), rounded to 0.1.
   - `code`: a code block or table in a reply
   - `card`: a box that needs you (ask card, question, diff card), measured on its title
   - `footer`: the turn's footer
-  - `live`: the live activity row
+  - `live`: the live row at the end of a running turn (spec phase 2: "Thinking", a step, "Waiting
+    for you"), measured on its 24-tall plate row
+  - `stats`: the stats under the live row, or under an answer that is writing (phase 2)
 - `text`: the row's visible words, whitespace collapsed to single spaces and trimmed. It leaves out
   hover actions, receipts (ticks, "just now"), the copy and retry icons and marks. For `line`,
   `thought` and `fold`: the parts verb, gist, object and result joined by one space ("Edited
   src/retry.rs +3 −2", "4 steps 2.2s"). For `footer`: as drawn, with " · " between parts. For
-  `card`: its title.
+  `card`: its title. For `live`: the label, object and thought joined by one space ("Editing
+  src/retry.rs", "Waiting for you"). For `stats`: as drawn, with every run of digits written `#`,
+  since the figures tick (`#s · waited #s`).
 - `x`: the left edge of the row's first visible character, minus the column's text edge (the
   column's left plus its gutter). 0 means on the shared left edge. A right-aligned bubble's x is
   wherever its text starts.

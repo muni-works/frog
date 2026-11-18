@@ -9,6 +9,16 @@
     "tool": "Mono, fg. The tool's own name, for a tool this table doesn't know (an MCP call: 'github › list_issues').",
     "none": "No object: the verb is the whole line."
   },
+  "live": {
+    "about": "The live row (spec.md, 'The row'): one row for whatever runs now. A step shows its live verb and object; several steps at once fold into a count, the noun from the object format ('Reading 3 files'), or 'Running 3 steps' when they differ. A turn between steps, or before any output, is 'Thinking'. A card waiting on a person is 'Waiting for you'. A finished think settles to 'Thought for 31s'; one stopped mid-think to 'Stopped after 12s'.",
+    "thinking": "Thinking",
+    "waiting": "Waiting for you",
+    "thought": "Thought for {time}",
+    "stopped": "Stopped after {time}",
+    "stalled": "No output for {time}",
+    "mixed": "Running {n} steps",
+    "counts": { "path": "files", "command": "commands", "pattern": "searches", "host": "pages", "text": "steps", "tool": "tools", "none": "steps" }
+  },
   "states": {
     "failed": { "verb": "Failed", "tone": "warn", "object": "the raw object, never a gist", "opens": "commands only, once per step" },
     "denied": { "verb": "Didn't run", "result": "you said no" },

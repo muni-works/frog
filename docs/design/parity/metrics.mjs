@@ -55,8 +55,8 @@ function measure() {
     if (!f || b.height === 0) return;
     rows.push({ kind, text: words(el), x: f.rect.left - edge, top: b.top, height: b.height, fontSize: f.font });
   };
-  for (const el of col.querySelectorAll(".me, .line-row, .say .md > *, [data-row='box'], .turn-foot, .thinking")) {
-    if (el.closest(".fold-steps, .line-open")) continue;
+  for (const el of col.querySelectorAll(".me, .line-row, .say .md > *, [data-row='box'], .turn-foot, .live-row, .live-tail")) {
+    if (el.closest(".fold-steps, .line-open, .outline")) continue;
     if (el.matches(".me")) add("prompt", el);
     else if (el.matches(".line-row")) {
       const kind = el.dataset.kind === "fold" ? "fold" : el.dataset.kind === "thought" ? "thought" : "line";
@@ -64,7 +64,16 @@ function measure() {
       // A line's text is its parts, verb, object, result, joined by one space.
       rows[rows.length - 1].text = [...el.querySelector(".line").querySelectorAll(".line-verb, .line-gist, .line-obj, .line-result")].map(words).filter(Boolean).join(" ");
     } else if (el.matches(".turn-foot")) add("footer", el.querySelector(".turn-line") ?? el, el);
-    else if (el.matches(".thinking")) add("live", el);
+    else if (el.matches(".live-row, .live-tail")) {
+      // The live row: its words (label, object, thought) joined by one space; then its stats,
+      // whose figures tick, so every run of digits is written "#".
+      if (el.matches(".live-row")) {
+        add("live", el.querySelector(".line"), el.querySelector(".line-plate"));
+        rows[rows.length - 1].text = [...el.querySelectorAll(".live-label, .line-obj, .live-thought > .tf:last-child")].map(words).filter(Boolean).join(" ");
+      }
+      const st = el.querySelector(".live-stats");
+      if (st) { add("stats", st); rows[rows.length - 1].text = words(st).replace(/\d[\d,.]*/g, "#"); }
+    }
     else if (el.matches("[data-row='box']")) add("card", el.querySelector("b, .ask-h, h3") ?? el, el);
     else if (el.matches("ul, ol")) el.querySelectorAll(":scope > li").forEach((li) => add("prose", li));
     else if (el.matches(".md-code, .md-table")) add("code", el);

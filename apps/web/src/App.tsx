@@ -694,6 +694,7 @@ export default function App() {
               onAnswer={(choices, other) => ct.question && cloud?.send(current.id, { op: 'answer', id: ct.question.id, choices, ...(other ? { other } : {}) })}
               onElicit={(action, content) => ct.elicitation && cloud?.send(current.id, { op: 'elicit', id: ct.elicitation.id, action, ...(content ? { content } : {}) })}
               onRetry={() => send(current.id, 'Try that again.')}
+              onStop={() => cloud?.send(current.id, { op: 'interrupt' })}
               onPrompt={(text) => send(current.id, text)}
               onShowChange={() => { try { localStorage.setItem('frog.inspectorTab', 'changes') } catch { /* private mode */ } setInspectorTab('changes'); setInspectorNonce((n) => n + 1); setInspector(true) }}
               outbox={outbox[current.id]} onResend={(n) => resend(current.id, n)}

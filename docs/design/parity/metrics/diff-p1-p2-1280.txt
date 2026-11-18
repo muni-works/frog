@@ -1,0 +1,4 @@
+3 differences (tolerance 1 pt):
+  row count: web@1280 12, web@1280 14
+  row 12: only in web@1280: {"kind":"live","text":"Waiting for you","x":0,"top":844,"height":24,"fontSize":12.5}
+  row 13: only in web@1280: {"kind":"stats","text":"#s · waited #s","x":0,"top":870,"height":16,"fontSize":11.5}

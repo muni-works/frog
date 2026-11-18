@@ -1,4 +1,4 @@
-import type { ElicitSchema, EndReason, Envelope, Event, FileDiff, Image, Mode, Part, TestRun, Todo, ToolOutcome, TurnUsage, Widget } from '../cloud/protocol'
+import type { ElicitSchema, EndReason, Envelope, Event, FileDiff, Image, Mode, Part, ShownThought, TestRun, Todo, ToolOutcome, TurnUsage, Widget } from '../cloud/protocol'
 
 // Folds a session's envelopes into what the transcript draws. Pure, so replay and
 // live streaming share one path: `reduce(thread, envelope)` for every envelope in order.
@@ -24,6 +24,14 @@ export interface Entry {
   ended?: number
   /** A recognised test run, from the engine. */
   tests?: TestRun
+  /** Reasoning, live: the engine's latest thought line (kept until a delta brings another), and
+   * every line it has shown so far, for the outline opened while thinking. */
+  thought?: string
+  shown?: string[]
+  /** Reasoning, finished: the lines shown with their paragraphs, and how long it thought. Absent
+   * in older logs, which draw a plain "Thought" opening to the full text. */
+  thoughts?: ShownThought[]
+  thinkMs?: number
 }
 
 export interface Ask { id: string; item: string; name: string; arg: string; always?: string; preview?: FileDiff; reason?: string }
@@ -43,7 +51,7 @@ export interface Thread {
   lastAt?: number
   lastRaw?: number
   /** Each turn's input and items; `usage` and `reason` once it ends. */
-  turns: { turn: number; input: string; images?: Image[]; more?: Part[]; entries: Entry[]; at?: number; usage?: TurnUsage; reason?: EndReason }[]
+  turns: { turn: number; input: string; images?: Image[]; more?: Part[]; entries: Entry[]; at?: number; usage?: TurnUsage; reason?: EndReason; endAt?: number }[]
   running: boolean
   ask: Ask | null
   ended: EndReason | null
@@ -78,6 +86,16 @@ export interface Thread {
   marks: { after: number; text: string; failed?: boolean }[]
   /** A compaction asked for and not yet answered. */
   compacting: boolean
+  /** The running turn's output tokens from `output_tokens`; `soFar` while part of it is a count of
+   * streamed pieces. Null until the engine says (older engines never do). */
+  live?: { output: number; soFar: boolean } | null
+  /** Bumped by every streamed piece and token count, so the stats line can tell output from
+   * silence by when this last changed (in the viewer's clock, not the engine's). */
+  pulse?: number
+  /** When the running turn's first output arrived (envelope `created`), for "first token after". */
+  firstOutputAt?: number | null
+  /** When the card now waiting on a person went up (envelope `created`), for "waited 6s". */
+  askedAt?: number | null
 }
 
 export const emptyThread: Thread = { lastSeq: 0, turns: [], running: false, ask: null, ended: null, changes: [], terminal: '', startedAt: 0, title: null, model: null, mode: null, context: null, activity: null, question: null, elicitation: null, todos: [], vision: null, panes: {}, next: null, marks: [], compacting: false }
@@ -98,7 +116,7 @@ function apply(t: Thread, ev: Event, created: number): Thread {
       // turn, not a second one: keep its items so no stale card shows up beside it.
       const last = t.turns[t.turns.length - 1]
       if (last && last.turn === ev.turn && !last.reason) return { ...t, running: true, ended: null }
-      return { ...t, running: true, ended: null, next: null, startedAt: created, turns: [...t.turns, { turn: ev.turn, input: ev.input, images: ev.images, more: ev.more, entries: [], at: created }] }
+      return { ...t, running: true, ended: null, next: null, startedAt: created, live: null, pulse: 0, firstOutputAt: null, askedAt: null, turns: [...t.turns, { turn: ev.turn, input: ev.input, images: ev.images, more: ev.more, entries: [], at: created }] }
     }
     case 'compacted':
       return { ...t, compacting: false, marks: [...(t.marks ?? []), { after: t.turns.length, text: `Compacted · ${kilo(ev.tokens_before)} → ${kilo(ev.tokens_after)} tokens` }] }
@@ -111,7 +129,7 @@ function apply(t: Thread, ev: Event, created: number): Thread {
     case 'turn_ended': {
       // The latest turn with that number: an older one that shares it has already ended.
       const at = t.turns.map((u) => u.turn).lastIndexOf(ev.turn)
-      const turns = t.turns.map((u, i) => (i === at ? { ...u, usage: ev.usage, reason: ev.reason } : u))
+      const turns = t.turns.map((u, i) => (i === at ? { ...u, usage: ev.usage, reason: ev.reason, endAt: created } : u))
       return { ...t, turns, running: false, ask: null, question: null, elicitation: null, ended: ev.reason, activity: null }
     }
     case 'progress':
@@ -132,7 +150,13 @@ function apply(t: Thread, ev: Event, created: number): Thread {
       const d = ev.delta
       if (t.activity) t = { ...t, activity: null }
       if (d.type === 'image_preview') return t
-      const next = patch(t, ev.id, (e) => (d.type === 'output' ? { ...e, output: e.output + d.text } : { ...e, text: e.text + d.text }))
+      t = { ...t, pulse: (t.pulse ?? 0) + 1, firstOutputAt: t.firstOutputAt ?? (d.type === 'output' ? null : created) }
+      const next = patch(t, ev.id, (e) => {
+        if (d.type === 'output') return { ...e, output: e.output + d.text }
+        // The thought line is shown verbatim and kept until the engine sends another.
+        if (d.type === 'reasoning' && d.thought != null && d.thought !== e.thought) return { ...e, text: e.text + d.text, thought: d.thought, shown: [...(e.shown ?? []), d.thought] }
+        return { ...e, text: e.text + d.text }
+      })
       return d.type === 'output' ? { ...next, terminal: next.terminal + d.text } : next
     }
     case 'item_gisted':
@@ -142,7 +166,9 @@ function apply(t: Thread, ev: Event, created: number): Thread {
       const it = ev.item
       const next = patch(t, ev.id, (e) => it.type === 'tool_call'
         ? { ...e, done: true, ended: created, outcome: it.outcome, display: it.display, diff: it.diff, ...(it.widget ? { widget: it.widget } : {}), ...(it.tests ? { tests: it.tests } : {}), output: it.output }
-        : { ...e, done: true, ended: created, text: it.text })
+        : it.type === 'reasoning'
+          ? { ...e, done: true, ended: created, text: it.text, ...(it.thoughts?.length ? { thoughts: it.thoughts } : {}), ...(it.think_ms != null ? { thinkMs: it.think_ms } : {}) }
+          : { ...e, done: true, ended: created, text: it.text })
       if (it.type === 'tool_call' && it.diff && it.outcome === 'ok') {
         // A file edited several times keeps every edit's hunks and the summed counts.
         const d = it.diff
@@ -152,8 +178,11 @@ function apply(t: Thread, ev: Event, created: number): Thread {
       }
       return next
     }
+    case 'output_tokens':
+      // Live only, for the running turn's stats; an older turn's count is its footer's.
+      return t.running ? { ...t, live: { output: ev.output, soFar: !!ev.so_far }, pulse: (t.pulse ?? 0) + 1, firstOutputAt: t.firstOutputAt ?? created } : t
     case 'permission_request':
-      return { ...t, ask: { id: ev.id, item: ev.item, name: ev.name, arg: ev.arg, always: ev.always, preview: ev.preview, reason: ev.reason } }
+      return { ...t, askedAt: created, ask: { id: ev.id, item: ev.item, name: ev.name, arg: ev.arg, always: ev.always, preview: ev.preview, reason: ev.reason } }
     case 'status':
       return { ...t, model: ev.model, mode: ev.mode, context: { used: ev.context_tokens, window: ev.context_window }, todos: ev.todos ?? t.todos, vision: ev.vision ?? t.vision, speed: ev.tokens_per_sec ?? t.speed ?? null }
     case 'pane_opened':
@@ -169,7 +198,7 @@ function apply(t: Thread, ev: Event, created: number): Thread {
       return { ...t, panes: { ...t.panes, [ev.id]: { ...p, screen: { cols: ev.cols, rows: ev.rows, lines: ev.lines, cursor: ev.cursor, seq: ev.screen_seq } } } }
     }
     case 'question':
-      return { ...t, question: { id: ev.id, item: ev.item, question: ev.question, options: ev.options ?? [], multi: !!ev.multi, allowOther: !!ev.allow_other } }
+      return { ...t, askedAt: created, question: { id: ev.id, item: ev.item, question: ev.question, options: ev.options ?? [], multi: !!ev.multi, allowOther: !!ev.allow_other } }
     case 'question_resolved':
       return t.question?.id === ev.id ? { ...t, question: null } : t
     case 'elicitation':
