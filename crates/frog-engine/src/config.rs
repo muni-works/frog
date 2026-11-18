@@ -205,6 +205,10 @@ fn default_child_quiet_stop() -> u64 {
     1800
 }
 
+fn default_call_quiet() -> u64 {
+    30
+}
+
 fn default_true() -> bool {
     true
 }
@@ -353,6 +357,13 @@ pub struct Config {
     /// call gets its own chance first. 0: wait forever.
     #[serde(default = "default_child_quiet_stop")]
     pub child_quiet_stop_secs: u64,
+    /// Seconds the turn's own model call may stream nothing before the person is asked whether
+    /// to keep waiting or stop the turn (docs/design/transcript/spec.md, "The row"). A cloud
+    /// call counts from when it was sent; a local one from its first token, since a local
+    /// model's prefill can rightly take longer. Only when someone can answer; 0: never ask.
+    /// See `child_watch::Watch::call`.
+    #[serde(default = "default_call_quiet")]
+    pub call_quiet_secs: u64,
     /// Set on a child session's own config by the engine that started it: its header names
     /// this parent. Not a config.toml key.
     #[serde(skip)]

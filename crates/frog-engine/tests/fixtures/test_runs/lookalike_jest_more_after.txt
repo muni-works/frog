@@ -1,0 +1,5 @@
+Tests:       1 failed, 3 passed, 4 total
+Snapshots:   0 total
+Time:        1.2 s
+Ran all test suites.
+Then the deploy script ran and printed this line, which isn't jest's.

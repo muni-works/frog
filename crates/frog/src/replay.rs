@@ -195,7 +195,7 @@ async fn play(p: &mut Player, events: &[Envelope], ask: bool) -> Result<(), Inte
         .filter_map(|e| match &e.event {
             Event::ItemCompleted {
                 id,
-                item: Item::Message { text } | Item::Reasoning { text },
+                item: Item::Message { text } | Item::Reasoning { text, .. },
             } => Some((id.as_str(), text.as_str())),
             _ => None,
         })
@@ -275,7 +275,10 @@ async fn play(p: &mut Player, events: &[Envelope], ask: bool) -> Result<(), Inte
                 let reasoning = *kind == ItemKind::Reasoning;
                 for chunk in chunks(texts.get(id.as_str()).copied().unwrap_or("")) {
                     let delta = if reasoning {
-                        frog_engine::Delta::Reasoning { text: chunk }
+                        frog_engine::Delta::Reasoning {
+                            text: chunk,
+                            thought: None,
+                        }
                     } else {
                         frog_engine::Delta::Text { text: chunk }
                     };
@@ -334,7 +337,12 @@ async fn play(p: &mut Player, events: &[Envelope], ask: bool) -> Result<(), Inte
                         p.wait(2000.0).await?;
                         Answer::default()
                     };
-                    p.emit(Event::QuestionResolved { id: qid, answer });
+                    p.emit(Event::QuestionResolved {
+                        id: qid,
+                        answer,
+                        item: None,
+                        asked: None,
+                    });
                 }
                 if let Some(out) = outputs.get(id.as_str()) {
                     for line in out.split_inclusive('\n') {

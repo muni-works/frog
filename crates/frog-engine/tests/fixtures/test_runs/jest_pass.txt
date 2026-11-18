@@ -1,0 +1,8 @@
+PASS jt/sizes.test.js
+PASS jt/shapes.test.js
+
+Test Suites: 2 passed, 2 total
+Tests:       1 skipped, 4 passed, 5 total
+Snapshots:   0 total
+Time:        0.234 s
+Ran all test suites.

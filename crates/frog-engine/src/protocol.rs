@@ -531,12 +531,26 @@ pub enum Event {
     PermissionResolved {
         id: String,
         decision: Decision,
+        /// The tool call it gated (the request's `item`), so a log reader can place the wait
+        /// without the request, which isn't kept. Absent in older logs and on a withdrawal.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        item: Option<String>,
+        /// When the request was sent (unix ms); the envelope's `created` is when it was
+        /// answered, or when the turn was stopped with it still up (then `deny`). Together:
+        /// the wait, for the turn's timeline. Absent in older logs and on a withdrawal.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        asked: Option<i64>,
     },
     /// The user answered (or dismissed) a [`Event::Question`].
     QuestionResolved {
         id: String,
         #[serde(flatten)]
         answer: Answer,
+        /// As on [`Event::PermissionResolved`]: the tool call that asked, and when (unix ms).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        item: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        asked: Option<i64>,
     },
     /// Auto mode's classifier let tool call `item` run without asking.
     AutoApproved {
@@ -954,6 +968,28 @@ pub enum Event {
     },
     /// The engine finished the queued op and is waiting.
     Idle,
+    /// The turn's output tokens so far, for the stats line: at most four times a second while
+    /// a call streams, and once when each call ends. While a call streams the count is
+    /// approximate (`so_far`: show it as "so far", never as exact; see [`crate::pace`]); when
+    /// the call ends the provider's figure replaces it (`so_far` false). Live only: the
+    /// finished figure is `turn_ended`'s `usage.output_tokens`.
+    OutputTokens {
+        turn: u64,
+        /// Every finished call's figure from the provider, plus the streaming call's count.
+        output: u64,
+        /// Part of `output` is counted from streamed pieces, not reported by the provider.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        so_far: bool,
+        /// The streaming call is slow: over the last 5 s it streamed under a quarter of this
+        /// model's usual rate (the median of its finished calls this session; none yet means
+        /// never slow). Only on `so_far` counts; absent means not slow.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        slow: bool,
+        /// Input tokens the turn has read from the provider's cache so far, for the stats
+        /// tooltip. Only when a call ends (`so_far` false), from the provider's figure.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cached: Option<u64>,
+    },
 }
 
 impl Event {
@@ -1029,6 +1065,16 @@ pub enum Item {
     },
     Reasoning {
         text: String,
+        /// The thought lines the thinking row showed while this streamed, in order, each with
+        /// its paragraph's range in `text` (see [`crate::thought`]). Empty in older logs and
+        /// for reasoning that never showed a line.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        thoughts: Vec<crate::thought::ShownThought>,
+        /// How long the reasoning streamed, in ms: its first delta to the first answer text
+        /// or tool call (`item_completed` comes only when the whole reply is in). Absent in
+        /// older logs.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        think_ms: Option<u64>,
     },
     ToolCall {
         name: String,
@@ -1057,6 +1103,11 @@ pub enum Item {
         /// An MCP App: the server's own UI for this result, for clients that can host it.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         app: Option<Box<AppView>>,
+        /// Set for a Bash command whose output ends in a test runner's summary (cargo test,
+        /// pytest, go test -v, vitest, jest): the counts and failing names. Absent when the
+        /// output wasn't recognised with confidence, and in older logs (see `test_run`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tests: Option<crate::test_run::TestRun>,
     },
 }
 
@@ -1164,6 +1215,10 @@ pub enum Delta {
     },
     Reasoning {
         text: String,
+        /// The thought line (see [`crate::thought`]), on the delta where it changes: at most
+        /// once every 1.2 s. Absent on every other delta; a client keeps the last one it got.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        thought: Option<String>,
     },
     /// Approximate image for display while generation runs; never model input.
     ImagePreview {
@@ -1360,6 +1415,11 @@ pub struct TurnUsage {
     /// Where the turn's last model call ran, for a pooled model (`node/…`). Absent otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ran_on: Option<RanOn>,
+    /// Output tokens over the turn in fixed buckets, for the turn line's curve (see
+    /// [`crate::pace`]). Absent when nothing streamed, and in every turn before it was kept:
+    /// such a turn has no pace data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pace: Option<crate::pace::Pace>,
 }
 
 /// The node a pooled model's call ran on (docs/node-protocol.md §7).
@@ -1858,6 +1918,8 @@ mod tests {
                 choices: vec![],
                 other: Some("neither".into()),
             },
+            item: None,
+            asked: None,
         };
         assert_eq!(
             serde_json::to_string(&resolved).unwrap(),
@@ -2020,5 +2082,157 @@ mod tests {
         assert_eq!(back.seq, 3);
         assert!(matches!(back.event, Event::ItemDelta { .. }));
         assert!(!back.event.is_durable());
+    }
+
+    /// The transcript additions (thought line, test runs, waits, pace, live tokens) are all
+    /// optional: a log written before them, line for line in its old shape, still loads and
+    /// reads as "none".
+    #[test]
+    fn transcript_additions_load_old_logs() {
+        let old = [
+            r#"{"seq":1,"session":"s","created":1,"event":"turn_started","turn":1,"input":"go"}"#,
+            r#"{"seq":2,"session":"s","created":2,"event":"item_started","id":"r","kind":{"type":"reasoning"}}"#,
+            r#"{"seq":3,"session":"s","created":3,"event":"item_completed","id":"r","item":{"type":"reasoning","text":"hm"}}"#,
+            r#"{"seq":4,"session":"s","created":4,"event":"item_completed","id":"t","item":{"type":"tool_call","name":"Bash","arg":"cargo test","input":{},"outcome":"ok","output":"ok","display":null}}"#,
+            r#"{"seq":5,"session":"s","created":5,"event":"permission_resolved","id":"p","decision":"allow"}"#,
+            r#"{"seq":6,"session":"s","created":6,"event":"question_resolved","id":"q","choices":["A"]}"#,
+            r#"{"seq":7,"session":"s","created":7,"event":"turn_ended","turn":1,"reason":{"type":"complete"},"usage":{"context_tokens":null,"input_tokens":1,"output_tokens":2,"model_calls":1,"tokens_per_sec":null}}"#,
+        ];
+        let evs: Vec<Envelope> = old
+            .iter()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert!(
+            matches!(&evs[2].event, Event::ItemCompleted { item: Item::Reasoning { thoughts, think_ms: None, .. }, .. } if thoughts.is_empty())
+        );
+        assert!(matches!(
+            &evs[3].event,
+            Event::ItemCompleted {
+                item: Item::ToolCall { tests: None, .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            &evs[4].event,
+            Event::PermissionResolved {
+                item: None,
+                asked: None,
+                ..
+            }
+        ));
+        assert!(
+            matches!(&evs[5].event, Event::QuestionResolved { item: None, asked: None, answer, .. } if answer.choices == ["A"])
+        );
+        assert!(matches!(&evs[6].event, Event::TurnEnded { usage, .. } if usage.pace.is_none()));
+        // And writes back the same shape: nothing new appears when there's nothing to say.
+        for (line, env) in old.iter().zip(&evs) {
+            let a: serde_json::Value = serde_json::from_str(line).unwrap();
+            let b = serde_json::to_value(env).unwrap();
+            assert_eq!(a, b, "{line}");
+        }
+    }
+
+    #[test]
+    fn waits_round_trip() {
+        let e = Event::PermissionResolved {
+            id: "p".into(),
+            decision: Decision::Allow,
+            item: Some("t1".into()),
+            asked: Some(1_794_900_000_000),
+        };
+        let json = serde_json::to_string(&e).unwrap();
+        assert_eq!(
+            json,
+            r#"{"event":"permission_resolved","id":"p","decision":"allow","item":"t1","asked":1794900000000}"#
+        );
+        assert!(matches!(
+            serde_json::from_str::<Event>(&json).unwrap(),
+            Event::PermissionResolved {
+                asked: Some(1_794_900_000_000),
+                ..
+            }
+        ));
+        let q = Event::QuestionResolved {
+            id: "q".into(),
+            answer: Answer {
+                choices: vec!["Yes".into()],
+                other: None,
+            },
+            item: Some("t2".into()),
+            asked: Some(5),
+        };
+        let json = serde_json::to_string(&q).unwrap();
+        assert_eq!(
+            json,
+            r#"{"event":"question_resolved","id":"q","choices":["Yes"],"item":"t2","asked":5}"#
+        );
+        assert!(
+            matches!(serde_json::from_str::<Event>(&json).unwrap(), Event::QuestionResolved { item: Some(i), asked: Some(5), .. } if i == "t2")
+        );
+    }
+
+    #[test]
+    fn pace_and_live_tokens_round_trip() {
+        let usage = TurnUsage {
+            output_tokens: 47,
+            model_calls: 1,
+            pace: Some(crate::pace::Pace {
+                bucket_ms: 1000,
+                tokens: vec![8, 16, 15, 8],
+            }),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&usage).unwrap();
+        assert!(
+            json.ends_with(r#""pace":{"bucket_ms":1000,"tokens":[8,16,15,8]}}"#),
+            "{json}"
+        );
+        assert_eq!(serde_json::from_str::<TurnUsage>(&json).unwrap(), usage);
+        let live = Event::OutputTokens {
+            turn: 3,
+            output: 120,
+            so_far: true,
+            slow: false,
+            cached: None,
+        };
+        let json = serde_json::to_string(&live).unwrap();
+        assert_eq!(
+            json,
+            r#"{"event":"output_tokens","turn":3,"output":120,"so_far":true}"#
+        );
+        assert!(!live.is_durable(), "the live count is never logged");
+        let slow = Event::OutputTokens {
+            turn: 3,
+            output: 125,
+            so_far: true,
+            slow: true,
+            cached: None,
+        };
+        assert_eq!(
+            serde_json::to_string(&slow).unwrap(),
+            r#"{"event":"output_tokens","turn":3,"output":125,"so_far":true,"slow":true}"#
+        );
+        let done = Event::OutputTokens {
+            turn: 3,
+            output: 131,
+            so_far: false,
+            slow: false,
+            cached: Some(9000),
+        };
+        let json = serde_json::to_string(&done).unwrap();
+        assert_eq!(
+            json,
+            r#"{"event":"output_tokens","turn":3,"output":131,"cached":9000}"#
+        );
+        // The shape #420 sent still reads.
+        assert!(matches!(
+            serde_json::from_str::<Event>(r#"{"event":"output_tokens","turn":3,"output":131}"#)
+                .unwrap(),
+            Event::OutputTokens {
+                slow: false,
+                cached: None,
+                ..
+            }
+        ));
     }
 }
