@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { COARSE_POINTER, hasThisMac, isPhone, showsDownloadChip } from "../src/ui/download.ts";
+import { COARSE_POINTER, hasThisMac, inviteFor, isMacVisitor, isPhone, showsDownloadChip } from "../src/ui/download.ts";
 import { DownloadAppChip } from "../src/ui/DownloadChip.tsx";
 import { SettingsPage } from "../src/ui/Settings.tsx";
 import { Inspector } from "../src/ui/Inspector.tsx";
@@ -75,20 +75,46 @@ test("the chip renders nothing on a phone", () => {
 const settings = (machines: Machine[], machine?: string) =>
   renderToStaticMarkup(createElement(SettingsPage, { section: "models" as const, account: null, machines, machine, onOpen: noop, onSignOut: noop }));
 
-test("Settings › Models › Pair a machine points at the Mac app instead of dead-ending", () => {
-  const html = settings([mew]);
-  assert.match(html, /Pair machines in the Mac app/);
-  assert.match(html, /href="\/download"/);
+/** Render as a visitor on a Mac (or not): the invitation's platform gate reads the user agent. */
+function asVisitor<T>(ua: string, f: () => T): T {
+  const was = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  Object.defineProperty(globalThis, "navigator", { value: { userAgent: ua }, configurable: true });
+  try { return f(); } finally { if (was) Object.defineProperty(globalThis, "navigator", was); }
+}
+const MAC_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_1) AppleWebKit/605.1.15";
+const PC_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
+/** The invitation rows' pills, by row id. */
+const invites = (html: string) => Object.fromEntries(html.split('data-row="').slice(1).flatMap((chunk) => {
+  const m = chunk.match(/^([\w-]+)"[^]*?(<a class="f-pill invite-pill"[^>]*>[^<]*<\/a>|<span class="det invite-elsewhere">[^<]*<\/span>)/);
+  return m ? [[m[1], m[2]]] : [];
+}));
+
+test("Settings › Models: the Mac's rows sit under On your Mac, each with Get the Mac app on a Mac", () => {
+  const html = asVisitor(MAC_UA, () => settings([mew]));
+  assert.ok(html.indexOf("On your Mac") > html.indexOf("Frog Cloud"), "invitations come after the working rows");
+  const pills = invites(html);
+  assert.deepEqual(Object.keys(pills), ["pair-machine", "local-models"]);
+  for (const [id, a] of Object.entries(pills)) assert.match(a, /href="\/download"[^>]*>Get the Mac app</, id);
+  assert.match(html, /Run models on this computer/, "the invitation's web words");
 });
 
-test("Settings › Models › a machine page replaces Stop, Rename and Unpair with the chip", () => {
-  const html = settings([mew], "n1");
+test("an invitation reads Open in Frog for Mac when the account has a Mac, and On a Mac off one", () => {
+  const withApp = invites(asVisitor(MAC_UA, () => settings([mew, mac])));
+  assert.match(withApp["pair-machine"], /href="frog:\/\/settings\/models"[^>]*>Open in Frog for Mac</);
+  const pc = invites(asVisitor(PC_UA, () => settings([mew])));
+  assert.equal(pc["pair-machine"], '<span class="det invite-elsewhere">On a Mac</span>');
+  // An iPad says Macintosh too; a coarse pointer rules it out.
+  const ipad = inviteFor({ mac: isMacVisitor((q) => q === "(pointer: coarse)", MAC_UA), thisMac: false });
+  assert.equal(ipad, "elsewhere");
+});
+
+test("Settings › Models › a machine page: no dead Stop, Rename or Unpair; rename and share are invitations", () => {
+  const html = asVisitor(MAC_UA, () => settings([mew], "n1"));
   assert.ok(!/disabled=""[^>]*>Stop</.test(html), `a disabled Stop button survived: ${html}`);
   assert.ok(!/Rename…/.test(html), `a disabled Rename button survived: ${html}`);
   assert.ok(!/Unpair mew…/.test(html), `a disabled Unpair button survived: ${html}`);
-  assert.match(html, /Stop it in the Mac app/);
-  assert.match(html, /Rename it in the Mac app/);
-  assert.match(html, /Unpair mew in the Mac app/);
+  assert.ok(!/type="checkbox"[^>]*disabled/.test(html), `a dead switch survived: ${html}`);
+  assert.deepEqual(Object.keys(invites(html)), ["machine-name", "share-models"]);
 });
 
 test("the Inspector's Preview tab points at the Mac app rather than dead-ending", () => {
