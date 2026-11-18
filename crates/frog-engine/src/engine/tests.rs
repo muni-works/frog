@@ -14818,10 +14818,23 @@ async fn a_sidecar_that_cannot_run_ends_the_turn_with_its_reason() {
         subagent: false,
         chat: false,
     };
-    let mut h = start(opts, Provider::Scripted(scripted::Client::new(vec![reply(vec![text("never sent")], Stop::End)]))).unwrap();
+    let mut h = start(
+        opts,
+        Provider::Scripted(scripted::Client::new(vec![reply(
+            vec![text("never sent")],
+            Stop::End,
+        )])),
+    )
+    .unwrap();
     let began = std::time::Instant::now();
-    let evs = tokio::time::timeout(Duration::from_secs(10), run(&mut h, "test")).await.expect("the turn ended");
-    assert!(began.elapsed() < Duration::from_secs(5), "took {:?}", began.elapsed());
+    let evs = tokio::time::timeout(Duration::from_secs(10), run(&mut h, "test"))
+        .await
+        .expect("the turn ended");
+    assert!(
+        began.elapsed() < Duration::from_secs(5),
+        "took {:?}",
+        began.elapsed()
+    );
     let end = evs
         .iter()
         .find_map(|e| match &e.event {
@@ -14839,7 +14852,8 @@ async fn a_sidecar_that_cannot_run_ends_the_turn_with_its_reason() {
         other => panic!("ended {other:?}"),
     }
     assert!(
-        !evs.iter().any(|e| matches!(&e.event, Event::ItemStarted { .. })),
+        !evs.iter()
+            .any(|e| matches!(&e.event, Event::ItemStarted { .. })),
         "nothing was asked of the model"
     );
 }

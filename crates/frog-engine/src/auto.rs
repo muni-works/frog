@@ -558,7 +558,9 @@ impl Classifier {
             // Where it's serving now (the Apple sidecar moves off a taken port).
             match Provider::new(&self.profile) {
                 Ok(p) => self.provider = p,
-                Err(e) => return Verdict::Failed(format!("the classifier couldn't start ({e:#})")),
+                Err(e) => {
+                    return Verdict::Failed(format!("the classifier couldn't start ({e:#})"));
+                }
             }
             self.started = true;
         }
@@ -654,7 +656,9 @@ impl Classifier {
             // Where it's serving now (the Apple sidecar moves off a taken port).
             match Provider::new(&self.profile) {
                 Ok(p) => self.provider = p,
-                Err(e) => return Verdict::Failed(format!("the second pass couldn't start ({e:#})")),
+                Err(e) => {
+                    return Verdict::Failed(format!("the second pass couldn't start ({e:#})"));
+                }
             }
             self.started = true;
         }

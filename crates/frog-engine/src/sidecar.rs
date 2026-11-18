@@ -238,13 +238,20 @@ pub enum StartError {
     /// It exited while starting.
     Exited { name: String, detail: String },
     /// It didn't answer within its deadline.
-    Timeout { name: String, after: Duration, log: PathBuf },
+    Timeout {
+        name: String,
+        after: Duration,
+        log: PathBuf,
+    },
 }
 
 impl std::fmt::Display for StartError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Off { name } => write!(f, "{name} can't start here: local models are off in this process (FROG_SIDECARS=off)."),
+            Self::Off { name } => write!(
+                f,
+                "{name} can't start here: local models are off in this process (FROG_SIDECARS=off)."
+            ),
             Self::PortTaken { name, port, by } => write!(
                 f,
                 "{name} can't start: port {port} is in use by {by}. Quit whatever is using it and send your message again, or pick another model."
@@ -273,7 +280,10 @@ enum Probe {
     Free,
     /// One of this frog's sidecars, serving `model`. `unavailable`: the system model behind
     /// it can't run, and why (frog-apple reports it).
-    Ours { model: String, unavailable: Option<String> },
+    Ours {
+        model: String,
+        unavailable: Option<String>,
+    },
     /// Something else, and what it looks like.
     Foreign(String),
 }
@@ -305,7 +315,12 @@ async fn probe(port: u16, token: Option<&str>) -> Probe {
     }
     let v: serde_json::Value = match res.json().await {
         Ok(v) if status.is_success() => v,
-        _ => return Probe::Foreign(format!("a server that isn't a frog sidecar (HTTP {})", status.as_u16())),
+        _ => {
+            return Probe::Foreign(format!(
+                "a server that isn't a frog sidecar (HTTP {})",
+                status.as_u16()
+            ));
+        }
     };
     match v["data"][0]["id"].as_str() {
         Some(id) => Probe::Ours {
@@ -318,7 +333,9 @@ async fn probe(port: u16, token: Option<&str>) -> Probe {
 
 /// A port the OS isn't using, for a sidecar that has to move.
 fn free_port() -> std::io::Result<u16> {
-    Ok(std::net::TcpListener::bind("127.0.0.1:0")?.local_addr()?.port())
+    Ok(std::net::TcpListener::bind("127.0.0.1:0")?
+        .local_addr()?
+        .port())
 }
 
 /// How one sidecar start goes: everything [`launch`] needs, so tests can run it against fake
@@ -368,15 +385,22 @@ pub(crate) async fn launch(
             return Ok((port, None));
         }
         Probe::Ours { model, .. } => {
-            note(format!("{}: on port {port} serving {model}; restarting it for {}", spot.bin, spot.model));
+            note(format!(
+                "{}: on port {port} serving {model}; restarting it for {}",
+                spot.bin, spot.model
+            ));
             stop();
             // Give the old one a moment to release the port.
             let until = Instant::now() + Duration::from_secs(3);
             loop {
                 match probe(port, token).await {
                     Probe::Free => break None,
-                    _ if Instant::now() < until => tokio::time::sleep(Duration::from_millis(100)).await,
-                    Probe::Ours { .. } => break Some("the sidecar it was told to stop".to_string()),
+                    _ if Instant::now() < until => {
+                        tokio::time::sleep(Duration::from_millis(100)).await
+                    }
+                    Probe::Ours { .. } => {
+                        break Some("the sidecar it was told to stop".to_string());
+                    }
                     Probe::Foreign(by) => break Some(by),
                 }
             }
@@ -386,16 +410,29 @@ pub(crate) async fn launch(
     };
     if let Some(by) = taken {
         if !spot.movable {
-            return Err(fail(StartError::PortTaken { name: spot.name.clone(), port, by }));
+            return Err(fail(StartError::PortTaken {
+                name: spot.name.clone(),
+                port,
+                by,
+            }));
         }
         let to = free_port().map_err(|e| {
-            fail(StartError::Exited { name: spot.name.clone(), detail: format!("no free port: {e}") })
+            fail(StartError::Exited {
+                name: spot.name.clone(),
+                detail: format!("no free port: {e}"),
+            })
         })?;
-        note(format!("{}: port {port} is in use by {by}; starting on {to}", spot.bin));
+        note(format!(
+            "{}: port {port} is in use by {by}; starting on {to}",
+            spot.bin
+        ));
         port = to;
     }
     let mut child = spawn(port).map_err(|e| {
-        fail(StartError::Exited { name: spot.name.clone(), detail: format!("couldn't run {}: {e}", spot.bin) })
+        fail(StartError::Exited {
+            name: spot.name.clone(),
+            detail: format!("couldn't run {}: {e}", spot.bin),
+        })
     })?;
     let until = Instant::now() + spot.deadline;
     loop {
@@ -408,18 +445,29 @@ pub(crate) async fn launch(
                 let _ = child.wait();
                 return Err(fail(e));
             }
-            note(format!("{}: serving {} on port {port}", spot.bin, spot.model));
+            note(format!(
+                "{}: serving {} on port {port}",
+                spot.bin, spot.model
+            ));
             return Ok((port, Some(child)));
         }
         if let Ok(Some(status)) = child.try_wait() {
             let log = std::fs::read_to_string(&spot.log).unwrap_or_default();
-            let tail: Vec<&str> = log.lines().filter(|l| !l.trim().is_empty()).rev().take(3).collect();
+            let tail: Vec<&str> = log
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .rev()
+                .take(3)
+                .collect();
             let detail = if tail.is_empty() {
                 format!("it exited with {status}")
             } else {
                 tail.into_iter().rev().collect::<Vec<_>>().join("; ")
             };
-            return Err(fail(StartError::Exited { name: spot.name.clone(), detail }));
+            return Err(fail(StartError::Exited {
+                name: spot.name.clone(),
+                detail,
+            }));
         }
         if Instant::now() >= until {
             let _ = child.kill();
@@ -526,7 +574,11 @@ async fn start(p: &Profile, need_model: bool) -> Result<()> {
         movable: apple,
         // frog-apple is up in about a second; tang reads a model's weights on its first
         // request, not here, but a big model's first start still takes a while.
-        deadline: if apple { Duration::from_secs(15) } else { Duration::from_secs(300) },
+        deadline: if apple {
+            Duration::from_secs(15)
+        } else {
+            Duration::from_secs(300)
+        },
         need_model,
         log: log_file(model),
     };
@@ -600,11 +652,15 @@ mod tests {
 
     /// A fake server on `port` (0: one the OS picks); returns the port.
     async fn serve(port: u16, answer: Answer) -> u16 {
-        let l = tokio::net::TcpListener::bind(("127.0.0.1", port)).await.unwrap();
+        let l = tokio::net::TcpListener::bind(("127.0.0.1", port))
+            .await
+            .unwrap();
         let port = l.local_addr().unwrap().port();
         tokio::spawn(async move {
             loop {
-                let Ok((mut c, _)) = l.accept().await else { return };
+                let Ok((mut c, _)) = l.accept().await else {
+                    return;
+                };
                 tokio::spawn(async move {
                     let mut buf = vec![0u8; 4096];
                     let mut n = 0;
@@ -626,7 +682,10 @@ mod tests {
                             r#"{"data":[{"id":"apple","unavailable":"Apple Intelligence is turned off. Turn it on in System Settings."}]}"#.to_string(),
                         ),
                     };
-                    let res = format!("HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                    let res = format!(
+                        "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
                     let _ = c.write_all(res.as_bytes()).await;
                 });
             }
@@ -685,12 +744,22 @@ mod tests {
         )
         .await
         .expect("started");
-        assert!(began.elapsed() < Duration::from_secs(5), "took {:?}", began.elapsed());
+        assert!(
+            began.elapsed() < Duration::from_secs(5),
+            "took {:?}",
+            began.elapsed()
+        );
         assert_ne!(port, taken);
         child.expect("a child").kill().unwrap();
         let lines = lines.lock().unwrap().join("\n");
-        assert!(lines.contains(&format!("port {taken} is in use by another frog-apple")), "{lines}");
-        assert!(lines.contains(&format!("serving apple on port {port}")), "{lines}");
+        assert!(
+            lines.contains(&format!("port {taken} is in use by another frog-apple")),
+            "{lines}"
+        );
+        assert!(
+            lines.contains(&format!("serving apple on port {port}")),
+            "{lines}"
+        );
     }
 
     /// Something that isn't a sidecar on the port: never waited on either.
@@ -712,7 +781,13 @@ mod tests {
         .expect("started");
         assert_ne!(port, taken);
         child.unwrap().kill().unwrap();
-        assert!(lines.lock().unwrap().join("\n").contains("isn't a frog sidecar"));
+        assert!(
+            lines
+                .lock()
+                .unwrap()
+                .join("\n")
+                .contains("isn't a frog sidecar")
+        );
     }
 
     /// tang's port can't move (the app and paired nodes reach it on 8911): a stranger there is
@@ -722,13 +797,31 @@ mod tests {
         let taken = serve(0, Answer::NotASidecar).await;
         let (lines, note) = notes();
         let began = Instant::now();
-        let err = launch(&spot(taken, false), || panic!("not ours"), |_| panic!("nothing starts"), &note)
-            .await
-            .unwrap_err();
-        assert!(began.elapsed() < Duration::from_secs(3), "took {:?}", began.elapsed());
-        assert!(matches!(&err, StartError::PortTaken { port, .. } if *port == taken), "{err:?}");
+        let err = launch(
+            &spot(taken, false),
+            || panic!("not ours"),
+            |_| panic!("nothing starts"),
+            &note,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            began.elapsed() < Duration::from_secs(3),
+            "took {:?}",
+            began.elapsed()
+        );
+        assert!(
+            matches!(&err, StartError::PortTaken { port, .. } if *port == taken),
+            "{err:?}"
+        );
         assert!(err.to_string().contains("pick another model"), "{err}");
-        assert!(lines.lock().unwrap().join("\n").contains(&format!("port {taken} is in use")));
+        assert!(
+            lines
+                .lock()
+                .unwrap()
+                .join("\n")
+                .contains(&format!("port {taken} is in use"))
+        );
     }
 
     /// One that starts but never answers: past the deadline the turn gets a reason, the
@@ -739,12 +832,30 @@ mod tests {
         let (lines, note) = notes();
         let pid = Arc::new(Mutex::new(None));
         let began = Instant::now();
-        let err = launch(&spot(free, true), || {}, |_| stand_in(&pid), &note).await.unwrap_err();
-        assert!(began.elapsed() < Duration::from_secs(4), "took {:?}", began.elapsed());
+        let err = launch(&spot(free, true), || {}, |_| stand_in(&pid), &note)
+            .await
+            .unwrap_err();
+        assert!(
+            began.elapsed() < Duration::from_secs(4),
+            "took {:?}",
+            began.elapsed()
+        );
         assert!(matches!(err, StartError::Timeout { .. }), "{err:?}");
-        assert!(err.to_string().contains("didn't start within 2 seconds"), "{err}");
-        assert!(gone(pid.lock().unwrap().unwrap()), "the stand-in was left running");
-        assert!(lines.lock().unwrap().join("\n").contains("didn't start within"));
+        assert!(
+            err.to_string().contains("didn't start within 2 seconds"),
+            "{err}"
+        );
+        assert!(
+            gone(pid.lock().unwrap().unwrap()),
+            "the stand-in was left running"
+        );
+        assert!(
+            lines
+                .lock()
+                .unwrap()
+                .join("\n")
+                .contains("didn't start within")
+        );
     }
 
     /// Up, but the system model can't run (Apple Intelligence off, an unsupported Mac, still
@@ -767,19 +878,31 @@ mod tests {
         .unwrap_err();
         assert_eq!(
             err,
-            StartError::Unavailable { reason: "Apple Intelligence is turned off. Turn it on in System Settings.".into() }
+            StartError::Unavailable {
+                reason: "Apple Intelligence is turned off. Turn it on in System Settings.".into()
+            }
         );
         assert!(gone(pid.lock().unwrap().unwrap()), "left running");
-        assert!(lines.lock().unwrap().join("\n").contains("Apple Intelligence is turned off"));
+        assert!(
+            lines
+                .lock()
+                .unwrap()
+                .join("\n")
+                .contains("Apple Intelligence is turned off")
+        );
 
         // Already running that way: the same reason, nothing started.
         let up = serve(0, Answer::Unavailable).await;
-        let err = launch(&spot(up, true), || {}, |_| panic!("nothing starts"), &note).await.unwrap_err();
+        let err = launch(&spot(up, true), || {}, |_| panic!("nothing starts"), &note)
+            .await
+            .unwrap_err();
         assert!(matches!(err, StartError::Unavailable { .. }));
         // For a screenshot it's fine.
         let mut s = spot(up, true);
         s.need_model = false;
-        let (port, child) = launch(&s, || {}, |_| panic!("nothing starts"), &note).await.unwrap();
+        let (port, child) = launch(&s, || {}, |_| panic!("nothing starts"), &note)
+            .await
+            .unwrap();
         assert_eq!((port, child.is_none()), (up, true));
     }
 
@@ -804,7 +927,11 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert!(began.elapsed() < Duration::from_secs(2), "took {:?}", began.elapsed());
+        assert!(
+            began.elapsed() < Duration::from_secs(2),
+            "took {:?}",
+            began.elapsed()
+        );
         assert!(err.to_string().contains("can't listen on"), "{err}");
         let _ = std::fs::remove_file(&log);
     }
@@ -814,16 +941,24 @@ mod tests {
     async fn our_running_sidecar_is_reused() {
         let up = serve(0, Answer::Sidecar).await;
         let (_lines, note) = notes();
-        let (port, child) = launch(&spot(up, true), || panic!("no restart"), |_| panic!("nothing starts"), &note)
-            .await
-            .unwrap();
+        let (port, child) = launch(
+            &spot(up, true),
+            || panic!("no restart"),
+            |_| panic!("nothing starts"),
+            &note,
+        )
+        .await
+        .unwrap();
         assert_eq!((port, child.is_none()), (up, true));
     }
 
     #[test]
     fn apple_intelligence_is_started_and_downloaded_models_loaded() {
         assert_eq!(activity(APPLE), "starting Apple Intelligence");
-        assert_eq!(activity("mlx-community/Qwen3-32B-4bit"), "loading mlx-community/Qwen3-32B-4bit");
+        assert_eq!(
+            activity("mlx-community/Qwen3-32B-4bit"),
+            "loading mlx-community/Qwen3-32B-4bit"
+        );
         assert_eq!(display_name(APPLE), "Apple Intelligence");
         assert_eq!(display_name("mlx-community/Qwen3-32B-4bit"), "Qwen3 32B");
     }
