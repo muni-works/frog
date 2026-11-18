@@ -129,11 +129,14 @@ export function resumedLine(input: string): string | null {
   return m[1] ? `$${m[1]} added. Frog picked up where it stopped.` : 'Credit added. Frog picked up where it stopped.'
 }
 
-/** The turn the wall is for: the last one, when it ended on money. */
+/** The turn the wall is for: the last one, when it ended on money (`billing_limit`, or the edge's
+ *  402 that old logs still hold, as store.ts outOfCredits reads it). */
 export function stoppedTurn(t: Thread): number | null {
   const last = t.turns[t.turns.length - 1]
-  if (!last || t.running || last.reason?.type !== 'billing_limit') return null
-  return last.turn
+  if (!last || t.running || !last.reason) return null
+  const r = last.reason
+  const money = r.type === 'billing_limit' || (r.type === 'error' && /insufficient_credit|out_of_credits|402/.test(JSON.stringify((r as { error?: unknown }).error ?? '')))
+  return money ? last.turn : null
 }
 
 /** A top-up left for Stripe from the wall: Checkout comes back to the bare origin, so this is

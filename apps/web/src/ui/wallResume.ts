@@ -50,7 +50,7 @@ export function useWallResume({ session, thread, send, fetchMe, onAccount, openS
     const tick = () => fetchMe().then((a) => {
       if (stop) return
       onAccount(a)
-      if (a.credit_cents > p.before) { setWaiting(null); setAdded({ session: p.session, turn: p.turn, cents: Math.round(a.credit_cents - p.before) }) }
+      if (a.credit_cents > p.before) { setWaiting(null); setAdded({ session: p.session, turn: p.turn, cents: p.cents }) }
       else again()
     }, again)
     tick()

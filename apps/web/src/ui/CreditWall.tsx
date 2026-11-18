@@ -6,7 +6,7 @@
 // no `frog://session/<id>` handler), and a cloud session opened there still runs, and bills, in
 // Frog Cloud. No plan offer: what a plan includes per dollar isn't decided (the board keeps it off).
 import { useState } from 'react'
-import { aboutTurns, cardFeeCents, costLine, sessionSpend, turnsLine, WALL_AMOUNTS } from '../wall'
+import { aboutTurns, cardFeeCents, costLine, leftLine, sessionSpend, turnsLine, WALL_AMOUNTS } from '../wall'
 import type { Thread } from '../engine/thread'
 import type { Model } from '../models'
 import { Coupon } from './Settings'
@@ -24,9 +24,17 @@ export interface WallProps {
   /** Credit came back (Stripe returned and the webhook landed, or it hasn't yet): what to say,
    *  and a way to resume by hand when the automatic one couldn't. */
   waiting?: { text: string; onResume?: () => void } | null
+  /** The balance now, in cents. Credit back by another route (Billing, a reload after the wait,
+   *  a plan window that reset) shows it with a Resume button: a click, never by itself. */
+  credit?: number
+  /** When `credit` was fetched (ms): only a balance read after the wall appeared counts, not the
+   *  one from before the stop that the account still holds for a moment. */
+  creditAt?: number
+  onResume?: () => void
 }
 
-export function CreditWall({ thread, models, avg, apiKey, onTopUp, onRedeemed, waiting }: WallProps) {
+export function CreditWall({ thread, models, avg, apiKey, onTopUp, onRedeemed, waiting, credit, creditAt = 0, onResume }: WallProps) {
+  const [since] = useState(() => Date.now())
   const [amount, setAmount] = useState(WALL_AMOUNTS[0])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -49,6 +57,11 @@ export function CreditWall({ thread, models, avg, apiKey, onTopUp, onRedeemed, w
         <div className="wall-row" role="status">
           <span className="det wrap" style={{ flex: 1 }}>{waiting.text}</span>
           {waiting.onResume && <button type="button" className="f-btn f-btn--prominent" onClick={waiting.onResume}>Resume</button>}
+        </div>
+      ) : credit != null && credit > 0 && creditAt > since && onResume ? (
+        <div className="wall-row">
+          <button type="button" className="f-btn f-btn--prominent" onClick={onResume}>Resume</button>
+          <span className="det wrap">You have {leftLine(credit)} of credit now. Frog picks up where it stopped.</span>
         </div>
       ) : onTopUp && (<>
         <div className="wall-amts" role="radiogroup" aria-label="Amount">

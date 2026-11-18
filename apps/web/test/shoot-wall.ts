@@ -66,6 +66,7 @@ try {
   // A: the warning, with $10 last added and $1.94 left (six 6¢ turns to average).
   await call("/v1/mock/credit", { cents: 194 });
   await shoot("warning");
+  for (const theme of ["dark", "light"]) await screenshot(`${site.origin}/parity/app.html?key=${KEY}&theme=${theme}`, `${out}warning-new-${theme}.png`);
 
   // B: the wall, after a turn that stopped on credit between steps.
   await call("/v1/mock/credit", { cents: 2 });

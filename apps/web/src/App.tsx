@@ -352,6 +352,9 @@ export default function App() {
   // ---------- the credit wall (wall.ts) ----------
   // The account's average turn, over every session this browser holds.
   const avgTurn = useMemo(() => averageTurn(sessions.map((s) => thread(s.id)), models), [sessions, threads, models]) // eslint-disable-line react-hooks/exhaustive-deps
+  // When the account was last read, so the wall can tell a fresh balance from one before the stop.
+  const [accountAt, setAccountAt] = useState(0)
+  useEffect(() => { if (account) setAccountAt(Date.now()) }, [account])
   const lastAdded = useLastAdded(DEV_KEY ? undefined : key ?? undefined, account)
   // Pay and resume: a code resumes at once; Stripe comes back to the bare origin, and this reopens
   // the session and resumes once the credit is in (ui/wallResume.ts).
@@ -732,7 +735,8 @@ export default function App() {
               <CreditWall thread={ct} models={models} avg={avgTurn} apiKey={!DEV_KEY ? key : undefined}
                 onTopUp={!DEV_KEY ? (d) => { wall.leaving(d, account?.credit_cents ?? 0); return topUp(key, d).catch((e) => { wall.stayed(); throw e }) } : undefined}
                 onRedeemed={(r) => { setAccount((a) => (a ? { ...a, credit_cents: r.credit_cents } : a)); refreshAccount(); wall.redeemed(r) }}
-                waiting={wall.waiting ? { text: wall.waiting, onResume: wall.resumeByHand(account?.credit_cents ?? 0) } : null} />
+                waiting={wall.waiting ? { text: wall.waiting, onResume: wall.resumeByHand(account?.credit_cents ?? 0) } : null}
+                credit={account?.credit_cents} creditAt={accountAt} onResume={wall.resumeByHand(account?.credit_cents ?? 0)} />
             )}
           </div></div>
           <div className="dock">

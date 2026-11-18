@@ -6,6 +6,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createElement as h, StrictMode } from "react";
 import TestRenderer, { act } from "react-test-renderer";
+import { renderToStaticMarkup } from "react-dom/server";
+import { Transcript } from "../src/ui/Transcript.tsx";
 import type { Account } from "../src/auth.ts";
 import type { EndReason, Op } from "../src/cloud/protocol.ts";
 import { emptyThread, type Thread } from "../src/engine/thread.ts";
@@ -184,7 +186,7 @@ test("back from Stripe: the session reopens, and the turn resumes once the webho
   savePending(storage, { session: "s1", turn: 6, cents: 500, before: 0, at: Date.now() });
   let calls = 0;
   // /v1/me: the webhook hasn't landed for the first two polls.
-  const fetchMe = async () => acct(++calls < 3 ? 0 : 500);
+  const fetchMe = async () => acct(++calls < 3 ? 0 : 497); // $5 in, less a late 3¢ debit
   const w = harness({ thread: stopped(6), session: null, storage, search: "?session_id=cs_test_1", fetchMe });
   assert.deepEqual(w.opened, ["s1"]);
   assert.match(w.api.waiting ?? "", /Waiting for the credit/);
@@ -246,14 +248,51 @@ test("leaving for checkout notes the stopped turn and the balance before", () =>
   w.unmount();
 });
 
+test("credit back by another route: the wall offers Resume (a click), only for a balance read after it appeared", async () => {
+  const resumes: string[] = [];
+  let r!: TestRenderer.ReactTestRenderer;
+  const props = (credit: number, creditAt: number) => ({ thread: stopped(6), models: MODELS, avg: 0.06, apiKey: "k", onTopUp: async () => {}, credit, creditAt, onResume: () => resumes.push("resume") });
+  act(() => { r = TestRenderer.create(h(CreditWall, props(500, Date.now() - 60_000))); });
+  assert.throws(() => button(r, "Resume"), "the balance from before the stop doesn't count");
+  assert.ok(button(r, "Add $5 and resume"));
+  await new Promise((x) => setTimeout(x, 5));
+  act(() => { r.update(h(CreditWall, props(500, Date.now()))); });
+  assert.match(all(r), /You have \$5\.00 of credit now/);
+  assert.equal(resumes.length, 0, "never by itself");
+  act(() => { button(r, "Resume").props.onClick(); });
+  assert.deepEqual(resumes, ["resume"]);
+  act(() => { r.update(h(CreditWall, props(0, Date.now() + 1))); });
+  assert.throws(() => button(r, "Resume"), "no credit, no Resume");
+  r.unmount();
+});
+
+test("shouldResume: the credit's own session and stopped turn, and once", () => {
+  const added = { session: "s1", turn: 6, cents: 500 };
+  assert.equal(shouldResume(added, "s1", stopped(6), new Set()), true);
+  assert.equal(shouldResume(added, "s1", stopped(6), new Set(["s1:6"])), false, "already resumed");
+  assert.equal(shouldResume(added, "s1", stopped(7), new Set()), false, "a later stop isn't the one paid for");
+  assert.equal(shouldResume(added, "s1", thread(6), new Set()), false, "nothing stopped");
+});
+
 test("the wall's pieces read the turn that stopped on money, and the session's spend", () => {
   assert.equal(stoppedTurn(stopped(4)), 4);
   assert.equal(stoppedTurn(thread(4)), null);
   assert.equal(stoppedTurn({ ...stopped(4), running: true }), null);
+  assert.equal(stoppedTurn(thread(4, { type: "error", error: { status: 402, code: "insufficient_credit" } })), 4, "the edge's old 402 ending");
+  assert.equal(stoppedTurn(thread(4, { type: "error", error: "connection reset" })), null);
   assert.equal(shouldResume({ session: "s2", turn: 4, cents: 500 }, "s1", stopped(4), new Set()), false, "another session's credit");
   const spend = sessionSpend(stopped(3), MODELS);
   assert.equal(spend.turns, 3);
   assert.ok(Math.abs(spend.dollars! - 0.18) < 1e-9);
   assert.equal(resumedLine("<resumed after the app restarted; your previous turn was interrupted; continue>"), null);
   assert.equal(resumedLine("please continue where you left off"), null);
+});
+
+test("a resumed turn shows one quiet line in the transcript, not the note as a message", () => {
+  const t = stopped(2);
+  const resumed: Turn = { turn: 3, input: resumeNote(500), entries: [], usage: usage(), reason: { type: "complete" } };
+  const html = renderToStaticMarkup(h(Transcript, { thread: { ...t, turns: [...t.turns, resumed], ended: { type: "complete" } }, onDecide: () => {}, onAnswer: () => {}, onElicit: () => {}, onRetry: () => {} } as never));
+  assert.match(html, /data-row="resumed"[^>]*>\$5\.00 added\. Frog picked up where it stopped\.</);
+  assert.doesNotMatch(html, /&lt;resumed after/, "the note never shows as text");
+  assert.equal((html.match(/class="me"/g) ?? []).length, 2, "the two typed messages stay bubbles");
 });
