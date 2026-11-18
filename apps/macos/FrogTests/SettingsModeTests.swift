@@ -120,7 +120,14 @@ final class SettingsModeTests: XCTestCase {
                 let devices = Devices()
                 devices.seed(ModelsParityTests.fixture())
                 SettingsBindings.devices = devices
-                defer { CloudAccount.shared.unstage(); SettingsBindings.devices = Devices.shared }
+                let suite = "frog-settings-snapshot-\(UUID().uuidString)"
+                SettingsBindings.stats = ModelStats(defaults: UserDefaults(suiteName: suite)!)
+                defer {
+                    CloudAccount.shared.unstage()
+                    SettingsBindings.devices = Devices.shared
+                    SettingsBindings.stats = ModelStats.shared
+                    UserDefaults().removePersistentDomain(forName: suite)
+                }
                 let (panes, _) = panesWithThread()
                 defer { panes.stopAll() }
                 panes.showSettings(section)
