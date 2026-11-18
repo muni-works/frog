@@ -9,7 +9,7 @@ import { ICON } from './icons'
 import { endError } from '../store'
 import { TurnFooter } from './TurnFooter'
 import { WidgetCard } from './Widget'
-import { foldRuns, foldTime, lineOf, opensItself, rememberOpen, thoughtLabel, type Step } from './rows'
+import { foldRuns, foldTime, lineOf, opensItself, rememberOpen, thinkMsOf, thoughtLabel, type Step } from './rows'
 import { LiveContext, LiveTail, ThinkingLine, type LiveInfo } from './LiveRow'
 
 // Draws a folded Thread: the user's message, tool lines, "Decided" steps (reasoning items),
@@ -383,7 +383,7 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
       // An older log has no length: a short scratch thought alone between replies folds away.
       if (e.thinkMs == null && !e.thoughts && foldedThought(entries, n)) return null
       // An empty thought has nothing to open, and a blank reply nothing to read: neither draws.
-      return e.text.trim() ? <ThinkingLine e={e} label={thoughtLabel(e, turn.reason?.type === 'cancelled' ? turn.endAt : undefined)} /> : null
+      return e.text.trim() ? <ThinkingLine e={e} label={thoughtLabel(e, turn.reason?.type === 'cancelled' ? turn.endAt : undefined, thinkMsOf(turn, e.id))} /> : null
     }
     if (e.kind === 'message' && e.done && !e.text.trim()) return null
     if (e.kind === 'message') return <div className="say" data-row="prose" data-item={e.id}><Markdown text={e.text} />{!e.done && <span className="caret" />}</div>

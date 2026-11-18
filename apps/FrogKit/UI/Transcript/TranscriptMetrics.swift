@@ -12,7 +12,7 @@ final class TranscriptMetrics {
     /// `-FrogMetrics <path>` was given.
     nonisolated static let enabled: Bool = !(UserDefaults.standard.string(forKey: "FrogMetrics") ?? "").isEmpty
 
-    enum Kind: String { case prompt, thought, fold, line, prose, code, card, footer, live }
+    enum Kind: String { case prompt, thought, fold, line, prose, code, card, footer, live, stats, turnline }
 
     struct Row {
         var kind: Kind
@@ -34,7 +34,7 @@ final class TranscriptMetrics {
     func set(_ key: String, kind: Kind, text: String, box: CGRect, fontSize: CGFloat) {
         var row = rows[key] ?? Row(kind: kind, text: text, box: box, fontSize: fontSize)
         row.kind = kind
-        row.text = Self.collapse(text)
+        row.text = kind == .stats ? Self.ticking(Self.collapse(text)) : Self.collapse(text)
         row.box = box
         row.fontSize = fontSize
         rows[key] = row
@@ -50,6 +50,13 @@ final class TranscriptMetrics {
 
     func remove(_ key: String) { rows[key] = nil }
 
+    /// The stats' figures tick, so the dump writes every duration `#s` and every other run of
+    /// digits `#` (docs/design/parity/README.md; metrics.mjs's own two replacements).
+    static func ticking(_ s: String) -> String {
+        let durations = s.replacingOccurrences(of: #"(\d+m )?\d+s\b"#, with: "#s", options: .regularExpression)
+        return durations.replacingOccurrences(of: #"\d[\d,.]*"#, with: "#", options: .regularExpression)
+    }
+
     static func collapse(_ s: String) -> String {
         s.split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
@@ -58,7 +65,9 @@ final class TranscriptMetrics {
     func json(width: CGFloat, height: CGFloat, look: String) -> Data {
         func r(_ v: CGFloat) -> Double { (Double(v) * 10).rounded() / 10 }
         struct Entry { let key: String; let row: Row }
-        let entries: [Entry] = rows.map { Entry(key: $0.key, row: $0.value) }.filter { !$0.row.text.isEmpty }
+        let entries: [Entry] = rows.map { Entry(key: $0.key, row: $0.value) }
+            // A turn line has no words: it's measured on its box (README, "turnline").
+            .filter { !$0.row.text.isEmpty || $0.row.kind == .turnline }
         let sorted = entries.sorted { (a: Entry, b: Entry) -> Bool in
             a.row.box.minY != b.row.box.minY ? a.row.box.minY < b.row.box.minY : a.row.box.minX < b.row.box.minX
         }

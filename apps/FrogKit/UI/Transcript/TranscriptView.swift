@@ -45,6 +45,9 @@ struct TranscriptView: View {
     /// How near the top of what's built (in points) builds more above it.
     static let nearTop: CGFloat = 60
 
+    /// The turn line's scrub, its jump to a step, and the open turn panel.
+    @State private var focus = TurnFocus()
+
     /// The transcript's left edge for its pane's width (see `TranscriptEdge`), written only when
     /// it changes, so a live resize doesn't redraw every row each frame. The Mac only: the phone's
     /// prose (`MessageText+UIKit`) has no inset yet, so it keeps the one gutter.
@@ -97,6 +100,27 @@ struct TranscriptView: View {
     #endif
 
     private var stack: some View {
+        stackScroll
+            .overlay {
+                // The turn panel (spec phase 3): over the transcript, which dims and doesn't
+                // reflow; Esc or a click outside closes it.
+                if let id = focus.panel, let turn = conversation.turns.first(where: { $0.id == id }) {
+                    ZStack {
+                        Color.black.opacity(0.35)
+                            .ignoresSafeArea()
+                            .contentShape(.rect)
+                            .onTapGesture { focus.panel = nil }
+                        TurnPanel(turn: turn, conversation: conversation) { focus.panel = nil }
+                            .environment(\.turnFocus, focus)
+                            .padding(TurnSpace.gutter)
+                    }
+                    .transition(.opacity)
+                }
+            }
+            .animation(.easeOut(duration: 0.15), value: focus.panel)
+    }
+
+    private var stackScroll: some View {
         ScrollViewReader { proxy in
             transcript
                 // Open at the end, whole: straight to the last row, laid out for real, rather
@@ -129,6 +153,14 @@ struct TranscriptView: View {
                         return
                     }
                     withAnimation(.snappy(duration: 0.35)) { proxy.scrollTo(row, anchor: .top) }
+                }
+                // The turn line or panel asked for a step: go to the row it's in, as a jump does.
+                .onChange(of: focus.reveal) { _, item in
+                    guard let item else { return }
+                    focus.reveal = nil
+                    guard let row = rowID(holding: item) else { return }
+                    following = false
+                    withAnimation(.snappy(duration: 0.35)) { proxy.scrollTo(row, anchor: .center) }
                 }
                 // Older turns folded in while you were at the top: carry on up into them.
                 .onChange(of: conversation.turns.first?.id) {
@@ -253,6 +285,11 @@ struct TranscriptView: View {
         }
     }
 
+    /// The question that draws under its think or answer rather than after the turn.
+    private var inlineQuestion: Question? {
+        conversation.question.flatMap { conversation.drawsQuestionInline($0) ? $0 : nil }
+    }
+
     /// The rows of the turns built, in order (see `TranscriptRow`).
     private var rows: [TranscriptRow] {
         Self.rows(of: conversation.turns, from: firstShown, flows: flows, showThinking: verbosity.showsThinking, space: space)
@@ -268,8 +305,14 @@ struct TranscriptView: View {
             let start = out.count
             func add(_ part: TurnPart, _ key: String) {
                 let leads = out.count == start
-                out.append(TranscriptRow(turn: turn, part: part, first: leads,
-                                         gap: space.gap(part, after: leads ? nil : out.last?.part, first: out.isEmpty),
+                let previous = leads ? nil : out.last?.part
+                var gap = space.gap(part, after: previous, first: out.isEmpty)
+                // A running turn's tail is its live row: a line's gaps, not a block's.
+                if case .tail = part, !turn.finished, !leads {
+                    let writing = turn.items.last.map { $0.kind == .message && !$0.done } ?? false
+                    gap = TurnSpace.liveTailGap(space, after: previous, writing: writing)
+                }
+                out.append(TranscriptRow(turn: turn, part: part, first: leads, gap: gap,
                                          id: TranscriptRow.ID(turn: turn.id, part: key)))
             }
             if TurnView.hasHead(turn) { add(.head, "head") }
@@ -277,6 +320,20 @@ struct TranscriptView: View {
             add(.tail, "tail")
         }
         return out
+    }
+
+    /// The row a step is drawn in: its segment's (a run of lines, a visual, a message).
+    private func rowID(holding item: String) -> TranscriptRow.ID? {
+        for turn in conversation.turns where turn.items.contains(where: { $0.id == item }) {
+            for segment in flows.segments(of: turn, showThinking: verbosity.showsThinking) {
+                let holds: Bool = switch segment {
+                case .activity(let g): g.steps.contains { $0.id == item }
+                case .text(let i), .visual(let i), .notice(let i): i.id == item
+                }
+                if holds { return TranscriptRow.ID(turn: turn.id, part: segment.id) }
+            }
+        }
+        return nil
     }
 
     /// A turn's first row: where scrolling to the turn goes.
@@ -438,6 +495,7 @@ struct TranscriptView: View {
             // A row per piece of each turn: only what's on screen is built (see `TurnPart`).
             ForEach(rows) { row in
                 TurnView(turn: row.turn, conversation: conversation, actions: actions, part: row.part,
+                         question: inlineQuestion.flatMap { row.part.holds($0.item) ? $0.id : nil },
                          gap: row.gap, pinsFooter: footers.contains(row.turn.id))
                     .equatable()
                     .id(row.id)
@@ -460,6 +518,7 @@ struct TranscriptView: View {
             .coordinateSpace(.named(Self.content))
             .environment(\.turnSpace, space)
             .environment(\.transcriptEdge, edge)
+            .environment(\.turnFocus, focus)
             .frame(maxWidth: TurnSpace.measure)
             .padding(.horizontal, edge.gutter)
             .padding(.top, TurnSpace.top)
@@ -517,7 +576,9 @@ struct TranscriptTrailer: View {
     @Environment(\.openSessionID) private var openSessionID
 
     var body: some View {
-        if let q = conversation.question {
+        // A question anchored on a think or an answer draws under it (`TurnView`); one with no
+        // `item` (or one not drawn here) waits after the turn, as on the web.
+        if let q = conversation.question, !conversation.drawsQuestionInline(q) {
             QuestionCard(question: q, conversation: conversation)
                 .padding(.top, space.turn)
                 .id(q.id)
@@ -678,7 +739,10 @@ private struct ContextDisclosure: View {
 struct EndView: View {
     let reason: EndReason
     let usage: TurnUsage?
+    /// The turn, for the turn line at the footer's right end.
+    var turn: TurnState? = nil
     @Environment(\.transcriptEdge) private var edge
+    @Environment(\.turnFocus) private var focus
     @AppStorage(ModelStats.energyKey) private var showEnergy = false
     /// The turn's answer: a copy button at the row's end, shown on hover.
     var answer: String = ""
@@ -702,19 +766,29 @@ struct EndView: View {
                         case .text(let words, let help):
                             Text(words).help(help)
                         case .cost(let c):
-                            PriceHint(cost: c, usage: usage)
+                            if let turn, let focus {
+                                // The turn panel has the working now (spec phase 3).
+                                Button(ModelStats.money(c)) { focus.panel = turn.id }
+                                    .buttonStyle(.plain).help("Open this turn")
+                            } else {
+                                PriceHint(cost: c, usage: usage)
+                            }
                         }
                     }
                     if showEnergy, let e = usage.energy {
                         Text(verbatim: " · ")
                         EnergyHint(energy: e, usage: usage)
                     }
-                    Spacer(minLength: 8)
                     if !answer.isEmpty {
                         MessageAction(title: "Copy answer", symbol: "doc.on.doc") {
                             Clipboard.copy(answer)
                         }
+                        .padding(.leading, TurnSpace.Inset.row)
                         .opacity(hovering ? 1 : 0)
+                    }
+                    Spacer(minLength: 8)
+                    if let turn, !turn.timeline.segments().isEmpty {
+                        TurnLine(turn: turn)
                     }
                 }
                 .lineLimit(1)
