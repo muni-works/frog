@@ -1,0 +1,126 @@
+{
+  "app" : "mac",
+  "column" : 720,
+  "format" : "frog-transcript-metrics\/1",
+  "gutter" : 32,
+  "height" : 800,
+  "look" : "dark",
+  "mark" : -26,
+  "markOnScreen" : true,
+  "pane" : 1030,
+  "rows" : [
+    {
+      "fontSize" : 14,
+      "height" : 38,
+      "kind" : "prompt",
+      "text" : "upload_retries_on_503 is flaky. Find out why and fix it.",
+      "top" : 0,
+      "x" : 363.5
+    },
+    {
+      "fontSize" : 12.5,
+      "height" : 24,
+      "kind" : "thought",
+      "text" : "Thought for 1s",
+      "top" : 54,
+      "x" : 0
+    },
+    {
+      "fontSize" : 12.5,
+      "height" : 24,
+      "kind" : "fold",
+      "text" : "4 steps 2.2s",
+      "top" : 78,
+      "x" : 0
+    },
+    {
+      "fontSize" : 12.5,
+      "height" : 24,
+      "kind" : "line",
+      "text" : "Failed cargo test -q upload 10 of 11 · 9.0s",
+      "top" : 102,
+      "x" : 0
+    },
+    {
+      "fontSize" : 14,
+      "height" : 44,
+      "kind" : "prose",
+      "text" : "The jitter came from thread_rng(), so the third retry could wait 800 ms while the mock store gave up at 500 ms.",
+      "top" : 362,
+      "x" : 0
+    },
+    {
+      "fontSize" : 12.5,
+      "height" : 24,
+      "kind" : "line",
+      "text" : "Edited src\/retry.rs +3 −2",
+      "top" : 418,
+      "x" : 0
+    },
+    {
+      "fontSize" : 12.5,
+      "height" : 24,
+      "kind" : "line",
+      "text" : "Ran cargo test -q upload 11 of 11 · 14s",
+      "top" : 442,
+      "x" : 0
+    },
+    {
+      "fontSize" : 13,
+      "height" : 44,
+      "kind" : "prose",
+      "text" : "Backoff::delay now takes the Rng, and the test passes a seeded one, so the retry timing is the same every run.",
+      "top" : 478,
+      "x" : 4
+    },
+    {
+      "fontSize" : 14,
+      "height" : 22,
+      "kind" : "prose",
+      "text" : "All eleven upload tests pass. I ran them once after the change, in the sandbox.",
+      "top" : 540,
+      "x" : 0
+    },
+    {
+      "fontSize" : 11.5,
+      "height" : 16,
+      "kind" : "footer",
+      "text" : "Qwen3 Coder Next · 56s · 1,902 tokens · <$0.01",
+      "top" : 582,
+      "x" : 0
+    },
+    {
+      "fontSize" : 14,
+      "height" : 38,
+      "kind" : "prompt",
+      "text" : "nice. open a PR",
+      "top" : 630,
+      "x" : 609.5
+    },
+    {
+      "fontSize" : 14,
+      "height" : 144,
+      "kind" : "card",
+      "text" : "Allow this command?",
+      "top" : 684,
+      "x" : 16
+    },
+    {
+      "fontSize" : 12.5,
+      "height" : 24,
+      "kind" : "live",
+      "text" : "Waiting for you",
+      "top" : 844,
+      "x" : 0
+    },
+    {
+      "fontSize" : 11.5,
+      "height" : 16,
+      "kind" : "stats",
+      "text" : "#s · waited #s",
+      "top" : 870,
+      "x" : 0
+    }
+  ],
+  "width" : 1280
+}
