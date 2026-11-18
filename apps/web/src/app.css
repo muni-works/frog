@@ -211,6 +211,8 @@ a { color: var(--frog); }
 .trust li { display: flex; align-items: center; gap: 6px; }
 .trust li::before { content: '✓'; color: var(--frog); font-size: 11px; }
 @media (prefers-reduced-motion: reduce) { .beta-pill i { animation: none; } }
+.version-chip { align-self: flex-start; margin: -2px 0 4px 18px; padding: 2px 6px; border-radius: 5px; font-size: 10.5px; color: var(--faint); text-decoration: none; font-variant-numeric: tabular-nums; }
+.version-chip:hover, .version-chip:focus-visible { color: var(--muted); background: var(--raised, transparent); }
 .muni-foot { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 0 0 14px; }
 .muni-foot .foot-links { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 14px; font-size: 12px; }
 .muni-foot .foot-links a { text-decoration: none; }
