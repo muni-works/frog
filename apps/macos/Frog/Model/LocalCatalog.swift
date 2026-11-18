@@ -85,6 +85,9 @@ struct LocalModelList: Equatable {
     var more: [LocalModelRow] = []
     /// Why Frog Cloud's models aren't offered here, when none of them run on it.
     var cloudNote: String?
+    /// What holds for every row on this machine, said once ("mew's Frog node (0.1.0) can't
+    /// download or delete models…", "Stuck loading …").
+    var machineNote: String?
 }
 
 /// One model on a machine's page, ready to draw: what it is, where it's from, whether it fits,
@@ -166,6 +169,7 @@ extension LocalModelList {
     @MainActor
     static func build(_ d: Device, pending: [String: Date] = [:], problems: [String: String] = [:],
                       waitingSwap: Set<String> = [], downloads: [String: LocalDownload] = [:],
+                      deleting: Set<String> = [], installed: (String) -> Bool = { _ in false },
                       now: Date = Date()) -> LocalModelList {
         let isMac = d.role == .thisMac
         let kind = d.kind.isEmpty ? (isMac ? "metal" : "cuda") : d.kind
@@ -222,6 +226,11 @@ extension LocalModelList {
             } else if isMac, let dl = downloads[id], dl.failed == nil {
                 r.state = .downloading(done: dl.done, total: dl.total, rate: dl.rate)
                 r.cancelDownload = true
+            } else if isMac, installed(id) {
+                // In this Mac's Hugging Face cache, though the engine hasn't listed it (not
+                // running, or the download just finished): on disk, not Get.
+                r.state = .onDisk
+                r.size = c.map { "\(LocalModelRow.gbDecimal($0.download_bytes)) on disk" }
             }
 
             // Why the last thing didn't happen.
@@ -243,11 +252,13 @@ extension LocalModelList {
                 r.get = .off("One download at a time.")
             }
             if !fits { r.load = .off(fit ?? "It doesn't fit.") }
+            else if r.spec == nil { r.load = .off("Loads once Frog's engine on this Mac lists it.") }
             else if d.stuckLoad != nil {
                 // The node's worker never came back from that load; another would wait behind it.
                 r.load = .off("\(where_.prefix(1).uppercased() + where_.dropFirst()) is stuck on another load. Restart the Frog node there first.")
             }
-            if case .loaded = r.state { r.delete = .off("Stop it first.") }
+            if deleting.contains(key) { r.delete = .off("Deleting…") }
+            else if case .loaded = r.state { r.delete = .off("Stop it first.") }
             else if case .loading = r.state { r.delete = .off("It's loading.") }
             else if !isMac && !d.canPull {
                 r.delete = .off("\(d.name)'s Frog node\(d.version.map { " (\($0))" } ?? "") can't delete models. Update it on \(d.name).")
@@ -282,7 +293,8 @@ extension LocalModelList {
         list.onMachine = on.sorted { a, b in
             let la = a.state.isLoaded, lb = b.state.isLoaded
             if la != lb { return la }
-            return a.name.localizedStandardCompare(b.name) == .orderedAscending
+            if a.name != b.name { return a.name.localizedStandardCompare(b.name) == .orderedAscending }
+            return a.id.localizedStandardCompare(b.id) == .orderedAscending
         }
 
         // The rest of what fits, behind "More models": not the same model again in another
@@ -297,9 +309,26 @@ extension LocalModelList {
         let cloud = LocalCatalog.all.filter { $0.cloud != nil }
         if !cloud.isEmpty, !cloud.contains(where: { LocalCatalog.fits($0, kind: kind, total: d.totalBytes, unified: d.unified) }),
            let smallest = cloud.map(\.memory_bytes).min() {
-            let names = cloud.map(\.name)
+            let names = cloud.map { $0.name }
             let listed = names.dropLast().joined(separator: ", ") + " and " + (names.last ?? "")
             list.cloudNote = "\(listed) run in Frog Cloud, not on \(where_): the smallest needs about \(Device.gb(smallest)) of NVIDIA GPU memory."
+        }
+        // Two checkpoints of one model both listed: say which is which ("Qwen3 0.6B · 4-bit").
+        var all = list.recommended + list.onMachine + list.more
+        let counts = Dictionary(all.map { ($0.name, 1) }, uniquingKeysWith: +)
+        for i in all.indices where counts[all[i].name, default: 0] > 1 {
+            if let v = ModelIdentity.cleanName(all[i].id).variant ?? all[i].format { all[i].name += " · \(v)" }
+        }
+        let a = list.recommended.count, b = a + list.onMachine.count
+        list.recommended = Array(all[..<a]); list.onMachine = Array(all[a..<b]); list.more = Array(all[b...])
+
+        // Said once rather than on every greyed-out button.
+        if let s = d.stuckLoad {
+            list.machineNote = "\(d.name) has been stuck loading \(LocalCatalog.displayName(s.id)) for \(Self.duration(s.seconds)). Restart the Frog node on \(d.name); until then it can't load anything."
+        } else if !isMac, d.online, !d.canPull {
+            list.machineNote = "\(d.name)'s Frog node\(d.version.map { " (\($0))" } ?? "") can't download or delete models. Update it on \(d.name) to get more; what's on it loads as usual."
+        } else if !isMac, d.online {
+            list.machineNote = "Downloading onto \(d.name) from Frog isn't ready yet."
         }
         return list
     }

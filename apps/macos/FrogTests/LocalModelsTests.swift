@@ -7,7 +7,7 @@ import XCTest
 @MainActor
 final class LocalModelsTests: XCTestCase {
     /// mew's `GET /node` on 2026-11-17 (Frog 0.6.4, tang-llm 0.1.0), trimmed to what the app
-    /// reads; its id, key and paths left out. It had said "loading openai/gpt-oss-20b" for
+    /// reads (all twelve checkpoints); its id, key and paths left out. It had said "loading openai/gpt-oss-20b" for
     /// 454,050 s (five days): nothing loaded, one turn waiting, the load never ended.
     static let mewReport = #"""
     {"schema":2,"node_id":"fixture-mew","name":"mew","version":"0.1.0",
@@ -21,7 +21,11 @@ final class LocalModelsTests: XCTestCase {
        {"id":"mlx-community/Qwen3-14B-4bit","weights_hash":"5555555555555555","quant":"mlx-4bit","size_bytes":8307898514,"load_bytes":10723817618},
        {"id":"mlx-community/Qwen3-8B-4bit","weights_hash":"6666666666666666","quant":"mlx-4bit","size_bytes":4607835174,"load_bytes":6889536550},
        {"id":"Qwen/Qwen3-VL-2B-Instruct","weights_hash":"7777777777777777","quant":"bf16","size_bytes":4255140312,"load_bytes":3210024132},
-       {"id":"Qwen/Qwen2.5-1.5B","weights_hash":"8888888888888888","quant":"bf16","size_bytes":3087467144,"load_bytes":2176972982}
+       {"id":"Qwen/Qwen2.5-1.5B","weights_hash":"8888888888888888","quant":"bf16","size_bytes":3087467144,"load_bytes":2176972982},
+       {"id":"unsloth/gemma-3-1b-it","weights_hash":"aaaaaaaaaaaaaaaa","quant":"bf16","size_bytes":1999811208,"load_bytes":1854292534},
+       {"id":"Qwen/Qwen3-0.6B","weights_hash":"bbbbbbbbbbbbbbbb","quant":"bf16","size_bytes":1503300328,"load_bytes":2436069137},
+       {"id":"mlx-community/Qwen3-1.7B-4bit","weights_hash":"cccccccccccccccc","quant":"mlx-4bit","size_bytes":968080210,"load_bytes":2981346130},
+       {"id":"mlx-community/Qwen3-0.6B-4bit","weights_hash":"dddddddddddddddd","quant":"mlx-4bit","size_bytes":335450584,"load_bytes":2348716504}
       ]},
      "queue":{"running":[],"waiting":[{"id":894}]}}
     """#
@@ -40,7 +44,8 @@ final class LocalModelsTests: XCTestCase {
         XCTAssertNil(d.loadingID, "a five-day-old load isn't a load in progress")
         XCTAssertNil(d.loading)
         XCTAssertEqual(d.stuckLoad, Device.StuckLoad(id: "openai/gpt-oss-20b", seconds: 454_050))
-        XCTAssertEqual(d.runningLine, "idle")
+        XCTAssertEqual(d.runningLine, "stuck loading GPT Oss 20B")
+        XCTAssertEqual(d.statusLine, "Stuck loading GPT Oss 20B")
 
         let list = LocalModelList.build(d)
         let oss = try XCTUnwrap(list.onMachine.first { $0.id == "openai/gpt-oss-20b" })
@@ -50,6 +55,7 @@ final class LocalModelsTests: XCTestCase {
         let q32 = try XCTUnwrap(list.recommended.first)
         XCTAssertEqual(q32.load, .off("Mew is stuck on another load. Restart the Frog node there first."))
         XCTAssertFalse(list.all.contains { if case .loading = $0.state { true } else { false } })
+        XCTAssertEqual(list.machineNote, "mew has been stuck loading GPT Oss 20B for 5 days. Restart the Frog node on mew; until then it can't load anything.")
     }
 
     // MARK: the short default list
@@ -59,9 +65,12 @@ final class LocalModelsTests: XCTestCase {
         XCTAssertEqual(list.recommended.map(\.name), ["Qwen3 32B", "Qwen3 14B", "Qwen3 8B"])
         XCTAssertEqual(list.recommended.map(\.state), [.onDisk, .onDisk, .onDisk])
         // Everything already on mew shows, whatever it is.
-        XCTAssertEqual(list.onMachine.map(\.name), ["Gemma 3 4B", "GPT Oss 20B", "Qwen2.5 1.5B", "Qwen2.5 7B", "Qwen3 VL 2B"])
-        // The rest of what fits sits behind More models: never a cloud model, never one that won't fit.
-        XCTAssertEqual(list.more.map(\.name), ["Qwen3 4B", "Qwen3 1.7B", "Qwen3 0.6B"])
+        // Two checkpoints of one model say which is which (docs/models.md).
+        XCTAssertEqual(list.onMachine.map(\.name), ["Gemma 3 1B", "Gemma 3 4B", "GPT Oss 20B", "Qwen2.5 1.5B", "Qwen2.5 7B",
+                                                    "Qwen3 0.6B · 4-bit", "Qwen3 0.6B · bf16", "Qwen3 1.7B", "Qwen3 VL 2B"])
+        // The rest of what fits sits behind More models: never a cloud model, never one that won't fit,
+        // never one already there in another packaging.
+        XCTAssertEqual(list.more.map(\.name), ["Qwen3 4B"])
         XCTAssertEqual(list.cloudNote, "Qwen3 Coder Next, GLM-5.3 Flash and DeepSeek V4.1 Flash run in Frog Cloud, not on mew: the smallest needs about 52 GB of NVIDIA GPU memory.")
     }
 
@@ -192,6 +201,11 @@ final class LocalModelsTests: XCTestCase {
         XCTAssertEqual(get.get, .off("mew's Frog node (0.1.0) can't download models. Update it on mew."))
         XCTAssertEqual(mew.recommended[0].load, .on)
         XCTAssertEqual(mew.recommended[0].delete, .off("mew's Frog node (0.1.0) can't delete models. Update it on mew."))
+        XCTAssertEqual(mew.machineNote, "mew's Frog node (0.1.0) can't download or delete models. Update it on mew to get more; what's on it loads as usual.")
+        // A delete in flight isn't a load.
+        let deleting = LocalModelList.build(try Self.mew(stuck: false), deleting: [Devices.rowKey("n1", "mlx-community/Qwen3-32B-4bit")])
+        XCTAssertEqual(deleting.recommended[0].state, .onDisk)
+        XCTAssertEqual(deleting.recommended[0].delete, .off("Deleting…"))
         // A node that reports pulls takes deletes.
         var newer = try Self.mew(stuck: false)
         newer.apply(try Self.report(pulling: "null"))
@@ -201,6 +215,12 @@ final class LocalModelsTests: XCTestCase {
         XCTAssertEqual(LocalModelList.build(newer).recommended[0].delete, .off("Stop it first."))
         // This Mac downloads itself.
         XCTAssertEqual(LocalModelList.build(Self.mac(gb: 16)).recommended[0].get, .on)
+        // In this Mac's cache while its engine is down: on disk, not Get; Load waits for the engine.
+        var down = Self.mac(gb: 16); down.online = false
+        let cached = LocalModelList.build(down, installed: { $0 == "mlx-community/Qwen3-8B-4bit" }).recommended[0]
+        XCTAssertEqual(cached.state, .onDisk)
+        XCTAssertEqual(cached.size, "4.6 GB on disk")
+        XCTAssertEqual(cached.load, .off("Loads once Frog's engine on this Mac lists it."))
     }
 
     // MARK: names agree everywhere
@@ -222,7 +242,14 @@ final class LocalModelsTests: XCTestCase {
     /// The machine page offscreen, light and dark: mew as Cam saw it (stuck load, twelve
     /// checkpoints on disk), a 16 GB Mac with More models open, a 64 GB Mac mid-download with
     /// each control state, and a fresh 24 GB node.
+    ///
+    /// Opt-in, so a suite run never rewrites the checked-in PNGs: pass the folder as
+    /// `TEST_RUNNER_FROG_LOCAL_MODELS_OUT` (docs/design/local-models to update them).
     func testRenderLocalModels() throws {
+        guard let out = ProcessInfo.processInfo.environment["FROG_LOCAL_MODELS_OUT"], !out.isEmpty else {
+            throw XCTSkip("set FROG_LOCAL_MODELS_OUT to render docs/design/local-models")
+        }
+        outDir = URL(fileURLWithPath: out)
         let devices = Devices()
         var states = Self.mac(gb: 64)
         let t0 = Date(timeIntervalSince1970: 3_000_000)
@@ -259,11 +286,10 @@ final class LocalModelsTests: XCTestCase {
         }
     }
 
+    private var outDir = URL(fileURLWithPath: NSTemporaryDirectory())
+
     private func render<V: View>(_ name: String, width: CGFloat = 620, height: CGFloat, @ViewBuilder _ view: () -> V) throws {
-        let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent()
-        let dir = ProcessInfo.processInfo.environment["FROG_LOCAL_MODELS_OUT"].map { URL(fileURLWithPath: $0) }
-            ?? repo.appending(path: "docs/design/local-models")
+        let dir = outDir
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         for (suffix, look) in [("dark", NSAppearance.Name.darkAqua), ("light", .aqua)] {
             let host = NSHostingView(rootView: view().frame(width: width, height: height).background(FrogCanvas.color))

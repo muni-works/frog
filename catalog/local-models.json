@@ -114,14 +114,14 @@
       "id": "glm-5.3-flash",
       "name": "GLM-5.3 Flash",
       "cloud": "glm-5.3-flash",
-      "source": { "host": "Hugging Face", "repo": "zai-org/GLM-5.3-Flash" },
+      "source": { "host": "Hugging Face", "repo": "unsloth/GLM-5.3-Flash-GGUF", "file": "UD-Q4_K_XL" },
       "format": "gguf UD-Q4_K_XL",
-      "download_bytes": 186000000000,
-      "memory_bytes": 200000000000,
+      "download_bytes": 199707321472,
+      "memory_bytes": 210000000000,
       "capabilities": ["coding", "uses tools", "reasons"],
-      "runs_on": [],
+      "runs_on": ["cuda"],
       "local": false,
-      "local_note": "321B parameters: about 186 GB at 4-bit, more than any one machine Frog runs on."
+      "local_note": "321B parameters, 200 GB at 4-bit: tang runs it on one datacenter GPU (a B300) with its own engine, not on a paired machine."
     },
     {
       "id": "deepseek-v4.1-flash",
@@ -129,12 +129,12 @@
       "cloud": "deepseek-v4.1-flash",
       "source": { "host": "Hugging Face", "repo": "deepseek-ai/DeepSeek-V4.1-Flash" },
       "format": "safetensors",
-      "download_bytes": 300000000000,
-      "memory_bytes": 300000000000,
+      "download_bytes": 510296708312,
+      "memory_bytes": 520000000000,
       "capabilities": ["coding", "uses tools", "reasons"],
-      "runs_on": [],
+      "runs_on": ["cuda"],
       "local": false,
-      "local_note": "Over 300 GB even at 2 to 3 bits; Frog Cloud only."
+      "local_note": "510 GB of weights: tang serves it across several datacenter GPUs (tang-llm deepseek-serve), not on a paired machine."
     }
   ]
 }

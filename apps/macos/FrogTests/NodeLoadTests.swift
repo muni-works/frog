@@ -70,6 +70,19 @@ final class NodeLoadTests: XCTestCase {
         XCTAssertEqual(devices.fit(model: qwen4), .fits(node: "mew", replaces: "Qwen3-1.7B-4bit"))
     }
 
+    /// The machine page's Load: a refused load leaves the row on disk with the node's reason,
+    /// and nothing pending (so nothing spinning).
+    func testARefusedLoadFromTheMachinePageSaysWhyAndEnds() async throws {
+        let id = "Qwen/Qwen3-32B"
+        do { try await devices.switchTo(qwen32, on: nodeID); XCTFail("loaded a model that can't fit") } catch {}
+        XCTAssertEqual(devices.rowProblem[Devices.rowKey(nodeID, id)], "It doesn't fit anymore: \(id) needs more than is free")
+        XCTAssertTrue(devices.pending.isEmpty)
+        let d = try XCTUnwrap(devices.list.first { $0.id == nodeID })
+        let row = try XCTUnwrap(LocalModelList.build(d, pending: devices.pending, problems: devices.rowProblem).all.first { $0.id == id })
+        XCTAssertEqual(row.state, .onDisk)
+        XCTAssertEqual(row.note, "Couldn't load: It doesn't fit anymore: \(id) needs more than is free")
+    }
+
     func testNothingLoadedMeansNothingToReplace() async throws {
         node.loaded = nil
         await devices.poll()

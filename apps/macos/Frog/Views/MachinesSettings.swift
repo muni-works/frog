@@ -234,6 +234,7 @@ extension Device {
         if let refused { return refused }
         if !online { return role == .thisMac ? "not running" : "offline" }
         if let loading { return "loading \(LocalCatalog.displayName(loading))" }
+        if let stuckLoad { return "stuck loading \(LocalCatalog.displayName(stuckLoad.id))" }
         guard let model else { return "idle" }
         return [LocalCatalog.displayName(model), decode.map(ModelStats.speedText)].compactMap { $0 }.joined(separator: " · ")
     }
@@ -241,6 +242,7 @@ extension Device {
     var statusLine: String {
         if let refused { return refused }
         if !online { return role == .thisMac ? "Engine not running" : "Not answering" }
+        if let stuckLoad { return "Stuck loading \(LocalCatalog.displayName(stuckLoad.id))" }
         if running > 0 { return "Working" + (waiting > 0 ? ", \(waiting) waiting" : "") }
         return model == nil ? "Idle" : "Ready"
     }

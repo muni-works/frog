@@ -393,6 +393,8 @@ final class Devices {
     private(set) var pending: [String: Date] = [:]
     /// Why the last load or delete of a model on a machine failed, by `rowKey`.
     private(set) var rowProblem: [String: String] = [:]
+    /// Deletes in flight, by `rowKey`.
+    private(set) var deleting: Set<String> = []
 
     nonisolated static func rowKey(_ deviceID: String, _ modelID: String) -> String { "\(deviceID)|\(modelID)" }
 
@@ -461,10 +463,10 @@ final class Devices {
     }
 
     /// `POST /models/load {"model": id}`; tang answers when the load is done (or refused).
-    nonisolated static func requestLoad(_ base: URL, key: String?, model: String) async throws {
+    nonisolated static func requestLoad(_ base: URL, key: String?, model: String, timeout: TimeInterval = 900) async throws {
         var req = URLRequest(url: base.appending(path: "models/load"))
         req.httpMethod = "POST"
-        req.timeoutInterval = 900
+        req.timeoutInterval = max(1, timeout)
         if let key { req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONSerialization.data(withJSONObject: ["model": model])
@@ -561,11 +563,16 @@ final class Devices {
         asked[spec] = hold.name
         loadProblem[spec] = nil
         rowProblem[rk] = nil
-        pending[rk] = Date()
+        let started = Date()
+        pending[rk] = started
         defer { asked[spec] = nil; waitingSwap[spec] = nil; pending[rk] = nil }
+        // The row's deadline bounds the whole ask: waiting for a busy machine and the load.
+        let deadline = Device.loadDeadline(bytes: m.sizeBytes ?? m.loadBytes)
+        func left() -> TimeInterval { deadline - Date().timeIntervalSince(started) }
         while true {
             do {
-                try await Self.requestLoad(base, key: key(hold.deviceID), model: m.id)
+                guard left() > 0 else { throw NodeLoadError("No answer from \(hold.name) in \(Int(deadline / 60)) min.") }
+                try await Self.requestLoad(base, key: key(hold.deviceID), model: m.id, timeout: left())
                 break
             } catch let e as NodeLoadError where e.busy {
                 // Swaps after this turn: wait for the machine to go idle, then ask again.
@@ -574,6 +581,7 @@ final class Devices {
                     try await Task.sleep(for: .seconds(1))
                     await poll()
                     if let now = list.first(where: { $0.id == hold.deviceID }), now.online, now.running + now.waiting == 0 { break }
+                    if left() <= 0 { break }
                 }
                 try Task.checkCancellation()
                 waitingSwap[spec] = nil
@@ -618,8 +626,8 @@ final class Devices {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try? JSONSerialization.data(withJSONObject: ["model": modelID])
         rowProblem[rk] = nil
-        pending[rk] = Date()
-        defer { pending[rk] = nil }
+        deleting.insert(rk)
+        defer { deleting.remove(rk) }
         do {
             let (data, resp) = try await URLSession.shared.data(for: req)
             let status = (resp as? HTTPURLResponse)?.statusCode ?? 0

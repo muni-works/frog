@@ -21,7 +21,9 @@ struct MachineModelsSections: View {
     var body: some View {
         let list = LocalModelList.build(device, pending: devices.pending, problems: devices.rowProblem,
                                         waitingSwap: Set(devices.waitingSwap.keys),
-                                        downloads: fixedDownloads ?? macDownloads, now: fixedNow ?? now)
+                                        downloads: fixedDownloads ?? macDownloads, deleting: devices.deleting,
+                                        installed: { fixedNow == nil && ModelDownloads.isInstalled($0) },
+                                        now: fixedNow ?? now)
         content(list)
     }
 
@@ -49,10 +51,15 @@ struct MachineModelsSections: View {
         } header: {
             Text("Recommended for \(named)")
         } footer: {
-            if let note = list.cloudNote {
-                Text(note).font(.frog(size: 11)).foregroundStyle(Tokens.textTertiary)
-                    .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 6) {
+                if let note = list.machineNote {
+                    Text(note).font(.frog(size: 11)).foregroundStyle(device.stuckLoad != nil ? Tokens.signal : Tokens.textSecondary)
+                }
+                if let note = list.cloudNote {
+                    Text(note).font(.frog(size: 11)).foregroundStyle(Tokens.textTertiary)
+                }
             }
+            .fixedSize(horizontal: false, vertical: true)
         })
         if !list.onMachine.isEmpty {
             Section("Also on \(named)") {
