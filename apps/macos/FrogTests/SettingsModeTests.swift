@@ -75,6 +75,23 @@ final class SettingsModeTests: XCTestCase {
         XCTAssertEqual(panes.settingsSection, "usage", "an unknown name keeps the last section")
     }
 
+    /// Settings is a mode, not a window (docs/design/app-shell.md › Done looks like): no
+    /// `Settings { }` scene, no `TabView` and no grouped `Form` anywhere in Settings' views.
+    func testNoSettingsWindowTabViewOrForm() throws {
+        let app = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appending(path: "Frog")
+        let scene = try String(contentsOf: app.appending(path: "FrogApp.swift"), encoding: .utf8)
+        XCTAssertFalse(scene.split(separator: "\n").contains { $0.trimmingCharacters(in: .whitespaces).hasPrefix("Settings {") },
+                       "FrogApp still has a Settings scene")
+        let views = try FileManager.default.contentsOfDirectory(at: app.appending(path: "Settings"), includingPropertiesForKeys: nil)
+        for file in views where file.pathExtension == "swift" {
+            let src = try String(contentsOf: file, encoding: .utf8)
+            for system in ["TabView", "Form {", ".formStyle(", "SettingsLink"] {
+                XCTAssertFalse(src.contains(system), "\(file.lastPathComponent) uses \(system)")
+            }
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: app.appending(path: "Views/SettingsView.swift").path), "the tabbed SettingsView is gone")
+    }
+
     func testSettingsLinks() {
         XCTAssertEqual(catalog.section(for: URL(string: "frog://settings/billing")!), "billing")
         XCTAssertEqual(catalog.section(for: URL(string: "frog://settings/lend")!), "models")

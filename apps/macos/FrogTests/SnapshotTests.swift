@@ -348,14 +348,6 @@ extension SnapshotTests {
     }
 
     /// Settings > Models as it is on this Mac: `settings-models.png`.
-    func testRenderModelSettings() async throws {
-        await ProviderStore.shared.load()
-        try render(
-            ModelSettings().background(Color(nsColor: .windowBackgroundColor)),
-            size: CGSize(width: 640, height: 1500), to: "settings-models", settle: 5)
-    }
-
-    /// frog cloud's card signed out, with a Keychain key and with FROG_API_KEY: `frog-cloud-card.png`.
     func testRenderFrogCloudCard() throws {
         func p(_ key: String?) -> ProviderInfo {
             ProviderInfo(id: "cloud", name: "Frog Cloud", kind: "openai", baseUrl: "https://api.frog.toys/v1",
