@@ -1106,7 +1106,9 @@ enum Event: Decodable, Sendable {
     /// The running turn's output tokens so far (ephemeral, at most 4/s while a call streams):
     /// finished calls' provider figures plus the streaming call's count. `soFar`: a count of
     /// what has arrived, never shown as exact.
-    case outputTokens(turn: UInt64, output: UInt64, soFar: Bool)
+    /// `slow`: the engine finds the stream slow (only on `soFar` counts; absent means not). `cached`:
+    /// tokens read from cache, when a call ends (the stats' hover).
+    case outputTokens(turn: UInt64, output: UInt64, soFar: Bool, slow: Bool = false, cached: UInt64? = nil)
     case unknown(String)
 }
 
@@ -1144,7 +1146,7 @@ extension Event {
         case urgency, body, prs
         /// The MCP server list and a sign-in's outcome.
         case servers, server, tools
-        case output, soFar
+        case output, soFar, slow, cached
     }
 
     init(from decoder: Decoder) throws {
@@ -1164,7 +1166,9 @@ extension Event {
                 usage: try c.decode(TurnUsage.self, forKey: .usage))
         case "output_tokens":
             self = .outputTokens(turn: try c.decode(UInt64.self, forKey: .turn), output: try c.decode(UInt64.self, forKey: .output),
-                                 soFar: try c.decodeIfPresent(Bool.self, forKey: .soFar) ?? false)
+                                 soFar: try c.decodeIfPresent(Bool.self, forKey: .soFar) ?? false,
+                                 slow: try c.decodeIfPresent(Bool.self, forKey: .slow) ?? false,
+                                 cached: try c.decodeIfPresent(UInt64.self, forKey: .cached))
         case "item_started":
             self = .itemStarted(id: try c.decode(String.self, forKey: .id), kind: try c.decode(ItemKind.self, forKey: .kind))
         case "item_completed":

@@ -5,7 +5,8 @@ import SwiftUI
 // thought or the step's object, with the turn's stats two points under it. Thinking cross-fades;
 // everything else cuts. The row is a button that opens the thinking as an outline.
 
-/// What the live row says, worked out once from the turn (pure, so it's tested).
+/// What the live row says, worked out once from the turn (pure, so it's tested). The words are
+/// verbs.json's `live` entry (`Verbs.Live`); the rules are the web's `liveRow` (rows.ts).
 struct LiveState: Equatable {
     enum Dot: Equatable {
         /// Tokens are arriving: it breathes.
@@ -19,7 +20,7 @@ struct LiveState: Equatable {
     }
 
     var dot: Dot
-    /// "Thinking", "Running", "Waiting for you".
+    /// "Thinking", "Running", "Reading 3 files", "Waiting for you", "No output for 12s".
     var label: String
     /// The thought (muted, cross-fades) or the step's object (fg, cuts); "" for none.
     var detail: String
@@ -27,129 +28,139 @@ struct LiveState: Equatable {
     var thought: Bool
     /// The detail is a command, path or pattern.
     var mono: Bool
-    /// "No output for 12s", in place of the thought.
-    var quiet: String
-    /// At 30 s without output: offer Stop.
-    var offersStop: Bool
     /// The reasoning item the row opens, when it's thinking.
     var reasoningID: String?
 
-    /// How long without a token before the row says so, and before it offers Stop.
+    /// How long without a token before a think says so. At 30 s the engine asks the person (an
+    /// ordinary question, "Keep waiting" / "Stop the turn"); the row offers nothing of its own.
     static let stallAfter: TimeInterval = 10
-    static let stopAfter: TimeInterval = 30
     /// A think's first moments show no thought, even if one arrives.
     static let quietStart: TimeInterval = 0.6
 
     /// The row for a running turn at `now`; nil when there's no row (the answer is writing:
     /// only the stats show, under the text).
-    static func of(_ turn: TurnState, waiting: String?, lastToken: Date?, now: Date) -> LiveState? {
-        if waiting != nil {
-            // The card above says what it's waiting for (board 8, C): the row is the label.
-            return LiveState(dot: .you, label: "Waiting for you", detail: "", thought: false, mono: false,
-                             quiet: "", offersStop: false, reasoningID: nil)
+    static func of(_ turn: TurnState, waiting: Bool, lastToken: Date?, now: Date) -> LiveState? {
+        func row(_ label: String, _ detail: String = "", mono: Bool = false) -> LiveState {
+            LiveState(dot: .still, label: label, detail: detail, thought: false, mono: mono, reasoningID: nil)
         }
-        let running = turn.items.filter { !$0.done }
-        if let last = turn.items.last, last.kind == .message, !last.done,
+        if waiting {
+            // The card says what it's waiting for (board 8, C): the row is the label.
+            var r = row(Verbs.Live.waiting)
+            r.dot = .you
+            return r
+        }
+        let steps = turn.items.filter { item in
+            if case .tool = item.kind { !item.done } else { false }
+        }
+        if steps.count == 1, let line = StepLine.of(steps[0]) {
+            return row(line.verb, line.object, mono: line.mono)
+        }
+        if steps.count > 1, case .tool(let name, _) = steps[0].kind {
+            // Several at once fold into a count ("Reading 3 files"), or "Running 3 steps" when
+            // they differ.
+            let verbs = Set(steps.compactMap { if case .tool(let n, _) = $0.kind { Verbs.look(n).live } else { nil } })
+            let look = Verbs.look(name)
+            return row(verbs.count == 1 ? "\(look.live) \(steps.count) \(Verbs.Live.counts[look.object] ?? "steps")"
+                                        : Verbs.Live.fill(Verbs.Live.mixed, n: steps.count))
+        }
+        let last = turn.items.last
+        if let last, last.kind == .message, !last.done,
            !last.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return nil }
-        let tools = running.filter { if case .tool = $0.kind { true } else { false } }
-        if let step = tools.last, let line = StepLine.of(step) {
-            // Several at once fold into a count ("Reading 3 files").
-            let same = tools.filter { if case .tool(let n, _) = $0.kind { Verbs.look(n).live == line.verb } else { false } }
-            let detail = same.count > 1 ? "\(same.count) \(Self.noun(Verbs.look(line.name).object, same.count))" : line.object
-            return LiveState(dot: .still, label: line.verb, detail: detail, thought: false,
-                             mono: same.count > 1 ? false : line.mono, quiet: "", offersStop: false, reasoningID: nil)
-        }
-        let think = running.last { $0.kind == .reasoning }
-        let since = lastToken ?? think?.startedAt ?? turn.startedAt
-        let silent = since.map { now.timeIntervalSince($0) } ?? 0
-        var state = LiveState(dot: .still, label: "Thinking", detail: "", thought: true, mono: false,
-                              quiet: "", offersStop: false, reasoningID: think?.id)
+        let think = last.flatMap { $0.kind == .reasoning && !$0.done ? $0 : nil }
+        var state = LiveState(dot: .still, label: Verbs.Live.thinking, detail: "", thought: true, mono: false,
+                              reasoningID: think?.id)
         if let lastToken, now.timeIntervalSince(lastToken) < 1.5 { state.dot = .live }
         if let think, let line = think.thought,
            now.timeIntervalSince(think.startedAt ?? .distantPast) >= quietStart {
             state.detail = line
         }
+        let since = lastToken ?? think?.startedAt ?? turn.startedAt
+        let silent = since.map { now.timeIntervalSince($0) } ?? 0
         if silent >= stallAfter {
+            // Stalled is named: the label says how long, and the thought steps aside.
             state.dot = .stalled
-            state.quiet = "No output for \(Int(silent))s"
+            state.label = Verbs.Live.fill(Verbs.Live.stalled, time: LiveStats.clock(silent))
             state.detail = ""
-            state.offersStop = silent >= stopAfter
         }
         return state
     }
 
-    private static func noun(_ object: Verbs.Object, _ n: Int) -> String {
-        switch object {
-        case .path: "files"
-        case .command: "commands"
-        case .host: "pages"
-        default: "steps"
-        }
-    }
+    /// The row's words as the parity metrics read them: label, object and thought by one space.
+    var text: String { [label, detail].filter { !$0.isEmpty }.joined(separator: " ") }
 }
 
 /// The stats under the live row (or under the answer while it writes): time, tokens, tokens per
-/// second, in `meta`. Time shows after the first second; tokens once any are counted.
+/// second, in `meta` (the web's `Stats`, LiveRow.tsx). Time shows after the first second.
 struct LiveStats: Equatable {
     var elapsed: TimeInterval
     var tokens: UInt64?
     /// The token figure is a count of what has arrived: never shown as exact.
     var soFar: Bool
-    var perSecond: Double?
-    /// Under a quarter of the model's usual rate for 5 s.
+    var perSecond: Int?
+    /// The engine says the stream is slow (`output_tokens.slow`).
     var slow: Bool
-    /// How long it has waited on you, while a card is up.
+    /// How long it has waited on you, while a card or question is up.
     var waited: TimeInterval? = nil
+    /// An answer writing with nothing arriving for this long (shown from 10 s).
+    var quiet: TimeInterval? = nil
+    var cached: UInt64? = nil
+    var firstToken: TimeInterval? = nil
+    var thinking = false
 
     var parts: [String] {
         var out: [String] = []
-        // Past an hour is a replayed or reopened session, not a clock worth reading.
-        if elapsed >= 1, elapsed < 3600 { out.append(Self.clock(elapsed)) }
-        if let tokens, tokens > 0, waited == nil { out.append("\(tokens.formatted(.number.grouping(.automatic).locale(Locale(identifier: "en_US")))) tokens") }
+        if elapsed >= 1 { out.append(Self.clock(elapsed)) }
         if let waited {
             // Waiting on you: the clock and how long it has waited; the speed means nothing now.
-            if waited < 3600 { out.append("waited \(Self.clock(max(0, waited)))") }
+            if waited >= 1 { out.append("waited \(Self.clock(waited))") }
             return out
         }
-        if let perSecond, perSecond > 0 {
-            out.append("\(Int(perSecond.rounded())) tok/s" + (slow ? ", slower than usual" : ""))
+        if let tokens { out.append("\(Self.grouped(tokens)) tokens") }
+        if let perSecond, perSecond > 0 { out.append("\(perSecond) tok/s") }
+        if slow { out.append("Slow") }
+        if let quiet, quiet >= LiveState.stallAfter {
+            out.append(Verbs.Live.fill(Verbs.Live.stalled, time: Self.clock(quiet)).lowercasedFirst)
         }
         return out
     }
 
     var text: String { parts.joined(separator: " · ") }
 
-    /// "19s", "2m 5s": whole seconds, for a clock that ticks.
+    /// "19s", "2m 5s": whole seconds (the web's `secs`).
     static func clock(_ secs: TimeInterval) -> String {
-        let s = Int(secs)
+        let s = max(0, Int(secs.rounded()))
         return s < 60 ? "\(s)s" : "\(s / 60)m \(s % 60)s"
+    }
+
+    static func grouped(_ n: UInt64) -> String {
+        n.formatted(.number.grouping(.automatic).locale(Locale(identifier: "en_US")))
     }
 
     /// The stats spelled out, for the hover.
     var help: String {
         var lines: [String] = []
-        if elapsed >= 1 { lines.append("Working for \(Int(elapsed.rounded())) seconds") }
-        if let tokens, tokens > 0 {
-            let rate = perSecond.map { " at \(Int($0.rounded())) tokens per second" } ?? ""
-            lines.append("Written \(tokens.formatted()) tokens\(soFar ? " so far" : "")\(rate)")
+        if elapsed >= 1 { lines.append("\(thinking ? "Thinking" : "Working") for \(Self.clock(elapsed).dropLast()) seconds") }
+        if waited == nil, let tokens {
+            let rate = perSecond.map { " at \($0) tokens per second" } ?? ""
+            lines.append("Written \(Self.grouped(tokens)) tokens\(soFar ? " so far" : "")\(rate)")
         }
+        if waited == nil, let cached, cached > 0 { lines.append("Read \(Self.grouped(cached)) tokens from cache") }
+        if let firstToken { lines.append("First token after \(String(format: "%.1f", max(0, firstToken))) seconds") }
         return lines.joined(separator: "\n")
     }
 
     /// The figures for a running turn at `now`.
-    static func of(_ turn: TurnState, pulse: LivePulse, usual: Double?, now: Date) -> LiveStats {
+    static func of(_ turn: TurnState, pulse: LivePulse, now: Date) -> LiveStats {
         let elapsed = turn.startedAt.map { now.timeIntervalSince($0) } ?? 0
-        var rate: Double?
-        if let tokens = pulse.output, let first = pulse.firstTokenAt {
-            let writing = now.timeIntervalSince(first)
-            if writing >= 1 { rate = Double(tokens) / writing }
-        }
-        let slow: Bool = {
-            guard let rate, let usual, usual > 0, let first = pulse.firstTokenAt, now.timeIntervalSince(first) >= 5 else { return false }
-            return rate < usual / 4
-        }()
-        return LiveStats(elapsed: elapsed, tokens: pulse.output, soFar: pulse.soFar, perSecond: rate, slow: slow)
+        var first: TimeInterval?
+        if let token = pulse.firstTokenAt, let start = turn.startedAt { first = token.timeIntervalSince(start) }
+        return LiveStats(elapsed: elapsed, tokens: pulse.output, soFar: pulse.soFar, perSecond: pulse.rate(at: now),
+                         slow: pulse.slow, cached: pulse.cached, firstToken: first)
     }
+}
+
+private extension String {
+    var lowercasedFirst: String { prefix(1).lowercased() + dropFirst() }
 }
 
 // MARK: - The row
@@ -161,40 +172,54 @@ struct LiveRow: View {
     let conversation: Conversation
     @State private var open = false
     @State private var hovered = false
-    @State private var keptWaiting: Date?
     @Environment(\.transcriptEdge) private var edge
     @Environment(\.turnSpace) private var space
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private var waiting: String? {
-        if let p = conversation.permission { return p.question }
-        if conversation.elicitation != nil { return "Waiting for your answer" }
-        return nil
+    /// A card or question is up: the row waits on you.
+    private var waiting: Bool {
+        conversation.permission != nil || conversation.elicitation != nil || conversation.question != nil
     }
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { ctx in
             let pulse = conversation.pulse
             let state = LiveState.of(turn, waiting: waiting, lastToken: pulse.lastTokenAt, now: ctx.date)
-            let stats = stats(at: ctx.date)
-            VStack(alignment: .leading, spacing: space.gaps.stats) {
-                if let state { row(state, at: ctx.date) }
-                if !stats.text.isEmpty {
-                    StatsLine(stats: stats)
+            let stats = stats(at: ctx.date, state)
+            if let state {
+                VStack(alignment: .leading, spacing: space.gaps.stats) {
+                    row(state, at: ctx.date)
+                    if !stats.text.isEmpty {
+                        StatsLine(stats: stats)
+                    }
+                    if open, let id = state.reasoningID, let think = turn.items.first(where: { $0.id == id }) {
+                        ThinkingOutline(item: think, live: true)
+                            .padding(.leading, edge.indent)
+                            .padding(.top, TurnSpace.Inset.tight)
+                    }
                 }
-                if open, let id = state?.reasoningID, let think = turn.items.first(where: { $0.id == id }) {
-                    ThinkingOutline(item: think, live: true)
-                        .padding(.leading, edge.indent)
-                        .padding(.top, TurnSpace.Inset.tight)
-                }
+            } else {
+                // The answer is writing: no row, the stats 2 under its text. Drawn over the fixed
+                // space under the last row, so they add no height: the stop at a long answer's
+                // start (the scroll code) counts that space and nothing else.
+                Color.clear.frame(height: 0)
+                    .overlay(alignment: .topLeading) {
+                        if !stats.text.isEmpty {
+                            StatsLine(stats: stats)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .offset(y: space.gaps.stats)
+                        }
+                    }
             }
         }
     }
 
-    private func stats(at now: Date) -> LiveStats {
-        var stats = LiveStats.of(turn, pulse: conversation.pulse,
-                                 usual: conversation.status.flatMap { ModelStats.shared.speed($0.model) }, now: now)
-        if waiting != nil { stats.waited = conversation.permissionAt.map { now.timeIntervalSince($0) } }
+    private func stats(at now: Date, _ state: LiveState?) -> LiveStats {
+        var stats = LiveStats.of(turn, pulse: conversation.pulse, now: now)
+        stats.thinking = state?.reasoningID != nil
+        if waiting { stats.waited = conversation.waitingSince.map { now.timeIntervalSince($0) } ?? 0 }
+        // An answer writing with nothing arriving says so in its stats.
+        if state == nil, let last = conversation.pulse.lastTokenAt { stats.quiet = now.timeIntervalSince(last) }
         return stats
     }
 
@@ -217,29 +242,17 @@ struct LiveRow: View {
                 }
                 detail(state)
                 Spacer(minLength: 0)
-                if state.offersStop, keptWaiting.map({ now.timeIntervalSince($0) >= LiveState.stopAfter }) ?? true {
-                    Button("Keep waiting") { keptWaiting = now }
-                        .buttonStyle(.plain).font(.frog(size: Tokens.Transcript.meta.size))
-                        .foregroundStyle(Tokens.textSecondary)
-                    Button("Stop") { conversation.interrupt() }
-                        .buttonStyle(CardButtonStyle())
-                        .controlSize(.small)
-                }
             }
         }
         .buttonStyle(.plain)
         .focusable(state.reasoningID != nil)
         .onHover { hovered = $0 }
-        .metricsRow(.live, [state.label, open ? "" : (state.quiet.isEmpty ? state.detail : state.quiet)].filter { !$0.isEmpty }.joined(separator: " "),
-                    key: "live-\(turn.id)", fontSize: Tokens.Transcript.status.size)
+        .metricsRow(.live, open && state.thought ? state.label : state.text, key: "live-\(turn.id)", fontSize: Tokens.Transcript.status.size)
     }
 
     @ViewBuilder
     private func detail(_ state: LiveState) -> some View {
-        if !state.quiet.isEmpty {
-            Text(state.quiet).font(.frog(size: Tokens.Transcript.status.size)).foregroundStyle(Tokens.textSecondary)
-                .monospacedDigit().lineLimit(1)
-        } else if state.thought {
+        if state.thought {
             // The row's own thought hides while the outline shows it.
             ZStack(alignment: .leading) {
                 if !open, !state.detail.isEmpty {

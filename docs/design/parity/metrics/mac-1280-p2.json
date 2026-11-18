@@ -112,6 +112,14 @@
       "text" : "Waiting for you",
       "top" : 844,
       "x" : 0
+    },
+    {
+      "fontSize" : 11.5,
+      "height" : 16,
+      "kind" : "stats",
+      "text" : "#s · waited #s",
+      "top" : 870,
+      "x" : 0
     }
   ],
   "width" : 1280

@@ -80,7 +80,23 @@ ${rows}
     static func look(_ name: String) -> Look {
         table[name.lowercased()] ?? Look(tool: name, live: unknownLive, past: unknownPast, created: nil, object: .${v.unknown.object})
     }
-}
+${v.live ? `
+    /// The live row's words (spec.md, "The row"): \`{time}\` and \`{n}\` are filled in.
+    enum Live {
+        static let thinking = ${q(v.live.thinking)}
+        static let waiting = ${q(v.live.waiting)}
+        static let thought = ${q(v.live.thought)}
+        static let stopped = ${q(v.live.stopped)}
+        static let stalled = ${q(v.live.stalled)}
+        static let mixed = ${q(v.live.mixed)}
+        /// The noun several steps at once fold into, by their object format ("Reading 3 files").
+        static let counts: [Object: String] = [${Object.entries(v.live.counts).map(([k, n]) => `.${k}: ${q(n)}`).join(", ")}]
+
+        static func fill(_ template: String, time: String = "", n: Int = 0) -> String {
+            template.replacingOccurrences(of: "{time}", with: time).replacingOccurrences(of: "{n}", with: String(n))
+        }
+    }
+` : ""}}
 `;
 }
 

@@ -115,13 +115,14 @@ enum TurnSpace {
     }
 
     /// Space above a running turn's tail, which is its live row (a line) and the stats: a line's
-    /// gaps (12 from prose, touching other lines, a block from the prompt), or the stats' 2 right
-    /// under an answer that's writing (spec phase 2: the stats sit under the text).
+    /// gaps (12 from prose, touching other lines, a block from the prompt), or none under an answer
+    /// that's writing (the stats sit 2 under the text, drawn over the space below it).
     static func liveTailGap(_ s: Scale, after previous: TurnPart?, writing: Bool) -> CGFloat {
         guard let previous else { return 0 }
         guard case .segment(let segment) = previous else { return s.block }
         switch segment {
-        case .text: return writing ? s.gaps.stats : s.activity
+        // Under a writing answer the stats overlay the space below it (`LiveRow`): no gap of their own.
+        case .text: return writing ? 0 : s.activity
         // Lines touch; a card that needs you is a box, a block from the row under it.
         case .activity: return segment.waiting ? s.block : 0
         case .visual, .notice: return s.block

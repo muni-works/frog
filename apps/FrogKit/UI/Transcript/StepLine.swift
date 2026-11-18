@@ -592,14 +592,18 @@ struct ThoughtLineView: View {
     /// the item's own times in an old log; "Stopped after 12s" for a think the turn stopped.
     private var words: String { Self.words(item) }
 
+    /// "Thought for 31s" from the engine's think time (started→completed overstates it), or
+    /// the item's own times in an old log; "Stopped after 12s" for a think the turn stopped
+    /// (verbs.json's `live` words, the web's `thoughtLabel`).
     static func words(_ item: ItemState) -> String {
-        let secs = item.thinkMs.map { Double($0) / 1000 } ?? item.duration
         if !item.done {
-            let ran = item.startedAt.map { (item.endedAt ?? .now).timeIntervalSince($0) }
-            return ran.map { "Stopped after \(ActivityWords.duration($0))" } ?? "Stopped"
+            guard let start = item.startedAt else { return "Thought" }
+            return Verbs.Live.fill(Verbs.Live.stopped, time: LiveStats.clock((item.endedAt ?? .now).timeIntervalSince(start)))
         }
-        return secs.map { "Thought for \(ActivityWords.duration($0))" } ?? "Thought"
+        let secs = item.thinkMs.map { Double($0) / 1000 } ?? item.duration
+        return secs.map { Verbs.Live.fill(Verbs.Live.thought, time: LiveStats.clock(max(1, $0))) } ?? "Thought"
     }
+
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
