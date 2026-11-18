@@ -1448,6 +1448,7 @@ struct CompactSessionRow<Menu: View>: View {
             if let git {
                 #if DEBUG
                 let _ = SidebarProbe.badgeBodies += 1
+                let _ = expandTitle ? SidebarProbe.expandedBadgeBodies += 1 : ()
                 #endif
                 GitBadgeView(display: git.display, muted: !running && !selected, help: git.help, card: git.card)
                     .padding(.leading, 5)
