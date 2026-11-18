@@ -417,10 +417,9 @@ extension SnapshotTests {
         try render(
             VStack(alignment: .leading, spacing: 14) {
                 ForEach(Array(groups.enumerated()), id: \.offset) { _, g in
-                    ActivityLine(group: g, conversation: done, expanded: true)
+                    ActivityLine(group: g, conversation: done, verbosity: .verbose)
                 }
-                ActivitySteps(steps: [edit], conversation: done)
-                ActivityStepRow(item: edit, conversation: done, expanded: true)
+                StepLineView(item: edit, conversation: done, startOpen: true)
             }
             .padding(28)
             .frame(maxHeight: .infinity, alignment: .top)
@@ -505,7 +504,7 @@ extension SnapshotTests {
         try lines.map(env).forEach(live.ingest)
         try render(transcript(live), size: CGSize(width: 760, height: 420), to: "agents-calm-live")
         let steps = try XCTUnwrap(live.turns.last?.items)
-        try render(ActivitySteps(steps: steps, conversation: live).padding(24).frame(maxHeight: .infinity, alignment: .top)
+        try render(ActivityLine(group: ActivityGroup(steps: steps), conversation: live, live: true).padding(24).frame(maxHeight: .infinity, alignment: .top)
                     .background(Color(nsColor: .windowBackgroundColor)),
                    size: CGSize(width: 600, height: 200), to: "agents-calm-steps")
         let sidebar = VStack(alignment: .leading, spacing: 0) {
@@ -714,22 +713,22 @@ extension SnapshotTests {
             tool("f1", "Bash", "cargo test -- --nocapture", outcome: .error),
             tool("m1", "mcp__github__list_issues", #"{"repo":"muni-works/frog"}"#),
         ]
-        let lines = VerbLine.lines(steps)
-        // The proof that matters: a gist row and a no-gist row are the same height.
-        let gisted = try XCTUnwrap(lines.first { $0.arg == nil && !$0.quiet })
-        let raw = try XCTUnwrap(lines.first { $0.arg != nil && $0.verb.isEmpty })
-        XCTAssertEqual(try renderedHeight(VerbLineView(line: gisted), width: 560),
-                       try renderedHeight(VerbLineView(line: raw), width: 560), accuracy: 0.5)
+        let c = Conversation(folder: URL(fileURLWithPath: "/Users/cam/Developer/frog"), link: nil, replay: false, session: "rows")
+        // The proof that matters: every line is one row tall, gist or not, failed or not, so the
+        // transcript doesn't jump as gists land (spec: lines in a run touch, 24 each).
+        // (A failed command opens itself, so it's taller: left out here.)
+        for step in steps where step.result?.outcome != .error {
+            XCTAssertEqual(try renderedHeight(StepLineView(item: step, conversation: c), width: 560), 24,
+                           accuracy: 0.5, "\(step.id)")
+        }
         for dark in [true, false] {
-            let view = VStack(alignment: .leading, spacing: 6) {
-                ForEach(Array(lines.enumerated()), id: \.offset) { _, v in
-                    VerbLineView(line: v)
-                }
+            let view = VStack(alignment: .leading, spacing: 0) {
+                ForEach(steps) { StepLineView(item: $0, conversation: c) }
             }
-            .padding(20)
+            .padding(.vertical, 20).padding(.horizontal, 46)
             .background(Color(nsColor: .windowBackgroundColor))
             .environment(\.colorScheme, dark ? .dark : .light)
-            try render(view, size: CGSize(width: 620, height: 240), to: "tool-rows" + (dark ? "" : "-light"),
+            try render(view, size: CGSize(width: 660, height: 420), to: "tool-rows" + (dark ? "" : "-light"),
                        appearance: dark ? .darkAqua : .aqua)
         }
         print("snapshots: \(outDir.path)")

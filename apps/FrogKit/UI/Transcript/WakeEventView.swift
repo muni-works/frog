@@ -193,7 +193,7 @@ struct EventLineView: View {
                     .font(.caption.monospaced())
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.leading, TurnSpace.Inset.iconColumn)
+                    .padding(.leading, Tokens.Transcript.Layout.hang)
             }
         }
         .font(.caption)

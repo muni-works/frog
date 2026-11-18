@@ -1,36 +1,31 @@
 import SwiftUI
 
-/// What frog did between two pieces of text, as a line of prose in the text column: muted,
-/// no card. Clicking it opens a light list of the steps; each step opens to its output.
+/// What frog did between two pieces of text: one line per finished step, four or more in a row
+/// folded into one, a thought on a line of its own (docs/design/transcript/spec.md, "Lines").
+/// Lines in a run touch; each opens on its own.
 struct ActivityLine: View {
     @Environment(\.pinsQuestions) private var pinsQuestions
+    @Environment(\.turnSpace) private var space
     let group: ActivityGroup
     let conversation: Conversation
     /// The turn is running: a long thought streams below the line, and a subagent shows live.
     var live = false
     var verbosity: Verbosity = .normal
-    /// Opened. Not private so snapshots can render it open.
-    @State var expanded: Bool
 
-    init(group: ActivityGroup, conversation: Conversation, live: Bool = false, verbosity: Verbosity = .normal, expanded: Bool? = nil) {
+    init(group: ActivityGroup, conversation: Conversation, live: Bool = false, verbosity: Verbosity = .normal) {
         self.group = group
         self.conversation = conversation
         self.live = live
         self.verbosity = verbosity
-        // Verbose shows every step; otherwise a line opens on click.
-        _expanded = State(initialValue: expanded ?? (verbosity == .verbose))
     }
 
-    private var failedCommands: [ItemState] {
-        group.done.filter { ["Bash", "!"].contains(Self.toolName($0)) && $0.result?.outcome == .error
-            && !($0.result.map { $0.display ?? $0.output } ?? "").isEmpty }
+    /// The group is only thinking: each finished thought is a line ("Thought for 12s").
+    private var thoughts: [ItemState] {
+        let hasTools = group.steps.contains { if case .tool = $0.kind { true } else { false } }
+        return hasTools ? [] : group.done.filter { $0.kind == .reasoning }
     }
 
-    private static func toolName(_ item: ItemState) -> String {
-        if case .tool(let name, _) = item.kind { name } else { "" }
-    }
-
-    /// A long thought on a line of its own ("Thought for 12s"): it gets a gist.
+    /// A long thought on a line of its own gets a gist.
     private var thought: ItemState? {
         guard group.steps.count == 1, let t = group.steps.first, t.kind == .reasoning, t.done,
               !ActivityGroup.isShort(t) else { return nil }
@@ -45,91 +40,31 @@ struct ActivityLine: View {
         #if DEBUG
         let _ = TranscriptProbe.row()
         #endif
-        VStack(alignment: .leading, spacing: TurnSpace.Inset.row) {
-            // Running steps aren't in the sentence yet; the live line says what's happening.
-            if !group.done.isEmpty {
-                line
+        let runs = StepRuns.of(group.steps)
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(thoughts) { t in
+                ThoughtLineView(item: t, gist: t.id == thought?.id ? gist : nil, open: verbosity == .verbose)
             }
-            if expanded {
-                ActivitySteps(steps: group.steps, conversation: conversation)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-            } else if live, let now = group.current {
+            ForEach(runs) { run in
+                switch run {
+                case .step(let item): StepLineView(item: item, conversation: conversation)
+                case .fold(let steps): FoldLineView(steps: steps, conversation: conversation, open: verbosity == .verbose)
+                }
+            }
+            if live, let now = group.current {
                 liveStep(now)
             }
             if !pinsQuestions, let p = conversation.permission, group.steps.contains(where: { $0.needsPermission && $0.id == p.item }) {
+                // A box: a block's gap from any line above it.
                 PermissionCard(request: p, conversation: conversation)
+                    .padding(.top, runs.isEmpty && thoughts.isEmpty ? 0 : space.block)
             }
         }
-        .animation(.snappy(duration: 0.25), value: expanded)
         // Asked for once the line shows (the lazy transcript only builds what's near the view).
         .task(id: thought?.id) {
             guard let t = thought else { return }
             Gists.shared.request(session: conversation.sessionID, item: t.id, thought: t.text)
         }
-        .onChange(of: verbosity) { _, v in expanded = v == .verbose }
-    }
-
-    /// One line per step, as the web shows them: icon, verb, the argument in mono ("Read
-    /// `crates/x.rs`", "Ran `cargo test`", "Edited `f` +6 −3"). A thought is one quiet line.
-    /// The first line carries the › that opens the steps' output — unless the line already
-    /// says the whole of it (one short result), where there is nothing behind to open.
-    private var line: some View {
-        Button {
-            guard hasMore else { return }
-            withAnimation(.snappy(duration: 0.25)) { expanded.toggle() }
-        } label: {
-            VStack(alignment: .leading, spacing: TurnSpace.Inset.tight) {
-                ForEach(Array(VerbLine.lines(group.done).enumerated()), id: \.offset) { i, v in
-                    HStack(alignment: .firstTextBaseline, spacing: 0) {
-                        VerbLineView(line: v)
-                            .help(v.helpText)
-                            .focusable()
-                        if i == 0, hasMore {
-                            Text(verbatim: "  ")
-                            chevron
-                            gistText.font(.callout).lineLimit(1)
-                        }
-                    }
-                    // A failed command's output, under its own line, as on the web.
-                    if !expanded, let step = failedCommands.first(where: { $0.id == v.itemID }) {
-                        ToolDetail(name: Self.toolName(step), item: step, expanded: true, root: conversation.folder.path)
-                            .padding(.leading, 22)
-                            .padding(.vertical, 2)
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(.rect)
-        }
-        .buttonStyle(.plain)
-        #if os(macOS)
-        .pointerStyle(.link)
-        #endif
-        .help(hasMore ? (expanded ? "Hide steps" : "Show steps") : "")
-    }
-
-    /// Whether anything sits behind the line. One finished step whose whole result the line
-    /// already says ("Sent to ops; delivered", "12 sessions") has nothing to open, so it gets
-    /// no chevron and a click does nothing — a dead chevron is the "click for no reason" this
-    /// change exists to end.
-    private var hasMore: Bool {
-        guard group.done.count == 1, let only = group.done.first,
-              case .tool(let name, _) = only.kind,
-              ToolLook.isInline(name), only.result?.outcome == .ok, only.result?.diff == nil,
-              only.displayImages.isEmpty else { return true }
-        return !ToolLook.fits(name: name, display: only.result?.display, output: only.result?.output ?? only.output)
-    }
-
-    /// " · Decided to…", quieter than the line it follows.
-    private var gistText: Text {
-        guard let gist else { return Text(verbatim: "") }
-        return Text(verbatim: " · \(gist)").foregroundStyle(.tertiary)
-    }
-
-    private var chevron: Text {
-        Text(Image(systemName: expanded ? "chevron.down" : "chevron.right"))
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(.tertiary)
     }
 
     @ViewBuilder
@@ -261,304 +196,6 @@ struct ThoughtSubtitle: View {
             return (sentences.count, tail)
         }
         return (sentences.count - 1, sentences[sentences.count - 1].trimmingCharacters(in: .whitespaces))
-    }
-}
-
-/// The opened line: one row per step, in a hairline outline.
-struct ActivitySteps: View {
-    let steps: [ItemState]
-    let conversation: Conversation
-
-    /// Steps that failed or were refused, as the group's sentence counts them ("…, 1 failed").
-    private var failures: Int { ActivityGroup(steps: steps).failures }
-
-    var body: some View {
-        Group {
-            switch Self.layout(steps) {
-            case .thought:
-                if let thought = steps.first {
-                    // A lone thought's line already says "Thought for 12s"; open, it's the
-                    // thought, set off like a quote rather than boxed.
-                    CappedThought(text: thought.text)
-                        .padding(.leading, TurnSpace.Inset.roomy)
-                        .overlay(alignment: .leading) {
-                            Rectangle().fill(.separator).frame(width: 2)
-                        }
-                        .padding(.vertical, TurnSpace.Inset.hair)
-                }
-            case .content:
-                if let step = steps.first {
-                    // One step: the line above already says what it was ("Read PaneView.swift",
-                    // "Used SendMessage"), so a boxed row repeating it is a second click for
-                    // nothing. Opened, it's the step's content: a short result as a plain line,
-                    // a payload (a command's output, a file, a diff) as its detail.
-                    content(of: step)
-                }
-            case .rows:
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(steps.enumerated()), id: \.element.id) { i, step in
-                        if case .tool("Task", let arg) = step.kind, !step.done {
-                            // A running agent keeps its live row open too: what it's doing now,
-                            // its plan, Stop, and its run a click away (a plain step row said
-                            // only "Agent: …" for as long as it worked).
-                            AgentStepRow(arg: arg, item: step, conversation: conversation)
-                                .padding(.horizontal, TurnSpace.Inset.card)
-                                .padding(.vertical, TurnSpace.Inset.snug)
-                        } else {
-                            ActivityStepRow(item: step, conversation: conversation, groupFailures: failures)
-                        }
-                    }
-                }
-                .padding(.vertical, TurnSpace.Inset.hair)
-                .background(Tokens.raised.opacity(0.6), in: RoundedRectangle(cornerRadius: TurnSpace.Card.nestedRadius))
-            }
-        }
-    }
-
-    /// What an opened line draws, decided in one place so the view and its test can't disagree.
-    enum Layout: Equatable {
-        /// A lone thought, set off like a quote.
-        case thought
-        /// A lone finished tool step: its content, under the line that already names it.
-        case content
-        /// A boxed row per step.
-        case rows
-    }
-
-    static func layout(_ steps: [ItemState]) -> Layout {
-        if steps.count == 1, let only = steps.first {
-            if only.kind == .reasoning { return .thought }
-            if only.done, opensDirectly(only) { return .content }
-        }
-        return .rows
-    }
-
-    /// Whether a lone finished step opens to its content rather than to a row of its own. A
-    /// thought has its own treatment (above); a tool's row repeats the line that opened it,
-    /// which is the click this rule removes. Person-facing rows that wait on you (a running
-    /// agent, a permission card) keep their rows.
-    static func opensDirectly(_ step: ItemState) -> Bool {
-        guard case .tool = step.kind else { return false }
-        return !step.needsPermission
-    }
-
-    /// A lone step's content, under the line that names it.
-    @ViewBuilder
-    private func content(of step: ItemState) -> some View {
-        if case .tool(let name, _) = step.kind {
-            let result = step.result
-            if !step.displayImages.isEmpty {
-                ToolImages(images: step.displayImages, preview: !step.done)
-            } else if ToolLook.isInline(name), result?.outcome == .ok, result?.diff == nil {
-                // A sentence, not a payload: plain text under the row, no terminal block.
-                InlineResult(name: name, display: result?.display, output: result?.output ?? step.output)
-            } else {
-                ToolDetail(name: name, item: step, root: conversation.folder.path)
-                    .padding(.trailing, TurnSpace.Inset.card)
-            }
-            if let why = step.autoReason {
-                Label("Auto: \(why)", systemImage: "wand.and.sparkles")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .padding(.leading, TurnSpace.Inset.iconColumn)
-            }
-        }
-    }
-}
-
-/// A short result, as a line of text under the row that names it: "It chose Send now." — no
-/// terminal block, no plate. What a `SendMessage` returned is a sentence; a box around one line
-/// reads as a payload it isn't.
-struct InlineResult: View {
-    let name: String
-    let display: String?
-    let output: String
-
-    var body: some View {
-        let text = ToolLook.result(name: name, display: display, output: output)
-        if !text.isEmpty {
-            Text(text)
-                .font(.callout)
-                .foregroundStyle(Tokens.textSecondary)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.leading, TurnSpace.Inset.iconColumn)
-        }
-    }
-}
-
-/// One step: "Read PaneView.swift", "Ran xcodebuild test · passed". Opens to the output.
-struct ActivityStepRow: View {
-    let item: ItemState
-    let conversation: Conversation
-    /// How many failures the step's group carries (the collapsed line ends "N failed"): when
-    /// this step is the only one, its own "· failed" would say it again. 0 outside a group.
-    var groupFailures: Int = 0
-    /// Opened. Not private so snapshots can render it open.
-    @State var expanded = false
-
-    /// The row stays quiet about a failure the group's sentence already carries: one failure,
-    /// this step, in a group whose sentence ends "1 failed".
-    private var groupSaysFailed: Bool { groupFailures == 1 }
-
-    private var name: String {
-        if case .tool(let name, _) = item.kind { name } else { "" }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: TurnSpace.Inset.row) {
-            Button {
-                withAnimation(.snappy(duration: 0.2)) { expanded.toggle() }
-            } label: {
-                HStack(spacing: TurnSpace.Inset.snug) {
-                    // Like the web: the tool's glyph, then its verb, then what it touched.
-                    Image(systemName: ToolLook.icon(name))
-                        .font(.frog(size: 11))
-                        .foregroundStyle(.tertiary)
-                        .frame(width: 14)
-                    ToolLook.title(rowTitle)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    outcome
-                    streaming
-                    Spacer(minLength: 8)
-                    status
-                }
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .contentShape(.rect)
-            }
-            .buttonStyle(.plain)
-            if expanded {
-                detail.transition(.opacity)
-            } else if !item.done, item.kind != .reasoning {
-                ToolDetail(name: name, item: item, expanded: false, root: conversation.folder.path)
-            }
-        }
-        .padding(.horizontal, TurnSpace.Inset.card)
-        .padding(.vertical, TurnSpace.Inset.snug)
-        // A failure opens by itself, as on the web: what went wrong is the point of the row.
-        .onAppear { if item.result?.outcome == .error, !groupSaysFailed { expanded = true } }
-    }
-
-    /// The row's words. A shell row running now says the intent ("Running git log…" from the
-    /// elided command) rather than the raw text; done, it reads as always ("Ran …"), with a
-    /// gist from the engine's side-model replacing the raw command when one arrived. Any
-    /// other row a gist came for (a web fetch, an MCP call) reads as the gist, which says
-    /// what it did where the row's own words only name the argument.
-    private var rowTitle: String {
-        if let gist = item.gist, item.done, name != "Bash", name != "!" { return gist }
-        guard name == "Bash" || name == "!" else { return ActivityWords.row(item) }
-        if !item.done {
-            let elided = CommandElision.elide(item.arg, from: conversation.folder.path)
-            return ActivityWords.isTest(item.arg) ? "Running the tests…" : "Running \(elided)…"
-        }
-        if let gist = item.gist {
-            return gist
-        }
-        return "Ran \(CommandElision.elide(item.arg, from: conversation.folder.path))"
-    }
-
-    /// A running row's subtle hint that output is streaming (its newest line shows below), so
-    /// a silent-looking wait reads as live. No per-step clock: the app keeps one, the turn's
-    /// live status row (`LiveStatus`).
-    @ViewBuilder
-    private var streaming: some View {
-        if !item.done, !item.output.isEmpty {
-            Image(systemName: "text.alignleft")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-                .help("Output is streaming")
-                .transition(.opacity)
-        }
-    }
-
-    @ViewBuilder
-    private var detail: some View {
-        switch item.kind {
-        case .reasoning:
-            CappedThought(text: item.text)
-        case .tool("Task", let arg):
-            // The row above already says "Agent: X · failed"; opened, its report.
-            AgentReport(arg: arg, item: item, conversation: conversation)
-        case .tool(let name, _):
-            VStack(alignment: .leading, spacing: TurnSpace.Inset.row) {
-                if !item.displayImages.isEmpty {
-                    ToolImages(images: item.displayImages, preview: !item.done)
-                    if !item.done { Text("Approximate step preview").font(.caption).foregroundStyle(.secondary) }
-                }
-                // The row above already names the call ("Used SendMessage"), so a short result
-                // is a line of text under it, never a second row saying the same label.
-                if ToolLook.isInline(name), item.result?.outcome == .ok, item.result?.diff == nil, item.displayImages.isEmpty {
-                    InlineResult(name: name, display: item.result?.display, output: item.result?.output ?? item.output)
-                } else {
-                    ToolDetail(name: name, item: item, root: conversation.folder.path)
-                }
-                if let why = item.autoReason {
-                    Label("Auto: \(why)", systemImage: "wand.and.sparkles")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                        .help("Auto mode's classifier let this run without asking")
-                }
-            }
-        default:
-            EmptyView()
-        }
-    }
-
-    /// How it went, after the name: "· passed", "+3 −1", "Read 8 lines". A failure is said
-    /// once: when this step is the only failure of its group, the group's sentence already
-    /// ends "1 failed" and the row's red word would say it again — the row stays quiet.
-    @ViewBuilder
-    private var outcome: some View {
-        if name == "Task", !item.done, let plan = item.subagent?.plan {
-            // An agent at work: how far along its own plan is.
-            Text("· \(plan.done)/\(plan.total)").foregroundStyle(.tertiary).monospacedDigit()
-        } else if let r = item.result {
-            let tests = (name == "Bash" || name == "!") && ActivityWords.isTest(item.arg)
-            switch r.outcome {
-            case .denied: Text("· denied").foregroundStyle(.orange)
-            case .skipped: Text("· skipped").foregroundStyle(.tertiary)
-            case .error where r.display?.hasPrefix("refused: repeated") == true:
-                Text("· repeated call refused").foregroundStyle(.red)
-            case .error where ToolResultWords.errorLabel(r.display) == "No folder open":
-                // A chat with no folder: the model reached for a file or shell tool it doesn't have.
-                Text("· no folder open").foregroundStyle(.orange)
-            case .error where ToolResultWords.errorLabel(r.display) == "Not available":
-                Text("· not available").foregroundStyle(.orange)
-            case .error where groupSaysFailed:
-                EmptyView()
-            case .error:
-                // As on the web: a red tag, and the output opens by itself (see `body`).
-                FailedTag()
-            case .ok:
-                if let d = r.diff {
-                    ActivityText(pieces: [.diff(added: d.added, removed: d.removed)]).text
-                } else if tests {
-                    Text("· passed").foregroundStyle(.tertiary)
-                } else if let display = r.display, !display.isEmpty, !display.contains("\n"), display.count < 60,
-                          // "Read 8 lines" after "Read Sidebar.swift" says it twice.
-                          display.split(separator: " ").first != ActivityWords.row(item).split(separator: " ").first {
-                    Text("· \(display)").foregroundStyle(.tertiary).lineLimit(1)
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var status: some View {
-        if item.needsPermission {
-            Image(systemName: "hand.raised.fill").foregroundStyle(.orange)
-        } else if !item.done {
-            ProgressView().controlSize(.mini)
-        } else {
-            Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.tertiary)
-        }
     }
 }
 
@@ -806,284 +443,5 @@ enum ToolLook {
         let text = (display.flatMap { $0.isEmpty ? nil : $0 } ?? output)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return text.isEmpty ? nil : text
-    }
-}
-
-/// A finished step as the web says it: an icon, a past-tense verb, the argument in mono, and
-/// what came of it (matches, a diff, a failure).
-struct VerbLine: Equatable {
-    var icon: String
-    var verb: String
-    var arg: String?
-    var detail: String?
-    var diff: (added: UInt32, removed: UInt32)?
-    var failed = false
-    /// You said no: a quiet "denied" tag, not a red failure (as on the web).
-    var denied = false
-    /// Yolo ran the call outside the shell sandbox: a quiet "sandbox" tag, not a second
-    /// notice row (its `EgressWidened` said so; the row is the record).
-    var sandboxEscaped = false
-    /// A thought: quieter, no icon.
-    var quiet = false
-    /// The step it says, for putting a failed command's output under its own line.
-    var itemID: String?
-    /// The raw arguments, kept for the row's `help` even when a gist replaces the line:
-    /// hover gives back the truth the gist may elide.
-    var rawArgs: String?
-
-    static func == (a: VerbLine, b: VerbLine) -> Bool {
-        a.icon == b.icon && a.verb == b.verb && a.arg == b.arg && a.detail == b.detail
-            && a.diff?.added == b.diff?.added && a.diff?.removed == b.diff?.removed && a.failed == b.failed && a.denied == b.denied
-            && a.sandboxEscaped == b.sandboxEscaped
-    }
-
-    /// A group's lines: a thought only when nothing else happened, repeated plan updates once.
-    static func lines(_ steps: [ItemState]) -> [VerbLine] {
-        let hasTools = steps.contains { if case .tool = $0.kind { true } else { false } }
-        var out: [VerbLine] = []
-        for step in steps {
-            guard let v = of(step, alone: !hasTools) else { continue }
-            if v.verb == "Updated the plan", out.contains(where: { $0.verb == v.verb }) { continue }
-            out.append(v)
-        }
-        return out
-    }
-
-    static func of(_ item: ItemState, alone: Bool = true) -> VerbLine? {
-        switch item.kind {
-        case .reasoning:
-            guard alone else { return nil }
-            return VerbLine(icon: "", verb: item.duration.map { "Thought for \(ActivityWords.duration($0))" } ?? "Thought", quiet: true)
-        case .message, .notice:
-            return nil
-        case .tool(let name, let arg):
-            let failed = item.result.map { $0.outcome == .error } ?? false
-            var v = VerbLine(icon: ToolLook.icon(name), verb: "", arg: arg.isEmpty ? nil : short(arg), failed: failed)
-            v.rawArgs = arg.isEmpty ? nil : arg
-            v.denied = item.result?.outcome == .denied
-            v.sandboxEscaped = item.sandboxEscaped
-            v.itemID = item.id
-            // The engine's gist says what the call did ("searched the engine for where gists
-            // flush"): it is the row's line, where the tool's own verb would only say ran
-            // twice. A failure keeps its verb — "Ran cargo test — failed" is the fact a gist
-            // would hide. The raw argument leads until both answer.
-            if let gist = item.gist, item.done, !failed { v.verb = gist; v.arg = nil }
-            else if name == "Bash" || name == "!" {
-                // A failure keeps its verb ("Ran cargo test — failed" is the fact a gist
-                // would hide). Without one, the command is the line — "Ran" beside it would
-                // say ran twice.
-                // `cd /Users/…/frog && git log` on forty rows reads as forty identical rows
-                // with the meaning truncated away: the command leads, and the place shows only
-                // when it's a worktree ("in audit334"). The full command stays the row's help.
-                let (cmd, place) = Self.splitCd(arg)
-                v.arg = cmd.split(separator: "\n").first.map { String($0.prefix(120)) }
-                if let place { v.detail = "in \(place)" }
-                if failed { v.verb = "Ran" }
-            }
-            else {
-                switch name {
-                case "Read": v.verb = "Read"
-                case "Grep", "Glob":
-                    v.verb = "Searched for"
-                    let n = item.output.split(separator: "\n", omittingEmptySubsequences: true).count
-                    if item.result?.outcome == .ok, !item.output.isEmpty { v.detail = "\(n) match\(n == 1 ? "" : "es")" }
-                case "Edit", "MultiEdit":
-                    v.verb = "Edited"
-                    v.diff = item.result?.diff.map { ($0.added, $0.removed) }
-                case "Write":
-                    v.verb = item.result?.diff?.created == true ? "Created" : "Wrote"
-                    v.diff = item.result?.diff.map { ($0.added, $0.removed) }
-                case "WebFetch":
-                    v.verb = "Fetched"
-                    v.arg = URL(string: arg)?.host() ?? arg
-                case "WebSearch": v.verb = "Searched the web for"
-                case "Task": v.verb = "Ran an agent"; v.arg = arg.isEmpty ? nil : arg
-                case "TodoWrite": v.verb = "Updated the plan"; v.arg = nil
-                case "Diagram": v.verb = "Drew"; if arg.isEmpty { v.verb = "Drew a diagram" }
-                case "Visualize": v.verb = "Made a visual"; v.arg = nil
-                case "VisualGuide": v.verb = "Read the visual guide"; v.arg = nil
-                case "Present": v.verb = "Showed results"; v.arg = nil
-                case "Ask": v.verb = "Asked you"; v.arg = nil
-                case "Skill": v.verb = "Used the skill"
-                case "UseFolder": v.verb = "Moved to"
-                default: break
-                }
-                // A tool the switch doesn't know (an MCP call, most of all) used to read
-                // "Used mcp__github__list_issues"; the gist names it when it lands, and
-                // until then the raw argument is the line. A command is a command.
-                if v.verb.isEmpty, v.arg == nil, !arg.isEmpty { v.arg = short(arg) }
-            }
-            // A tool whose result is a sentence says it here, on the line, with no click at
-            // all — the same move `Grep` makes with "3 matches". `Grep`'s count stays its own
-            // (above): a match count reads better than the first line of an rg dump.
-            if ToolLook.isInline(name), item.result?.outcome == .ok, v.detail == nil {
-                var said = ToolLook.line(name: name, display: item.result?.display, output: item.result?.output ?? item.output)
-                // A result often opens by repeating the line it sits on ("Moved to /tmp/demo"
-                // under "Moved to /tmp/demo", or "Sent to ops…" under "Used SendMessage ops").
-                // The line's own words win: drop whatever it already says, and add only the
-                // rest. When the result is nothing but that, the line has nothing to add.
-                let lineText = (v.verb + " " + (v.arg ?? "")).trimmingCharacters(in: .whitespaces)
-                for prefix in [lineText, v.verb] where !prefix.isEmpty {
-                    guard said.lowercased().hasPrefix(prefix.lowercased()) else { continue }
-                    said = String(said.dropFirst(prefix.count))
-                        .trimmingCharacters(in: CharacterSet(charactersIn: " ·:—-"))
-                    break
-                }
-                if !said.isEmpty { v.detail = said }
-            }
-            return v
-        }
-    }
-
-    /// A command that opens with `cd <dir> &&` (or `;`), split into the rest and a short name
-    /// for the place: a worktree's own name (`…/worktrees/audit334` → "audit334"), or nil for
-    /// anywhere else — the session root on every row is the noise this strips. Anything that
-    /// isn't that shape comes back whole.
-    static func splitCd(_ command: String) -> (command: String, place: String?) {
-        let trimmed = command.drop { $0 == " " }
-        guard trimmed.hasPrefix("cd ") else { return (command, nil) }
-        var rest = trimmed.dropFirst(3).drop { $0 == " " }
-        var dir = ""
-        if let q = rest.first, q == "\"" || q == "'" {
-            guard let end = rest.dropFirst().firstIndex(of: q) else { return (command, nil) }
-            dir = String(rest[rest.index(after: rest.startIndex)..<end])
-            rest = rest[rest.index(after: end)...]
-        } else {
-            let end = rest.firstIndex { $0 == " " || $0 == ";" || $0 == "&" || $0 == "\n" } ?? rest.endIndex
-            dir = String(rest[..<end])
-            rest = rest[end...]
-        }
-        rest = rest.drop { $0 == " " }
-        if rest.hasPrefix("&&") { rest = rest.dropFirst(2) } else if rest.hasPrefix(";") { rest = rest.dropFirst() } else { return (command, nil) }
-        let cmd = rest.drop { $0 == " " }
-        guard !dir.isEmpty, !cmd.isEmpty else { return (command, nil) }
-        let parts = dir.split(separator: "/")
-        let place = parts.firstIndex(of: "worktrees").flatMap { i in i + 1 < parts.count ? String(parts[i + 1]) : nil }
-        return (String(cmd), place)
-    }
-
-    /// A path from its repo down, not from /Users.
-    private static func short(_ arg: String) -> String {
-        guard arg.hasPrefix("/") else { return arg }
-        let parts = arg.split(separator: "/")
-        return parts.count > 3 ? parts.suffix(3).joined(separator: "/") : arg
-    }
-
-    /// The row's `help`: the raw command or full arguments, the truth the line may elide.
-    var helpText: String {
-        if let raw = rawArgs, !raw.isEmpty { return raw }
-        switch (verb, arg) {
-        case ("", .some(let a)): return a
-        case (_, .some(let a)): return "\(verb) \(a)"
-        case ("", nil): return ""
-        case (let v, nil): return v
-        }
-    }
-}
-
-struct VerbLineView: View {
-    let line: VerbLine
-
-    var body: some View {
-        if line.quiet {
-            Text(line.verb)
-                .font(.frog(size: Tokens.Size.status))
-                .foregroundStyle(Tokens.textTertiary)
-        } else {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                text
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                if line.failed { FailedTag() } else if line.denied { DeniedTag() }
-                if line.sandboxEscaped { SandboxTag() }
-            }
-            // 12.5 × 1.6 = 20: the web's line box. `lineSpacing` adds to SwiftUI's default
-            // leading (~1.28), hence the difference. Applied to the row, not the Text —
-            // these modifiers don't return Text.
-            .font(.frog(size: Tokens.Size.status))
-            .lineSpacing(Tokens.Size.status * (1.6 - 1.28))
-        }
-    }
-
-    /// The row, at the web's rhythm: 12.5 pt type on a 20 pt line (12.5 × 1.6), so six calls
-    /// read as a list rather than a block. The icon and the fallback command are `faint`
-    /// (5.3:1 on the dark canvas), the gist or a switch verb `muted` (8.3:1); a failure's
-    /// verb goes to `warn`, where the web's error rows are.
-    private var text: Text {
-        // The icon's tint, computed from Tokens.text: over the dark canvas, `text` (0.925)
-        // at alpha 0.691 composites to #a3a3a3 — the muted the web's icons read (0.65 would
-        // give #999999; the old textTertiary was #505050 at 2.60:1, under the 4.5 minimum).
-        // Light composites toward white, so the alpha solves against 1.0 there; the result
-        // lands on the light muted #5e5e5e either way.
-        func raised() -> Color {
-            func alpha(to target: Double, base: Double, over canvas: Double) -> Double {
-                (target - canvas) / (base - canvas)
-            }
-            return Color(
-                light: (0.106, 0.114, 0.102, min(alpha(to: 0.369, base: 0.106, over: 1.0), 1)),
-                dark: (0.925, 0.925, 0.925, min(alpha(to: 0.639, base: 0.925, over: 0.0), 1)))
-        }
-        let iconTint = raised()
-        var t = Text(Image(systemName: line.icon)).foregroundStyle(iconTint)
-            + Text(verbatim: "  ")
-        if !line.verb.isEmpty {
-            t = t + Text(line.verb).foregroundStyle(line.failed ? Tokens.warn : Tokens.textSecondary)
-        }
-        if let arg = line.arg {
-            // No verb, no gist: the argument is the line — a command is a command — so it
-            // reads as one, in mono at the faint step, uncapitalised, like the web's.
-            let fallback = line.verb.isEmpty
-            t = t + Text(verbatim: fallback ? "" : " ")
-                + Text(verbatim: arg)
-                .font(.frog(size: Tokens.Size.status, design: .monospaced))
-                .foregroundStyle(fallback ? Tokens.textTertiary : Tokens.text)
-        }
-        if let d = line.detail {
-            // No verb, no separator: the detail *is* the line ("Renamed s2 to …"), so
-            // " · Renamed s2 …" would open with an orphan separator.
-            t = t + Text(verbatim: line.verb.isEmpty ? d : " · \(d)").foregroundStyle(Tokens.textTertiary)
-        }
-        if let diff = line.diff {
-            t = t + Text(verbatim: " +\(diff.added)").foregroundStyle(.green).monospacedDigit()
-                + Text(verbatim: " −\(diff.removed)").foregroundStyle(.red).monospacedDigit()
-        }
-        return t
-    }
-}
-
-/// A denied step's tag, as on the web (`.tool-tag`): "denied", quiet, on the hover fill.
-struct DeniedTag: View {
-    var body: some View {
-        Text("denied")
-            .font(.frog(size: 11, weight: .medium))
-            .foregroundStyle(Tokens.textSecondary)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 1)
-            .background(Tokens.hover, in: .rect(cornerRadius: 5))
-    }
-}
-
-/// A failed step's tag, as on the web: "failed" in red on a faint red plate.
-struct FailedTag: View {
-    var body: some View {
-        Text("failed")
-            .font(.frog(size: 11, weight: .medium))
-            .foregroundStyle(Tokens.fail)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 1)
-            .background(Tokens.fail.opacity(0.14), in: .rect(cornerRadius: 5))
-    }
-}
-
-/// A call that ran outside the shell sandbox, on its own row (yolo's `EgressWidened` said
-/// `sandbox_left`): "⌫ sandbox", quiet, on the hover fill like `DeniedTag`.
-struct SandboxTag: View {
-    var body: some View {
-        Text(verbatim: "⌫ sandbox")
-            .font(.frog(size: 11, weight: .medium))
-            .foregroundStyle(Tokens.textSecondary)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 1)
-            .background(Tokens.hover, in: .rect(cornerRadius: 5))
     }
 }

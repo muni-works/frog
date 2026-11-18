@@ -165,12 +165,23 @@ struct TurnView: View, Equatable {
     }
 
     private var prompt: some View {
-        VStack(alignment: .trailing, spacing: TurnSpace.Inset.hair) {
-            // Messages queued while the last turn ran go together: a bubble each.
+        // The receipts and actions sit beside the last bubble, not under it, so the prompt is a
+        // block gap from the first row (docs/design/transcript/spec.md, "Gaps"), as on the web.
+        Group {
+            // Messages queued while the last turn ran go together: a bubble each. The last one
+            // carries the receipts and actions at its side.
+            let side = AnyView(PromptActions(
+                turn: turn,
+                visible: hoveringPrompt && !(running && turn.number == nil),
+                canRewind: self.actions.canRewind,
+                copy: copy,
+                rewind: { confirmRewind = true },
+                fork: { if let n = turn.number { self.actions.fork?(n) } }
+            ))
             VStack(alignment: .trailing, spacing: TurnSpace.Inset.snug) {
-                UserPrompt(text: turn.input, images: turn.images)
-                ForEach(Array(turn.more.enumerated()), id: \.offset) { _, part in
-                    UserPrompt(text: part.text, images: part.images)
+                UserPrompt(text: turn.input, images: turn.images, actions: turn.more.isEmpty ? side : nil)
+                ForEach(Array(turn.more.enumerated()), id: \.offset) { i, part in
+                    UserPrompt(text: part.text, images: part.images, actions: i == turn.more.count - 1 ? side : nil)
                 }
             }
                 // Sent like an iMessage: up from the composer, a little small, then a
@@ -185,14 +196,6 @@ struct TurnView: View, Equatable {
                     }
                 }
                 .contextMenu { menu(changes: TurnParts(turn).changes.count) }
-            PromptActions(
-                turn: turn,
-                visible: hoveringPrompt && !(running && turn.number == nil),
-                canRewind: actions.canRewind,
-                copy: copy,
-                rewind: { confirmRewind = true },
-                fork: { if let n = turn.number { actions.fork?(n) } }
-            )
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
         .contentShape(.rect)

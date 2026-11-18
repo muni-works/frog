@@ -88,7 +88,7 @@ struct ReasoningView: View {
             .buttonStyle(.plain)
             if expanded {
                 CappedThought(text: text)
-                    .padding(.leading, TurnSpace.Inset.iconColumn)
+                    .padding(.leading, Tokens.Transcript.Layout.hang)
                     .transition(.opacity)
             }
         }
@@ -310,7 +310,7 @@ struct ToolCallView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
-                    .padding(.leading, TurnSpace.Inset.iconColumn)
+                    .padding(.leading, Tokens.Transcript.Layout.hang)
                     .help("Auto mode's classifier let this run without asking")
             }
             if !pinsQuestions, item.needsPermission, let p = conversation.permission, p.item == item.id {
@@ -392,7 +392,7 @@ struct ToolDetail: View {
                     Text(m).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
             }
-            .padding(.leading, TurnSpace.Inset.iconColumn)
+            .padding(.leading, Tokens.Transcript.Layout.hang)
             .transition(.opacity)
         } else if !item.done, !item.output.isEmpty {
             // Live tail of a running command.
@@ -526,6 +526,8 @@ struct PermissionCard: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(request.question)
                     .font(.frog(size: Tokens.Size.body, weight: .semibold))
+                    .fixedLine(Tokens.Transcript.body)
+                    .metricsFirstWord()
                 if let reason = request.reason {
                     Text(reason).font(.frog(size: Tokens.Size.secondary)).foregroundStyle(Tokens.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -535,8 +537,11 @@ struct PermissionCard: View {
                 DiffView(diff: diff, maxLines: 40)
                     .clipShape(.rect(cornerRadius: 8))
             } else if !request.arg.isEmpty {
+                let extra = Tokens.Transcript.status.line - monoLineHeight(Tokens.Size.secondary)
                 Text(request.arg)
                     .font(.frog(size: Tokens.Size.secondary, design: .monospaced))
+                    // On the status line (20), as the web's well sets it.
+                    .lineSpacing(extra).padding(.vertical, extra / 2)
                     .textSelection(.enabled)
                     .lineLimit(8)
                     .padding(.horizontal, 12).padding(.vertical, 9)
@@ -592,6 +597,7 @@ struct PermissionCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Tokens.raised, in: .rect(cornerRadius: Tokens.Radius.card))
         .clipShape(.rect(cornerRadius: Tokens.Radius.card))
+        .metricsRow(.card, request.question, key: "card-\(request.id)", fontSize: Tokens.Size.body)
     }
     #endif
 

@@ -45,6 +45,10 @@ struct TranscriptView: View {
     /// How near the top of what's built (in points) builds more above it.
     static let nearTop: CGFloat = 60
 
+    /// The transcript pane's width, for its gutter (see `TranscriptEdge`).
+    @State private var paneWidth: CGFloat = 1000
+    private var edge: TranscriptEdge { TranscriptEdge.of(paneWidth: paneWidth) }
+
     #if os(macOS)
     @State private var tableHandle = TableTranscriptHandle()
     @State private var safeInsets = EdgeInsets()
@@ -388,47 +392,63 @@ struct TranscriptView: View {
     /// A row at the very end of the transcript, below the last turn and its indicators.
     private static let end = "transcript-end"
 
-    private var transcript: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                #if os(macOS)
-                // On the Mac every turn's footer (model, cost, speed, energy) is hover-only,
-                // the last one too: nothing pinned under the answer at rest.
-                let footers = Set<TurnState.ID>()
-                #else
-                // No hover on a phone: the footers that matter stay pinned.
-                let footers = TurnFooter.pinned(conversation.turns) { ModelStats.shared.cost(of: $0) }
-                #endif
-                let lastTurn = conversation.turns.last?.id
-                // The transcript's first line: the last compaction's banner. Replay and
-                // reopen keep it (a durable event); sessions compacted before receipts
-                // existed show nothing.
-                if let kept = conversation.carriedForward {
-                    CarriedForwardBanner(kept: kept)
-                }
-                // A row per piece of each turn: only what's on screen is built (see `TurnPart`).
-                ForEach(rows) { row in
-                    TurnView(turn: row.turn, conversation: conversation, actions: actions, part: row.part,
-                             gap: row.gap, pinsFooter: footers.contains(row.turn.id))
-                        .equatable()
-                        .id(row.id)
-                        .background {
-                            if row.first, row.turn.id == lastTurn {
-                                Color.clear.onGeometryChange(for: CGFloat.self, of: { $0.frame(in: .named(Self.content)).minY }) {
-                                    track.lastTurnTop = $0
-                                }
+    /// The transcript's rows. A lazy stack builds only what's near the view; the parity metrics
+    /// (`-FrogMetrics`) need every row laid out, so they get a plain stack.
+    @ViewBuilder
+    private var stackRows: some View {
+        if TranscriptMetrics.enabled {
+            VStack(alignment: .leading, spacing: 0) { rowsContent }
+        } else {
+            LazyVStack(alignment: .leading, spacing: 0) { rowsContent }
+        }
+    }
+
+    @ViewBuilder
+    private var rowsContent: some View {
+
+            #if os(macOS)
+            // On the Mac every finished turn's footer shows at rest, as on the web
+            // (docs/design/transcript/spec.md, "The footer"): one quiet meta line.
+            let footers = Set(conversation.turns.map(\.id))
+            #else
+            // No hover on a phone: the footers that matter stay pinned.
+            let footers = TurnFooter.pinned(conversation.turns) { ModelStats.shared.cost(of: $0) }
+            #endif
+            let lastTurn = conversation.turns.last?.id
+            // The transcript's first line: the last compaction's banner. Replay and
+            // reopen keep it (a durable event); sessions compacted before receipts
+            // existed show nothing.
+            if let kept = conversation.carriedForward {
+                CarriedForwardBanner(kept: kept)
+            }
+            // A row per piece of each turn: only what's on screen is built (see `TurnPart`).
+            ForEach(rows) { row in
+                TurnView(turn: row.turn, conversation: conversation, actions: actions, part: row.part,
+                         gap: row.gap, pinsFooter: footers.contains(row.turn.id))
+                    .equatable()
+                    .id(row.id)
+                    .background {
+                        if row.first, row.turn.id == lastTurn {
+                            Color.clear.onGeometryChange(for: CGFloat.self, of: { $0.frame(in: .named(Self.content)).minY }) {
+                                track.lastTurnTop = $0
                             }
                         }
-                }
-                // What follows the turns: cards that need you, the live line, a failure.
-                TranscriptTrailer(conversation: conversation)
-                Color.clear.frame(height: space.turn).id(Self.end)
+                    }
             }
+            // What follows the turns: cards that need you, the live line, a failure.
+            TranscriptTrailer(conversation: conversation)
+            Color.clear.frame(height: space.turn).id(Self.end)
+    }
+
+    private var transcript: some View {
+        ScrollView {
+            stackRows
             .scrollTargetLayout()
             .coordinateSpace(.named(Self.content))
             .environment(\.turnSpace, space)
+            .environment(\.transcriptEdge, edge)
             .frame(maxWidth: TurnSpace.measure)
-            .padding(.horizontal, TurnSpace.gutter)
+            .padding(.horizontal, edge.gutter)
             .padding(.top, TurnSpace.top)
             .padding(.bottom, TurnSpace.bottom)
             .frame(maxWidth: .infinity)
@@ -438,6 +458,17 @@ struct TranscriptView: View {
             .contentMargins(0, for: .scrollContent)
         }
         .scrollContentBackground(.hidden)
+        // The pane's width decides the gutter, and whether marks hang in it (`TranscriptEdge`).
+        .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { w in
+            paneWidth = w
+            if TranscriptMetrics.enabled {
+                let e = TranscriptEdge.of(paneWidth: w)
+                TranscriptMetrics.shared.pane = w
+                TranscriptMetrics.shared.gutter = e.gutter
+                TranscriptMetrics.shared.indent = e.indent
+                TranscriptMetrics.shared.column = min(TurnSpace.measure, w - 2 * e.gutter)
+            }
+        }
         .scrollPosition($position, anchor: .top)
         // The system's scroll-edge blur is hidden (see ScrollBackdropClear), so fade the
         // content out under the toolbar instead of letting it run into the title.
@@ -537,6 +568,8 @@ struct TranscriptTrailer: View {
 struct UserPrompt: View {
     let text: String
     var images: [ToolImage] = []
+    /// Receipts and actions, beside the bubble's bottom-left (the last bubble of a turn).
+    var actions: AnyView? = nil
 
     var body: some View {
         let (message, contexts) = PromptContext.split(text)
@@ -557,18 +590,26 @@ struct UserPrompt: View {
                 }
             }
             if !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let L = Tokens.Transcript.Layout.self
                 Text(message)
                     .font(.frog(size: TurnType.body))
+                    .fixedLine(Tokens.Transcript.body)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, TurnSpace.Inset.roomy + TurnSpace.Inset.tight)
-                    .padding(.vertical, TurnSpace.Inset.snug + TurnSpace.Inset.tight)
-                    // Neutral raised gray: the prompt is you, not the place that served
-                    // you. Where it ran shows in the model pill and the turn's footer.
-                    // 14×10 padding: the bubble hugs closer than the web's `.me` (9×13 at
-                    // 12px text) scaled up, so a short prompt doesn't float in a grey slab.
+                    .metricsFirstWord()
+                    // The transcript's bubble (`Layout.bubbleX` × `bubbleY`): one line is 38
+                    // tall, as on the web. Neutral raised gray: the prompt is you, not the
+                    // place that served you.
+                    .padding(.horizontal, L.bubbleX)
+                    .padding(.vertical, L.bubbleY)
                     .foregroundStyle(Tokens.text)
                     .background(Tokens.bubble, in: .rect(cornerRadius: Tokens.Radius.bubble, style: .continuous))
+                    .overlay(alignment: .bottomLeading) {
+                        if let actions {
+                            actions.fixedSize().alignmentGuide(.leading) { $0[.trailing] + TurnSpace.Inset.tight }
+                        }
+                    }
+                    .metricsRow(.prompt, message, key: "prompt-\(message.hashValue)", fontSize: TurnType.body)
             }
             ForEach(contexts) { ContextDisclosure(context: $0) }
         }
@@ -631,26 +672,24 @@ struct EndView: View {
         switch reason {
         case .complete, .denied:
             if let usage, usage.modelCalls > 0 {
-                HStack(spacing: TurnSpace.Inset.card) {
-                    // Where it ran, then what it cost (cloud) or how fast it wrote.
-                    if let spec = usage.model {
-                        ModelLabel(model: ModelIdentity.of(spec, in: models), size: .caption)
-                    }
-                    // Who served it is a place tag too: a Frog Cloud turn is cloud green whoever's
-                    // GPUs answered (docs/models.md, "Place color"), and reads as Frog Cloud
-                    // whoever proxied it (Cam, 2026-11-12: the upstream is opaque to the user;
-                    // `servedBy.name` keeps it for the log).
-                    if let s = usage.servedBy {
-                        Text(s.displayName).foregroundStyle(Color.place(.frogCloud))
-                    }
-                    // What it cost (cloud) or how fast it wrote; each opens its working.
-                    if let c = ModelStats.shared.cost(of: usage) {
-                        PriceHint(cost: c, usage: usage)
-                    } else if let tps = usage.tokensPerSec, tps > 0 {
-                        Text(ModelStats.speedText(tps))
-                            .help("\(usage.modelCalls) call\(usage.modelCalls == 1 ? "" : "s") · \(usage.inputTokens.tokens) in, \(usage.outputTokens.tokens) out") // advanced
+                // One meta line (docs/design/transcript/spec.md, "The footer"): the model in
+                // muted, Frog Cloud when it served the turn, then time, tokens written and cost,
+                // set off by middle dots. The cost opens its working (PriceCard).
+                HStack(spacing: 0) {
+                    let line = Self.footer(usage, models: models)
+                    ForEach(Array(line.enumerated()), id: \.offset) { i, part in
+                        if i > 0 { Text(verbatim: " · ") }
+                        switch part {
+                        case .model(let name):
+                            Text(name).foregroundStyle(Tokens.textSecondary).metricsFirstWord()
+                        case .text(let words, let help):
+                            Text(words).help(help)
+                        case .cost(let c):
+                            PriceHint(cost: c, usage: usage)
+                        }
                     }
                     if showEnergy, let e = usage.energy {
+                        Text(verbatim: " · ")
                         EnergyHint(energy: e, usage: usage)
                     }
                     Spacer(minLength: 8)
@@ -661,8 +700,12 @@ struct EndView: View {
                         .opacity(hovering ? 1 : 0)
                     }
                 }
-                .font(.caption2.monospacedDigit())
-                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+                .font(.frog(size: Tokens.Transcript.meta.size).monospacedDigit())
+                .foregroundStyle(Tokens.textTertiary)
+                .frame(height: Tokens.Transcript.meta.line)
+                .metricsRow(.footer, Self.footer(usage, models: models).map(\.words).joined(separator: " · "),
+                            key: "footer-\(usage.model ?? "")-\(usage.outputTokens)-\(usage.timing?.wallMs ?? 0)", fontSize: Tokens.Transcript.meta.size)
             }
         case .cancelled:
             banner("Interrupted", symbol: "stop.circle", color: .secondary)
@@ -700,6 +743,37 @@ struct EndView: View {
             }
         }
     }
+
+    @MainActor enum FooterPart {
+        case model(String)
+        case text(String, help: String)
+        case cost(Double)
+
+        var words: String {
+            switch self {
+            case .model(let s), .text(let s, _): s
+            case .cost(let c): ModelStats.money(c)
+            }
+        }
+    }
+
+    /// The footer's parts, in order: model, Frog Cloud, time, tokens written, cost.
+    static func footer(_ usage: TurnUsage, models: [ModelEntry]) -> [FooterPart] {
+        var out: [FooterPart] = []
+        if let spec = usage.model { out.append(.model(ModelIdentity.of(spec, in: models).name)) }
+        // Who served a Frog Cloud turn reads as Frog Cloud, whoever's GPUs answered (Cam, 2026-11-12).
+        if let s = usage.servedBy { out.append(.model(s.displayName)) }
+        if let ms = usage.timing?.wallMs { out.append(.text(seconds(ms), help: "Wall time for this turn")) }
+        if usage.outputTokens > 0 {
+            out.append(.text("\(usage.outputTokens.formatted(.number.grouping(.automatic).locale(Locale(identifier: "en_US")))) tokens",
+                             help: "\(usage.outputTokens.tokens) tokens written, \(usage.inputTokens.tokens) read"))
+        }
+        if let c = ModelStats.shared.cost(of: usage) { out.append(.cost(c)) }
+        return out
+    }
+
+    /// "9.0s", "56s", "2m 5s": the web's `seconds`.
+    static func seconds(_ ms: UInt64) -> String { StepLine.duration(Double(ms) / 1000) }
 
     private func banner(_ text: String, symbol: String, color: Color) -> some View {
         Label(text, systemImage: symbol)
