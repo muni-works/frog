@@ -8,7 +8,6 @@ final class CloudFlowTests: FlowTestCase {
     private var cloud: FakeFrogCloud!
 
     private func openCloud(signedIn: Bool, credit: Double = 500) throws {
-        try FlowWindow.requireScreen()
         cloud = try FakeFrogCloud()
         cloud.account.creditCents = credit
         try open()

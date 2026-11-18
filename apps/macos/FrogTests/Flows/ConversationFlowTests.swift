@@ -14,11 +14,11 @@ class FlowTestCase: XCTestCase {
 
     /// Opens the window on a fresh project. Call first in each test.
     func open(mode: Mode = .default, config: [String] = [], sharedHome: Bool = false) throws {
-        try FlowWindow.requireScreen()
         executionTimeAllowance = 120
         UserDefaults.standard.removeObject(forKey: "yoloConfirmed")
         engine = try ScriptedEngine.startNow(mode: mode, config: config, sharedHome: sharedHome)
         w = FlowWindow(folder: engine.folder)
+        try w.requireReadable()
     }
 
     override func tearDown() {
@@ -300,8 +300,8 @@ final class ComposerAndTitleFlowTests: FlowTestCase {
         w.press(.sheetButton("Move to Trash"))
         expect("the log left the sessions folder") { !FileManager.default.fileExists(atPath: log.path) }
         expect("the pane shows a fresh conversation") { self.c?.sessionID != id }
-        // Out of the Trash again: it's the developer's own.
-        let trash = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".Trash")
+        // Out of the Trash again: it's the developer's own (wherever macOS keeps it for this file).
+        guard let trash = try? FileManager.default.url(for: .trashDirectory, in: .userDomainMask, appropriateFor: log, create: false) else { return }
         for name in (try? FileManager.default.contentsOfDirectory(atPath: trash.path)) ?? [] where name.hasPrefix(id) {
             try? FileManager.default.removeItem(at: trash.appending(path: name))
         }
