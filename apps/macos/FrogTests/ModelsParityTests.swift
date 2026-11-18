@@ -49,8 +49,12 @@ final class ModelsParityTests: XCTestCase {
             }
             .frame(maxHeight: .infinity, alignment: .top)
         }
-        try render("models-settings", width: 620, height: 560) { MachinesSettings(devices: devices, fixtureAccount: ("Cam · cam@example.com", "$12.34")) }
-        try render("models-machine", width: 620, height: 560) { MachinesSettings(devices: devices, path: ["n1"], fixtureAccount: ("Cam · cam@example.com", "$12.34")) }
+        SettingsBindings.devices = devices
+        SettingsBindings.loads = false
+        CloudAccount.shared.stage(SettingsModeTests.fixtureAccount)
+        defer { SettingsBindings.loads = true; SettingsBindings.devices = Devices.shared; CloudAccount.shared.unstage() }
+        try render("models-settings", width: 820, height: 760) { SettingsSectionView(section: "models") }
+        try render("models-machine", width: 820, height: 760) { MachineSettingsPage(deviceID: "n1") {} }
     }
 
     private func header(_ title: String) -> some View {

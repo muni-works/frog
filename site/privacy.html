@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Privacy · Frog</title>
-<meta name="description" content="Frog has no telemetry. Everything that leaves your machine, and when.">
+<meta name="description" content="The Mac app sends nothing about you unless you turn it on. Everything that leaves your machine, and when.">
 <meta name="theme-color" content="#f6f5f1" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#141513" media="(prefers-color-scheme: dark)">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
@@ -82,7 +82,7 @@
 <main>
   <a class="back" href="/mac/">← Frog</a>
   <h1>Privacy</h1>
-  <p class="lede">Frog has no telemetry. Here's everything that leaves your machine, and when.</p>
+  <p class="lede">The Mac app sends nothing about you unless you turn on <b>Share usage with Frog</b>, which is off by default. Here's everything that leaves your machine, and when.</p>
 
   <section>
     <h2>Never collected</h2>
@@ -91,7 +91,7 @@
       <li>Your code, file names, paths or contents</li>
       <li>Repository names, branch names or git remotes</li>
       <li>IP addresses (not stored, not logged by us, not used for counting)</li>
-      <li>Device names, hardware ids, or any id that tells one install from another</li>
+      <li>Device names, hardware ids, or any id that tells one install from another (the one exception: the random install id described under Usage events, and only while you have it turned on)</li>
       <li>Cookies or fingerprints on frog.toys</li>
     </ul>
   </section>
@@ -112,6 +112,7 @@
           <tr><td><b>Provider model lists</b></td><td>Same, for each provider you've connected.</td><td>Your key for that provider, to that provider only.</td></tr>
           <tr><td><b>Model downloads</b><span class="det">huggingface.co</span></td><td>When you download a local model.</td><td>The names of the files being downloaded.</td></tr>
           <tr><td><b>Local servers</b><span class="det">ollama, LM Studio</span></td><td>When picking or listing models.</td><td>A request on your own machine.</td></tr>
+          <tr><td><b>Usage events</b><span class="det">api.frog.toys/v1/events</span></td><td>Mac app, only with <b>Share usage with Frog</b> on (Settings › General; off by default). A first local answer, a model download starting or finishing, an edit you allow, Run in Frog Cloud.</td><td>The event's name and a word or two (<code>apple</code> or <code>local</code>, never a model name). Signed in: your Frog Cloud key, so it counts toward your account. Signed out: a random install id, deleted when you turn the setting off.</td></tr>
           <tr><td><b>Updates</b><span class="det">frog.toys/appcast.xml</span></td><td>Mac app, about once a day.</td><td>The app version.</td></tr>
           <tr><td><b>Installer</b><span class="det">GitHub</span></td><td>When you run <code>install.sh</code> or <code>/node</code>.</td><td>An ordinary request for the latest release; GitHub's own logging applies.</td></tr>
         </tbody>
@@ -134,6 +135,7 @@
     <h2>Frog Cloud</h2>
     <p>If you sign up, we keep your account (email, name, sign-in method), your purchases (through Stripe; we never see card details) and per-request usage (model, token counts, cost, timing) so we can bill you. Never the text of requests made with an API key. Sessions you run in Frog Cloud keep their transcript and working files until you delete them, or for 30 days without activity. We don't train models on your code or sell your data. The full account policy is at <a href="https://api.frog.toys/privacy">api.frog.toys/privacy</a>.</p>
     <p>Our team gets anonymous notices: a new sign-up's country, credit bought, a plan started or cancelled, and daily totals. No names, emails or ids in any of them.</p>
+    <p>To see where people get stuck, Frog Cloud also records a short list of product events in PostHog, under your account's random id: account created and how you signed in, credit granted, GitHub connected, a session started, a turn finished, a pull request opened, out of credit, a payment or code redeemed with its amount, a plan started or cancelled, and clicks between the web and Mac apps. Our servers send them, never your browser, so PostHog doesn't see your IP address. Nothing you type, no code, file, repository or PR name, no email or name. The list is in <a href="https://github.com/muni-works/frog/blob/main/docs/design/funnel/events.md">docs/design/funnel/events.md</a>.</p>
   </section>
 
   <section>

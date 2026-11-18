@@ -38,6 +38,36 @@ final class TurnLineTests: XCTestCase {
         }
     }
 
+    /// "Thought for Ns", done correctly (#441): every case with reasoning says how long each
+    /// reasoning item thought. The turn line's thinking segments and the transcript's label both
+    /// say it: an older log (no `think_ms`) thinks until the first message or tool call logged
+    /// after it starts, or until it completed if that's sooner; `think_ms` is cut at completion.
+    @MainActor
+    func testThinkingTimesMatchTheEnginesCases() throws {
+        let data = try Data(contentsOf: root.appending(path: "docs/design/transcript/timeline.json"))
+        let raw = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        let cases = (raw["cases"] as! [[String: Any]]).filter { $0["thinking"] != nil }
+        XCTAssertGreaterThanOrEqual(cases.count, 10)
+        for c in cases {
+            let name = c["name"] as! String
+            let want = (c["thinking"] as! [[String: Any]]).map { (item: $0["item"] as! String, ms: ($0["ms"] as! NSNumber).uint64Value) }
+            let envs = try (c["events"] as! [Any]).map { try JSONDecoder.frog.decode(Envelope.self, from: JSONSerialization.data(withJSONObject: $0)) }
+            var timeline = TurnTimeline()
+            envs.forEach { timeline.record($0) }
+            XCTAssertEqual(timeline.thinking().map(\.item), want.map(\.item), "\(name): items")
+            XCTAssertEqual(timeline.thinking().map(\.ms), want.map(\.ms), "\(name): the turn line's thinking")
+            // The label, from the same events as the transcript reads them.
+            let conversation = Conversation(preview: URL(fileURLWithPath: "/tmp/demo"))
+            envs.forEach(conversation.ingest)
+            let items = conversation.turns.flatMap(\.items)
+            for w in want {
+                let item = try XCTUnwrap(items.first { $0.id == w.item }, "\(name): \(w.item)")
+                XCTAssertEqual(ThoughtLineView.words(item), "Thought for \(LiveStats.clock(max(1, Double(w.ms) / 1000)))",
+                               "\(name): \(w.item)'s label")
+            }
+        }
+    }
+
     private func seg(_ k: TurnTimeline.Kind, _ a: UInt64, _ b: UInt64, _ item: String?) -> TurnTimeline.Segment {
         TurnTimeline.Segment(kind: k, startMs: a, endMs: b, item: item)
     }

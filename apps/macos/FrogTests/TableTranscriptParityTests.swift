@@ -181,13 +181,13 @@ final class TableTranscriptParityTests: XCTestCase {
     /// Both ways an answer starts: after tool calls (it stops at the answer), and as the turn's
     /// first words (it stops at the prompt above them).
     func testStreamingALongAnswerStopsAtItsStart() throws {
-        // CI (`TestRunner.isCI`): skipped until the lazy stack's hang after a park is understood.
-        // On the macOS 26 runner, after the view stops at a long answer's start, the main thread
-        // can stay pegged in lazy-stack layout and the streamed words stop reaching the screen, so
-        // this test ran past the 5-minute allowance (probe run 44221344446, 1 in 3 iterations).
-        // That is a product bug still being chased, not this test's timing; locally every
-        // assertion here holds as written, so it runs on a Mac.
-        try XCTSkipIf(TestRunner.isCI, "the lazy stack can hang after stopping at a long answer's start on the macOS 26 runner (open; see #408)")
+        // CI (`TestRunner.isCI`): skipped. On the macOS 26 runner the stop lands late: in 3 of 50
+        // runs (probe run 44340604147) the answer's start went 33-91 pt above the top before the
+        // view stopped (lazy stack, and once the table), and the lazy stack wasn't left at the
+        // start. That is an open product difference on macOS 26, not this test's timing (the hang
+        // it also used to hit was the new-turn scroll inside SwiftUI's update, fixed). Locally
+        // every assertion holds.
+        try XCTSkipIf(TestRunner.isCI, "the stop at a long answer's start lands late on the macOS 26 runner (open)")
         for table in [false, true] {
           for tools in [true, false] {
             let c = open(table: table, turns: 30)

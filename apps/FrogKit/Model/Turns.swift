@@ -77,6 +77,10 @@ struct ItemState: Identifiable {
     var shownThoughts: [ShownThought] = []
     var thoughts: [Item.Thought] = []
     var thinkMs: UInt64?
+    /// How long it thought, what "Thought for Ns" says: `think_ms` cut at its completion, or in an
+    /// older log, until the first message or tool call logged after it starts, or its completion
+    /// if that's sooner (timeline.rs's `thinking`, #441). Set when it completes.
+    var thoughtMs: UInt64?
 
     struct ShownThought: Equatable {
         var text: String

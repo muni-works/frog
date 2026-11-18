@@ -102,9 +102,22 @@ final class Workspace {
     static var startingModel: String? { startingModel() }
 
     static func startingModel(_ d: UserDefaults = .standard, apple: Bool = AppleIntelligence.available) -> String? {
-        if d.string(forKey: "newMessageModelPolicy") == "fixed",
-           let s = d.string(forKey: "defaultModel"), !s.isEmpty { return s }
+        // Settings › Models › New conversations use: one model every time, else the last one.
+        // (The old "New messages use" policy is cut, board 7: a conversation keeps its model.)
+        if let s = d.string(forKey: "defaultModel"), !s.isEmpty { return s }
         return lastUsed(d, apple: apple)
+    }
+
+    /// "New messages use" is gone (board 7), and with it the switch that kept `defaultModel`
+    /// from applying. A model left there while the policy said "last" wasn't in use: forget it,
+    /// so nobody's new conversations change model on update. Runs once at launch.
+    static func dropModelPolicy(_ d: UserDefaults = .standard) {
+        // Also cut: "Show cloud models in the picker". Nothing reads it now; a stored "off"
+        // goes with it so it can't come back to life.
+        d.removeObject(forKey: ModelMenu.showCloudKey)
+        guard let policy = d.string(forKey: "newMessageModelPolicy") else { return }
+        if policy != "fixed" { d.removeObject(forKey: "defaultModel") }
+        d.removeObject(forKey: "newMessageModelPolicy")
     }
 
     /// The model picked last, or Apple Intelligence before anything has been.
@@ -147,8 +160,7 @@ final class Workspace {
         // The model the last turn that actually ran used. A turn that never reached the model
         // (a provider error, a 401, an unreachable server) carries that model in its usage with
         // no calls behind it: inheriting it would hand the next message the same dead model.
-        if UserDefaults.standard.string(forKey: "newMessageModelPolicy") != "fixed",
-           let model = conversation?.turns.reversed()
+        if let model = conversation?.turns.reversed()
             .compactMap({ $0.usage.flatMap { $0.modelCalls > 0 ? $0.model : nil } })
             .first { return model }
         return conversation?.status?.model ?? preferredModel
@@ -349,18 +361,96 @@ final class Workspace {
     var cloudTarget: String??
 
     func runInCloud(_ text: String, repo: String?? = nil) async {
+        Funnel.track("handoff_clicked", ["from": "mac", "to": "cloud", "where": "composer"])
         let folder = folder
         // Off the main thread: it runs git and waits, which spins the main run loop.
         let repo: String? = if let repo { repo } else {
             await Task.detached(priority: .userInitiated) { CloudSessions.githubRepo(of: folder) }.value
         }
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, let gateway = CloudSessions.shared.gateway else {
+            do {
+                guard let s = try await CloudSessions.shared.create(repo: repo) else { return }
+                cloudTarget = nil
+                openCloud(s.id)
+            } catch {
+                raceError = CloudFailure.text(error, doing: "start a Frog Cloud session")
+            }
+            return
+        }
+        // One conversation from Send to its first turn (`CloudStart`, the web's #447): the
+        // message is the first turn at once, and its live row says how far the start has got.
+        let start = CloudStart(text: text, repo: repo)
+        let link = PendingCloudLink()
+        let c = Conversation(folder: folder, link: link, replay: false)
+        start.onRetry = { [weak self, weak c] in
+            guard let self, let c else { return }
+            self.retryStart(c)
+        }
+        cloudTarget = nil
+        incoming?.stop(reason: "open superseded")
+        incoming = c
+        show(c)
+        c.open(start)
+        await boot(c, start, link, gateway)
+    }
+
+    /// The start's POST, then its session's state until the engine is up (`CloudStart`).
+    private func boot(_ c: Conversation, _ start: CloudStart, _ link: PendingCloudLink, _ gateway: CloudGateway) async {
+        let s: CloudGateway.Session
         do {
-            guard let s = try await CloudSessions.shared.create(repo: repo) else { return }
-            cloudTarget = nil
-            openCloud(s.id)
-            if !text.isEmpty { conversation?.submit(text) }
+            s = try await gateway.create(repo: start.repo, model: nil)
         } catch {
-            raceError = CloudFailure.text(error, doing: "start a Frog Cloud session")
+            c.startFailed(CloudFailure.text(error, doing: "start a Frog Cloud session"))
+            return
+        }
+        guard c.start === start else { return }
+        start.session = s.id
+        c.cloudSession = s.id
+        link.attach(CloudLink(gateway: gateway, session: s.id))
+        if conversation === c {
+            selection = s.id
+            currentSession = s.id
+        }
+        Task { await CloudSessions.shared.refresh() }
+        observe(s, c, start)
+        // While it boots, its state every 2 s rather than at the list's 15 s, so a boot that
+        // failed says so soon after.
+        while c.start === start, !start.failed, start.handedAt == nil, start.stage != .engine, !c.stopping {
+            try? await Task.sleep(for: .seconds(2))
+            guard c.start === start, !start.failed, start.handedAt == nil, !c.stopping else { return }
+            if let now = try? await gateway.session(s.id) { observe(now, c, start) }
+        }
+    }
+
+    /// What the gateway says of a starting session, on its row.
+    private func observe(_ s: CloudGateway.Session, _ c: Conversation, _ start: CloudStart) {
+        switch s.state {
+        case "running": start.reached(.engine)
+        case "error": c.startFailed(CloudFailure.session(s.error))
+        default: start.reached(.booting)
+        }
+    }
+
+    /// Try again on a start that failed: the sandbox is up but no turn came, so the message (or
+    /// `text`, typed instead) goes again to the same session; otherwise a fresh sandbox, in
+    /// place, and the failed one goes (it holds nothing yet).
+    func retryStart(_ c: Conversation, text: String? = nil) {
+        guard let old = c.start, old.handedAt == nil, let link = c.link as? PendingCloudLink,
+              let gateway = CloudSessions.shared.gateway else { return }
+        if old.stuck(at: .now) { return c.resendStart(text) }
+        guard old.failed else { return }
+        let start = CloudStart(text: text ?? c.turns.first?.input ?? old.text, repo: old.repo)
+        start.onRetry = old.onRetry
+        link.reset()
+        c.cloudSession = nil
+        c.restart(start)
+        Task {
+            if let id = old.session {
+                // First, so it doesn't count against the running limit.
+                try? await gateway.remove(id)
+            }
+            await boot(c, start, link, gateway)
         }
     }
 

@@ -112,8 +112,7 @@ extension ComposerView {
         case "open_login":
             Task { _ = try? await CloudAccount.signInAndSave(provider: "github"); await loadCloudRepos() }
         case "open_billing":
-            UserDefaults.standard.set("billing", forKey: "settingsTab")
-            openSettings()
+            showSettings?("billing")
         case "set_mode": if case .string(let m) = e.fields["mode"], let mode = ComposerModel.Mode(rawValue: m) { conversation.setMode(Self.mode(mode)) }
         case "open_mic_settings":
             NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!)

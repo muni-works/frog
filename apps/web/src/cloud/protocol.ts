@@ -6,6 +6,9 @@ export type Decision = "allow" | "allow_always" | "deny";
 export type Op =
   | { op: "submit"; text: string; images?: Image[]; more?: Part[] }
   | { op: "interrupt" }
+  /** Op::Continue: run a turn on the (repaired) history with `note` as its message; the wall
+   *  resumes a turn that stopped on credit with it (wall.ts resumeNote). */
+  | { op: "continue"; note?: string }
   | { op: "compact"; focus?: string }
   | { op: "permission"; id: string; decision: Decision; note?: string }
   | { op: "answer"; id: string; choices?: string[]; other?: string }

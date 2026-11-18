@@ -40,6 +40,10 @@ targets:
       - path: ../../catalog/local-models.json
         buildPhase: resources
         group: Catalog
+      # Every setting and its section (design/settings.json): the web reads it too.
+      - path: ../../design/settings.json
+        buildPhase: resources
+        group: Catalog
       # Shared with the iOS app and its extensions (see FrogKit/README.md).
       - path: ../FrogKit
         excludes: ["README.md"]
@@ -57,6 +61,12 @@ targets:
         SUPublicEDKey: $(SPARKLE_PUBLIC_KEY)
         LSApplicationCategoryType: public.app-category.developer-tools
         NSUserActivityTypes: [toys.frog.conversation]
+        # frog://settings/<section> opens Settings on that section (the web's "Open in Frog for Mac").
+        # Debug builds answer frog-dev:// instead, so a stray build never takes the installed
+        # app's links (the same reason they have their own bundle id, below).
+        CFBundleURLTypes:
+          - CFBundleURLName: toys.frog.links
+            CFBundleURLSchemes: [$(FROG_URL_SCHEME)]
         NSLocalNetworkUsageDescription: "frog on your iPhone connects to this Mac over your network, and frog finds machines that can run models for you on it."
         NSBonjourServices: [_frog._tcp, _frog-node._tcp]
         NSHumanReadableCopyright: "© 2026 Municipal Robotics"
@@ -69,6 +79,7 @@ targets:
         # The EdDSA public key for update signatures. Its private half lives in the release
         # machine's Keychain (Sparkle's generate_keys); see scripts/release.sh.
         SPARKLE_PUBLIC_KEY: BLziGLx/omop7rhIoQuyOTqj1ssTJi+KJcGfpIAL1WY=
+        FROG_URL_SCHEME: frog
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
       # Debug builds (this checkout, worktrees, agents) are their own app, so macOS never
@@ -76,6 +87,7 @@ targets:
       configs:
         Debug:
           PRODUCT_BUNDLE_IDENTIFIER: toys.frog.dev
+          FROG_URL_SCHEME: frog-dev
     preBuildScripts:
       - name: Build frog engine
         script: '"$SRCROOT/scripts/build-engine.sh"'

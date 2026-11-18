@@ -41,6 +41,8 @@ struct CloudGateway: Sendable {
     private struct List: Decodable { let sessions: [Session] }
 
     func sessions() async throws -> [Session] { try await req(List.self, "GET", "v1/sessions").sessions }
+    /// One session as listed, for its state while it starts.
+    func session(_ id: String) async throws -> Session { try await req(Session.self, "GET", "v1/sessions/\(id)") }
     func repos() async throws -> Repos { try await req(Repos.self, "GET", "v1/repos") }
     func create(repo: String?, model: String?) async throws -> Session {
         var body: [String: String] = [:]

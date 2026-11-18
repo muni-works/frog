@@ -103,6 +103,7 @@ struct SessionList: View {
     @Environment(\.paneNumbers) private var paneNumbers
     @Environment(\.switchFolder) private var switchFolder
     @Environment(\.showDocs) private var showDocs
+    @Environment(\.showSettings) private var showSettings
 
     /// Conversations shown per project before "Show more".
     static let groupLimit = 5
@@ -252,6 +253,13 @@ struct SessionList: View {
                 Button(action: showDocs) { ShellRow(symbol: "book", title: "Documentation") }
                     .buttonStyle(.plain)
                     .help("Frog documentation")
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 2)
+            }
+            if let showSettings {
+                Button { showSettings(nil) } label: { ShellRow(symbol: "gearshape", title: "Settings", key: "⌘,") }
+                    .buttonStyle(.plain)
+                    .help("Settings (⌘,)")
                     .padding(.horizontal, 8)
                     .padding(.bottom, 2)
             }

@@ -32,6 +32,23 @@ enum CloudFailure {
          .secureConnectionFailed].contains(e.code)
     }
 
+    /// A session the gateway lists as `error`, in words (the web's `plainError`): an OS error
+    /// number becomes what it means; nothing at all is "The sandbox couldn't start."
+    static func session(_ raw: String?) -> String {
+        let s = (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !s.isEmpty else { return "The sandbox couldn't start." }
+        if s.range(of: #"\bno session \S+"#, options: [.regularExpression, .caseInsensitive]) != nil {
+            return "This session's history isn't in the sandbox anymore, so it couldn't reopen. Start a new session."
+        }
+        guard let r = s.range(of: #"\(os error (\d+)\)"#, options: [.regularExpression, .caseInsensitive]) else { return s }
+        switch Int(s[r].filter(\.isNumber)) {
+        case 2: return "A file Frog needed is missing, so it stopped. Try again, or start a new session."
+        case 1, 13: return "Frog wasn't allowed to open a file it needs. Try again, or start a new session."
+        case 28: return "The sandbox disk is full. Start a new session."
+        default: return "Frog hit a system error and stopped. Try again."
+        }
+    }
+
     /// `doing` finishes "Couldn't …", e.g. "start a Frog Cloud session".
     static func text(_ error: Error, doing: String) -> String {
         if let e = error as? URLError, offline(e) { return offlineText }

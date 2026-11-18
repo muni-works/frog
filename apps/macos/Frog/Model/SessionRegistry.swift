@@ -302,13 +302,19 @@ final class QuitGuard: NSObject, NSApplicationDelegate {
     /// window closed.
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard !SingleInstance.isTesting else { return }
+        AppTheme.apply()
+        Workspace.dropModelPolicy()
         Snapshot.scheduleIfAsked()
         SingleInstance.listen()
     }
 
     /// A folder opened from Finder or dropped on the Dock icon while Frog runs: its own window.
     func application(_ application: NSApplication, open urls: [URL]) {
-        for url in urls where url.hasDirectoryPath || (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
+        // frog://settings/<section>: Settings mode on that section, in the front window.
+        for url in urls {
+            if let section = SettingsCatalog.bundled.section(for: url) { SettingsRequest.post(section) }
+        }
+        for url in urls where url.isFileURL && (url.hasDirectoryPath || (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true) {
             FolderOpener.open(url)
         }
     }

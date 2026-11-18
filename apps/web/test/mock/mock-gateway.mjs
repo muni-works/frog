@@ -18,18 +18,23 @@ import { loadFixture, Recorded } from "./session.mjs";
 import { mintPreview, okPort, previewTarget, servePreview, upgradePreview } from "./preview.mjs";
 import { accountRoutes } from "./account.mjs";
 
+/** What a played turn of demo.jsonl costs at account.mjs's qwen3-coder-next prices (120 in, 18 out). */
+const MOCK_TURN_CENTS = 6;
+/** The usage a turn stopped on credit reports: the one model call that ran before the refusal. */
+const STOPPED_USAGE = { context_tokens: null, input_tokens: 120, output_tokens: 18, model_calls: 1, tokens_per_sec: null, timing: { wall_ms: 700, prefill_ms: 0, decode_ms: 0, think_ms: 0, tool_ms: 0, user_ms: 0, classifier_ms: 0, compact_ms: 0, other_ms: 0 }, model: "cloud/qwen3-coder-next" };
+
 const arg = (name, fallback) => {
   const i = process.argv.indexOf(`--${name}`);
   return i > 0 ? process.argv[i + 1] : fallback;
 };
 
-export function startMock({ port = 8788, fixture = new URL("./demo.jsonl", import.meta.url).pathname, delayMs = 15, previewScript, previews = true } = {}) {
+export function startMock({ port = 8788, fixture = new URL("./demo.jsonl", import.meta.url).pathname, delayMs = 15, previewScript, previews = true, bootMs = 0, bootFail = null, fresh = false, createMs = 0, welcomeMs = 0, autoAllow = false } = {}) {
   const events = loadFixture(fixture);
   const sessions = new Map(); // id → { info, rec }
   const account_ = accountRoutes(); // local addition: the edge's account routes (./account.mjs)
 
   const json = (res, status, body) => res.writeHead(status, { "content-type": "application/json" }).end(body === undefined ? "" : JSON.stringify(body));
-  const summary = ({ info }) => ({ id: info.id, title: info.title, repo: info.repo, branch: info.branch, state: info.state, updated: info.updated });
+  const summary = ({ info }) => ({ id: info.id, title: info.title, repo: info.repo, branch: info.branch, state: info.state, updated: info.updated, ...(info.error ? { error: info.error } : {}) });
   const bearer = (req) => {
     const h = req.headers.authorization ?? "";
     if (h.startsWith("Bearer ") && h.slice(7).trim()) return h.slice(7).trim();
@@ -63,18 +68,25 @@ export function startMock({ port = 8788, fixture = new URL("./demo.jsonl", impor
       }
       // A repo is optional, as on the real gateway (zest sandbox/src/router.ts); one given must be owner/name.
       if (b.repo != null && (typeof b.repo !== "string" || !/^[\w.-]+\/[\w.-]+$/.test(b.repo))) return json(res, 400, { error: "repo must be owner/name" });
+      // Local addition: `createMs` holds the POST answer that long (a slow gateway or cold DO).
+      if (createMs > 0) await new Promise((ok) => setTimeout(ok, createMs));
       const id = "s_" + randomBytes(10).toString("hex");
       const now = Date.now();
-      const info = { id, account, repo: b.repo ?? "", branch: b.repo ? b.branch ?? `frog/${b.repo.split("/")[1]}-${id.slice(2, 8)}` : "", title: b.repo ?? "New session", state: "running", created: now, updated: now };
+      // Local addition: `bootMs` boots like zest (session.ts create): 201 at once with state
+      // "starting", the socket welcomes at once, and a submit waits for the boot before the
+      // engine sees it. `bootFail` ends the boot in state "error" with that reason instead.
+      const info = { id, account, repo: b.repo ?? "", branch: b.repo ? b.branch ?? `frog/${b.repo.split("/")[1]}-${id.slice(2, 8)}` : "", title: b.repo ?? "New session", state: bootMs > 0 ? "starting" : "running", created: now, updated: now };
       const rec = new Recorded(id, events);
-      // One recorded turn already in the log, so a fresh attach has something to replay.
-      for (const e of events) {
+      const booted = bootMs > 0 ? new Promise((ok) => setTimeout(() => { Object.assign(info, bootFail ? { state: "error", error: bootFail } : { state: "running" }); ok(!bootFail); }, bootMs)) : Promise.resolve(true);
+      // One recorded turn already in the log, so a fresh attach has something to replay
+      // (local addition: not with `fresh`, which starts empty like a real new session).
+      if (!fresh) for (const e of events) {
         rec.emit(e.event === "turn_started" ? { ...e, input: "(recorded)" } : e);
         if (e.event === "permission_request") rec.permission({ id: e.id, decision: "allow" });
       }
       // Live turns number on from the recorded one, as a real session's would.
-      rec.turn = Math.max(0, ...events.filter((e) => e.event === "turn_started").map((e) => e.turn ?? 0));
-      sessions.set(id, { info, rec });
+      if (!fresh) rec.turn = Math.max(0, ...events.filter((e) => e.event === "turn_started").map((e) => e.turn ?? 0));
+      sessions.set(id, { info, rec, booted });
       const origin = `ws://${req.headers.host}`;
       return json(res, 201, { ...summary({ info }), ws: `${origin}/v1/sessions/${id}/ws` });
     }
@@ -131,6 +143,16 @@ export function startMock({ port = 8788, fixture = new URL("./demo.jsonl", impor
           conn.send(JSON.stringify({ refused: { reason: "protocol", min: 1, max: 1, upgrade: "https://frog.toys/download" } }));
           return conn.close(4001, "protocol");
         }
+        // Local addition: `welcomeMs` delays the welcome (handshake latency on a real network).
+        if (welcomeMs > 0) {
+          live = true; // nothing else is read until the welcome has gone
+          setTimeout(() => {
+            conn.send(JSON.stringify({ welcome: { protocol: 1, session: s.info.id, engine: "frog-mock/0.1.0", last_seq: s.rec.lastSeq() } }));
+            for (const t of s.rec.after(Number(v.hello.resume_after) || 0)) conn.send(t);
+            s.rec.peers.add(conn);
+          }, welcomeMs);
+          return;
+        }
         conn.send(JSON.stringify({ welcome: { protocol: 1, session: s.info.id, engine: "frog-mock/0.1.0", last_seq: s.rec.lastSeq() } }));
         for (const t of s.rec.after(Number(v.hello.resume_after) || 0)) conn.send(t);
         live = true;
@@ -138,7 +160,17 @@ export function startMock({ port = 8788, fixture = new URL("./demo.jsonl", impor
         return;
       }
       s.info.updated = Date.now();
-      if (v.op === "submit") void s.rec.play(typeof v.text === "string" ? v.text : "", delayMs);
+      // Local addition (the credit wall): a turn plays only on credit, each costs MOCK_TURN_CENTS,
+      // and one that can't pay for itself stops after its tool call with billing_limit, as the
+      // engine does when the edge refuses its next model call. Op::Continue plays like a submit.
+      if (v.op === "submit" || v.op === "continue") {
+        const input = v.op === "submit" ? (typeof v.text === "string" ? v.text : "") : typeof v.note === "string" ? v.note : "<resumed after the app restarted; your previous turn was interrupted; continue>";
+        const a = account_.accounts(s.info.account).account;
+        const stop = a.credit_cents >= MOCK_TURN_CENTS ? undefined : { after: a.credit_cents > 0 ? "i2" : null, reason: { type: "billing_limit", window: "credit", reason: "out of credit" }, usage: a.credit_cents > 0 ? { ...STOPPED_USAGE } : undefined };
+        a.credit_cents = stop ? Math.min(0, a.credit_cents - MOCK_TURN_CENTS) : a.credit_cents - MOCK_TURN_CENTS;
+        // Local addition (slow starts): the engine sees it once the boot is done; a failed boot drops it.
+        void s.booted.then((ok) => ok && s.rec.play(input, delayMs, { autoAllow, stop }));
+      }
       else if (v.op === "permission" && typeof v.id === "string") s.rec.permission(v);
       // A preview pane the client asked for: the engine opens it and the client loads its URL.
       else if (v.op === "pane_open" && v.kind === "preview") s.rec.emit({ event: "pane_opened", id: `p${(s.panes = (s.panes ?? 0) + 1)}`, kind: "preview", title: v.url ?? "preview", ...(v.url ? { url: v.url } : {}) });
@@ -150,6 +182,6 @@ export function startMock({ port = 8788, fixture = new URL("./demo.jsonl", impor
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const { port } = await startMock({ port: Number(arg("port", 8788)), ...(arg("fixture") ? { fixture: arg("fixture") } : {}), previewScript: arg("preview-script") ?? new URL("../../public/preview.js", import.meta.url).pathname });
+  const { port } = await startMock({ port: Number(arg("port", 8788)), ...(arg("fixture") ? { fixture: arg("fixture") } : {}), previewScript: arg("preview-script") ?? new URL("../../public/preview.js", import.meta.url).pathname, bootMs: Number(arg("boot-ms", 0)), bootFail: arg("boot-fail") ?? null, fresh: process.argv.includes("--fresh"), createMs: Number(arg("create-ms", 0)), welcomeMs: Number(arg("welcome-ms", 0)), autoAllow: process.argv.includes("--auto-allow") });
   console.log(`mock gateway on http://127.0.0.1:${port} (any bearer key is an account)`);
 }

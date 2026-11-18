@@ -39,43 +39,53 @@ struct MachineModelsSections: View {
             }
     }
 
+    /// Settings' look (docs/design/app-shell.md): group labels and hairline rows, no Form.
     @ViewBuilder private func content(_ list: LocalModelList) -> some View {
         let named = device.role == .thisMac ? "this Mac" : device.name
-        ticking(Section {
-            if !device.online {
-                Text("Not answering.").foregroundStyle(Tokens.textTertiary)
-            } else if list.recommended.isEmpty {
-                Text("None of Frog's models fit in \(named)'s memory.").foregroundStyle(Tokens.textTertiary)
+        ticking(VStack(alignment: .leading, spacing: 0) {
+            SettingsGroupLabel(text: "Recommended for \(named)")
+            SettingsRows {
+                if !device.online {
+                    SettingsRow("Not answering") { EmptyView() }
+                } else if list.recommended.isEmpty {
+                    SettingsRow("None of Frog's models fit in \(named)'s memory") { EmptyView() }
+                }
+                ForEach(list.recommended) { LocalModelRowView(row: $0, device: device, devices: devices).padding(.vertical, 8) }
             }
-            ForEach(list.recommended) { LocalModelRowView(row: $0, device: device, devices: devices) }
-        } header: {
-            Text("Recommended for \(named)")
-        } footer: {
             VStack(alignment: .leading, spacing: 6) {
                 if let note = list.machineNote {
-                    Text(note).font(.frog(size: 11)).foregroundStyle(device.stuckLoad != nil ? Tokens.signal : Tokens.textSecondary)
+                    Text(note).font(.frog(size: 12)).foregroundStyle(device.stuckLoad != nil ? Tokens.signal : Tokens.textTertiary)
                 }
                 if let note = list.cloudNote {
-                    Text(note).font(.frog(size: 11)).foregroundStyle(Tokens.textTertiary)
+                    Text(note).font(.frog(size: 12)).foregroundStyle(Tokens.textTertiary)
                 }
             }
             .fixedSize(horizontal: false, vertical: true)
-        })
-        if !list.onMachine.isEmpty {
-            Section("Also on \(named)") {
-                ForEach(list.onMachine) { LocalModelRowView(row: $0, device: device, devices: devices) }
-            }
-        }
-        if !list.more.isEmpty, device.online {
-            Section {
-                DisclosureGroup(isExpanded: $moreOpen) {
-                    ForEach(list.more) { LocalModelRowView(row: $0, device: device, devices: devices) }
-                } label: {
-                    Text("More models").foregroundStyle(Tokens.textSecondary)
-                    + Text("  \(list.more.count)").foregroundStyle(Tokens.textTertiary)
+            if !list.onMachine.isEmpty {
+                SettingsGroupLabel(text: "Also on \(named)")
+                SettingsRows {
+                    ForEach(list.onMachine) { LocalModelRowView(row: $0, device: device, devices: devices).padding(.vertical, 8) }
                 }
             }
-        }
+            if !list.more.isEmpty, device.online {
+                Button { moreOpen.toggle() } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: moreOpen ? "chevron.down" : "chevron.right").font(.frog(size: 10, weight: .semibold))
+                        Text("More models").foregroundStyle(Tokens.textSecondary)
+                        Text("\(list.more.count)").foregroundStyle(Tokens.textTertiary)
+                    }
+                    .font(.frog(size: 12, weight: .semibold))
+                    .padding(.top, 22).padding(.bottom, 4)
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                if moreOpen {
+                    SettingsRows {
+                        ForEach(list.more) { LocalModelRowView(row: $0, device: device, devices: devices).padding(.vertical, 8) }
+                    }
+                }
+            }
+        })
     }
 
     /// This Mac's own downloads, by repo.
