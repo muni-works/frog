@@ -581,7 +581,7 @@ export default function App() {
           <h1>What should we work on?</h1>
           <div className="home-sub">
             <p>Frog is a coding agent for your repos: open models, on your machines or in Frog Cloud.</p>
-            <p><b>$1 of Frog Cloud credit free when you connect GitHub.</b></p>
+            <p><b>25¢ of Frog Cloud credit free, $1 when you connect GitHub.</b></p>
           </div>
           <HowItWorks />
           <Trust />
