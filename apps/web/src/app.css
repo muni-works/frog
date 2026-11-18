@@ -669,7 +669,7 @@ button.tool:hover .tool-chev { opacity: 1; }
    two rows at rest (field, controls), the status line above them only when there's something to
    say. No shadow, no glass. Only the action is filled, and only Send is green. */
 .cz { position: relative; width: 100%; box-sizing: border-box; padding: 6px 0; }
-.cz-card { container-type: inline-size; display: flex; flex-direction: column; background: var(--card); border: 1px solid var(--line-strong); border-radius: var(--radius-field); box-shadow: none; transition: border-color .12s; }
+.cz-card { container-type: inline-size; display: flex; flex-direction: column; background: var(--card); border: 1px solid var(--edge); border-radius: var(--radius-field); box-shadow: none; transition: border-color .12s; }
 .cz-card:focus-within { border-color: var(--muted); }
 .cz-card textarea { display: block; width: 100%; box-sizing: border-box; border: 0; background: transparent; resize: none; outline: none; padding: 12px 14px 4px; font: 15px/21px var(--font-sans); color: var(--fg); caret-color: var(--frog); height: 37px; max-height: 226px; overflow-y: auto; }
 .cz-card textarea::placeholder { color: var(--faint); }
