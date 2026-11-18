@@ -1,0 +1,2 @@
+ok  	example.com/gomod/shapes	0.109s
+ok  	example.com/gomod/sizes	0.107s

@@ -1,0 +1,36 @@
+.F.sF..E                                                                 [100%]
+==================================== ERRORS ====================================
+________________________ ERROR at setup of test_uses_db ________________________
+
+    @pytest.fixture
+    def db():
+>       raise RuntimeError("no database")
+E       RuntimeError: no database
+
+tests/test_shapes.py:16: RuntimeError
+=================================== FAILURES ===================================
+___________________________________ test_add ___________________________________
+
+>   def test_add(): assert add(2, 2) == 5
+                    ^^^^^^^^^^^^^^^^^^^^^
+E   assert 4 == 5
+E    +  where 4 = add(2, 2)
+
+tests/test_shapes.py:7: AssertionError
+_______________________________ test_positive[1] _______________________________
+
+n = 1
+
+    @pytest.mark.parametrize("n", [1, 2, 3])
+>   def test_positive(n): assert square(n) > 1
+                          ^^^^^^^^^^^^^^^^^^^^
+E   assert 1 > 1
+E    +  where 1 = square(1)
+
+tests/test_shapes.py:12: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_shapes.py::test_add - assert 4 == 5
+FAILED tests/test_shapes.py::test_positive[1] - assert 1 > 1
+ERROR tests/test_shapes.py::test_uses_db - RuntimeError: no database
+2 failed, 4 passed, 1 skipped, 1 error in 0.01s
+[exit code 1]

@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The turn line and the waterfall</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.b{box-sizing:border-box;background:#0a0a0a;color:#ececec;font:13px/16px -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;padding:40px;display:flex;flex-direction:column;gap:20px}
+.h{font-size:22px;line-height:26px;font-weight:600;margin:0}
+.h2{font-size:13px;line-height:16px;font-weight:600;margin:0}
+.sub{color:#a3a3a3;margin:6px 0 0;max-width:860px;line-height:18px}
+.g{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 20px;align-items:start}
+.cell{display:flex;flex-direction:column;gap:6px}
+.cap{color:#a3a3a3;font-size:12px;line-height:16px}
+.cap b{color:#ececec;font-weight:600}
+.pn{background:#000;border-radius:12px;padding:14px 18px}
+.r{display:flex;align-items:center;gap:10px;height:18px}
+.d{width:7px;height:7px;border-radius:50%;background:#58cc6f;flex:none}
+.th{flex:1;min-width:0;color:#a3a3a3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sb{display:flex;align-items:center;gap:12px;margin-top:8px;color:#808080;font:11px/16px ui-monospace,"SF Mono",Menlo,monospace;font-variant-numeric:tabular-nums}
+.sb:not(.hot):not(:hover) svg polyline{stroke:#5c5c5c}
+.sb:not(.hot):not(:hover) svg rect{fill:#444}
+.sb svg polyline,.sb svg rect{transition:stroke .15s ease-out,fill .15s ease-out}
+.sb svg{order:9}
+.sb svg+span::before{content:"·";margin-right:12px}
+.ans{color:#ececec;line-height:19px}
+.tip{display:inline-block;background:#121212;border:1px solid #2a2a2a;border-radius:8px;padding:5px 9px;color:#ececec;font-size:12px;line-height:16px}
+.tip span{color:#808080}
+.wf{display:grid;grid-template-columns:190px minmax(0,1fr) 46px;align-items:center;gap:0 12px}
+.wf .n{height:24px;display:flex;align-items:center;gap:8px;color:#a3a3a3;white-space:nowrap;overflow:hidden;padding:0 6px;margin:0 -6px;border-radius:7px}
+.wf .n b{color:#ececec;font-weight:400;font:12px/16px ui-monospace,Menlo,monospace;overflow:hidden;text-overflow:ellipsis}
+.wf .n.hv{background:rgba(255,255,255,.07);color:#ececec}
+.wf .t{position:relative;height:24px}
+.wf .t span{position:absolute;top:8px;height:8px;border-radius:2px}
+.wf .t.ax{height:30px}
+.wf .x{color:#808080;font:11px/16px ui-monospace,Menlo,monospace;text-align:right;font-variant-numeric:tabular-nums}
+.tick{position:absolute;top:0;bottom:0;width:1px;background:#1a1a1a}
+.tk{position:absolute;top:-16px;color:#808080;font:10px/13px ui-monospace,Menlo,monospace;transform:translateX(-50%)}
+.key{display:flex;gap:16px;color:#808080;font-size:11px;line-height:14px;margin-top:10px}
+.key i{display:inline-block;width:10px;height:4px;border-radius:1px;margin-right:6px;vertical-align:middle}
+.scrim{background:#050505;border-radius:12px;padding:28px;display:flex;justify-content:center}
+.modal{width:1000px;max-width:100%;background:#121212;border:1px solid #2a2a2a;border-radius:16px;padding:16px 20px 18px;box-shadow:0 24px 60px -30px rgba(0,0,0,.9);box-sizing:border-box}
+.mh{display:flex;align-items:center;gap:12px;height:24px}
+.mq{color:#808080}
+.mn{font:11px/16px ui-monospace,"SF Mono",Menlo,monospace;font-variant-numeric:tabular-nums}
+.cx{width:12px;height:12px;fill:none;stroke:#a3a3a3;stroke-width:1.4;stroke-linecap:round;flex:none;margin-left:6px}
+.sum{display:flex;align-items:center;gap:18px;margin:12px 0 0;padding:10px 0;border-top:1px solid #1e1e1e;border-bottom:1px solid #1e1e1e;color:#a3a3a3;font-size:12px;line-height:16px}
+.sum b{color:#ececec;font-weight:400;font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:11px}
+.sum i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:6px;vertical-align:baseline}
+.mg{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:24px;margin-top:6px}
+.dt{border-left:1px solid #1e1e1e;padding:20px 0 0 20px;font-size:12px;line-height:16px}
+.ob{margin-top:10px;background:#0a0a0a;border-radius:8px;padding:8px 10px;font:11px/16px ui-monospace,"SF Mono",Menlo,monospace;color:#a3a3a3;white-space:pre-wrap}
+.ob b{color:#ececec;font-weight:400}
+.mb{border:0;border-radius:999px;height:24px;padding:0 10px;background:rgba(255,255,255,.07);color:#ececec;font:12px/15px inherit}
+.modal .tick{background:#1e1e1e}
+.rule{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px 22px;background:#121212;border-radius:12px;padding:16px 18px;color:#a3a3a3;font-size:12px;line-height:17px}
+.rule b{color:#ececec;font-weight:600;display:block}
+</style>
+</helmet>
+<div class="b" style="width: 1180px; height: 1360px">
+<div>
+<h1 class="h">7. The turn line, and the waterfall behind it</h1>
+<p class="sub">One small graphic at the right end of the stats bar, always there: the turn drawn left to right in time. A strip coloured by what Frog was doing, with the pace of the model drawn above it. It grows while the turn runs and rests in the footer afterwards. Clicking it opens the waterfall in a panel over the transcript, so the transcript itself stays text and one quiet line.</p>
+</div>
+<div class="g">
+<div class="cell">
+<div class="cap"><b>Live.</b> The line grows as the turn runs, about four times real speed here. It is drawn in the stats' own grey, so it reads as part of the numbers; hover it here and its colours come up. The curve is tokens per second; it sits on the floor while a tool runs.</div>
+<div class="pn">
+<div class="r"><span class="d"></span><span>{{label}}</span><span class="th">{{detail}}</span></div>
+<div class="sb"><span>{{clock}}</span><svg width="240" height="20" viewBox="0 0 240 20" role="img" aria-label="The turn so far"><polyline fill="none" stroke="#58cc6f" stroke-width="1.1" stroke-linejoin="round" points="{{pts}}"/><sc-for list="{{segs}}" as="s" hint-placeholder-count="3"><rect x="{{s.x}}" y="16" width="{{s.w}}" height="3" rx="1" fill="{{s.c}}"/></sc-for></svg><span>{{nums}}</span></div>
+</div>
+</div>
+<div class="cell">
+<div class="cap"><b>At rest, in the turn's footer.</b> The same line, finished, at the right end after the model and the totals, so the numbers read first and the picture follows. It is 20 points tall and never taller.</div>
+<div class="pn">
+<div class="ans">…and that loop, repeated one token at a time, is the whole model.</div>
+<div class="sb"><span style="color: #a3a3a3">DeepSeek V4.1 Flash</span><svg width="240" height="20" viewBox="0 0 240 20" role="img" aria-label="The whole turn: 56 seconds"><polyline fill="none" stroke="#58cc6f" stroke-width="1.1" stroke-linejoin="round" points="0,15 6,5 17,4 30,5 40,13 47,6 64,5 64,15 105,15 105,6 115,5 126,6 126,15 203,15 203,5 215,4 228,5 240,5"/><rect x="0" y="16" width="63" height="3" rx="1" fill="#58cc6f"/><rect x="65" y="16" width="1.5" height="3" fill="#808080"/><rect x="68" y="16" width="36" height="3" rx="1" fill="#808080"/><rect x="105" y="16" width="20" height="3" rx="1" fill="#58cc6f"/><rect x="126" y="16" width="16" height="3" rx="1" fill="#ff9f0a"/><rect x="143" y="16" width="59" height="3" rx="1" fill="#808080"/><rect x="203" y="16" width="37" height="3" rx="1" fill="#ececec"/></svg><span>56s · 1,902 tokens · &lt;1¢</span></div>
+</div>
+</div>
+<div class="cell">
+<div class="cap"><b>Hover: colour, and the line scrubs.</b> At rest the line is grey like the stats beside it. Under the pointer it takes its colours (green thinking, grey tools, amber waiting on you, white writing), a hairline follows the pointer and a readout gives the time, the speed at that moment and the step under it. That step's segment thickens and its line in the transcript gets the hover plate. Click to jump to it; click anywhere else on the line to open the waterfall.</div>
+<div class="pn">
+<div class="sb hot" style="margin-top: 0"><span style="color: #a3a3a3">DeepSeek V4.1 Flash</span><svg width="240" height="20" viewBox="0 0 240 20" aria-hidden="true"><polyline fill="none" stroke="#58cc6f" stroke-width="1.1" stroke-linejoin="round" opacity=".45" points="0,15 6,5 17,4 30,5 40,13 47,6 64,5 64,15 105,15 105,6 115,5 126,6 126,15 203,15 203,5 215,4 228,5 240,5"/><rect x="0" y="16" width="63" height="3" rx="1" fill="#58cc6f" opacity=".45"/><rect x="68" y="14" width="36" height="5" rx="1" fill="#ececec"/><rect x="105" y="16" width="20" height="3" rx="1" fill="#58cc6f" opacity=".45"/><rect x="126" y="16" width="16" height="3" rx="1" fill="#ff9f0a" opacity=".45"/><rect x="143" y="16" width="59" height="3" rx="1" fill="#808080" opacity=".45"/><rect x="203" y="16" width="37" height="3" rx="1" fill="#ececec" opacity=".45"/><line x1="86" y1="0" x2="86" y2="20" stroke="#ececec" stroke-width="1"/><circle cx="86" cy="15" r="2" fill="#ececec"/></svg><span>56s · 1,902 tokens · &lt;1¢</span></div>
+<div style="display: flex; justify-content: flex-end; margin-top: 8px"><span class="tip">20s <span>·</span> 0 tok/s <span>·</span> Ran cargo test -q upload <span>· 9s · failed</span></span></div>
+<div class="sb hot" style="margin-top: 14px"><span style="color: #a3a3a3">DeepSeek V4.1 Flash</span><svg width="240" height="20" viewBox="0 0 240 20" aria-hidden="true"><polyline fill="none" stroke="#58cc6f" stroke-width="1.1" stroke-linejoin="round" points="0,15 6,5 17,4 30,5 40,13 47,6 64,5 64,15 105,15 105,6 115,5 126,6 126,15 203,15 203,5 215,4 228,5 240,5"/><rect x="0" y="14" width="63" height="5" rx="1" fill="#58cc6f"/><rect x="68" y="16" width="36" height="3" rx="1" fill="#808080" opacity=".45"/><rect x="105" y="16" width="20" height="3" rx="1" fill="#58cc6f" opacity=".45"/><rect x="126" y="16" width="16" height="3" rx="1" fill="#ff9f0a" opacity=".45"/><rect x="143" y="16" width="59" height="3" rx="1" fill="#808080" opacity=".45"/><rect x="203" y="16" width="37" height="3" rx="1" fill="#ececec" opacity=".45"/><line x1="40" y1="0" x2="40" y2="20" stroke="#ececec" stroke-width="1"/><circle cx="40" cy="13" r="2" fill="#ececec"/></svg><span>56s · 1,902 tokens · &lt;1¢</span></div>
+<div style="display: flex; justify-content: flex-end; margin-top: 8px"><span class="tip">9s <span>·</span> 12 tok/s, slower than usual <span>·</span> Thinking</span></div>
+</div>
+</div>
+<div class="cell">
+<div class="cap"><b>Narrow, and in the sidebar.</b> Under 420 wide the curve goes and the strip stays. A sidebar row can carry the strip alone as its progress.</div>
+<div class="pn" style="display: flex; gap: 24px; align-items: center">
+<div class="sb" style="margin-top: 0"><svg width="120" height="6" viewBox="0 0 120 6" aria-hidden="true"><rect x="0" y="1" width="31" height="3" rx="1" fill="#58cc6f"/><rect x="33" y="1" width="18" height="3" rx="1" fill="#808080"/><rect x="52" y="1" width="10" height="3" rx="1" fill="#58cc6f"/><rect x="63" y="1" width="8" height="3" rx="1" fill="#ff9f0a"/><rect x="72" y="1" width="29" height="3" rx="1" fill="#808080"/><rect x="102" y="1" width="18" height="3" rx="1" fill="#ececec"/></svg><span>56s · 58 tok/s</span></div>
+<div style="width: 190px; padding: 7px 10px; border-radius: 7px; background: rgba(255,255,255,.07)"><div style="display: flex; align-items: center; gap: 8px"><span class="d"></span><span>Fix flaky upload retry</span></div><svg width="170" height="6" viewBox="0 0 170 6" aria-hidden="true" style="margin-top: 6px; display: block"><rect x="0" y="1" width="44" height="3" rx="1" fill="#58cc6f"/><rect x="46" y="1" width="26" height="3" rx="1" fill="#808080"/><rect x="74" y="1" width="14" height="3" rx="1" fill="#58cc6f"/></svg></div>
+</div>
+</div>
+</div>
+<div class="cell">
+<div class="cap"><b>Click the line: the turn opens in its own panel.</b> The transcript underneath doesn't change or reflow; it dims. The panel has the room the waterfall deserves: where the time went at the top, every step as a bar on one time axis with the pace curve above it, and the selected step's detail beside it. Esc or a click outside closes it.</div>
+<div class="scrim"><div class="modal">
+<div class="mh"><span style="font-weight: 600">This turn</span><span class="mq">Qwen3 Coder Next · Frog Cloud</span><span style="flex: 1"></span><span class="mq mn">56s · 1,902 tokens · &lt;1¢</span><svg class="cx" viewBox="0 0 12 12" role="img" aria-label="Close"><path d="M3 3l6 6M9 3l-6 6"/></svg></div>
+<div class="sum"><span><i style="background: #58cc6f"></i>Thinking <b>20s</b></span><span><i style="background: #808080"></i>Tools <b>24s</b></span><span><i style="background: #ff9f0a"></i>Waiting on you <b>4s</b></span><span><i style="background: #ececec"></i>Writing <b>8.6s</b></span><span style="flex: 1"></span><span>Read <b>12,400</b> tokens, <b>11,900</b> from cache</span></div>
+<div class="mg"><div style="padding-top: 24px">
+<div class="wf">
+<div class="n" style="color: #808080">56s · 7 steps</div>
+<div class="t ax"><span class="tick" style="left: 0"></span><span class="tk" style="left: 0; transform: none">0s</span><span class="tick" style="left: 26.8%"></span><span class="tk" style="left: 26.8%">15s</span><span class="tick" style="left: 53.6%"></span><span class="tk" style="left: 53.6%">30s</span><span class="tick" style="left: 80.4%"></span><span class="tk" style="left: 80.4%">45s</span>
+<svg width="100%" height="24" viewBox="0 0 240 24" preserveAspectRatio="none" aria-hidden="true" style="position: absolute; left: 0; top: 2px"><polyline fill="none" stroke="#58cc6f" stroke-width="1.1" vector-effect="non-scaling-stroke" points="0,18 6,6 17,5 30,6 40,15 47,7 64,6 64,18 105,18 105,7 115,6 126,7 126,18 203,18 203,6 215,5 228,6 240,6"/></svg></div>
+<div class="x"></div>
+<div class="n">Thought</div><div class="t"><span style="left: 0; width: 26.8%; background: #58cc6f"></span></div><div class="x">15s</div>
+<div class="n">Read <b>src/retry.rs</b></div><div class="t"><span style="left: 26.8%; width: .8%; background: #808080"></span></div><div class="x">0.4s</div>
+<div class="n">Read <b>src/store.rs</b></div><div class="t"><span style="left: 26.8%; width: 1.1%; background: #808080"></span></div><div class="x">0.6s</div>
+<div class="n hv">Ran <b>cargo test -q upload</b></div><div class="t"><span style="left: 28%; width: 15.6%; background: #ececec"></span></div><div class="x" style="color: #ececec">9s</div>
+<div class="n">Thought</div><div class="t"><span style="left: 43.6%; width: 8.9%; background: #58cc6f"></span></div><div class="x">5s</div>
+<div class="n">Waited for you</div><div class="t"><span style="left: 52.5%; width: 7.1%; background: #ff9f0a"></span></div><div class="x">4s</div>
+<div class="n">Ran <b>cargo test -q upload</b></div><div class="t"><span style="left: 59.6%; width: 25%; background: #808080"></span></div><div class="x">14s</div>
+<div class="n">Wrote the answer</div><div class="t"><span style="left: 84.6%; width: 15.4%; background: #ececec; opacity: .85"></span></div><div class="x">8.6s</div>
+</div>
+<div class="key"><span><i style="background: #58cc6f"></i>Thinking</span><span><i style="background: #808080"></i>Tools</span><span><i style="background: #ff9f0a"></i>Waiting on you</span><span><i style="background: #ececec"></i>Writing</span></div>
+</div>
+<div class="dt">
+<div style="display: flex; align-items: center; gap: 8px"><span style="color: #a3a3a3">Ran</span><span class="mn" style="color: #ececec">cargo test -q upload</span></div>
+<div class="mq mn" style="margin-top: 4px">15.4s to 24.4s · 9s · exit 101 · in the sandbox</div>
+<div class="ob">running 11 tests
+<b>test upload_retries_on_503 ... FAILED</b>
+mock store: no request within 500ms
+test result: FAILED. 10 passed; 1 failed</div>
+<div style="display: flex; gap: 6px; margin-top: 10px"><button class="mb">Show in transcript</button><button class="mb">Copy output</button></div>
+</div>
+</div></div></div>
+</div>
+<div class="rule">
+<span><b>The transcript stays words.</b>In the transcript the turn is only ever the 20-point line (or a 6-point strip in a fold or a sidebar row). The waterfall never opens inline; it lives in this panel.</span>
+<span><b>Rows are the transcript's own steps.</b>Selecting a row shows that step's detail on the right: output for a command, the change for an edit, the rail for a think. "Show in transcript" closes the panel and scrolls to it.</span>
+<span><b>Long waits are cut, not scaled.</b>A wait over 30 s is drawn as a short broken segment with its real length written on it, so one coffee break doesn't flatten everything else.</span>
+<span><b>Only real data.</b>Bars come from each step's start and end in the session log; the curve from tokens actually received. Nothing is estimated, and a step still running has an open right edge.</span>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1180,"height":1360}}'>
+class Component extends DCLogic {
+constructor(props) {
+super(props);
+this.T = 56; this.W = 240;
+this.phases = [
+[0, 15, 'think', '#58cc6f', 'Thinking', 'Better idea: attention as a soft lookup'],
+[15, 15.4, 'tool', '#808080', 'Reading', 'src/retry.rs'],
+[15.4, 24.4, 'tool', '#808080', 'Running', 'cargo test -q upload'],
+[24.4, 29.4, 'think', '#58cc6f', 'Thinking', 'The jitter came from thread_rng'],
+[29.4, 33.4, 'wait', '#ff9f0a', 'Waiting for you', 'Allow cargo test -q upload?'],
+[33.4, 47.4, 'tool', '#808080', 'Running', 'cargo test -q upload'],
+[47.4, 56, 'write', '#ececec', 'Writing', 'the answer']
+];
+this.state = { t: 0 };
+}
+componentDidMount() {
+this.tick = setInterval(() => this.setState((s) => ({ t: s.t >= this.T + 6 ? 0 : s.t + 0.4 })), 100);
+}
+componentWillUnmount() { clearInterval(this.tick); }
+rate(t) {
+const p = this.phases.find((x) => t >= x[0] && t < x[1]);
+if (!p || p[2] === 'tool' || p[2] === 'wait') return 0;
+const wob = Math.sin(t * 1.7) * 5 + Math.sin(t * 0.6) * 4;
+const dip = t > 8 && t < 10 ? -42 : 0;
+return Math.max(8, 58 + wob + dip);
+}
+renderVals() {
+const t = Math.min(this.state.t, this.T), k = this.W / this.T;
+const segs = this.phases.filter((p) => p[0] < t).map((p) => ({ x: (p[0] * k).toFixed(1), w: Math.max(1, (Math.min(p[1], t) - p[0]) * k - 1).toFixed(1), c: p[3] }));
+const pts = [];
+for (let s = 0; s <= t; s += 0.5) pts.push((s * k).toFixed(1) + ',' + (15 - (this.rate(s) / 70) * 12).toFixed(1));
+const cur = this.phases.find((p) => t >= p[0] && t < p[1]) || this.phases[this.phases.length - 1];
+const done = t >= this.T;
+let tok = 0;
+for (let s = 0; s < t; s += 0.5) tok += this.rate(s) * 0.5;
+const r = Math.round(this.rate(Math.max(0, t - 0.2)));
+return {
+segs, pts: pts.join(' '),
+label: done ? 'Done' : cur[4], detail: done ? '' : cur[5],
+clock: Math.floor(t) + 's',
+nums: Math.round(tok).toLocaleString('en-US') + ' tokens' + (r > 0 && !done ? ' · ' + r + ' tok/s' : '')
+};
+}
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>What the thinking line says</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.b{box-sizing:border-box;background:#0a0a0a;color:#ececec;font:13px/16px -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;padding:40px;display:flex;flex-direction:column;gap:20px}
+.h{font-size:22px;line-height:26px;font-weight:600;margin:0}
+.h2{font-size:13px;line-height:16px;font-weight:600;margin:0 0 8px}
+.sub{color:#a3a3a3;margin:6px 0 0;max-width:840px;line-height:18px}
+.cols{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:24px;align-items:start}
+.tbl{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:0;background:#000;border-radius:12px;padding:6px 16px}
+.tbl .hd{color:#808080;font-size:11px;line-height:14px;padding:8px 0}
+.tbl .raw{font:11px/16px ui-monospace,"SF Mono",Menlo,monospace;color:#808080;padding:8px 14px 8px 0;border-top:1px solid #1a1a1a;white-space:pre-wrap;overflow-wrap:anywhere}
+.tbl .out{padding:8px 0;border-top:1px solid #1a1a1a;color:#ececec;font-size:12px;line-height:16px}
+.tbl .held{color:#808080}
+.why{display:block;color:#808080;font-size:11px;line-height:15px;margin-top:2px}
+.cap{color:#a3a3a3;font-size:12px;line-height:16px;margin:0 0 6px}
+.cap b{color:#ececec;font-weight:600}
+.pn{background:#000;border-radius:12px;padding:12px 18px}
+.pn.lt{background:#fff}
+.r{display:flex;align-items:center;gap:10px;height:18px}
+.d{width:7px;height:7px;border-radius:50%;background:#58cc6f;flex:none}
+.lb{flex:none}
+.th{flex:1;min-width:0;color:#a3a3a3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.st{margin:6px 0 0 17px;color:#808080;font:11px/16px ui-monospace,"SF Mono",Menlo,monospace;font-variant-numeric:tabular-nums}
+.side{background:#0a0a0a;border:1px solid #1a1a1a;border-radius:12px;padding:8px}
+.srow{padding:7px 10px;border-radius:7px}
+.srow.on{background:rgba(255,255,255,.07)}
+.srow .t{display:flex;align-items:center;gap:8px;color:#ececec}
+.srow .s{color:#808080;font-size:11px;line-height:15px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rule{background:#121212;border-radius:12px;padding:14px 18px;color:#a3a3a3;font-size:12px;line-height:17px;display:grid;gap:8px}
+.rule b{color:#ececec;font-weight:600}
+.stack{display:flex;flex-direction:column;gap:16px}
+</style>
+</helmet>
+<div class="b" style="width: 1180px; height: 940px">
+<div>
+<h1 class="h">4. What the line says</h1>
+<p class="sub">Left, paragraphs from a real DeepSeek think in Frog (15,670 characters for one answer) and what the row would show for each. The filter is plain text handling in the engine, so both apps and the sidebar get the same line and no second model is called.</p>
+</div>
+<div class="cols">
+<div>
+<div class="tbl">
+<div class="hd">What the model wrote</div><div class="hd">What the row shows</div>
+<sc-for list="{{rows}}" as="x" hint-placeholder-count="8">
+<div class="raw">{{x.raw}}</div>
+<div class="out"><sc-if value="{{x.shown}}" hint-placeholder-val="{{true}}"><span>{{x.out}}</span></sc-if><sc-if value="{{x.heldRow}}" hint-placeholder-val="{{false}}"><span class="held">Holds the previous line</span></sc-if><span class="why">{{x.why}}</span></div>
+</sc-for>
+</div>
+</div>
+<div class="stack">
+<div class="rule">
+<span><b>The filter, in order.</b></span>
+<span>1. Wait for a paragraph to finish. Never show a partial one.</span>
+<span>2. Take its first sentence. Cut at the first full stop, or at a colon that ends the line.</span>
+<span>3. Drop lead-ins: "Let me", "I should", "Actually,", "Hmm,", "OK so".</span>
+<span>4. Skip it if what's left is a list item, code, mostly numbers or symbols, or under three words.</span>
+<span>5. Strip markdown and trailing punctuation. One line, ellipsis at the edge.</span>
+</div>
+<div>
+<p class="cap"><b>In the sidebar,</b> the same line is the row's second line, so every running session says what it's thinking.</p>
+<div class="side">
+<div class="srow on"><div class="t"><span class="d"></span><span>Explain transformers</span></div><div class="s">Better idea: attention as a soft lookup in two dimensions</div></div>
+<div class="srow"><div class="t"><span class="d"></span><span>Fix flaky upload retry</span></div><div class="s">Running cargo test -q upload</div></div>
+<div class="srow"><div class="t"><span>Docs search</span></div><div class="s">Filters page titles as you type</div></div>
+</div>
+</div>
+<div>
+<p class="cap"><b>Narrow.</b> The thought truncates first; under 360 the stats drop tokens and keep time and speed.</p>
+<div class="pn" style="width: 300px"><div class="r"><span class="d"></span><span class="lb">Thinking</span><span class="th">Build one widget that walks through five stages</span></div><div class="st">9s · 58 tok/s</div></div>
+</div>
+<div>
+<p class="cap"><b>A model that doesn't share its reasoning.</b> No thought to show: the label and the stats carry it alone.</p>
+<div class="pn"><div class="r"><span class="d"></span><span class="lb">Thinking</span></div><div class="st">6s</div></div>
+</div>
+<div>
+<p class="cap"><b>Light.</b> Same tokens, light values.</p>
+<div class="pn lt"><div class="r"><span class="d" style="background: #2e9e4f"></span><span class="lb" style="color: #1b1d1a">Thinking</span><span class="th" style="color: #5e5e5e">Build one widget that walks through five stages</span></div><div class="st" style="color: #767676">9s · 388 tokens · 58 tok/s</div></div>
+</div>
+</div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1180,"height":940}}'>
+class Component extends DCLogic {
+renderVals() {
+const rows = [
+['The user wants a visual explanation of transformers from first principles. I should build an interactive visual. Call VisualGuide first.', 'The user wants a visual explanation of transformers from first principles', 'First sentence of the paragraph.'],
+['Let me think about what to build. A good interactive transformer widget: tokens → embeddings → attention (QKV) → softmax weights → MLP → logits, with a slider maybe…', 'A good interactive transformer widget: tokens → embeddings → attention (QKV) → softmax…', 'The lead-in sentence is filler, so the next one is used.'],
+['Idea: build a single-page widget that walks through stages with tabs/steps, showing:', 'Idea: build a single-page widget that walks through stages with tabs/steps', 'Cut at the colon that ends the line.'],
+['1. Text → tokens (tokenize a phrase, show ids)\n2. Embeddings (vectors as heatmap rows)', '', 'List items are detail under the line already showing.'],
+['Simplest robust approach: one widget with stage buttons (1..5), a canvas/SVG-free DOM-based visualization using divs. Plus sliders.', 'Simplest robust approach: one widget with stage buttons (1..5), a canvas/SVG-free…', 'Long sentences truncate; the opened view has it all.'],
+['viewBox height 420 → some bottom margin. Fine. Actually let me use 400 to reduce whitespace. Loop bottom at 360, so 400 works…', '', 'Mostly numbers: working-out, not a thought.'],
+['Actually a clickable Ask for next step would be genuinely useful here. But it interrupts. I\'ll skip. Keep it tight.', 'A clickable Ask for next step would be genuinely useful here', '"Actually" dropped.'],
+['Write the widget.', 'Write the widget', 'Short, but three words and a real step.'],
+['Go.', '', 'Under three words.']
+];
+return { rows: rows.map((r) => ({ raw: r[0], out: r[1], shown: r[1] !== '', heldRow: r[1] === '', why: r[2] })) };
+}
+}
+</script>
+</body>
+</html>

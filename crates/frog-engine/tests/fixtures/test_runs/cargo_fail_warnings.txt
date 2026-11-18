@@ -1,0 +1,79 @@
+
+running 4 tests
+test tests::slow ... ignored
+test tests::squares ... ok
+test tests::adds_zero ... FAILED
+test tests::adds ... FAILED
+
+failures:
+
+---- tests::adds_zero stdout ----
+
+thread 'tests::adds_zero' (77629030) panicked at src/lib.rs:16:30:
+assertion `left == right` failed
+  left: 7
+ right: 8
+
+---- tests::adds stdout ----
+
+thread 'tests::adds' (77629029) panicked at src/lib.rs:15:25:
+assertion `left == right` failed
+  left: 4
+ right: 5
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::adds
+    tests::adds_zero
+
+test result: FAILED. 1 passed; 2 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 2 tests
+test outer_square ... ok
+test outer_add ... FAILED
+
+failures:
+
+---- outer_add stdout ----
+
+thread 'outer_add' (77629049) panicked at tests/outer.rs:2:26:
+assertion `left == right` failed
+  left: 3
+ right: 4
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    outer_add
+
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 1 test
+test src/lib.rs - square (line 3) ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+
+   Compiling shapes v0.1.0 (/work/cargo_fail)
+warning: unused variable: `x`
+ --> src/lib.rs:8:36
+  |
+8 | pub fn unused_thing() -> u32 { let x = 1; 2 }
+  |                                    ^ help: if this is intentional, prefix it with an underscore: `_x`
+  |
+  = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `shapes` (lib) generated 1 warning (run `cargo fix --lib -p shapes` to apply 1 suggestion)
+warning: `shapes` (lib test) generated 1 warning (1 duplicate)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.28s
+     Running unittests src/lib.rs (/work/tf/debug/deps/shapes-bd6bb5950cfecc60)
+error: test failed, to rerun pass `--lib`
+     Running tests/outer.rs (/work/tf/debug/deps/outer-b85b311d5e33327e)
+error: test failed, to rerun pass `--test outer`
+   Doc-tests shapes
+error: 2 targets failed:
+    `--lib`
+    `--test outer`
+[exit code 101]

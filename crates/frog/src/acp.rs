@@ -380,7 +380,7 @@ async fn pump(
                         TextContent::new(text),
                     ))),
                 ),
-                Delta::Reasoning { text } => conn.update(
+                Delta::Reasoning { text, .. } => conn.update(
                     &session,
                     SessionUpdate::AgentThoughtChunk(ContentChunk::new(ContentBlock::Text(
                         TextContent::new(text),

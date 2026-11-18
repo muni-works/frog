@@ -1,0 +1,19 @@
+=== RUN   TestSquare
+--- PASS: TestSquare (0.00s)
+=== RUN   TestAdd
+=== RUN   TestAdd/zero
+=== RUN   TestAdd/two
+--- PASS: TestAdd (0.00s)
+    --- PASS: TestAdd/zero (0.00s)
+    --- PASS: TestAdd/two (0.00s)
+=== RUN   TestSkip
+    shapes_test.go:10: slow
+--- SKIP: TestSkip (0.00s)
+PASS
+ok  	example.com/gomod/shapes	0.081s
+=== RUN   TestDouble
+--- PASS: TestDouble (0.00s)
+=== RUN   TestDoubleZero
+--- PASS: TestDoubleZero (0.00s)
+PASS
+ok  	example.com/gomod/sizes	0.081s

@@ -1,0 +1,808 @@
+{
+ "about": "The definition of the thought line (docs/design/transcript/spec.md, 'The thought line (engine)'). `lines`: the reasoning so far and the line to show (null: nothing yet); a case with `chunks` appends them in order and gives the line after each. `streams`: chunks with the ms they arrive at and the `thought` the delta carries (null: none, the line doesn't change), then the `shown` list the completed reasoning item carries, offsets in UTF-16 code units into `final` (or into everything streamed). The engine's tests (crates/frog-engine/src/thought_tests.rs) run every case; the apps load it to check they show `thought` verbatim. Every case is synthetic.",
+ "interval_ms": 1200,
+ "lines": [
+  {
+   "name": "a paragraph still being written shows nothing",
+   "reasoning": "I am reading the config loader to see where defaults come from.",
+   "expect": null
+  },
+  {
+   "name": "a finished paragraph shows",
+   "reasoning": "Reading the config loader to find where defaults come from.\n\n",
+   "expect": "Reading the config loader to find where defaults come from"
+  },
+  {
+   "name": "the newest finished paragraph shows, never the one being written",
+   "reasoning": "The parser keeps a table of precedences.\n\nThe second paragraph is still being writ",
+   "expect": "The parser keeps a table of precedences"
+  },
+  {
+   "name": "a single newline is not a paragraph break",
+   "reasoning": "Line one is about the build cache.\nLine two is about the linker flags.",
+   "expect": null
+  },
+  {
+   "name": "a blank line holding only spaces still breaks",
+   "reasoning": "Checking the linker flags now.\n   \nmore",
+   "expect": "Checking the linker flags now"
+  },
+  {
+   "name": "windows line endings break paragraphs",
+   "reasoning": "Reading the path handling code for drive letters.\r\n\r\n",
+   "expect": "Reading the path handling code for drive letters"
+  },
+  {
+   "name": "the newest of several finished paragraphs wins",
+   "reasoning": "The lexer splits on whitespace.\n\nThe printer keeps comments attached.\n\nThe formatter reads both.\n\n",
+   "expect": "The formatter reads both"
+  },
+  {
+   "name": "no paragraph breaks at all shows nothing",
+   "reasoning": "The request goes through the proxy first. The proxy adds a header. Then the server checks the header and the token. If either is missing it returns a 401. The client retries once with a fresh token. That second attempt is the one failing in the logs, which points at the refresh path rather than the proxy.",
+   "expect": null
+  },
+  {
+   "name": "a paragraph finishes when its blank line arrives",
+   "chunks": [
+    "Looking at the session store",
+    " to see how it writes.\n",
+    "\nNext",
+    " paragraph"
+   ],
+   "expect": [
+    null,
+    null,
+    "Looking at the session store to see how it writes",
+    "Looking at the session store to see how it writes"
+   ]
+  },
+  {
+   "name": "a blank line split across chunks",
+   "chunks": [
+    "Reading the lexer tables.",
+    "\n",
+    "\n"
+   ],
+   "expect": [
+    null,
+    null,
+    "Reading the lexer tables"
+   ]
+  },
+  {
+   "name": "cut at the first full stop",
+   "reasoning": "The parser drops trailing commas. That explains the failing fixture.\n\n",
+   "expect": "The parser drops trailing commas"
+  },
+  {
+   "name": "a question ends the sentence",
+   "reasoning": "Why does the retry loop never back off? It resets the counter each time.\n\n",
+   "expect": "Why does the retry loop never back off"
+  },
+  {
+   "name": "a short exclamation is skipped for the next sentence",
+   "reasoning": "Found it! The flag is read before the config loads.\n\n",
+   "expect": "The flag is read before the config loads"
+  },
+  {
+   "name": "dots inside numbers and file names don't end a sentence",
+   "reasoning": "Version 2.4 of the lockfile changed in Cargo.toml last week. Unrelated.\n\n",
+   "expect": "Version 2.4 of the lockfile changed in Cargo.toml last week"
+  },
+  {
+   "name": "abbreviations don't end a sentence",
+   "reasoning": "Some callers pass relative paths, e.g. the CLI, so normalise first. Then check.\n\n",
+   "expect": "Some callers pass relative paths, e.g. the CLI, so normalise first"
+  },
+  {
+   "name": "vs. doesn't end a sentence",
+   "reasoning": "Comparing the old vs. new allocator under load. Numbers next.\n\n",
+   "expect": "Comparing the old vs. new allocator under load"
+  },
+  {
+   "name": "an initial doesn't end a sentence",
+   "reasoning": "The test from J. Doe's branch still fails on Linux.\n\n",
+   "expect": "The test from J. Doe's branch still fails on Linux"
+  },
+  {
+   "name": "a colon that ends the line cuts",
+   "reasoning": "The plan has three parts:\n1. read\n2. fix\n3. test\n\n",
+   "expect": "The plan has three parts"
+  },
+  {
+   "name": "a colon then a space at the line's end cuts",
+   "reasoning": "Two options are left: \n- retry\n- fail\n\n",
+   "expect": "Two options are left"
+  },
+  {
+   "name": "a colon inside a line does not cut",
+   "reasoning": "Root cause: the watcher drops events during a rename.\n\n",
+   "expect": "Root cause: the watcher drops events during a rename"
+  },
+  {
+   "name": "the end of a line ends the sentence",
+   "reasoning": "The cache key ignores the target triple\nso cross builds collide\n\n",
+   "expect": "The cache key ignores the target triple"
+  },
+  {
+   "name": "three dots end a sentence",
+   "reasoning": "Maybe the socket closes early... that would explain the empty reply.\n\n",
+   "expect": "Maybe the socket closes early"
+  },
+  {
+   "name": "an ellipsis character does not end a sentence",
+   "reasoning": "Maybe the socket closes early… that would explain it. Checking.\n\n",
+   "expect": "Maybe the socket closes early… that would explain it"
+  },
+  {
+   "name": "a sentence ending the paragraph without a stop",
+   "reasoning": "The build script reads the env flag twice\n\n",
+   "expect": "The build script reads the env flag twice"
+  },
+  {
+   "name": "let me is dropped",
+   "reasoning": "Let me check the tests first.\n\n",
+   "expect": "Check the tests first"
+  },
+  {
+   "name": "I should is dropped",
+   "reasoning": "I should read the README before touching the build.\n\n",
+   "expect": "Read the README before touching the build"
+  },
+  {
+   "name": "actually is dropped",
+   "reasoning": "Actually, the timeout is in the client, not the server.\n\n",
+   "expect": "The timeout is in the client, not the server"
+  },
+  {
+   "name": "hmm is dropped",
+   "reasoning": "Hmm, the snapshot has an extra newline at the end.\n\n",
+   "expect": "The snapshot has an extra newline at the end"
+  },
+  {
+   "name": "OK so is dropped",
+   "reasoning": "OK so the migration runs twice on startup.\n\n",
+   "expect": "The migration runs twice on startup"
+  },
+  {
+   "name": "stacked lead-ins are all dropped",
+   "reasoning": "Okay, so let me look at how the router matches paths.\n\n",
+   "expect": "Look at how the router matches paths"
+  },
+  {
+   "name": "a lead-in that is the whole sentence uses the next one",
+   "reasoning": "Let me think. The lock is taken before the await point.\n\n",
+   "expect": "The lock is taken before the await point"
+  },
+  {
+   "name": "several filler sentences in a row",
+   "reasoning": "Hmm. Wait. The env var is read once at startup.\n\n",
+   "expect": "The env var is read once at startup"
+  },
+  {
+   "name": "a paragraph of only lead-ins shows nothing",
+   "reasoning": "Let me think about this.\n\n",
+   "expect": null
+  },
+  {
+   "name": "a paragraph of only lead-ins holds the previous line",
+   "reasoning": "The index is rebuilt on every save.\n\nHmm, let me think.\n\n",
+   "expect": "The index is rebuilt on every save"
+  },
+  {
+   "name": "a curly apostrophe lead-in is dropped",
+   "reasoning": "I’ll add a regression test for the empty input.\n\n",
+   "expect": "Add a regression test for the empty input"
+  },
+  {
+   "name": "I think is dropped",
+   "reasoning": "I think the bug is in the escaping of quotes.\n\n",
+   "expect": "The bug is in the escaping of quotes"
+  },
+  {
+   "name": "good followed by a space is not a lead-in",
+   "reasoning": "Good tests already cover the happy path.\n\n",
+   "expect": "Good tests already cover the happy path"
+  },
+  {
+   "name": "perfect followed by a comma is a lead-in",
+   "reasoning": "Perfect, the build passes with the new flag.\n\n",
+   "expect": "The build passes with the new flag"
+  },
+  {
+   "name": "a dash after a lead-in is dropped too",
+   "reasoning": "Wait — the handler returns before flushing.\n\n",
+   "expect": "The handler returns before flushing"
+  },
+  {
+   "name": "a lead-in must be a whole word",
+   "reasoning": "Sorting is stable here, so order is kept.\n\n",
+   "expect": "Sorting is stable here, so order is kept"
+  },
+  {
+   "name": "now is dropped, the rest kept",
+   "reasoning": "Now I understand the structure of the queue.\n\n",
+   "expect": "I understand the structure of the queue"
+  },
+  {
+   "name": "first is a lead-in only with a comma",
+   "reasoning": "First, I'll run the engine tests alone.\n\n",
+   "expect": "Run the engine tests alone"
+  },
+  {
+   "name": "first as a word stays",
+   "reasoning": "First paragraph of the spec covers the tokens.\n\n",
+   "expect": "First paragraph of the spec covers the tokens"
+  },
+  {
+   "name": "the rest is capitalised after a lead-in",
+   "reasoning": "let me run cargo test on just the engine.\n\n",
+   "expect": "Run cargo test on just the engine"
+  },
+  {
+   "name": "we need to is dropped",
+   "reasoning": "We need to keep the old field for older apps.\n\n",
+   "expect": "Keep the old field for older apps"
+  },
+  {
+   "name": "a list after a sentence holds the sentence",
+   "reasoning": "The parser is fine on its own.\n\n- check the lexer\n- check the printer\n\n",
+   "expect": "The parser is fine on its own"
+  },
+  {
+   "name": "reasoning that is only a numbered list shows nothing",
+   "reasoning": "1. Read the protocol\n2. Write the test\n\n3. Run it\n\n",
+   "expect": null
+  },
+  {
+   "name": "reasoning that is only a bullet list shows nothing",
+   "reasoning": "- the cache\n- the lockfile\n\n* the env\n\n• the flags\n\n",
+   "expect": null
+  },
+  {
+   "name": "lettered options are list items",
+   "reasoning": "a) keep the old field\nb) drop it\n\n",
+   "expect": null
+  },
+  {
+   "name": "code in a fence is skipped, blank lines inside it too",
+   "reasoning": "The fix belongs in the decoder.\n\n```rust\nlet a = 1;\n\nlet total = items.len() + offset;\n```\n\n",
+   "expect": "The fix belongs in the decoder"
+  },
+  {
+   "name": "prose after a fence shows again",
+   "reasoning": "```\nmake build\n```\n\nThe build target needs the env file.\n\n",
+   "expect": "The build target needs the env file"
+  },
+  {
+   "name": "indented code is skipped",
+   "reasoning": "The loop is the problem here.\n\n    for i in 0..n {\n        work(i)\n    }\n\n",
+   "expect": "The loop is the problem here"
+  },
+  {
+   "name": "code without a fence is skipped",
+   "reasoning": "Here is the shape of it.\n\nfn main() {\n    run();\n}\n\n",
+   "expect": "Here is the shape of it"
+  },
+  {
+   "name": "a paragraph of numbers is skipped",
+   "reasoning": "Timings so far look fine.\n\n12.5 13.1 12.9 40.2 13.0\n\n",
+   "expect": "Timings so far look fine"
+  },
+  {
+   "name": "a paragraph of symbols is skipped",
+   "reasoning": "=== --- === ---\n\n",
+   "expect": null
+  },
+  {
+   "name": "one word is too short",
+   "reasoning": "Interesting.\n\n",
+   "expect": null
+  },
+  {
+   "name": "two words are too short and hold the previous line",
+   "reasoning": "The cache path is wrong.\n\nConfirmed fix.\n\n",
+   "expect": "The cache path is wrong"
+  },
+  {
+   "name": "a short heading is too short",
+   "reasoning": "## Plan\n\n",
+   "expect": null
+  },
+  {
+   "name": "a long heading shows without its marks",
+   "reasoning": "### Checking the release workflow inputs\n\n",
+   "expect": "Checking the release workflow inputs"
+  },
+  {
+   "name": "a table is skipped",
+   "reasoning": "| a | b |\n|---|---|\n| 1 | 2 |\n\n",
+   "expect": null
+  },
+  {
+   "name": "a bare url is too short",
+   "reasoning": "https://example.com/a/b?c=1\n\n",
+   "expect": null
+  },
+  {
+   "name": "a bare path is too short",
+   "reasoning": "src/engine/turn.rs\n\n",
+   "expect": null
+  },
+  {
+   "name": "bold is stripped",
+   "reasoning": "**The real issue** is the stale lockfile.\n\n",
+   "expect": "The real issue is the stale lockfile"
+  },
+  {
+   "name": "backticks are stripped",
+   "reasoning": "The `retry_after` header is ignored by `fetch_json`.\n\n",
+   "expect": "The retry_after header is ignored by fetch_json"
+  },
+  {
+   "name": "underscore emphasis is stripped",
+   "reasoning": "This is _not_ the same path as before.\n\n",
+   "expect": "This is not the same path as before"
+  },
+  {
+   "name": "snake case keeps its underscores",
+   "reasoning": "Rename max_retries to retry_limit everywhere.\n\n",
+   "expect": "Rename max_retries to retry_limit everywhere"
+  },
+  {
+   "name": "a link keeps its text",
+   "reasoning": "The [release notes](https://example.com/notes) mention the change.\n\n",
+   "expect": "The release notes mention the change"
+  },
+  {
+   "name": "strikethrough marks are stripped",
+   "reasoning": "Use ~~the old~~ the new endpoint for uploads.\n\n",
+   "expect": "Use the old the new endpoint for uploads"
+  },
+  {
+   "name": "trailing punctuation is stripped",
+   "reasoning": "Is the cache stale?!\n\n",
+   "expect": "Is the cache stale"
+  },
+  {
+   "name": "a quote shows without its mark",
+   "reasoning": "> The docs say retries are capped at five.\n\n",
+   "expect": "The docs say retries are capped at five"
+  },
+  {
+   "name": "a bold label keeps its words",
+   "reasoning": "**Approach**: move the check into the loader.\n\n",
+   "expect": "Approach: move the check into the loader"
+  },
+  {
+   "name": "whitespace inside a sentence collapses",
+   "reasoning": "The   watcher    restarts   twice.\n\n",
+   "expect": "The watcher restarts twice"
+  },
+  {
+   "name": "a quote cut open loses its opening mark",
+   "reasoning": "The notes say \"retries are capped\nat five\" for uploads.\n\n",
+   "expect": "The notes say retries are capped"
+  },
+  {
+   "name": "a closed quote is kept",
+   "reasoning": "The notes say \"retries are capped\" for uploads.\n\n",
+   "expect": "The notes say \"retries are capped\" for uploads"
+  },
+  {
+   "name": "a plain lowercase start is capitalised",
+   "reasoning": "how the cache key is built matters here.\n\n",
+   "expect": "How the cache key is built matters here"
+  },
+  {
+   "name": "a lowercase identifier start is left alone",
+   "reasoning": "iOS builds skip the sandbox check entirely.\n\n",
+   "expect": "iOS builds skip the sandbox check entirely"
+  },
+  {
+   "name": "a capital-letter enumeration is a list item",
+   "reasoning": "The checklist is long.\n\nE. The text view never updates its controller.\n\n",
+   "expect": "The checklist is long"
+  },
+  {
+   "name": "a sentence that is a line of code is skipped",
+   "reasoning": "The width is wrong somewhere.\n\nThen view.frame = NSRect(x: 0, y: 0, width: w, height: h) fixes it.\n\n",
+   "expect": "The width is wrong somewhere"
+  },
+  {
+   "name": "parentheses in prose are not code",
+   "reasoning": "The plan (step two) moves the check earlier.\n\n",
+   "expect": "The plan (step two) moves the check earlier"
+  },
+  {
+   "name": "a very long sentence is cut at a clause break",
+   "reasoning": "The session store writes every completed item to the log as it arrives, flushes on the end of each turn, and replays them all on resume so a reopened session matches the live one.\n\n",
+   "expect": "The session store writes every completed item to the log as it arrives, flushes on the end of each turn"
+  },
+  {
+   "name": "a very long sentence with no clause break is cut at a word",
+   "reasoning": "The session store writes every completed item to the log as it arrives and flushes on the end of each turn and replays them all on resume so a reopened session matches\n\n",
+   "expect": "The session store writes every completed item to the log as it arrives and flushes on the end of each turn and replays…"
+  },
+  {
+   "name": "exactly 120 characters is kept whole",
+   "reasoning": "The cache key covers the target triple and the profile and the feature set and the toolchain hash and the lockfile hash.\n\n",
+   "expect": "The cache key covers the target triple and the profile and the feature set and the toolchain hash and the lockfile hash"
+  },
+  {
+   "name": "one long token cut to fit is still one word",
+   "reasoning": "Long_test_name_that_keeps_going_and_going_far_past_the_line_limit_for_any_single_row_in_the_transcript_view_at_all_ever.\n\n",
+   "expect": null
+  },
+  {
+   "name": "a sentence that is two words once its quote is dropped is skipped",
+   "reasoning": "The test is fine.\n\nChecked \"it\nbreaks\" again.\n\n",
+   "expect": "The test is fine"
+  },
+  {
+   "name": "chinese ends at the ideographic full stop",
+   "reasoning": "我需要先检查配置文件的加载顺序。然后再修改。\n\n",
+   "expect": "我需要先检查配置文件的加载顺序"
+  },
+  {
+   "name": "japanese counts characters as words",
+   "reasoning": "まず設定ファイルの読み込み順を確認する。\n\n",
+   "expect": "まず設定ファイルの読み込み順を確認する"
+  },
+  {
+   "name": "two chinese characters are too short",
+   "reasoning": "好的。\n\n",
+   "expect": null
+  },
+  {
+   "name": "spanish keeps its accents",
+   "reasoning": "Primero reviso cómo se cargan los ajustes.\n\n",
+   "expect": "Primero reviso cómo se cargan los ajustes"
+  },
+  {
+   "name": "german keeps its umlauts",
+   "reasoning": "Ich prüfe zuerst die Konfiguration des Servers.\n\n",
+   "expect": "Ich prüfe zuerst die Konfiguration des Servers"
+  },
+  {
+   "name": "russian keeps its punctuation inside",
+   "reasoning": "Сначала проверю, где читается конфигурация.\n\n",
+   "expect": "Сначала проверю, где читается конфигурация"
+  },
+  {
+   "name": "an emoji is kept",
+   "reasoning": "The 🚀 launch script skips the build step.\n\n",
+   "expect": "The 🚀 launch script skips the build step"
+  },
+  {
+   "name": "a letter that changes length when lowercased",
+   "reasoning": "İstanbul servers time out on the health check.\n\n",
+   "expect": "İstanbul servers time out on the health check"
+  },
+  {
+   "name": "a fullwidth colon at the line end cuts",
+   "reasoning": "计划分三步：\n1. 读\n2. 改\n\n",
+   "expect": "计划分三步"
+  },
+  {
+   "name": "an opening think tag breaks a paragraph",
+   "reasoning": "<think>\nThe user wants a smaller binary.\n\nFirst I'll check",
+   "expect": "The user wants a smaller binary"
+  },
+  {
+   "name": "a closing think tag finishes the paragraph",
+   "reasoning": "<think>Checking the build script for the env flag.</think>",
+   "expect": "Checking the build script for the env flag"
+  },
+  {
+   "name": "thinking tags work the same",
+   "reasoning": "<thinking>\nThe flag is parsed twice on startup.\n</thinking>\n",
+   "expect": "The flag is parsed twice on startup"
+  },
+  {
+   "name": "tags are matched in any case",
+   "reasoning": "<THINK>The handler is registered twice.</THINK>",
+   "expect": "The handler is registered twice"
+  },
+  {
+   "name": "other tags are kept as text",
+   "reasoning": "The <div> wrapper adds padding on mobile.\n\n",
+   "expect": "The <div> wrapper adds padding on mobile"
+  },
+  {
+   "name": "a tag split across chunks finishes the paragraph when it completes",
+   "chunks": [
+    "Checking the flag parse order.</thi",
+    "nk>"
+   ],
+   "expect": [
+    null,
+    "Checking the flag parse order"
+   ]
+  },
+  {
+   "name": "the line holds through skipped paragraphs",
+   "chunks": [
+    "The test runner hides stderr.\n\n",
+    "- one\n- two\n\n",
+    "Next the fixture needs a header.\n\n"
+   ],
+   "expect": [
+    "The test runner hides stderr",
+    "The test runner hides stderr",
+    "Next the fixture needs a header"
+   ]
+  },
+  {
+   "name": "a code block streaming in holds the line",
+   "chunks": [
+    "The fix belongs in the decoder.\n\n",
+    "```rust\nfn decode() {\n",
+    "\n    todo!()\n}\n```\n\n",
+    "Now the decoder handles empty frames.\n\n"
+   ],
+   "expect": [
+    "The fix belongs in the decoder",
+    "The fix belongs in the decoder",
+    "The fix belongs in the decoder",
+    "The decoder handles empty frames"
+   ]
+  }
+ ],
+ "streams": [
+  {
+   "name": "the first line shows at once",
+   "events": [
+    {
+     "at": 0,
+     "chunk": "The parser is slow on big files.\n\n",
+     "thought": "The parser is slow on big files"
+    }
+   ],
+   "shown": [
+    {
+     "text": "The parser is slow on big files",
+     "start": 0,
+     "end": 32,
+     "ms": 0
+    }
+   ]
+  },
+  {
+   "name": "a paragraph that lands within 1.2 s waits for the first chunk after it",
+   "events": [
+    {
+     "at": 0,
+     "chunk": "The parser is slow on big files.\n\n",
+     "thought": "The parser is slow on big files"
+    },
+    {
+     "at": 500,
+     "chunk": "The lexer allocates per token.\n\n",
+     "thought": null
+    },
+    {
+     "at": 1100,
+     "chunk": " more",
+     "thought": null
+    },
+    {
+     "at": 1300,
+     "chunk": "x",
+     "thought": "The lexer allocates per token"
+    }
+   ],
+   "shown": [
+    {
+     "text": "The parser is slow on big files",
+     "start": 0,
+     "end": 32,
+     "ms": 0
+    },
+    {
+     "text": "The lexer allocates per token",
+     "start": 34,
+     "end": 64,
+     "ms": 1300
+    }
+   ]
+  },
+  {
+   "name": "when several land in one interval only the newest shows",
+   "events": [
+    {
+     "at": 100,
+     "chunk": "The parser is slow on big files.\n\n",
+     "thought": "The parser is slow on big files"
+    },
+    {
+     "at": 500,
+     "chunk": "The lexer allocates per token.\n\n",
+     "thought": null
+    },
+    {
+     "at": 900,
+     "chunk": "The printer copies every line.\n\n",
+     "thought": null
+    },
+    {
+     "at": 1400,
+     "chunk": "and",
+     "thought": "The printer copies every line"
+    }
+   ],
+   "shown": [
+    {
+     "text": "The parser is slow on big files",
+     "start": 0,
+     "end": 32,
+     "ms": 0
+    },
+    {
+     "text": "The printer copies every line",
+     "start": 66,
+     "end": 96,
+     "ms": 1300
+    }
+   ]
+  },
+  {
+   "name": "the same line from a later paragraph is not sent again",
+   "events": [
+    {
+     "at": 0,
+     "chunk": "Let me check the tests first.\n\n",
+     "thought": "Check the tests first"
+    },
+    {
+     "at": 2000,
+     "chunk": "I'll check the tests first.\n\n",
+     "thought": null
+    }
+   ],
+   "shown": [
+    {
+     "text": "Check the tests first",
+     "start": 0,
+     "end": 29,
+     "ms": 0
+    }
+   ]
+  },
+  {
+   "name": "a line still waiting when the reasoning ends is never shown",
+   "events": [
+    {
+     "at": 0,
+     "chunk": "The parser is slow on big files.\n\n",
+     "thought": "The parser is slow on big files"
+    },
+    {
+     "at": 300,
+     "chunk": "The lexer allocates per token.\n\n",
+     "thought": null
+    }
+   ],
+   "shown": [
+    {
+     "text": "The parser is slow on big files",
+     "start": 0,
+     "end": 32,
+     "ms": 0
+    }
+   ]
+  },
+  {
+   "name": "skipped paragraphs send nothing",
+   "events": [
+    {
+     "at": 0,
+     "chunk": "The parser is slow on big files.\n\n",
+     "thought": "The parser is slow on big files"
+    },
+    {
+     "at": 2000,
+     "chunk": "- a list item\n\n",
+     "thought": null
+    },
+    {
+     "at": 4000,
+     "chunk": "```\ncode\n```\n\n",
+     "thought": null
+    }
+   ],
+   "shown": [
+    {
+     "text": "The parser is slow on big files",
+     "start": 0,
+     "end": 32,
+     "ms": 0
+    }
+   ]
+  },
+  {
+   "name": "offsets count UTF-16 code units",
+   "events": [
+    {
+     "at": 1000,
+     "chunk": "Das Über-Flag 🚀 bleibt aus, sagt die Doku.\n\n",
+     "thought": "Das Über-Flag 🚀 bleibt aus, sagt die Doku"
+    },
+    {
+     "at": 2200,
+     "chunk": "The second paragraph is shown later.\n\n",
+     "thought": "The second paragraph is shown later"
+    }
+   ],
+   "shown": [
+    {
+     "text": "Das Über-Flag 🚀 bleibt aus, sagt die Doku",
+     "start": 0,
+     "end": 43,
+     "ms": 0
+    },
+    {
+     "text": "The second paragraph is shown later",
+     "start": 45,
+     "end": 81,
+     "ms": 1200
+    }
+   ]
+  },
+  {
+   "name": "offsets point into the completed text when it differs from what streamed",
+   "events": [
+    {
+     "at": 0,
+     "chunk": "The parser is slow on big files.\n\n",
+     "thought": "The parser is slow on big files"
+    },
+    {
+     "at": 1500,
+     "chunk": "The lexer allocates per token.\n\n",
+     "thought": "The lexer allocates per token"
+    }
+   ],
+   "final": "<think>The parser is slow on big files.\n\nThe lexer allocates per token.\n\n",
+   "shown": [
+    {
+     "text": "The parser is slow on big files",
+     "start": 7,
+     "end": 39,
+     "ms": 0
+    },
+    {
+     "text": "The lexer allocates per token",
+     "start": 41,
+     "end": 71,
+     "ms": 1500
+    }
+   ]
+  },
+  {
+   "name": "a paragraph missing from the completed text is left out",
+   "events": [
+    {
+     "at": 0,
+     "chunk": "The parser is slow on big files.\n\n",
+     "thought": "The parser is slow on big files"
+    },
+    {
+     "at": 1500,
+     "chunk": "The lexer allocates per token.\n\n",
+     "thought": "The lexer allocates per token"
+    }
+   ],
+   "final": "The lexer allocates per token.\n\n",
+   "shown": [
+    {
+     "text": "The lexer allocates per token",
+     "start": 0,
+     "end": 30,
+     "ms": 1500
+    }
+   ]
+  }
+ ]
+}

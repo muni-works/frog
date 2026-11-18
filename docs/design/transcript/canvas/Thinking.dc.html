@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Thinking, start to finish</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.b{box-sizing:border-box;background:#0a0a0a;color:#ececec;font:13px/16px -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;padding:40px;display:flex;flex-direction:column;gap:22px}
+.h{font-size:22px;line-height:26px;font-weight:600;margin:0}
+.h2{font-size:13px;line-height:16px;font-weight:600;margin:0}
+.sub{color:#a3a3a3;margin:6px 0 0;max-width:840px;line-height:18px}
+.g{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 20px}
+.cell{display:flex;flex-direction:column;gap:6px}
+.cap{color:#a3a3a3;font-size:12px;line-height:16px}
+.cap b{color:#ececec;font-weight:600}
+.pn{background:#000;border-radius:12px;padding:14px 18px}
+.r{display:flex;align-items:center;gap:10px;height:18px}
+.d{width:7px;height:7px;border-radius:50%;background:#58cc6f;flex:none}
+.d.still{background:#808080}
+.d.warn{background:#ff9f0a}
+.lb{flex:none}
+.th{flex:1;min-width:0;color:#a3a3a3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.th.q{color:#808080}
+.st{margin:6px 0 0 17px;color:#808080;font:11px/16px ui-monospace,"SF Mono",Menlo,monospace;font-variant-numeric:tabular-nums}
+.i{width:12px;height:12px;fill:none;stroke:#808080;stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.tb{border:0;border-radius:999px;height:22px;padding:0 9px;background:rgba(255,255,255,.07);color:#ececec;font:12px/15px inherit;white-space:nowrap}
+.out{margin:10px 0 0 17px;border-left:1px solid #2a2a2a;padding-left:12px;display:grid;gap:5px;color:#a3a3a3;font-size:12px;line-height:17px}
+.out b{color:#ececec;font-weight:400}
+.ans{margin:12px 0 0;color:#ececec;line-height:19px}
+.rule{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px 22px;background:#121212;border-radius:12px;padding:16px 18px;color:#a3a3a3;font-size:12px;line-height:17px}
+.rule b{color:#ececec;font-weight:600;display:block}
+</style>
+</helmet>
+<div class="b" style="width: 1180px; height: 900px">
+<div>
+<h1 class="h">2. Thinking, start to finish</h1>
+<p class="sub">One think, in the order its states can happen. Only the thought and the numbers change; the row keeps its shape from the first frame to the settled line.</p>
+</div>
+<div class="g">
+<sc-for list="{{rows}}" as="s" hint-placeholder-count="8">
+<div class="cell">
+<div class="cap"><b>{{s.name}}</b> {{s.note}}</div>
+<div class="pn">
+<div class="r"><sc-if value="{{s.live}}" hint-placeholder-val="{{true}}"><span class="d"></span></sc-if><sc-if value="{{s.still}}" hint-placeholder-val="{{false}}"><span class="d still"></span></sc-if><sc-if value="{{s.warn}}" hint-placeholder-val="{{false}}"><span class="d warn"></span></sc-if><span class="lb">{{s.label}}</span><sc-if value="{{s.hasThought}}" hint-placeholder-val="{{true}}"><span class="th">{{s.thought}}</span></sc-if><sc-if value="{{s.hasQuiet}}" hint-placeholder-val="{{false}}"><span class="th q">{{s.quiet}}</span></sc-if><sc-if value="{{s.hasBtn}}" hint-placeholder-val="{{false}}"><button class="tb">{{s.btn}}</button></sc-if></div>
+<sc-if value="{{s.hasStats}}" hint-placeholder-val="{{true}}"><div class="st">{{s.stats}}</div></sc-if>
+</div>
+</div>
+</sc-for>
+</div>
+<div class="g" style="align-items: start">
+<div class="cell">
+<div class="cap"><b>Settled.</b> The answer has started. The row folds to one quiet line you can open; its stats have moved to the turn's footer.</div>
+<div class="pn">
+<div class="r"><span class="lb" style="color: #a3a3a3">Thought for 31s</span><svg class="i" viewBox="0 0 12 12" aria-hidden="true"><path d="M4.5 2.5 8 6l-3.5 3.5"/></svg></div>
+<div class="ans">A transformer reads a sentence as a list of tokens. Each token starts as a point in space…</div>
+</div>
+</div>
+<div class="cell">
+<div class="cap"><b>Opened.</b> The reasoning as its paragraph openers, in order. A second click on any line shows that paragraph in full.</div>
+<div class="pn">
+<div class="r"><span class="lb" style="color: #a3a3a3">Thought for 31s</span><svg class="i" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5"/></svg></div>
+<div class="out"><span>The user wants a visual explanation of transformers from first principles</span><span>Build one widget that walks through five stages</span><span>Better idea: attention as a soft lookup in two dimensions</span><span><b>Writing the widget</b></span></div>
+</div>
+</div>
+</div>
+<div class="rule">
+<span><b>Slow is not stalled.</b>Under a quarter of the model's usual rate for 5 s, the stats say so in words. The thought stays; nothing turns orange.</span>
+<span><b>Stalled is named.</b>No tokens for 10 s: the dot stops and the row says how long. At 30 s it offers Stop and Keep waiting, the same question a quiet child session raises.</span>
+<span><b>Stopping keeps what it had.</b>Pressing Stop mid-think settles the row as "Stopped after 12s" and keeps the reasoning so far openable.</span>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1180,"height":900}}'>
+class Component extends DCLogic {
+renderVals() {
+const rows = [
+['First moments.', 'Nothing to say yet: no thought, and no stats until a token arrives.', 'live', 'Thinking', '', '', '', ''],
+['First thought.', 'After 600 ms, the first finished sentence fades in.', 'live', 'Thinking', 'The user wants a visual explanation of transformers', '', '2s · 61 tokens · 59 tok/s', ''],
+['Mid-think.', 'A new paragraph, a new line. The usual state.', 'live', 'Thinking', 'Build one widget that walks through five stages', '', '9s · 388 tokens · 58 tok/s', ''],
+['A long line.', 'Truncated at the edge; the full sentence is in the opened view.', 'live', 'Thinking', 'Simplest robust approach: one widget with stage buttons, a live visual per stage built from plain elements, and two global sliders', '', '14s · 702 tokens · 59 tok/s', ''],
+['Filler and working-out.', 'Paragraphs that are only "Hmm", code or coordinates are skipped; the last good line holds.', 'live', 'Thinking', 'Laying out the diagram: seven rows, a loop back from the centre', '', '24s · 1,410 tokens · 57 tok/s', ''],
+['Slow.', 'The model is producing, just slowly. Said in the stats.', 'live', 'Thinking', 'Three visuals might be a lot; do two or three well', '', '27s · 1,610 tokens · 12 tok/s, slower than usual', ''],
+['Stalled.', 'No tokens for 10 s. The dot stops breathing and greys.', 'still', 'Thinking', '', 'No output for 12s', '39s · 1,640 tokens', ''],
+['Stalled, 30 s.', 'Now it asks. The same row, with one action; Keep waiting is the dismiss.', 'warn', 'Thinking', '', 'No output for 31s', '58s · 1,640 tokens', 'Stop']
+];
+return {
+rows: rows.map((r) => ({
+name: r[0], note: r[1], live: r[2] === 'live', still: r[2] === 'still', warn: r[2] === 'warn', label: r[3],
+thought: r[4], hasThought: r[4] !== '', quiet: r[5], hasQuiet: r[5] !== '', stats: r[6], hasStats: r[6] !== '', btn: r[7], hasBtn: r[7] !== ''
+}))
+};
+}
+}
+</script>
+</body>
+</html>

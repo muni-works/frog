@@ -1,0 +1,58 @@
+
+ RUN  v3.2.7 /work/js/vt
+
+ ❯ shapes.test.js (3 tests | 1 failed | 1 skipped) 4ms
+   ✓ shapes > squares 1ms
+   × shapes > adds 3ms
+     → expected 4 to be 5 // Object.is equality
+   ↓ shapes > is slow
+ ❯ sizes.test.js (2 tests | 1 failed) 4ms
+   ✓ doubles 1ms
+   × doubles zero 3ms
+     → expected +0 to be 1 // Object.is equality
+
+ Test Files  2 failed (2)
+      Tests  2 failed | 2 passed | 1 skipped (5)
+   Start at  23:42:07
+   Duration  142ms (transform 15ms, setup 0ms, collect 13ms, tests 8ms, environment 0ms, prepare 66ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  shapes.test.js > shapes > adds
+AssertionError: expected 4 to be 5 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 5[39m
+[31m+ 4[39m
+
+ ❯ shapes.test.js:6:38
+      4| describe('shapes', () => {
+      5|   it('squares', () => expect(square(3)).toBe(9))
+      6|   it('adds', () => expect(add(2, 2)).toBe(5))
+       |                                      ^
+      7|   it.skip('is slow', () => {})
+      8| })
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  sizes.test.js > doubles zero
+AssertionError: expected +0 to be 1 // Object.is equality
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 1[39m
+[31m+ 0[39m
+
+ ❯ sizes.test.js:3:40
+      1| import { it, expect } from 'vitest'
+      2| it('doubles', () => expect(2 * 2).toBe(4))
+      3| it('doubles zero', () => expect(0 * 2).toBe(1))
+       |                                        ^
+      4| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+[exit code 1]

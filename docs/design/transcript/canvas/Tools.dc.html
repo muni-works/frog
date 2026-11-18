@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tool calls</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.b{box-sizing:border-box;background:#0a0a0a;color:#ececec;font:13px/16px -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;padding:40px;display:flex;flex-direction:column;gap:20px}
+.h{font-size:22px;line-height:26px;font-weight:600;margin:0}
+.sub{color:#a3a3a3;margin:6px 0 0;max-width:840px;line-height:18px}
+.g{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 20px;align-items:start}
+.cell{display:flex;flex-direction:column;gap:6px}
+.cap{color:#a3a3a3;font-size:12px;line-height:16px}
+.cap b{color:#ececec;font-weight:600}
+.pn{background:#000;border-radius:12px;padding:10px 12px}
+.ln{display:flex;align-items:center;gap:8px;height:24px;padding:0 6px;border-radius:7px;color:#a3a3a3}
+.ln.hv{background:rgba(255,255,255,.07);color:#ececec}
+.ln .v{flex:none}
+.ln .o{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#ececec}
+.ln .o.m{font:12px/16px ui-monospace,"SF Mono",Menlo,monospace}
+.ln .x{flex:none;color:#808080;font:11px/16px ui-monospace,"SF Mono",Menlo,monospace;font-variant-numeric:tabular-nums}
+.add{color:#30d158}.del{color:#e5775f}
+.i{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.c{width:11px;height:11px;fill:none;stroke:#808080;stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.sp{flex:1}
+.tag{flex:none;font-size:10px;line-height:13px;font-weight:600;padding:1px 6px;border-radius:999px;border:1px solid #ff9f0a;color:#ececec}
+.act{flex:none;border:0;background:transparent;color:#a3a3a3;font:11px/14px inherit;padding:3px 6px;border-radius:6px}
+.act.on{background:rgba(255,255,255,.08);color:#ececec}
+.live{display:flex;align-items:center;gap:10px;height:24px;padding:0 6px}
+.d{width:7px;height:7px;border-radius:50%;background:#58cc6f;flex:none}
+.st{margin:0 0 4px 23px;color:#808080;font:11px/16px ui-monospace,"SF Mono",Menlo,monospace;font-variant-numeric:tabular-nums}
+.box{margin:4px 0 6px 27px;background:#121212;border-radius:8px;padding:8px 10px;font:11px/16px ui-monospace,"SF Mono",Menlo,monospace;color:#a3a3a3;white-space:pre-wrap;overflow:hidden}
+.box b{color:#ececec;font-weight:400}
+.box .ft{display:flex;gap:10px;align-items:center;margin-top:6px;padding-top:6px;border-top:1px solid #1a1a1a;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif;font-size:11px;color:#808080}
+.dl{display:block;padding:0 6px;margin:0 -10px}
+.dl.a{background:rgba(48,209,88,.12);color:#ececec}
+.dl.r{background:rgba(229,119,95,.12);color:#ececec}
+.res{margin:4px 0 6px 27px;display:grid;gap:4px;font-size:12px;line-height:16px;color:#ececec}
+.res span span{color:#808080}
+.ln .v.bad{color:#e5775f}
+.sq{width:12px;height:12px;border-radius:3px;background:#2a2a2a;display:block}
+.sq.bad{background:transparent;border:1.5px solid #ff9f0a;box-sizing:border-box}
+.mm{position:relative;flex:none;width:96px;height:6px;border-radius:2px;background:#1a1a1a;display:block}
+.mm span{position:absolute;top:0;height:6px;border-radius:1px}
+.chip{border:1px solid #2a2a2a;border-radius:999px;padding:1px 8px;color:#a3a3a3}
+.chip.ed{border-color:transparent;background:#1e1e1e;color:#ececec}
+.rule{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px 22px;background:#121212;border-radius:12px;padding:16px 18px;color:#a3a3a3;font-size:12px;line-height:17px}
+.rule b{color:#ececec;font-weight:600;display:block}
+</style>
+</helmet>
+<div class="b" style="width: 1180px; height: 1220px">
+<div>
+<h1 class="h">6. Tool calls</h1>
+<p class="sub">A tool call is the live row while it runs and one quiet line once it's done: the verb in the past tense, what it acted on, and the result in a few characters. The line is a button with the same hover and the same one-step opening as the thinking.</p>
+</div>
+<div class="g">
+<div class="cell">
+<div class="cap"><b>Live, then done.</b> The row from board 3 becomes a line in place. Same words, past tense; the stats shrink to the one that mattered.</div>
+<div class="pn">
+<div class="live"><span class="d"></span><span>Running</span><span class="o m" style="color: #a3a3a3; font: 12px/16px ui-monospace,Menlo,monospace">cargo test -q upload</span></div>
+<div class="st">12s · 142 lines</div>
+<div class="ln" style="margin-top: 6px"><svg class="i" viewBox="0 0 14 14" aria-hidden="true"><path d="M2.5 4.5 5 7l-2.5 2.5M7 9.5h4.5"/></svg><span class="v">Ran</span><span class="o m">cargo test -q upload</span><span class="sp"></span><span class="x">14s</span><svg class="c" viewBox="0 0 12 12" aria-hidden="true"><path d="M4.5 2.5 8 6l-3.5 3.5"/></svg></div>
+</div>
+</div>
+<div class="cell">
+<div class="cap"><b>A run of steps at rest.</b> Icon, verb, object, result. Secondary text, so the reply around them stays the loudest thing.</div>
+<div class="pn">
+<div class="ln"><svg class="i" viewBox="0 0 14 14" aria-hidden="true"><path d="M3.5 2h5l2.5 2.5V12h-7.5z"/></svg><span class="v">Read</span><span class="o m">src/retry.rs</span><span class="sp"></span><span class="x">lines 1 to 120</span></div>
+<div class="ln"><svg class="i" viewBox="0 0 14 14" aria-hidden="true"><circle cx="6" cy="6" r="3.5"/><path d="m8.7 8.7 2.8 2.8"/></svg><span class="v">Searched</span><span class="o">tokio jitter backoff</span><span class="sp"></span><span class="x">8 results</span></div>
+<div class="ln"><svg class="i" viewBox="0 0 14 14" aria-hidden="true"><path d="M2.5 4.5 5 7l-2.5 2.5M7 9.5h4.5"/></svg><span class="v bad">Failed</span><span class="o m">cargo test -q upload</span><span class="sp"></span><span class="x">9s</span></div>
+<div class="ln"><svg class="i" viewBox="0 0 14 14" aria-hidden="true"><path d="m9 2.5 2.5 2.5L5 11.5H2.5V9z"/></svg><span class="v">Edited</span><span class="o m">src/retry.rs</span><span class="sp"></span><span class="x"><span class="add">+3</span> <span class="del">−2</span></span></div>
+<div class="ln"><svg class="i" viewBox="0 0 14 14" aria-hidden="true"><path d="M2.5 4.5 5 7l-2.5 2.5M7 9.5h4.5"/></svg><span class="v">Ran</span><span class="o m">cargo test -q upload</span><span class="sp"></span><span class="x">14s</span></div>
+</div>
+</div>
+<div class="cell">
+<div class="cap"><b>Hover.</b> The plate, a chevron, and the one or two things you'd do with that line. Actions appear only on hover or keyboard focus.</div>
+<div class="pn">
+<div class="ln hv"><svg class="i" viewBox="0 0 14 14" aria-hidden="true"><path d="M2.5 4.5 5 7l-2.5 2.5M7 9.5h4.5"/></svg><span class="v">Ran</span><span class="o m">cargo test -q upload</span><span class="sp"></span><button class="act on">Copy command</button><button class="act">Run in Terminal</button><svg class="c" viewBox="0 0 12 12" aria-hidden="true" style="stroke: #ececec"><path d="M4.5 2.5 8 6l-3.5 3.5"/></svg></div>
+<div class="ln hv" style="margin-top: 4px"><svg class="i" viewBox="0 0 14 14" aria-hidden="true"><path d="m9 2.5 2.5 2.5L5 11.5H2.5V9z"/></svg><span class="v">Edited</span><span class="o m">src/retry.rs</span><span class="sp"></span><button class="act on">Show in Changes</button><svg class="c" viewBox="0 0 12 12" aria-hidden="true" style="stroke: #ececec"><path d="M4.5 2.5 8 6l-3.5 3.5"/></svg></div>
+</div>
+</div>
+<div class="cell">
+<div class="cap"><b>A command, opened.</b> The last lines of output, capped, with where it ran and how it ended.</div>
+<div class="pn">
+<div class="ln"><svg class="i" viewBox="0 0 14 14" aria-hidden="true"><path d="M2.5 4.5 5 7l-2.5 2.5M7 9.5h4.5"/></svg><span class="v bad">Failed</span><span class="o m">cargo test -q upload</span><span class="sp"></span><span class="x">9s</span><svg class="c" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5"/></svg></div>
+<div class="box">running 11 tests
+<b>test upload_retries_on_503 ... FAILED</b>
+mock store: no request within 500ms
+test result: FAILED. 10 passed; 1 failed<div class="ft"><span>Exit 101</span><span>·</span><span>In the sandbox</span><span style="flex: 1"></span><span>Show all 142 lines</span><span>Copy</span></div></div>
+</div>
+</div>
+<div class="cell">
+<div class="cap"><b>An edit, opened.</b> The change itself, a few lines of context. The full diff is in Changes.</div>
+<div class="pn">
+<div class="ln"><svg class="i" viewBox="0 0 14 14" aria-hidden="true"><path d="m9 2.5 2.5 2.5L5 11.5H2.5V9z"/></svg><span class="v">Edited</span><span class="o m">src/retry.rs</span><span class="sp"></span><span class="x"><span class="add">+3</span> <span class="del">−2</span></span><svg class="c" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5"/></svg></div>
+<div class="box">  let base = Duration::from_millis(100 &lt;&lt; attempt);
+<span class="dl r">- let jitter = thread_rng().gen_range(0..base.as_millis());</span><span class="dl a">+ let jitter = self.rng.gen_range(0..base.as_millis() / 2);</span>  base + Duration::from_millis(jitter as u64)</div>
+</div>
+</div>
+<div class="cell">
+<div class="cap"><b>A search, opened.</b> What came back, by title and site. A read has nothing to open: clicking it shows the file at those lines.</div>
+<div class="pn">
+<div class="ln"><svg class="i" viewBox="0 0 14 14" aria-hidden="true"><circle cx="6" cy="6" r="3.5"/><path d="m8.7 8.7 2.8 2.8"/></svg><span class="v">Searched</span><span class="o">tokio jitter backoff</span><span class="sp"></span><span class="x">8 results</span><svg class="c" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5"/></svg></div>
+<div class="res"><span>Exponential backoff and jitter <span>aws.amazon.com</span></span><span>tokio_retry::strategy <span>docs.rs</span></span><span>Deterministic RNG in tests <span>rust-lang.github.io</span></span><span style="color: #808080">5 more</span></div>
+</div>
+</div>
+<div class="cell">
+<div class="cap"><b>Many steps fold.</b> Four or more finished steps in a row become one line that opens to the list. A failed step keeps its own line outside the fold.</div>
+<div class="pn">
+<div class="ln"><svg class="c" viewBox="0 0 12 12" aria-hidden="true"><path d="M4.5 2.5 8 6l-3.5 3.5"/></svg><span class="o">12 steps</span><span class="v">6 reads, 4 commands, 2 edits</span><span class="sp"></span><span class="x">48s</span></div>
+<div class="ln"><svg class="i" viewBox="0 0 14 14" aria-hidden="true"><path d="M2.5 4.5 5 7l-2.5 2.5M7 9.5h4.5"/></svg><span class="v bad">Failed</span><span class="o m">cargo clippy</span><span class="sp"></span><span class="x">6s</span></div>
+</div>
+</div>
+<div class="cell">
+<div class="cap"><b>Steps that didn't run, and a child.</b> A refusal says who refused. A delegated session shows its result and opens to its own outline.</div>
+<div class="pn">
+<div class="ln"><svg class="i" viewBox="0 0 14 14" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="m4 10 6-6"/></svg><span class="v">Didn't run</span><span class="o m">cargo publish</span><span class="sp"></span><span class="x">you said no</span></div>
+<div class="ln"><svg class="i" viewBox="0 0 14 14" aria-hidden="true"><path d="M3 3.5v4a2 2 0 0 0 2 2h5M8 7.5l2 2-2 2"/></svg><span class="v">Delegated</span><span class="o">Fix flaky upload retry</span><span class="sp"></span><span class="x">done · 2m 4s</span><svg class="c" viewBox="0 0 12 12" aria-hidden="true"><path d="M4.5 2.5 8 6l-3.5 3.5"/></svg></div>
+</div>
+</div>
+<div class="cell">
+<div class="cap"><b>A test run.</b> When Frog recognises the runner's summary line, the step says how many passed and, opened, names the tests that failed. That's all: no per-test picture. A runner it doesn't recognise is a plain command with its output, never a wrong count.</div>
+<div class="pn">
+<div class="ln"><svg class="i" viewBox="0 0 14 14" aria-hidden="true"><path d="M2.5 4.5 5 7l-2.5 2.5M7 9.5h4.5"/></svg><span class="v bad">Failed</span><span class="o m">cargo test -q upload</span><span class="sp"></span><span class="x">10 of 11 · 9s</span><svg class="c" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5"/></svg></div>
+<div style="margin: 6px 0 6px 27px; display: flex; flex-direction: column; gap: 8px">
+<div style="font: 11px/16px ui-monospace,Menlo,monospace; color: #a3a3a3"><span style="color: #808080; font-family: -apple-system,BlinkMacSystemFont,sans-serif">1 failed</span><br><span style="color: #ececec">upload_retries_on_503</span> · no request within 500ms</div>
+<div style="font-size: 11px; line-height: 15px; color: #808080">Read from the summary line of cargo, pytest, go test, vitest and jest. Show output for the rest.</div>
+</div>
+</div>
+</div>
+<div class="cell">
+<div class="cap"><b>An edit, with a minimap.</b> A thin strip of the whole file with marks where lines changed, so "+3 −2" also says where. It sits on the line when hovered and stays when opened.</div>
+<div class="pn">
+<div class="ln hv"><svg class="i" viewBox="0 0 14 14" aria-hidden="true"><path d="m9 2.5 2.5 2.5L5 11.5H2.5V9z"/></svg><span class="v">Edited</span><span class="o m">src/retry.rs</span><span class="sp"></span><span class="mm" role="img" aria-label="Changes at lines 41 to 46 and 88 of 124"><span style="left: 33%; width: 3%; background: #30d158"></span><span style="left: 36.5%; width: 2%; background: #e5775f"></span><span style="left: 71%; width: 1.5%; background: #30d158"></span></span><span class="x"><span class="add">+3</span> <span class="del">−2</span></span></div>
+<div style="margin: 4px 0 2px 27px; font: 11px/16px ui-monospace,Menlo,monospace; color: #808080">lines 41 to 46 and 88 of 124</div>
+</div>
+</div>
+<div class="cell">
+<div class="cap"><b>A fold, with what it touched.</b> Opened, a fold leads with the files as chips: outlined for read, filled for edited, a count when visited more than once. The steps follow underneath.</div>
+<div class="pn">
+<div class="ln"><svg class="c" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5"/></svg><span class="o">12 steps</span><span class="sp"></span><span class="x">48s</span></div>
+<div style="margin: 4px 0 6px 27px; display: flex; gap: 6px; flex-wrap: wrap; font: 11px/16px ui-monospace,Menlo,monospace"><span class="chip">mod.rs</span><span class="chip ed">retry.rs <span style="color: #808080">×3</span></span><span class="chip">store.rs</span><span class="chip ed">retry_test.rs</span><span class="chip">Cargo.toml</span></div>
+</div>
+</div>
+<div class="cell">
+<div class="cap"><b>A fold, at rest.</b> Instead of "6 reads, 4 commands, 2 edits" in words, the fold's line carries a strip of its time: green thinking, grey work, amber waiting. It is the turn line from board 7, cut to these steps.</div>
+<div class="pn">
+<div class="ln"><svg class="c" viewBox="0 0 12 12" aria-hidden="true"><path d="M4.5 2.5 8 6l-3.5 3.5"/></svg><span class="o">12 steps</span><span class="sp"></span><span class="mm" style="width: 180px; background: transparent" role="img" aria-label="Thinking 20 seconds, work 24 seconds, waiting 4 seconds"><span style="left: 0; width: 31%; background: #58cc6f"></span><span style="left: 32%; width: 2%; background: #808080"></span><span style="left: 35%; width: 18%; background: #808080"></span><span style="left: 54%; width: 10%; background: #58cc6f"></span><span style="left: 65%; width: 8%; background: #ff9f0a"></span><span style="left: 74%; width: 26%; background: #808080"></span></span><span class="x">48s</span></div>
+</div>
+</div>
+</div>
+<div class="rule">
+<span><b>Failures open themselves, once.</b>A failed command is the one thing that starts opened, showing its last lines. Its verb changes from "Ran" to "Failed" and is the one red word in the transcript; there is no pill or tag.</span>
+<span><b>Output is capped.</b>The last 12 lines, then "Show all". The full output scrolls in its own box and is never dumped into the transcript.</span>
+<span><b>One action per kind.</b>Commands: copy, or run in Terminal. Edits: show in Changes. Reads: open the file. Searches: open a result. Nothing else hides in the hover.</span>
+<span><b>Same keys as thinking.</b>Return opens, arrows move between lines, Esc closes. A fold opens to its steps; a step opens to its detail.</span>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1180,"height":1220}}'>
+class Component extends DCLogic {
+renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,62 @@
+
+running 4 tests
+i. 2/4
+tests::adds --- FAILED
+tests::adds_zero --- FAILED
+
+failures:
+
+---- tests::adds stdout ----
+
+thread 'tests::adds' (77628233) panicked at src/lib.rs:14:25:
+assertion `left == right` failed
+  left: 4
+ right: 5
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- tests::adds_zero stdout ----
+
+thread 'tests::adds_zero' (77628234) panicked at src/lib.rs:15:30:
+assertion `left == right` failed
+  left: 7
+ right: 8
+
+
+failures:
+    tests::adds
+    tests::adds_zero
+
+test result: FAILED. 1 passed; 2 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 2 tests
+. 1/2
+outer_add --- FAILED
+
+failures:
+
+---- outer_add stdout ----
+
+thread 'outer_add' (77628238) panicked at tests/outer.rs:2:26:
+assertion `left == right` failed
+  left: 3
+ right: 4
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    outer_add
+
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 1 test
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s
+
+error: test failed, to rerun pass `--lib`
+error: test failed, to rerun pass `--test outer`
+error: 2 targets failed:
+    `--lib`
+    `--test outer`
+[exit code 101]

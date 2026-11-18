@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Status rows for everything that isn't thinking</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+.b{box-sizing:border-box;background:#0a0a0a;color:#ececec;font:13px/16px -apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;padding:40px;display:flex;flex-direction:column;gap:22px}
+.h{font-size:22px;line-height:26px;font-weight:600;margin:0}
+.sub{color:#a3a3a3;margin:6px 0 0;max-width:840px;line-height:18px}
+.g{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 20px}
+.cell{display:flex;flex-direction:column;gap:6px}
+.cap{color:#a3a3a3;font-size:12px;line-height:16px}
+.cap b{color:#ececec;font-weight:600}
+.pn{background:#000;border-radius:12px;padding:12px 18px}
+.r{display:flex;align-items:center;gap:10px;height:18px}
+.d{width:7px;height:7px;border-radius:50%;background:#58cc6f;flex:none}
+.d.warn{background:#ff9f0a}
+.lb{flex:none}
+.ob{flex:1;min-width:0;color:#a3a3a3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ob.m{font:12px/16px ui-monospace,"SF Mono",Menlo,monospace}
+.st{margin:6px 0 0 17px;color:#808080;font:11px/16px ui-monospace,"SF Mono",Menlo,monospace;font-variant-numeric:tabular-nums}
+.tb{border:0;border-radius:999px;height:22px;padding:0 9px;background:rgba(255,255,255,.07);color:#ececec;font:12px/15px inherit;white-space:nowrap}
+.ft{display:flex;align-items:center;gap:8px;color:#808080;font:11px/16px ui-monospace,"SF Mono",Menlo,monospace;font-variant-numeric:tabular-nums;margin-top:10px}
+.ans{color:#ececec;line-height:19px}
+.rule{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px 22px;background:#121212;border-radius:12px;padding:16px 18px;color:#a3a3a3;font-size:12px;line-height:17px}
+.rule b{color:#ececec;font-weight:600;display:block}
+</style>
+</helmet>
+<div class="b" style="width: 1180px; height: 940px">
+<div>
+<h1 class="h">3. Everything that isn't thinking</h1>
+<p class="sub">The same two lines, held still. A verb, the thing it's acting on, and the one or two numbers that tell you it's alive. Only thinking cross-fades; these rows change by cutting, because each is a different step, not a continuing thought.</p>
+</div>
+<div class="g">
+<sc-for list="{{rows}}" as="s" hint-placeholder-count="12">
+<div class="cell">
+<div class="cap"><b>{{s.name}}</b> {{s.note}}</div>
+<div class="pn">
+<div class="r"><sc-if value="{{s.ok}}" hint-placeholder-val="{{true}}"><span class="d"></span></sc-if><sc-if value="{{s.warn}}" hint-placeholder-val="{{false}}"><span class="d warn"></span></sc-if><span class="lb">{{s.label}}</span><sc-if value="{{s.mono}}" hint-placeholder-val="{{true}}"><span class="ob m">{{s.obj}}</span></sc-if><sc-if value="{{s.plain}}" hint-placeholder-val="{{false}}"><span class="ob">{{s.obj}}</span></sc-if><sc-if value="{{s.hasBtn}}" hint-placeholder-val="{{false}}"><button class="tb">{{s.btn}}</button></sc-if></div>
+<div class="st">{{s.stats}}</div>
+</div>
+</div>
+</sc-for>
+</div>
+<div class="g" style="align-items: start">
+<div class="cell">
+<div class="cap"><b>While the answer writes,</b> there is no row. The same stats sit under the text as it streams, so the numbers never leave the bottom of the turn.</div>
+<div class="pn"><div class="ans">A transformer reads a sentence as a list of tokens. Each token starts as a point in</div><div class="ft"><span>34s</span><span>·</span><span>1,902 tokens</span><span>·</span><span>58 tok/s</span></div></div>
+</div>
+<div class="cell">
+<div class="cap"><b>When the turn ends,</b> the live stats become the turn's footer: the model, where it ran, what it cost and its speed.</div>
+<div class="pn"><div class="ans">…and that loop, repeated one token at a time, is the whole model.</div><div class="ft"><span style="color: #a3a3a3">DeepSeek V4.1 Flash</span><span>·</span><span>Frog Cloud</span><span>·</span><span>&lt;1¢</span><span>·</span><span>58 tok/s</span><span>·</span><span>41s</span></div></div>
+</div>
+</div>
+<div class="rule">
+<span><b>A verb, then its object.</b>Paths and commands in mono, names in plain text. No "…" after the verb; the dot says it's ongoing.</span>
+<span><b>Stats earn their place.</b>Time shows after the first second. Then the one number that proves progress: lines, bytes, results, gigabytes, a countdown.</span>
+<span><b>One row at a time.</b>Several tools at once fold into a count ("Reading 3 files"). Finished steps stay in the transcript as today's quiet lines.</span>
+<span><b>Orange means you.</b>The dot is orange only when Frog is waiting on a person: a permission, or a child that has gone quiet. Everything else stays green.</span>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1180,"height":940}}'>
+class Component extends DCLogic {
+renderVals() {
+const rows = [
+['A command.', 'Output is one click away; the row counts lines.', 'ok', 'Running', 'npm test', 'm', '12s · 142 lines', ''],
+['Reading and editing.', 'Fast steps rarely show stats at all.', 'ok', 'Editing', 'src/retry.rs', 'm', '+3 −2', ''],
+['Several at once.', 'Parallel reads fold into a count.', 'ok', 'Reading', '3 files', 'p', '1s', ''],
+['The web.', 'Search and fetch say what came back.', 'ok', 'Searching', 'tokio jitter backoff', 'p', '2s · 8 results', ''],
+['A model starting.', 'The system model is started, not loaded.', 'ok', 'Starting', 'Apple Intelligence', 'p', '3s', ''],
+['A model loading.', 'A downloaded model really is loaded into memory.', 'ok', 'Loading', 'Qwen3 32B', 'p', '6s · 11 of 18 GB', ''],
+['A cloud sandbox.', 'Says which step it is on.', 'ok', 'Starting sandbox', 'ecto/pond', 'p', '4s · cloning', ''],
+['Retrying.', 'A countdown, so a pause reads as a plan.', 'ok', 'Retrying', 'Frog Cloud is busy', 'p', 'attempt 2 · in 12s', ''],
+['Tidying context.', 'Says what was kept.', 'ok', 'Tidying context', 'kept your messages', 'p', '3s · 41,200 to 18,900 tokens', ''],
+['A child session.', "Shows the child's own current line.", 'ok', 'Delegating', 'Fix flaky upload retry', 'p', '1m 12s · child is thinking', ''],
+['Waiting on you.', 'A permission card is up. Orange, still.', 'warn', 'Waiting for you', 'Allow cargo test -q upload?', 'p', 'waited 40s', ''],
+['A quiet child.', 'The child stopped reporting. One action here; the full question is in its card.', 'warn', 'Delegating', 'Fix flaky upload retry', 'p', 'quiet for 2m', 'Stop']
+];
+return {
+rows: rows.map((r) => ({
+name: r[0], note: r[1], ok: r[2] === 'ok', warn: r[2] === 'warn', label: r[3], obj: r[4],
+mono: r[5] === 'm', plain: r[5] === 'p', stats: r[6], btn: r[7], hasBtn: r[7] !== ''
+}))
+};
+}
+}
+</script>
+</body>
+</html>
