@@ -632,8 +632,17 @@ impl Agent {
                     *self.call_started.lock().unwrap() =
                         Some((Instant::now(), attempt + 1, asked.map(|d| d.as_secs())));
                     self.emit_status();
+                    let busy = matches!(
+                        trouble_of(&e),
+                        model_policy::Trouble::Busy | model_policy::Trouble::NoCapacity
+                    );
                     self.emit(Event::Progress {
-                        label: "busy, retrying…".into(),
+                        label: if busy {
+                            model_policy::BUSY_LABEL
+                        } else {
+                            model_policy::RETRY_LABEL
+                        }
+                        .into(),
                         completed: None,
                         total: None,
                     });

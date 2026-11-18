@@ -5,23 +5,29 @@ use crate::protocol::{Answer, Image, NotifyUrgency};
 use crate::provider::scripted;
 use serde_json::json;
 
-/// Scripts for subagents started in a given cwd (each test uses its own directory).
-static CHILD_SCRIPTS: std::sync::LazyLock<Mutex<HashMap<PathBuf, Vec<Vec<Response>>>>> =
-    std::sync::LazyLock::new(Default::default);
+/// Scripts for subagents started in a given cwd (each test uses its own directory): the
+/// responses, and calls that fail first (see [`scripted::Fail`]).
+static CHILD_SCRIPTS: std::sync::LazyLock<
+    Mutex<HashMap<PathBuf, Vec<(Vec<Response>, Vec<scripted::Fail>)>>>,
+> = std::sync::LazyLock::new(Default::default);
 
-pub(super) fn child_script(cwd: &Path) -> Option<Vec<Response>> {
+pub(super) fn child_script(cwd: &Path) -> Option<(Vec<Response>, Vec<scripted::Fail>)> {
     let mut all = CHILD_SCRIPTS.lock().unwrap();
     let list = all.get_mut(cwd)?;
     (!list.is_empty()).then(|| list.remove(0))
 }
 
 fn script_child(cwd: &Path, script: Vec<Response>) {
+    script_child_failing(cwd, Vec::new(), script);
+}
+
+fn script_child_failing(cwd: &Path, fails: Vec<scripted::Fail>, script: Vec<Response>) {
     CHILD_SCRIPTS
         .lock()
         .unwrap()
         .entry(cwd.to_path_buf())
         .or_default()
-        .push(script);
+        .push((script, fails));
 }
 
 fn reply(content: Vec<Block>, stop: Stop) -> Response {
@@ -14791,3 +14797,6 @@ async fn a_message_sent_mid_turn_makes_the_held_draft_stale() {
     );
     shutdown(h).await;
 }
+
+#[path = "tests_children.rs"]
+mod children;

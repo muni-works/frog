@@ -22,6 +22,16 @@ frog --sessions            # list this folder's sessions
 
 For a self-contained investigation, such as finding where something is used across many files, Frog can hand the work to a subagent: a helper with its own context that reads and reports back. Only its report joins the conversation, so a long search costs the session little. Its steps show live in its card, and stopping the turn stops it.
 
+## When a child goes quiet
+
+If a subagent, or a session Frog started for you, produces nothing for five minutes while it's working, Frog asks you what to do instead of looking busy: keep waiting, or stop it and carry on with what it has. The question names the child, what it was asked, and how long it's been quiet, and it goes away by itself if the child starts again. A child waiting on one of your approvals is never counted as quiet.
+
+If a child crashes, Frog says so straight away rather than waiting on it.
+
+<!-- only: terminal -->
+The wait is `child_quiet_secs` in `config.toml` (default `300`). With nobody to ask, as in `frog -p` or `frog bench`, Frog stops a child that has been quiet for `child_quiet_stop_secs` (default `1800`) and carries on. `0` turns either off.
+<!-- end -->
+
 <!-- only: mac -->
 ## Sessions that start sessions
 
