@@ -189,6 +189,10 @@ and font size match within 1 point, and every row's words match (`match: 12 rows
 - **The phone** keeps one gutter and no inset: its prose (`MessageText+UIKit`) has no indent yet, so
   `TranscriptEdge` applies on the Mac only. The phone does get the new lines, folds, footer and
   bubble from FrogKit.
+- **"Thought for Ns"** is how long the think ran (`ItemState.thoughtMs`, set as it completes):
+  `think_ms` cut at its completion, or in an older log, until the first message or tool call
+  logged after it starts, or its completion if sooner (#441). The turn line's thinking segments
+  use the same rule; `TurnLineTests` runs every case's `thinking` in timeline.json.
 - **Thoughts between steps** don't draw on the Mac (as before) and so don't break a fold; on the
   web a thought line breaks the run.
 
