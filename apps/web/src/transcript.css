@@ -59,15 +59,15 @@
 .tx .say { padding-left: var(--tx-indent); overflow-wrap: anywhere; }
 .tx .md { font-size: var(--tx-body-size); line-height: var(--tx-body-line); }
 .tx .md > :is(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6) { max-width: var(--tx-prose); }
-.tx .md :is(p, ul, ol, blockquote, hr, .md-code, .md-table) { margin: 0; }
+.tx .md :where(p, ul, ol, blockquote, hr, .md-code, .md-table) { margin: 0; }
 .tx .md > * + * { margin-top: var(--gap-paragraph); }
 .tx .md > * + :is(h1, h2, h3, h4, h5, h6) { margin-top: var(--gap-section); }
 .tx .md > :is(h1, h2, h3, h4, h5, h6) + * { margin-top: var(--gap-heading); }
-.tx .md :is(h1, h2, h3, h4, h5, h6) { margin: 0; font-size: var(--tx-body-size); line-height: var(--tx-body-line); font-weight: 600; }
-.tx .md > * + :is(h1, h2, h3, h4, h5, h6) { margin-top: var(--gap-section); }
+.tx .md :where(h1, h2, h3, h4, h5, h6) { margin: 0; }
+.tx .md :is(h1, h2, h3, h4, h5, h6) { font-size: var(--tx-body-size); line-height: var(--tx-body-line); font-weight: 600; }
 .tx .md h1 { font-size: calc(var(--tx-body-size) + var(--space-tight)); }
 .tx .md h2 { font-size: calc(var(--tx-body-size) + var(--space-hair)); }
-.tx .md li { margin: 0; }
+.tx .md :where(li) { margin: 0; }
 .tx .md li + li { margin-top: var(--gap-list); }
 .tx .md code { font-family: var(--font-mono); font-size: var(--tx-body-mono); line-height: 1; padding: var(--space-hair) var(--space-tight); border-radius: var(--space-tight); }
 .tx .md-code pre { margin: 0; padding: var(--space-card) var(--space-roomy); font-family: var(--font-mono); font-size: var(--tx-body-mono); line-height: var(--tx-status-line); }
@@ -113,8 +113,11 @@
 .tx [data-state="run"] > .line-plate .line-verb { color: var(--fg); }
 /* Failure: the verb says it, in the one red the transcript has. No pill. */
 .tx [data-state="failed"] > .line-plate .line-verb { color: var(--warn); }
-.tx .line-acts { flex: none; display: flex; margin-left: var(--space-tight); opacity: 0; transition: opacity .12s; }
-.tx .line-plate:hover .line-acts, .tx .line-acts:focus-within { opacity: 1; }
+/* Hover actions sit over the result's end, so at rest the result reaches the column's edge;
+ * on hover the result gives way to them. */
+.tx .line-acts { position: absolute; right: 0; top: 50%; transform: translateY(-50%); display: flex; opacity: 0; transition: opacity .12s; pointer-events: none; }
+.tx .line-plate:hover .line-acts, .tx .line-acts:focus-within { opacity: 1; pointer-events: auto; }
+.tx .line-plate:is(:hover, :focus-within):has(.line-acts) .line-result { visibility: hidden; }
 .tx .tool-spin { width: 11px; height: 11px; border-radius: 50%; border: 1.5px solid var(--frog-pad); border-top-color: var(--frog); animation: spin 1s linear infinite; }
 
 /* Opened: a command's last lines and where it ran, an edit's change, a search's results. */
@@ -133,6 +136,8 @@
 .tx .line-link { border: 0; background: none; padding: 0; font: inherit; color: var(--muted); cursor: pointer; }
 .tx .line-link:hover { color: var(--fg); }
 .tx .line-open, .tx .fold-steps, .tx .thought-body { padding-left: 0; }
+/* A fold's steps sit inside its row, which already carries the indent. */
+.tx .fold-steps .line-row { padding-left: 0; }
 .tx .thought-body { font-size: var(--tx-status-size); line-height: var(--tx-status-line); color: var(--muted); white-space: pre-wrap; padding-bottom: var(--space-snug); }
 
 /* The footer (spec, "The footer"): one meta line, the model in muted. */
@@ -148,7 +153,7 @@
 .tx .turn-card-h { display: flex; justify-content: space-between; font-size: var(--tx-body-size); }
 .tx .turn-card-row { display: flex; gap: var(--space-row); }
 .tx .turn-card-time { color: var(--muted); padding-top: var(--space-row); }
-.tx .turn-foot .hover-acts { margin-left: 0; }
+.tx .turn-foot .hover-acts { margin-left: 0; height: var(--tx-meta-line); align-items: center; }
 .tx .turn-note { padding-left: var(--tx-indent); margin-top: var(--gap-block); font-size: var(--tx-status-size); line-height: var(--tx-status-line); color: var(--muted); white-space: normal; }
 
 /* What Frog is doing (the live row; phase 2 redraws it): quiet, a breathing dot. */

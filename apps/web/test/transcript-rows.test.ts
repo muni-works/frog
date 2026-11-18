@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ToolLine } from "../src/ui/Transcript.tsx";
-import { foldRuns, lineOf, lookOf, gutterLayout, INSET_BELOW, resetOpened, type Step } from "../src/ui/rows.ts";
+import { foldRuns, lineOf, lookOf, gutterLayout, INSET_BELOW, rememberOpen, resetOpened, type Step } from "../src/ui/rows.ts";
 import type { Entry } from "../src/engine/thread.ts";
 
 const verbs = JSON.parse(readFileSync(new URL("../../../docs/design/transcript/verbs.json", import.meta.url), "utf8"));
@@ -89,9 +89,15 @@ test("a failed command starts opened, once; a failed read doesn't open itself", 
   const first = draw(e);
   assert.match(first, /aria-expanded="true"/);
   assert.match(first, /line-open/);
-  // Drawn again (a remount, a session switch): it opened once already, so it stays as the person left it.
-  assert.doesNotMatch(draw(e), /line-open/, "a failure opens itself once, not on every mount");
+  // Drawn again (StrictMode's second call, the app replaying its cache, a session switch): still open.
+  assert.match(draw(e), /line-open/, "a remount doesn't close what opened itself");
+  // The person closes it: from then on it stays as they left it, on every mount.
+  rememberOpen("f1", false);
+  assert.doesNotMatch(draw(e), /line-open/, "a failure opens itself once, not again after you close it");
   assert.doesNotMatch(draw(step({ id: "f2", name: "Read", outcome: "error", output: "gone" })), /line-open/);
+  // A step that didn't fail never opens itself, and remembering it does nothing.
+  rememberOpen("ok1", true);
+  assert.doesNotMatch(draw(step({ id: "ok1", name: "Bash", arg: "ls", output: "a" })), /line-open/);
 });
 
 test("a recognised test run reads 10 of 11 and, opened, names what failed above the output", () => {

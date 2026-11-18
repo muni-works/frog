@@ -9,7 +9,7 @@ import { ICON } from './icons'
 import { endError } from '../store'
 import { TurnFooter } from './TurnFooter'
 import { WidgetCard } from './Widget'
-import { foldRuns, foldTime, lineOf, opensItself, type Step } from './rows'
+import { foldRuns, foldTime, lineOf, opensItself, rememberOpen, type Step } from './rows'
 
 // Draws a folded Thread: the user's message, tool lines, "Decided" steps (reasoning items),
 // streamed replies, and a diff card per edit with Allow ⌘↩ / Deny ⌘. while it waits.
@@ -121,6 +121,8 @@ const TAIL = 12
 export function ToolLine({ e, diff, onShowChange, startOpen }: { e: Entry; diff?: FileDiff; onShowChange?: (path: string) => void; /** Tests: draw it opened. */ startOpen?: boolean }) {
   const line = lineOf(e, diff ?? e.diff)
   const [open, setOpen] = useState<boolean>(() => opensItself(e, line) || !!startOpen)
+  // A step that fails while drawn (it mounted running) opens when it turns failed, once.
+  useEffect(() => { if (line.state === 'failed' && opensItself(e, line)) setOpen(true) }, [line.state]) // eslint-disable-line react-hooks/exhaustive-deps
   const [all, setAll] = useState(false)
   const name = (e.name ?? '').toLowerCase()
   const output = e.output.trim()
@@ -142,7 +144,7 @@ export function ToolLine({ e, diff, onShowChange, startOpen }: { e: Entry; diff?
     <div className="line-row" data-row="line" data-kind={line.kind} data-state={line.state}>
       <div className="line-plate">
         <button type="button" className="line" aria-expanded={opens ? shown : undefined} aria-disabled={opens ? undefined : true}
-          title={line.title || undefined} onClick={() => { if (opens) setOpen(!shown) }}>
+          title={line.title || undefined} onClick={() => { if (opens) { rememberOpen(e.id, !shown); setOpen(!shown) } }}>
           <span className="line-mark" aria-hidden="true">
             {line.state === 'run' ? <span className="tool-spin" /> : <Glyph d={MARK[name] ?? OTHER_MARK} />}
           </span>

@@ -124,17 +124,25 @@ export function lineOf(e: Entry, diff: FileDiff | undefined = e.diff): Line {
   }
 }
 
-// A failed command opens itself once (spec, "Failure"). Kept outside the row's state, so a remount
-// or a session switch doesn't reopen what the person closed.
-const opened = new Set<string>()
-/** Whether a row should start opened: a failed command, the first time it is drawn. */
+// A failed command opens itself once (spec, "Failure"): the first time it is drawn failed it
+// starts open, and from then on it is however the person last left it. Kept outside the row's
+// state, so a remount (the app replaying a cached session, a session switch) neither reopens what
+// the person closed nor closes what opened itself.
+const remembered = new Map<string, boolean>()
+/** Whether a row should be open when drawn: a failed command, unless the person closed it. */
 export function opensItself(e: Entry, line: Line = lineOf(e)): boolean {
-  if (line.state !== 'failed' || line.kind !== 'command' || opened.has(e.id)) return false
-  opened.add(e.id)
+  const was = remembered.get(e.id)
+  if (was !== undefined) return was
+  if (line.state !== 'failed' || line.kind !== 'command') return false
+  remembered.set(e.id, true)
   return true
 }
+/** The person opened or closed a row: remember it for a self-opening one. */
+export function rememberOpen(id: string, open: boolean) {
+  if (remembered.has(id)) remembered.set(id, open)
+}
 /** For tests: forget which failures have opened. */
-export function resetOpened() { opened.clear() }
+export function resetOpened() { remembered.clear() }
 
 // Folds: four or more finished steps in a row, with no prose between, fold into one line. A
 // failed step never folds (and splits the run around it).

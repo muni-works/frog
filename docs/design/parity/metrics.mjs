@@ -6,6 +6,7 @@
 //
 //   node metrics.mjs <url> <out.json> <width> <height> [light|dark]
 //   METRICS_WAIT=6000 (ms to let the session load)
+//   METRICS_STORAGE='{"frog.inspector":"1"}' seeds localStorage first (the inspector open)
 import { spawn } from "node:child_process";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -30,7 +31,7 @@ function measure() {
   // The visible words of an element, without hover actions, receipts or marks.
   const words = (el) => {
     const c = el.cloneNode(true);
-    c.querySelectorAll(".hover-row, .line-acts, .hover-acts, .line-mark, [aria-hidden='true'], .turn-card").forEach((x) => x.remove());
+    c.querySelectorAll(".hover-row, .line-acts, .hover-acts, .line-mark, .ticks, .turn-card").forEach((x) => x.remove());
     return clean(c.textContent ?? "");
   };
   // The first non-blank character's box, skipping hover rows and marks.
@@ -60,6 +61,8 @@ function measure() {
     else if (el.matches(".line-row")) {
       const kind = el.dataset.kind === "fold" ? "fold" : el.dataset.kind === "thought" ? "thought" : "line";
       add(kind, el.querySelector(".line"), el.querySelector(".line-plate"));
+      // A line's text is its parts, verb, object, result, joined by one space.
+      rows[rows.length - 1].text = [...el.querySelector(".line").querySelectorAll(".line-verb, .line-gist, .line-obj, .line-result")].map(words).filter(Boolean).join(" ");
     } else if (el.matches(".turn-foot")) add("footer", el.querySelector(".turn-line") ?? el, el);
     else if (el.matches(".thinking")) add("live", el);
     else if (el.matches("[data-row='box']")) add("card", el.querySelector("b, .ask-h, h3") ?? el, el);
@@ -73,6 +76,9 @@ function measure() {
     rows: rows.map((r) => ({ ...r, x: r1(r.x), top: r1(r.top - top0), height: r1(r.height), fontSize: r1(r.fontSize) })),
     column: r1(col.getBoundingClientRect().width - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)),
     gutter: r1(parseFloat(cs.paddingLeft)),
+    pane: r1(document.querySelector(".scroll")?.getBoundingClientRect().width ?? 0),
+    mark: (() => { const m = col.querySelector(".line-mark"); return m ? r1(m.getBoundingClientRect().left - edge) : null })(),
+    markOnScreen: (() => { const m = col.querySelector(".line-mark"); const p = document.querySelector(".scroll")?.getBoundingClientRect(); return m && p ? m.getBoundingClientRect().left >= p.left : null })(),
   };
 }
 
@@ -98,6 +104,9 @@ const call = (method, params = {}) => new Promise((resolve) => {
 await call("Emulation.setDeviceMetricsOverride", { width: +w, height: +h, deviceScaleFactor: 2, mobile: +w < 768 });
 await call("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: look }, { name: "prefers-reduced-motion", value: "reduce" }] });
 await call("Page.enable");
+if (process.env.METRICS_STORAGE) {
+  await call("Page.addScriptToEvaluateOnNewDocument", { source: `try { for (const [k, v] of Object.entries(${process.env.METRICS_STORAGE})) localStorage.setItem(k, v) } catch {}` });
+}
 await call("Page.navigate", { url });
 await new Promise((r) => setTimeout(r, Number(process.env.METRICS_WAIT ?? 6000)));
 const res = await call("Runtime.evaluate", { expression: `document.fonts.ready.then(() => (${measure.toString()})())`, awaitPromise: true, returnByValue: true });
@@ -107,6 +116,6 @@ await new Promise((r) => proc.once("exit", r));
 try { rmSync(profile, { recursive: true, force: true, maxRetries: 5 }); } catch {}
 const v = res?.result?.value;
 if (!v || v.error) { console.error(`metrics.mjs: ${v?.error ?? JSON.stringify(res)}`); process.exit(1); }
-const dump = { format: "frog-transcript-metrics/1", app: "web", width: +w, height: +h, look, column: v.column, gutter: v.gutter, rows: v.rows };
+const dump = { format: "frog-transcript-metrics/1", app: "web", width: +w, height: +h, look, column: v.column, gutter: v.gutter, pane: v.pane, mark: v.mark, markOnScreen: v.markOnScreen, rows: v.rows };
 writeFileSync(out, JSON.stringify(dump, null, 2) + "\n");
 console.log(`${out}: ${v.rows.length} rows`);

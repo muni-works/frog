@@ -4,9 +4,10 @@ Proof that the Mac app and the web app look the same: one fixture session render
 same size, dark and light, side by side in [`index.html`](index.html) (open it locally).
 
 The session ([`fixture.mjs`](fixture.mjs), written out as `fixture.jsonl`) has every row the
-[One look](../frog-web/README.md#one-look-mac-and-web-decided-2026-11-11) specifies: your message,
-Thinking, Read, Search, Ran (failed), an edit with a diff, a reply with inline code, and an ask
-card, held open.
+[unified transcript](../transcript/spec.md) specifies. Turn 1, finished: your message, a thought,
+four quiet steps (a fold), a failed test run (10 of 11, from the engine's `tests` field), prose, an
+edit, a passing run (11 of 11), a two-paragraph reply and the footer. Turn 2: your message and an ask
+card, held open. The gateway keeps the fixture's own event times, so step durations come through.
 
 ## Run it
 
@@ -59,3 +60,69 @@ Mac and web, from one fixture. Mac: `TEST_RUNNER_FROG_PARITY_OUT=$PWD/docs/desig
 … test -only-testing:FrogTests/ModelsParityTests`. Web: `npx vite` in `apps/web`, then
 `node docs/design/parity/web-shot.mjs "http://localhost:5173/parity/models.html?view=picker&theme=dark" …`
 (views: `picker`, `settings`, `machine`).
+
+## Metrics
+
+Screenshots are for people. Parity is measured: each app renders the fixture at the same size and
+writes its transcript's rows as JSON, and [`diff-metrics.mjs`](diff-metrics.mjs) compares two dumps.
+It fails on any difference in a row's kind or text, on x, top or height off by more than 1 point,
+or on any font size difference.
+
+```bash
+node docs/design/parity/metrics.mjs http://127.0.0.1:5173/s/s_parity web.json 1280 800 dark
+node docs/design/parity/diff-metrics.mjs web.json mac.json
+```
+
+[`metrics.mjs`](metrics.mjs) is the web's dumper (headless Chrome, like `web-shot.mjs`;
+`METRICS_STORAGE` seeds localStorage, e.g. `{"frog.inspector":"1"}`). The Mac writes the same file
+(to build: a `-FrogMetrics <path>` launch argument beside `-FrogSnapshot`).
+
+### Format (`frog-transcript-metrics/1`)
+
+```json
+{
+  "format": "frog-transcript-metrics/1",
+  "app": "web",
+  "width": 1280, "height": 800, "look": "dark",
+  "column": 720, "gutter": 32, "pane": 1010, "mark": -26, "markOnScreen": true,
+  "rows": [
+    { "kind": "line", "text": "Failed cargo test -q upload 10 of 11 · 9.0s", "x": 0, "top": 102, "height": 24, "fontSize": 12.5 }
+  ]
+}
+```
+
+All lengths are points (CSS px on the web), rounded to 0.1.
+
+- `width`, `height`: the window (web: the viewport). `column`: the transcript column's text
+  width. `gutter`: the room either side of it. `pane`: the transcript pane's width. `mark`: the x of
+  the first line's mark box (left edge). `markOnScreen`: whether that box's left edge is inside the
+  pane. These describe the layout and are not compared.
+- `rows`: top to bottom, one per row the transcript draws. Nothing inside an opened line or an
+  opened fold counts (a failed command's open output doesn't add rows; it moves the rows below it).
+- `kind`, one of:
+  - `prompt`: a message bubble
+  - `thought`: a thought line
+  - `fold`: a fold line
+  - `line`: a step's line
+  - `prose`: one paragraph, heading, quote or list item of a reply (a list gives one row per item)
+  - `code`: a code block or table in a reply
+  - `card`: a box that needs you (ask card, question, diff card), measured on its title
+  - `footer`: the turn's footer
+  - `live`: the live activity row
+- `text`: the row's visible words, whitespace collapsed to single spaces and trimmed. It leaves out
+  hover actions, receipts (ticks, "just now"), the copy and retry icons and marks. For `line`,
+  `thought` and `fold`: the parts verb, gist, object and result joined by one space ("Edited
+  src/retry.rs +3 −2", "4 steps 2.2s"). For `footer`: as drawn, with " · " between parts. For
+  `card`: its title.
+- `x`: the left edge of the row's first visible character, minus the column's text edge (the
+  column's left plus its gutter). 0 means on the shared left edge. A right-aligned bubble's x is
+  wherever its text starts.
+- `top`: the row box's top minus the first row's top (the first row is 0). Boxes: a line's 24-tall
+  plate row, a paragraph's block, a bubble, a card, the footer's row.
+- `height`: that box's height.
+- `fontSize`: the font size of the first visible character (so a paragraph that opens with inline
+  code reports the mono size).
+
+Proof the diff works, web against web (`../transcript/metrics/`): 1280 and 1600 match
+(`diff-1280-1600.txt`, exit 0). 1280 against 375 fails, as it should (`diff-1280-375.txt`, 27
+differences, exit 1).
