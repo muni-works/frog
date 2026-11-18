@@ -1,0 +1,16 @@
+[project]
+name = "frog-anim"
+version = "0.1.0"
+description = "The Frog mascot in motion: a pure-function-of-time animator and CLI (PIL, numpy, ffmpeg)."
+requires-python = ">=3.10"
+dependencies = ["pillow>=12.0", "numpy>=2.0"]
+
+[project.scripts]
+frog-anim = "frog_anim.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["frog_anim"]

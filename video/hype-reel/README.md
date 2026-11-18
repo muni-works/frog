@@ -52,7 +52,7 @@ vite dev against it (port 5211) and `capture/capture.mjs`, which drives the app 
 |---|---|
 | `beats.py` | the beat grid (`B(i)`) and the cut list, shared by picture and music |
 | `comp.py` | the compositor: one function per shot, the pond, words, chips |
-| `frog.py` | the frog as a full character: poses, blink, wink, hop, squash |
+| `frog.py` | a shim: the frog is drawn by the shared animator in `video/frog-anim` (poses, blink, wink, hop, squash), with the label in Plex Mono |
 | `prices.json` | the pricing shot's numbers, with a source per row and a date |
 | `music.py` | the track: kick, clap, hats, bass, pad, pluck arpeggio, risers; Am F C G |
 | `sheet.py` | renders chosen beats through `comp.py` into a contact sheet, for review while editing |
@@ -86,7 +86,8 @@ turns the title.
 | 72–80 | 29.8–33.1 s | the frog on its own pad inside a ring; the limit notice from the open flies in, meets the ring on beat 76 and tumbles away; the frog waves | Nobody can cap what you own. / Free and open source. Local models keep your code on your Mac. | `README.md:55`, License |
 | 80–88 | 33.1–36.5 s | the breakdown: the frog hops in and lands with a ripple; the line, the install line, frog.toys; it winks on beat 86; no fade, picture and music stop on the last beat | No caps. Your machines. One agent. / `curl -fsSL https://frog.toys/install.sh \| sh` / frog.toys | `README.md:3,10` |
 
-The frog (`frog.py`) is drawn in code. Its head is the mark's own shapes and colours, read from
+The frog is drawn in code by `video/frog-anim` (the reel's own frog, moved there so other videos
+can use it; `frog.py` is a shim). Its head is the mark's own shapes and colours, from
 `apps/web/public/frog-mark.svg`; the body (belly, arms, hind legs) is new for this reel and is
 not yet anywhere else in the brand. Poses: sit, hop, wave, carry, head only; it blinks, winks,
 looks at things and squashes when it lands.

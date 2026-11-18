@@ -1,0 +1,7 @@
+#!/bin/zsh
+# frog-anim, with its pinned deps (the hype reel's): no install needed, just uv and ffmpeg.
+#   video/frog-anim/frog-anim list
+#   video/frog-anim/frog-anim render --action hop --size 512 --out hop.mp4
+set -euo pipefail
+here=${0:A:h}
+PYTHONPATH="$here${PYTHONPATH:+:$PYTHONPATH}" exec uv run --quiet --no-project --with pillow==12.0.0 --with numpy==2.3.4 python -m frog_anim "$@"

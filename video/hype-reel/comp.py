@@ -14,7 +14,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 from beats import ASK, B, BEAT, CUT, DUR, FPS, JUMP, NFRAMES, OPTIONS, W, H
-from frog import sprite, place
+from frog import rest, hop as _hop  # the shared animator, video/frog-anim
+from frog_anim import ease, seg, lerp
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
@@ -32,18 +33,7 @@ def sans(sz, bold=True): return ImageFont.truetype(str(FONTS / ("IBMPlexSans-Sem
 @lru_cache(None)
 def mono(sz, bold=False): return ImageFont.truetype(str(FONTS / ("IBMPlexMono-SemiBold.otf" if bold else "IBMPlexMono-Regular.otf")), sz)
 
-# ---- time helpers (from the board video's comp.py)
-def ease(x):
-    """cubic-bezier(0.2, 0, 0, 1), the one curve."""
-    x = min(1.0, max(0.0, x)); lo, hi = 0.0, 1.0
-    if x in (0.0, 1.0): return x
-    for _ in range(18):
-        u = (lo + hi) / 2
-        if 3 * (1 - u) ** 2 * u * 0.2 + u ** 3 < x: lo = u
-        else: hi = u
-    return u ** 3
-def seg(t, a, b): return min(1.0, max(0.0, (t - a) / (b - a)))
-def lerp(a, b, k): return a + (b - a) * k
+# ---- time helpers: ease, seg, lerp come from frog_anim (the board video's, unchanged)
 def shot_of(t):
     names = sorted(CUT, key=CUT.get)
     cur = names[0]
@@ -201,23 +191,14 @@ def blinking(t):
     return 6.0 <= f < 6.3
 
 def frog_at(img, t, x, y, size, pose="sit", land=None, look=(0, 0), wink=False, label=None, blink=None, clip_y=None, rot=0.0):
-    """the frog resting at (x, y); `land` is when it touched down, for the squash."""
-    sq = 1.0 if land is None or t < land else 1 - 0.24 * np.exp(-(t - land) * 13)
-    b = blinking(t) if blink is None else blink
-    place(img, sprite(size, pose, blink=b, wink=wink, look=look, label=label), x, y, squash=float(sq), rot=rot, clip_y=clip_y)
+    """the frog resting at (x, y); `land` is when it touched down, for the squash. Blinks on the beat grid."""
+    rest(img, t, x, y, size, pose, land=land, look=look, wink=wink, label=label,
+         blink=blinking(t) if blink is None else blink, clip_y=clip_y, rot=rot)
 
 def hop(img, t, t0, t1, p0, p1, size, height=260, look=(0, 0), pose_end="sit", label=None):
     """a hop from p0 to p1 between t0 and t1: in the air stretched and turned along the arc,
     then resting at p1 with a squash. Before t0 nothing is drawn."""
-    if t < t0: return False
-    if t >= t1:
-        frog_at(img, t, p1[0], p1[1], size, pose_end, land=t1, look=look, label=label); return True
-    k = (t - t0) / (t1 - t0)
-    x = lerp(p0[0], p1[0], k); y = lerp(p0[1], p1[1], k) - height * 4 * k * (1 - k)
-    dx = p1[0] - p0[0]; dy = (p1[1] - p0[1]) - height * 4 * (1 - 2 * k)
-    rot = float(np.degrees(np.arctan2(-dx, -dy))) if abs(dx) > 1 else 0.0
-    place(img, sprite(size, "hop", look=(0.4 * np.sign(dx) if dx else 0, -0.5)), x, y + size * 0.9, rot=max(-70, min(70, rot)))
-    return True
+    return _hop(img, t, t0, t1, p0, p1, size, height=height, look=look, pose_end=pose_end, label=label, blink=blinking(t))
 
 def chip(img, cx, cy, text, alpha=1.0, rot=0.0, size=40, kind="well"):
     """a small labelled chip: a file the frog picks up, or the limit notice."""
