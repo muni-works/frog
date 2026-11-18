@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Image, SessionSummary } from '../cloud/protocol'
 import type { Thread } from '../engine/thread'
+import verbs from '../../../../docs/design/transcript/verbs.json'
 
 // A new session from Send to its first turn: one steady view (#calm-start).
 //
@@ -58,14 +59,17 @@ export function undelivered<M extends { text: string; seen: number }>(list: M[] 
   return left.length === list.length ? list : left
 }
 
+// The words are the shared verb table's `start` section (docs/design/transcript/verbs.json).
+const START = verbs.start as { reserving: string; booting: string; cloning: string; engine: string; failed: string; stuck: string; retry: string }
+
 export const BOOT = {
-  reserving: 'Reserving a sandbox',
-  booting: 'Booting it',
-  cloning: (repo: string) => `Booting it and cloning ${repo}`,
-  engine: 'Starting Frog',
-  failed: 'Failed',
-  retry: 'Try again',
-  stuck: "Frog didn't pick this up.",
+  reserving: START.reserving,
+  booting: START.booting,
+  cloning: (repo: string) => START.cloning.replace('{repo}', repo),
+  engine: START.engine,
+  failed: START.failed,
+  retry: START.retry,
+  stuck: START.stuck,
   /** Nothing for this long: a quick start never shows the row. */
   quietMs: 600,
   /** At most one change this often. */

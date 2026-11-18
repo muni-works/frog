@@ -10,6 +10,7 @@ import TestRenderer, { act } from "react-test-renderer";
 import { BOOT, STUCK_MS, firstTitle, provisional, startWords, stuck, undelivered, withOpening, type Opening, type StartInfo } from "../src/ui/Opening.tsx";
 import { LiveContext, LiveTail, type LiveInfo } from "../src/ui/LiveRow.tsx";
 import { emptyThread } from "../src/engine/thread.ts";
+import verbs from "../../../docs/design/transcript/verbs.json" with { type: "json" };
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -132,6 +133,17 @@ test("shown once, Try again's new clock doesn't hide it again", async () => {
   await act(() => { r.update(tail(at())); });
   assert.equal(rowOf(r).props["data-ready"], undefined);
   r.unmount();
+});
+
+test("the words are the shared verb table's start section, word for word", () => {
+  const t = verbs.start;
+  assert.equal(startWords({ stage: "reserving" }).verb, t.reserving);
+  assert.equal(startWords({ stage: "booting" }).verb, t.booting);
+  assert.equal(startWords({ stage: "booting", repo: "ecto/pond" }).verb, t.cloning.replace("{repo}", "ecto/pond"));
+  assert.equal(startWords({ stage: "engine" }).verb, t.engine);
+  assert.equal(startWords({ stage: "booting", error: "x" }).verb, t.failed);
+  assert.equal(startWords({ stage: "engine", upSince: 0 }, STUCK_MS).object, t.stuck);
+  assert.equal(BOOT.retry, t.retry);
 });
 
 test("words: each stage, Failed with the reason, and the 30 s rule", () => {

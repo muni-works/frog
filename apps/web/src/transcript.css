@@ -203,11 +203,12 @@
 .tx .thought-full > .thought-body { max-height: 320px; overflow: auto; background: var(--well); border-radius: var(--radius-nested); padding: var(--space-row) var(--space-card); }
 
 /* A new session's start on the live row (ui/Opening.tsx): its space is there from Send; it shows
- * after 600 ms, over 240 ms. Failed, the dot greys and only the verb is red. */
+ * after 600 ms, over 240 ms. Failed, the dot greys, only the verb is red (warn) and the reason muted. */
 .tx .live-row[data-kind="start"] { transition: opacity 240ms ease; }
 .tx .live-row[data-ready="false"] { opacity: 0; }
 .tx .live-row .start-words { flex: 0 1 auto; }
 .tx .live-row .start-failed { color: var(--warn); }
+.tx .live-row .start-words .line-obj { color: var(--muted); }
 .tx .live-row[data-state="failed"] .live-dot { background: var(--faint); }
 .tx .live-row .start-retry { flex: none; margin-left: var(--space-tight); }
 
