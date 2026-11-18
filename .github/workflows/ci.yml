@@ -52,7 +52,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        probe: [iso-a, iso-b, full]
+        variant: [before, after]
+        probe: [iso-1, iso-2, iso-3]
+        include:
+          - variant: after
+            probe: full
     # The app targets macOS 26 (SwiftPM tools 6.2), so it needs the macOS 26 image's Xcode.
     runs-on: macos-26
     timeout-minutes: 60
@@ -81,6 +85,9 @@ jobs:
         run: |
           brew install tesseract || brew upgrade tesseract
           tesseract --version | head -1
+      - name: apply the fix (after legs)
+        if: matrix.variant == 'after'
+        run: git apply .github/probe/after.patch
       - name: generate project
         run: cd apps/macos && xcodegen generate --quiet
       # build-engine.sh (pre-build phase) builds frog + the frog-apple/frog-desktop sidecars.
@@ -127,7 +134,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: probe-diag-${{ matrix.probe }}
+          name: probe-diag-${{ matrix.variant }}-${{ matrix.probe }}
           path: diag
           if-no-files-found: ignore
       # Each failing test with its assertion message, in the log and as a check annotation.
@@ -143,7 +150,7 @@ jobs:
         if: failure() && hashFiles('apps/macos/build/ci/Test.xcresult/Info.plist') != ''
         uses: actions/upload-artifact@v4
         with:
-          name: macos-app-xcresult-${{ matrix.probe }}
+          name: macos-app-xcresult-${{ matrix.variant }}-${{ matrix.probe }}
           path: apps/macos/build/ci/Test.xcresult
           retention-days: 14
       # Release builds break differently from Debug (DEBUG-only symbols used

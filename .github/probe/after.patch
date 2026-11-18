@@ -1,0 +1,82 @@
+diff --git i/apps/FrogKit/UI/Transcript/TranscriptView.swift w/apps/FrogKit/UI/Transcript/TranscriptView.swift
+index b4d988cc..828f7cc5 100644
+--- i/apps/FrogKit/UI/Transcript/TranscriptView.swift
++++ w/apps/FrogKit/UI/Transcript/TranscriptView.swift
+@@ -148,7 +148,7 @@ struct TranscriptView: View {
+                 .onScrollGeometryChange(for: ScrollEnd.self, of: ScrollEnd.init) { old, new in
+                     defer { track.measured(below: new.below, height: new.contentHeight) }
+                     #if DEBUG
+-                    DiagLog.note("geo h \(old.contentHeight)->\(new.contentHeight) top \(old.visibleTop)->\(new.visibleTop) below \(new.below) atB \(new.atBottom) past \(new.pastEnd) fol \(following) busy \(conversation.busy) user \(track.userScrolling) ans \(String(describing: track.answer?.top)) lastTop \(track.lastTurnTop) inset \(topInset)")
++                    DiagLog.note("geo h \(old.contentHeight)->\(new.contentHeight) top \(old.visibleTop)->\(new.visibleTop) below \(new.below) atB \(new.atBottom) past \(new.pastEnd) fol \(following) busy \(conversation.busy) user \(track.userScrolling) ans \(String(describing: track.answer?.frame)) lastTop \(track.lastTurnTop) inset \(topInset)")
+                     #endif
+                     // Near the top of what's built, once it has opened at the end: build more
+                     // above (and, when what's built is shorter than the view, until it isn't).
+@@ -193,9 +193,20 @@ struct TranscriptView: View {
+                         track.unpark()
+                         return follow(proxy)
+                     }
++                    #if DEBUG
++                    if following, conversation.busy, growth > 0, let live = liveAnswer, let answer = track.answerFrame(live.item) {
++                        let top = live.first ? track.lastTurnTop : answer.minY
++                        if top < new.visibleTop + growth + topInset + 4, !(answer.maxY - top > new.visibleHeight - topInset - 4) {
++                            DiagLog.declined += 1
++                            DiagLog.note("declined extent \(answer.maxY - top) visible \(new.visibleHeight)")
++                        }
++                    }
++                    #endif
+                     if following, conversation.busy, growth > 0, let live = liveAnswer,
+-                       let top = live.first ? track.lastTurnTop : track.answerTop(live.item),
+-                       top < new.visibleTop + growth + topInset + 4 {
++                       let answer = track.answerFrame(live.item),
++                       case let top = live.first ? track.lastTurnTop : answer.minY,
++                       top < new.visibleTop + growth + topInset + 4,
++                       answer.maxY - top > new.visibleHeight - topInset - 4 {
+                         // Keeping to the bottom would push the answer's start above the top:
+                         // stop at its start instead (the prompt, when it's the turn's first
+                         // words), and read from there. Only for an answer: a turn of tool calls
+@@ -376,6 +387,7 @@ struct TranscriptView: View {
+         let below: CGFloat
+         /// The top of the visible area, in content coordinates.
+         let visibleTop: CGFloat
++        let visibleHeight: CGFloat
+         /// The whole visible area is below the end of the content.
+         let pastEnd: Bool
+ 
+@@ -388,6 +400,7 @@ struct TranscriptView: View {
+             // scrolled to it over and over.
+             below = max(0, g.contentSize.height - (g.visibleRect.maxY - g.contentInsets.bottom))
+             visibleTop = g.visibleRect.minY
++            visibleHeight = g.visibleRect.height - g.contentInsets.bottom
+             atBottom = below <= 24
+         }
+     }
+@@ -1049,13 +1062,13 @@ final class ScrollTrack {
+     /// Where the last turn starts, in the content.
+     @ObservationIgnored var lastTurnTop: CGFloat = .infinity
+     /// Where the answer being written starts, in the content (reported by its row).
+-    @ObservationIgnored var answer: (item: String, top: CGFloat)?
++    @ObservationIgnored var answer: (item: String, frame: CGRect)?
+     /// The view is near the top of what's built (see `TranscriptView.nearTop`).
+     @ObservationIgnored var atTop = false
+     /// It has been at the end once: it opened.
+     @ObservationIgnored var openedAtEnd = false
+-    func answerTop(_ item: String) -> CGFloat? {
+-        answer?.item == item ? answer?.top : nil
++    func answerFrame(_ item: String) -> CGRect? {
++        answer?.item == item ? answer?.frame : nil
+     }
+ 
+     func park(at contentHeight: CGFloat) {
+diff --git i/apps/FrogKit/UI/Transcript/TurnView.swift w/apps/FrogKit/UI/Transcript/TurnView.swift
+index f2a80096..22d1298b 100644
+--- i/apps/FrogKit/UI/Transcript/TurnView.swift
++++ w/apps/FrogKit/UI/Transcript/TurnView.swift
+@@ -210,7 +210,7 @@ struct TurnView: View, Equatable {
+             .background {
+                 // The answer being written: where it starts, so a long one stops there.
+                 if running, segment.id == liveAnswerID, let track {
+-                    Color.clear.onGeometryChange(for: CGFloat.self, of: { $0.frame(in: .named(TranscriptView.content)).minY }) {
++                    Color.clear.onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named(TranscriptView.content)) }) {
+                         track.answer = (segment.id, $0)
+                     }
+                 }
