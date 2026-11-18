@@ -53,7 +53,8 @@ export type ItemKind = { type: "message" } | { type: "reasoning" } | { type: "to
 
 export type Item =
   | { type: "message"; text: string }
-  | { type: "reasoning"; text: string }
+  /** `think_ms`: how long the reasoning streamed (engine #420); absent in older logs. */
+  | { type: "reasoning"; text: string; think_ms?: number }
   | {
       type: "tool_call";
       name: string;

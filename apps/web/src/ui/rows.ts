@@ -187,3 +187,13 @@ export function gutterLayout(paneWidth: number): { gutter: number; mode: 'hang' 
   const mode = gutter < HANG ? 'inset' : 'hang'
   return { gutter, mode, indent: mode === 'inset' ? HANG : 0 }
 }
+
+/** A finished thought's line (spec, the settled row): "Thought for 31s" from the engine's think_ms;
+ * an older log uses the item's own times, as the timeline does (engine timeline.rs) and the Mac
+ * does; with neither, plain "Thought". Whole seconds, never "for 0s". */
+export function thoughtLabel(e: Entry): string {
+  const ms = e.thinkMs ?? (e.started != null && e.ended != null && e.ended >= e.started ? e.ended - e.started : null)
+  if (ms == null) return 'Thought'
+  const s = Math.max(1, Math.round(ms / 1000))
+  return `Thought for ${s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`}`
+}

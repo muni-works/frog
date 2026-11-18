@@ -125,11 +125,17 @@ See the PR for the full list. In short:
   Changes). Run in Terminal, opening a read's file and opening a search result have no web
   equivalent yet. Actions overlay the result's end on hover, so the result reaches the edge at rest.
 - **Footer**: model, Frog Cloud when it served the turn (kept from 2026-11-12), time, tokens
-  written, cost. Speed moves to phase 2's stats line. Cost needs the model's prices, so it doesn't
-  show in the parity gateway, which serves no models.
+  written, cost. Speed moves to phase 2's stats line. Cost is written the Mac's way
+  (FrogKit `Dollars.format`: "<$0.01", "$0.11", "$15"). It needs the model's prices; the parity
+  gateway serves the fixture's model with list prices (`/v1/models`), and the parity web points its
+  API at the gateway (`VITE_API=`).
 - **The prompt's receipts** sit beside the last bubble so the block gap stays 16. At phone width
   there's no room beside it, so they show under it on tap, over the gap.
-- **Thought line** keeps today's behaviour (phase 2 replaces it), drawn as a line with a chevron.
+- **Thought line** reads "Thought for 1s" (the spec's settled row): the engine's `think_ms` when it
+  sends one, otherwise the item's own times, as the engine's timeline and the Mac read an older
+  log. Phase 2 replaces the rest of it.
+- **Parity with the Mac**: on #424's fixture the web's and the Mac's 1280 dumps match, 12 rows within
+  1 pt (#424 commits `diff-web-mac-1280.txt` with the Mac dump).
 - **A failed read opens** to its error. A successful read has nothing to open (spec).
 - **Scrolling** (a fix found while building, in `App.tsx`): the scroller's inline ref ran on every
   App render and threw the reader to the end whenever any state changed. Opening a fold or a line

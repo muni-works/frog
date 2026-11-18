@@ -83,7 +83,7 @@ fi
 # --- Web ---------------------------------------------------------------------------------------
 node "$HERE/gateway.mjs" --port $PORT > "$WORK/gateway.log" 2>&1 & pids+=($!)
 cd "$WEB"
-GATEWAY=http://127.0.0.1:$PORT VITE_DEV_KEY=parity npx vite --host 127.0.0.1 --port $VITE_PORT --strictPort > "$WORK/vite.log" 2>&1 & pids+=($!)
+GATEWAY=http://127.0.0.1:$PORT VITE_DEV_KEY=parity VITE_API= npx vite --host 127.0.0.1 --port $VITE_PORT --strictPort > "$WORK/vite.log" 2>&1 & pids+=($!)
 for i in {1..60}; do curl -sf "http://127.0.0.1:$VITE_PORT/" >/dev/null && break; sleep 0.5; done
 curl -sf "http://127.0.0.1:$VITE_PORT/" >/dev/null || { print -u2 "capture.sh: vite didn't start:"; cat "$WORK/vite.log" >&2; exit 1; }
 for look in $LOOKS; do

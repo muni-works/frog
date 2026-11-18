@@ -9,7 +9,7 @@ import { ICON } from './icons'
 import { endError } from '../store'
 import { TurnFooter } from './TurnFooter'
 import { WidgetCard } from './Widget'
-import { foldRuns, foldTime, lineOf, opensItself, rememberOpen, type Step } from './rows'
+import { foldRuns, foldTime, lineOf, opensItself, rememberOpen, thoughtLabel, type Step } from './rows'
 
 // Draws a folded Thread: the user's message, tool lines, "Decided" steps (reasoning items),
 // streamed replies, and a diff card per edit with Allow ⌘↩ / Deny ⌘. while it waits.
@@ -222,14 +222,14 @@ function foldedThought(entries: Entry[], n: number): boolean {
   return entries.slice(a, b + 1).every((x) => x.kind === 'reasoning' && x.done && x.text.trim().length <= 200 && !x.text.trim().includes('\n\n'))
 }
 
-function ThoughtLine({ text }: { text: string }) {
+function ThoughtLine({ text, label }: { text: string; label: string }) {
   const [open, setOpen] = useState(false)
   return (
     <div className="line-row thought" data-row="line" data-kind="thought">
       <div className="line-plate">
         <button type="button" className="line" aria-expanded={open} onClick={() => setOpen(!open)}>
           <span className="line-mark chev" aria-hidden="true">›</span>
-          <span className="line-verb">Thought</span>
+          <span className="line-verb">{label}</span>
         </button>
       </div>
       {open && <div className="thought-body">{text}</div>}
@@ -383,7 +383,7 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
   const draw = (e: Entry, entries: Entry[], n: number): ReactNode => {
     if (e.kind === 'reasoning' && foldedThought(entries, n)) return null
     // An empty thought has nothing to open, and a blank reply nothing to read: neither draws.
-    if (e.kind === 'reasoning') return e.text.trim() ? <ThoughtLine text={e.text} /> : null
+    if (e.kind === 'reasoning') return e.text.trim() ? <ThoughtLine text={e.text} label={thoughtLabel(e)} /> : null
     if (e.kind === 'message' && e.done && !e.text.trim()) return null
     if (e.kind === 'message') return <div className="say" data-row="prose"><Markdown text={e.text} />{!e.done && <span className="caret" />}</div>
     if (question?.item === e.id) return <div data-row="box"><QuestionCard q={question} onAnswer={cb.onAnswer} /></div>
