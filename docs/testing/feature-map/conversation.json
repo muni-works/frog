@@ -1242,7 +1242,10 @@
             "FrogTests/BillingTests.swift:testHardBillingEndRendersTheBanner"
           ],
           "coverage_v070": "unit",
-          "automatable": "yes"
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/CloudFlowTests.swift:test_out_of_credit"
+          ]
         }
       ]
     },

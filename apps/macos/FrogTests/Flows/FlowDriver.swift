@@ -31,8 +31,12 @@ final class FlowWindow {
     let panes: Panes
     let window: NSWindow
     private let started = Date()
+    /// Links and pages the window asked to open (a SwiftUI `Link`, `openURL`): caught, so no
+    /// browser opens.
+    var openedURLs: [URL] { opened?.urls ?? [] }
     private var restores: [() -> Void] = []
 
+    private var opened: OpenedBox?
     var workspace: Workspace { panes.focused.workspace }
     var conversation: Conversation? { panes.focused.conversation }
 
@@ -43,7 +47,9 @@ final class FlowWindow {
     init(panes: Panes, size: CGSize = CGSize(width: 1300, height: 820), file: StaticString = #filePath, line: UInt = #line) {
         self.panes = panes
         Self.isolate(&restores)
-        let host = NSHostingView(rootView: FlowRoot { WorkspaceView(panes: panes) })
+        let opened = OpenedBox()
+        let host = NSHostingView(rootView: FlowRoot(opened: opened) { WorkspaceView(panes: panes) })
+        self.opened = opened
         host.sceneBridgingOptions = [.toolbars, .title]
         window = NSWindow(contentRect: CGRect(origin: .zero, size: size),
                           styleMask: [.titled, .resizable, .fullSizeContentView, .closable, .miniaturizable],
@@ -276,7 +282,11 @@ final class FlowWindow {
 
 /// The window's root, wrapped: it reads the `FrogWindow` the window publishes for the menu bar
 /// (the focused value the real menu bar reads in a key window) and stages it.
+@MainActor
+final class OpenedBox { var urls: [URL] = [] }
+
 private struct FlowRoot<Content: View>: View {
+    let opened: OpenedBox
     @ViewBuilder let content: () -> Content
     @FocusedValue(\.frogWindow) private var frogWindow
 
@@ -285,7 +295,10 @@ private struct FlowRoot<Content: View>: View {
         // the pass, so the update doesn't write state mid-render.
         let current = frogWindow
         DispatchQueue.main.async { if let current { StagedWindow.shared.window = current } }
-        return content()
+        return content().environment(\.openURL, OpenURLAction { url in
+            opened.urls.append(url)
+            return .handled
+        })
     }
 }
 

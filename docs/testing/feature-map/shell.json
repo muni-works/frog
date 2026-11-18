@@ -1389,7 +1389,10 @@
           ],
           "existing_tests_v070": [],
           "coverage_v070": "none",
-          "automatable": "yes"
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/CloudFlowTests.swift:test_see_low_credit"
+          ]
         }
       ]
     },

@@ -274,6 +274,7 @@ struct ComposerView: View {
                     WhereChipLabel(place: s.where, narrow: narrow)
                 }
                 .layoutPriority(-1)
+                .accessibilityIdentifier("composer.where")
                 .composerMenu(menu == .place, close: closeMenu) {
                     WhereMenu(
                         state: s, lists: whereLists, send: dispatch,
