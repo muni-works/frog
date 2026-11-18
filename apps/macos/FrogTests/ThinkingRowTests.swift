@@ -115,7 +115,7 @@ final class ThinkingRowTests: XCTestCase {
                                  waiting: nil, lastToken: nil, now: t0)!
         XCTAssertEqual([three.label, three.detail], ["Reading", "3 files"], "parallel steps fold into a count")
         let you = LiveState.of(turn([read]), waiting: "Allow cargo test -q upload?", lastToken: nil, now: t0)!
-        XCTAssertEqual([you.label, you.detail], ["Waiting for you", "Allow cargo test -q upload?"])
+        XCTAssertEqual([you.label, you.detail], ["Waiting for you", ""], "the card above says what")
         XCTAssertEqual(you.dot, .you, "amber only when it's waiting on a person")
     }
 
@@ -132,6 +132,8 @@ final class ThinkingRowTests: XCTestCase {
         XCTAssertEqual(LiveStats(elapsed: 19.7, tokens: 1105, soFar: true, perSecond: 58.2, slow: false).text, "19s · 1,105 tokens · 58 tok/s")
         XCTAssertEqual(LiveStats(elapsed: 27, tokens: 1610, soFar: true, perSecond: 12, slow: true).text, "27s · 1,610 tokens · 12 tok/s, slower than usual")
         XCTAssertEqual(LiveStats(elapsed: 125, tokens: nil, soFar: false, perSecond: nil, slow: false).text, "2m 5s")
+        XCTAssertEqual(LiveStats(elapsed: 7 * 86_400, tokens: nil, soFar: false, perSecond: nil, slow: false).text, "",
+                       "a reopened session's week-old clock isn't shown")
         XCTAssertEqual(LiveStats(elapsed: 39, tokens: 1212, soFar: false, perSecond: 40, slow: false, waited: 6.4).text, "39s · waited 6s",
                        "waiting on you: the clock and how long (board 8, C)")
         XCTAssertTrue(LiveStats(elapsed: 9, tokens: 388, soFar: true, perSecond: 58, slow: false).help.contains("388 tokens so far"))

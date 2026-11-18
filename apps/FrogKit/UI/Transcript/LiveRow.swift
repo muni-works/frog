@@ -43,8 +43,9 @@ struct LiveState: Equatable {
     /// The row for a running turn at `now`; nil when there's no row (the answer is writing:
     /// only the stats show, under the text).
     static func of(_ turn: TurnState, waiting: String?, lastToken: Date?, now: Date) -> LiveState? {
-        if let waiting {
-            return LiveState(dot: .you, label: "Waiting for you", detail: waiting, thought: false, mono: false,
+        if waiting != nil {
+            // The card above says what it's waiting for (board 8, C): the row is the label.
+            return LiveState(dot: .you, label: "Waiting for you", detail: "", thought: false, mono: false,
                              quiet: "", offersStop: false, reasoningID: nil)
         }
         let running = turn.items.filter { !$0.done }
@@ -102,11 +103,12 @@ struct LiveStats: Equatable {
 
     var parts: [String] {
         var out: [String] = []
-        if elapsed >= 1 { out.append(Self.clock(elapsed)) }
+        // Past an hour is a replayed or reopened session, not a clock worth reading.
+        if elapsed >= 1, elapsed < 3600 { out.append(Self.clock(elapsed)) }
         if let tokens, tokens > 0, waited == nil { out.append("\(tokens.formatted(.number.grouping(.automatic).locale(Locale(identifier: "en_US")))) tokens") }
         if let waited {
             // Waiting on you: the clock and how long it has waited; the speed means nothing now.
-            out.append("waited \(Self.clock(max(0, waited)))")
+            if waited < 3600 { out.append("waited \(Self.clock(max(0, waited)))") }
             return out
         }
         if let perSecond, perSecond > 0 {
@@ -177,7 +179,7 @@ struct LiveRow: View {
             let stats = stats(at: ctx.date)
             VStack(alignment: .leading, spacing: space.gaps.stats) {
                 if let state { row(state, at: ctx.date) }
-                if !stats.text.isEmpty || state != nil {
+                if !stats.text.isEmpty {
                     StatsLine(stats: stats)
                 }
                 if open, let id = state?.reasoningID, let think = turn.items.first(where: { $0.id == id }) {
@@ -286,7 +288,7 @@ struct StatsLine: View {
     @Environment(\.transcriptEdge) private var edge
 
     var body: some View {
-        Text(stats.text.isEmpty ? " " : stats.text)
+        Text(stats.text)
             .font(.frog(size: Tokens.Transcript.meta.size).monospacedDigit())
             .foregroundStyle(Tokens.textTertiary)
             .frame(height: Tokens.Transcript.meta.line, alignment: .leading)
