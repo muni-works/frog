@@ -11,10 +11,10 @@ extension EnvironmentValues {
 }
 
 enum DocsLinks {
-    /// The public copy of a page, for sharing. docs.frog.toys serves the web app's
-    /// Documentation mode (spec step 3); the site isn't up yet.
+    /// The public copy of a page, for sharing: the web app's Documentation mode at
+    /// frog.toys/docs/<slug>. (A docs.frog.toys host is in the shell spec but doesn't exist.)
     static func web(_ slug: String) -> URL {
-        URL(string: "https://docs.frog.toys/")!.appending(path: slug)
+        URL(string: "https://frog.toys/docs/")!.appending(path: slug)
     }
 
     /// "Frog 0.6.0": the build the bundled pages describe.

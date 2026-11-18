@@ -53,6 +53,11 @@ load_claude_md = true
 # subagent_max_steps = 100
 # Child sessions one engine may own at once when no client hosts sessions.
 # background_tasks = 4
+# Seconds a child (subagent or child session) may produce nothing before you're asked whether
+# to keep waiting (0: never ask). With nobody to ask (-p, bench), a child quiet this long is
+# stopped and the parent carries on (0: wait forever).
+# child_quiet_secs = 300
+# child_quiet_stop_secs = 1800
 # Screenshot service for page captures (default: the bundled WebKit sidecar).
 # screenshot_endpoint = "http://localhost:3000/screenshot"
 

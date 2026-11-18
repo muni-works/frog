@@ -1130,6 +1130,8 @@ arrives as a <session-message from=\"parent\"> in this turn."
                 branch.clone(),
                 prompt,
                 self.shared.bg.clone(),
+                &self.cfg,
+                self.asker(),
             )
             .await?;
         let mut text = format!("Started session {title} ({id}) in {}", cwd.display());
@@ -1200,6 +1202,8 @@ arrives as a <session-message from=\"parent\"> in this turn."
             id,
             answer: answer.clone(),
         });
+        // A child's quiet question this card covered on screen comes back.
+        self.shared.reshow_watching();
         let text = crate::ask::result(&q, &answer);
         Ok(tools::Output {
             display: Some(text.trim_start_matches("The user ").to_string()),
