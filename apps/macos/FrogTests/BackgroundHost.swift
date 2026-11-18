@@ -49,6 +49,8 @@ enum HideChildren {
     static func install() {
         swap(NSWindow.self, #selector(NSWindow.addChildWindow(_:ordered:)), #selector(NSWindow.frogTest_addChildWindow(_:ordered:)))
         swap(NSPopover.self, #selector(NSPopover.show(relativeTo:of:preferredEdge:)), #selector(NSPopover.frogTest_show(relativeTo:of:preferredEdge:)))
+        swap(NSWindow.self, #selector(NSWindow.beginSheet(_:completionHandler:)), #selector(NSWindow.frogTest_beginSheet(_:completionHandler:)))
+        swap(NSWindow.self, #selector(NSWindow.beginCriticalSheet(_:completionHandler:)), #selector(NSWindow.frogTest_beginCriticalSheet(_:completionHandler:)))
     }
 
     private static func swap(_ cls: AnyClass, _ a: Selector, _ b: Selector) {
@@ -64,6 +66,25 @@ extension NSWindow {
             child.ignoresMouseEvents = true
         }
         frogTest_addChildWindow(child, ordered: place)  // the original, after the swap
+    }
+
+    /// A sheet (an alert, a confirmation dialog) on a hidden window is hidden too, before it
+    /// slides down.
+    @objc fileprivate func frogTest_beginSheet(_ sheet: NSWindow, completionHandler: ((NSApplication.ModalResponse) -> Void)?) {
+        hideIfParentHidden(sheet)
+        frogTest_beginSheet(sheet, completionHandler: completionHandler)  // the original
+    }
+
+    @objc fileprivate func frogTest_beginCriticalSheet(_ sheet: NSWindow, completionHandler: ((NSApplication.ModalResponse) -> Void)?) {
+        hideIfParentHidden(sheet)
+        frogTest_beginCriticalSheet(sheet, completionHandler: completionHandler)  // the original
+    }
+
+    private func hideIfParentHidden(_ sheet: NSWindow) {
+        guard alphaValue <= 0.01 || hasHiddenAncestor else { return }
+        sheet.alphaValue = 0
+        sheet.ignoresMouseEvents = true
+        sheet.animationBehavior = .none
     }
 }
 
@@ -93,6 +114,8 @@ final class BackgroundGuard: NSObject, @preconcurrency XCTestObservation {
         super.init()
         XCTestObservationCenter.shared.addTestObserver(self)
         HideChildren.install()
+        HiddenMenus.install()
+        HiddenMenus.onEscape = { [weak self] what in self?.fail(what) }
         let center = NotificationCenter.default
         center.addObserver(self, selector: #selector(becameActive), name: NSApplication.didBecomeActiveNotification, object: nil)
         center.addObserver(self, selector: #selector(windowChanged), name: NSWindow.didChangeOcclusionStateNotification, object: nil)
@@ -127,7 +150,7 @@ final class BackgroundGuard: NSObject, @preconcurrency XCTestObservation {
         }
     }
 
-    private func fail(_ what: String) {
+    fileprivate func fail(_ what: String) {
         let message = "Test run left the background: \(what)"
         guard let current else { return print(message) }
         current.record(XCTIssue(type: .assertionFailure, compactDescription: message))
