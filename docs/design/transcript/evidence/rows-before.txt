@@ -1,0 +1,18 @@
+not ok 1 - every tool in the verb table draws its past verb and object from the table
+not ok 2 - a finished command says Ran and the command, the cd prefix dropped
+not ok 3 - an unknown tool never reads 'Used X'
+not ok 4 - a gist is the whole line of a successful step, never of a failed one
+not ok 5 - an edit says +3 −2 with a true minus
+not ok 6 - a denied step: Didn't run … you said no
+not ok 7 - a failed step: the verb is Failed in warn, no pill
+not ok 8 - a failed command starts opened, once; a failed read doesn't open itself
+not ok 9 - a recognised test run reads 10 of 11 and, opened, names what failed above the output
+ok 10 - without the engine's tests field a command is a plain command: no count is guessed
+ok 11 - lookOf: aliases and the engine's own casing
+ok 12 - three steps don't fold; four do
+ok 13 - prose between steps breaks a run
+ok 14 - a failed step never folds, and splits the run
+ok 15 - the gutter fallback: under 26 the marks come inside and all text indents by 26
+not ok 16 - the CSS switches at the same width as gutterLayout
+# pass 6
+# fail 10

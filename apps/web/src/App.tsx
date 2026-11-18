@@ -221,7 +221,9 @@ export default function App() {
   // inspector closed, it opens on Preview, as the Mac brings its pane forward.
   const preview = current && cloud && !current.id.startsWith(PENDING) ? cloud.preview(current.id) : undefined
   usePreviewHub(preview)
-  const [inspectorTab, setInspectorTab] = useState<'preview' | undefined>()
+  const [inspectorTab, setInspectorTab] = useState<'preview' | 'changes' | undefined>()
+  // Bumped to reopen the inspector on a tab while it is already open (an edit's Show in Changes).
+  const [inspectorNonce, setInspectorNonce] = useState(0)
   const seenAttention = useRef<{ hub?: PreviewHub; n: number }>({ n: 0 })
   useEffect(() => {
     const last = seenAttention.current
@@ -636,7 +638,7 @@ export default function App() {
             // Back from Documentation mode: where you were. Otherwise the newest message.
             if (savedScroll.current !== null) { el.scrollTop = savedScroll.current; savedScroll.current = null; return }
             el.scrollTop = el.scrollHeight
-          }}><div className="col">
+          }}><div className="col tx">
             {cs?.state === 'refused' && <div role="status" className="banner warn"><span style={{ flex: 1 }}>Update Frog to continue. This sandbox speaks a different protocol than this page.</span>{safeHref(cs.refused.upgrade) ? <a className="f-btn f-btn--bordered f-btn--small" href={safeHref(cs.refused.upgrade)!.href} style={{ textDecoration: 'none' }}>Update</a> : <button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => location.reload()}>Reload</button>}</div>}
             {cs?.state === 'closed' && cs.code === 4004 && <div role="status" className="banner warn">This session was deleted.</div>}
             {ct.turns.length === 0 && !opening[current.id] && cs?.state !== 'refused' && current.state !== 'error' && (
@@ -655,6 +657,7 @@ export default function App() {
               onElicit={(action, content) => ct.elicitation && cloud?.send(current.id, { op: 'elicit', id: ct.elicitation.id, action, ...(content ? { content } : {}) })}
               onRetry={() => send(current.id, 'Try that again.')}
               onPrompt={(text) => send(current.id, text)}
+              onShowChange={() => { try { localStorage.setItem('frog.inspectorTab', 'changes') } catch { /* private mode */ } setInspectorTab('changes'); setInspectorNonce((n) => n + 1); setInspector(true) }}
               outbox={outbox[current.id]} onResend={(n) => resend(current.id, n)}
               waiting={cs?.state === 'connecting' ? (cs.attempt ? 'reconnecting to the sandbox' : 'connecting to the sandbox')
                 : current.state === 'sleeping' ? 'waking the sandbox' : current.state === 'starting' ? 'starting the sandbox'
@@ -730,7 +733,7 @@ export default function App() {
 
       </main> }}
       inspector={key && view.kind === 'session' && current && ct && inspector && (
-        <Inspector onClose={() => setInspector(false)} thread={ct} branch={current.branch} hasPr={!!current.pr} onCommit={() => commit(current)} onPr={current.repo ? () => push(current) : undefined} machines={machines} send={(op) => cloud?.send(current.id, op)} preview={preview} pane={inspectorTab} />
+        <Inspector key={inspectorNonce} onClose={() => setInspector(false)} thread={ct} branch={current.branch} hasPr={!!current.pr} onCommit={() => commit(current)} onPr={current.repo ? () => push(current) : undefined} machines={machines} send={(op) => cloud?.send(current.id, op)} preview={preview} pane={inspectorTab} />
       )}
       after={<>
       {key && palette && <Palette commands={commands} sessions={sessions} onOpen={(id) => go({ kind: 'session', id })} onClose={() => setPalette(false)}

@@ -1,12 +1,12 @@
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { TurnUsage } from '../cloud/protocol'
-import { currentId, idOf, modelName, placeColor, placeOf, servedByName, type Model } from '../models'
+import { currentId, idOf, modelName, servedByName, type Model } from '../models'
 import { money, seconds, tokens, turnCost } from '../usage'
 import { CopyButton, IconButton } from './Transcript'
 
-// Port of the Mac app's turn footer (FrogKit EndView): the model it ran on, what it cost
-// (opens the working, like PriceCard), how fast it wrote in tokens/s, with copy and retry icons first. On the Mac every
-// footer is hover-only; here the latest finished turn keeps its footer, like the phone.
+// The turn's footer (docs/design/transcript/spec.md, "The footer"): one meta line under the last
+// row, the model then time, tokens and cost; the cost opens the working (PriceCard on the Mac).
+// Speed moves to the stats line in phase 2. Copy and retry show on hover, after the line.
 
 export function TurnFooter({ usage, models, answer, pinned, onRetry, credit }: { usage: TurnUsage; models: Model[]; answer: string; pinned: boolean; onRetry?: () => void; /** The account's credit left, "$4.12". */ credit?: string }) {
   const [open, setOpen] = useState(false)
@@ -22,26 +22,27 @@ export function TurnFooter({ usage, models, answer, pinned, onRetry, credit }: {
   const id = idOf(usage.model ?? null)
   const model = models.find((m) => currentId(m.id) === id)
   const cost = turnCost(usage, model)
-  const tps = usage.tokens_per_sec ?? 0
-  const speed = tps > 0 ? Math.round(tps) : null
   const t = usage.timing
 
+  // One meta line (spec, "The footer"): the model in muted, then time, tokens and cost, set off
+  // by middle dots. The cost opens the working (the turn card) until the turn panel replaces it.
+  const parts: ReactNode[] = []
+  if (t) parts.push(<span key="t" title="Wall time for this turn">{seconds(t.wall_ms)}</span>)
+  if (usage.output_tokens > 0) parts.push(<span key="n" title={`${usage.output_tokens.toLocaleString('en-US')} tokens written, ${usage.input_tokens.toLocaleString('en-US')} read`}>{usage.output_tokens.toLocaleString('en-US')} tokens</span>)
+  if (cost) parts.push(<button key="c" type="button" className="turn-plate" aria-expanded={open} title="Cost of this turn" onClick={() => setOpen(!open)}>{money(cost.total)}</button>)
+
   return (
-    <div ref={root} className={`turn-foot ${pinned || open ? 'pinned' : ''}`}>
+    <div ref={root} data-row="footer" className={`turn-foot ${pinned || open ? 'pinned' : ''}`}>
+      <span className="turn-line">
+        {id && <span className="turn-model">{modelName(id)}</span>}
+        {/* Who served a Frog Cloud turn reads as Frog Cloud, whoever's GPUs answered (Cam, 2026-11-12). */}
+        {usage.served_by && <><span className="dot" aria-hidden="true"> · </span><span className="turn-model">{servedByName(usage.served_by)}</span></>}
+        {parts.map((p, i) => <Fragment key={i}>{(i > 0 || id) && <span className="dot" aria-hidden="true"> · </span>}{p}</Fragment>)}
+      </span>
       <span className="hover-acts">
         {answer && <CopyButton text={answer} label="Copy answer" />}
         {onRetry && <IconButton label="Try again" icon="retry" onClick={onRetry} />}
       </span>
-      {id && <span className="turn-model" style={{ color: placeColor(placeOf(usage.model)) }}>{modelName(id)}</span>}
-      {/* Who served it is a place tag: a Frog Cloud turn is cloud green whoever's GPUs answered,
-          and reads as Frog Cloud whoever proxied it (Cam, 2026-11-12). */}
-      {usage.served_by && <span style={{ color: placeColor('cloud') }}>{servedByName(usage.served_by)}</span>}
-      {cost && (
-        <button type="button" className="turn-plate" aria-expanded={open} title="Cost of this turn" onClick={() => setOpen(!open)}>{money(cost.total)}</button>
-      )}
-      {speed != null && <span title="Tokens per second">{speed} tok/s</span>}
-      {t && <span title="Wall time for this turn">{seconds(t.wall_ms)}</span>}
-
       {open && cost && (
         <div className="f-card turn-card" role="dialog" aria-label="Cost of this turn">
           <div className="turn-card-h"><b>Cost</b><b className="num">{money(cost.total)}</b></div>

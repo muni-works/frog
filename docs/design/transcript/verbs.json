@@ -1,0 +1,44 @@
+{
+  "about": "One verb list for the Mac and the web (spec.md, 'Lines'). Keyed by the engine's tool name. `live` is the present-tense verb a running step shows, `past` the finished line's verb, `object` how the thing it acted on is set. The web reads this file (apps/web/src/ui/rows.ts); the Mac's OneLookTests should load it too. Wording decisions: README.md in this folder, 'Verb table'.",
+  "objects": {
+    "command": "Mono, fg. The command's first line; a leading `cd <dir> &&` is dropped and a worktree's name becomes the result ('in audit334').",
+    "path": "Mono, fg. The path as the tool was given it.",
+    "pattern": "Mono, fg. What was searched for, as given.",
+    "host": "Sans, fg. The URL's host (the full URL is the hover and the opened body).",
+    "text": "Sans, fg. The argument as words.",
+    "tool": "Mono, fg. The tool's own name, for a tool this table doesn't know (an MCP call: 'github › list_issues').",
+    "none": "No object: the verb is the whole line."
+  },
+  "states": {
+    "failed": { "verb": "Failed", "tone": "warn", "object": "the raw object, never a gist", "opens": "commands only, once per step" },
+    "denied": { "verb": "Didn't run", "result": "you said no" },
+    "gist": "A finished, successful step with an engine gist shows the gist as its whole line in muted, no verb or object ('ran the suite in the worktree'): the gist starts with its own verb. A failed or denied step ignores the gist."
+  },
+  "unknown": { "live": "Calling", "past": "Called", "object": "tool" },
+  "tools": [
+    { "tool": "Bash", "aliases": ["!"], "live": "Running", "past": "Ran", "object": "command" },
+    { "tool": "Read", "live": "Reading", "past": "Read", "object": "path" },
+    { "tool": "Edit", "aliases": ["MultiEdit"], "live": "Editing", "past": "Edited", "object": "path" },
+    { "tool": "Write", "live": "Writing", "past": "Wrote", "created": "Created", "object": "path" },
+    { "tool": "Grep", "live": "Searching", "past": "Searched", "object": "pattern" },
+    { "tool": "Glob", "live": "Searching", "past": "Searched", "object": "pattern" },
+    { "tool": "CodeMap", "live": "Mapping", "past": "Mapped", "object": "path" },
+    { "tool": "WebFetch", "live": "Fetching", "past": "Fetched", "object": "host" },
+    { "tool": "WebSearch", "live": "Searching the web for", "past": "Searched the web for", "object": "text" },
+    { "tool": "Task", "live": "Delegating", "past": "Delegated", "object": "text" },
+    { "tool": "TodoWrite", "live": "Planning", "past": "Updated the plan", "object": "none" },
+    { "tool": "Diagram", "live": "Drawing", "past": "Drew", "object": "text" },
+    { "tool": "Visualize", "live": "Making a visual", "past": "Made a visual", "object": "none" },
+    { "tool": "VisualGuide", "live": "Reading the visual guide", "past": "Read the visual guide", "object": "none" },
+    { "tool": "Present", "live": "Laying out", "past": "Showed results", "object": "none" },
+    { "tool": "Ask", "live": "Asking", "past": "Asked you", "object": "none" },
+    { "tool": "Skill", "live": "Loading skill", "past": "Loaded skill", "object": "text" },
+    { "tool": "McpTools", "aliases": ["ToolSearch"], "live": "Finding tools", "past": "Found tools", "object": "text" },
+    { "tool": "Docs", "live": "Reading docs", "past": "Read docs", "object": "text" },
+    { "tool": "Models", "live": "Listing models", "past": "Listed models", "object": "none" },
+    { "tool": "SetTitle", "live": "Naming", "past": "Named", "object": "text" },
+    { "tool": "UseFolder", "live": "Moving to", "past": "Moved to", "object": "path" },
+    { "tool": "SendMessage", "live": "Messaging", "past": "Messaged", "object": "text" },
+    { "tool": "Recall", "live": "Recalling", "past": "Recalled", "object": "text" }
+  ]
+}

@@ -17,6 +17,6 @@ export default defineConfig({
   server: {
     proxy: { '/v1': { target: gateway, ws: true, changeOrigin: true } },
     // Documentation mode bundles the pages in docs/app, outside this folder.
-    fs: { allow: ['.', fileURLToPath(new URL('../../docs/app', import.meta.url))] },
+    fs: { allow: ['.', fileURLToPath(new URL('../../docs/app', import.meta.url)), fileURLToPath(new URL('../../docs/design/transcript', import.meta.url))] },
   },
 })

@@ -63,7 +63,13 @@ export type Item =
       display: string | null;
       diff?: FileDiff;
       widget?: Widget;
+      /** A test run the engine recognised in the output's summary line (cargo, pytest, go,
+       * vitest, jest). Absent for anything else: the web never parses output for a count. */
+      tests?: TestRun;
     };
+
+/** A recognised test run: "10 of 11", and the failing tests' names in output order. */
+export interface TestRun { runner: string; passed: number; total: number; failed: string[] }
 
 /** widget.rs `Widget`: a Visualize result. `html` is the sandboxed document to load as is. */
 export interface Widget { title: string; code: string; html: string }

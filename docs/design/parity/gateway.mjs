@@ -6,12 +6,18 @@
 //
 // Reuses the vendored mock's websocket and fixture loader (apps/web/test/mock).
 import { createServer } from "node:http";
+import { readFileSync } from "node:fs";
 import { accept } from "../../../apps/web/test/mock/ws.mjs";
 import { loadFixture } from "../../../apps/web/test/mock/session.mjs";
 
 const arg = (n, d) => (process.argv.indexOf(`--${n}`) > 0 ? process.argv[process.argv.indexOf(`--${n}`) + 1] : d);
 const port = Number(arg("port", 8799));
-const events = loadFixture(arg("fixture", new URL("./fixture.jsonl", import.meta.url).pathname));
+const fixture = arg("fixture", new URL("./fixture.jsonl", import.meta.url).pathname);
+const events = loadFixture(fixture);
+// Each event's own time, so a step's duration and a fold's time come through as the fixture has
+// them (the loader drops `created`). Missing: the old 400 ms spacing.
+const times = readFileSync(fixture, "utf8").split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l))
+  .map((v) => (v.type === "event" ? v.env : v)).filter((e) => typeof e.event === "string").map((e) => e.created);
 const id = "s_parity";
 const title = arg("title", "Fix flaky upload retry");
 const now = Date.now();
@@ -39,7 +45,8 @@ server.on("upgrade", (req, socket) => {
     try { v = JSON.parse(text); } catch { return; }
     if (!v?.hello) return;
     conn.send(JSON.stringify({ welcome: { protocol: 1, session: id, engine: "frog-parity", last_seq: shown.length } }));
-    shown.forEach((e, i) => conn.send(JSON.stringify({ seq: i + 1, session: id, created: now - (shown.length - i) * 400, ...e })));
+    const last = times[shown.length - 1];
+    shown.forEach((e, i) => conn.send(JSON.stringify({ seq: i + 1, session: id, created: last != null && times[i] != null ? now - (last - times[i]) : now - (shown.length - i) * 400, ...e })));
   };
 });
 server.listen(port, "127.0.0.1", () => console.log(`parity gateway on http://127.0.0.1:${port}`));

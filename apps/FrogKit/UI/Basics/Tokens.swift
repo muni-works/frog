@@ -155,6 +155,8 @@ enum Tokens {
             static let prose: CGFloat = 640
             /// Room either side of the column (TurnSpace.gutter).
             static let gutter: CGFloat = 32
+            /// The gutter in a pane under 480 wide (the phone, a narrow split): under hang, so marks come inside.
+            static let gutterNarrow: CGFloat = 16
             /// How far a line's mark hangs into the gutter. Under this much gutter, marks come inside and all text indents by it.
             static let hang: CGFloat = 26
             /// A line's mark box (icon, live dot, fold chevron).

@@ -1,4 +1,4 @@
-import { Fragment, memo, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { FileDiff, Image } from '../cloud/protocol'
 import type { Ask, Entry, Question, Thread } from '../engine/thread'
 import { type Model } from '../models'
@@ -9,6 +9,7 @@ import { ICON } from './icons'
 import { endError } from '../store'
 import { TurnFooter } from './TurnFooter'
 import { WidgetCard } from './Widget'
+import { foldRuns, foldTime, lineOf, opensItself, type Step } from './rows'
 
 // Draws a folded Thread: the user's message, tool lines, "Decided" steps (reasoning items),
 // streamed replies, and a diff card per edit with Allow ⌘↩ / Deny ⌘. while it waits.
@@ -42,26 +43,24 @@ function clip(out: string) {
   return [...ls.slice(0, half), `… ${ls.length - MAX_LINES} more lines …`, ...ls.slice(-half)].join('\n')
 }
 
-/** One step: a summary line that opens to what it ran and what came back. A running shell
- * command shows its live output; a failure opens by itself. */
-// What each tool did, as a verb and an icon: "Ran git status", "Read src/a.ts".
-const TOOL_LOOK: Record<string, { verb: [string, string]; icon: string }> = {
-  bash: { verb: ['Running', 'Ran'], icon: ICON.terminal },
-  read: { verb: ['Reading', 'Read'], icon: ICON.doc },
-  write: { verb: ['Writing', 'Wrote'], icon: 'M6 3h8l4 4v14H6zM14 3v4h4M9 13h6M9 17h4' },
-  edit: { verb: ['Editing', 'Edited'], icon: 'M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4' },
-  grep: { verb: ['Searching', 'Searched'], icon: 'M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-4-4' },
-  glob: { verb: ['Finding', 'Found'], icon: 'M3 7h6l2 2h10v10H3z' },
-  webfetch: { verb: ['Fetching', 'Fetched'], icon: ICON.globe },
-  websearch: { verb: ['Searching the web for', 'Searched the web for'], icon: ICON.globe },
-  todowrite: { verb: ['Planning', 'Planned'], icon: 'M9 6h11M9 12h11M9 18h11M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2' },
-  visualize: { verb: ['Making a visual', 'Made a visual'], icon: 'M4 19V5M4 19h16M8 15l3-4 3 2 5-6' },
-  visualguide: { verb: ['Reading the visual guide', 'Read the visual guide'], icon: ICON.doc },
-  settitle: { verb: ['Naming', 'Named'], icon: 'M4 7V5h16v2M12 5v14M9 19h6' },
-  // A child session, as on Mac (ActivityLine): "Ran an agent <what it was asked>".
-  task: { verb: ['Running an agent', 'Ran an agent'], icon: 'M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM3 20c0-3 3-5 6-5s6 2 6 5M16 11a3 3 0 1 0 0-6M18 15c2 .6 3 2.4 3 5' },
+// Each tool's mark: the icon hung in the gutter beside its line. Its words come from the shared
+// verb table (rows.ts, docs/design/transcript/verbs.json), never from here.
+const MARK: Record<string, string> = {
+  bash: ICON.terminal, '!': ICON.terminal, read: ICON.doc,
+  write: 'M6 3h8l4 4v14H6zM14 3v4h4M9 13h6M9 17h4',
+  edit: 'M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4', multiedit: 'M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4',
+  grep: 'M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-4-4', glob: 'M3 7h6l2 2h10v10H3z',
+  webfetch: ICON.globe, websearch: ICON.globe,
+  todowrite: 'M9 6h11M9 12h11M9 18h11M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2',
+  visualize: 'M4 19V5M4 19h16M8 15l3-4 3 2 5-6', visualguide: ICON.doc,
+  settitle: 'M4 7V5h16v2M12 5v14M9 19h6',
+  task: 'M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM3 20c0-3 3-5 6-5s6 2 6 5M16 11a3 3 0 1 0 0-6M18 15c2 .6 3 2.4 3 5',
 }
-const OTHER = { verb: ['Using', 'Used'] as [string, string], icon: 'M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z' }
+const OTHER_MARK = 'M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z'
+
+function Glyph({ d }: { d: string }) {
+  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d={d} /></svg>
+}
 
 /** Tools whose result is a sentence, not a payload: a `SendMessage` result is one line. These
  * say it on their row with no click at all. The Mac's `ToolLook.inlineResults` is the same set,
@@ -111,100 +110,101 @@ export function sessionCount(name: string, output: string): string | null {
   }
 }
 
-/** Exported for `test/toolrow-render.test.ts`, which draws this row and reads the DOM back:
- * the only way a test can see what the browser is actually handed, since the helpers above can
- * stay correct while the row stops using them. */
-/** A command that opens with `cd <dir> &&` (or `;`): the rest, and a worktree's name for the
- * place (`…/worktrees/audit334` → "audit334"; anywhere else, the session root most of all,
- * is noise and gets none). Null when the command isn't that shape. */
-export function splitCd(command: string): { command: string; place: string } | null {
-  const m = /^\s*cd\s+(?:"([^"]+)"|'([^']+)'|([^\s;&]+))\s*(?:&&|;)\s*([\s\S]+)$/.exec(command)
-  if (!m) return null
-  const dir = m[1] ?? m[2] ?? m[3] ?? ''
-  const parts = dir.split('/')
-  const i = parts.indexOf('worktrees')
-  return { command: m[4], place: i >= 0 && parts[i + 1] ? parts[i + 1] : '' }
-}
+export { splitCd } from './rows'
 
-export function ToolLine({ e }: { e: Entry }) {
-  const [open, setOpen] = useState<boolean | null>(null)
+/** How many lines of a command's output its opened line shows before Show all. */
+const TAIL = 12
+
+/** One step as one line (spec, "Lines"): mark, verb, object, result at the right. One click (or
+ * Return) opens it: a command's last lines, an edit's change, a search's results. A read has
+ * nothing to open. A failed command opens itself, once. `diff` is an edit's change. */
+export function ToolLine({ e, diff, onShowChange, startOpen }: { e: Entry; diff?: FileDiff; onShowChange?: (path: string) => void; /** Tests: draw it opened. */ startOpen?: boolean }) {
+  const line = lineOf(e, diff ?? e.diff)
+  const [open, setOpen] = useState<boolean>(() => opensItself(e, line) || !!startOpen)
+  const [all, setAll] = useState(false)
   const name = (e.name ?? '').toLowerCase()
-  const look = TOOL_LOOK[name] ?? OTHER
   const output = e.output.trim()
-  // A short result is said on the row itself: no click, no chevron, no body to open.
-  const said = e.done && e.outcome === 'ok' && INLINE_RESULTS.has(name) && !e.diff
+  // A short result is said on the line itself: no click, nothing to open.
+  const said = line.state === 'ok' && INLINE_RESULTS.has(name) && !line.diff
     ? sessionCount(name, output) ?? saidLine(e.display, output)
     : ''
   const whole = said ? fits(e.display, sessionCount(name, output) ?? output) : false
-  const shown = open ?? (e.outcome === 'error' || (!e.done && !!output))
-  const state = !e.done ? 'run' : e.outcome === 'error' ? 'err' : e.outcome === 'denied' ? 'denied' : 'ok'
-  // What it touched ("Read src/retry.rs", as on the Mac), or the side-model's gist when one
-  // arrived: a raw shell command or MCP arguments read as nothing, and the gist says what the
-  // call did. The engine's own one-line display ("Read 54 lines") goes in the opened detail,
-  // so the verb isn't said twice.
-  // A shell command that opens with `cd <dir> &&` leads with the command instead, and names
-  // the place only when it's a worktree: forty `cd /Users/…/frog && …` rows read identical,
-  // with the meaning cut off the end. The full command stays on hover and in the opened body.
-  const cd = (name === 'bash' || name === '!') && e.arg ? splitCd(e.arg) : null
-  const what = (e.done && e.gist) || cd?.command || e.arg || (e.done && e.display) || (TOOL_LOOK[name] ? '' : e.name)
-  const place = !(e.done && e.gist) && cd?.place ? cd.place : ''
+  const d = diff ?? e.diff
+  // What opening shows; nothing for a read, a whole inline result, or a step with nothing behind it.
+  const opens = !whole && line.kind !== 'read' && line.state !== 'run'
+    && (!!d || !!output || !!e.tests || line.state === 'failed' || !!line.gist || !!line.title)
+  // A running command shows its live output under the line, as before.
+  const shown = (open && opens) || (line.state === 'run' && !!output)
+  const result = said || line.result
+  const lines = output ? clip(output).split('\n') : []
+  const tail = all || lines.length <= TAIL ? lines : lines.slice(-TAIL)
   return (
-    <div className={`tool-row ${state}`}>
-      <button type="button" className="tool" aria-expanded={whole ? false : shown} onClick={() => { if (!whole) setOpen(!shown) }}>
-        <span className="tool-ic" aria-hidden="true">
-          {state === 'run'
-            ? <span className="tool-spin" />
-            : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={look.icon} /></svg>}
-        </span>
-        {/* The verb stays for a running call and a failure ("Ran cargo test — failed"). A
-            finished row drops it: a gist already says what it did, and a raw command reads
-            as itself ("a command is a command"), so "Ran" beside either says ran twice. */}
-        {(state === 'run' || state === 'err') && <span className="tool-verb">{look.verb[e.done ? 1 : 0]}</span>}
-        {what && <span className={`tool-what${e.done && e.gist ? ' gist' : ''}`} title={cd ? e.arg : undefined}>{what}</span>}
-        {place && <span className="tool-said">· in {place}</span>}
-        {said && <span className="tool-said">· {said}</span>}
-        {state === 'err' && <span className="tool-tag err">failed</span>}
-        {state === 'denied' && <span className="tool-tag">denied</span>}
-        {!whole && <span className="tool-chev" aria-hidden="true">›</span>}
-      </button>
-      {shown && !whole && (
-        <div className="tool-body">
-          {/* The raw call stays readable when the row's line is something else: with a gist on
-              the row, this is the argument it summarized. The engine's own display leads, as
-              upstream had it ("Read 54 lines"), with the argument under it. */}
-          {e.arg && (e.gist || e.display || cd) && (
-            <>
-              {e.display && <div className="tool-arg">{e.display}</div>}
-              <div className="tool-arg">{e.arg}</div>
-            </>
+    <div className="line-row" data-row="line" data-kind={line.kind} data-state={line.state}>
+      <div className="line-plate">
+        <button type="button" className="line" aria-expanded={opens ? shown : undefined} aria-disabled={opens ? undefined : true}
+          title={line.title || undefined} onClick={() => { if (opens) setOpen(!shown) }}>
+          <span className="line-mark" aria-hidden="true">
+            {line.state === 'run' ? <span className="tool-spin" /> : <Glyph d={MARK[name] ?? OTHER_MARK} />}
+          </span>
+          {line.gist
+            ? <span className="line-gist">{line.gist}</span>
+            : <>
+              {line.verb && <span className="line-verb">{line.verb}</span>}
+              {line.object && <span className={`line-obj${line.mono ? ' mono' : ''}`}>{line.object}</span>}
+            </>}
+          <span className="line-fill" />
+          {result && <span className="line-result">{result}</span>}
+          {line.diff && <span className="line-result"><span className="line-n add">+{line.diff.added}</span> <span className="line-n del">−{line.diff.removed}</span></span>}
+        </button>
+        {line.kind === 'command' && e.arg && line.state !== 'run' && <span className="line-acts"><CopyButton text={e.arg} label="Copy command" /></span>}
+        {line.kind === 'edit' && d && onShowChange && line.state === 'ok' && (
+          <span className="line-acts"><IconButton label="Show in Changes" icon="changes" onClick={() => onShowChange(d.path)} /></span>
+        )}
+      </div>
+      {shown && (
+        <div className="line-open">
+          {(line.gist || line.title) && e.arg && <div className="line-arg">{e.arg}</div>}
+          {e.tests && e.tests.failed.length > 0 && (
+            <div className="line-failing" role="list" aria-label="Failing tests">
+              {e.tests.failed.map((t) => <div key={t} role="listitem">{t}</div>)}
+            </div>
           )}
-          {/* An inline tool's body is its sentence, as text — never a terminal block: one line
-              in a <pre> reads as a payload it isn't. */}
-          {INLINE_RESULTS.has(name) && !e.diff
-            ? <div className="tool-said-body">{output ? clip(output) : 'No output.'}</div>
-            : output ? <pre className="tool-out">{clip(output)}</pre> : <div className="det">{e.done ? 'No output.' : 'Running…'}</div>}
+          {d && line.kind === 'edit'
+            ? <div className="line-box"><Hunks diff={d} max={40} /></div>
+            : INLINE_RESULTS.has(name) || line.kind === 'web'
+              ? <div className="line-said">{output ? clip(output) : 'No output.'}</div>
+              : output
+                ? <pre className="line-out">{tail.join('\n')}</pre>
+                : <div className="line-note">{e.done ? 'No output.' : 'Running…'}</div>}
+          {line.kind === 'command' && line.state !== 'run' && (
+            <div className="line-foot">
+              <span>Ran in your Frog Cloud sandbox</span>
+              {lines.length > TAIL && <button type="button" className="line-link" onClick={() => setAll(!all)}>{all ? 'Show less' : `Show all ${lines.length} lines`}</button>}
+              {output && <CopyButton text={output} label="Copy output" />}
+            </div>
+          )}
         </div>
       )}
     </div>
   )
 }
 
-/** A finished edit: its line, opening to the diff card. */
-function EditLine({ diff }: { diff: FileDiff }) {
+/** Four or more finished steps in a row, folded into one line: a chevron, "12 steps", the time.
+ * Opened, it lists its steps. */
+function Fold({ steps, render }: { steps: Entry[]; render: (e: Entry) => ReactNode }) {
   const [open, setOpen] = useState(false)
+  const time = foldTime(steps)
   return (
-    <div className="tool-row ok">
-      <button type="button" className="tool" aria-expanded={open} onClick={() => setOpen(!open)}>
-        <span className="tool-ic" aria-hidden="true">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={TOOL_LOOK.edit.icon} /></svg>
-        </span>
-        <span className="tool-verb">{diff.created ? 'Created' : 'Edited'}</span>
-        <span className="tool-what">{diff.path}</span>
-        <span className="tool-n add">+{diff.added}</span>
-        <span className="tool-n del">−{diff.removed}</span>
-        <span className="tool-chev" aria-hidden="true">›</span>
-      </button>
-      {open && <DiffCard diff={diff} />}
+    <div className="line-row fold" data-row="line" data-kind="fold" data-state="ok">
+      <div className="line-plate">
+        <button type="button" className="line" aria-expanded={open} onClick={() => setOpen(!open)}>
+          <span className="line-mark chev" aria-hidden="true">›</span>
+          <span className="line-verb">{steps.length} steps</span>
+          <span className="line-fill" />
+          {time && <span className="line-result">{time}</span>}
+        </button>
+      </div>
+      {open && <div className="fold-steps">{steps.map(render)}</div>}
     </div>
   )
 }
@@ -222,11 +222,13 @@ function foldedThought(entries: Entry[], n: number): boolean {
 function ThoughtLine({ text }: { text: string }) {
   const [open, setOpen] = useState(false)
   return (
-    <div className="thought">
-      <button type="button" className="tool" aria-expanded={open} onClick={() => setOpen(!open)}>
-        <span className="tool-verb">Thought</span>
-        <span className="tool-chev" aria-hidden="true">›</span>
-      </button>
+    <div className="line-row thought" data-row="line" data-kind="thought">
+      <div className="line-plate">
+        <button type="button" className="line" aria-expanded={open} onClick={() => setOpen(!open)}>
+          <span className="line-mark chev" aria-hidden="true">›</span>
+          <span className="line-verb">Thought</span>
+        </button>
+      </div>
       {open && <div className="thought-body">{text}</div>}
     </div>
   )
@@ -271,7 +273,7 @@ function AskCard({ ask, onDecide }: { ask: Ask; onDecide: Decide }) {
 
 const NO_MODELS: Model[] = []
 
-export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, models = NO_MODELS, outbox = [], onResend, onEdit, waiting, onContinue, onPrompt, credit }: {
+export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, models = NO_MODELS, outbox = [], onResend, onEdit, waiting, onContinue, onPrompt, onShowChange, credit }: {
   thread: Thread
   /** The account's credit left, for the turn-cost card. */
   credit?: string
@@ -292,13 +294,15 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
   waiting?: string
   /** A visual's `sendPrompt`: send this as the user's next message. */
   onPrompt?: (text: string) => void
+  /** An edit line's "Show in Changes": open the inspector on Changes. */
+  onShowChange?: (path: string) => void
 }) {
   // The live turn is the last one by position: turn numbers can repeat after a resume.
   const lastIdx = thread.turns.length - 1
   // Handlers change identity every render; turns read them through one stable ref so a
   // streamed delta redraws only the turn it touched.
-  const latest = useRef({ onDecide, onAnswer, onRetry, onEdit, onContinue, onPrompt })
-  latest.current = { onDecide, onAnswer, onRetry, onEdit, onContinue, onPrompt }
+  const latest = useRef({ onDecide, onAnswer, onRetry, onEdit, onContinue, onPrompt, onShowChange })
+  latest.current = { onDecide, onAnswer, onRetry, onEdit, onContinue, onPrompt, onShowChange }
   const cb = useMemo<TurnCallbacks>(() => ({
     onDecide: (a, o) => latest.current.onDecide(a, o),
     onAnswer: (c, o) => latest.current.onAnswer(c, o),
@@ -306,6 +310,7 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
     onEdit: (t) => latest.current.onEdit?.(t),
     onContinue: () => latest.current.onContinue?.(),
     onPrompt: (t) => latest.current.onPrompt?.(t),
+    onShowChange: onShowChange ? (p) => latest.current.onShowChange?.(p) : undefined,
   }), [])
   const has = { retry: !!onRetry, edit: !!onEdit, cont: !!onContinue }
   return (
@@ -350,6 +355,16 @@ interface TurnCallbacks {
   onEdit: (text: string) => void
   onContinue: () => void
   onPrompt: (text: string) => void
+  onShowChange?: (path: string) => void
+}
+
+/** A turn's entries as foldable rows: a finished step that draws as a line is a step (a failed one
+ * never folds); everything else (prose, thoughts, cards, a running step) breaks a run. */
+function rows(entries: Entry[], ask: Ask | null, question: Question | null) {
+  return entries.map((e, n): Step & { e: Entry; n: number } => {
+    const line = e.kind === 'tool' && e.done && question?.item !== e.id && ask?.item !== e.id && !(e.widget && e.outcome === 'ok')
+    return { kind: line ? 'step' : 'other', id: e.id, failed: line && e.outcome === 'error', e, n }
+  })
 }
 
 /** One turn. Memoized: the reducer keeps untouched turns the same object, so while the last
@@ -359,45 +374,53 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
   turn: Turn; live: boolean; ask: Ask | null; question: Question | null; running: boolean; models: Model[]
   credit?: string; cb: TurnCallbacks; hasRetry: boolean; hasEdit: boolean; hasContinue: boolean
 }) {
+  // One entry as its row. `data-row` says what it is (prose, line, box), and the gaps between
+  // rows come from that alone (transcript.css): lines touch, prose to lines is `activity`, a box
+  // is a `block` from anything.
+  const draw = (e: Entry, entries: Entry[], n: number): ReactNode => {
+    if (e.kind === 'reasoning' && foldedThought(entries, n)) return null
+    // An empty thought has nothing to open, and a blank reply nothing to read: neither draws.
+    if (e.kind === 'reasoning') return e.text.trim() ? <ThoughtLine text={e.text} /> : null
+    if (e.kind === 'message' && e.done && !e.text.trim()) return null
+    if (e.kind === 'message') return <div className="say" data-row="prose"><Markdown text={e.text} />{!e.done && <span className="caret" />}</div>
+    if (question?.item === e.id) return <div data-row="box"><QuestionCard q={question} onAnswer={cb.onAnswer} /></div>
+    const asking = ask?.item === e.id ? ask : null
+    const diff = e.diff ?? asking?.preview
+    // Asking first, an edit's card shows whole; finished, it is a line that opens to its change.
+    if (diff && asking) return (
+      <div data-row="box"><DiffCard diff={diff} ask={asking} onDecide={cb.onDecide}
+        note="Runs in your Frog Cloud sandbox. Nothing is pushed until you say so." /></div>
+    )
+    if (asking) return <div data-row="box"><AskCard ask={asking} onDecide={cb.onDecide} /></div>
+    if (e.widget && e.outcome === 'ok') return <div data-row="box"><WidgetCard widget={e.widget} onPrompt={cb.onPrompt} /></div>
+    return <ToolLine e={e} diff={diff} onShowChange={cb.onShowChange} />
+  }
   return (
     <div className="turn">
       <div className="ask-block">
         {/* A blank message (whitespace, no images) draws no empty bubble. */}
-        {[{ text: turn.input, images: turn.images }, ...(turn.more ?? [])].map((m, i) => !m.text.trim() && !m.images?.length ? null : (
+        {/* The receipts and actions sit beside the last bubble, not under it, so the prompt is a
+            block gap from the first row (spec, "Gaps"). */}
+        {[{ text: turn.input, images: turn.images }, ...(turn.more ?? [])].filter((m) => m.text.trim() || m.images?.length).map((m, i, all) => (
           <div key={i} className="me" dir="auto">
             {m.images?.length ? <div className="me-imgs">{m.images.map((im, j) => <img key={j} src={`data:${im.mime};base64,${im.data}`} alt="" />)}</div> : null}
             {m.text}
+            {i === all.length - 1 && (
+              <div className="hover-row mine" dir="ltr">
+                <Ticks n={2} />
+                {turn.at ? <span className="when" title={new Date(turn.at).toLocaleString()}>{ago(turn.at)}</span> : null}
+                <span className="sep" aria-hidden="true">·</span>
+                <CopyButton text={[turn.input, ...(turn.more ?? []).map((m) => m.text)].join('\n\n')} />
+                {hasEdit && <IconButton label="Edit (back to the composer)" onClick={() => cb.onEdit([turn.input, ...(turn.more ?? []).map((m) => m.text)].join('\n\n'))} icon="edit" />}
+              </div>
+            )}
           </div>
         ))}
-        <div className="hover-row mine">
-          <Ticks n={2} />
-          {turn.at ? <span className="when" title={new Date(turn.at).toLocaleString()}>{ago(turn.at)}</span> : null}
-          <span className="sep" aria-hidden="true">·</span>
-          <CopyButton text={[turn.input, ...(turn.more ?? []).map((m) => m.text)].join('\n\n')} />
-          {hasEdit && <IconButton label="Edit (back to the composer)" onClick={() => cb.onEdit([turn.input, ...(turn.more ?? []).map((m) => m.text)].join('\n\n'))} icon="edit" />}
-        </div>
       </div>
       <div className="reply-block">
-      {turn.entries.map((e, n) => {
-        if (e.kind === 'reasoning' && foldedThought(turn.entries, n)) return null
-        // An empty thought has nothing to open, and a blank reply nothing to read: neither draws.
-        if (e.kind === 'reasoning') return e.text.trim() ? <ThoughtLine key={e.id} text={e.text} /> : null
-        if (e.kind === 'message' && e.done && !e.text.trim()) return null
-        if (e.kind === 'message') return <div key={e.id} className="say"><Markdown text={e.text} />{!e.done && <span className="caret" />}</div>
-        if (question?.item === e.id) return <QuestionCard key={e.id} q={question} onAnswer={cb.onAnswer} />
-        const asking = ask?.item === e.id ? ask : null
-        const diff = e.diff ?? asking?.preview
-        // A finished edit is one activity line ("Edited src/a.ts +3 −2 ›", the One look), the
-        // Mac's too; it opens to the diff card. Asking first, the card shows whole.
-        if (diff && e.outcome !== 'denied' && !asking) return <EditLine key={e.id} diff={diff} />
-        if (diff && e.outcome !== 'denied') return (
-          <DiffCard key={e.id} diff={diff} ask={asking} onDecide={cb.onDecide}
-            note="Runs in your Frog Cloud sandbox. Nothing is pushed until you say so." />
-        )
-        if (asking) return <AskCard key={e.id} ask={asking} onDecide={cb.onDecide} />
-        if (e.widget && e.outcome === 'ok') return <WidgetCard key={e.id} widget={e.widget} onPrompt={cb.onPrompt} />
-        return <ToolLine key={e.id} e={e} />
-      })}
+      {foldRuns(rows(turn.entries, ask, question)).map((r) => r.kind === 'fold'
+        ? <Fold key={r.id} steps={r.steps.map((x) => x.e)} render={(e) => <ToolLine key={e.id} e={e} onShowChange={cb.onShowChange} />} />
+        : <Fragment key={r.id}>{draw(r.e, turn.entries, r.n)}</Fragment>)}
       {turn.usage && (turn.reason?.type === 'complete' || turn.reason?.type === 'denied') && (
         <TurnFooter usage={turn.usage} models={models} pinned={false} credit={credit}
           answer={[...turn.entries].reverse().find((e) => e.kind === 'message')?.text ?? ''}
@@ -405,7 +428,7 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
       )}
       </div>
       {/* How the turn ended stays with the turn: stopping a later one doesn't clear it. */}
-      {turn.reason?.type === 'cancelled' && <div className="tool">Stopped</div>}
+      {turn.reason?.type === 'cancelled' && <div className="turn-note">Stopped</div>}
       {/* A denied step ends the turn: say so in words (the engine's own sentence when it sends one). */}
       {endNote(turn.reason) && <div className="det wrap turn-note">{endNote(turn.reason)}</div>}
       {/* Any other ending that isn't a finished answer says so, never silence. */}
@@ -447,6 +470,7 @@ const ICONS = {
   copy: <><rect x="8" y="8" width="12" height="12" rx="2.5" /><path d="M16 8V6.5A2.5 2.5 0 0 0 13.5 4h-7A2.5 2.5 0 0 0 4 6.5v7A2.5 2.5 0 0 0 6.5 16H8" /></>,
   check: <path d="M5 12.5l4.5 4.5L19 7.5" />,
   edit: <><path d="M4 20h4L19 9l-4-4L4 16z" /><path d="M13.5 6.5l4 4" /></>,
+  changes: <><path d="M12 4v8M8 8h8" /><path d="M8 18h8" /></>,
   retry: <><path d="M4 12a8 8 0 0 1 14-5.3L20 9" /><path d="M20 4v5h-5" /><path d="M20 12a8 8 0 0 1-14 5.3L4 15" /><path d="M4 20v-5h5" /></>,
 }
 

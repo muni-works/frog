@@ -33,7 +33,7 @@ const sent = (over: Partial<Entry> = {}): Entry => ({
 test("a SendMessage row says its result with no click at all", () => {
   const html = draw(sent())
   // The meat is on the row's own line, in the row's own text.
-  assert.match(html, /tool-said/, "the result must be said on the row: reverted row has no tool-said")
+  assert.match(html, /line-result/, "the result must be said on the row")
   assert.match(
     html,
     /Sent to ops \(20261112-175150-6a2c\); delivered \(turn started\)/,
@@ -43,27 +43,28 @@ test("a SendMessage row says its result with no click at all", () => {
 
 test("a line that already says it all offers no click, and no body", () => {
   // Cut at the first sentence, so there IS more behind it — a chevron is right here.
-  assert.match(draw(sent()), /tool-chev/)
-  assert.doesNotMatch(draw(sent()), /tool-body/, "nothing is open until the person clicks")
+  assert.match(draw(sent()), /aria-expanded="false"/)
+  assert.doesNotMatch(draw(sent()), /line-open/, "nothing is open until the person clicks")
   // The whole result on one line: nothing behind it, so no chevron to click for nothing.
   const whole = draw(sent({ output: "Sent to ops; delivered." }))
-  assert.doesNotMatch(whole, /tool-chev/, "a click that reveals nothing is the same wasted click")
+  assert.doesNotMatch(whole, /aria-expanded/, "a click that reveals nothing is the same wasted click")
   assert.match(whole, /Sent to ops; delivered\./)
 })
 
 test("the label is not said twice", () => {
   // The web is single-level (no boxed inner row), so the duplication it can show is the
-  // result repeating the row's own words. Since #339 a finished row has no verb at all —
+  // result repeating the row's own words. (Since #339 a finished row had no verb; the unified
+  // transcript gives inline-result rows their past verb back, "Messaged ops".) —
   // the result is the line — so the old assertion ("Used" appears once) was counting a
   // span that no longer renders, and failed 0 !== 1 for exactly that (2026-11-14).
   // What must hold now: the row says the sentence, and "Used" appears zero times —
   // neither on the line nor doubled anywhere.
   const html = draw(sent({ arg: "ops", output: "Sent to ops; delivered." }))
-  const said = /<span class="tool-said">([^<]*)<\/span>/.exec(html)?.[1] ?? ""
+  const said = /<span class="line-result">([^<]*)<\/span>/.exec(html)?.[1] ?? ""
   assert.ok(said.length > 0, `the row must say something; html: ${html}`)
   // A finished row drops its verb (#339): "Used" appears zero times, and the label is never
   // doubled anywhere in the row. Where a verb does show (a running call), it shows once.
-  assert.equal((html.match(/>Used</g) ?? []).length, 0, `a finished row has no verb; html: ${html}`)
+  assert.equal((html.match(/>Used</g) ?? []).length, 0, `no row reads "Used"; html: ${html}`)
   assert.doesNotMatch(html, /Used[^<]*Used/, `the label must not be said twice; html: ${html}`)
   assert.ok(!said.startsWith("Used"), `the sentence must not open with the verb again; html: ${html}`)
 })
@@ -80,15 +81,15 @@ test("a payload tool keeps its chevron and its body, and says nothing on the lin
     outcome: "ok",
   }
   const html = draw(bash)
-  assert.doesNotMatch(html, /tool-said/, "a command's output is a payload, not a sentence")
-  assert.match(html, /tool-chev/, "a payload stays behind the chevron")
+  assert.doesNotMatch(html, /line-result/, "a command's output is a payload, not a sentence")
+  assert.match(html, /aria-expanded="false"/, "a payload stays behind a click")
 })
 
 test("an opened short result is text, never a terminal block", () => {
-  // Opened by hand (an error opens by itself), the body is its sentence in a plain div.
-  const denied = draw(sent({ outcome: "error" }))
-  assert.match(denied, /tool-said-body/, "one line in a <pre> reads as a payload it isn't")
-  assert.doesNotMatch(denied, /tool-out/)
+  // A failed SendMessage isn't a command, so it doesn't open itself: open it as a click would.
+  const denied = renderToStaticMarkup(createElement(ToolLine, { e: sent({ outcome: "error" }), startOpen: true }))
+  assert.match(denied, /line-said/, "one line in a <pre> reads as a payload it isn't")
+  assert.doesNotMatch(denied, /line-out/)
 })
 
 // "frog manager" (2026-11-14): forty rows read `cd /Users/cam/Developer/frog && …`, the meaning
@@ -98,12 +99,12 @@ const bash = (arg: string, over: Partial<Entry> = {}): Entry =>
 
 test("a cd prefix gives way to the command, and a worktree shows by name", () => {
   const root = draw(bash("cd /Users/cam/Developer/frog && git log --oneline -2"))
-  assert.match(root, /class="tool-what"[^>]*>git log --oneline -2</, "the command leads the row")
-  assert.doesNotMatch(root, /· in /, "the session root on every row is noise")
+  assert.match(root, /class="line-obj mono">git log --oneline -2</, "the command leads the row")
+  assert.doesNotMatch(root, />in /, "the session root on every row is noise")
   assert.match(root, /title="cd \/Users\/cam\/Developer\/frog &amp;&amp; git log --oneline -2"/, "full command on hover")
   const wt = draw(bash('cd "/Users/cam/Developer/frog/.frog/worktrees/audit334" && timeout 600 cargo test'))
   assert.match(wt, />timeout 600 cargo test</)
-  assert.match(wt, /· in audit334/)
+  assert.match(wt, /class="line-result">in audit334</)
   // Not that shape: as it was.
   assert.match(draw(bash("cd foo || true")), />cd foo \|\| true</)
 })

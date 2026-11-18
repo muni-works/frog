@@ -8,9 +8,10 @@ import { emptyThread, reduce } from "../src/engine/thread.ts";
 import type { Envelope, Event } from "../src/cloud/protocol.ts";
 
 test("#1 long unbroken text wraps inside the user bubble and replies", () => {
-  const css = readFileSync(new URL("../src/app.css", import.meta.url), "utf8");
-  for (const sel of [".me", ".say"]) {
-    const rule = css.match(new RegExp(`^\\${sel} \\{([^}]*)\\}`, "m"))?.[1] ?? "";
+  // The transcript's rules live in transcript.css, scoped under .tx (spec phase 1).
+  const css = readFileSync(new URL("../src/transcript.css", import.meta.url), "utf8");
+  for (const sel of [".tx .me", ".tx .say"]) {
+    const rule = css.match(new RegExp(`^${sel.replace(/\./g, "\\.")} \\{([^}]*)\\}`, "m"))?.[1] ?? "";
     assert.match(rule, /overflow-wrap:\s*anywhere/, sel);
   }
 });
