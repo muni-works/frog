@@ -13,6 +13,8 @@ struct PaneView: View {
     let insets: EdgeInsets
     /// The pane's top is the window's: its inspector runs up under the title bar.
     var underTitleBar = true
+    /// Its inspector's strip is in the window's title row (it's the window's top-right one).
+    var stripInTitleRow = false
     /// The pane's right edge is the window's: no hairline after its inspector.
     var trailingEdge = true
     let changesDocked: Bool
@@ -199,7 +201,8 @@ struct PaneView: View {
                      width: Binding(get: { pane.cardWidth }, set: { pane.cardWidth = $0 }),
                      collapse: { toggleChanges() },
                      folder: pane.workspace.isChat ? nil : pane.workspace.folder,
-                     git: pane.workspace.isChat || pane.workspace.git == nil ? nil : { ui.requestGit($0) })
+                     git: pane.workspace.isChat || pane.workspace.git == nil ? nil : { ui.requestGit($0) },
+                     stripInTitleRow: stripInTitleRow && changesDocked)
                 // The sidebar's column, not glass, and outside any GlassEffectContainer: on
                 // macOS 27 glass around views that take the keyboard (terminal, web view,
                 // buttons) made SwiftUI's focus walk endless, and the app froze in it on a resize

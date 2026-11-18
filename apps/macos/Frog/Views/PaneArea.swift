@@ -13,9 +13,9 @@ struct PaneArea: View {
     /// Runs one of the composer tray's git actions (`draft_commit`, `open_pr`, `push`); nil
     /// where there's no repo, so the Changes tab shows no Commit or Open PR.
     var git: ((String) -> Void)? = nil
-    /// Terminal or Preview picked while there's no pane to show (a chat has no folder to open
-    /// a shell in): the tab is still there, with its empty state.
-    @State private var placeholder: PaneKind?
+    /// The strip is in the window's title row (the window's top-right inspector, docked): the
+    /// body starts at the column's top.
+    var stripInTitleRow = false
 
     static let minWidth: CGFloat = 360
     static let maxWidth: CGFloat = 560
@@ -28,6 +28,11 @@ struct PaneArea: View {
     }
 
     private var hub: PaneHub { conversation.panes }
+    /// Terminal or Preview picked with no pane behind it (kept on the hub: see `placeholder`).
+    private var placeholder: PaneKind? {
+        get { hub.placeholder }
+        nonmutating set { hub.placeholder = newValue }
+    }
     /// Any changed file at all. The count would walk every turn's diffs per body pass; the
     /// card's tab list only needs whether there are any (see `Conversation.changesVersion`).
     private var hasChanges: Bool { conversation.changesVersion > 0 && !conversation.sessionChanges.isEmpty }
@@ -63,7 +68,7 @@ struct PaneArea: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            strip
+            if !stripInTitleRow { strip }
             ZStack {
                 switch current {
                 case .tab(.changes):
@@ -113,7 +118,9 @@ struct PaneArea: View {
         .onChange(of: hub.selected) { placeholder = nil }
     }
 
-    private var strip: some View {
+    /// The tabs and the close button. In the column, or in the window's title row (a toolbar
+    /// item: content under the toolbar can't take clicks on macOS 27).
+    var strip: some View {
         HStack(spacing: 2) {
             ForEach(slots, id: \.self) { slot in
                 let paneID: String? = if case .tab(.pane(let id)) = slot { id } else { nil }

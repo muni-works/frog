@@ -84,6 +84,9 @@ struct WorkspaceView: View {
     static let trafficLights: CGFloat = 84
     /// The strip at the window's left edge that peeks the collapsed sidebar on hover.
     static let peekEdge: CGFloat = 6
+    /// The toolbar's own inset at the window's trailing edge: the inspector's tabs in the title
+    /// row are this much narrower than its column, so they start at its hairline.
+    static let toolbarTrailing: CGFloat = 8
     /// Narrowest a column may get; a card that would squeeze it further stays folded.
     static let minColumn: CGFloat = 520
     /// Split panes accept narrower columns: that's the point of splitting.
@@ -404,34 +407,41 @@ struct WorkspaceView: View {
         panes.split(s, on: edge, window: window)
     }
 
+    /// One pane, placed: its frame, its clip, and its part in the documentation's cover.
+    private func paneCell(_ pane: Pane, number: Int?, stripInTitleRow: Bool) -> some View {
+        let place = placement(pane)
+        return PaneView(
+            pane: pane,
+            panes: panes,
+            number: number,
+            insets: place.insets,
+            underTitleBar: place.frame.minY < 0.5,
+            stripInTitleRow: stripInTitleRow,
+            trailingEdge: place.frame.maxX >= canvasSize.width - 0.5,
+            changesDocked: docked.changes.contains(pane.id),
+            toggleChanges: { toggleChanges(pane) },
+            window: window
+        )
+        // Exactly its frame: content that wants more is cut at the pane's own edge, never
+        // centered out over its neighbors (the rail and text of one pane over the next).
+        // Open at the top for a pane under the title bar: its inspector's column runs up
+        // under it.
+        .frame(width: max(0, place.frame.width), height: max(0, place.frame.height), alignment: .topLeading)
+        .clipShape(TitleBarClip(open: place.frame.minY < 0.5))
+        .offset(x: place.frame.minX, y: place.frame.minY)
+        // Under the documentation, still mounted: its turn keeps running and its
+        // scroll, draft and inspector are there when you come back.
+        .allowsHitTesting(!inDocs)
+        .accessibilityHidden(inDocs)
+        .transition(.opacity.combined(with: .scale(scale: 0.98)))
+    }
+
     var body: some View {
         let numbers = panes.numbers
+        let corner = cornerInspector?.id
         ZStack(alignment: .topLeading) {
             ForEach(Array(panes.items.enumerated()), id: \.element.id) { i, pane in
-                let place = placement(pane)
-                PaneView(
-                    pane: pane,
-                    panes: panes,
-                    number: panes.isSplit ? i + 1 : nil,
-                    insets: place.insets,
-                    underTitleBar: place.frame.minY < 0.5,
-                    trailingEdge: place.frame.maxX >= canvasSize.width - 0.5,
-                    changesDocked: docked.changes.contains(pane.id),
-                    toggleChanges: { toggleChanges(pane) },
-                    window: window
-                )
-                // Exactly its frame: content that wants more is cut at the pane's own edge, never
-                // centered out over its neighbors (the rail and text of one pane over the next).
-                // Open at the top for a pane under the title bar: its inspector's column runs up
-                // under it.
-                .frame(width: max(0, place.frame.width), height: max(0, place.frame.height), alignment: .topLeading)
-                .clipShape(TitleBarClip(open: place.frame.minY < 0.5))
-                .offset(x: place.frame.minX, y: place.frame.minY)
-                // Under the documentation, still mounted: its turn keeps running and its
-                // scroll, draft and inspector are there when you come back.
-                .allowsHitTesting(!inDocs)
-                .accessibilityHidden(inDocs)
-                .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                paneCell(pane, number: panes.isSplit ? i + 1 : nil, stripInTitleRow: corner == pane.id)
             }
 
             docsLayer
@@ -666,23 +676,31 @@ struct WorkspaceView: View {
                     .help("Inspector: changes, terminal, preview (⌥⌘0)")
                     .disabled(focused.conversation == nil || inDocs)
             }
-            if controlsInset > 0 {
-                ToolbarItem(placement: .primaryAction) { Color.clear.frame(width: controlsInset, height: 1) }
-                    .sharedBackgroundVisibility(.hidden)
+            // The top-right inspector's tabs, over its column: the controls sit left of it.
+            if let corner = cornerInspector, let c = corner.conversation {
+                ToolbarItem(placement: .primaryAction) {
+                    PaneArea(conversation: c, height: 0, width: .constant(corner.cardWidth),
+                             collapse: { toggleChanges(corner) },
+                             folder: corner.workspace.isChat ? nil : corner.workspace.folder)
+                        .strip
+                        .frame(width: max(0, corner.cardWidth - Self.toolbarTrailing))
+                }
+                .sharedBackgroundVisibility(.hidden)
             }
         }
     }
 
-    /// Room the controls leave at the right, so they sit left of a docked inspector at the
-    /// window's top-right.
-    private var controlsInset: CGFloat {
-        guard !inDocs else { return 0 }
+    /// The pane whose docked inspector stands at the window's top-right: its tabs are in the
+    /// title row, at the toolbar's trailing end. (Another pane's inspector, in a split, keeps
+    /// its tabs on its first row: the toolbar's items run in one row from each end.)
+    private var cornerInspector: Pane? {
+        guard !inDocs else { return nil }
         let corner = panes.items.first { pane in
             let f = placement(pane).frame
             return f.minY < 0.5 && f.maxX >= canvasSize.width - 0.5
         }
-        guard let corner, docked.changes.contains(corner.id), corner.hasTabs else { return 0 }
-        return corner.cardWidth
+        guard let corner, docked.changes.contains(corner.id), corner.hasTabs else { return nil }
+        return corner
     }
 
     // MARK: Columns

@@ -32,7 +32,7 @@ controls = the old "rail".
 
 | Part | Spec |
 | --- | --- |
-| Card | fill `card`, 1px stroke `line-strong`, radius 16 (`radius-field`). No shadow, no glass, no blur. |
+| Card | fill `card`, 1px stroke `edge` at rest (the quiet border the sidebars use), radius 16 (`radius-field`). No shadow, no glass, no blur. |
 | Width | the transcript column: `min(720, available)`, centred, 32 gutter on a narrow window. It does not grow when a sidebar closes. |
 | Status line | 32 tall, padding 0 8 0 14, 1px `line` hairline below. Text 12/15 (`callout`); content in `fg`, detail in `muted`. Gap 8. |
 | Field | padding 12 top, 14 sides, 4 bottom. Text `body` 13/16 in `fg`. One line at rest, grows to 10 lines (160), then scrolls inside. Placeholder in `muted`-ish (`#8a8a8a` dark). |

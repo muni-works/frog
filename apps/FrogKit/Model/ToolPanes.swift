@@ -42,6 +42,10 @@ final class PaneHub {
     private(set) var panes: [ToolPane] = []
     /// The tab in front: Changes, or a pane by id.
     var selected: Tab?
+    /// Terminal or Preview picked while there's no pane to show (a chat has no folder to open a
+    /// shell in): its tab is up, with its empty state. Here, not in the inspector's view, so
+    /// its strip and body agree when the strip is in the window's title row.
+    var placeholder: PaneKind?
     /// Per-turn preview screenshots, for before/after in the timeline.
     private(set) var checkpoints: [UInt64: Checkpoint] = [:]
     /// The turn whose checkpoint the preview is comparing against, if any.

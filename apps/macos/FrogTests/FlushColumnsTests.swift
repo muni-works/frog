@@ -270,6 +270,11 @@ final class FlushColumnsTests: XCTestCase {
             .min { $0.minY < $1.minY }?.midY
     }
 
+    /// Controls on one row (within 8 pt of `y`) in an x range: a strip's tabs and close button.
+    private func tabs(_ shot: Shot, from x0: CGFloat, to x1: CGFloat, at y: CGFloat) -> Int {
+        shot.controls.filter { $0.minX >= x0 - 0.5 && $0.maxX <= x1 + 0.5 && $0.height < 30 && abs($0.midY - y) < 8 }.count
+    }
+
     /// Split, no pane has a header: no control at the top of either transcript, where the
     /// number, state and model pill stood.
     func testSplitPanesHaveNoHeaderPill() throws {
@@ -283,25 +288,26 @@ final class FlushColumnsTests: XCTestCase {
         XCTAssertEqual(pills, [], "controls at the top of a split pane: its header pill is still there")
     }
 
-    /// Every inspector's tab strip, split or not, sits on one line with the sidebar's first row
-    /// (New session), right under the title bar.
+    /// The window's top-right inspector keeps its tabs in the title row (a toolbar item;
+    /// `FlushSnapshotTests.testInspectorTabsInTitleRow`), so its column starts with its content.
+    /// In a split, the other pane's inspector keeps its strip, on the sidebar's first row.
     func testInspectorStripsShareTheSidebarsFirstRow() throws {
         let (single, one) = try shoot { try showConversation($0, inspector: true) }
         defer { one.stopAll() }
         let card = one.items[0].cardWidth
         let sidebar = try XCTUnwrap(firstRow(single, from: 0, to: WorkspaceView.sessionsWidth), "the sidebar's first row")
-        let alone = try XCTUnwrap(firstRow(single, from: single.size.width - card, to: single.size.width), "the inspector's strip")
-        XCTAssertEqual(alone, sidebar, accuracy: 1, "unsplit: the inspector's strip and the sidebar's first row")
+        XCTAssertLessThan(tabs(single, from: single.size.width - card, to: single.size.width, at: sidebar), 3,
+                          "unsplit: the strip's tabs are in the title row, not on the column's first row")
 
         let (split, two) = try splitShot(inspectors: true)
         defer { two.stopAll() }
         XCTAssertTrue(two.items.allSatisfy { $0.showChanges })
         let mid = middle(split), W = split.size.width
         let left = try XCTUnwrap(firstRow(split, from: mid - card, to: mid), "pane 1's inspector strip")
-        let right = try XCTUnwrap(firstRow(split, from: W - card, to: W), "pane 2's inspector strip")
         let splitSidebar = try XCTUnwrap(firstRow(split, from: 0, to: WorkspaceView.sessionsWidth))
         XCTAssertEqual(left, sidebar, accuracy: 1, "split: pane 1's strip and the sidebar's first row")
-        XCTAssertEqual(right, sidebar, accuracy: 1, "split: pane 2's strip and the sidebar's first row")
+        XCTAssertLessThan(tabs(split, from: W - card, to: W, at: sidebar), 3, "split: the top-right inspector's strip is in the title row")
+        XCTAssertGreaterThanOrEqual(tabs(split, from: mid - card, to: mid, at: sidebar), 4, "split: pane 1's strip keeps its tabs and close button")
         XCTAssertEqual(splitSidebar, sidebar, accuracy: 1, "the sidebar's first row doesn't move when split")
     }
 
@@ -337,9 +343,7 @@ final class FlushColumnsTests: XCTestCase {
             assertGray(shot, 319.5, y, line, "the widened sidebar's hairline")
             assertGray(shot, 322, y, canvas, "the page past the widened sidebar")
         }
-        let sidebar = try XCTUnwrap(firstRow(shot, from: 0, to: 320))
-        let strip = try XCTUnwrap(firstRow(shot, from: shot.size.width - panes.items[0].cardWidth, to: shot.size.width))
-        XCTAssertEqual(strip, sidebar, accuracy: 1, "the inspector's strip stays on the sidebar's first row")
+        XCTAssertNotNil(firstRow(shot, from: 0, to: 320), "the widened sidebar's rows")
     }
 
     /// The sidebar's width: 250 by default, dragged between 220 and 400, kept under
