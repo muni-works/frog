@@ -68,6 +68,12 @@ struct TurnTimeline: Equatable {
         lastAt = max(lastAt ?? t, t)
     }
 
+    /// How long each reasoning item thought, in the order they started: its thinking segment's
+    /// length, what "Thought for Ns" says (timeline.rs's `thinking`).
+    func thinking(now: Date? = nil) -> [(item: String, ms: UInt64)] {
+        segments(now: now).filter { $0.kind == .thinking }.map { (item: $0.item ?? "", ms: $0.endMs - $0.startMs) }
+    }
+
     /// The turn's length so far in ms (to its end, or its latest event, or `now` while live).
     func length(now: Date? = nil) -> UInt64 {
         guard let t0 = startedAt else { return 0 }
@@ -81,17 +87,27 @@ struct TurnTimeline: Equatable {
         guard let t0 = startedAt else { return [] }
         let end = max(t0, endedAt ?? now.map { Int64($0.timeIntervalSince1970 * 1000) } ?? lastAt ?? t0)
         func at(_ t: Int64) -> UInt64 { UInt64(min(max(t, t0), end) - t0) }
-        var open: [String: (kind: Kind, start: Int64)] = [:]
+        // Where each message or tool call started, in log order: an older think's end.
+        let answers: [(index: Int, at: Int64)] = marks.enumerated().compactMap { i, mark in
+            if case .started(_, let kind, let at) = mark, kind == .writing || kind == .tool { (i, at) } else { nil }
+        }
+        var open: [String: (kind: Kind, start: Int64, index: Int)] = [:]
         var out: [Segment] = []
         var waits: [Segment] = []
         var discarded = Set<String>()
-        for mark in marks {
+        for (i, mark) in marks.enumerated() {
             switch mark {
             case .started(let id, let kind, let start):
-                open[id] = (kind, start)
+                open[id] = (kind, start, i)
             case .completed(let id, let t, let thinkMs):
-                guard let (kind, start) = open.removeValue(forKey: id) else { continue }
-                let stop = thinkMs.map { min(start + Int64($0), t) } ?? t
+                guard let (kind, start, began) = open.removeValue(forKey: id) else { continue }
+                var stop = t
+                if kind == .thinking {
+                    // `think_ms` (from #420 on), cut at the completion; an older log thinks until the
+                    // first message or tool call logged after it starts, or its completion if sooner.
+                    if let thinkMs { stop = min(start + Int64(thinkMs), t) }
+                    else if let next = answers.first(where: { $0.index > began }) { stop = min(next.at, t) }
+                }
                 out.append(Segment(kind: kind, startMs: at(start), endMs: at(stop), item: id))
             case .wait(let item, let asked, let t):
                 waits.append(Segment(kind: .waiting, startMs: at(asked), endMs: at(t), item: item))
