@@ -26,6 +26,14 @@ pub enum Fail {
         /// The `x-frog-billing` header's value (`credit: <micros>`), when the edge said.
         billing: Option<String>,
     },
+    /// A call that never answers: the stream stalls before its first byte and stays that way
+    /// (a dead upstream with the socket still open). For the quiet-child tests.
+    Stall,
+    /// A call that hangs `secs` and then fails as a timed-out stream would: a real stall,
+    /// which the retry policy retries.
+    Hang { secs: u64 },
+    /// A bug: the call panics, taking the engine's work loop with it. For the dead-child tests.
+    Panic,
 }
 
 impl Fail {
@@ -217,7 +225,8 @@ impl Client {
                 tokio::time::sleep(Duration::from_millis(2)).await;
             }
         }
-        if let Some(fail) = self.fails.lock().unwrap().pop_front() {
+        let fail = self.fails.lock().unwrap().pop_front();
+        if let Some(fail) = fail {
             match fail {
                 Fail::Stream { partial, message } => {
                     for b in &partial {
@@ -250,6 +259,15 @@ impl Client {
                     }
                     .into());
                 }
+                Fail::Stall => std::future::pending::<()>().await,
+                Fail::Hang { secs } => {
+                    tokio::time::sleep(Duration::from_secs(secs)).await;
+                    return Err(StreamError {
+                        message: "operation timed out".into(),
+                    }
+                    .into());
+                }
+                Fail::Panic => panic!("scripted provider panic (a test's injected bug)"),
             }
         }
         let r = self

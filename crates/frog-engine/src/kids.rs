@@ -33,8 +33,12 @@ pub struct State {
     pub turns: u32,
     /// Its last reply.
     pub report: String,
-    /// How its last turn ended (`complete`, `cancelled`, ...).
+    /// How its last turn ended (`complete`, `cancelled`, ..., or `died` when its engine went
+    /// away mid-life).
     pub ended: Option<String>,
+    /// Why frog (or the person, answering a quiet question) stopped its running turn, for the
+    /// parent's note. See `child_watch`.
+    pub stopped: Option<String>,
 }
 
 struct Kid {
@@ -54,6 +58,8 @@ pub struct Kids {
     inbox: Mutex<Option<mpsc::WeakUnboundedSender<Op>>>,
     /// The parent's background registry: its event stream and permission relay.
     relay: Mutex<Option<Arc<crate::background::Registry>>>,
+    /// The parent is shutting its children down: their engines ending now is expected.
+    closing: std::sync::atomic::AtomicBool,
 }
 
 /// Each live child's way back to its parent, by child session id: the parent's inbox (weak,
@@ -99,6 +105,10 @@ pub fn note(name: &str, state: &State) -> String {
         format!("{name} finished a turn.")
     } else {
         format!("{name} stopped ({how}).")
+    };
+    let head = match &state.stopped {
+        Some(why) => format!("{head} {why}"),
+        None => head,
     };
     if report.is_empty() {
         head
@@ -264,7 +274,7 @@ impl Kids {
 
     /// Adopt a spawned child engine: watch its events, relay its permission prompts through
     /// `relay` (the parent's), and note its finished turns to the parent.
-    pub async fn adopt(
+    pub(crate) async fn adopt(
         self: &Arc<Self>,
         mut handle: Handle,
         name: String,
@@ -272,6 +282,8 @@ impl Kids {
         branch: Option<String>,
         prompt: String,
         relay: Arc<crate::background::Registry>,
+        cfg: &crate::config::Config,
+        asker: crate::engine::Asker,
     ) -> Result<String> {
         // The first envelope names the child's session.
         let first = handle
@@ -298,7 +310,7 @@ impl Kids {
             },
         );
         handle.ops.send(Op::Submit {
-            text: prompt,
+            text: prompt.clone(),
             images: Vec::new(),
             more: Vec::new(),
         })?;
@@ -315,14 +327,38 @@ impl Kids {
         }
         let (kids, id2) = (self.clone(), id.clone());
         kids.announce(&id, &relay);
+        let mut watch = crate::child_watch::Watch::new(
+            cfg,
+            asker,
+            format!("the child session “{name}”"),
+            &prompt,
+            id.clone(),
+        );
         tokio::spawn(async move {
             let ops = handle.ops.clone();
-            while let Some(env) = handle.events.recv().await {
+            // Its permission cards open on the parent, to close if it dies on one.
+            let mut cards: Vec<String> = Vec::new();
+            loop {
+                let running = state.lock().unwrap().running;
+                let env = tokio::select! {
+                    env = handle.events.recv() => env,
+                    // Quiet past the threshold, and the person said stop (or nobody could be
+                    // asked): interrupt it. Its turn ends cancelled and the note says why.
+                    why = watch.next(), if running => {
+                        state.lock().unwrap().stopped = Some(why.words("it"));
+                        let _ = ops.send(Op::Interrupt);
+                        watch.reset();
+                        continue;
+                    }
+                };
+                let Some(env) = env else { break };
+                watch.saw(&env.event);
                 match env.event {
                     Event::TurnStarted { .. } => {
                         let mut s = state.lock().unwrap();
                         s.running = true;
                         s.ended = None;
+                        s.stopped = None;
                         drop(s);
                         kids.announce(&id2, &relay);
                     }
@@ -365,6 +401,7 @@ impl Kids {
                         card,
                     } => {
                         state.lock().unwrap().needs_you += 1;
+                        cards.push(id.clone());
                         kids.announce(&id2, &relay);
                         relay.relay_to(&id, &ops);
                         relay.emit(Event::PermissionRequest {
@@ -383,12 +420,53 @@ impl Kids {
                         let mut s = state.lock().unwrap();
                         s.needs_you = s.needs_you.saturating_sub(1);
                         drop(s);
+                        cards.retain(|c| *c != id);
                         relay.unrelay(&id);
                         relay.emit(Event::PermissionResolved { id, decision });
                         kids.announce(&id2, &relay);
                     }
                     _ => {}
                 }
+            }
+            // The stream closed: its engine is gone. Expected after ArchiveSession or the
+            // parent's own shutdown; otherwise it died (see `engine::Closer`), and a parent
+            // waiting on it hears so now instead of waiting forever.
+            watch.withdraw();
+            let expected = kids.closing.load(std::sync::atomic::Ordering::SeqCst)
+                || kids
+                    .kids
+                    .lock()
+                    .unwrap()
+                    .get(&id2)
+                    .is_none_or(|k| k.archived);
+            if expected {
+                return;
+            }
+            let (waited_on, snap) = {
+                let mut s = state.lock().unwrap();
+                let waited_on = s.running || s.needs_you > 0;
+                s.running = false;
+                s.needs_you = 0;
+                s.ended = Some("died".into());
+                (waited_on, s.clone())
+            };
+            for id in cards {
+                relay.unrelay(&id);
+                relay.emit(Event::PermissionResolved {
+                    id,
+                    decision: crate::protocol::Decision::Deny,
+                });
+            }
+            kids.announce(&id2, &relay);
+            if waited_on {
+                let report = cap(snap.report.trim(), REPORT_CAP);
+                let mut text = format!(
+                    "{name} stopped unexpectedly: its engine exited mid-turn (a bug in frog, not in its work). Its log is kept. Start a new session if the work still needs doing."
+                );
+                if !report.is_empty() {
+                    text.push_str(&format!(" Its last report:\n\n{report}"));
+                }
+                kids.deliver(&id2, &name, text);
             }
         });
         Ok(id)
@@ -447,6 +525,12 @@ impl Kids {
                 let k = &kids[&id];
                 if k.archived {
                     bail!("{} is archived", k.name);
+                }
+                if k.state.lock().unwrap().ended.as_deref() == Some("died") {
+                    bail!(
+                        "{} died (its engine exited), so nothing can reach it. Start a new session if the work still needs doing.",
+                        k.name
+                    );
                 }
                 let message = input["message"].as_str().unwrap_or("").to_string();
                 let op = if input["informational"].as_bool() == Some(true) {
@@ -512,6 +596,8 @@ impl Kids {
 
     /// Stop every child (the parent's engine is going away).
     pub fn shutdown(&self) {
+        self.closing
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         for k in self.kids.lock().unwrap().values() {
             let _ = k.ops.send(Op::Interrupt);
             let _ = k.ops.send(Op::Shutdown);

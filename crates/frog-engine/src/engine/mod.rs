@@ -380,6 +380,110 @@ pub struct Handle {
     pub bus: crate::irc::Slot,
 }
 
+/// How an engine-side watcher (see `child_watch`) puts a question to this engine's person on
+/// the ordinary question path: [`Event::Question`] out, [`Op::Answer`] back through the
+/// router, [`Event::QuestionResolved`] when it closes. Weak, so a child's watcher never keeps
+/// its parent's engine alive.
+#[derive(Clone)]
+pub(crate) struct Asker {
+    shared: std::sync::Weak<Shared>,
+    can_ask: bool,
+}
+
+impl Asker {
+    /// Whether a person can answer right now: the engine may ask and a client said it shows
+    /// questions (`SetClientCaps { ask }`).
+    pub(crate) fn ready(&self) -> bool {
+        self.can_ask
+            && self
+                .shared
+                .upgrade()
+                .is_some_and(|s| s.client_ask.load(Ordering::Relaxed))
+    }
+
+    /// Open a question, unless another one is open on this session: the Mac and the web each
+    /// show one question at a time (a second would replace the first on screen), so the caller
+    /// tries again later.
+    pub(crate) fn open(
+        &self,
+        item: &str,
+        question: String,
+        options: Vec<crate::protocol::AskOption>,
+    ) -> Option<(String, oneshot::Receiver<crate::protocol::Answer>)> {
+        let shared = self.shared.upgrade()?;
+        let id = new_id();
+        let (tx, rx) = oneshot::channel();
+        {
+            let mut open = shared.questions.lock().unwrap();
+            if !open.is_empty() {
+                return None;
+            }
+            open.insert(id.clone(), tx);
+        }
+        let event = Event::Question {
+            id: id.clone(),
+            item: item.into(),
+            question,
+            options,
+            multi: false,
+            allow_other: false,
+        };
+        shared
+            .watching
+            .lock()
+            .unwrap()
+            .insert(id.clone(), event.clone());
+        shared.journal.emit(event);
+        Some((id, rx))
+    }
+
+    /// Close question `id` (answered, or withdrawn with an empty answer because the child
+    /// spoke, ended, or was stopped), so every client drops its card.
+    pub(crate) fn close(&self, id: &str, answer: crate::protocol::Answer) {
+        let Some(shared) = self.shared.upgrade() else {
+            return;
+        };
+        shared.questions.lock().unwrap().remove(id);
+        shared.watching.lock().unwrap().remove(id);
+        shared.journal.emit(Event::QuestionResolved {
+            id: id.into(),
+            answer,
+        });
+    }
+}
+
+/// Held by the work loop: if the loop dies in a panic (a bug), the event stream closes anyway,
+/// as it does on a clean shutdown, so whoever watches this engine (a parent's `Task`, a child
+/// session's watcher, a headless run) sees it gone instead of a stream that never speaks again.
+/// The op router and the background registry hold the journal too, so without this a dead
+/// engine looked exactly like a quiet one.
+struct Closer(Arc<Shared>);
+
+impl Drop for Closer {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            // Poison-tolerant: the panic may have happened under this very lock.
+            self.0
+                .journal
+                .events
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .take();
+        }
+    }
+}
+
+impl Shared {
+    /// Show the watchers' open questions again (a turn just ended, or the model's own `Ask`
+    /// just closed, and clients put the card away).
+    fn reshow_watching(&self) {
+        let open: Vec<Event> = self.watching.lock().unwrap().values().cloned().collect();
+        for event in open {
+            self.journal.emit(event);
+        }
+    }
+}
+
 /// State the op router touches while a turn is running.
 struct Shared {
     cancel: Mutex<CancellationToken>,
@@ -389,6 +493,11 @@ struct Shared {
     notes: Mutex<HashMap<String, String>>,
     /// Open `Ask` questions, answered by `Op::Answer`.
     questions: Mutex<HashMap<String, oneshot::Sender<crate::protocol::Answer>>>,
+    /// The open ones a child's watcher raised (see `child_watch`), by id, as sent. They
+    /// outlive a turn of this session (a child session's quiet question is asked while this
+    /// one is idle), so a turn's end doesn't dismiss them, and they're shown again after it:
+    /// clients put every question away at `turn_ended`.
+    watching: Mutex<HashMap<String, Event>>,
     /// A client shows questions to someone who can answer (`SetClientCaps { ask }`).
     client_ask: AtomicBool,
     /// Session tools the client answers (`SetClientCaps { sessions }`).
@@ -648,11 +757,10 @@ pub async fn spawn_checked(opts: Options) -> Result<Handle> {
 /// Start a subagent's engine. Tests script it via `tests::child_script`.
 pub(crate) fn spawn_child(opts: Options) -> Result<Handle> {
     #[cfg(test)]
-    if let Some(script) = tests::child_script(&opts.cwd) {
-        return start(
-            opts,
-            Provider::Scripted(crate::provider::scripted::Client::new(script)),
-        );
+    if let Some((script, fails)) = tests::child_script(&opts.cwd) {
+        let client = crate::provider::scripted::Client::new(script);
+        *client.fails.lock().unwrap() = fails.into();
+        return start(opts, Provider::Scripted(client));
     }
     spawn(opts)
 }
@@ -671,6 +779,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         pending: Default::default(),
         notes: Default::default(),
         questions: Default::default(),
+        watching: Default::default(),
         client_ask: Default::default(),
         sessions: Default::default(),
         mcp: Default::default(),
@@ -973,7 +1082,9 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         }
     });
 
+    let closer = Closer(shared.clone());
     tokio::spawn(async move {
+        let _closer = closer;
         if agent.profile.provider == ProviderKind::Codex
             && let Err(e) = crate::provider::codex::check_available().await
         {
@@ -1177,19 +1288,27 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             shared.pending.lock().unwrap().clear();
             // A question still open when the turn ends (interrupted) was dismissed; say so,
             // so clients put the card away.
-            let open: Vec<String> = shared
-                .questions
-                .lock()
-                .unwrap()
-                .drain()
-                .map(|(id, _)| id)
-                .collect();
+            // A child watcher's question isn't this turn's: it stays open, and is shown again.
+            let open: Vec<String> = {
+                let watching = shared.watching.lock().unwrap();
+                let mut questions = shared.questions.lock().unwrap();
+                let ids: Vec<String> = questions
+                    .keys()
+                    .filter(|id| !watching.contains_key(*id))
+                    .cloned()
+                    .collect();
+                for id in &ids {
+                    questions.remove(id);
+                }
+                ids
+            };
             for id in open {
                 agent.emit(Event::QuestionResolved {
                     id,
                     answer: Default::default(),
                 });
             }
+            shared.reshow_watching();
             shared.panes.set_in_turn(false);
             // A drain (app update) ends the turn suspended, never cancelled: the ack tells
             // the client the engine stopped at a safe point and the jobs it stopped. A turn
@@ -2207,6 +2326,14 @@ impl Agent {
 
     fn emit(&self, event: Event) {
         self.shared.journal.emit(event);
+    }
+
+    /// This engine's question path, for a child's watcher (see `child_watch`).
+    pub(super) fn asker(&self) -> Asker {
+        Asker {
+            shared: Arc::downgrade(&self.shared),
+            can_ask: self.can_ask,
+        }
     }
 
     fn notice(&self, level: Level, message: impl Into<String>) {

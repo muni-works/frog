@@ -197,6 +197,14 @@ fn default_background_tasks() -> usize {
     4
 }
 
+fn default_child_quiet() -> u64 {
+    300
+}
+
+fn default_child_quiet_stop() -> u64 {
+    1800
+}
+
 fn default_true() -> bool {
     true
 }
@@ -334,6 +342,17 @@ pub struct Config {
     /// The key name predates child sessions (it capped background Tasks).
     #[serde(default = "default_background_tasks")]
     pub background_tasks: usize,
+    /// Seconds a child (a `Task` subagent, or a child session this engine owns) may run with
+    /// no progress (see `child_watch::alive`) before its parent asks the person whether to keep waiting. A child on
+    /// a permission card is never quiet. 0: never ask. See `child_watch`.
+    #[serde(default = "default_child_quiet")]
+    pub child_quiet_secs: u64,
+    /// With nobody to ask (headless, `frog bench`, a client that can't show questions):
+    /// seconds of no events before the engine stops the child itself and the parent carries on
+    /// with what it reported so far. Longer than the provider's request timeout, so a slow
+    /// call gets its own chance first. 0: wait forever.
+    #[serde(default = "default_child_quiet_stop")]
+    pub child_quiet_stop_secs: u64,
     /// Set on a child session's own config by the engine that started it: its header names
     /// this parent. Not a config.toml key.
     #[serde(skip)]
