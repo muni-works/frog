@@ -191,6 +191,9 @@
   --gap-activity: 12px;
   --gap-row: 24px;
   --gap-stats: 2px;
+  --gap-list: 7px;
+  --gap-section: 30px;
+  --gap-heading: 7px;
 }
 [data-density="compact"] {
   --gap-turn: 16px;
@@ -200,6 +203,9 @@
   --gap-activity: 8px;
   --gap-row: 22px;
   --gap-stats: 2px;
+  --gap-list: 6px;
+  --gap-section: 26px;
+  --gap-heading: 6px;
 }
 .title { font-family: var(--font-sans); font-size: 22px; line-height: 26px; font-weight: 400; }
 .headline { font-family: var(--font-sans); font-size: 13px; line-height: 16px; font-weight: 700; }

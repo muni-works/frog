@@ -33,7 +33,7 @@ test("transcript type roles equal the Mac's Tokens.Size", () => {
 test("transcript gaps equal TurnSpace.Scale, comfortable and compact", () => {
   for (const density of ["comfortable", "compact"] as const) {
     const s = scale(density);
-    for (const k of ["turn", "paragraph", "block", "activity"]) assert.equal(gap(k)[density], s[k], `${density} ${k}`);
+    for (const k of ["turn", "paragraph", "block", "activity", "list", "section", "heading"]) assert.equal(gap(k)[density], s[k], `${density} ${k}`);
     // The spec's footer gap is the whole distance; the Mac's Scale.footer is the extra on top of block.
     assert.equal(gap("footer")[density], s.block + s.footer, `${density} footer = block + Scale.footer`);
   }

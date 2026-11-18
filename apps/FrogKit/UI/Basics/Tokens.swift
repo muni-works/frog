@@ -137,9 +137,15 @@ enum Tokens {
             let row: CGFloat
             /// A live row and its stats line.
             let stats: CGFloat
+            /// Between items of one list (TurnSpace.Scale.list).
+            let list: CGFloat
+            /// Above a heading in prose (TurnSpace.Scale.section).
+            let section: CGFloat
+            /// Below a heading: it belongs to what follows (TurnSpace.Scale.heading).
+            let heading: CGFloat
 
-            static let comfortable = Gaps(turn: 32, footer: 20, paragraph: 18, block: 16, activity: 12, row: 24, stats: 2)
-            static let compact = Gaps(turn: 16, footer: 12, paragraph: 16, block: 10, activity: 8, row: 22, stats: 2)
+            static let comfortable = Gaps(turn: 32, footer: 20, paragraph: 18, block: 16, activity: 12, row: 24, stats: 2, list: 7, section: 30, heading: 7)
+            static let compact = Gaps(turn: 16, footer: 12, paragraph: 16, block: 10, activity: 8, row: 22, stats: 2, list: 6, section: 26, heading: 6)
         }
 
         enum Layout {
