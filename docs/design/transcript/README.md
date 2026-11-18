@@ -220,3 +220,63 @@ and phase 2 adds two under the ask card, the live row "Waiting for you" 16 below
 stats 2 below that (`diff-p1-p2-1280.txt`). 1280 and 1600 match (`diff-p2-1280-1600.txt`).
 Captures: `captures/p2-*` (`capture-p2.sh`): thinking, thinking opened, two reads at once, an
 answer writing with its stats, waiting on a card, stalled ("No output for 12s"), and the engine's quiet call at 30 s.
+
+## Phase 3 (web): the turn line and the turn panel
+
+No new wire fields (#427): the timeline is computed from the events the web already gets.
+`apps/web/src/engine/timeline.ts` ports the engine's `timeline.rs`, and
+`apps/web/test/transcript-timeline.test.ts` runs every case in [`timeline.json`](timeline.json)
+(18 with #427's "a card still up when the turn is stopped waits until the stop"). It also folds
+each case through the reducer and checks that the events the thread keeps per turn (`turn.tl`, a
+few numbers per step) give the same segments. A reload, which rebuilds the thread, draws the same
+line.
+
+| Piece | Where |
+| --- | --- |
+| Segments and per-kind totals | `apps/web/src/engine/timeline.ts` |
+| Each turn's kept events (`tl`) | `apps/web/src/engine/thread.ts` (`timed`) |
+| The turn line, the panel, the live pace | `apps/web/src/ui/TurnGraph.tsx` |
+| Where they sit | `TurnFooter.tsx` (at rest), `LiveRow.tsx` (live stats) |
+
+### What it does
+
+- **The turn line**: 200 by 16, at the right end of the footer at rest and of the stats while live.
+  A strip along the bottom coloured by phase (thinking `frog`, tools `faint`, waiting `notice`,
+  writing `fg`), the pace curve above. Grey at rest; on hover it takes its colours over 150 ms and
+  scrubs: a hairline, a readout ("15s · 0 tok/s · Ran cargo test -q upload"), and that step's
+  line (or the closed fold holding it) gets the hover plate. A click on the strip scrolls to the
+  step; anywhere else opens the panel. Under 420 wide the curve goes and the strip stays.
+- **The panel** opens over the transcript pane, which dims and doesn't reflow; Esc or a click
+  outside closes it. It replaces the footer's old cost popover (`.turn-card` is gone).
+  - Header: "This turn", the model and where it ran, the totals (the footer's time, tokens and cost).
+  - Where the time went: thinking, tools, waiting on you, writing (each kind's wall time, so tools
+    that ran together count once), then tokens read and from cache, and the cost.
+  - The waterfall: one row per step under a shared axis with ticks, the pace curve above. Steps that
+    ran together overlap on their own rows. A wait over 30 s takes 3 s of room and is drawn broken,
+    with its real length written on it.
+  - Select a row to see its detail beside the waterfall: a command's output, an edit's change, a
+    think's outline, an answer's text. "Show in transcript" closes the panel and scrolls there.
+  - A live turn opens the same panel. Its open step grows to now, and a card still up is a wait
+    growing to now, cut out of its step as an answered one is.
+- **The live pace curve** comes from the running counts: `output_tokens` arrives up to four times a
+  second with the turn's total, and each second's bucket is that total's growth over the second.
+  A finished turn uses the engine's `usage.pace`; a turn without it (every turn before #420) draws
+  the strip and no curve.
+
+### Decided beyond the spec, or left out
+
+- **The fixture's pace**: turn 1's `turn_ended.usage` carries the Mac's proposed record (#429,
+  commit faa9d943): 31 one-second buckets summing to the 1,902 output tokens, streamed while it
+  thought and wrote. Both apps measure the same fixture.
+- **The line's span** is the turn's events (`turn_started` to `turn_ended`), the same span the
+  segments and the pace use; the header's time is the footer's (wall time).
+- **A sidebar row and a fold carrying the strip alone** (spec: "may") are left out.
+- **The readout's step** is named like its line ("Ran cargo test -q upload"); the Mac adds the
+  step's result after it. The readout isn't in the metrics dump.
+
+### Measured
+
+[`../parity/metrics/`](../parity/metrics/) `web-*-p3.json`: every phase 2 row is unchanged, and a
+`turnline` row follows the footer and the live stats, its left edge at 520 (the column's 720 less
+200), on the same top as the row it ends. 1280 and 1600 match (`diff-p3-1280-1600.txt`).
+Captures: `captures/p3-*` (`capture-p3.sh`), the turn line hovered and the panel open.

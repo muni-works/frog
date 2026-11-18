@@ -1,3 +1,4 @@
+import type { TimedEvent } from './timeline'
 import type { ElicitSchema, EndReason, Envelope, Event, FileDiff, Image, Mode, Part, ShownThought, TestRun, Todo, ToolOutcome, TurnUsage, Widget } from '../cloud/protocol'
 
 // Folds a session's envelopes into what the transcript draws. Pure, so replay and
@@ -51,7 +52,9 @@ export interface Thread {
   lastAt?: number
   lastRaw?: number
   /** Each turn's input and items; `usage` and `reason` once it ends. */
-  turns: { turn: number; input: string; images?: Image[]; more?: Part[]; entries: Entry[]; at?: number; usage?: TurnUsage; reason?: EndReason; endAt?: number }[]
+  turns: { turn: number; input: string; images?: Image[]; more?: Part[]; entries: Entry[]; at?: number; usage?: TurnUsage; reason?: EndReason; endAt?: number
+    /** The turn's timed events, cut to what its timeline reads (engine/timeline.ts). */
+    tl?: TimedEvent[] }[]
   running: boolean
   ask: Ask | null
   ended: EndReason | null
@@ -226,7 +229,31 @@ export function reduce(t: Thread, env: Envelope): Thread {
   const at = t.lastAt
   const fresh = env.seq > t.lastSeq || (at !== undefined && (env.created > at || (env.created === at && env.seq > (t.lastRaw ?? 0))))
   if (!fresh) return t
-  return { ...apply(t, env, env.created), lastSeq: Math.max(t.lastSeq, env.seq), lastAt: Math.max(at ?? 0, env.created), lastRaw: env.seq }
+  return { ...timed(apply(t, env, env.created), env), lastSeq: Math.max(t.lastSeq, env.seq), lastAt: Math.max(at ?? 0, env.created), lastRaw: env.seq }
+}
+
+const TIMED = new Set(['turn_started', 'item_started', 'item_completed', 'permission_resolved', 'question_resolved', 'items_discarded', 'turn_ended'])
+/** Keep what the turn's timeline reads (spec phase 3): each item's start and end, a reasoning
+ * item's think_ms, the waits, discarded items. A few numbers per step, so it fits the cache. */
+function timed(t: Thread, env: Envelope): Thread {
+  if (!TIMED.has(env.event)) return t
+  const last = t.turns[t.turns.length - 1]
+  if (!last) return t
+  const e = env as Envelope & { id?: string; kind?: { type: string }; item?: unknown; asked?: number; ids?: string[] }
+  const it = e.event === 'item_completed' ? e.item as { type: string; think_ms?: number } : undefined
+  const ev: TimedEvent = {
+    created: e.created, event: e.event,
+    ...(e.id != null ? { id: e.id } : {}),
+    ...(e.event === 'item_started' && e.kind ? { kind: { type: e.kind.type } } : {}),
+    ...(it ? { item: { type: it.type, ...(it.think_ms != null ? { think_ms: it.think_ms } : {}) } } : {}),
+    ...((e.event === 'permission_resolved' || e.event === 'question_resolved') && typeof e.item === 'string' ? { item: e.item } : {}),
+    ...(e.asked != null ? { asked: e.asked } : {}),
+    ...(e.ids ? { ids: e.ids } : {}),
+  }
+  // A turn_ended for an older turn that shares the number lands on that turn, as `apply` does.
+  const at = e.event === 'turn_ended' ? t.turns.map((u) => u.turn).lastIndexOf((e as unknown as { turn: number }).turn) : t.turns.length - 1
+  if (at < 0) return t
+  return { ...t, turns: t.turns.map((u, i) => (i === at ? { ...u, tl: [...(u.tl ?? []), ev] } : u)) }
 }
 
 /** The engine's notices, in words: a model call it's retrying reads as what happened and when

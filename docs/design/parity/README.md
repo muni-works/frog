@@ -111,6 +111,9 @@ All lengths are points (CSS px on the web), rounded to 0.1.
   - `live`: the live row at the end of a running turn (spec phase 2: "Thinking", a step, "Waiting
     for you"), measured on its 24-tall plate row
   - `stats`: the stats under the live row, or under an answer that is writing (phase 2)
+  - `turnline`: the turn line at the right end of the footer or the stats (phase 3), measured on its
+    200 × 16 box: `x` is its left edge, `text` is empty and `fontSize` 0. It follows the row it
+    ends.
 - `text`: the row's visible words, whitespace collapsed to single spaces and trimmed. It leaves out
   hover actions, receipts (ticks, "just now"), the copy and retry icons and marks. For `line`,
   `thought` and `fold`: the parts verb, gist, object and result joined by one space ("Edited
