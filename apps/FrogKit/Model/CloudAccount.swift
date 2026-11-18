@@ -16,6 +16,12 @@ final class CloudAccount {
     static let shared = CloudAccount()
     static let origin = URL(string: "https://api.frog.toys")!
 
+    #if DEBUG
+    /// Flow tests: never read the login Keychain (the test host shares the developer's), so the
+    /// only key is `keyProvider`'s.
+    nonisolated(unsafe) static var noKeychain = false
+    #endif
+
     struct Window: Decodable, Hashable {
         let kind: String
         let used: Double
@@ -182,6 +188,9 @@ final class CloudAccount {
     nonisolated static func readKey() -> String? {
         if let env = ProcessInfo.processInfo.environment["FROG_API_KEY"], !env.isEmpty { return env }
         if let key = keyProvider?() { return key }
+        #if DEBUG
+        if noKeychain { return nil }
+        #endif
         #if os(macOS)
         return macKey()
         #else
