@@ -12,6 +12,10 @@
 //! the pure part (tiers, parsing, line edits, undo); the engine owns asking and applying
 //! (`engine/customize.rs`).
 
+pub mod lines;
+pub mod report;
+pub mod usage;
+
 use crate::provider::ToolSpec;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -484,16 +488,100 @@ pub fn tokens(text: &str) -> i64 {
 
 // ---- toggles ----
 
-/// Skills and MCP tools the user turned off. Kept beside Frog's notes, as `customize.json`.
+static STORE_PATH: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Skills, MCP tools and whole connections the user turned off. Kept beside Frog's notes, as
+/// `customize.json` (`~/.local/share/frog/customize.json`); everything not listed is on.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Toggles {
+    /// Skills by name.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub skills_off: BTreeSet<String>,
+    /// Tools by exposed name, `mcp__<server>__<tool>`.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub tools_off: BTreeSet<String>,
+    /// Connections (MCP servers) by name.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub servers_off: BTreeSet<String>,
 }
 
 impl Toggles {
+    /// The file the process reads switches from (the CLI, the catalog filter): beside the
+    /// session store's notes, as a session keeps it ([`Self::use_store`]), else the data dir.
+    pub fn path() -> PathBuf {
+        if cfg!(test) {
+            // Tests never read or write your real choices; this file is never written.
+            return std::env::temp_dir()
+                .join(format!("frog-customize-test-{}.json", std::process::id()));
+        }
+        STORE_PATH
+            .get()
+            .cloned()
+            .unwrap_or_else(|| crate::config::data_dir().join("customize.json"))
+    }
+
+    /// A session's store decides where its switches live (`<store>/../customize.json`), and a
+    /// sandbox runs with its own store: point [`Self::path`] there, so the catalog filter and
+    /// the session read the same file. The first store wins; every session in a process shares
+    /// one.
+    pub fn use_store(store: &Path) {
+        if let Some(dir) = store.parent() {
+            let _ = STORE_PATH.set(dir.join("customize.json"));
+        }
+    }
+
+    /// Read, change, write.
+    pub fn update_in(file: &Path, f: impl FnOnce(&mut Self)) -> Result<()> {
+        let mut t = Self::load(file);
+        f(&mut t);
+        if let Some(dir) = file.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        let tmp = file.with_extension("json.tmp");
+        std::fs::write(&tmp, t.render())?;
+        std::fs::rename(&tmp, file)?;
+        Ok(())
+    }
+
+    pub fn skill_on(&self, name: &str) -> bool {
+        !self.skills_off.contains(name)
+    }
+
+    pub fn server_on(&self, name: &str) -> bool {
+        !self.servers_off.contains(name)
+    }
+
+    pub fn tool_on(&self, exposed: &str) -> bool {
+        !self.tools_off.contains(exposed)
+    }
+
+    pub fn set(set: &mut BTreeSet<String>, key: &str, on: bool) {
+        if on {
+            set.remove(key);
+        } else {
+            set.insert(key.to_string());
+        }
+    }
+
+    /// The saved choices at [`Self::path`], for `mcp::Hub::catalog` and `mcp::configured`,
+    /// which run on every tool call: re-read only when the file changes.
+    pub fn current() -> std::sync::Arc<Toggles> {
+        use std::sync::{Arc, Mutex};
+        use std::time::SystemTime;
+        static CACHE: Mutex<Option<(Option<SystemTime>, Arc<Toggles>)>> = Mutex::new(None);
+        let file = Self::path();
+        let stamp = std::fs::metadata(&file).and_then(|m| m.modified()).ok();
+        let mut cache = CACHE.lock().unwrap();
+        if let Some((s, t)) = cache.as_ref()
+            && *s == stamp
+        {
+            return t.clone();
+        }
+        let t = Arc::new(Self::load(&file));
+        *cache = Some((stamp, t.clone()));
+        t
+    }
+
     pub fn load(path: &Path) -> Self {
         std::fs::read_to_string(path)
             .ok()

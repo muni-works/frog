@@ -60,37 +60,60 @@ struct McpJson {
 /// Every configured server: config.toml first, then the project's `.mcp.json` (which can't
 /// override a config.toml server of the same name), then Claude Code's servers once you've
 /// said to use them (docs/onboarding.md), plus `desktop` (computer use) when it's on.
+///
+/// Connections switched off in Customize are left out too.
 pub fn configured(cfg: &crate::config::Config, cwd: &Path) -> BTreeMap<String, ServerConfig> {
+    let toggles = crate::customize::Toggles::current();
+    configured_from(cfg, cwd)
+        .into_iter()
+        .filter(|(name, (s, _))| {
+            s.enabled && (s.command.is_some() || s.url.is_some()) && toggles.server_on(name)
+        })
+        .map(|(name, (s, _))| (name, s))
+        .collect()
+}
+
+/// Every server `configured` looks at, switched off or not, with where it came from: `frog`
+/// (config.toml), `project` (its `.mcp.json`), `claude_code` (`~/.claude.json`), `builtin`.
+pub fn configured_from(
+    cfg: &crate::config::Config,
+    cwd: &Path,
+) -> BTreeMap<String, (ServerConfig, &'static str)> {
     // Hermetic: only what the project itself declares.
-    let mut all = if cfg.hermetic {
+    let mut all: BTreeMap<String, (ServerConfig, &'static str)> = if cfg.hermetic {
         BTreeMap::new()
     } else {
-        cfg.mcp_servers.clone()
+        cfg.mcp_servers
+            .iter()
+            .map(|(n, s)| (n.clone(), (s.clone(), "frog")))
+            .collect()
     };
     if cfg.computer_use
         && !cfg.hermetic
         && let Some(bin) = crate::sidecar::desktop()
     {
-        all.entry("desktop".into()).or_insert(ServerConfig {
-            command: Some(bin.display().to_string()),
-            enabled: true,
-            trust: true,
-            ..Default::default()
-        });
+        all.entry("desktop".into()).or_insert((
+            ServerConfig {
+                command: Some(bin.display().to_string()),
+                enabled: true,
+                trust: true,
+                ..Default::default()
+            },
+            "builtin",
+        ));
     }
     if let Ok(text) = std::fs::read_to_string(cwd.join(".mcp.json"))
         && let Ok(file) = serde_json::from_str::<McpJson>(&text)
     {
         for (name, s) in file.servers {
-            all.entry(name).or_insert(s);
+            all.entry(name).or_insert((s, "project"));
         }
     }
     if cfg.claude_mcp && !cfg.hermetic {
         for (name, s) in crate::imports::claude_servers(cwd) {
-            all.entry(name).or_insert(s);
+            all.entry(name).or_insert((s, "claude_code"));
         }
     }
-    all.retain(|_, s| s.enabled && (s.command.is_some() || s.url.is_some()));
     all
 }
 
@@ -729,12 +752,17 @@ impl Hub {
     /// Every tool the model may use (quarantined ones left out), in a stable order.
     pub fn catalog(&self) -> Vec<Entry> {
         let mut out = Vec::new();
+        // Switched off in Customize: not offered, so it weighs nothing.
+        let toggles = crate::customize::Toggles::current();
         for (name, s) in self.inner.servers.read().unwrap().iter() {
+            if !toggles.server_on(name) {
+                continue;
+            }
             for t in s.tools.read().unwrap().iter() {
                 if !s.trust && suspicious(t).is_some() {
                     continue;
                 }
-                if !visible_to_model(t) {
+                if !visible_to_model(t) || !toggles.tool_on(&exposed_name(name, &t.name)) {
                     continue;
                 }
                 out.push(Entry {
@@ -748,6 +776,30 @@ impl Hub {
         // order, whatever order a server lists them in.
         out.sort_by(|a, b| a.exposed.cmp(&b.exposed));
         out
+    }
+
+    /// Each connected server as Customize shows it: its instructions and every tool the
+    /// model could see (on, off or withheld alike), with whether it's trusted.
+    pub fn detail(&self) -> Vec<ServerDetail> {
+        self.inner
+            .servers
+            .read()
+            .unwrap()
+            .iter()
+            .map(|(name, s)| ServerDetail {
+                name: name.clone(),
+                trust: s.trust,
+                instructions: s.instructions.clone(),
+                tools: s
+                    .tools
+                    .read()
+                    .unwrap()
+                    .iter()
+                    .filter(|t| visible_to_model(t))
+                    .cloned()
+                    .collect(),
+            })
+            .collect()
     }
 
     fn find(&self, exposed: &str) -> Option<Entry> {
@@ -826,15 +878,16 @@ impl Hub {
     /// Servers' own instructions, and how to reach deferred tools, for the system prompt.
     pub fn prompt(&self) -> String {
         let mut out = String::new();
+        let toggles = crate::customize::Toggles::current();
         for (name, s) in self.inner.servers.read().unwrap().iter() {
             if self.compact() {
                 break;
             }
+            if !toggles.server_on(name) {
+                continue;
+            }
             if let Some(i) = &s.instructions {
-                out.push_str(&format!(
-                    "\n\n## MCP server `{name}`\n{}",
-                    crate::tools::truncate_middle(i.trim(), 2_000)
-                ));
+                out.push_str(&instructions_block(name, i));
             }
         }
         if self.deferred() {
@@ -1218,6 +1271,44 @@ pub fn search_spec() -> ToolSpec {
             "required": ["query"]
         }),
     }
+}
+
+/// A connected server, for Customize ([`Hub::detail`]).
+pub struct ServerDetail {
+    pub name: String,
+    pub trust: bool,
+    pub instructions: Option<String>,
+    pub tools: Vec<Tool>,
+}
+
+/// What a tool adds to the prompt when it's sent, in characters, counted the way the engine
+/// counts a request's tools: name, description and schema.
+pub fn spec_chars(server: &str, t: &Tool) -> usize {
+    let s = spec_for(&Entry {
+        exposed: exposed_name(server, &t.name),
+        server: server.to_string(),
+        tool: t.clone(),
+    });
+    s.name.len() + s.description.len() + s.schema.to_string().len()
+}
+
+/// The search tool's size, sent instead of every schema once there are too many tools.
+pub fn search_spec_chars() -> usize {
+    let s = search_spec();
+    s.name.len() + s.description.len() + s.schema.to_string().len()
+}
+
+/// A server's instructions as the system prompt carries them.
+pub fn instructions_block(name: &str, instructions: &str) -> String {
+    format!(
+        "\n\n## MCP server `{name}`\n{}",
+        crate::tools::truncate_middle(instructions.trim(), 2_000)
+    )
+}
+
+/// Whether `n` tools are too many to send them all, so they're loaded on demand.
+pub fn defers(n: usize) -> bool {
+    n > DEFER_OVER
 }
 
 fn spec_for(e: &Entry) -> ToolSpec {

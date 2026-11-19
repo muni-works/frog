@@ -9,6 +9,7 @@ import './app.css'
 import './home.css'
 import './transcript.css'
 import './wall.css'
+import './customize.css'
 
 // `?theme=light|dark` pins the theme; otherwise Settings › Appearance's (index.html applies it
 // before first paint too), which is System unless you picked one.

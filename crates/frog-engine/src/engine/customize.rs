@@ -401,6 +401,7 @@ impl Agent {
                 } else {
                     crate::memory::Scope::Project
                 };
+                store.set_session(&self.conv.session_id, &self.title());
                 let (note, _) = store.add(scope, line)?;
                 cz::Undo::File(cz::FileUndo {
                     after: cz::read_opt(&note.path),
@@ -597,3 +598,85 @@ fn declined_key(change: &Change) -> String {
 }
 
 use anyhow::Context as _;
+
+// ---- the Customize pages: the snapshot, the changes they make, and the use log ----
+
+impl Agent {
+    /// Log a use of a skill or a connection's tool, for Customize's strip and "last used".
+    pub(super) fn record_use(&self, kind: cz::usage::Kind, key: &str) {
+        cz::usage::record(kind, key, &self.conv.session_id, &self.title());
+    }
+
+    /// Log a use of the skill named `name`, if there is one.
+    pub(super) fn record_skill_use(&self, name: &str) {
+        if let Some(s) = self.skills.get(name) {
+            self.record_use(cz::usage::Kind::Skill, &s.id());
+        }
+    }
+
+    /// Answer [`Op::Customize`] (and every page change) with the snapshot as things are now,
+    /// measured against this session's model and connections.
+    pub(super) fn emit_customize(&mut self, error: Option<String>) {
+        if self.subagent {
+            return;
+        }
+        let connecting: Vec<String> = self.mcp_connecting.iter().cloned().collect();
+        let ctx = cz::report::Ctx {
+            cfg: &self.cfg,
+            cwd: &self.root,
+            chat: self.chat,
+            est: self.est,
+            calibrated: self.est.chars_per_token != Estimator::default().chars_per_token,
+            tier: self.harness.tier,
+            window: self.window,
+            small_window: self.small_window(),
+            hub: Some(&self.mcp),
+            connecting: &connecting,
+            connected: true,
+            memory: self.memory.as_ref(),
+        };
+        let report = cz::report::report_with(&ctx, &self.toggles(), &cz::usage::summary());
+        self.emit(Event::Customize {
+            report: Box::new(report),
+            error,
+        });
+    }
+
+    /// A Customize page changed something ([`Op::CustomizeChange`]): make the change, re-read
+    /// what it touched so the next turn's prompt carries it, and answer with the new snapshot.
+    pub(super) fn customize_change(&mut self, change: cz::report::Edit) {
+        if self.subagent {
+            return;
+        }
+        let toggles = self.toggles_path().unwrap_or_else(cz::Toggles::path);
+        let applied = cz::report::apply(
+            &self.cfg,
+            &self.root,
+            self.chat,
+            self.memory.as_ref(),
+            &toggles,
+            &change,
+        );
+        if let Err(e) = applied {
+            self.emit_customize(Some(format!("{e:#}")));
+            return;
+        }
+        match change.kind() {
+            "skills" => {
+                self.skills = crate::skills::discover_in(&self.root, !self.cfg.hermetic);
+                self.drop_skills_off();
+            }
+            "rules" if !self.chat => self.rules = crate::rules::discover(&self.root),
+            "memory" => {
+                if let Some(store) = &self.memory {
+                    self.notes = store.load();
+                }
+            }
+            // Tools are filtered where the specs are built (`sync_specs`), servers in the catalog.
+            _ => {}
+        }
+        self.sync_specs();
+        self.apply_harness();
+        self.emit_customize(None);
+    }
+}
