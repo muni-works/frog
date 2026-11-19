@@ -7,12 +7,14 @@
 /* The signed-out footer sits on the bottom edge, out of the flow, so the hero centres on the same
    line signed out and signed in; the card's half leaves room for it. */
 .main.home > .muni-foot { position: absolute; left: 0; right: 0; bottom: 0; }
-.main.home:has(> .muni-foot) .home-below { padding-bottom: 88px; }
+.main.home:has(> .muni-foot) .home-below::after { height: 88px; }
 .home-page { flex: 1; min-height: 0; overflow-y: auto; box-sizing: border-box; display: flex; flex-direction: column; padding: 0 var(--tx-gutter); container: home / inline-size; }
 .home-col { flex: 1 0 auto; width: 100%; max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; align-items: center; }
 /* Equal shares above and below: centred. The card's half never shrinks under the card. */
 .home-above { flex: 1 1 0; min-height: 24px; }
-.home-below { flex: 1 1 0; width: 100%; padding-bottom: 32px; }
+.home-below { flex: 1 1 0; width: 100%; }
+/* Room at the bottom as content, not padding, so it never unbalances the halves. */
+.home-below::after { content: ''; display: block; height: 32px; }
 .home-hero-c { width: 100%; display: flex; flex-direction: column; align-items: center; }
 .home-mark { width: 64px; height: 64px; }
 .main.home .home-col h1 { margin: 22px 0 16px; font-family: var(--font-display); font-size: 28px; line-height: 34px; font-weight: 600; letter-spacing: -0.01em; text-align: center; }
@@ -47,7 +49,7 @@
 }
 @media (max-width: 760px) {
   .home-page { padding: 0 16px; }
-  .home-below { padding-bottom: max(24px, env(safe-area-inset-bottom)); }
+  .home-below::after { height: max(24px, env(safe-area-inset-bottom)); }
   .main.home .home-col h1 { font-size: 24px; line-height: 30px; margin: 16px 0 12px; }
   .home-mark { width: 52px; height: 52px; }
   .what { margin-top: 24px; }
