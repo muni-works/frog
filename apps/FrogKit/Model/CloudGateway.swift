@@ -31,7 +31,12 @@ struct CloudGateway: Sendable {
     }
 
     struct Repos: Decodable, Sendable {
-        struct Repo: Decodable, Hashable, Sendable { let name: String; let `private`: Bool }
+        struct Repo: Decodable, Hashable, Sendable {
+            let name: String
+            let `private`: Bool
+            /// The last push on GitHub (ISO 8601), for the where menu's order; nil if never.
+            var pushed_at: String? = nil
+        }
         let repos: [Repo]
         let install: String?
         /// The account's GitHub login; nil when it signed in with Google and hasn't connected GitHub.

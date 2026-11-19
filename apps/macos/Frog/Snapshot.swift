@@ -11,7 +11,8 @@ enum Snapshot {
     static func scheduleIfAsked() {
         let path = UserDefaults.standard.string(forKey: "FrogSnapshot") ?? ""
         let metrics = UserDefaults.standard.string(forKey: "FrogMetrics") ?? ""
-        guard !path.isEmpty || !metrics.isEmpty else { return }
+        let edges = UserDefaults.standard.string(forKey: "FrogEdges") ?? ""
+        guard !path.isEmpty || !metrics.isEmpty || !edges.isEmpty else { return }
         // A capture shows text as it lands: the ink runs on the display, which an off-screen
         // window doesn't get, so a reply would stay unwritten (and short) in the picture.
         InkReveal.off = true
@@ -31,6 +32,12 @@ enum Snapshot {
                     let seen = NSApp.windows.map { "\(type(of: $0)) visible=\($0.isVisible) \($0.frame)" }.joined(separator: "; ")
                     FileHandle.standardError.write(Data("FrogMetrics: no window to measure (\(seen))\n".utf8))
                 }
+            }
+            if !edges.isEmpty, let window = mainWindow {
+                window.contentView?.layoutSubtreeIfNeeded()
+                let dark = window.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                let data = TranscriptMetrics.shared.edgesJSON(width: window.frame.width, height: window.frame.height, look: dark ? "dark" : "light")
+                ok = ok && (try? data.write(to: URL(fileURLWithPath: edges))) != nil
             }
             if !path.isEmpty {
                 let drawn = write(to: URL(fileURLWithPath: path))

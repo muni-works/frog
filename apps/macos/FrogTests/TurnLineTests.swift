@@ -79,7 +79,9 @@ final class TurnLineTests: XCTestCase {
         let shape = TurnLineShape.of(segments: [seg(.thinking, 0, 1000, "r"), seg(.tool, 1000, 4000, "t")], lengthMs: 4000, pace: pace)
         XCTAssertEqual(shape.pieces.map(\.x), [0, 50])
         XCTAssertEqual(shape.pieces.map(\.width), [50, 150])
-        XCTAssertEqual(shape.curve.count, 3)
+        XCTAssertEqual(shape.curve.count, 4, "a point per bucket, and the last bucket held to its end")
+        XCTAssertEqual(shape.curve[3].x, 150, accuracy: 0.01)
+        XCTAssertEqual(shape.curve[3].y, shape.curve[2].y, accuracy: 0.01)
         XCTAssertEqual(shape.curve[0].y, TurnLineShape.height - TurnLineShape.strip - 1 - (TurnLineShape.height - TurnLineShape.strip - 2), accuracy: 0.01,
                        "the fastest bucket reaches the top")
         XCTAssertEqual(shape.curve[1].y, TurnLineShape.height - TurnLineShape.strip - 1, accuracy: 0.01, "on the floor while a tool runs")

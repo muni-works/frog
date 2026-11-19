@@ -75,7 +75,7 @@ struct TranscriptView: View {
     private var table: some View {
         TableTranscript(conversation: conversation, actions: actions, jump: jump, onVisibleTurns: onVisibleTurns,
                         track: track, space: space, showThinking: verbosity.showsThinking, handle: tableHandle,
-                        insets: safeInsets)
+                        insets: safeInsets, sends: conversation.sends)
             .ignoresSafeArea(.container, edges: .vertical)
             .background {
                 // The toolbar and the composer, which the rows scroll under.
@@ -184,6 +184,18 @@ struct TranscriptView: View {
                         proxy.scrollTo(Self.end, anchor: .bottom)
                     }
                 }
+                // You sent something: to the end, from wherever you were reading, so your message
+                // and the start of the reply are in view (Cam, 2026-11-19). A jump with reduced
+                // motion. After this update, as for a new turn above. From there it follows the
+                // reply as below, holding a long answer at its start.
+                .onChange(of: conversation.sends) {
+                    following = true
+                    track.unpark()
+                    DispatchQueue.main.async {
+                        guard following else { return }
+                        withAnimation(reduceMotion ? nil : .snappy(duration: 0.3)) { proxy.scrollTo(Self.end, anchor: .bottom) }
+                    }
+                }
                 // Follow the answer as it streams: while following, content that grows takes the
                 // view back to the bottom. The size-change anchor alone loses the bottom once the
                 // lazy stack re-estimates rows it hasn't laid out.
@@ -229,7 +241,7 @@ struct TranscriptView: View {
                         track.unpark()
                         return follow(proxy)
                     }
-                    if following, conversation.busy, growth > 0, let live = liveAnswer,
+                    if following, conversation.busy, growth > 0, let live = liveAnswer, track.heldAnswer != live.item,
                        let answer = track.answerFrame(live.item),
                        case let top = live.first ? track.lastTurnTop : answer.minY,
                        top < new.visibleTop + growth + topInset + 4,
@@ -249,6 +261,7 @@ struct TranscriptView: View {
                         // estimated the row while the content keeps growing under it, and can
                         // stop past the laid-out end, a blank transcript until you scroll.
                         following = false
+                        track.heldAnswer = live.item
                         track.park(at: old.contentHeight)
                         let target = live.first ? firstRow(of: conversation.turns[conversation.turns.count - 1])
                             : TranscriptRow.ID(turn: live.turn, part: live.item)
@@ -523,6 +536,11 @@ struct TranscriptView: View {
     private var transcript: some View {
         ScrollView {
             stackRows
+            .background {
+                if TranscriptMetrics.enabled {
+                    Color.clear.onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { TranscriptMetrics.shared.columnGlobal = $0 }
+                }
+            }
             .coordinateSpace(.named(Self.content))
             .environment(\.turnSpace, space)
             .environment(\.transcriptEdge, edge)
@@ -875,11 +893,24 @@ struct EndView: View {
     /// "9.0s", "56s", "2m 5s": the web's `seconds`.
     static func seconds(_ ms: UInt64) -> String { StepLine.duration(Double(ms) / 1000) }
 
+    /// How a turn ended, in words on the column's edge; its symbol hangs in the gutter like a
+    /// line's mark (spec, "Measure and the left edge").
     private func banner(_ text: String, symbol: String, color: Color) -> some View {
-        Label(text, systemImage: symbol)
+        Text(text)
             .font(.callout)
             .foregroundStyle(color)
             .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+            .metricsEdge("words", claims: ["text"], kind: "error", text: text)
+            .overlay(alignment: .leading) {
+                Image(systemName: symbol)
+                    .font(.callout)
+                    .foregroundStyle(color)
+                    .frame(width: Tokens.Transcript.Layout.mark)
+                    .metricsEdge("mark", claims: ["hung"], kind: "error")
+                    .alignmentGuide(.leading) { $0[.leading] + Tokens.Transcript.Layout.hang }
+            }
+            .padding(.leading, edge.indent)
     }
 }
 
@@ -1215,6 +1246,9 @@ final class ScrollTrack {
     @ObservationIgnored var followPending = false
     /// Where the last turn starts, in the content.
     @ObservationIgnored var lastTurnTop: CGFloat = .infinity
+    /// The answer the view last held at its start: once you scroll on to its end yourself, it
+    /// follows that answer to the end rather than taking you back up.
+    @ObservationIgnored var heldAnswer: String?
     /// Where the answer being written is, in the content (reported by its row, laid out).
     @ObservationIgnored var answer: (item: String, frame: CGRect)?
     /// The view is near the top of what's built (see `TranscriptView.nearTop`).

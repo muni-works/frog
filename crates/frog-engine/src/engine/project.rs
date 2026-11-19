@@ -261,6 +261,9 @@ impl Agent {
             if self.shared.client_customize.load(Ordering::Relaxed) {
                 specs.push(crate::customize::spec());
             }
+            if self.auto_note() {
+                specs.push(crate::noting::spec());
+            }
             specs.push(crate::present::spec(self.harness.tier == Tier::Weak));
             if self.can_ask && self.shared.client_ask.load(Ordering::Relaxed) {
                 specs.push(crate::ask::spec());

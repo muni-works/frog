@@ -209,6 +209,12 @@ final class MarkdownCache {
     }
 }
 
+extension EnvironmentValues {
+    /// Markdown here is a reply in the transcript's column: a top-level list's markers hang in
+    /// the gutter, so its words start on the column's edge (spec, "Two lines"). The Mac reads it; the phone's text has no gutter.
+    @Entry var hangsListMarkers = false
+}
+
 struct MarkdownView: View {
     let text: String
     /// Still arriving from the model: written in at a reading pace.
@@ -238,10 +244,13 @@ struct MarkdownView: View {
         let blocks: [MarkdownBlock]
         let streaming: Bool
         @State private var origin: CGPoint?
+        @Environment(\.metricsScope) private var scope
 
         var body: some View {
             #if os(macOS)
-            MessageText(blocks: blocks, streaming: streaming, metricsOrigin: origin)
+            // Reaching into the gutter by the text view's room, its text on the column's edge.
+            MessageText(blocks: blocks, streaming: streaming, metricsOrigin: TranscriptMetrics.shared.accepts(scope) ? origin : nil)
+                .padding(.leading, -MessageTextView.gutterRoom)
                 .background {
                     if TranscriptMetrics.enabled {
                         Color.clear.onGeometryChange(for: CGPoint.self, of: { $0.frame(in: .named(TranscriptView.content)).origin }) {

@@ -31,6 +31,7 @@ mod call;
 mod compact;
 mod customize;
 mod dispatch;
+mod noting;
 mod permit;
 mod project;
 #[cfg(test)]
@@ -39,6 +40,8 @@ mod tests_compact;
 mod tests_customize;
 #[cfg(test)]
 mod tests_ingest;
+#[cfg(test)]
+mod tests_noting;
 #[cfg(test)]
 mod tests_prompt;
 mod turn;
@@ -536,6 +539,8 @@ struct Shared {
     client_ask: AtomicBool,
     /// A client draws `Customize` cards (`SetClientCaps { customize }`).
     client_customize: AtomicBool,
+    /// A client draws the `noted` receipt (`SetClientCaps { notes }`): noting on its own may run.
+    client_notes: AtomicBool,
     /// Session tools the client answers (`SetClientCaps { sessions }`).
     sessions: crate::tools::sessions::Hub,
     /// Connected MCP servers, for elicitation answers and app tool calls mid-turn.
@@ -821,6 +826,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         watching: Default::default(),
         client_ask: Default::default(),
         client_customize: Default::default(),
+        client_notes: Default::default(),
         sessions: Default::default(),
         mcp: Default::default(),
         subagents: Default::default(),
@@ -1967,6 +1973,22 @@ struct Agent {
     undos: HashMap<String, crate::customize::Undo>,
     /// `Customize` offers the user declined this session: never offered again.
     declined: HashSet<String>,
+    /// The turn Frog last kept a note in: one a turn at most (`noting`).
+    noted_turn: Option<u64>,
+    /// "Remember that …" kept a note from the message this turn answers, so `Note` doesn't.
+    remembered: bool,
+    /// The notes' vectors, while they're in step with `notes`: each turn then brings back only
+    /// the notes that fit (`memvec`). `None` falls back to the whole index in the prompt.
+    note_index: Option<crate::memvec::Index>,
+    /// Notes already brought into this conversation's history (`p:`/`g:` + id), not resent.
+    notes_sent: HashSet<String>,
+    /// Notes the system prompt carries (`p:`/`g:` + id): never brought back per turn.
+    notes_in_prompt: HashSet<String>,
+    /// The store is past `memory::whole_budget`: notes beyond standing guidance come back
+    /// per turn (`memvec`) instead of riding every call.
+    notes_per_turn: bool,
+    /// Files the `Read` tool opened this session: the only files a `read` note can come from.
+    read_by_frog: HashSet<PathBuf>,
     /// Notes that didn't fit the current model's index.
     notes_omitted: usize,
     /// Rule files for this project, and the scoped ones already shown this session.
@@ -2302,6 +2324,13 @@ impl Agent {
             user_words: Vec::new(),
             undos: HashMap::new(),
             declined: HashSet::new(),
+            noted_turn: None,
+            remembered: false,
+            note_index: None,
+            notes_sent: HashSet::new(),
+            notes_in_prompt: HashSet::new(),
+            notes_per_turn: false,
+            read_by_frog: HashSet::new(),
             notes_omitted: 0,
             rules,
             repo_map: Default::default(),
@@ -2814,6 +2843,7 @@ impl Agent {
     }
 
     fn end_turn(&mut self, turn: u64, reason: EndReason) {
+        self.remembered = false;
         // Only a turn that finished its answer counts as the work being done.
         if reason == EndReason::Complete
             && self.cfg.git.open_pr_when_done == crate::config::OpenPr::Auto
@@ -3048,6 +3078,7 @@ impl Agent {
                     msg.push_str(&format!(" (redacted: {})", redacted.join(", ")));
                 }
                 msg.push_str(" — /forget removes it");
+                self.remembered = true;
                 self.notes = store.load();
                 self.apply_harness();
                 self.notice(Level::Info, msg);
@@ -3092,6 +3123,9 @@ impl Agent {
             }
             Op::Shell { command } => self.shell(&command).await,
             Op::Undo { undo } => self.customize_undo(&undo),
+            Op::NoteToRule { id, scope, place } => {
+                self.note_to_rule(&id, &scope, place.as_deref()).await
+            }
             Op::ApprovalDigest => {
                 let summary = self.digest.summary();
                 self.emit(Event::ApprovalDigest { summary });
@@ -3199,7 +3233,9 @@ impl Agent {
                 sessions,
                 irc,
                 customize,
+                notes,
             } => {
+                self.shared.client_notes.store(notes, Ordering::Relaxed);
                 self.shared.panes.set_client(panes);
                 self.shared.client_ask.store(ask, Ordering::Relaxed);
                 self.shared.client_customize.store(customize, Ordering::Relaxed);

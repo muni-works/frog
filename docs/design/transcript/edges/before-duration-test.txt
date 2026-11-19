@@ -1,0 +1,6 @@
+not ok 5 - a long wait reads in days and hours, not minutes
+    + actual - expected
+  expected: '1h 0m'
+  actual: '60m 0s'
+# pass 4
+# fail 1

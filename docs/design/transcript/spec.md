@@ -86,6 +86,15 @@ These are `TurnSpace.Scale`'s values. `rowGroup` (8 / 5) goes away: lines in a r
   minimum pane width on the Mac and at 375 on the web, and write the numbers in the PR.
 - A line's hover plate is 24 tall with a 7 corner and bleeds 6 past the text on each side, so
   words don't move when it appears.
+- **Two lines.** Every row's text starts on the left line and everything that reaches the right
+  ends on the right line; marks hang in the gutter and never push text. Boxes (code, tables, cards,
+  the inline visual, the error banner on the web) put their outer edge on the lines and their words
+  inside their padding. **The composer is part of the column: its card's outer edge sits on the two
+  lines, like a card's, and its words sit inside its padding.** Inline code that starts a line keeps
+  its letters on the edge and its plate overhangs into the gutter by its own padding. A top-level
+  list's marker hangs in the gutter like a line's mark, so an item's words start on the edge; a
+  nested list steps in by the 22-point marker column. The turn line's drawing ends on the right
+  line: its time axis ends where its last segment does.
 
 ### Lines
 
@@ -124,10 +133,28 @@ Anything else is a plain command. Never guess a count; no per-test picture.
 
 ### The footer
 
-One line in `meta`, 20 below the last row: the model in `muted`, then time, tokens and cost
-separated by middle dots, each with a normal space either side. Phase 3 adds the turn line at
+One line in `meta`, 20 below the last row: the model in `muted`, then time, tokens and cost,
+each part 10 apart with no separator character (Cam, 5b76372f: metadata gets space; this was
+middle dots). Phase 3 adds the turn line at
 its right end. The web's `.turn-foot` and the Mac's footer become this; the web's `.turn-card`
 popover is replaced by the turn panel in phase 3 and stays until then.
+
+### Following
+
+Where the view goes as you send and the reply arrives, the same on both apps (Cam, 2026-11-19:
+"when the user submits a message, the transcript should scroll down to the incoming response").
+
+- **A send brings the view to the end**, from wherever you were reading, so your message and the
+  start of the reply are in view: a message, one queued behind a running turn, a new session's
+  first, and a retried start. It glides, or jumps with reduced motion, the moment you send, not
+  when the engine's turn arrives (a sandbox or model may still be starting).
+- **The view follows the reply** as it grows, until the reply's first line would leave the top of
+  the view. There it **holds**, so a long answer reads from its start: the answer itself after
+  steps, your message when the answer is the turn's first words.
+- **Your own scrolling releases either.** Scroll up and nothing moves you; scroll back to the end
+  and it follows again. An answer already held isn't held a second time: scrolled on to its end
+  yourself, it follows that answer to the end.
+- Opening a session, or coming back to one, shows its end.
 
 ### Parity is measured, not eyeballed
 
@@ -137,6 +164,11 @@ the x of its first word, its top and height, and its font size. A script diffs t
 and fails on any text difference or any position off by more than 1 point. The fixture gains a
 fold, a failed step, a two-paragraph reply, a card that needs you and a finished footer. The
 side-by-side screenshots stay, for people.
+
+The two lines are measured too: `docs/design/parity/edges-fixture.mjs` has every kind of row,
+each app dumps every element's left and right edge (`edges.mjs`, the Mac's `-FrogEdges`), and an
+edge test on each app (`apps/web/test/transcript-edges.test.ts`,
+`FrogTests/TranscriptEdgesTests`) fails on anything more than 0.5 pt off its line.
 
 ## 2. The thinking row and the stats line
 
@@ -182,7 +214,8 @@ and their tests' old expectations.
 
 ### The stats line
 
-Under the live row, 2 below it, in `meta`: time, tokens, tokens per second. Time shows after
+Under the live row, 2 below it, in `meta`: time, tokens, tokens per second, 10 apart with no
+separator character, as the footer. Time shows after
 the first second. The token figure while a call is streaming is counted from what has arrived
 and is replaced by the provider's number when the call ends; it must never be shown as exact
 while it is a count of chunks (no decimals, and the hover says "so far"). While the answer

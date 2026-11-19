@@ -69,7 +69,7 @@
     {
       "kind": "prose",
       "text": "Backoff::delay now takes the Rng, and the test passes a seeded one, so the retry timing is the same every run.",
-      "x": 4,
+      "x": 0,
       "top": 478,
       "height": 44,
       "fontSize": 13
@@ -91,6 +91,14 @@
       "fontSize": 11.5
     },
     {
+      "kind": "turnline",
+      "text": "",
+      "x": 520,
+      "top": 582,
+      "height": 16,
+      "fontSize": 0
+    },
+    {
       "kind": "prompt",
       "text": "nice. open a PR",
       "x": 609.9,
@@ -105,6 +113,30 @@
       "top": 684,
       "height": 144,
       "fontSize": 14
+    },
+    {
+      "kind": "live",
+      "text": "Waiting for you",
+      "x": 0,
+      "top": 844,
+      "height": 24,
+      "fontSize": 12.5
+    },
+    {
+      "kind": "stats",
+      "text": "#s · waited #s",
+      "x": 0,
+      "top": 870,
+      "height": 16,
+      "fontSize": 11.5
+    },
+    {
+      "kind": "turnline",
+      "text": "",
+      "x": 520,
+      "top": 870,
+      "height": 16,
+      "fontSize": 0
     }
   ]
 }

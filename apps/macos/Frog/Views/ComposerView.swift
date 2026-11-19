@@ -34,6 +34,8 @@ struct ComposerView: View {
     @State var slug: String?
     @State var ahead = 0
     @State var cloudRepos: [String] = []
+    /// Each cloud repo's last push on GitHub, for the where menu's order.
+    @State var cloudPushed: [String: String] = [:]
     /// The current place's branches, for the where menu's Branch level.
     @State var branches: [String] = []
     /// The one composer menu that's open.
@@ -209,8 +211,10 @@ struct ComposerView: View {
                 // After the card's content shape, so a menu above the card still takes clicks.
                 .composerMenuHost()
                 .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+                .metricsEdge("box", claims: ["box", "right"], kind: "composer", global: true)
             }
-            .padding(.horizontal, TurnSpace.gutter)
+            // Its gutter is the column's (`turnColumn`): the card's outer edge is on the
+            // transcript's two lines, its words inside its padding.
             .padding(.top, TurnSpace.top)
             .padding(.bottom, TurnSpace.Inset.snug)
             .turnColumn()
@@ -278,7 +282,7 @@ struct ComposerView: View {
                 .composerMenu(menu == .place, close: closeMenu) {
                     WhereMenu(
                         state: s, lists: whereLists, send: dispatch,
-                        chooseFolder: { switchFolder?(nil) },
+                        chooseFolder: { chooseFolderFromPanel() },
                         signIn: { run(.init("open_login"), s) },
                         close: closeMenu
                     )
@@ -307,6 +311,8 @@ struct ComposerView: View {
         WhereLists(
             recents: Recents.all.map(\.path),
             cloudRepos: cloudRepos,
+            pushed: cloudPushed,
+            usedRepos: RepoRank.used(CloudSessions.shared.sessions.map { ($0.repo, $0.updated, $0.last_turn) }),
             signedIn: CloudSessions.shared.available,
             branches: branches
         )

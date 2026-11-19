@@ -1,0 +1,129 @@
+{
+  "about": "Which repos the where menu shows, best first (spec.md, Where it runs). apps/web/test/repo-rank.test.ts runs these against apps/web/src/repoRank.ts, and FrogTests/RepoRankTests against apps/FrogKit/Core/RepoRank.swift. ranked is the whole order; shown, more and line are for query.",
+  "limit": 6,
+  "cases": [
+    {
+      "name": "the current repo, then the ones used in Frog, then by last push",
+      "current": "ecto/zest",
+      "used": ["ecto/tang", "ecto/pond"],
+      "repos": [
+        { "name": "ecto/pond", "pushed_at": "2026-11-01T10:00:00Z" },
+        { "name": "ecto/loon", "pushed_at": "2026-11-18T09:00:00Z" },
+        { "name": "ecto/zest", "pushed_at": "2026-10-01T10:00:00Z" },
+        { "name": "ecto/kyte", "pushed_at": "2026-11-10T10:00:00Z" },
+        { "name": "ecto/tang", "pushed_at": "2026-09-01T10:00:00Z" },
+        { "name": "ecto/mew", "pushed_at": null },
+        { "name": "ecto/blog", "pushed_at": "2026-11-17T10:00:00Z" },
+        { "name": "ecto/notes", "pushed_at": "2025-01-01T10:00:00Z" },
+        { "name": "ecto/aardvark", "pushed_at": null }
+      ],
+      "query": "",
+      "ranked": ["ecto/zest", "ecto/tang", "ecto/pond", "ecto/loon", "ecto/blog", "ecto/kyte", "ecto/notes", "ecto/aardvark", "ecto/mew"],
+      "shown": ["ecto/zest", "ecto/tang", "ecto/pond", "ecto/loon", "ecto/blog", "ecto/kyte"],
+      "more": 3,
+      "line": "3 more repos, type to search"
+    },
+    {
+      "name": "no current repo: the last used leads",
+      "current": null,
+      "used": ["ecto/pond", "ecto/pond", "ecto/tang"],
+      "repos": [
+        { "name": "ecto/tang", "pushed_at": "2026-01-01T00:00:00Z" },
+        { "name": "ecto/pond", "pushed_at": "2026-01-01T00:00:00Z" },
+        { "name": "ecto/loon", "pushed_at": "2026-11-18T00:00:00Z" }
+      ],
+      "query": "",
+      "ranked": ["ecto/pond", "ecto/tang", "ecto/loon"],
+      "shown": ["ecto/pond", "ecto/tang", "ecto/loon"],
+      "more": 0,
+      "line": null
+    },
+    {
+      "name": "a repo used in Frog that the account no longer lists still shows",
+      "current": null,
+      "used": ["old/gone"],
+      "repos": [{ "name": "ecto/loon", "pushed_at": "2026-11-18T00:00:00Z" }],
+      "query": "",
+      "ranked": ["old/gone", "ecto/loon"],
+      "shown": ["old/gone", "ecto/loon"],
+      "more": 0,
+      "line": null
+    },
+    {
+      "name": "the same push time falls back to the name",
+      "current": null,
+      "used": [],
+      "repos": [
+        { "name": "ecto/b", "pushed_at": "2026-11-18T00:00:00Z" },
+        { "name": "ecto/a", "pushed_at": "2026-11-18T00:00:00Z" },
+        { "name": "ecto/d", "pushed_at": null },
+        { "name": "ecto/c", "pushed_at": null }
+      ],
+      "query": "",
+      "ranked": ["ecto/a", "ecto/b", "ecto/c", "ecto/d"],
+      "shown": ["ecto/a", "ecto/b", "ecto/c", "ecto/d"],
+      "more": 0,
+      "line": null
+    },
+    {
+      "name": "searching filters every repo, not only the ones shown, in the same order",
+      "current": "ecto/zest",
+      "used": ["ecto/tang"],
+      "repos": [
+        { "name": "ecto/zest", "pushed_at": "2026-11-18T00:00:00Z" },
+        { "name": "ecto/tang", "pushed_at": "2026-11-17T00:00:00Z" },
+        { "name": "ecto/a1", "pushed_at": "2026-11-16T00:00:00Z" },
+        { "name": "ecto/a2", "pushed_at": "2026-11-15T00:00:00Z" },
+        { "name": "ecto/a3", "pushed_at": "2026-11-14T00:00:00Z" },
+        { "name": "ecto/a4", "pushed_at": "2026-11-13T00:00:00Z" },
+        { "name": "ecto/a5", "pushed_at": "2026-11-12T00:00:00Z" },
+        { "name": "ecto/old-thing", "pushed_at": "2020-01-01T00:00:00Z" }
+      ],
+      "query": "  OLD ",
+      "ranked": ["ecto/zest", "ecto/tang", "ecto/a1", "ecto/a2", "ecto/a3", "ecto/a4", "ecto/a5", "ecto/old-thing"],
+      "shown": ["ecto/old-thing"],
+      "more": 0,
+      "line": null
+    },
+    {
+      "name": "a search with more matches than fit says how many more",
+      "current": null,
+      "used": [],
+      "repos": [
+        { "name": "ecto/a1", "pushed_at": "2026-11-18T00:00:00Z" },
+        { "name": "ecto/a2", "pushed_at": "2026-11-17T00:00:00Z" },
+        { "name": "ecto/a3", "pushed_at": "2026-11-16T00:00:00Z" },
+        { "name": "ecto/a4", "pushed_at": "2026-11-15T00:00:00Z" },
+        { "name": "ecto/a5", "pushed_at": "2026-11-14T00:00:00Z" },
+        { "name": "ecto/a6", "pushed_at": "2026-11-13T00:00:00Z" },
+        { "name": "ecto/a7", "pushed_at": "2026-11-12T00:00:00Z" },
+        { "name": "ecto/b1", "pushed_at": "2026-11-11T00:00:00Z" },
+        { "name": "ecto/a8", "pushed_at": "2026-11-10T00:00:00Z" }
+      ],
+      "query": "a",
+      "ranked": ["ecto/a1", "ecto/a2", "ecto/a3", "ecto/a4", "ecto/a5", "ecto/a6", "ecto/a7", "ecto/b1", "ecto/a8"],
+      "shown": ["ecto/a1", "ecto/a2", "ecto/a3", "ecto/a4", "ecto/a5", "ecto/a6"],
+      "more": 2,
+      "line": "2 more matches, keep typing"
+    },
+    {
+      "name": "one hidden repo is said in the singular",
+      "current": null,
+      "used": [],
+      "repos": [
+        { "name": "ecto/a1", "pushed_at": "2026-11-18T00:00:00Z" },
+        { "name": "ecto/a2", "pushed_at": "2026-11-17T00:00:00Z" },
+        { "name": "ecto/a3", "pushed_at": "2026-11-16T00:00:00Z" },
+        { "name": "ecto/a4", "pushed_at": "2026-11-15T00:00:00Z" },
+        { "name": "ecto/a5", "pushed_at": "2026-11-14T00:00:00Z" },
+        { "name": "ecto/a6", "pushed_at": "2026-11-13T00:00:00Z" },
+        { "name": "ecto/a7", "pushed_at": "2026-11-12T00:00:00Z" }
+      ],
+      "query": "",
+      "ranked": ["ecto/a1", "ecto/a2", "ecto/a3", "ecto/a4", "ecto/a5", "ecto/a6", "ecto/a7"],
+      "shown": ["ecto/a1", "ecto/a2", "ecto/a3", "ecto/a4", "ecto/a5", "ecto/a6"],
+      "more": 1,
+      "line": "1 more repo, type to search"
+    }
+  ]
+}

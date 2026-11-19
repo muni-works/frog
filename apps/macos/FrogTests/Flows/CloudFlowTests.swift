@@ -114,15 +114,37 @@ final class CloudFlowTests: FlowTestCase {
         XCTAssertTrue(w.shows("flowtester/demo"), "the where menu lists the account's repos")
     }
 
-    /// Reported at v0.7.0: the where menu's "Choose a folder…" makes the conversation a plain
-    /// chat (`switchFolder(nil)`) instead of asking for a folder.
+    /// Reported at v0.7.0: the where menu's "Choose a folder…" made the conversation a plain
+    /// chat (`switchFolder(nil)`) instead of asking for a folder. It asks (the panel is stubbed:
+    /// no panel on the screen) and the new session moves to the folder picked.
     func testWhereMenuChooseAFolderAsksForAFolder() throws {
+        let picked = FileManager.default.temporaryDirectory.appending(path: "frog-choose-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: picked, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: picked) }
+        var asked = 0
+        ComposerView.pickFolderForTesting = { asked += 1; return picked }
+        defer { ComposerView.pickFolderForTesting = nil }
         try open()
         XCTAssertFalse(w.workspace.isChat)
         w.press(.id("composer.where"))
         w.press(.text("Choose a folder"))
+        expect("the session moved to the folder picked") {
+            self.w.workspace.folder.resolvingSymlinksInPath().path == picked.resolvingSymlinksInPath().path
+        }
+        XCTAssertEqual(asked, 1, "the folder panel was asked once")
+        XCTAssertFalse(w.workspace.isChat, "not a plain chat")
+    }
+
+    /// Cancelling the folder panel leaves the session where it was.
+    func testWhereMenuChooseAFolderCancelledStaysPut() throws {
+        ComposerView.pickFolderForTesting = { nil }
+        defer { ComposerView.pickFolderForTesting = nil }
+        try open()
+        let before = w.workspace.folder
+        w.press(.id("composer.where"))
+        w.press(.text("Choose a folder"))
         w.pump(0.5)
-        XCTExpectFailure("v0.7.0 bug: Choose a folder… calls switchFolder(nil), which makes a plain chat")
-        XCTAssertFalse(w.workspace.isChat, "the conversation stays in its folder until one is chosen")
+        XCTAssertEqual(w.workspace.folder, before)
+        XCTAssertFalse(w.workspace.isChat)
     }
 }

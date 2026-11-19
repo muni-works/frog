@@ -79,7 +79,7 @@ test("removing a queued chip removes that follow-up", () => {
 
 test("the where menu, signed in: filter, Scratch sandbox, your repos, more access, Branch", () => {
   const s = html({ pickRepo: true, onRepo: noop, repo: "ecto/pond", repos: ["ecto/pond", "ecto/loon"], install: "https://github.com/apps/frog/installations/new" });
-  assert.match(s, /placeholder="Search repos, or paste a GitHub URL"/);
+  assert.match(s, /placeholder="Search your repos"/);
   assert.match(s, />Scratch sandbox</);
   assert.match(s, /Your repos/);
   assert.match(s, /ecto\/loon/);
@@ -87,6 +87,33 @@ test("the where menu, signed in: filter, Scratch sandbox, your repos, more acces
   assert.match(s, />Branch</);
   // Web: the Frog Cloud part only.
   assert.ok(!s.includes("This Mac") && !s.includes("Choose a folder") && !s.includes("Just chat"), s);
+});
+
+// Cam, 2026-11-19: an account with dozens of repos listed every one. The menu shows the best six
+// (repoRank.ts) and one line for the rest; typing searches all of them; return picks the first.
+test("the where menu trims a long repo list, searches all of it, and return picks", () => {
+  const names = Array.from({ length: 40 }, (_, i) => `ecto/r${String(i).padStart(2, "0")}`);
+  const pushed = Object.fromEntries(names.map((n, i) => [n, `2026-11-${String(28 - (i % 28)).padStart(2, "0")}T00:00:00Z`]));
+  const picked: (string | undefined)[] = [];
+  // An open menu listens on the document for clicks outside it.
+  const d = globalThis as { document?: unknown };
+  const had = d.document;
+  d.document ??= { addEventListener: noop, removeEventListener: noop, activeElement: null };
+  let r!: TestRenderer.ReactTestRenderer;
+  act(() => { r = TestRenderer.create(h(Composer, { ...base, pickRepo: true, repo: "ecto/r39", recent: ["ecto/r30"], repos: names, pushed, onRepo: (x) => picked.push(x) })); });
+  const rows = () => r.root.findAll((n) => n.type === "button" && n.props.role === "menuitemradio").map((n) => n.findAll((c) => c.props.className === "cz-mname")[0]?.children.join("") ?? "Scratch");
+  // Scratch sandbox, then six: the current repo, the last used, then by last push (r00 and r28 tie on the 28th: name order).
+  assert.deepEqual(rows(), ["Scratch", "ecto/r39", "ecto/r30", "ecto/r00", "ecto/r28", "ecto/r01", "ecto/r29"]);
+  const note = () => r.root.findAll((n) => n.props.className === "cz-menu-note cz-more").map((n) => n.children.join(""));
+  assert.deepEqual(note(), ["34 more repos, type to search"]);
+  const input = r.root.find((n) => n.type === "input" && n.props.placeholder === "Search your repos");
+  act(() => input.props.onChange({ target: { value: "r17" } }));
+  assert.deepEqual(rows(), ["ecto/r17"]);
+  assert.deepEqual(note(), []);
+  act(() => input.props.onKeyDown({ key: "Enter", preventDefault: () => {} }));
+  assert.deepEqual(picked, ["ecto/r17"]);
+  act(() => r.unmount());
+  d.document = had;
 });
 
 // First-run audit: with the GitHub App not installed the menu was "No repo" and "Give Frog
@@ -105,7 +132,7 @@ test("the where menu, signed out: one row that opens sign-in", () => {
   const s = html({ pickRepo: true, onSignIn: noop });
   const menu = s.slice(s.indexOf('aria-label="Where it runs"'));
   assert.match(menu, /Sign in to use Frog Cloud/);
-  assert.ok(!menu.includes("Search repos"), menu);
+  assert.ok(!menu.includes("Search your repos"), menu);
   // The action is the Sign in pill.
   assert.match(s, /class="cz-signin"[^>]*>Sign in</);
 });
