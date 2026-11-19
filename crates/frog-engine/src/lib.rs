@@ -68,6 +68,7 @@ pub mod thinking;
 pub mod thought;
 pub mod timeline;
 pub mod next;
+pub mod noting;
 pub mod pace;
 pub mod title;
 pub mod tools;

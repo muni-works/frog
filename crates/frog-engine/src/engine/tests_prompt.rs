@@ -84,6 +84,7 @@ fn session(script: Vec<Response>, app: bool) -> (Handle, Fixed, PathBuf) {
                 ask: true,
                 sessions: true,
                 customize: false,
+                notes: false,
             })
             .unwrap();
     }
@@ -195,9 +196,10 @@ async fn prompt_breakdown() {
 /// The budget for what a plain coding call re-sends, in chars. Set from the size after the
 /// prompt diet (see the PR); raise it only on purpose, since every call pays it.
 /// Raised by about 1,000 for Grep's context output and Read's `files`: the text that lets one
-/// call do what took three.
-const HEADLESS_BUDGET: usize = 20_100;
-const APP_BUDGET: usize = 22_750;
+/// call do what took three. Raised by about 750 for the `Note` tool (noting on its own, about
+/// 176 tokens: it can't be deferred, since the model uses it unprompted).
+const HEADLESS_BUDGET: usize = 20_850;
+const APP_BUDGET: usize = 23_500;
 
 #[tokio::test]
 async fn the_fixed_prompt_stays_under_budget() {

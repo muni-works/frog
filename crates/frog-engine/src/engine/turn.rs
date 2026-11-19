@@ -795,7 +795,15 @@ impl Agent {
             continuing = false;
             reply_text.clear();
             let called = uses.clone();
+            // A reply that answered and then only kept a note (and maybe suggested what's
+            // next) is done: another model round would only say "noted". Saves that round.
+            let closing = !silent
+                && called.iter().any(|(_, n, _)| n == crate::noting::TOOL)
+                && called
+                    .iter()
+                    .all(|(_, n, _)| n == crate::noting::TOOL || n == crate::next::TOOL);
             match self.run_tools(uses, &mut guard, streamed.early).await? {
+                Batch::Continue if closing => break EndReason::Complete,
                 Batch::Continue => {
                     let results = self.conv.messages.last().map(|m| m.content.as_slice());
                     if progressed(&called, results.unwrap_or_default()) {
