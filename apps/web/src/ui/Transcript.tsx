@@ -576,8 +576,13 @@ const TurnView = memo(function TurnView({ turn, index, live, ask, question, runn
           answer={[...turn.entries].reverse().find((e) => e.kind === 'message')?.text ?? ''}
           onRetry={live && !running && hasRetry ? cb.onRetry : undefined} />
       )}
-      {turn.noted && <NotedLine noted={turn.noted} onUndo={cb.onUndo} onRule={cb.onNoteToRule} />}
-      {turn.usedNotes && <UsedNotesBlock used={turn.usedNotes} />}
+      {/* Under the reply and its stats once the turn ends (canvas M2): used_notes comes at its start. */}
+      {turn.reason && turn.noted && <NotedLine noted={turn.noted} onUndo={cb.onUndo} onRule={cb.onNoteToRule} />}
+      {turn.reason && turn.usedNotes && <UsedNotesBlock used={turn.usedNotes} />}
+      {/* A Customize card on no row ("Make it a rule" asks as `note:<id>`) waits after the turn. */}
+      {ask?.proposal && !turn.entries.some((e) => e.id === ask.item) && (
+        <div data-row="box"><ProposalCard ask={ask} proposal={ask.proposal} onDecide={cb.onDecide} /></div>
+      )}
       {/* One row from Send on: a new session's start, then the turn's live row (the same node). */}
       {live && (running || start) && <LiveTail entries={turn.entries} tl={turn.tl} waiting={!!ask || !!question} waitItem={ask?.item ?? question?.item} models={models} start={running ? undefined : start} />}
       </div>

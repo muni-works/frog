@@ -588,7 +588,7 @@ body { font-family: var(--font-sans); }
 .noted-fail { color: var(--warn); flex: none; }
 /* The notes that came back for a turn (canvas M2, "Used 2 notes"): a rule at the left, the lines. */
 .used-notes { display: flex; flex-direction: column; gap: 4px; border-left: 1px solid var(--line); padding-left: 18px; font-size: 12.5px; line-height: 18px; }
-.used-head { display: flex; align-items: center; gap: 10px; margin-left: -18px; color: var(--faint); }
+.used-head { display: flex; align-items: center; gap: 14px; margin-left: -18px; color: var(--faint); }
 .used-ring { width: 8px; height: 8px; border-radius: 50%; background: var(--frog); flex: none; margin-left: -4px; }
 .used-line { color: var(--muted); overflow-wrap: anywhere; }
 

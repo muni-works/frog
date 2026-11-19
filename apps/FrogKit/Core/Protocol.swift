@@ -1193,7 +1193,31 @@ enum Event: Decodable, Sendable {
     case customizeUndone(undo: String, ok: Bool, message: String?)
     /// A setting the app owns, changed by Customize or its Undo. Live only.
     case settingChange(id: String, value: JSONValue)
+    /// Frog kept a note on its own (docs/customize-events.md, "Noted"). Durable.
+    case noted(NotedNote)
+    /// Notes that came back for a turn ("Used notes"). Durable.
+    case usedNotes(turn: UInt64, tokens: UInt64, notes: [UsedNote])
     case unknown(String)
+}
+
+/// A note Frog kept (`noted`): drawn under the reply of `turn`, with Undo (`undo`) and Make it a rule.
+struct NotedNote: Codable, Sendable, Equatable {
+    var item: String
+    var turn: UInt64
+    var id: String
+    var text: String
+    var scope: String
+    var place: String
+    var source: String?
+    var from: String?
+    var undo: String
+}
+
+/// One of the notes that came back for a turn (`used_notes`).
+struct UsedNote: Codable, Sendable, Equatable {
+    var id: String
+    var scope: String
+    var text: String
 }
 
 struct Envelope: Decodable, Sendable {
@@ -1232,6 +1256,7 @@ extension Event {
         case servers, server, tools
         case output, soFar, slow, cached, asked
         case undo, card, ok, value
+        case tokens, notes
     }
 
     init(from decoder: Decoder) throws {
@@ -1314,6 +1339,11 @@ extension Event {
         case "customize_undone":
             self = .customizeUndone(undo: try c.decode(String.self, forKey: .undo), ok: try c.decode(Bool.self, forKey: .ok),
                                     message: try c.decodeIfPresent(String.self, forKey: .message))
+        case "noted":
+            self = .noted(try NotedNote(from: decoder))
+        case "used_notes":
+            self = .usedNotes(turn: try c.decode(UInt64.self, forKey: .turn), tokens: try c.decodeIfPresent(UInt64.self, forKey: .tokens) ?? 0,
+                              notes: try c.decode([UsedNote].self, forKey: .notes))
         case "setting_change":
             self = .settingChange(id: try c.decode(String.self, forKey: .id), value: try c.decode(JSONValue.self, forKey: .value))
         case "progress":

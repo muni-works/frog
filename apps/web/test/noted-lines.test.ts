@@ -8,6 +8,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import TestRenderer, { act } from "react-test-renderer";
 import { emptyThread, reduce, type Thread } from "../src/engine/thread.ts";
 import { NotedLine, Transcript, UsedNotesBlock } from "../src/ui/Transcript.tsx";
+import type { Proposal } from "../src/cloud/protocol.ts";
 import type { Envelope } from "../src/cloud/protocol.ts";
 
 let seq = 0;
@@ -21,6 +22,7 @@ const turn = [
   { event: "item_started", id: "call_9", kind: { type: "tool_call", name: "Note", arg: "Use pnpm here, never npm." } },
   { event: "item_completed", id: "call_9", item: { type: "tool_call", name: "Note", arg: "Use pnpm here, never npm.", input: {}, outcome: "ok", output: "Noted.", display: null } },
 ];
+const ended = { event: "turn_ended", turn: 1, reason: { type: "complete" }, usage: { input_tokens: 10, output_tokens: 5, model_calls: 1 } };
 const noop = () => {};
 const page = (thread: Thread) => renderToStaticMarkup(h(Transcript, { thread, onDecide: noop, onAnswer: noop, onElicit: noop, onRetry: noop }));
 
@@ -35,7 +37,9 @@ test("noted and used_notes land on their turn", () => {
 test("the note draws under the reply, and the Note call that kept it isn't a step of its own", () => {
   const before = page(fold(turn));
   assert.match(before, /data-item="call_9"|Use pnpm here/, "before noted, the call draws as any step");
-  const html = page(fold([...turn, noted, used]));
+  // While the turn runs, nothing yet: used_notes comes at its start, before any reply.
+  assert.doesNotMatch(page(fold([...turn, noted, used])), /Noted for|Used 2 notes/);
+  const html = page(fold([...turn, noted, used, ended]));
   assert.match(html, /Noted for pond/);
   assert.equal(html.match(/Use pnpm here, never npm\./g)?.length, 1, "once, on the noted line");
   assert.match(html, /data-row="noted"[\s\S]*data-row="used-notes"/);
@@ -61,6 +65,19 @@ test("Undo sends the note's handle, Make it a rule its id and scope; Undo's answ
   const badHtml = renderToStaticMarkup(h(NotedLine, { noted: bad, onUndo: noop, onRule: noop }));
   assert.match(badHtml, /That note is already gone\./);
   assert.doesNotMatch(badHtml, />Make it a rule</);
+});
+
+test("Make it a rule: the engine's card, on no row, waits after the turn; approved, its receipt is the turn's last line", () => {
+  const rule: Proposal = { kind: "line", title: "Make this a rule?", change: { new: "Use pnpm here, never npm." }, where: "In pond, in AGENTS.md, so your team gets it too",
+    tokens_per_turn: 8, primary: "Add rule", dismiss: "Not now" };
+  const asking = fold([...turn, noted, ended, { event: "permission_request", id: "p_9", item: "note:n_4", name: "Customize", arg: "Make this a rule?", always: "", proposal: rule }]);
+  const html = page(asking);
+  assert.match(html, /cardx ask proposal[\s\S]*Make this a rule\?[\s\S]*>Add rule</);
+  assert.match(html, /Noted for pond[\s\S]*Make this a rule\?/, "under the noted line");
+  const done = fold([{ event: "permission_resolved", id: "p_9", decision: "allow" }, { event: "customize_applied", item: "note:n_4", undo: "u_r1", card: rule }], asking);
+  const after = page(done);
+  assert.doesNotMatch(after, /cardx ask proposal/);
+  assert.match(after, /line-row applied[\s\S]*Remembered/);
 });
 
 test("one note reads singular", () => {
