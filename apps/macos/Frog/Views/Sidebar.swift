@@ -59,7 +59,9 @@ struct SessionList: View {
     @AppStorage("sidebarSort") private var sort = Sort.activity
     /// The tree's scope (Live · Today · All), per window like the grouping.
     @AppStorage("sidebarScope") private var scope = AttentionTree.Scope.live
-    @AppStorage("compactSidebar") private var compactSidebar = false
+    @AppStorage("compactSidebar") private var compactSidebar = true
+    /// Every pin listed, not just the first five.
+    @State private var showAllPins = false
 
     /// How rows are grouped: by project folder (pins, folders, chats), by day, or not at all.
     enum Grouping: String, CaseIterable {
@@ -714,8 +716,14 @@ struct SessionList: View {
             guide: guide ?? SessionNesting.Guide(depth: depth, rails: [], last: true),
             git: GitTreeBadges.leaf(session, members: [session], settled: GitTreeBadges.settled(rowState(session))) { open($0) },
             folded: folded, foldOpen: foldOpen, counts: counts, collapsed: collapsed, onFold: onFold,
-            onCollapse: counts.total > 0 ? { toggleChildren(session.id) } : nil
-        ) { open(session) } menu: { rowMenu(session) }
+            onCollapse: counts.total > 0 ? { toggleChildren(session.id) } : nil,
+            speed: library.live[session.id] == .running
+                ? library.conversation(session.id)?.pulse.rate(at: SidebarClock.shared.now) : nil,
+            card: .init(session: session, library: library) { open(session) }
+        ) {
+            ThreadCardController.shared.opened(session.id)
+            open(session)
+        } menu: { rowMenu(session) }
     }
 
     @ViewBuilder
@@ -740,25 +748,43 @@ struct SessionList: View {
         }
     }
 
-    /// Pinned conversations, as tiles above everything else in every grouping.
+    /// Pinned conversations above everything else in every grouping: named rows with their
+    /// live state, the same rows as the rest of the list (one line compact, two otherwise).
+    /// Waiting on you first, then running, then your order; five show unless opened, plus the
+    /// one on screen.
     @ViewBuilder
     private var pinTiles: some View {
         if !pins.isEmpty {
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 4), spacing: 6) {
-                ForEach(pins) { s in
-                    Button { open(s) } label: {
-                        Monogram(session: s, size: 38, selected: s.id == current, live: library.live[s.id])
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.plain)
-                    .contextMenu { rowMenu(s) }
-                    .paneDraggable(.session(s), title: s.displayTitle)
-                    .help(s.displayTitle)
+            let ranked = pins.enumerated().sorted { a, b in
+                let (ra, rb) = (pinRank(a.element), pinRank(b.element))
+                return ra != rb ? ra < rb : a.offset < b.offset
+            }.map(\.element)
+            let shown = showAllPins ? ranked : ranked.enumerated().filter { i, s in
+                i < Self.pinLimit || s.id == current
+            }.map(\.element)
+            compactHeader("Pinned")
+            ForEach(shown) { listRow($0) }
+            if ranked.count > Self.pinLimit {
+                Button(showAllPins ? "Show less" : "\(ranked.count - shown.count) more pinned") {
+                    withAnimation(.snappy(duration: 0.22)) { showAllPins.toggle() }
                 }
+                .buttonStyle(.plain)
+                .font(.frog(size: 11))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 4)
             }
-            .padding(.horizontal, 4)
-            .padding(.top, 4)
-            .padding(.bottom, 6)
+            Color.clear.frame(height: 4)
+        }
+    }
+
+    private static let pinLimit = 5
+
+    private func pinRank(_ s: SessionInfo) -> Int {
+        switch library.live[s.id] {
+        case .waiting: 0
+        case .running: 1
+        default: 2
         }
     }
 
@@ -1330,6 +1356,11 @@ struct CompactSessionRow<Menu: View>: View {
     var onFold: (() -> Void)? = nil
     /// Collapse or show the children, when there are any.
     var onCollapse: (() -> Void)? = nil
+    /// Live decode speed while running, when its conversation is loaded (tokens per second).
+    var speed: Int? = nil
+    /// The thread card resting on the row opens; nil for none (tests, previews).
+    var card: ThreadCardController.Request? = nil
+    @State private var anchor = AnchorBox()
     let open: () -> Void
     @ViewBuilder let menu: () -> Menu
     /// Seeded by tests: a synthetic hover drives the row's own 450 ms title-expansion task.
@@ -1391,8 +1422,17 @@ struct CompactSessionRow<Menu: View>: View {
         .contentShape(.rect)
         .contextMenu { DeferredMenu(make: menu) }
         .paneDraggable(.session(session), title: session.displayTitle)
-        .help(helpText)
-        .onHover { hoveringLive = $0 }
+        .help(card == nil ? helpText : "")
+        .background(ThreadAnchorView(box: anchor))
+        .onHover { inside in
+            hoveringLive = inside
+            guard let card else { return }
+            if inside {
+                ThreadCardController.shared.enterRow(card, anchor: anchor)
+            } else {
+                ThreadCardController.shared.leaveRow(session.id)
+            }
+        }
         // A pass of the pointer doesn't reflow the list; resting on a row does.
         .task(id: hovered) {
             guard hovered else { expandTitle = false; return }
@@ -1437,9 +1477,16 @@ struct CompactSessionRow<Menu: View>: View {
             // the title doesn't (a slugged title never repeats itself). The child badge is its
             // own button, so the open target is a tap on the rest rather than a wrapping button.
             HStack(spacing: 5) {
-                Text(session.displayTitle).lineLimit(expandTitle ? 3 : 1).truncationMode(.tail)
+                // Never "Untitled": a thread nobody has typed in yet is a new session, muted.
+                let blank = session.title == nil && session.firstInput == nil
+                Text(blank ? "New session" : session.displayTitle).lineLimit(expandTitle ? 3 : 1).truncationMode(.tail)
                     .font(.frog(size: 13))
-                    .foregroundStyle(Color.primary.opacity(selected || running ? 1 : 0.82))
+                    .foregroundStyle(Color.primary.opacity(selected || running ? 1 : blank ? 0.5 : 0.82))
+                if session.isCloud {
+                    // The thread runs in the cloud: a glyph, never the words "Frog Cloud".
+                    Image(systemName: "cloud").font(.frog(size: 10)).foregroundStyle(.tertiary)
+                        .help("Runs in Frog Cloud")
+                }
                 if let suffix, showSuffix {
                     Text(suffix).lineLimit(1)
                         .font(.frog(size: 11)).foregroundStyle(.tertiary)
@@ -1461,15 +1508,69 @@ struct CompactSessionRow<Menu: View>: View {
                 GitBadgeView(display: git.display, muted: !running && !selected, help: git.help, card: git.card)
                     .padding(.leading, 5)
             }
-            glyphView.padding(.leading, 5)
-            // Nested rows show the menu button only under the pointer (the context menu is
-            // always there).
-            if !nested || hovered {
+            // One meta slot, then the mark: titles never move, whatever the state (the menu
+            // takes the meta's place under the pointer; the context menu is always there).
+            if hovered {
                 SwiftUI.Menu { menu() } label: {
                     Image(systemName: "ellipsis").font(.frog(size: 10)).frame(width: 14, height: 20)
                 }
                 .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).foregroundStyle(.secondary)
+                .padding(.leading, 5)
+            } else {
+                metaView.padding(.leading, 6)
             }
+            markView.padding(.leading, 6)
+        }
+    }
+
+    /// The meta slot: the highest of waiting time, failed, live speed, then age.
+    @ViewBuilder
+    private var metaView: some View {
+        switch glyph {
+        case .running:
+            if let speed, speed > 0 {
+                metaText("\(speed) tok/s").foregroundStyle(.secondary)
+            } else {
+                ProgressView().controlSize(.mini).scaleEffect(0.7).frame(width: 12, height: 12).help("working")
+            }
+        case .failed:
+            metaText("failed").foregroundStyle(Tokens.warn).help("ended with an error")
+        case .waiting:
+            metaText(age).foregroundStyle(.secondary).help("waiting on you for \(age)")
+        case .unread, .idle:
+            if !nested { metaText(age).foregroundStyle(.tertiary) }
+        }
+    }
+
+    private func metaText(_ s: String) -> some View {
+        Text(s).font(.frog(size: 11)).monospacedDigit().lineLimit(1).fixedSize()
+    }
+
+    /// "4m"; never "now" (the style guide's times read 1m, 3h, 2d).
+    private var age: String {
+        let a = SessionAgeShort.age(session.modifiedDate, now: SidebarClock.shared.now)
+        return a == "now" ? "1m" : a
+    }
+
+    /// The trailing mark: orange waiting on you, accent unread, the finished check; nothing else.
+    @ViewBuilder
+    private var markView: some View {
+        switch glyph {
+        case .waiting:
+            Circle().fill(.orange).frame(width: 6, height: 6).help("waiting on you")
+        case .unread:
+            Circle().fill(Color.accentColor).frame(width: 6, height: 6).help("finished while you were away")
+        case .idle:
+            switch check {
+            case .none: EmptyView()
+            case .fresh:
+                Image(systemName: "checkmark.circle.fill").font(.frog(size: 11)).foregroundStyle(.green).help("done")
+            case .quiet:
+                Image(systemName: "checkmark.circle.fill").font(.frog(size: 11))
+                    .foregroundStyle(.green.opacity(0.6)).help("done")
+            }
+        case .running, .failed:
+            EmptyView()
         }
     }
 
@@ -1509,35 +1610,6 @@ struct CompactSessionRow<Menu: View>: View {
                         : "Collapse the \(n) session\(n == 1 ? "" : "s") this one started")
     }
 
-
-    /// The state glyph: a spinner while running, an amber dot waiting on you, red for a turn
-    /// that ended in error, tinted for unseen, nothing for idle.
-    @ViewBuilder
-    private var glyphView: some View {
-        switch glyph {
-        case .running:
-            ProgressView().controlSize(.mini).scaleEffect(0.7).frame(width: 12, height: 12).help("working")
-        case .waiting:
-            Circle().fill(.orange).frame(width: 6, height: 6).help("waiting on you")
-        case .failed:
-            Circle().fill(.red).frame(width: 6, height: 6).help("ended with an error")
-        case .unread:
-            Circle().fill(Color.accentColor).frame(width: 6, height: 6).help("finished while you were away")
-        case .idle:
-            // Nothing for idle work that's been seen. The check is for a row that finished and
-            // hasn't had its look yet; the pointer arriving counts as the look (see `check`).
-            switch check {
-            case .none:
-                EmptyView()
-            case .fresh:
-                Image(systemName: "checkmark.circle.fill").font(.frog(size: 11))
-                    .foregroundStyle(.green).help("done")
-            case .quiet:
-                Image(systemName: "checkmark.circle.fill").font(.frog(size: 11))
-                    .foregroundStyle(.green.opacity(0.6)).help("done")
-            }
-        }
-    }
 }
 
 /// A conversation as a tile: its initial over its folder's tint (a bubble for chats), outlined

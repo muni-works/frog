@@ -618,6 +618,7 @@ final class Workspace {
         Motion.cut {
             conversation = c
             currentSession = c.cloudSession ?? c.sessionID
+            if let id = currentSession { Library.shared.adopt(id, conversation: c) }
             currentTitle = c.title
             // The id lands when the engine names the session (its first logged event); mirror
             // it here. `onSessionChange` stays the workspace's own hook; this chains beside it
