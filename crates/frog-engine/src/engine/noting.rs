@@ -31,9 +31,9 @@ impl Agent {
         {
             return false;
         }
-        match self.shared.settings.lock().unwrap().get(noting::SETTING) {
-            Some(Value::Bool(on)) => *on,
-            _ => self.cfg.memory.auto_note.unwrap_or(false),
+        match self.shared.settings.lock().unwrap().auto_note() {
+            Some(on) => on,
+            None => self.cfg.memory.auto_note.unwrap_or(false),
         }
     }
 

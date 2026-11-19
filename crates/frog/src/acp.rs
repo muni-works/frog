@@ -646,6 +646,7 @@ pub(crate) fn submit(
         images,
         more: Vec::new(),
         typed: false,
+        client: None,
     }
 }
 

@@ -81,7 +81,7 @@ fn rig_cfg(
     // As the apps do on every link: the `auto-note` setting (on).
     let mut values = serde_json::Map::new();
     values.insert(crate::noting::SETTING.into(), json!(true));
-    r.h.ops.send(Op::Settings { values }).unwrap();
+    r.h.ops.send(Op::Settings { values, client: None }).unwrap();
     r
 }
 
@@ -197,6 +197,7 @@ impl Rig {
             text: text.into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })
         .await
     }
@@ -593,7 +594,7 @@ async fn noting_off_writes_nothing() {
     r.idle().await;
     let mut values = serde_json::Map::new();
     values.insert(crate::noting::SETTING.into(), json!(false));
-    r.h.ops.send(Op::Settings { values }).unwrap();
+    r.h.ops.send(Op::Settings { values, client: None }).unwrap();
     let evs = r.say(STAGING).await;
     assert!(receipts(&evs).is_empty());
     // Not offered, so the call is an unknown tool; either way nothing is written.
@@ -1106,5 +1107,39 @@ async fn a_file_frog_wrote_grounds_no_note() {
     let evs = r.say("now note it").await;
     assert!(receipts(&evs).is_empty(), "{:?}", note_outputs(&evs));
     assert!(r.notes().is_empty());
+    r.end().await;
+}
+
+/// Review 4, item 5: auto-note isn't whichever device spoke last. Off on any attached app is
+/// off; when that app detaches, the others' on counts again.
+#[tokio::test]
+async fn auto_note_off_on_any_attached_app_wins() {
+    // Off, the call to the tool that isn't there ends the turn.
+    let mut r = rig(vec![
+        answer_and_note("Ok.", staging_note()),
+        answer_and_note("Ok.", staging_note()),
+        done(),
+    ]);
+    r.idle().await;
+    let tell = |client: &str, on: bool| {
+        let mut values = serde_json::Map::new();
+        values.insert(crate::noting::SETTING.into(), json!(on));
+        Op::Settings {
+            values,
+            client: Some(client.into()),
+        }
+    };
+    r.h.ops.send(tell("mac", false)).unwrap();
+    r.h.ops.send(tell("web", true)).unwrap();
+    let evs = r.say(STAGING).await;
+    assert!(receipts(&evs).is_empty(), "the Mac says off: {evs:?}");
+    assert!(r.notes().is_empty());
+    r.h.ops
+        .send(Op::Detach {
+            client: "mac".into(),
+        })
+        .unwrap();
+    let evs = r.say(STAGING).await;
+    assert_eq!(receipts(&evs).len(), 1, "{evs:?}");
     r.end().await;
 }

@@ -314,6 +314,7 @@ impl Kids {
             text: prompt.clone(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         })?;
         // Named by the parent: its brief opens with the head start, which is no title. Sent
         // after the first input so the log is open and the title lands in it.

@@ -109,6 +109,23 @@ test("reconnect resumes after the last seen seq, with no gaps or repeats", async
   late.conn.close();
 });
 
+// Review 4, item 6: a reconnect may reach a new engine (a sandbox woken from sleep), so what the
+// engine is told (caps, settings) goes again on every welcome, not once per connection.
+test("every welcome tells the engine again", async () => {
+  const gw = gateway("acct-greet");
+  const { id } = await gw.create({ repo: "ecto/frog" });
+  let greeted = 0;
+  const states: ConnectionState[] = [];
+  const conn = gw.connect(id, { onEnvelope: () => {}, onState: (s) => states.push(s), greet: () => (greeted++, []) });
+  const until = async (pred: () => boolean) => { const end = Date.now() + 3000; while (!pred()) { if (Date.now() > end) throw new Error("timed out"); await new Promise((r) => setTimeout(r, 20)); } };
+  await until(() => states.some((s) => s.state === "live"));
+  assert.equal(greeted, 1);
+  conn.drop();
+  await until(() => states.filter((s) => s.state === "live").length === 2);
+  assert.equal(greeted, 2);
+  conn.close();
+});
+
 test("permission round trip: first answer wins and every client sees it", async () => {
   const gw = gateway();
   const { id } = await gw.create({ repo: "ecto/frog" });

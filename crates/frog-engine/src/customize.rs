@@ -1464,6 +1464,8 @@ pub enum Undo {
         old: Option<Value>,
         /// What the change set: undo refuses when the setting holds anything else now.
         new: Value,
+        /// The app that applied it (`Op::Settings`' `client`; empty for the unnamed one).
+        client: String,
     },
 }
 

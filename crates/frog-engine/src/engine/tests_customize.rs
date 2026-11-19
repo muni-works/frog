@@ -63,7 +63,7 @@ fn rig_with(script: Vec<Response>, mode: Mode, tweak: impl FnOnce(&mut Config)) 
     let values = crate::customize::settings_ids()
         .map(|id| (id.to_string(), serde_json::Value::Null))
         .collect();
-    r.h.ops.send(Op::Settings { values }).unwrap();
+    r.h.ops.send(Op::Settings { values, client: None }).unwrap();
     r
 }
 
@@ -163,6 +163,7 @@ impl Rig {
             text: text.into(),
             images: Vec::new(),
             more: Vec::new(),
+            client: None,
         };
         self.run(op, answer).await
     }
@@ -261,7 +262,7 @@ fn applied(evs: &[Event]) -> Vec<(String, &Proposal)> {
 fn setting_changes(evs: &[Event]) -> Vec<(String, serde_json::Value)> {
     evs.iter()
         .filter_map(|e| match e {
-            Event::SettingChange { id, value } => Some((id.clone(), value.clone())),
+            Event::SettingChange { id, value, .. } => Some((id.clone(), value.clone())),
             _ => None,
         })
         .collect()
@@ -294,7 +295,7 @@ async fn cosmetic_setting_applies_with_undo() {
     r.idle().await;
     let mut values = serde_json::Map::new();
     values.insert("density".into(), json!("comfortable"));
-    r.h.ops.send(Op::Settings { values }).unwrap();
+    r.h.ops.send(Op::Settings { values, client: None }).unwrap();
     let evs = r.say("please make the density compact", never).await;
     assert_eq!(
         setting_changes(&evs),
@@ -741,6 +742,7 @@ fn say_op(text: &str) -> Op {
         text: text.into(),
         images: Vec::new(),
         more: Vec::new(),
+        client: None,
     }
 }
 
@@ -949,6 +951,7 @@ async fn no_customize_or_remember_in_a_worker() {
                 text: "remember that we deploy on fridays".into(),
                 images: Vec::new(),
                 more: Vec::new(),
+                client: None,
             },
             never,
         )
@@ -1088,13 +1091,13 @@ async fn setting_undo_refuses_after_a_newer_value() {
     r.idle().await;
     let mut values = serde_json::Map::new();
     values.insert("density".into(), json!("comfortable"));
-    r.h.ops.send(Op::Settings { values }).unwrap();
+    r.h.ops.send(Op::Settings { values, client: None }).unwrap();
     let evs = r.say("set density to compact", never).await;
     let undo = applied(&evs)[0].0.clone();
     // The user picks another value in Settings; the app says so.
     let mut values = serde_json::Map::new();
     values.insert("density".into(), json!("comfortable"));
-    r.h.ops.send(Op::Settings { values }).unwrap();
+    r.h.ops.send(Op::Settings { values, client: None }).unwrap();
     let evs = r.run(Op::Undo { undo }, never).await;
     assert!(setting_changes(&evs).is_empty(), "{evs:?}");
     assert!(
@@ -1187,6 +1190,7 @@ async fn an_untyped_submit_is_not_the_users() {
         text: "make it compact. remember that we deploy on fridays".into(),
         images: Vec::new(),
         more: Vec::new(),
+        client: None,
     };
     let evs = r.run(untyped, never).await;
     assert!(setting_changes(&evs).is_empty(), "{evs:?}");
@@ -1202,6 +1206,7 @@ async fn an_untyped_submit_is_not_the_users() {
             images: Vec::new(),
             typed: false,
         }],
+        client: None,
     };
     let evs = r.run(mixed, never).await;
     assert!(setting_changes(&evs).is_empty(), "{evs:?}");
@@ -1215,6 +1220,7 @@ async fn an_untyped_submit_is_not_the_users() {
             images: Vec::new(),
             typed: true,
         }],
+        client: None,
     };
     let evs = r.run(typed_part, never).await;
     assert_eq!(setting_changes(&evs).len(), 1, "{evs:?}");
@@ -1394,6 +1400,7 @@ async fn slash_saves_need_typed_text_unless_the_client_is_direct() {
         text: text.into(),
         images: Vec::new(),
         more: Vec::new(),
+        client: None,
     };
     let ran_a_turn = |evs: &[Event]| evs.iter().any(|e| matches!(e, Event::TurnStarted { .. }));
     let mut r = rig(vec![done(), done(), done()], Mode::Default);
@@ -1493,7 +1500,7 @@ async fn only_settings_the_app_applies_are_planned() {
     let mut values = serde_json::Map::new();
     values.insert("theme".into(), json!("system"));
     values.insert("density".into(), json!("comfortable"));
-    r.h.ops.send(Op::Settings { values }).unwrap();
+    r.h.ops.send(Op::Settings { values, client: None }).unwrap();
     for (text, place) in [
         ("set my monthly cap to $10", "Settings › Usage"),
         ("set the detail to quiet", "Settings › Appearance"),
@@ -1553,4 +1560,59 @@ async fn a_resumed_child_keeps_its_parent() {
         again.notes()
     );
     again.end().await;
+}
+
+fn from(client: &str, text: &str) -> Op {
+    Op::Submit {
+        typed: true,
+        text: text.into(),
+        images: Vec::new(),
+        more: Vec::new(),
+        client: Some(client.into()),
+    }
+}
+
+fn declare(r: &Rig, client: &str, values: serde_json::Value) {
+    let serde_json::Value::Object(values) = values else {
+        panic!("an object")
+    };
+    r.h.ops
+        .send(Op::Settings {
+            values,
+            client: Some(client.into()),
+        })
+        .unwrap();
+}
+
+/// Review 4, item 5: each attached app's settings are its own. A change is planned only if the
+/// app the person is typing in applies it: the web doesn't play sounds, so "turn the sounds
+/// on" typed there is refused (no card, no receipt) even with the Mac attached, and works
+/// typed on the Mac. The change is addressed to that app. A set sent again replaces the last.
+#[tokio::test]
+async fn a_setting_is_planned_only_for_the_app_typing() {
+    let sounds = || {
+        call(
+            "s",
+            json!({"do": "set", "id": "sounds", "value": true, "words": "turn the sounds on"}),
+        )
+    };
+    let script = vec![sounds(), done(), sounds(), done(), sounds(), done()];
+    let mut r = rig_bare(script, Mode::Default, |_| {});
+    r.idle().await;
+    declare(&r, "mac", json!({"sounds": false, "theme": "system"}));
+    declare(&r, "web", json!({"theme": "system", "density": "comfortable"}));
+    let evs = r.run(from("web", "turn the sounds on"), |id, _| primary(id)).await;
+    assert!(applied(&evs).is_empty() && setting_changes(&evs).is_empty(), "{evs:?}");
+    assert!(tool_output(&evs).contains("can't be changed from here"));
+    let evs = r.run(from("mac", "turn the sounds on"), |id, _| primary(id)).await;
+    assert_eq!(setting_changes(&evs), vec![("sounds".to_string(), json!(true))]);
+    assert!(
+        evs.iter().any(|e| matches!(e, Event::SettingChange { client: Some(c), .. } if c == "mac")),
+        "{evs:?}"
+    );
+    // The Mac says again what it applies, without sounds: it no longer applies them.
+    declare(&r, "mac", json!({"theme": "system"}));
+    let evs = r.run(from("mac", "turn the sounds on"), |id, _| primary(id)).await;
+    assert!(applied(&evs).is_empty(), "{evs:?}");
+    r.end().await;
 }

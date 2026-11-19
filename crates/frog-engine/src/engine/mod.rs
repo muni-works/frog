@@ -526,8 +526,9 @@ struct Shared {
     /// The alternative a user picked on a `Customize` card, by request id, until the agent
     /// picks it up.
     choices: Mutex<HashMap<String, String>>,
-    /// The app's settings as it last reported them (`Op::Settings`), plus changes made since.
-    settings: Mutex<serde_json::Map<String, Value>>,
+    /// Each attached app's settings as it last reported them (`Op::Settings`), plus changes
+    /// made since (`customize::ClientSettings`).
+    settings: Mutex<customize::ClientSettings>,
     /// Open `Ask` questions, answered by `Op::Answer`.
     questions: Mutex<HashMap<String, oneshot::Sender<crate::protocol::Answer>>>,
     /// The open ones a child's watcher raised (see `child_watch`), by id, as sent. They
@@ -1038,7 +1039,12 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                     }
                 }
                 // State, not a turn: the app's settings land at once.
-                Op::Settings { values } => router.settings.lock().unwrap().extend(values),
+                Op::Settings { values, client } => router
+                    .settings
+                    .lock()
+                    .unwrap()
+                    .declare(client.as_deref().unwrap_or_default(), values),
+                Op::Detach { client } => router.settings.lock().unwrap().detach(&client),
                 Op::Answer { id, answer } => {
                     if let Some(tx) = router.questions.lock().unwrap().remove(&id) {
                         let _ = tx.send(answer);
@@ -1109,6 +1115,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                     images,
                     more,
                     typed,
+                    client,
                 } => {
                     // Mid-turn the turn loop owns this queue: the parts park in order, and
                     // its next tool-call boundary delivers them as user messages of the
@@ -1132,6 +1139,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                             images,
                             more,
                             typed,
+                            client,
                         })
                         .is_err()
                     {
@@ -1460,6 +1468,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                     text: first.text,
                     images: first.images,
                     more: parts.collect(),
+                    client: None,
                 });
                 continue;
             }
@@ -2008,6 +2017,9 @@ struct Agent {
     noted_turn: Option<u64>,
     /// "Remember that …" kept a note from the message this turn answers, so `Note` doesn't.
     remembered: bool,
+    /// The app the message this turn answers came from (`Op::Submit`'s `client`; empty for
+    /// the unnamed one): whose settings a `Customize` change may touch.
+    turn_client: String,
     /// The notes' vectors, while they're in step with `notes`: each turn then brings back only
     /// the notes that fit (`memvec`). `None` falls back to the whole index in the prompt.
     note_index: Option<crate::memvec::Index>,
@@ -2378,6 +2390,7 @@ impl Agent {
             declined: resumed_declined,
             noted_turn: None,
             remembered: false,
+            turn_client: String::new(),
             note_index: None,
             notes_sent: HashSet::new(),
             notes_in_prompt: HashSet::new(),
@@ -3173,7 +3186,9 @@ impl Agent {
                 images,
                 more,
                 typed,
+                client,
             } => {
+                self.turn_client = client.unwrap_or_default();
                 // A memory command is answered alone; one sent with others is just words. See
                 // `memory_command` for where each works; natural-language "remember …" below
                 // needs typed text.
@@ -3191,6 +3206,8 @@ impl Agent {
                 }
             }
             Op::Act { label, send } => {
+                // A `Present` button names no app: only the unnamed client's settings.
+                self.turn_client.clear();
                 let text = if send.trim().is_empty() {
                     label.clone()
                 } else {
@@ -3351,6 +3368,7 @@ impl Agent {
             | Op::DismissWakes
             | Op::Permission { .. }
             | Op::Settings { .. }
+            | Op::Detach { .. }
             | Op::Answer { .. }
             | Op::SessionReply { .. }
             | Op::Elicit { .. }

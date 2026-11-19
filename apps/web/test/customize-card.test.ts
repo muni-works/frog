@@ -111,7 +111,8 @@ test("the engine isn't told about Customize cards until its review passes, and n
   assert.deepEqual(caps(false, false, true), { op: "set_client_caps", ask: true, panes: false });
   // What a session actually hears on subscribe: no customize, child or not.
   const sent: Record<string, unknown[]> = {};
-  const fake = { connect: (id: string) => ({ send: (op: unknown) => (sent[id] ??= []).push(op), close() {} }) };
+  // A welcome at once: what the engine is told on it (greet) goes first.
+  const fake = { connect: (id: string, h: { greet?: () => unknown[] }) => { for (const op of h.greet?.() ?? []) (sent[id] ??= []).push(op); return { send: (op: unknown) => (sent[id] ??= []).push(op), close() {} } } };
   const engine = new CloudEngine(fake as unknown as Gateway);
   engine.setParents([{ id: "top" }, { id: "kid", parent: "top" }]);
   engine.subscribe("top", 0, () => {});
@@ -127,7 +128,8 @@ test("the engine isn't told about Customize cards until its review passes, and n
 test("a session of unknown parentage gets no Customize caps until the list says it's top-level", async () => {
   const { CloudEngine: Engine } = await import("../src/engine/cloud.ts");
   const sent: Record<string, Record<string, unknown>[]> = {};
-  const fake = { connect: (id: string) => ({ send: (op: Record<string, unknown>) => (sent[id] ??= []).push(op), close() {} }) };
+  // A welcome at once: what the engine is told on it (greet) goes first.
+  const fake = { connect: (id: string, h: { greet?: () => Record<string, unknown>[] }) => { for (const op of h.greet?.() ?? []) (sent[id] ??= []).push(op); return { send: (op: Record<string, unknown>) => (sent[id] ??= []).push(op), close() {} } } };
   const engine = new Engine(fake as unknown as Gateway);
   const capsOf = (id: string) => sent[id].filter((o) => o.op === "set_client_caps");
   // Turned on for the check: the real constants stay off.
@@ -147,6 +149,41 @@ test("a session of unknown parentage gets no Customize caps until the list says 
   engine.subscribe("mine", 0, () => {});
   engine.setParents([{ id: "early" }]);
   assert.equal(capsOf("mine").length, 1, "still top after a list that doesn't hold it yet");
+});
+
+// Review 4, item 5: each op says which app sent it, so the engine keeps each app's settings
+// apart; closing says the app is gone; a setting change typed in another app is left alone.
+test("the web names itself to the engine, says when it leaves, and leaves other apps' changes alone", async () => {
+  const { CloudEngine: Engine, CLIENT_ID } = await import("../src/engine/cloud.ts");
+  const sent: Record<string, unknown>[] = [];
+  let deliver: (e: unknown) => void = () => {};
+  const fake = { connect: (_id: string, h: { greet?: () => Record<string, unknown>[]; onEnvelope: (e: unknown) => void }) => {
+    deliver = h.onEnvelope; sent.push(...(h.greet?.() ?? []))
+    return { send: (op: Record<string, unknown>) => sent.push(op), close() {} }
+  } };
+  const engine = new Engine(fake as unknown as Gateway);
+  const seen: unknown[] = [];
+  const off = engine.subscribe("s", 0, (e) => seen.push(e));
+  assert.equal(sent.find((o) => o.op === "settings")?.client, CLIENT_ID);
+  engine.send("s", { op: "submit", text: "make it dark", typed: true });
+  engine.send("s", { op: "submit", text: "Fix the build" });
+  assert.equal(sent.at(-2)?.client, CLIENT_ID);
+  assert.equal("client" in sent.at(-1)!, false, "an app's own prompt isn't the person's");
+  const g = globalThis as unknown as { document?: unknown; localStorage?: unknown };
+  const had = g.document, hadStore = g.localStorage;
+  const root = { dataset: {} as Record<string, string | undefined> };
+  g.document = { documentElement: root };
+  const kept = new Map<string, string>();
+  g.localStorage = { getItem: (k: string) => kept.get(k) ?? null, setItem: (k: string, v: string) => { kept.set(k, v) }, removeItem: (k: string) => { kept.delete(k) } };
+  try {
+    deliver({ seq: 1, event: "setting_change", id: "density", value: "compact", client: "mac-1" });
+    assert.equal(root.dataset.density, undefined, "typed on the Mac: the Mac's to apply");
+    deliver({ seq: 2, event: "setting_change", id: "density", value: "compact", client: CLIENT_ID });
+    assert.equal(root.dataset.density, "compact", "typed here: applied");
+  } finally { g.document = had; g.localStorage = hadStore }
+  assert.equal(seen.length, 2, "both still shown");
+  off();
+  assert.deepEqual(sent.at(-1), { op: "detach", client: CLIENT_ID });
 });
 
 test("setting_change changes this app's own setting; one it doesn't keep is left alone", async () => {
