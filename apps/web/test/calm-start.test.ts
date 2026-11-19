@@ -148,7 +148,7 @@ test("the title stays your message when the gateway lists the session as New ses
   const w = await world();
   await type(w.p, "Make a tiny pomodoro timer");
   await enter(w.p);
-  const title = () => shownText(find(w.p, (n) => n.type === "b" && shownText(n).length > 0 && (n.props.title === "Double-click to rename"))!);
+  const title = () => shownText(find(w.p, (n) => n.type === "b" && n.props.className === "title-text")!);
   assert.equal(title(), "Make a tiny pomodoro timer");
   await w.answer({ status: 201, body: { ...summary(), ws: "wss://x" } });
   await act(async () => { dispatch("focus", {}); });
@@ -271,7 +271,7 @@ test("a repo session: the same message node, composer and title when the id arri
   await tick();
   await type(w.p, "Fix the flaky test");
   await enter(w.p);
-  const title = () => shownText(find(w.p, (n) => n.type === "b" && n.props.title === "Double-click to rename")!);
+  const title = () => shownText(find(w.p, (n) => n.type === "b" && n.props.className === "title-text")!);
   const node = inst(bubbles(w.p)[0]);
   const composer = inst(box(w.p));
   assert.equal(title(), "Fix the flaky test");
@@ -295,7 +295,7 @@ test("a failed POST's placeholder can be deleted: it was never on the gateway", 
   await w.answer({ status: 503, body: { error: "Frog Cloud is busy." } });
   const menu = find(w.p, (n) => n.type === "button" && n.props["aria-label"] === "Session menu");
   await act(async () => { (menu!.props.onClick as () => void)(); });
-  const del = find(w.p, (n) => n.type === "button" && shownText(n) === "Delete session");
+  const del = find(w.p, (n) => n.type === "button" && shownText(n) === "Delete…");
   await act(async () => { (del!.props.onClick as () => void)(); });
   await tick();
   assert.ok(!w.p.calls.some((c) => c.method === "DELETE"), "no DELETE for an id the gateway never gave");

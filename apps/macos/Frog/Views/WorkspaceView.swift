@@ -35,6 +35,9 @@ struct WorkspaceView: View {
     /// The session the title menu's Delete… is asking about.
     @State private var deletingSession: String?
     @State private var newTitle = ""
+    /// The title's field while renaming in place (docs/design/chrome/spec.md, 3).
+    @FocusState private var titleFieldFocused: Bool
+    @State private var titleFieldHadFocus = false
     // The sidebar's view options, for the quick-switch shortcuts' reading of it.
     @AppStorage("sidebarGroup") private var sidebarGroup = SessionList.Grouping.date
     @AppStorage("sidebarSort") private var sidebarSort = SessionList.Sort.activity
@@ -87,6 +90,11 @@ struct WorkspaceView: View {
     /// The toolbar's own inset at the window's trailing edge: the inspector's tabs in the title
     /// row are this much narrower than its column, so they start at its hairline.
     static let toolbarTrailing: CGFloat = 8
+    /// What the window controls add to the toolbar's own trailing inset, so the capsule stands
+    /// 8 from the window's edge (spec.md, 1; measured by docs/design/chrome/parity).
+    static let controlsTrailing: CGFloat = 0
+    /// Between a mode's header items and the window controls.
+    static let headerGap: CGFloat = 12
     /// Narrowest a column may get; a card that would squeeze it further stays folded.
     static let minColumn: CGFloat = 520
     /// Split panes accept narrower columns: that's the point of splitting.
@@ -536,6 +544,11 @@ struct WorkspaceView: View {
             docsLayer
             settingsLayer
             customizeLayer
+            // The title row is an opaque surface over a mode's page: it scrolls beneath the
+            // crumbs and controls, never through them (docs/design/chrome/spec.md, 3).
+            if inMode {
+                HeaderSurface().padding(.leading, extent(sessions: docked.sessions))
+            }
 
             GeometryReader { geo in
                 sessions(room: max(120, geo.size.height))
@@ -715,15 +728,6 @@ struct WorkspaceView: View {
         } message: {
             Text("Its log moves to the Trash.")
         }
-        .alert("Rename Conversation", isPresented: $renamingTitle) {
-            TextField("Title", text: $newTitle)
-            Button("Rename") {
-                if let id = workspace.currentSession {
-                    Task { await Library.shared.rename(id, to: newTitle) }
-                }
-            }
-            Button("Cancel", role: .cancel) {}
-        }
         .toolbar {
             // Beside the traffic lights: the sidebar's header over the sidebar (docked or
             // peeking), else its toggle and New session. Then, as on the web, a plain title (no
@@ -756,30 +760,27 @@ struct WorkspaceView: View {
             ToolbarItem(placement: .navigation) { titleBar }
                 .sharedBackgroundVisibility(.hidden)
             ToolbarSpacer(.flexible)
-            // Customize: the page's one figure and one action, at the header's right.
-            if panes.mode == .customize {
-                ToolbarItem(placement: .primaryAction) { CustomizeHeaderTrailing(panes: panes) }
-                    .sharedBackgroundVisibility(.hidden)
-            }
+            // The window controls (docs/design/chrome/spec.md, 1): Split, Commands and the
+            // inspector toggle, rightmost, in one capsule Frog draws (the web draws the same).
+            // A mode's own header items (Customize's figure and action) share the item, left of
+            // the capsule with a gap, so they can never run under it (spec.md, 3).
             ToolbarItem(placement: .primaryAction) {
-                Button("Split", systemImage: "rectangle.split.2x1") { split() }
-                    .contextMenu {
-                        Button("Split Right") { split(nil, .right) }
-                        Button("Split Down") { split(nil, .bottom) }
-                    }
-                    .help("Split pane (⌘\\)")
-                    .disabled(!panes.canSplit || inMode)
+                HStack(spacing: Self.headerGap) {
+                    if panes.mode == .customize { CustomizeHeaderTrailing(panes: panes) }
+                    WindowControls(
+                    canSplit: panes.canSplit && !inMode,
+                    paletteOn: focused.ui.paletteShown,
+                    inspectorOn: changesVisible(focused) && !inMode,
+                    inspectorEnabled: focused.conversation != nil && !inMode,
+                    split: { split() },
+                    splitRight: { split(nil, .right) },
+                    splitDown: { split(nil, .bottom) },
+                    palette: { focused.ui.paletteShown.toggle() },
+                    inspector: { toggleChanges(focused) })
+                }
+                .padding(.trailing, Self.controlsTrailing)
             }
-            ToolbarItem(placement: .primaryAction) {
-                Button("Commands", systemImage: "command") { focused.ui.paletteShown.toggle() }
-                    .help("Command Palette (⌘K)")
-            }
-            // The inspector toggle, rightmost: Changes, Terminal and Preview as tabs of one panel.
-            ToolbarItem(placement: .primaryAction) {
-                Button("Inspector", systemImage: "sidebar.right") { toggleChanges(focused) }
-                    .help("Inspector: changes, terminal, preview (⌥⌘0)")
-                    .disabled(focused.conversation == nil || inMode)
-            }
+            .sharedBackgroundVisibility(.hidden)
             // The top-right inspector's tabs, over its column: the controls sit left of it.
             if let corner = cornerInspector, let c = corner.conversation {
                 ToolbarItem(placement: .primaryAction) {
@@ -915,7 +916,43 @@ extension WorkspaceView {
         }
     }
 
+    /// The title, or its field while renaming: in place, the same size (spec.md, 3). Return or
+    /// leaving the field saves; Escape cancels.
+    @ViewBuilder
     private var threadTitleBar: some View {
+        if renamingTitle {
+            TextField("Session name", text: $newTitle)
+                .textFieldStyle(.plain)
+                .font(.frog(size: 13, weight: .semibold))
+                .frame(width: 320)
+                .focused($titleFieldFocused)
+                .onSubmit { finishRename(save: true) }
+                .onExitCommand { finishRename(save: false) }
+                // Leaving saves only once the field has had the keyboard: the menu that chose
+                // Rename… closing must not end the rename before it starts.
+                .onChange(of: titleFieldFocused) { _, focused in
+                    if focused { titleFieldHadFocus = true } else if titleFieldHadFocus { finishRename(save: true) }
+                }
+                .onAppear {
+                    titleFieldHadFocus = false
+                    DispatchQueue.main.async { titleFieldFocused = true }
+                }
+                .accessibilityLabel("Session name")
+                .accessibilityIdentifier("title.field")
+        } else {
+            titleMenuButton
+        }
+    }
+
+    private func finishRename(save: Bool) {
+        guard renamingTitle else { return }
+        renamingTitle = false
+        let name = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard save, !name.isEmpty, name != workspace.conversation?.title, let id = workspace.currentSession else { return }
+        Task { await Library.shared.rename(id, to: name) }
+    }
+
+    private var titleMenuButton: some View {
         Menu {
             if let c = workspace.conversation { titleMenu(c) }
         } label: {
@@ -930,7 +967,9 @@ extension WorkspaceView {
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help("Rename, archive or delete this conversation")
+        .help("Rename, archive or delete this session")
+        .accessibilityLabel("Session menu")
+        .accessibilityValue(windowTitle)
         .accessibilityIdentifier("title.menu")
     }
 
@@ -1130,5 +1169,22 @@ private struct FolderDocument: ViewModifier {
     let folder: URL?
     func body(content: Content) -> some View {
         if let folder { content.navigationDocument(folder) } else { content }
+    }
+}
+
+/// The title row's surface over a page: the canvas, from the page's top up through the title
+/// bar, so what scrolls under the toolbar is hidden behind it (docs/design/chrome/spec.md, 3).
+struct HeaderSurface: View {
+    var body: some View {
+        // Laid out at the safe area's top with no height, drawing the title bar's height above
+        // it: the band covers exactly the title row, whatever its height.
+        GeometryReader { g in
+            FrogCanvas.color
+                .frame(width: g.size.width, height: g.safeAreaInsets.top)
+                .offset(y: -g.safeAreaInsets.top)
+        }
+        .frame(height: 0)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }

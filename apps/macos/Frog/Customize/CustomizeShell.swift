@@ -71,10 +71,16 @@ struct CustomizeHeaderTrailing: View {
 
     var body: some View {
         HStack(spacing: 14) {
-            if let figure { Text(figure).font(.frog(size: 12.5)).foregroundStyle(Tokens.textSecondary).monospacedDigit() }
-            action
+            // The figure gives way first: one line, cut at the end, before it reaches the
+            // action or the window controls (docs/design/chrome/spec.md, 3).
+            if let figure {
+                Text(figure).font(.frog(size: 12.5)).foregroundStyle(Tokens.textSecondary).monospacedDigit()
+                    .lineLimit(1).truncationMode(.tail)
+                    .frame(maxWidth: 280, alignment: .trailing)
+                    .layoutPriority(-1)
+            }
+            action.fixedSize()
         }
-        .fixedSize()
     }
 
     private var figure: String? {

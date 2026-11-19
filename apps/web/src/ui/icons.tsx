@@ -16,6 +16,14 @@ export const ICON = {
   search: 'M11 4a7 7 0 1 0 0 14a7 7 0 1 0 0-14M20 20l-4-4',
   /** Settings (the Mac's gearshape): the sidebar's Settings row. */
   gear: 'M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z',
+  /** Split pane (the Mac's rectangle.split.2x1): a window halved down its middle. Drawn at 18,
+   * its ink is the symbol's at 15 pt: 17.5 × 13.5 (docs/design/chrome/parity, ink). */
+  split: 'M4.7 3.9h14.6a3.5 3.5 0 0 1 3.5 3.5v9.2a3.5 3.5 0 0 1-3.5 3.5H4.7a3.5 3.5 0 0 1-3.5-3.5V7.4a3.5 3.5 0 0 1 3.5-3.5zM12 3.9v16.2',
+  /** The command palette (the Mac's command): the ⌘ loop. */
+  command: 'M15 6v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3',
+  /** The inspector (the Mac's sidebar.right): a window with a right panel, three lines in it. Drawn
+   * at 18, like split. */
+  sidebarRight: 'M4.7 3.9h14.6a3.5 3.5 0 0 1 3.5 3.5v9.2a3.5 3.5 0 0 1-3.5 3.5H4.7a3.5 3.5 0 0 1-3.5-3.5V7.4a3.5 3.5 0 0 1 3.5-3.5zM16 3.9v16.2M18.6 8h1.4M18.6 10.5h1.4M18.6 13h1.4',
   /** Back to app (the Mac's arrow.left). */
   arrowLeft: 'M19 12H5M11 6l-6 6 6 6',
   /** Customize (the Mac's wand.and.stars): what the agent knows and can do. */

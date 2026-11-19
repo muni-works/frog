@@ -235,8 +235,8 @@ struct PaneView: View {
             )
             // Grows with the conversation instead of standing full height from turn one.
             .frame(height: TimelineRail.height(for: conversation.turns, room: room))
-            .glassEffect(.regular, in: .capsule)
-            .glassEffectID("timeline", in: glass)
+            // Frog's capsule, not glass (docs/design/chrome/spec.md, 2): the web draws the same.
+            .background(Tokens.raised, in: .capsule)
             .transition(.opacity)
         }
     }
