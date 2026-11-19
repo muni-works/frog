@@ -30,7 +30,11 @@ height, right }] }`, ids `group`, `split`, `palette`, `inspector`, `rail`, `titl
 inspector button had another label. `*-now.*` is the latest run. Re-run after a change to the
 chrome and commit the JSON and PNGs with it.
 
-The title is compared on top, height and where it starts from the conversation area's left edge.
-Its width isn't, yet: the same 13 pt semibold IBM Plex Sans title measures 141.9 on the web and
-128 on the Mac (text and chevron) — a font-rendering gap to close with the sidebar's row, which
-has the same words at the same weight.
+The title is compared from the conversation area's left edge (`main` in each dump), on its words:
+the Mac's AX frame for the title menu is the text, so the web measures its `.title-text`.
+
+[`ink.swift`](ink.swift) then reads each picture and adds `ink` to the icon buttons and the title:
+where the drawn pixels are inside the box (anything 40 off the box's commonest colour). The diff
+holds the ink to 1 point too, so an SVG drawn smaller than its SF Symbol fails. Not covered: the
+title's chevron (outside the Mac's AX frame) and states other than rest (the fixture's inspector
+is closed).

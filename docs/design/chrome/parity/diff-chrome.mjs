@@ -31,12 +31,13 @@ for (const id of ids) {
     rows.push({ id, ok, note: `${w ? "web" : "mac"} only${ok ? " (spec: one app)" : ""}`, web: w ?? null, mac: m ?? null });
     continue;
   }
-  // The title's width is its text's, which differs while the two apps' fonts differ by a hair: top, height and where it starts.
-  const keys = fromLeft.has(id) ? ["top", "height", "x0"] : ["top", "width", "height", "right"];
+  const keys = fromLeft.has(id) ? ["top", "width", "height", "x0"] : ["top", "width", "height", "right"];
   // The web's group, short of the Mac-only buttons, is expected that much narrower.
   if (fromLeft.has(id)) { w.x0 = Math.round((w.x - (web.main ?? 0)) * 10) / 10; m.x0 = Math.round((m.x - (mac.main ?? 0)) * 10) / 10; }
   const expect = (k) => (id === "group" && k === "width" ? m[k] - groupShift(web, mac) + groupShift(mac, web) : m[k]);
   const off = keys.filter((k) => Math.abs(w[k] - expect(k)) > TOL).map((k) => `${k} ${w[k]} vs ${m[k]}${expect(k) !== m[k] ? ` (expected ${expect(k)})` : ""}`);
+  // The icon's (or title's) ink inside its box, from ink.swift, when both dumps carry it.
+  if (w.ink && m.ink) for (const k of ["x", "top", "width", "height"]) if (Math.abs(w.ink[k] - m.ink[k]) > TOL) off.push(`ink ${k} ${w.ink[k]} vs ${m.ink[k]}`);
   if (off.length) bad++;
   rows.push({ id, ok: !off.length, note: off.join(", ") || "same", web: w, mac: m });
 }

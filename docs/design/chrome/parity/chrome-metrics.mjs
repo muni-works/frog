@@ -37,7 +37,8 @@ function measure() {
   for (const [id, match] of wanted) {
     const el = [...document.querySelectorAll("[aria-label]")].find((e) => match(e.getAttribute("aria-label")) && e.getBoundingClientRect().width > 0);
     if (!el) continue;
-    const b = el.getBoundingClientRect();
+    // The title: its words, as the Mac's AX frame for the title menu is (the chevron is outside it).
+    const b = (id === "title" ? el.querySelector(".title-text") ?? el : el).getBoundingClientRect();
     controls.push({ id, x: r1(b.left), top: r1(b.top), width: r1(b.width), height: r1(b.height), right: r1(width - b.right) });
   }
   return { controls, main: r1(document.querySelector(".main")?.getBoundingClientRect().left ?? 0) };

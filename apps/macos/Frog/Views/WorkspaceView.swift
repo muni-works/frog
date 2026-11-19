@@ -37,6 +37,7 @@ struct WorkspaceView: View {
     @State private var newTitle = ""
     /// The title's field while renaming in place (docs/design/chrome/spec.md, 3).
     @FocusState private var titleFieldFocused: Bool
+    @State private var titleFieldHadFocus = false
     // The sidebar's view options, for the quick-switch shortcuts' reading of it.
     @AppStorage("sidebarGroup") private var sidebarGroup = SessionList.Grouping.date
     @AppStorage("sidebarSort") private var sidebarSort = SessionList.Sort.activity
@@ -868,8 +869,15 @@ extension WorkspaceView {
                 .focused($titleFieldFocused)
                 .onSubmit { finishRename(save: true) }
                 .onExitCommand { finishRename(save: false) }
-                .onChange(of: titleFieldFocused) { _, focused in if !focused { finishRename(save: true) } }
-                .onAppear { titleFieldFocused = true }
+                // Leaving saves only once the field has had the keyboard: the menu that chose
+                // Rename… closing must not end the rename before it starts.
+                .onChange(of: titleFieldFocused) { _, focused in
+                    if focused { titleFieldHadFocus = true } else if titleFieldHadFocus { finishRename(save: true) }
+                }
+                .onAppear {
+                    titleFieldHadFocus = false
+                    DispatchQueue.main.async { titleFieldFocused = true }
+                }
                 .accessibilityLabel("Session name")
                 .accessibilityIdentifier("title.field")
         } else {

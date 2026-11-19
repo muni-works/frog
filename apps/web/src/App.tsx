@@ -280,7 +280,8 @@ export default function App() {
     }, { root })
     root.querySelectorAll('[data-turn-index]').forEach((el) => io.observe(el))
     return () => io.disconnect()
-  }, [currentId, turnCount, mode]) // eslint-disable-line react-hooks/exhaustive-deps
+  // The scroller remounts when a column opens or closes (the inspector): observe the new one.
+  }, [currentId, turnCount, mode, inspector]) // eslint-disable-line react-hooks/exhaustive-deps
   const jumpToTurn = useCallback((i: number) => {
     const root = threadScroll.current
     const el = root?.querySelector<HTMLElement>(`[data-turn-index="${i}"]`)
@@ -761,7 +762,7 @@ export default function App() {
               <button type="button" className="title-btn" aria-label="Session menu" aria-haspopup="menu" aria-expanded={menuOpen}
                 title="Rename, archive or delete this session" onClick={() => setMenuOpen(!menuOpen)}>
                 <b className="title-text">{current ? title(current) : 'New session'}</b>
-                <svg aria-hidden="true" className="title-chev" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 9l7 7 7-7" /></svg>
+                <svg aria-hidden="true" className="title-chev" width="8.5" height="4.9" viewBox="3.7 7.7 16.6 9.6" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><path d="M5 9l7 7 7-7" /></svg>
               </button>
             )}
             {current && menuOpen && (

@@ -37,13 +37,13 @@ One control, the **window controls**: a capsule at the conversation's top-right 
 | Surface | A capsule, fill `card` / `Tokens.raised`, no stroke, radius = height / 2 |
 | Size | Height 34, padding 3 on every side; buttons side by side with no gap |
 | Button | 34 × 28, a capsule (radius 14); the states above |
-| Icon | 16 pt / 17 px box |
+| Icon | The SF Symbol at 15 pt regular; the web's SVG drawn so its ink matches (split and inspector at 18, command at 17): 17.5 × 13.5 and 14 × 14 |
 | Accessibility | The group is labelled **Window controls**; buttons **Split**, **Commands**, **Inspector** |
 
 | Button | Mac symbol | Web SVG | Tooltip | Does | Disabled |
 | --- | --- | --- | --- | --- | --- |
 | Split | `rectangle.split.2x1` | rounded rect 18 × 16, r 3, a line down its middle | Split pane (⌘\\) | Splits the focused pane right; right-click: Split Right, Split Down | Can't split; Settings or Documentation |
-| Commands | `command` | the ⌘ loop | Command palette (⌘K) | Opens or closes the palette | never |
+| Commands | `command` | the ⌘ loop | Command palette (⌘K) | Opens or closes the palette. **On** while it shows | never |
 | Inspector | `sidebar.right` | rounded rect 18 × 16, r 3, a line at x 15, three short lines in the right panel | Inspector (⌥⌘0) | Shows or hides the inspector. **On** while it shows | No session; Settings or Documentation |
 
 Width: 108 with three buttons. The rightmost button never moves: a button the app hasn't got
@@ -84,7 +84,7 @@ One design, the Mac's `TimelineRail`, on both.
 | Room | The conversation keeps its width plus 8 + 28 clear on the right for it, so the column centres in what's left |
 | Surface | A capsule, fill `card` / `Tokens.raised`, 28 wide; height `min(room, 360, chapters × 18 + 28)` |
 | Narrow | 14 wide in a narrow split pane (Mac only, while the web has no split) |
-| Accessibility | `Timeline, N turns, in chapter c of C`; arrow keys move between chapters on the web, VoiceOver adjusts on the Mac |
+| Accessibility | `Timeline, N turns, in chapter c of C`; on the web a slider whose arrow keys move between chapters (the Mac's has the label only, for now) |
 
 Marks, drawn inside a 12 pad top and bottom, centred on the rail:
 
@@ -128,7 +128,7 @@ The session's title at the left of the conversation's title row, and its menu.
 | --- | --- |
 | Place | In the 52 title row, vertically centred (top 17.5); its left edge 20 from the conversation area's (the sidebar's edge); with the sidebar collapsed, after its toggle and New session |
 | Title | 13 pt semibold, `fg` / `Tokens.text`, one line, truncated at the tail |
-| Menu affordance | The whole title is the button; a 9 pt semibold chevron down, `muted`, 5 after the text |
+| Menu affordance | The whole title is the button; a 9 pt semibold chevron down (8.5 × 4.9 on the web), `muted`, 5 after the text |
 | Hit area | The text and chevron, 17 tall, no fill; hover and pressed turn the chevron `fg` |
 | Tooltip | Rename, archive or delete this session |
 | Accessibility | **Session menu**, its value the title |
