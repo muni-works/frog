@@ -7787,6 +7787,11 @@
               "description": "The IRC agent bus is on (config `[irc] enabled`, a frog cloud Bus DO): the model\ngets the `Irc` tool, and the client relays the bus. Off by default until the DO\ndeploys.",
               "type": "boolean"
             },
+            "notes": {
+              "default": false,
+              "description": "The client draws the `noted` receipt under a reply, with Undo\n(docs/customize-events.md, Noted), so Frog may note things on its own. Without it\nthe `Note` tool isn't offered and nothing is written: no note nobody can see.",
+              "type": "boolean"
+            },
             "op": {
               "const": "set_client_caps",
               "type": "string"

@@ -38,7 +38,15 @@ pub fn stems(text: &str) -> Vec<String> {
         .split(|c: char| !(c.is_alphanumeric() || c == '\''))
         .map(|w| w.trim_matches('\''))
         .filter(|w| w.chars().count() >= 3 && !STOP.contains(w))
-        .map(|w| w.chars().take(5).collect())
+        .map(|w| {
+            // Plurals and third persons meet their singular: "tests" and "test", "icons", "uses".
+            let w = if w.chars().count() > 3 && w.ends_with('s') && !w.ends_with("ss") {
+                &w[..w.len() - 1]
+            } else {
+                w
+            };
+            w.chars().take(5).collect()
+        })
         .collect()
 }
 
@@ -268,6 +276,7 @@ pub fn choose(
     budget: usize,
 ) -> Vec<Chosen> {
     let q = vector(&format!("{words} {}", files.join(" ")));
+    let asked: std::collections::BTreeSet<String> = stems(words).into_iter().collect();
     if q.iter().all(|x| *x == 0.0) && files.is_empty() {
         return Vec::new();
     }
@@ -275,7 +284,14 @@ pub fn choose(
         .iter()
         .filter_map(|n| {
             let e = index.get(n.scope, &n.id)?;
+            // Cosine, plus how much of what was asked the note covers: a short question
+            // naming one thing ("publish the docs") still finds a longer note about it.
             let mut s = cosine(&q, &e.v);
+            if !asked.is_empty() {
+                let have: std::collections::BTreeSet<String> = stems(&n.body).into_iter().collect();
+                let covered = asked.iter().filter(|w| have.contains(*w)).count();
+                s += 0.3 * covered as f32 / asked.len() as f32;
+            }
             if n.cites.iter().any(|c| {
                 let c = c.split('#').next().unwrap_or(c);
                 files
@@ -344,5 +360,143 @@ mod tests {
         );
         let far = cosine(&staging, &vector("write a test for the import job"));
         assert!(near > FLOOR && far < FLOOR, "near {near} far {far}");
+    }
+}
+
+/// The miss rate, honestly: twenty notes, each with a question a user might ask that should
+/// bring it back, written the way people talk rather than to share words. Printed for the PR;
+/// `cargo test -p frog-engine memvec::miss_rate -- --nocapture`.
+#[cfg(test)]
+#[test]
+fn miss_rate() {
+    let cases = [
+        (
+            "The staging database is wiped every Monday.",
+            "seed some data into staging",
+        ),
+        (
+            "The staging database is wiped every Monday.",
+            "why did my seed rows vanish over the weekend",
+        ),
+        (
+            "Tests live in spec/, one file per module.",
+            "where should the new test go?",
+        ),
+        (
+            "Tests live in spec/, one file per module.",
+            "add coverage for the importer",
+        ),
+        (
+            "Release notes lead with fixes people asked for.",
+            "write the 0.7.1 release notes",
+        ),
+        (
+            "Release notes lead with fixes people asked for.",
+            "draft the changelog for this version",
+        ),
+        (
+            "The sidecar listens on port 8912.",
+            "the apple sidecar won't start, port taken?",
+        ),
+        ("The sidecar listens on port 8912.", "what's using 8912?"),
+        (
+            "Icons are drawn at 16 points with a 1.5 point stroke.",
+            "make a new icon for the toolbar",
+        ),
+        (
+            "Icons are drawn at 16 points with a 1.5 point stroke.",
+            "the glyph looks too heavy",
+        ),
+        (
+            "The docs site deploys from the site folder by hand.",
+            "publish the docs",
+        ),
+        (
+            "The docs site deploys from the site folder by hand.",
+            "ship the documentation update",
+        ),
+        (
+            "Benchmarks run on the M4 Max with the lid open.",
+            "run the benchmarks again",
+        ),
+        (
+            "Benchmarks run on the M4 Max with the lid open.",
+            "why are the tok/s numbers lower today?",
+        ),
+        (
+            "The billing page shows dollars per token.",
+            "change the billing page copy",
+        ),
+        (
+            "The billing page shows dollars per token.",
+            "how should we show what a request costs?",
+        ),
+        (
+            "Screenshots for the README live in video/stills.",
+            "update the README screenshots",
+        ),
+        (
+            "Screenshots for the README live in video/stills.",
+            "where do the hero images go?",
+        ),
+        (
+            "The CI runner caches cargo builds between jobs.",
+            "CI builds are slow",
+        ),
+        (
+            "The CI runner caches cargo builds between jobs.",
+            "the pipeline takes forever",
+        ),
+    ];
+    let mut notes: Vec<Note> = Vec::new();
+    for (i, (body, _)) in cases.iter().enumerate() {
+        if !notes.iter().any(|n| n.body == *body) {
+            notes.push(note_for_eval(&format!("n{i}"), body));
+        }
+    }
+    // Thirty more on other subjects, so it's a store past the whole-store budget.
+    for i in 0..30 {
+        notes.push(note_for_eval(
+            &format!("f{i}"),
+            &format!("Filler fact {i} about the onboarding flow and email templates"),
+        ));
+    }
+    let dir = std::env::temp_dir().join(format!("frog-missrate-{}", crate::session::new_id()));
+    std::fs::create_dir_all(dir.join("repo/.git")).unwrap();
+    let store = crate::memory::Store::new(&dir.join("memory"), Some(&dir.join("repo")));
+    let index = Index::sync(&store, &notes).unwrap();
+    let mut misses = Vec::new();
+    for (body, q) in cases {
+        let got = choose(&notes, &index, q, &[], 5, 400);
+        let want = notes.iter().find(|n| n.body == body).unwrap();
+        if !got.iter().any(|c| c.id == want.id) {
+            misses.push(q);
+        }
+    }
+    eprintln!(
+        "miss rate: {} of {} ({}%); missed: {misses:?}",
+        misses.len(),
+        cases.len(),
+        misses.len() * 100 / cases.len()
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[cfg(test)]
+fn note_for_eval(id: &str, body: &str) -> Note {
+    Note {
+        id: id.into(),
+        created: String::new(),
+        scope: Scope::Project,
+        source: "user".into(),
+        cites: Vec::new(),
+        body: body.into(),
+        path: PathBuf::from(format!("/nowhere/{id}.md")),
+        missing: Vec::new(),
+        session: None,
+        session_title: None,
+        kind: None,
+        turn: None,
+        from: None,
     }
 }

@@ -64,6 +64,10 @@ struct Rig {
 }
 
 fn rig_at(base: &Path, script: Vec<Response>) -> Rig {
+    rig_caps(base, script, true)
+}
+
+fn rig_caps(base: &Path, script: Vec<Response>, notes: bool) -> Rig {
     let (project, store) = (base.join("project"), base.join("store"));
     for d in [&project, &store] {
         std::fs::create_dir_all(d).unwrap();
@@ -99,6 +103,7 @@ fn rig_at(base: &Path, script: Vec<Response>) -> Rig {
             sessions: false,
             irc: false,
             customize: true,
+            notes,
         })
         .unwrap();
     Rig {
@@ -512,6 +517,29 @@ async fn noting_off_writes_nothing() {
     r.end().await;
 }
 
+/// A client that can't show the receipt (no `notes` capability: the CLI, today's apps) gets no
+/// `Note` tool, and a call writes nothing: Frog never keeps a note nobody can see or undo.
+#[tokio::test]
+async fn no_receipt_no_noting() {
+    let base = std::env::temp_dir().join(format!("frog-noting-{}", session::new_id()));
+    let mut r = rig_caps(
+        &base,
+        vec![answer_and_note("Ok.", staging_note()), done()],
+        false,
+    );
+    r.idle().await;
+    let evs = r.say(STAGING).await;
+    assert!(receipts(&evs).is_empty());
+    assert!(!r.sent.lock().unwrap()[0].contains("<tool Note>"));
+    let out = &note_outputs(&evs)[0];
+    assert!(
+        out.contains("no `Note` tool") || out.contains("off"),
+        "{out}"
+    );
+    assert!(r.notes().is_empty());
+    r.end().await;
+}
+
 /// "Make it a rule": the Customize card, then the line in AGENTS.md and the note gone; undo
 /// puts both back exactly.
 #[tokio::test]
@@ -611,8 +639,10 @@ fn used(evs: &[Event]) -> Vec<(Vec<String>, u64)> {
 /// Prints the weight before and after (the PR's numbers).
 #[tokio::test]
 async fn brings_back_only_what_fits() {
-    let mut r = rig(vec![done(), done(), done()]);
-    let store = fifty(&r);
+    let base = std::env::temp_dir().join(format!("frog-noting-{}", session::new_id()));
+    std::fs::create_dir_all(base.join("project/.git")).unwrap();
+    let store = fifty_at(&base, &base.join("project").canonicalize().unwrap());
+    let mut r = rig_at(&base, vec![done(), done(), done(), done()]);
     let notes = store.load();
     let (whole, _) = crate::memory::index(&notes, crate::harness::Tier::Medium, 128_000);
     let (whole_strong, _) = crate::memory::index(&notes, crate::harness::Tier::Strong, 200_000);
@@ -628,8 +658,13 @@ async fn brings_back_only_what_fits() {
     );
     assert!(u[0].0.len() <= 5);
     let sent = r.sent.lock().unwrap()[0].clone();
+    // Past the whole-store budget: standing guidance rides in the prompt, facts don't.
     assert!(
-        !sent.contains("# Notes about this user and project"),
+        sent.contains("Swift files use four spaces, never tabs"),
+        "standing note"
+    );
+    assert!(
+        !sent.contains("the sidecar listens on port 8912"),
         "no whole index"
     );
     assert!(sent.contains("<memory>"));
@@ -637,6 +672,20 @@ async fn brings_back_only_what_fits() {
     assert!(
         !sent.contains("billing page shows dollars"),
         "unrelated notes stay out"
+    );
+    let standing: Vec<_> = notes
+        .iter()
+        .filter(|n| crate::memory::standing(n))
+        .cloned()
+        .collect();
+    let (kept, _, _) = crate::memory::index_within(
+        &standing,
+        crate::memory::whole_budget(crate::harness::Tier::Medium),
+    );
+    eprintln!(
+        "50 notes: standing guidance kept in the prompt: {} notes, {} tokens a call",
+        standing.len(),
+        kept.len() / 4
     );
     eprintln!(
         "50 notes: whole index {} tokens a call (Medium) / {} (Strong); this turn {} tokens, once",
@@ -669,6 +718,11 @@ async fn brings_back_only_what_fits() {
     // Nothing related: no notes, no event.
     let evs = r.say("hello").await;
     assert!(used(&evs).is_empty());
+
+    // The honest miss: this should recall the staging note, but shares no words with it
+    // (word and trigram similarity, not meaning), so nothing comes back.
+    let evs = r.say("why did my seed rows vanish over the weekend").await;
+    assert!(used(&evs).is_empty(), "{:?}", used(&evs));
     r.end().await;
 }
 
@@ -728,4 +782,48 @@ async fn falls_back_to_the_whole_index() {
     let sent = r.sent.lock().unwrap()[0].clone();
     assert!(sent.contains("# Notes about this user and project"));
     r.end().await;
+}
+
+/// "Never force-push without asking" must apply to "clean up this branch", which shares no
+/// words with it: a small store rides whole, and in a big one standing guidance still rides.
+#[tokio::test]
+async fn standing_guidance_applies_with_no_shared_words() {
+    for big in [false, true] {
+        let base = std::env::temp_dir().join(format!("frog-noting-{}", session::new_id()));
+        std::fs::create_dir_all(base.join("project/.git")).unwrap();
+        let project = base.join("project").canonicalize().unwrap();
+        let store = if big {
+            fifty_at(&base, &project)
+        } else {
+            let s = crate::memory::Store::new(&base.join("memory"), Some(&project));
+            for t in [
+                "Tests live in spec/, one file per module.",
+                "The staging database is wiped every Monday.",
+                "Release notes lead with fixes people asked for.",
+            ] {
+                s.add(crate::memory::Scope::Project, t).unwrap();
+            }
+            s
+        };
+        store
+            .add(
+                crate::memory::Scope::Project,
+                "Never force-push without asking.",
+            )
+            .unwrap();
+        let mut r = rig_at(&base, vec![done()]);
+        r.idle().await;
+        let evs = r.say("clean up this branch").await;
+        let sent = r.sent.lock().unwrap()[0].clone();
+        assert!(
+            sent.contains("Never force-push without asking."),
+            "big: {big}"
+        );
+        if !big {
+            // Small store: every note rides, nothing is chosen per turn.
+            assert!(sent.contains("Tests live in spec/"));
+            assert!(used(&evs).is_empty());
+        }
+        r.end().await;
+    }
 }

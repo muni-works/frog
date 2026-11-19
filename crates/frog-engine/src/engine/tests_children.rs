@@ -50,6 +50,7 @@ fn shows_questions(h: &Handle) {
             ask: true,
             sessions: false,
             customize: false,
+            notes: false,
         })
         .unwrap();
 }

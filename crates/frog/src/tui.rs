@@ -663,6 +663,7 @@ pub async fn run(h: Handle, cfg: Config, queued: Option<String>) -> Result<()> {
         sessions: false,
         irc: false,
         customize: false,
+        notes: false,
     });
     if !tui.drain_startup(false).await {
         return Ok(());

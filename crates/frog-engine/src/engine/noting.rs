@@ -24,6 +24,7 @@ impl Agent {
             || self.cfg.parent_session.is_some()
             || self.memory.is_none()
             || self.harness.tier == Tier::Weak
+            || !self.shared.client_notes.load(Ordering::Relaxed)
         {
             return false;
         }
@@ -274,14 +275,7 @@ impl Agent {
         if self.subagent {
             return String::new();
         }
-        // Read fresh: another session may have noted or forgotten something since. Safe here
-        // because in this mode the prompt doesn't carry the notes.
-        if self.note_index.is_some()
-            && let Some(store) = &self.memory
-        {
-            self.notes = store.load();
-        }
-        if self.notes.is_empty() {
+        if !self.notes_per_turn || self.notes.is_empty() {
             return String::new();
         }
         self.sync_note_index();
@@ -300,12 +294,18 @@ impl Agent {
                 .filter_map(|p| p.strip_prefix(&self.root).ok())
                 .map(|p| p.display().to_string()),
         );
-        let chosen = crate::memvec::choose(&self.notes, index, words, &files, PER_TURN_MAX, budget);
+        // The prompt already carries standing guidance; choose among the rest.
+        let rest: Vec<Note> = self
+            .notes
+            .iter()
+            .filter(|n| !self.notes_in_prompt.contains(&note_key(n.scope, &n.id)))
+            .cloned()
+            .collect();
+        let chosen = crate::memvec::choose(&rest, index, words, &files, PER_TURN_MAX, budget);
         if chosen.is_empty() {
             return String::new();
         }
-        let key =
-            |s: Scope, id: &str| format!("{}:{id}", if s == Scope::Global { "g" } else { "p" });
+        let key = note_key;
         let picked: Vec<&Note> = chosen
             .iter()
             .filter_map(|c| {
@@ -349,5 +349,45 @@ impl Agent {
             tokens: self.est.tokens(block.len()) as u64,
         });
         block
+    }
+}
+
+fn note_key(s: Scope, id: &str) -> String {
+    format!("{}:{id}", if s == Scope::Global { "g" } else { "p" })
+}
+
+impl Agent {
+    /// The notes' part of the system prompt. A store that fits [`crate::memory::whole_budget`]
+    /// rides whole, so every note applies whatever the message's words. Past it (with vectors
+    /// to choose by), only standing guidance rides, within that budget, and the rest come back
+    /// per turn. Without vectors, the whole index within the model's budget, as before.
+    pub(super) fn place_notes(&mut self) {
+        self.notes_in_prompt.clear();
+        let small = crate::memory::whole_budget(self.harness.tier);
+        let (_, _, over) = crate::memory::index_within(&self.notes, small);
+        self.notes_per_turn = self.note_index.is_some() && over > 0;
+        let (index, each, omitted) = if self.notes_per_turn {
+            let standing: Vec<Note> = self
+                .notes
+                .iter()
+                .filter(|n| crate::memory::standing(n))
+                .cloned()
+                .collect();
+            crate::memory::index_within(&standing, small)
+        } else {
+            crate::memory::index_parts(&self.notes, self.harness.tier, self.window)
+        };
+        for (id, scope, line) in &each {
+            if line.is_some() {
+                self.notes_in_prompt.insert(note_key(*scope, id));
+            }
+        }
+        self.system.push_str(&index);
+        if self.notes_per_turn {
+            self.system.push_str(crate::memory::PER_TURN);
+            self.notes_omitted = 0;
+        } else {
+            self.notes_omitted = omitted;
+        }
     }
 }

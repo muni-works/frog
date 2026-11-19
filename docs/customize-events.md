@@ -186,6 +186,12 @@ a quiet line under that turn's reply (canvas frame M2 Noted): *Noted for pond*, 
 Code: `crates/frog-engine/src/noting.rs` (the tool and every check) and
 `src/engine/noting.rs` (the setting, the receipt, undo, the rule).
 
+**Turning it on.** Noting on its own runs only for a client that draws the receipt:
+`{"op":"set_client_caps", ..., "notes": true}`. Without it (the CLI and TUI, and any app that
+hasn't built the line yet) the `Note` tool isn't offered and a call writes nothing, so Frog never
+keeps a note nobody can see or undo. Send it once the line with Undo and "Make it a rule" is
+drawn. The user's `auto-note` setting is the second switch.
+
 ```json
 {
   "type": "noted",
@@ -222,7 +228,7 @@ Durable: it replays with the transcript, and its Undo still works after a restar
   file, shared). The engine shows the usual card (`permission_request` with `proposal`,
   title "Make this a rule?", primary "Add rule"); approving adds the line, removes the note,
   and emits `customize_applied`, whose Undo puts both back. Frog never writes a rule on its own.
-- Turning it off: the app setting `auto-note` (`design/settings.json`, tier `ask`, default
+- Turning it off (with `notes: true` sent): the app setting `auto-note` (`design/settings.json`, tier `ask`, default
   on), sent with `Op::Settings`. Off, the tool isn't offered and a call writes nothing. Without
   an app, `[memory] auto_note = false` in config.toml. Never on in subagents, sessions another
   session started, or small (Weak-tier) models, which can't do it reliably.
@@ -252,13 +258,23 @@ extra model round, only the call's own output, about 40 tokens.
 
 ## Used notes: only what fits comes back
 
-Notes no longer ride every call as one index in the system prompt. Each turn, Frog picks the
-few notes that bear on the user's message and the files in play (named or `@`-pointed, and
-files read this session), at most five and within a small budget (about 120 / 250 / 400
-tokens for small / mid / large models), and appends them to that turn's user message in a
-`<memory>` block framed exactly as before: background data, not instructions. A note already
-brought into this conversation isn't sent again (until compaction rewrites the history). The
-system prompt keeps one fixed line saying notes come with messages, so it stays cached.
+A small store rides whole, as before: while the notes fit a modest budget (about 250 / 450 / 600
+tokens for small / mid / large models, so a typical 5 to 15 notes), every note is in the system
+prompt and applies on every turn whatever the message's words. Nothing is chosen per turn then,
+and no `used_notes` is sent.
+
+Past that budget:
+
+- **Standing guidance stays in the prompt**, within the same budget: corrections, and notes
+  that say always, never, don't, must, avoid, prefer, instead, "without asking"… ("Never
+  force-push without asking" must apply to "clean up this branch", which shares no words with
+  it).
+- **The rest come back per turn**: at most five that bear on the user's message and the files
+  in play (named, `@`-pointed, or read this session), within about 120 / 250 / 400 tokens,
+  appended to that turn's user message in a `<memory>` block framed exactly as the index is
+  (background data, not instructions). A note already brought into this conversation isn't
+  sent again (until compaction rewrites the history). The system prompt adds one fixed line
+  saying so.
 
 ```json
 { "type": "used_notes", "turn": 13, "tokens": 94,
@@ -268,21 +284,36 @@ system prompt keeps one fixed line saying notes come with messages, so it stays 
                "text": "The staging database is wiped every Monday." } ] }
 ```
 
-Durable, once per turn, only when a note was used. Draw "Used 2 notes" under that turn's reply,
+Durable, once per turn, only when a note came back. Draw "Used 2 notes" under that turn's reply,
 with the lines (canvas frame M2). `tokens` is what the block added (0 when every note was
 already in the conversation).
 
-How it picks (`crates/frog-engine/src/memvec.rs`): a lexical vector per note, computed in the
-engine with no model and no download (five-letter word stems plus their character trigrams,
-hashed into 256 dimensions), so it works the same on a Mac and in a Frog Cloud sandbox. Notes
-scoring under 0.2 cosine against the message never come back; citing a file in play lifts a
-note. Vectors live beside the notes (`.vectors.json` in each notes folder, with each note's
+**How it picks: word and trigram similarity, not meaning.** Each note gets a lexical vector,
+computed in the engine with no model and no download (word stems, plurals folded, plus their
+character trigrams, hashed into 256 dimensions; `crates/frog-engine/src/memvec.rs`), so it
+works the same on a Mac and in a Frog Cloud sandbox. A note scores by cosine against the
+message plus how much of the message's words it covers; under 0.2 it doesn't come back; citing
+a file in play lifts it. Notes are close when they share words or word pieces, not when they
+mean the same thing, so don't describe the selection or the map as understanding meaning.
+Vectors carry a `model` tag (`lexical-1`) so a neural embedder can replace them later.
+
+Vectors live beside the notes (`.vectors.json` in each notes folder, with each note's
 `last_used`), and a forgotten note is pruned from them at once. If the vectors can't be kept,
-the engine falls back to the whole index in the system prompt, as before. Subagents still get
+the engine falls back to the whole index within the model's budget, as before. Subagents get
 the whole index.
 
-Weight on a store of 50 notes: the whole index was about 996 tokens on every call (mid-size
-model; 1,464 on a large one); a turn about one subject now adds about 94 tokens, once.
+Measured on a store of 50 notes (mid-size model):
+
+- Before: the whole index, about 996 tokens on every call (1,464 on a large model).
+- After: the 5 standing notes stay in the prompt, about 231 tokens a call, and a turn about one
+  subject adds about 94 tokens, once.
+- The miss rate, honestly: 20 questions written the way people ask, each of which should bring
+  back one of 20 notes in a 50-note store (`memvec::miss_rate`). **8 of 20 miss (40%)**, and
+  every miss shares no words with its note: "why did my seed rows vanish over the weekend" doesn't
+  recall "The staging database is wiped every Monday", nor "ship the documentation update" the
+  docs note, nor "the pipeline takes forever" the CI note. A miss brings nothing back: the note
+  just isn't there that turn (no wrong note in its place, and standing guidance isn't subject
+  to this). The fix for those is meaning, a neural embedder in the `model` slot.
 
 ## Not here yet
 

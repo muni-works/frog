@@ -600,11 +600,44 @@ pub fn index_parts(
     tier: Tier,
     window: u64,
 ) -> (String, Vec<(String, Scope, Option<String>)>, usize) {
+    index_within(notes, budget(tier, window))
+}
+
+/// Tokens of notes that always ride in the prompt, whole: a typical store of 5 to 15 notes
+/// fits, so every note applies on every turn, whatever its words. Past it, only standing
+/// guidance stays in the prompt and the rest come back per turn when they fit the message.
+pub fn whole_budget(tier: Tier) -> usize {
+    match tier {
+        Tier::Weak => 250,
+        Tier::Medium => 450,
+        Tier::Strong => 600,
+    }
+}
+
+/// Guidance rather than a fact: a correction, or a note that says always, never, don't,
+/// prefer, instead… Such a note must apply even when the message shares no words with it
+/// ("never force-push without asking" for "clean up this branch"), so it stays in the prompt.
+pub fn standing(n: &Note) -> bool {
+    static WORDS: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(
+            r"(?i)\b(always|never|don'?t|do not|must|avoid|prefers?|instead|from now on|without asking|ask (me )?(first|before)|make sure|no longer)\b",
+        )
+        .unwrap()
+    });
+    n.kind.as_deref() == Some("correction") || WORDS.is_match(&n.body)
+}
+
+/// The index within `budget` tokens, each note's line by id (`None` when it didn't fit), and
+/// how many didn't fit.
+pub fn index_within(
+    notes: &[Note],
+    budget: usize,
+) -> (String, Vec<(String, Scope, Option<String>)>, usize) {
     if notes.is_empty() {
         return (String::new(), Vec::new(), 0);
     }
     let mut each = Vec::new();
-    let room = budget(tier, window) * 4;
+    let room = budget * 4;
     let mut ordered: Vec<&Note> = notes.iter().collect();
     ordered.sort_by_key(|n| n.scope != Scope::Project);
     let mut used = FRAME.len() + "<memory>\n</memory>\n".len() + 100;

@@ -52,16 +52,7 @@ impl Agent {
             self.system.push_str(&crate::skills::catalog(&self.skills));
         }
         self.sync_note_index();
-        if self.note_index.is_some() {
-            // Each turn brings back the notes that fit, with the user's message.
-            self.system.push_str(crate::memory::PER_TURN);
-            self.notes_omitted = 0;
-        } else {
-            let (index, omitted) =
-                crate::memory::index(&self.notes, self.harness.tier, self.window);
-            self.system.push_str(&index);
-            self.notes_omitted = omitted;
-        }
+        self.place_notes();
         if self.has_recall() {
             self.system
                 .push_str("\nRecall searches your notes and past sessions in this project.\n");
