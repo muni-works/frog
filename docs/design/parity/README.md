@@ -166,3 +166,7 @@ the fixture; part of `npm test`) and `FrogTests/TranscriptEdgesTests` (the fixtu
 pane, transcript and composer; `TEST_RUNNER_FROG_EDGES_OUT=<dir>` writes its dumps). Regenerate
 `edges.jsonl` after changing the fixture (`node edges-fixture.mjs > edges.jsonl`): the Mac test
 reads the file. The before and after dumps are in `../transcript/edges/`.
+
+Known: twice, the first `mac-edges.sh` run after a rebuild read the table's box at 12 (the table sits
+above the replay window's fold, so it couldn't be checked in pixels); reruns and the hosted-pane
+test read 0. If it fails on that row alone, run it again with a longer `PARITY_MAC_WAIT`.
