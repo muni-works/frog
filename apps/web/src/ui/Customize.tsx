@@ -217,7 +217,7 @@ export function WeightCard({ skills, used, budget }: { skills: Skill[]; used: nu
         {bars.map((b) => <i key={b.name} className={b.idle ? 'idle' : undefined} style={{ width: `${b.share * 100}%` }} title={b.name} />)}
         <i className="room" />
       </div>
-      <p className="det">Each bar is one skill's summary.{bars.some((b) => b.idle) ? " The outlined one hasn't been used in 30 days." : ''}</p>
+      <p className="det wrap">Each bar is one skill's summary.{bars.some((b) => b.idle) ? " The outlined one hasn't been used in 30 days." : ''}</p>
     </div>
   )
 }
@@ -346,7 +346,7 @@ function MemoryList(p: CustomizeProps) {
   if (!notes.length) return (<>
     <div className="set-h">In Frog Cloud</div>
     <div className="set-group">
-      <div className="set-row"><div style={{ flex: 1, minWidth: 0 }}><b>No notes kept</b><div className="det wrap">Each cloud session starts on a fresh machine, so nothing it noted is carried to the next one. Notes kept in a repo's rules file are read every time.</div></div></div>
+      <div className="set-row"><div style={{ flex: 1, minWidth: 0 }}><b>No notes kept</b><div className="det wrap">Each cloud session starts on a fresh machine, so nothing it noted is carried to the next one. Anything worth keeping can go in the repo's rules file, which every session reads.</div></div></div>
     </div>
   </>)
   return (
