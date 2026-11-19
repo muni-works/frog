@@ -125,6 +125,22 @@ final class OneLookTests: XCTestCase {
         XCTAssertEqual(StepLine.duration(125), "2m 5s")
     }
 
+    /// The parity fixture's waiting row read "11011m 29s · waited 11011m 29s" (2026-11-18): a week
+    /// in minutes. Past an hour it's hours and minutes, past a day days and hours, as the sidebar
+    /// writes ages; the live clock, the wait and a turn's time share the one formatter (the web's
+    /// `clock` in usage.ts says the same).
+    func testALongWaitReadsInDaysAndHours() {
+        let hour: TimeInterval = 3600, day: TimeInterval = 86400
+        XCTAssertEqual(LiveStats.clock(42), "42s")
+        XCTAssertEqual(LiveStats.clock(125), "2m 5s")
+        XCTAssertEqual(LiveStats.clock(58 * 60 + 59), "58m 59s")
+        XCTAssertEqual(LiveStats.clock(hour), "1h 0m")
+        XCTAssertEqual(LiveStats.clock(15 * hour + 58 * 60 + 40), "15h 58m")
+        XCTAssertEqual(LiveStats.clock(7 * day + 15 * hour + 29), "7d 15h")
+        XCTAssertEqual(StepLine.duration(7 * day + 15 * hour), "7d 15h", "a turn's time too")
+        XCTAssertEqual(StepLine.duration(2 * hour + 5 * 60), "2h 5m")
+    }
+
     /// Four or more finished steps fold into "N steps" and the time; a failed step never folds
     /// and splits the run; a running step breaks it.
     func testFolds() {

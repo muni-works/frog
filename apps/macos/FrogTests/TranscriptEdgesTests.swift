@@ -70,9 +70,11 @@ final class TranscriptEdgesTests: XCTestCase {
     }
 
     private func measure(width: CGFloat, height: CGFloat = 3400) throws -> Dump {
+        // A folder that isn't there: no engine starts, so the fed events are what the pane shows
+        // (its "Couldn't start frog" row sits under the live row and isn't measured).
         let ws = Workspace(folder: URL(fileURLWithPath: "/tmp/frog-edges-tests"), fresh: true)
         let c = try XCTUnwrap(ws.conversation)
-        let host = NSHostingView(rootView: Pane(workspace: ws, conversation: c).frame(width: width, height: height))
+        let host = NSHostingView(rootView: Pane(workspace: ws, conversation: c).frame(width: width, height: height).background(Tokens.canvas))
         host.frame = CGRect(x: 0, y: 0, width: width, height: height)
         // Borderless, so the window keeps its size off any screen's bounds.
         let w = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
@@ -86,8 +88,14 @@ final class TranscriptEdgesTests: XCTestCase {
         host.layoutSubtreeIfNeeded()
         pump(0.5)
         let data = TranscriptMetrics.shared.edgesJSON(width: width, height: height, look: "dark")
+        // `TEST_RUNNER_FROG_EDGES_OUT=<dir>`: the dump and a picture of the pane, for the PR and
+        // for checking the hooks against the pixels (docs/design/transcript/edges/).
         if let out = ProcessInfo.processInfo.environment["FROG_EDGES_OUT"] {
             try? data.write(to: URL(fileURLWithPath: "\(out)/edges-mac-\(Int(width)).json"))
+            if let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+                host.cacheDisplay(in: host.bounds, to: rep)
+                try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "\(out)/edges-mac-\(Int(width)).png"))
+            }
         }
         return try JSONDecoder().decode(Dump.self, from: data)
     }
@@ -122,6 +130,15 @@ final class TranscriptEdgesTests: XCTestCase {
     /// A narrower pane (a split): the column is still 720 with its gutter, centred.
     func testAndInANarrowerPane() throws {
         let d = try measure(width: 800)
+        let p = Self.problems(d)
+        XCTAssertEqual(p, [], "\(p.count) off:\n" + p.joined(separator: "\n"))
+    }
+
+    /// Under 480 (`TranscriptEdge.insetBelow`): the narrow gutter, marks come inside and all text
+    /// indents by the hang together; boxes and the composer keep the column's edges.
+    func testAndInAPaneUnder480() throws {
+        let d = try measure(width: 440)
+        XCTAssertEqual(d.indent, Tokens.Transcript.Layout.hang, accuracy: 0.01, "text indents by the hang")
         let p = Self.problems(d)
         XCTAssertEqual(p, [], "\(p.count) off:\n" + p.joined(separator: "\n"))
     }

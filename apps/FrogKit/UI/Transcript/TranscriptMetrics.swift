@@ -84,7 +84,7 @@ final class TranscriptMetrics {
     /// The stats' figures tick, so the dump writes every duration `#s` and every other run of
     /// digits `#` (docs/design/parity/README.md; metrics.mjs's own two replacements).
     static func ticking(_ s: String) -> String {
-        let durations = s.replacingOccurrences(of: #"(\d+m )?\d+s\b"#, with: "#s", options: .regularExpression)
+        let durations = s.replacingOccurrences(of: #"(\d+[dhm] )?\d+[dhms]\b"#, with: "#s", options: .regularExpression)
         return durations.replacingOccurrences(of: #"\d[\d,.]*"#, with: "#", options: .regularExpression)
     }
 

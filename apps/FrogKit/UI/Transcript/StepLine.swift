@@ -139,8 +139,17 @@ struct StepLine: Equatable {
     /// "0.8s", "9.0s", "12s", "2m 5s": a step's time, in the web's words (rows.ts `duration`).
     static func duration(_ secs: TimeInterval) -> String {
         if secs < 10 { return String(format: "%.1fs", secs) }
-        if secs < 60 { return "\(Int(secs.rounded()))s" }
-        return "\(Int(secs / 60))m \(Int(secs.truncatingRemainder(dividingBy: 60).rounded()))s"
+        return clock(secs)
+    }
+
+    /// A duration as the app writes times, two units at most: "42s", "12m 5s", "15h 58m", then
+    /// days and hours past the first day ("7d 15h"), never a week in minutes. The web's `clock`.
+    static func clock(_ secs: TimeInterval) -> String {
+        let s = max(0, Int(secs.rounded()))
+        if s < 60 { return "\(s)s" }
+        if s < 3600 { return "\(s / 60)m \(s % 60)s" }
+        if s < 86400 { return "\(s / 3600)h \(s % 3600 / 60)m" }
+        return "\(s / 86400)d \(s % 86400 / 3600)h"
     }
 
     /// The result the engine's own display gives, without the verb it repeats: "Read 54 lines"
@@ -523,7 +532,7 @@ struct OpenedStep: View {
                 .frame(maxHeight: 320)
                 .fixedSize(horizontal: false, vertical: true)
                 .background(Tokens.well, in: .rect(cornerRadius: TurnSpace.Card.nestedRadius))
-                .metricsEdge("opened: output box", claims: ["box", "right"], kind: "line:\(line.kind.metricsName)")
+                .metricsEdge("opened: output box", claims: ["text", "right"], kind: "line:\(line.kind.metricsName)")
             }
             HStack(spacing: TurnSpace.Inset.row) {
                 Text(conversation.cloudSession != nil ? "Ran in your Frog Cloud sandbox" : "Ran on this Mac")

@@ -51,6 +51,9 @@ export function pacePath(pace: Pace | null | undefined, total: number, width: nu
   if (!pace?.tokens.length || total <= 0) return ''
   const max = Math.max(...pace.tokens, 1)
   const pts = pace.tokens.map((v, i) => [Math.min(width, (((i + 0.5) * pace.bucket_ms) / total) * width), height - (v / max) * (height - 1)])
+  // The last bucket held to its end, so the curve runs as far as the time it covers.
+  const end = Math.min(width, ((pace.tokens.length * pace.bucket_ms) / total) * width)
+  if (end > pts[pts.length - 1][0]) pts.push([end, pts[pts.length - 1][1]])
   return pts.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`).join('')
 }
 
@@ -95,7 +98,9 @@ export function showStep(item: string | undefined) {
 export function TurnLine({ segs, total, pace, entries, onOpen }: { segs: Segment[]; total: number; pace?: Pace | null; entries: Entry[]; onOpen: () => void }) {
   const [at, setAt] = useState<number | null>(null)
   const box = useRef<SVGSVGElement>(null)
-  const span = Math.max(total, 1)
+  // The axis ends where the last segment does (live, that's now): a finished turn's bookkeeping
+  // after its last step isn't drawn, so the strip reaches the right edge (spec, the right line).
+  const span = Math.max(segs.length ? Math.max(...segs.map((s) => s.end_ms)) : total, 1)
   const x = (ms: number) => (ms / span) * W
   const path = pacePath(pace, span, W, H - STRIP - 1)
   const pick = (ev: ReactMouseEvent) => {

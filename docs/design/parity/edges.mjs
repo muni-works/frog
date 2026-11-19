@@ -60,7 +60,8 @@ export function measureEdges() {
   const out = [];
   const push = (kind, part, text, left, right, claims) => out.push({ kind, part, text: clean(text).slice(0, 60), left: left - edge, right: right - edge, claims });
   const box = (kind, part, el, claims, text = "") => { if (!el) return; const b = el.getBoundingClientRect(); if (b.width) push(kind, part, text || el.textContent, b.left, b.right, claims); };
-  const word = (kind, part, el, claims) => { if (!el) return; const k = ink(el); if (k) push(kind, part, k.text, k.left, k.right, claims); };
+  // Clamped to the element's box: a truncated result's hidden overflow isn't drawn.
+  const word = (kind, part, el, claims) => { if (!el) return; const k = ink(el); if (k) push(kind, part, k.text, k.left, Math.min(k.right, el.getBoundingClientRect().right), claims); };
   // The drawn marks of the turn line (its strip and curve), not its box: what the eye lines up.
   const graph = (kind, el) => {
     const svg = el?.querySelector(".turn-graph svg");
@@ -83,7 +84,8 @@ export function measureEdges() {
       const open = el.querySelector(":scope > .line-open");
       if (open) {
         word(kind, "opened: failing tests", open.querySelector(".line-failing"), ["text"]);
-        box(kind, "opened: output box", open.querySelector(".line-out, .line-box, .line-said"), ["box", "right"]);
+        // Under its line's words: on the text line (at 26 in a narrow pane, as on the Mac).
+        box(kind, "opened: output box", open.querySelector(".line-out, .line-box, .line-said"), ["text", "right"]);
         word(kind, "opened: caption", open.querySelector(".line-foot > span"), ["text"]);
       }
       continue;

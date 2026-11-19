@@ -9,7 +9,7 @@
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { createServer as listen } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -55,3 +55,12 @@ test("every element of the edge fixture sits on the column's two lines (1280 wid
 
 test("and with the inspector open (the column centred in a narrower pane)", { skip, timeout: 90_000 }, () =>
   edges(1600, 2600, { "frog.inspector": "1" }));
+
+// The phone: a 16 gutter, under the hang, so marks come inside and all text indents by 26
+// together; boxes and the composer keep the column's edges (the composer sat 8 pt outside them).
+test("and on a phone, where marks come inside and text indents by the hang", { skip, timeout: 90_000 }, () => edges(375, 2600));
+
+test("edges.jsonl is edges-fixture.mjs's output (the Mac's edge test reads the file)", () => {
+  const fresh = execFileSync("node", [join(parity, "edges-fixture.mjs")]).toString().trim();
+  assert.equal(readFileSync(join(parity, "edges.jsonl"), "utf8").trim(), fresh, "run: node docs/design/parity/edges-fixture.mjs > docs/design/parity/edges.jsonl");
+});

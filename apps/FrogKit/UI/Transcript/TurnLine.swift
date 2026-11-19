@@ -42,7 +42,9 @@ struct TurnLineShape: Equatable {
 
     static func of(segments: [TurnTimeline.Segment], lengthMs: UInt64, pace: TurnUsage.Pace?,
                    width: CGFloat = width, height: CGFloat = height, curve showCurve: Bool = true) -> TurnLineShape {
-        let total = max(1, lengthMs)
+        // The axis ends where the last segment does (live, that's now): a finished turn's
+        // bookkeeping after its last step isn't drawn, so the strip reaches the right edge.
+        let total = max(1, segments.map(\.endMs).max() ?? lengthMs)
         let k = width / CGFloat(total)
         // Thinking and writing are what the curve is about; draw tools and waits under them, so
         // a short write shows over a long tool.
@@ -60,13 +62,16 @@ struct TurnLineShape: Equatable {
                 guard x <= width else { break }
                 points.append(CGPoint(x: x, y: height - strip - 1 - CGFloat(r / top) * room))
             }
+            // The last bucket held to its end, so the curve runs as far as the time it covers.
+            let end = min(width, CGFloat(pace.tokens.count) * CGFloat(pace.bucketMs) * k)
+            if let last = points.last, end > last.x { points.append(CGPoint(x: end, y: last.y)) }
         }
         return TurnLineShape(pieces: pieces, curve: points, lengthMs: total)
     }
 
     /// From the left of the first mark it draws to the right of the last (strip or curve).
     var drawnSpan: ClosedRange<CGFloat>? {
-        let xs = pieces.flatMap { [$0.x, $0.x + max(1, $0.width - 0.5)] } + curve.map(\.x)
+        let xs = pieces.flatMap { [$0.x, $0.x + max(1, $0.x + $0.width >= Self.width - 0.5 ? $0.width : $0.width - 0.5)] } + curve.map(\.x)
         guard let lo = xs.min(), let hi = xs.max(), hi > lo else { return nil }
         return lo...hi
     }
@@ -123,7 +128,9 @@ struct TurnLine: View {
             let hovered = pointer != nil
             Canvas { g, size in
                 for p in shape.pieces.sorted(by: { $0.width > $1.width }) {
-                    let r = CGRect(x: p.x, y: size.height - TurnLineShape.strip, width: max(1, p.width - 0.5), height: TurnLineShape.strip)
+                    // A hairline gap between pieces, none after the last: it ends on the edge.
+                    let reachesEnd = p.x + p.width >= size.width - 0.5
+                    let r = CGRect(x: p.x, y: size.height - TurnLineShape.strip, width: max(1, reachesEnd ? p.width : p.width - 0.5), height: TurnLineShape.strip)
                     let tone: Color = hovered ? p.kind.color : (p.kind == .tool ? Tokens.textQuaternary : Tokens.textTertiary)
                     g.fill(Path(roundedRect: r, cornerRadius: 1), with: .color(tone))
                     if let pointer, let under = shape.piece(at: pointer), under == p {
@@ -176,7 +183,7 @@ struct TurnLine: View {
             .background(alignment: .leading) {
                 // What it draws, not its box: the strip's and the curve's extent (edges dump).
                 if TranscriptMetrics.enabled, let span = shape.drawnSpan {
-                    Color.clear.frame(width: span.upperBound - span.lowerBound).offset(x: span.lowerBound)
+                    Color.clear.frame(width: span.upperBound - span.lowerBound).padding(.leading, span.lowerBound)
                         .metricsEdge("turn line (drawn)", claims: ["right"], kind: live ? "stats" : "footer")
                 }
             }

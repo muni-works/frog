@@ -4,6 +4,7 @@
 import verbs from '../../../../docs/design/transcript/verbs.json'
 import type { Entry, Thread } from '../engine/thread'
 import { thinking } from '../engine/timeline'
+import { clock } from '../usage'
 import type { FileDiff } from '../cloud/protocol'
 
 export type ObjectFormat = 'command' | 'path' | 'pattern' | 'host' | 'text' | 'tool' | 'none'
@@ -195,8 +196,7 @@ const LIVE = verbs.live as { thinking: string; waiting: string; thought: string;
 
 /** "4s", "31s", "2m 5s": whole seconds, for the row and its stats. */
 export function secs(ms: number): string {
-  const s = Math.max(0, Math.round(ms / 1000))
-  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`
+  return clock(ms / 1000)
 }
 const fill = (t: string, v: Record<string, string | number>) => t.replace(/\{(\w+)\}/g, (_, k) => String(v[k] ?? ''))
 

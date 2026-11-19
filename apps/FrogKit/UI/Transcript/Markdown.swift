@@ -241,7 +241,9 @@ struct MarkdownView: View {
 
         var body: some View {
             #if os(macOS)
+            // Reaching into the gutter by the text view's room, its text on the column's edge.
             MessageText(blocks: blocks, streaming: streaming, metricsOrigin: origin)
+                .padding(.leading, -MessageTextView.gutterRoom)
                 .background {
                     if TranscriptMetrics.enabled {
                         Color.clear.onGeometryChange(for: CGPoint.self, of: { $0.frame(in: .named(TranscriptView.content)).origin }) {
