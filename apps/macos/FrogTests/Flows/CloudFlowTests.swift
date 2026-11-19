@@ -48,8 +48,9 @@ final class CloudFlowTests: FlowTestCase {
 
     func test_sign_in_from_footer() throws {
         try openCloud(signedIn: false)
-        XCTAssertTrue(w.shows("Sign in to Frog Cloud"))
-        let menu = try XCTUnwrap(w.menu(.text("Sign in to Frog Cloud")))
+        // The foot since #468: a green Sign in with what it adds.
+        XCTAssertTrue(w.shows("25¢ free, $1 with GitHub"))
+        let menu = try XCTUnwrap(w.menu(.id("footer.signin")))
         XCTAssertEqual(menu.titles, ["Continue with GitHub", "Continue with Google"])
         menu.choose("Continue with GitHub")
         expect("the footer shows the account") { self.w.shows("Flow") && self.w.shows("$5.00 credit") }
@@ -63,11 +64,11 @@ final class CloudFlowTests: FlowTestCase {
     func test_cancel_sign_in() throws {
         try openCloud(signedIn: false)
         cloud.browserCompletes = false
-        let menu = try XCTUnwrap(w.menu(.text("Sign in to Frog Cloud")))
+        let menu = try XCTUnwrap(w.menu(.id("footer.signin")))
         menu.choose("Continue with GitHub")
         expect("it waits on the browser") { self.w.shows("Signing in…") }
         w.press(.text("Signing in…"))
-        expect("back to signing in") { self.w.shows("Sign in to Frog Cloud") }
+        expect("back to signing in") { self.w.find(.id("footer.signin")) != nil }
         XCTAssertNil(cloud.savedKey)
     }
 
@@ -103,7 +104,7 @@ final class CloudFlowTests: FlowTestCase {
     /// the app never asks the gateway for them.
     func testWhereMenuOffersReposAfterSigningInFromTheFooter() throws {
         try openCloud(signedIn: false)
-        let menu = try XCTUnwrap(w.menu(.text("Sign in to Frog Cloud")))
+        let menu = try XCTUnwrap(w.menu(.id("footer.signin")))
         menu.choose("Continue with GitHub")
         expect("signed in") { self.w.shows("$5.00 credit") }
         w.press(.id("composer.where"))
