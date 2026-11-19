@@ -48,8 +48,10 @@ export function DownloadAppChip({ label, machines = [], phone, className = 'f-pi
 /** Where an invitation row's control would be (docs/design/app-shell.md, Invitations): one
  *  bordered pill, "Get the Mac app" (the chip's /download); "Open in Frog for Mac" on that
  *  section when the account already has a Mac; off a Mac, no pill and the words "On a Mac". */
-export function InvitePill({ section, machines = [], invite }: {
+export function InvitePill({ section, machines = [], invite, open }: {
   section: string
+  /** The Mac's own link for this page, where it isn't `frog://settings/<section>`. */
+  open?: string
   machines?: readonly { thisMac?: boolean }[]
   /** Override the platform gate (tests). Default: this browser and the account's machines. */
   invite?: Invite
@@ -58,6 +60,6 @@ export function InvitePill({ section, machines = [], invite }: {
   const which = invite ?? inviteFor({ mac: isMacVisitor(), thisMac: hasThisMac(machines) })
   if (which === 'elsewhere') return <span className="det invite-elsewhere" title="Frog for Mac does this; open this page on a Mac to get it">On a Mac</span>
   return which === 'open'
-    ? <a className="f-pill invite-pill" href={`frog://settings/${section}`} style={{ textDecoration: 'none' }} title="Opens this section in Frog for Mac">Open in Frog for Mac</a>
+    ? <a className="f-pill invite-pill" href={open ?? `frog://settings/${section}`} style={{ textDecoration: 'none' }} title="Opens this section in Frog for Mac">Open in Frog for Mac</a>
     : <a className="f-pill invite-pill" href="/download" title="Download Frog for Mac (free)" style={{ textDecoration: 'none' }}>Get the Mac app</a>
 }

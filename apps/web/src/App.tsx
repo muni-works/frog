@@ -22,7 +22,9 @@ import { firstTitle, stuck, provisional, undelivered, withOpening, type Opening 
 import { useMachines } from './machines'
 import { creditLine, Palette, type Command } from './ui/Overlays'
 import { SettingsPage, SettingsSidebar } from './ui/Settings'
-import { pinModel, pinnedModel, rememberPick, SECTIONS, sectionOfQuery, setTheme, settingsPath, settingsSectionOf, startingModel, toggledTheme, type Section } from './settings'
+import { pinModel, pinnedModel, rememberPick, sectionOfQuery, setTheme, settingsMovedTo, settingsPath, settingsSectionOf, startingModel, toggledTheme, WEB_SECTIONS, type Section } from './settings'
+import { CustomizePage, CustomizeSidebar } from './ui/Customize'
+import { CUSTOMIZE_SECTIONS, customizeAtOf, customizePath, customizePathIsCanonical, FIRST_CUSTOMIZE, shownAt, type CustomizeAt } from './customize'
 import { Transcript } from './ui/Transcript'
 import { safeHref } from './ui/href'
 import { askLine } from './ui/ask'
@@ -64,21 +66,25 @@ function pathOfView(view: View): string | null {
  *  the history entry so a refresh still knows it. */
 function backOf(state: unknown): string {
   const back = (state as { back?: unknown } | null)?.back
-  return typeof back === 'string' && docsSlugOf(back) === null && settingsSectionOf(back) === null ? back : '/'
+  return typeof back === 'string' && !modePath(back) ? back : '/'
 }
 
 /** A path that's one of the shell's other modes rather than a view. */
-const modePath = (path: string) => docsSlugOf(path) !== null || settingsSectionOf(path) !== null
+function modePath(path: string) { return docsSlugOf(path) !== null || settingsSectionOf(path) !== null || customizeAtOf(path) !== null }
 
 /** The mode and settings section a first load opens on. Settings needs a key: signed out, a
  *  /settings URL or a ?settings= link opens the app. */
-function firstMode(signedIn: boolean): { mode: ShellMode; section: Section } {
+function firstMode(signedIn: boolean): { mode: ShellMode; section: Section; customize: CustomizeAt } {
   const path = location.pathname
   const at = settingsSectionOf(path)
   const asked = sectionOfQuery(location.search)
-  if (docsSlugOf(path) !== null) return { mode: 'docs', section: asked ?? 'account' }
-  if ((at !== null || asked) && signedIn) return { mode: 'settings', section: at || asked || 'account' }
-  return { mode: 'threads', section: 'account' }
+  // Customize, like Settings, needs a key. Settings' old Connections links open it there.
+  const moved = settingsMovedTo(path, location.search)
+  const cz = moved ? { section: moved } : customizeAtOf(path)
+  if (docsSlugOf(path) !== null) return { mode: 'docs', section: asked ?? 'account', customize: FIRST_CUSTOMIZE }
+  if (cz && signedIn) return { mode: 'customize', section: 'account', customize: cz }
+  if ((at !== null || asked) && signedIn) return { mode: 'settings', section: at || asked || 'account', customize: FIRST_CUSTOMIZE }
+  return { mode: 'threads', section: 'account', customize: FIRST_CUSTOMIZE }
 }
 
 const FIRST_DOC = DOCS[0]?.slug ?? ''
@@ -105,10 +111,13 @@ export default function App() {
   // The last page and section, for the life of the window.
   const [docPage, setDocPage] = useState(() => docsSlugOf(location.pathname) || FIRST_DOC)
   const [section, setSection] = useState<Section>(first.section)
+  const [cz, setCz] = useState<CustomizeAt>(first.customize)
+  // A detail page with nothing to show opens its list (or Add), and the URL says so.
+  const czAt = shownAt(cz)
   useEffect(() => {
     // A session still being created (a placeholder id) waits for its real id.
     const viewPath = pathOfView(view)
-    const path = mode === 'docs' ? docsPath(docPage) : mode === 'settings' ? settingsPath(section) : viewPath
+    const path = mode === 'docs' ? docsPath(docPage) : mode === 'settings' ? settingsPath(section) : mode === 'customize' ? customizePath(czAt) : viewPath
     // api.frog.toys/account and /billing (and Stripe) land on ?settings=account|billing: the
     // section is open now, so the query goes, and anything else in it stays.
     const q = new URLSearchParams(location.search)
@@ -119,18 +128,26 @@ export default function App() {
     // Bare /docs and /settings name a page: replace them, so Back doesn't land on them again.
     // Settings without a key (signed out from it, or a /settings link signed out) is the app:
     // replaced too, so Back doesn't land on it and bounce.
-    const stale = mode !== 'settings' && settingsSectionOf(location.pathname) !== null && !keyNow.current
-    if (asked || stale || docsSlugOf(location.pathname) === '' || settingsSectionOf(location.pathname) === '') history.replaceState(state, '', path + (q.size ? `?${q}` : ''))
+    const stale = (mode !== 'settings' && settingsSectionOf(location.pathname) !== null && !keyNow.current)
+      || (mode !== 'customize' && customizeAtOf(location.pathname) !== null && !keyNow.current)
+    // Bare /customize, an old name and Settings' moved Connections are replaced the same way.
+    const czUrl = customizeAtOf(location.pathname)
+    const renamed = (czUrl !== null && !customizePathIsCanonical(location.pathname)) || (mode === 'customize' && settingsMovedTo(location.pathname) !== null)
+      || (mode === 'customize' && !!czUrl?.page && customizePath(czUrl) !== path)
+    if (asked || stale || renamed || docsSlugOf(location.pathname) === '' || settingsSectionOf(location.pathname) === '') history.replaceState(state, '', path + (q.size ? `?${q}` : ''))
     else history.pushState(state, '', path)
-  }, [view, mode, docPage, section])
+  }, [view, mode, docPage, section, czAt.section, czAt.page, customizePath(czAt)])
   useEffect(() => {
     const back = () => {
       const slug = docsSlugOf(location.pathname)
       if (slug !== null) { setMode('docs'); setDocPage(slug || FIRST_DOC); return }
+      const moved = settingsMovedTo(location.pathname)
+      const c = moved ? { section: moved } : customizeAtOf(location.pathname)
+      if (c && keyNow.current) { setMode('customize'); setCz(c); return }
       const at = settingsSectionOf(location.pathname)
       if (at !== null && keyNow.current) { setMode('settings'); if (at) setSection(at); return }
       setMode('threads')
-      setView(viewOf(at !== null ? backOf(history.state) : location.pathname))
+      setView(viewOf(at !== null || c ? backOf(history.state) : location.pathname))
     }
     addEventListener('popstate', back)
     return () => removeEventListener('popstate', back)
@@ -138,7 +155,7 @@ export default function App() {
   // The transcript's scroll position, kept while another mode hides it.
   const threadScroll = useRef<HTMLDivElement | null>(null)
   const savedScroll = useRef<number | null>(null)
-  const enter = (m: 'docs' | 'settings') => {
+  const enter = (m: 'docs' | 'settings' | 'customize') => {
     if (mode === 'threads') savedScroll.current = threadScroll.current?.scrollTop ?? null
     setMode(m)
   }
@@ -153,6 +170,12 @@ export default function App() {
     if (opts?.coupon) setCouponAsk((n) => n + 1)
     else setCouponAsk(0)
     enter('settings')
+  }
+  /** Customize mode, on a page or the last one. Only with a key, like Settings. */
+  const openCustomize = (at?: CustomizeAt) => {
+    if (!keyNow.current) return
+    if (at) setCz(at)
+    enter('customize')
   }
   const backToApp = () => { setCouponAsk(0); setMode('threads') }
   /** Somewhere in Threads mode (a session, a new one): leaves the other modes on the way. */
@@ -571,7 +594,9 @@ export default function App() {
     { id: 'c-new', label: 'New session', hint: '⌘N', run: () => key && go({ kind: 'new' }) },
     { id: 'c-repo', label: 'Connect a repo', run: () => key && go({ kind: 'new', pick: true }) },
     { id: 'c-settings', label: 'Settings', hint: '⌘,', run: () => openSettings() },
-    ...SECTIONS.map((x) => ({ id: `s-${x.id}`, label: x.label, hint: 'Settings', run: () => openSettings(x.id) })),
+    ...WEB_SECTIONS.map((x) => ({ id: `s-${x.id}`, label: x.label, hint: 'Settings', run: () => openSettings(x.id) })),
+    { id: 'c-customize', label: 'Customize', run: () => openCustomize() },
+    ...CUSTOMIZE_SECTIONS.map((x) => ({ id: `z-${x.id}`, label: x.label, hint: 'Customize', run: () => openCustomize({ section: x.id }) })),
     { id: 'c-docs', label: 'Documentation', run: () => openDocs() },
     ...DOCS.map((p) => ({ id: `d-${p.slug}`, label: p.title, hint: 'Documentation', run: () => openDocs(p.slug) })),
     ...(current ? [
@@ -646,7 +671,7 @@ export default function App() {
           onSignIn={(provider, prompt) => leave(prompt ?? (signedOutDraft.current.trim() || null), provider)} />
       ) : <>
         <SideNav onNew={() => setView({ kind: 'new' })} newOn={view.kind === 'new'} onSearch={() => setPalette(true)}
-          onCustomize={() => openSettings('appearance')} onDocs={() => openDocs()} onSettings={() => openSettings()} />
+          onCustomize={() => openCustomize()} onDocs={() => openDocs()} onSettings={() => openSettings()} />
         {sessions.length === 0 && !listError
           ? <Starters items={repoStarters(repoList.repos.map((r) => r.name))}
               onStart={(st) => st.pick ? setView({ kind: 'new', pick: true }) : st.github ? openSettings('connections') : start(st.prompt, st.repo)} />
@@ -672,8 +697,11 @@ export default function App() {
           <LegalRow />
         </div>
       </>, docs: <DocsSidebar pages={DOCS} current={docPage} version={VERSION} onBack={backToApp} onOpen={openDocs} />,
-      settings: key && <SettingsSidebar current={section} onBack={backToApp} onOpen={(x) => openSettings(x)} /> }}
+      settings: key && <SettingsSidebar current={section} onBack={backToApp} onOpen={(x) => openSettings(x)} />,
+      customize: key && <CustomizeSidebar current={czAt.section} onBack={backToApp} onOpen={(x) => openCustomize({ section: x })} /> }}
       main={{ docs: <DocsPage pages={DOCS} slug={docPage} onOpen={openDocs} bar={<><Burger />{collapsed && sideToggle(false)}</>} />,
+      customize: key && <CustomizePage at={czAt} repos={repoList} machines={machines} docSlugs={DOCS.map((d) => d.slug)}
+        onOpen={(at) => openCustomize(at)} onDocs={openDocs} bar={<><Burger />{collapsed && sideToggle(false)}</>} />,
       settings: key && <SettingsPage section={section} account={account} apiKey={!DEV_KEY ? key : undefined} models={models} machines={machines} focusCoupon={couponAsk}
         newMode={newMode} onNewMode={setNewMode} pinnedModel={pinned} onPinModel={setPinned}
         bar={<><Burger />{collapsed && sideToggle(false)}</>} onOpen={(x) => openSettings(x)}

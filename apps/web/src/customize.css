@@ -1,0 +1,46 @@
+/* Customize mode (ui/Customize.tsx). The page is Settings' (.settings-page: a 720 column, group
+   labels, hairlines only between rows); these are its own pieces, from the canvas frames
+   F1–F6, F9, mapped onto tokens.css so light and dark both hold. Cards are flat: no stroke. */
+
+.customize-main .titlebar { gap: 8px; }
+.cust-hdr-rt { margin-left: auto; display: flex; align-items: center; gap: 14px; flex: none; font-size: 12.5px; color: var(--muted); }
+.cust-pill { all: unset; box-sizing: border-box; border: 1px solid var(--line-strong); border-radius: 999px; padding: 3px 13px; font: 12.5px/18px var(--font-sans); color: var(--fg); cursor: pointer; white-space: nowrap; flex: none; text-decoration: none; }
+.cust-pill:hover { background: var(--hover); }
+.cust-pill:focus-visible { outline: 2px solid var(--frog); outline-offset: 2px; }
+
+.customize-page code { font-family: var(--font-mono); font-size: 0.92em; }
+.customize-page .mono { font-family: var(--font-mono); }
+
+/* The explainer: a flat card on the page. */
+.cust-card { background: var(--card); border-radius: 14px; padding: 14px 18px; }
+.cust-explain { display: flex; gap: 20px; align-items: center; margin-bottom: 12px; }
+.cust-explain p { margin: 0; flex: 1; min-width: 0; color: var(--muted); font-size: 13px; line-height: 19px; }
+.cust-explain p b { color: var(--fg); font-weight: 600; }
+.cust-explain a { color: var(--fg); font-size: 12.5px; line-height: 18px; text-decoration: none; border-bottom: 1px solid var(--line-strong); white-space: nowrap; flex: none; }
+.cust-explain a:hover { border-bottom-color: var(--fg); }
+
+/* Automations: the last seven days, one cell a day. */
+.cust-week { display: flex; flex-direction: column; }
+.cust-week-row { display: grid; grid-template-columns: minmax(0, 1fr) auto 34px; column-gap: 12px; align-items: center; }
+.cust-week-h .cust-au { visibility: hidden; height: 0; }
+.cust-week-h { padding-bottom: 8px; }
+.cust-au { padding: 14px 0; min-width: 0; }
+.cust-au .det { display: block; font-size: 12.5px; }
+.cust-wk { display: grid; grid-template-columns: repeat(7, 34px); column-gap: 6px; }
+.cust-dh { color: var(--faint); font-size: 11.5px; line-height: 16px; text-align: center; }
+.cust-dh.now { color: var(--fg); }
+.cust-empty { margin-top: 18px; padding: 18px; background: var(--card); border-radius: 14px; }
+.cust-empty b { font-weight: 600; }
+.cust-empty p { margin: 4px 0 0; font-size: 12.5px; }
+
+@media (max-width: 760px) {
+  .customize-page { box-sizing: border-box; padding-inline: 16px; }
+  .customize-main .crumbs { flex: 1; }
+  .cust-explain { flex-direction: column; align-items: flex-start; gap: 10px; }
+  /* The week keeps its seven cells; the name takes its own line above them. */
+  .cust-week-row { grid-template-columns: minmax(0, 1fr) 34px; }
+  .cust-week-row .cust-au { grid-column: 1 / -1; padding-bottom: 6px; }
+  .cust-week-row .cust-wk { grid-template-columns: repeat(7, minmax(0, 1fr)); column-gap: 4px; padding-bottom: 12px; }
+  .cust-week-h .cust-au { display: none; }
+  .cust-week-h .cust-wk { grid-column: 1; }
+}
