@@ -44,6 +44,10 @@ targets:
       - path: ../../design/settings.json
         buildPhase: resources
         group: Catalog
+      # Customize's five sections and their explainers (design/customize.json): the web reads it too.
+      - path: ../../design/customize.json
+        buildPhase: resources
+        group: Catalog
       # Shared with the iOS app and its extensions (see FrogKit/README.md).
       - path: ../FrogKit
         excludes: ["README.md"]

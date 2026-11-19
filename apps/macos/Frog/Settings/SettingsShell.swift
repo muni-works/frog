@@ -81,37 +81,75 @@ struct SettingsCrumbs: View {
     var machine: String? = nil
     var backToSection: () -> Void = {}
     var catalog = SettingsCatalog.bundled
-    @State private var hovering = false
 
     private var label: String { catalog.sections.first { $0.id == section }?.label ?? "Settings" }
 
     var body: some View {
+        if let machine {
+            ShellCrumbs(root: "Settings", trail: [.init(label, back: backToSection), .init(machine)])
+        } else {
+            ShellCrumbs(root: "Settings", trail: [.init(label)])
+        }
+    }
+}
+
+/// A mode's breadcrumbs in the title bar (Settings, Customize): the mode, then the way down to
+/// the page. Every step but the last is a link back to it.
+struct ShellCrumbs: View {
+    struct Step {
+        let label: String
+        var mono = false
+        var back: (() -> Void)? = nil
+        init(_ label: String, mono: Bool = false, back: (() -> Void)? = nil) {
+            self.label = label
+            self.mono = mono
+            self.back = back
+        }
+    }
+
+    let root: String
+    let trail: [Step]
+
+    var body: some View {
         HStack(spacing: 6) {
-            Text("Settings").foregroundStyle(Tokens.textSecondary)
-            chevron
-            if let machine {
-                Button(action: backToSection) {
-                    Text(label).underline(hovering).foregroundStyle(Tokens.textSecondary)
-                }
-                .buttonStyle(.plain)
-                .onHover { hovering = $0 }
-                .help("Back to \(label)")
+            Text(root).foregroundStyle(Tokens.textSecondary)
+            ForEach(Array(trail.enumerated()), id: \.offset) { i, step in
                 chevron
-                Text(machine).foregroundStyle(Tokens.text)
-            } else {
-                Text(label).foregroundStyle(Tokens.text)
+                if i < trail.count - 1, let back = step.back {
+                    CrumbLink(step: step, back: back)
+                } else {
+                    text(step).foregroundStyle(Tokens.text)
+                }
             }
         }
         .font(.frog(size: 13, weight: .semibold))
         .lineLimit(1)
         .fixedSize()
-        // A container, so the link back stays its own button for VoiceOver.
+        // A container, so the links back stay their own buttons for VoiceOver.
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Breadcrumb")
     }
 
+    private func text(_ step: Step) -> Text {
+        step.mono ? Text(step.label).font(.frog(size: 12.5, design: .monospaced)) : Text(step.label)
+    }
+
     private var chevron: some View {
         Image(systemName: "chevron.right").font(.frog(size: 9, weight: .semibold)).foregroundStyle(Tokens.textTertiary)
+    }
+
+    private struct CrumbLink: View {
+        let step: Step
+        let back: () -> Void
+        @State private var hovering = false
+        var body: some View {
+            Button(action: back) {
+                Text(step.label).underline(hovering).foregroundStyle(Tokens.textSecondary)
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering = $0 }
+            .help("Back to \(step.label)")
+        }
     }
 }
 

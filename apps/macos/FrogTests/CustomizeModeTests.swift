@@ -1,0 +1,541 @@
+import AppKit
+import SwiftUI
+import XCTest
+@testable import Frog
+
+/// Customize as a mode of the shell (docs/design/app-shell.md › Customize): five sections from
+/// design/customize.json, Connections moved in from Settings, rules files edited a line at a
+/// time without touching the rest, servers added without running them, and no figure the
+/// engine hasn't given. Also renders each page, dark and light (`$FROG_SNAPSHOT_DIR` or
+/// `$TMPDIR/frog-snapshots`, `mac-customize-<page>-<look>.png`).
+@MainActor
+final class CustomizeModeTests: XCTestCase {
+    private let catalog = CustomizeCatalog.bundled
+
+    private func pump(_ seconds: TimeInterval) {
+        RunLoop.main.run(until: Date().addingTimeInterval(seconds))
+    }
+
+    private var outDir: URL {
+        if let dir = ProcessInfo.processInfo.environment["FROG_SNAPSHOT_DIR"], !dir.isEmpty {
+            return URL(fileURLWithPath: dir)
+        }
+        return FileManager.default.temporaryDirectory.appending(path: "frog-snapshots")
+    }
+
+    private func tempDir() throws -> URL {
+        let d = FileManager.default.temporaryDirectory.appending(path: "frog-customize-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: d) }
+        return d
+    }
+
+    // MARK: The list and the mode
+
+    func testFiveSectionsEachWithAnExplainerAndADocsLink() throws {
+        let url = try XCTUnwrap(Bundle.main.url(forResource: "customize", withExtension: "json"))
+        let all = try JSONDecoder().decode(CustomizeCatalog.self, from: Data(contentsOf: url))
+        XCTAssertEqual(all.sections.map(\.label), ["Skills", "Connections", "Rules", "Memory", "Automations"])
+        // This build draws Connections; the other pages come next, and stay out of sight till then.
+        XCTAssertEqual(catalog.sections.map(\.id), ["connections"])
+        for s in all.sections {
+            XCTAssertEqual(s.explainer.href, "https://frog.toys/docs/\(s.id)")
+            XCTAssertTrue(s.explainer.link.hasPrefix("How "), s.id)
+            XCTAssertFalse(s.explainer.bold.isEmpty)
+            XCTAssertFalse(s.explainer.rest.isEmpty)
+        }
+        XCTAssertFalse(all.sections.map(\.label).contains("Instructions"), "the name Instructions is retired")
+    }
+
+    /// No link to a docs page that isn't there: the section's own page once it exists, else the
+    /// page that covers it today, else none.
+    func testDocsLinksGoToPagesThatExist() throws {
+        let e = CustomizeCatalog.Explainer(bold: "", rest: "", link: "How connections work", href: "https://frog.toys/docs/connections", fallback: "skills-and-mcp")
+        XCTAssertEqual(e.url(has: { $0 == "connections" })?.absoluteString, "https://frog.toys/docs/connections")
+        XCTAssertEqual(e.url(has: { $0 == "skills-and-mcp" })?.absoluteString, "https://frog.toys/docs/skills-and-mcp")
+        XCTAssertNil(e.url(has: { _ in false }))
+        let docs = try XCTUnwrap(AppDocs.bundled)
+        let url = try XCTUnwrap(Bundle.main.url(forResource: "customize", withExtension: "json"))
+        let all = try JSONDecoder().decode(CustomizeCatalog.self, from: Data(contentsOf: url))
+        for s in all.sections where s.id != "automations" {
+            XCTAssertNotNil(s.explainer.url(has: { docs.page($0)?.slug == $0 }), "\(s.id) links a page the docs have")
+        }
+    }
+
+    func testConnectionsLeftSettings() {
+        let settings = SettingsCatalog.bundled
+        XCTAssertNil(settings.sections.first { $0.id == "connections" })
+        XCTAssertFalse(settings.rows.contains { $0.section == "connections" })
+        XCTAssertFalse(settings.rows.contains { $0.id.hasPrefix("mcp-") })
+    }
+
+    func testModeRemembersItsPage() {
+        let panes = Panes(Workspace(folder: URL(fileURLWithPath: "/tmp/demo"), fresh: true))
+        defer { panes.stopAll() }
+        CustomizeStore.loads = false
+        defer { CustomizeStore.loads = true }
+        panes.showCustomize()
+        XCTAssertEqual(panes.mode, .customize)
+        XCTAssertEqual(panes.customizeSection, "connections")
+        panes.customizePage = .add("connections")
+        panes.backToApp()
+        XCTAssertEqual(panes.mode, .threads)
+        panes.showCustomize()
+        XCTAssertEqual(panes.customizePage, .add("connections"), "the window keeps its page")
+        panes.showCustomize("skills")
+        XCTAssertEqual(panes.customizeSection, "connections", "a section this build doesn't draw changes nothing")
+    }
+
+    /// Everything that used to open Settings › Connections opens Customize › Connections.
+    func testOldConnectionsLinksOpenCustomize() throws {
+        let panes = Panes(Workspace(folder: URL(fileURLWithPath: "/tmp/demo"), fresh: true))
+        defer { panes.stopAll() }
+        CustomizeStore.loads = false
+        defer { CustomizeStore.loads = true }
+        for name in ["mcp", "connections"] {
+            panes.backToApp()
+            panes.showSettings(name)
+            XCTAssertEqual(panes.mode, .customize, name)
+            XCTAssertEqual(panes.customizeSection, "connections", name)
+        }
+        panes.showSettings("billing")
+        XCTAssertEqual(panes.mode, .settings, "Settings' own sections stay in Settings")
+        let link = try XCTUnwrap(URL(string: "frog://settings/mcp"))
+        XCTAssertEqual(SettingsCatalog.bundled.section(for: link), "connections")
+        // The web's "Open in Frog for Mac" pill.
+        XCTAssertEqual(CustomizeCatalog.bundled.section(for: try XCTUnwrap(URL(string: "frog://customize/connections"))), "connections")
+        XCTAssertEqual(CustomizeCatalog.bundled.section(for: try XCTUnwrap(URL(string: "frog-dev://customize/mcp"))), "connections")
+        XCTAssertNotNil(CustomizeCatalog.bundled.section(for: try XCTUnwrap(URL(string: "frog://customize"))), "no section: the first")
+        XCTAssertNil(CustomizeCatalog.bundled.section(for: try XCTUnwrap(URL(string: "frog://settings/general"))))
+    }
+
+    func testBreadcrumbs() {
+        XCTAssertEqual(CustomizeCrumbs.title(section: "connections", page: nil), "Customize › Connections")
+        XCTAssertEqual(CustomizeCrumbs.title(section: "connections", page: .add("connections")), "Customize › Connections › Add")
+        let d = ServerDraft(name: "postgres", command: "npx", args: ["-y", "pg"])
+        XCTAssertEqual(CustomizeCrumbs.title(section: "connections", page: .review(d)), "Customize › Connections › Add › postgres")
+        var went: CustomizePage?? = .none
+        let trail = CustomizeCrumbs.trail(section: "connections", page: .review(d)) { went = .some($0) }
+        XCTAssertNotNil(trail[0].back)
+        trail[1].back?()
+        XCTAssertEqual(went, .some(.add("connections")), "Add goes back to the search")
+        XCTAssertNil(trail.last?.back, "the page you're on isn't a link")
+    }
+
+    // MARK: Never a made-up number
+
+    func testFiguresStayHiddenUntilTheEngineGivesThem() throws {
+        let json = #"[{"name":"commit","description":"Write a commit message.","path":"/x/SKILL.md","project":false}]"#
+        let skills = try JSONDecoder().decode([CustomizeSkill].self, from: Data(json.utf8))
+        XCTAssertNil(skills[0].tokensPerTurn)
+        XCTAssertNil(skills[0].uses)
+        XCTAssertNil(CustomizeFormat.totalTokens(skills.map(\.tokensPerTurn)))
+        XCTAssertNil(CustomizeFormat.totalTokens([140, nil]), "a sum with a hole in it isn't shown")
+        XCTAssertEqual(CustomizeFormat.totalTokens([140, 680]), "820 tokens a turn")
+        XCTAssertNil(CustomizeFormat.totalTokens([]))
+    }
+
+    func testBuiltInSkillsHaveNoFile() throws {
+        let json = #"[{"name":"gh","description":"GitHub CLI.","path":"frog-builtin:gh","project":false}]"#
+        let s = try JSONDecoder().decode([CustomizeSkill].self, from: Data(json.utf8))[0]
+        XCTAssertTrue(s.builtIn)
+        XCTAssertNil(s.file)
+    }
+
+    // MARK: VoiceOver
+
+    func testVoiceOverLabelsForTheBarSquaresAndMarks() {
+        let squares: [ToolSquares.Square] = (0..<10).map { .init(tool: "t\($0)", state: .on) }
+            + [.init(tool: "x", state: .withheld), .init(tool: "y", state: .withheld)]
+        XCTAssertEqual(ToolSquares.label(squares), "12 tools, 2 withheld")
+        XCTAssertEqual(ToolSquares.label([.init(tool: "a", state: .on), .init(tool: "b", state: .off)]), "2 tools, 1 on")
+        XCTAssertEqual(ToolSquares.label([.init(tool: "a", state: .off)]), "1 tool, none on")
+        XCTAssertEqual(ToolSquares.label([]), "No tools")
+
+        var days = Array(repeating: 0, count: 30)
+        XCTAssertEqual(ActivityMarks.label(days), "Never used")
+        days[3] = 2; days[20] = 1
+        XCTAssertEqual(ActivityMarks.label(days), "Used 3 times in the last 30 days")
+
+        let bar = WeightBar.label([.init(name: "commit", tokens: 140, idle: false), .init(name: "pdf", tokens: 210, idle: true)], budget: 1_500)
+        XCTAssertTrue(bar.hasPrefix("What each skill adds to a turn: 350 tokens of a 1,500 token budget."), bar)
+        XCTAssertTrue(bar.contains("commit 140 tokens"))
+    }
+
+    // MARK: Connections
+
+    func testConnectionLines() {
+        let figma = MCPStatus(name: "figma", connected: true, error: nil, tools: ["mcp__figma__get_file", "mcp__figma__comment"],
+                              quarantined: [.init(tool: "mcp__figma__run", reason: "reads like instructions")], needsAuth: nil, declined: nil)
+        let squares = ConnectionsPage.squares(figma)
+        XCTAssertEqual(squares.map(\.tool), ["get_file", "comment", "run"])
+        XCTAssertEqual(squares.map(\.state), [.on, .on, .withheld])
+        let say = ConnectionsPage.say(CustomizeConnection(figma, fromProject: false), project: "pond")
+        XCTAssertEqual(say.lead, "2 tools.")
+        XCTAssertEqual(say.rest, "1 is withheld: its description reads like instructions to the model.")
+
+        let linear = MCPStatus(name: "linear", connected: false, error: "Signed out", tools: [], quarantined: [], needsAuth: true, declined: true)
+        XCTAssertEqual(ConnectionsPage.say(CustomizeConnection(linear, fromProject: false), project: nil).rest,
+                       "Wants you to sign in. Frog can't see its tools until you do. You declined before.")
+        let db = MCPStatus(name: "pond-db", connected: false, error: "spawn failed", tools: [], quarantined: [], needsAuth: nil, declined: nil)
+        XCTAssertEqual(ConnectionsPage.say(CustomizeConnection(db, fromProject: true), project: "pond").rest, "spawn failed Came with pond's .mcp.json.")
+        XCTAssertEqual(CustomizeConnection(linear, fromProject: false).state, .declined)
+        XCTAssertNil(CustomizeConnection(figma, fromProject: false).on, "today's engine can't switch a connection")
+    }
+
+    // MARK: The engine's report (docs/customize-api.md)
+
+    static let reportJSON = #"""
+        {"project":"/tmp/pond","estimate":{"chars_per_token":3.5,"calibrated":false},"tokens":3300,
+         "skills":{"tokens":180,"budget_tokens":1715,"names_only":false,"items":[
+           {"id":"/tmp/pond/.frog/skills/release-notes/SKILL.md","name":"release-notes","description":"Write release notes in pond's house style from merged pull requests.","scope":"project","source":"frog","path":"/tmp/pond/.frog/skills/release-notes/SKILL.md","on":true,"tokens":40,"tokens_if_on":40,"full_tokens":310,"shadowed_by":null,
+            "use":{"count":3,"days":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,2,0],"last":{"at":"2026-11-16T10:04:00-08:00","session":"c1f","title":"0.7.1 notes"}}},
+           {"id":"frog-builtin:gh","name":"gh","description":"GitHub CLI.","scope":"everywhere","source":"builtin","path":null,"on":false,"tokens":0,"tokens_if_on":30,"full_tokens":900,"shadowed_by":null,
+            "use":{"count":0,"days":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"last":null}},
+           {"id":"/Users/ada/.config/frog/skills/release-notes/SKILL.md","name":"release-notes","description":"Older.","scope":"everywhere","source":"frog","path":"/Users/ada/.config/frog/skills/release-notes/SKILL.md","on":true,"tokens":0,"tokens_if_on":20,"full_tokens":100,"shadowed_by":"/tmp/pond/.frog/skills/release-notes/SKILL.md","use":null}]},
+         "connections":{"tokens":2860,"deferred":false,"items":[
+           {"name":"figma","scope":"everywhere","source":"frog","on":true,"state":"connected","error":null,"waiting":null,"tokens":2160,"tokens_if_all_on":3900,"instructions_tokens":120,
+            "tools":[{"name":"get_file","exposed":"mcp__figma__get_file","description":"Reads a file.","state":"on","why":null,"read_only":true,"tokens":180,"tokens_if_on":180},
+                     {"name":"comment","exposed":"mcp__figma__comment","state":"off","why":null,"read_only":false,"tokens":0,"tokens_if_on":90},
+                     {"name":"setup","exposed":"mcp__figma__setup","state":"withheld","why":"asks the model to run a command","read_only":null,"tokens":0,"tokens_if_on":0}],
+            "use":{"count":0,"days":[],"last":null}},
+           {"name":"linear","scope":"everywhere","source":"frog","on":true,"state":"needs_sign_in","error":null,"waiting":"sign_in","tokens":0,"tokens_if_all_on":0,"tools":[],"use":null}]},
+         "rules":{"tokens":310,"files":[{"path":"/tmp/pond/AGENTS.md","scope":"project","source":"agents","kind":"instructions","applies":"always","paths":[],"tokens":210,"full_tokens":210,"lines":[{"n":1,"text":"Use pnpm."}]}]},
+         "memory":{"tokens":70,"omitted":0,"notes":[{"id":"staging","scope":"project","created":"2026-11-12T09:30:00-08:00","session":"c1f","title":"why did my seed data vanish","text":"The staging database is reset every Monday.","path":"/tmp/notes/staging.md","cites":[],"missing":[],"tokens":18,"omitted":false}]}}
+        """#
+
+    func testTheEngineReportBecomesThePages() throws {
+        let r = try JSONDecoder.frog.decode(CustomizeReport.self, from: Data(Self.reportJSON.utf8))
+        let skills = r.pageSkills
+        XCTAssertEqual(skills.map(\.name), ["release-notes", "gh"], "a shadowed skill isn't listed twice")
+        XCTAssertEqual(skills[0].tokensPerTurn, 40)
+        XCTAssertEqual(skills[0].uses?.reduce(0, +), 3)
+        XCTAssertEqual(skills[0].lastUsed, "0.7.1 notes")
+        XCTAssertTrue(skills[0].project)
+        XCTAssertTrue(skills[1].builtIn, "no path: Frog's own")
+        XCTAssertEqual(skills[1].on, false)
+        XCTAssertEqual(skills[1].engineID, "frog-builtin:gh")
+
+        let figma = r.pageConnections[0]
+        XCTAssertEqual(figma.squares.map(\.state), [.on, .off, .withheld])
+        XCTAssertEqual(figma.squares[0].exposed, "mcp__figma__get_file")
+        XCTAssertEqual(figma.tokens, 2160)
+        XCTAssertEqual(ToolSquares.label(figma.squares), "3 tools, 1 on, 1 withheld")
+        XCTAssertEqual(ConnectionsPage.say(figma, project: "pond").lead, "1 of 2 tools on.")
+        XCTAssertEqual(ConnectionsPage.say(figma, project: "pond").rest, "1 is withheld: its description reads like instructions to the model. Never called.")
+        XCTAssertTrue(r.pageConnections[1].wantsSignIn)
+
+        let notes = r.pageNotes()
+        XCTAssertEqual(notes[0].from, "why did my seed data vanish")
+        XCTAssertEqual(notes[0].scope, .project)
+        XCTAssertNotNil(notes[0].created)
+        XCTAssertEqual(CustomizeFormat.perTurn(r.skills.tokens), "about 180 tokens a turn", "estimates say so")
+    }
+
+    func testChangesAsTheEngineTakesThem() {
+        XCTAssertEqual(CustomizeChange.skill(name: "gh", on: false).json, #"{"change":"skill","name":"gh","on":false}"#)
+        XCTAssertEqual(CustomizeChange.connection(name: "figma", on: true).json, #"{"change":"connection","name":"figma","on":true}"#)
+        XCTAssertEqual(CustomizeChange.tool(exposed: "mcp__figma__comment", on: true).json, #"{"change":"tool","exposed":"mcp__figma__comment","on":true}"#)
+    }
+
+    // MARK: Rules files
+
+    private let sample = """
+        ---
+        title: pond
+        ---
+        # pond
+
+        Use pnpm in this project, never npm.
+
+        ## Tests
+        - Tests live in spec/, one file per module.
+          * Run them with pnpm test.
+        1. Commit messages start with the area.
+
+        ```sh
+        pnpm codegen
+        ```
+        <!-- a comment -->
+        """
+
+    func testRuleLinesSkipFrontmatterBlankLinesAndFences() {
+        let lines = RuleText.lines(sample)
+        XCTAssertEqual(lines.map(\.text), ["pond", "Use pnpm in this project, never npm.", "Tests",
+                                           "Tests live in spec/, one file per module.", "Run them with pnpm test.",
+                                           "Commit messages start with the area.", "pnpm codegen"])
+        XCTAssertEqual(lines.map(\.kind), [.heading, .plain, .heading, .item, .item, .item, .code])
+        XCTAssertEqual(lines.filter(\.editable).count, 4)
+        XCTAssertEqual(lines[4].prefix, "  * ")
+    }
+
+    func testEditingALineKeepsEveryOtherByte() {
+        let lines = RuleText.lines(sample)
+        let target = lines[4]
+        let edited = RuleText.replacing(sample, at: target.index, with: "Run them with pnpm test --watch.")
+        var expected = sample.components(separatedBy: "\n")
+        expected[target.index] = "  * Run them with pnpm test --watch."
+        XCTAssertEqual(edited, expected.joined(separator: "\n"))
+        // Untouched lines are byte for byte the same, and so is the end of the file.
+        XCTAssertEqual(edited.components(separatedBy: "\n").count, sample.components(separatedBy: "\n").count)
+        XCTAssertEqual(RuleText.replacing(sample, at: 999, with: "x"), sample, "a line that isn't there changes nothing")
+        XCTAssertEqual(RuleText.replacing(sample, at: lines[1].index, with: "two\nlines"),
+                       sample.replacingOccurrences(of: "Use pnpm in this project, never npm.", with: "two lines"),
+                       "an edit stays on its line")
+    }
+
+    func testRemovingALineKeepsEveryOtherByte() {
+        let lines = RuleText.lines(sample)
+        let removed = RuleText.removing(sample, at: lines[1].index)
+        XCTAssertEqual(removed, sample.replacingOccurrences(of: "Use pnpm in this project, never npm.\n", with: ""))
+    }
+
+    func testCRLFFilesKeepTheirLineEndings() {
+        let crlf = "# Rules\r\n- one\r\n- two\r\n"
+        let edited = RuleText.replacing(crlf, at: 1, with: "uno")
+        XCTAssertEqual(edited, "# Rules\r\n- uno\r\n- two\r\n")
+        XCTAssertEqual(RuleText.lines(crlf).map(\.text), ["Rules", "one", "two"])
+    }
+
+    func testAddingALineMatchesTheList() {
+        XCTAssertEqual(RuleText.appending("", "Be concise."), "- Be concise.\n", "a new file starts a list")
+        XCTAssertEqual(RuleText.appending("- one\n", "two"), "- one\n- two\n")
+        XCTAssertEqual(RuleText.appending("- one", "two"), "- one\n- two\n", "a missing final newline is supplied, not doubled")
+        XCTAssertEqual(RuleText.appending("Plain words.\n", "More."), "Plain words.\nMore.\n")
+        XCTAssertEqual(RuleText.appending("- one\n", "   "), "- one\n", "nothing to add, nothing written")
+    }
+
+    func testRuleFilesAlwaysOfferAPlaceForEachScope() {
+        let home = URL(fileURLWithPath: "/Users/ada")
+        let folder = URL(fileURLWithPath: "/tmp/pond")
+        let none = CustomizeStore.ruleFiles(found: [], folder: folder, home: home)
+        XCTAssertEqual(none.map(\.url.path), ["/tmp/pond/AGENTS.md", "/Users/ada/.config/frog/FROG.md"])
+        XCTAssertTrue(none.allSatisfy { !$0.exists })
+        let chat = CustomizeStore.ruleFiles(found: [], folder: nil, home: home)
+        XCTAssertEqual(chat.map(\.scope), [.everywhere], "a chat has no project file")
+        let found = CustomizeStore.ruleFiles(found: [URL(fileURLWithPath: "/Users/ada/.claude/CLAUDE.md"), URL(fileURLWithPath: "/tmp/pond/CLAUDE.md")],
+                                             folder: folder, home: home)
+        XCTAssertEqual(found.map(\.scope), [.project, .everywhere], "the project's first")
+    }
+
+    // MARK: Memory
+
+    func testMemoryProjectKeyMatchesTheEngine() throws {
+        XCTAssertEqual(MemoryFiles.key("/Users/me/my app"), "-Users-me-my-app")
+        XCTAssertEqual(MemoryFiles.key("/a/b.c_d"), "-a-b.c_d")
+        // A worktree's notes are its main checkout's.
+        let root = try tempDir()
+        let main = root.appending(path: "pond")
+        let wt = root.appending(path: "wt")
+        try FileManager.default.createDirectory(at: main.appending(path: ".git/worktrees/wt"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: wt.appending(path: "src"), withIntermediateDirectories: true)
+        try "gitdir: \(main.path)/.git/worktrees/wt\n".write(to: wt.appending(path: ".git"), atomically: true, encoding: .utf8)
+        XCTAssertEqual(MemoryFiles.projectRoot(wt.appending(path: "src")).path, main.path)
+        XCTAssertEqual(MemoryFiles.projectRoot(main).standardizedFileURL.path, main.standardizedFileURL.path)
+    }
+
+    func testMemoryNotesLoadNewestFirst() throws {
+        let home = try tempDir()
+        let folder = try tempDir()
+        let root = MemoryFiles.root(home: home)
+        let global = root.appending(path: "global")
+        let project = MemoryFiles.projectDir(root: root, folder: folder)
+        for d in [global, project] { try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true) }
+        try "---\nid: a\ncreated: 2026-10-21T10:00:00Z\nscope: global\nsource: user\n---\nWorks on a 64 GB Mac.\n".write(to: global.appending(path: "a.md"), atomically: true, encoding: .utf8)
+        try "---\nid: b\ncreated: 2026-11-16T09:00:00Z\nscope: project\nsource: user\n---\nThe timer module is being rewritten.\n".write(to: project.appending(path: "b.md"), atomically: true, encoding: .utf8)
+        try "A hand-written note.".write(to: global.appending(path: "c.md"), atomically: true, encoding: .utf8)
+        try "".write(to: global.appending(path: "empty.md"), atomically: true, encoding: .utf8)
+        let notes = MemoryFiles.load(home: home, folder: folder)
+        XCTAssertEqual(notes.map(\.firstLine), ["The timer module is being rewritten.", "Works on a 64 GB Mac.", "A hand-written note."])
+        XCTAssertEqual(notes.map(\.scope), [.project, .everywhere, .everywhere])
+        XCTAssertEqual(MemoryFiles.load(home: home, folder: nil).count, 2, "a chat sees only notes for everywhere")
+    }
+
+    // MARK: Adding a connection
+
+    func testPastedLinksAndCommands() throws {
+        let link = try XCTUnwrap(ServerDraft.parse("https://mcp.supabase.com/mcp"))
+        XCTAssertTrue(link.remote)
+        XCTAssertEqual(link.name, "supabase")
+        let npx = try XCTUnwrap(ServerDraft.parse("npx -y @modelcontextprotocol/server-postgres postgres://localhost/pond"))
+        XCTAssertEqual(npx.command, "npx")
+        XCTAssertEqual(npx.args, ["-y", "@modelcontextprotocol/server-postgres", "postgres://localhost/pond"])
+        XCTAssertEqual(npx.name, "postgres")
+        let env = try XCTUnwrap(ServerDraft.parse(#"GITHUB_TOKEN=abc uvx "mcp-server-git" --repo '/tmp/my repo'"#))
+        XCTAssertEqual(env.env, ["GITHUB_TOKEN": "abc"])
+        XCTAssertEqual(env.args, ["mcp-server-git", "--repo", "/tmp/my repo"])
+        XCTAssertEqual(env.name, "git")
+        XCTAssertNil(ServerDraft.parse("postgres"), "one plain word is a search")
+        XCTAssertNil(ServerDraft.parse("   "))
+        XCTAssertNotNil(ServerDraft.parse("/usr/local/bin/my-server"))
+    }
+
+    func testAddingToConfigAppendsAndKeepsEveryByte() throws {
+        let dir = try tempDir()
+        let config = dir.appending(path: "config.toml")
+        let old = "# mine\nmodel = \"local/qwen3-4b\"\n\n[mcp_servers.github]\nurl = \"https://api.githubcopilot.com/mcp/\""
+        try old.write(to: config, atomically: true, encoding: .utf8)
+        let d = ServerDraft(name: "pg", command: "npx", args: ["-y", "a \"b\""], env: ["K": "v"])
+        try d.appendToConfig(config)
+        let new = try String(contentsOf: config, encoding: .utf8)
+        XCTAssertTrue(new.hasPrefix(old + "\n"), "what was there stays, byte for byte")
+        XCTAssertTrue(new.hasSuffix("[mcp_servers.pg]\ncommand = \"npx\"\nargs = [\"-y\", \"a \\\"b\\\"\"]\nenv = { K = \"v\" }\n"), new)
+        XCTAssertThrowsError(try ServerDraft(name: "github", url: "https://x").appendToConfig(config)) {
+            XCTAssertEqual($0 as? ServerDraft.AddError, .taken("github"))
+        }
+        // A config that doesn't exist yet is made.
+        let fresh = dir.appending(path: "sub/config.toml")
+        try ServerDraft(name: "docs", url: "https://docs.example/mcp").appendToConfig(fresh)
+        XCTAssertEqual(try String(contentsOf: fresh, encoding: .utf8), "\n[mcp_servers.docs]\nurl = \"https://docs.example/mcp\"\n")
+    }
+
+    func testAddingToAProjectKeepsItsOtherServers() throws {
+        let folder = try tempDir()
+        let file = folder.appending(path: ".mcp.json")
+        try #"{"mcpServers":{"fs":{"command":"fs-server"}},"other":1}"#.write(to: file, atomically: true, encoding: .utf8)
+        try ServerDraft(name: "docs", url: "https://docs.example/mcp").addToProject(folder)
+        let obj = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+        let servers = try XCTUnwrap(obj["mcpServers"] as? [String: Any])
+        XCTAssertEqual(Set(servers.keys), ["fs", "docs"])
+        XCTAssertEqual(obj["other"] as? Int, 1)
+        XCTAssertEqual((servers["docs"] as? [String: String])?["url"], "https://docs.example/mcp")
+        XCTAssertThrowsError(try ServerDraft(name: "fs", command: "x").addToProject(folder))
+
+        try "not json".write(to: file, atomically: true, encoding: .utf8)
+        XCTAssertThrowsError(try ServerDraft(name: "y", command: "x").addToProject(folder)) {
+            XCTAssertEqual($0 as? ServerDraft.AddError, .unreadable)
+        }
+        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "not json", "a file Frog can't read is left alone")
+    }
+
+    // MARK: Rendering
+
+    /// Made-up data in the shapes today's engine gives: names, descriptions, files, tools and
+    /// withheld tools, rules text and notes, and no weights or use counts.
+    static func stageFixture(_ store: CustomizeStore, figures: Bool = false) {
+        let pond = URL(fileURLWithPath: "/tmp/pond")
+        let skills = [
+            CustomizeSkill(name: "release-notes", description: "Write release notes in pond's house style from merged pull requests.", path: "/tmp/pond/.frog/skills/release-notes/SKILL.md", project: true),
+            CustomizeSkill(name: "db-migrations", description: "How to write and check a migration for pond's Postgres schema.", path: "/tmp/pond/.frog/skills/db-migrations/SKILL.md", project: true),
+            CustomizeSkill(name: "commit", description: "Write a commit message from the staged changes.", path: "/Users/ada/.config/frog/skills/commit/SKILL.md", project: false),
+            CustomizeSkill(name: "gh", description: "GitHub CLI: PRs, issues, CI checks; valid --json fields.", path: "frog-builtin:gh", project: false),
+        ]
+        let servers = [
+            MCPStatus(name: "github", connected: true, error: nil, tools: (1...12).map { "mcp__github__tool_\($0)" }, quarantined: [], needsAuth: nil, declined: nil),
+            MCPStatus(name: "figma", connected: true, error: nil, tools: (1...21).map { "mcp__figma__tool_\($0)" },
+                      quarantined: [.init(tool: "mcp__figma__run_script", reason: "tells the model to ignore its instructions"),
+                                    .init(tool: "mcp__figma__setup", reason: "asks the model to run a command")], needsAuth: nil, declined: nil),
+            MCPStatus(name: "linear", connected: false, error: "Signed out: this server needs you to sign in.", tools: [], quarantined: [], needsAuth: true, declined: nil),
+            MCPStatus(name: "pond-db", connected: true, error: nil, tools: ["mcp__pond-db__query", "mcp__pond-db__schema", "mcp__pond-db__explain"], quarantined: [], needsAuth: nil, declined: nil),
+        ]
+        let rules = [
+            RuleFile(url: pond.appending(path: "AGENTS.md"), scope: .project, text: """
+                # pond
+
+                - Use pnpm in this project, never npm.
+                - Tests live in spec/, one file per module. Run them with pnpm test.
+                - Never edit files under generated/. Change the schema and run pnpm codegen.
+                - Commit messages start with the area, then a colon: "timer: fix drift after sleep".
+                - Pull requests say what was tested and what was not.
+                """, exists: true),
+            RuleFile(url: URL(fileURLWithPath: "/Users/ada/.config/frog/FROG.md"), scope: .everywhere, text: """
+                - Be concise. Skip explanations I didn't ask for.
+                - Never force-push or reset --hard without asking.
+                - Prefer early returns to nested conditions.
+                """, exists: true),
+        ]
+        let iso = ISO8601DateFormatter()
+        let note = { (id: String, date: String, scope: MemoryNote.Scope, body: String) in
+            MemoryNote(id: id, created: iso.date(from: date), scope: scope, body: body, url: URL(fileURLWithPath: "/tmp/notes/\(id).md"))
+        }
+        let notes = [
+            note("timer", "2026-11-16T10:00:00Z", .project, "The timer module is being rewritten in #212; avoid large edits there."),
+            note("staging", "2026-11-12T10:00:00Z", .project, "The staging database is reset every Monday; don't rely on data there."),
+            note("reviews", "2026-11-09T10:00:00Z", .project, "Reviews happen in the morning; open pull requests before 9."),
+            note("langs", "2026-10-28T10:00:00Z", .everywhere, "Prefers Rust and TypeScript; uses npm outside pond."),
+            note("mac", "2026-10-21T10:00:00Z", .everywhere, "Works on a 64 GB Mac and a paired GPU box called mew."),
+        ]
+        store.home = URL(fileURLWithPath: "/Users/ada")
+        if figures, let r = try? JSONDecoder.frog.decode(CustomizeReport.self, from: Data(reportJSON.utf8)) {
+            store.stage(report: r, folder: pond, rules: rules)
+        } else {
+            store.stage(folder: pond, skills: skills, servers: servers, projectServers: ["pond-db"], rules: rules, notes: notes)
+        }
+    }
+
+    /// The window in Customize mode, one image per page, dark and light.
+    func testRenderCustomizeMode() throws {
+        CustomizeStore.loads = false
+        defer { CustomizeStore.loads = true }
+        let pages: [(String, String, CustomizePage?, Bool)] = [
+            ("connections", "connections", nil, false),
+            ("connections", "connections-with-engine-report", nil, true),
+            ("connections", "add", .add("connections"), false),
+            ("connections", "review", .review(ServerDraft.parse("https://mcp.supabase.com/mcp")!), false),
+        ]
+        for (look, name) in [(NSAppearance.Name.darkAqua, "dark"), (.aqua, "light")] {
+            for (section, file, page, figures) in pages {
+                let panes = Panes(Workspace(folder: URL(fileURLWithPath: "/tmp/pond"), fresh: true))
+                defer { panes.stopAll() }
+                panes.showCustomize(section)
+                Self.stageFixture(panes.customize, figures: figures)
+                panes.customizePage = page
+                let (w, host) = window(panes, appearance: look)
+                pump(0.6)
+                try snapshot(host, "mac-customize-\(file)-\(name)")
+                w.close()
+            }
+        }
+        print("snapshots: \(outDir.path)")
+    }
+
+    /// The title bar's toolbar doesn't draw offscreen, so its two Customize pieces render here:
+    /// the breadcrumbs, and the right side's figure and action.
+    func testRenderCustomizeHeader() throws {
+        CustomizeStore.loads = false
+        defer { CustomizeStore.loads = true }
+        let cases: [(String, String, CustomizePage?)] = [
+            ("connections", "connections", nil),
+            ("connections", "review", .review(ServerDraft.parse("https://mcp.supabase.com/mcp")!)),
+        ]
+        for (look, name) in [(NSAppearance.Name.darkAqua, "dark"), (.aqua, "light")] {
+            for (section, file, page) in cases {
+                let panes = Panes(Workspace(folder: URL(fileURLWithPath: "/tmp/pond"), fresh: true))
+                defer { panes.stopAll() }
+                panes.showCustomize(section)
+                Self.stageFixture(panes.customize)
+                panes.customizePage = page
+                let bar = HStack { CustomizeCrumbs(panes: panes); Spacer(); CustomizeHeaderTrailing(panes: panes) }
+                    .padding(.horizontal, 20).frame(width: 1030, height: 50).background(FrogCanvas.color)
+                let host = NSHostingView(rootView: bar)
+                host.frame = CGRect(x: 0, y: 0, width: 1030, height: 50)
+                host.appearance = NSAppearance(named: look)
+                host.layoutSubtreeIfNeeded()
+                pump(0.2)
+                try snapshot(host, "mac-customize-header-\(file)-\(name)")
+            }
+        }
+    }
+
+    private func window(_ panes: Panes, size: CGSize = CGSize(width: 1280, height: 800),
+                        appearance: NSAppearance.Name = .darkAqua) -> (NSWindow, NSHostingView<some View>) {
+        let host = NSHostingView(rootView: WorkspaceView(panes: panes).frame(width: size.width, height: size.height))
+        host.frame = CGRect(origin: .zero, size: size)
+        let w = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        w.isReleasedWhenClosed = false
+        w.appearance = NSAppearance(named: appearance)
+        w.contentView = host
+        host.layoutSubtreeIfNeeded()
+        pump(0.6)
+        host.layoutSubtreeIfNeeded()
+        return (w, host)
+    }
+
+    private func snapshot(_ host: NSView, _ name: String) throws {
+        host.layoutSubtreeIfNeeded()
+        guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return XCTFail("no bitmap") }
+        host.cacheDisplay(in: host.bounds, to: rep)
+        try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
+        try XCTUnwrap(rep.representation(using: .png, properties: [:])).write(to: outDir.appending(path: "\(name).png"))
+    }
+}
