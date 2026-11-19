@@ -6,7 +6,6 @@
     { "id": "appearance", "label": "Appearance" },
     { "id": "models", "label": "Models", "aliases": ["lend", "machines"] },
     { "id": "permissions", "label": "Permissions" },
-    { "id": "connections", "label": "Connections", "aliases": ["mcp"] },
     { "id": "shortcuts", "label": "Shortcuts" },
     { "id": "usage", "label": "Usage", "aliases": ["energy"] },
     { "id": "account", "label": "Account" },
@@ -93,14 +92,6 @@
       "label": "Let Frog see and use other apps", "description": "Every action asks first unless you allow it. It never types into password fields." },
     { "id": "allowed-commands", "section": "permissions", "platform": "mac", "control": "button",
       "label": "Command prefixes that never ask", "description": "They live in Frog's config file, shared with the terminal app." },
-
-    { "id": "mcp-servers", "section": "connections", "platform": "both", "control": "list",
-      "label": "Servers", "description": "MCP servers give sessions more tools. A project can add its own with a .mcp.json file.",
-      "notYet": { "web": "Cloud sessions don't use MCP servers, and the web can't read the list your Mac has." } },
-    { "id": "mcp-sign-in", "section": "connections", "platform": "invite", "control": "button",
-      "label": "Sign in to a server", "description": "Servers like Linear and GitHub, with your own account." },
-    { "id": "mcp-config", "section": "connections", "platform": "mac", "control": "button",
-      "label": "Servers in config.toml", "description": "How servers are added today." },
 
     { "id": "shortcuts", "section": "shortcuts", "platform": "both", "control": "list",
       "label": "Keys", "description": "Each app lists its own keys." },
