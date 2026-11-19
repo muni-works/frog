@@ -102,18 +102,20 @@ test("/docs/<slug> serves the app's page, like /s/<id>; other paths stay 404", a
   assert.equal(miss.status, 404);
 });
 
-test("/settings/<section> serves the app's page, like /docs/<slug>; deeper paths stay 404", async () => {
+test("/settings/<section> and Skills' and Connections' detail pages serve the app's page, like /docs/<slug>; deeper paths stay 404", async () => {
   const seen = [];
   const ASSETS = { fetch: async (u) => { seen.push(new URL(u).pathname); return new Response("<!doctype html>app"); } };
-  for (const path of ["/settings/billing", "/settings/account/", "/settings"]) {
+  const paths = ["/settings/billing", "/settings/account/", "/settings", "/settings/skills/release-notes", "/settings/connections/add", "/settings/connections/add/com.supabase%2Fmcp"];
+  for (const path of paths) {
     const r = await worker.fetch(new Request(`https://frog.toys${path}`), { ASSETS });
     assert.equal(r.status, 200, path);
   }
-  assert.deepEqual(seen, ["/", "/", "/"]);
-  assert.equal((await worker.fetch(new Request("https://frog.toys/settings/a/b"), { ASSETS })).status, 404);
+  assert.equal(seen.length, paths.length);
+  assert.ok(seen.every((p) => p === "/"));
+  assert.equal((await worker.fetch(new Request("https://frog.toys/settings/a/b/c/d"), { ASSETS })).status, 404);
 });
 
-test("/customize/<section> and its detail pages serve the app; deeper paths stay 404", async () => {
+test("old /customize/<section> links and their detail pages still serve the app (it sends them on to Settings); deeper paths stay 404", async () => {
   const seen = [];
   const ASSETS = { fetch: async (u) => { seen.push(new URL(u).pathname); return new Response("<!doctype html>app"); } };
   for (const path of ["/customize", "/customize/skills", "/customize/rules/", "/customize/skills/release-notes", "/customize/connections/add", "/customize/connections/add/com.supabase%2Fmcp"]) {

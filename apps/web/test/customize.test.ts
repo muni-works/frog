@@ -251,6 +251,10 @@ test("figure helpers say plain words", () => {
 
 // ---------- Customize is gone: every old way in lands on its Settings section ----------
 
+test("the five sections here are design/settings.json's run 2, in its order, with its labels", () => {
+  assert.deepEqual(CUSTOMIZE_SECTIONS.map((s) => [s.id, s.label]), WEB_SECTIONS.filter((s) => s.run === 2).map((s) => [s.id, s.label]));
+});
+
 test("Settings lists all five; every old Customize entry point lands on its Settings section", async () => {
   for (const id of ["skills", "connections", "rules", "memory", "automations"]) assert.ok(WEB_SECTIONS.some((s) => s.id === id), id);
   const cases: [string, string, string][] = [
