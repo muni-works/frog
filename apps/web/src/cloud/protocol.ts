@@ -13,6 +13,8 @@ export type Op =
   | { op: "permission"; id: string; decision: Decision; note?: string; choice?: string }
   /** Undo a Customize change by its handle (docs/customize-events.md). */
   | { op: "undo"; undo: string }
+  /** "Make it a rule" on a note Frog kept: the engine answers with its card. */
+  | { op: "note_to_rule"; id: string; scope: string; where?: "home" }
   /** The app's current setting values, so the engine can quote them (docs/customize-events.md). */
   | { op: "settings"; values: Record<string, string | number | boolean> }
   | { op: "answer"; id: string; choices?: string[]; other?: string }
@@ -170,6 +172,10 @@ export type Event =
   | { event: "customize_undone"; undo: string; ok: boolean; message?: string }
   /** A setting the app owns, changed by Customize (or its undo). Live only. */
   | { event: "setting_change"; id: string; value: string | number | boolean }
+  /** Frog kept a note on its own (docs/customize-events.md, "Noted"). Durable. */
+  | { event: "noted"; item: string; turn: number; id: string; text: string; scope: "project" | "everywhere"; place: string; source: "said" | "correction" | "read"; from?: string; undo: string }
+  /** Notes that came back for a turn ("Used notes"). Durable. */
+  | { event: "used_notes"; turn: number; tokens: number; notes: { id: string; scope: string; text: string }[] }
   /** `item` and `asked` (unix ms) place the wait on the turn's timeline; absent in older logs. */
   | { event: "permission_resolved"; id: string; decision: Decision; item?: string; asked?: number }
   | { event: "titled"; title: string }

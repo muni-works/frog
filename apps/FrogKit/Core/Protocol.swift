@@ -112,7 +112,7 @@ enum Op: Encodable, Sendable {
     /// What this client can do, sent once after the engine starts.
     /// `customize`: this app draws Customize cards, their receipts and `setting_change`
     /// (docs/customize-events.md), so the engine may offer the tool.
-    case setClientCaps(panes: Bool, ask: Bool = false, sessions: Bool = false, customize: Bool = false)
+    case setClientCaps(panes: Bool, ask: Bool = false, sessions: Bool = false, customize: Bool = false, notes: Bool = false)
     /// Undo a Customize change by its handle; `customize_undone` answers.
     case undo(String)
     /// The answer to a `sessionRequest`: JSON (or text) for the model, or an error.
@@ -145,7 +145,7 @@ enum Op: Encodable, Sendable {
         case deadline, pr, repo, number
         case decline, servers, tools
         case values, scope
-        case choice, customize, undo
+        case choice, customize, undo, notes
     }
 
     func encode(to encoder: Encoder) throws {
@@ -261,12 +261,13 @@ enum Op: Encodable, Sendable {
             try c.encode(id, forKey: .id)
             try c.encode(mention, forKey: .mention)
             try c.encodeIfPresent(context, forKey: .context)
-        case .setClientCaps(let panes, let ask, let sessions, let customize):
+        case .setClientCaps(let panes, let ask, let sessions, let customize, let notes):
             try c.encode("set_client_caps", forKey: .op)
             try c.encode(panes, forKey: .panes)
             if ask { try c.encode(ask, forKey: .ask) }
             if sessions { try c.encode(sessions, forKey: .sessions) }
             if customize { try c.encode(customize, forKey: .customize) }
+            if notes { try c.encode(notes, forKey: .notes) }
         case .undo(let handle):
             try c.encode("undo", forKey: .op)
             try c.encode(handle, forKey: .undo)
@@ -1026,6 +1027,9 @@ enum ClientCaps {
     /// Only ever for a session the person is typing in: one another session started has no one
     /// to click its card.
     static func customize(top: Bool, enabled: Bool = customize) -> Bool { enabled && top }
+    /// Noting on its own (`notes`): the noted line draws, held off with Customize.
+    static let notes = false
+    static func notes(top: Bool, enabled: Bool = notes) -> Bool { enabled && top }
 }
 
 struct Proposal: Codable, Sendable, Equatable {
@@ -1193,7 +1197,31 @@ enum Event: Decodable, Sendable {
     case customizeUndone(undo: String, ok: Bool, message: String?)
     /// A setting the app owns, changed by Customize or its Undo. Live only.
     case settingChange(id: String, value: JSONValue)
+    /// Frog kept a note on its own (docs/customize-events.md, "Noted"). Durable.
+    case noted(NotedNote)
+    /// Notes that came back for a turn ("Used notes"). Durable.
+    case usedNotes(turn: UInt64, tokens: UInt64, notes: [UsedNote])
     case unknown(String)
+}
+
+/// A note Frog kept (`noted`): drawn under the reply of `turn`, with Undo (`undo`) and Make it a rule.
+struct NotedNote: Codable, Sendable, Equatable {
+    var item: String
+    var turn: UInt64
+    var id: String
+    var text: String
+    var scope: String
+    var place: String
+    var source: String?
+    var from: String?
+    var undo: String
+}
+
+/// One of the notes that came back for a turn (`used_notes`).
+struct UsedNote: Codable, Sendable, Equatable {
+    var id: String
+    var scope: String
+    var text: String
 }
 
 struct Envelope: Decodable, Sendable {
@@ -1232,6 +1260,7 @@ extension Event {
         case servers, server, tools
         case output, soFar, slow, cached, asked
         case undo, card, ok, value
+        case tokens, notes
     }
 
     init(from decoder: Decoder) throws {
@@ -1314,6 +1343,11 @@ extension Event {
         case "customize_undone":
             self = .customizeUndone(undo: try c.decode(String.self, forKey: .undo), ok: try c.decode(Bool.self, forKey: .ok),
                                     message: try c.decodeIfPresent(String.self, forKey: .message))
+        case "noted":
+            self = .noted(try NotedNote(from: decoder))
+        case "used_notes":
+            self = .usedNotes(turn: try c.decode(UInt64.self, forKey: .turn), tokens: try c.decodeIfPresent(UInt64.self, forKey: .tokens) ?? 0,
+                              notes: try c.decode([UsedNote].self, forKey: .notes))
         case "setting_change":
             self = .settingChange(id: try c.decode(String.self, forKey: .id), value: try c.decode(JSONValue.self, forKey: .value))
         case "progress":

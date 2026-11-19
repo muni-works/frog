@@ -238,6 +238,11 @@ struct TurnState: Identifiable {
     /// The model's title for the chapter starting at this turn (`chapter_titled`), when one
     /// arrived; it wins over the rail's heuristic title.
     var chapterTitle: String?
+    /// A note Frog kept this turn (`noted`), drawn under the reply; the call that kept it doesn't
+    /// draw as a step. `undone` once Undo answered.
+    var noted: NotedState?
+    /// Notes that came back for this turn (`used_notes`).
+    var usedNotes: [UsedNote] = []
 
     var finished: Bool { end != nil }
 
@@ -306,6 +311,11 @@ final class LivePulse {
 
 /// A Customize change made, on the call that made it (docs/customize-events.md): what was done
 /// (`card`), its Undo handle, and Undo's answer once it came.
+struct NotedState: Equatable, Sendable {
+    var note: NotedNote
+    var undone: CustomizeApplied.Undone?
+}
+
 struct CustomizeApplied: Equatable, Sendable {
     var undo: String
     var card: Proposal

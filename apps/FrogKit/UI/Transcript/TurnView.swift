@@ -70,6 +70,7 @@ struct TurnView: View, Equatable {
                 && a.turn.usage?.tokensPerSec == b.turn.usage?.tokensPerSec
                 && a.turn.usage?.model == b.turn.usage?.model
                 && a.turn.usage?.servedBy == b.turn.usage?.servedBy
+                && a.turn.noted == b.turn.noted && a.turn.usedNotes == b.turn.usedNotes
         default:
             return false
         }
@@ -248,7 +249,7 @@ struct TurnView: View, Equatable {
         let live = running && loading == nil
         let plan = running && !parts.plan.isEmpty
         if plan || loading != nil || live || !parts.changes.isEmpty || turn.end != nil
-            || (FeatureFlags.outcomeCard && turn.claims != nil) {
+            || (FeatureFlags.outcomeCard && turn.claims != nil) || (turn.end != nil && (turn.noted != nil || !turn.usedNotes.isEmpty)) {
             VStack(alignment: .leading, spacing: space.block) {
                 if plan {
                     PlanView(todos: parts.plan)
@@ -287,6 +288,14 @@ struct TurnView: View, Equatable {
                         .padding(.top, isFooter(end) ? space.footer : 0)
                         .opacity(pinsFooter || !isFooter(end) || hovering ? 1 : 0)
                         .allowsHitTesting(pinsFooter || hovering)
+                }
+                // Under the reply and its stats once the turn ends (canvas M2): the note Frog kept,
+                // the notes it used (`used_notes` comes at the turn's start), as on the web.
+                if turn.end != nil, let noted = turn.noted {
+                    NotedLineView(noted: noted, conversation: conversation)
+                }
+                if turn.end != nil, !turn.usedNotes.isEmpty {
+                    UsedNotesView(notes: turn.usedNotes)
                 }
             }
             .padding(.top, gap)

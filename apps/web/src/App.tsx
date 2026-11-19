@@ -842,6 +842,7 @@ export default function App() {
               onRetry={() => send(current.id, 'Try that again.')}
               onPrompt={(text) => send(current.id, text)}
               onUndo={(handle) => cloud?.send(current.id, { op: 'undo', undo: handle })}
+              onNoteToRule={(n) => cloud?.send(current.id, { op: 'note_to_rule', id: n.id, scope: n.scope })}
               onShowChange={() => { try { localStorage.setItem('frog.inspectorTab', 'changes') } catch { /* private mode */ } setInspectorTab('changes'); setInspectorNonce((n) => n + 1); setInspector(true) }}
               outbox={undelivered(outbox[current.id], ct.turns)} onResend={(n) => resend(current.id, n)}
               waiting={cs?.state === 'connecting' ? (cs.attempt ? 'reconnecting to the sandbox' : 'connecting to the sandbox')

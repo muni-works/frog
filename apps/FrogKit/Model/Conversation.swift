@@ -662,6 +662,17 @@ final class Conversation {
         link?.send(.undo(handle))
     }
 
+    /// A Customize card on no row of the conversation ("Make it a rule" asks as `note:<id>`): it
+    /// waits after the last turn, as a question with no item does.
+    func drawsProposalLoose(_ p: PermissionRequest) -> Bool {
+        p.proposal != nil && itemAt[p.item] == nil
+    }
+
+    /// "Make it a rule" on a note Frog kept: the engine answers with its Customize card.
+    func noteToRule(_ note: NotedNote) {
+        link?.send(.noteToRule(id: note.id, scope: note.scope))
+    }
+
     /// The app's own settings, changed from a conversation (`setting_change`, live only): the app
     /// applies it (`CustomizeSettings` on the Mac). Unset in tests and previews: nothing changes.
     @MainActor static var applySetting: ((String, JSONValue) -> Void)?
@@ -1008,7 +1019,18 @@ final class Conversation {
                 state.done = true
                 state.applied = CustomizeApplied(undo: undo, card: card)
             }
+        case .noted(let note):
+            if let t = turns.lastIndex(where: { $0.number == note.turn }) ?? turns.indices.last {
+                turns[t].noted = NotedState(note: note)
+            }
+        case .usedNotes(let turn, _, let notes):
+            if !notes.isEmpty, let t = turns.lastIndex(where: { $0.number == turn }) ?? turns.indices.last {
+                turns[t].usedNotes = notes
+            }
         case .customizeUndone(let undo, let ok, let message):
+            for t in turns.indices where turns[t].noted?.note.undo == undo {
+                turns[t].noted?.undone = .init(ok: ok, message: message)
+            }
             for t in turns.indices {
                 if let i = turns[t].items.firstIndex(where: { $0.applied?.undo == undo }) {
                     turns[t].items[i].applied?.undone = .init(ok: ok, message: message)

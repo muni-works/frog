@@ -57,7 +57,12 @@ export interface Thread {
   /** Each turn's input and items; `usage` and `reason` once it ends. */
   turns: { turn: number; input: string; images?: Image[]; more?: Part[]; entries: Entry[]; at?: number; usage?: TurnUsage; reason?: EndReason; endAt?: number
     /** The turn's timed events, cut to what its timeline reads (engine/timeline.ts). */
-    tl?: TimedEvent[] }[]
+    tl?: TimedEvent[]
+    /** A note Frog kept this turn (`noted`), drawn under the reply with Undo and Make it a rule;
+     *  the call that kept it doesn't draw. `undone` once Undo answered. */
+    noted?: { item: string; id: string; text: string; scope: string; place: string; undo: string; undone?: { ok: boolean; message?: string } }
+    /** Notes that came back for this turn (`used_notes`). */
+    usedNotes?: { tokens: number; notes: { id: string; scope: string; text: string }[] } }[]
   running: boolean
   ask: Ask | null
   ended: EndReason | null
@@ -202,7 +207,22 @@ function apply(t: Thread, ev: Event, created: number): Thread {
       }
       return { ...t, turns: next }
     }
+    case 'noted': {
+      const at = t.turns.map((u) => u.turn).lastIndexOf(ev.turn)
+      const i = at >= 0 ? at : t.turns.length - 1
+      if (i < 0) return t
+      return { ...t, turns: t.turns.map((u, k) => (k === i ? { ...u, noted: { item: ev.item, id: ev.id, text: ev.text, scope: ev.scope, place: ev.place, undo: ev.undo } } : u)) }
+    }
+    case 'used_notes': {
+      const at = t.turns.map((u) => u.turn).lastIndexOf(ev.turn)
+      const i = at >= 0 ? at : t.turns.length - 1
+      if (i < 0 || !ev.notes.length) return t
+      return { ...t, turns: t.turns.map((u, k) => (k === i ? { ...u, usedNotes: { tokens: ev.tokens, notes: ev.notes } } : u)) }
+    }
     case 'customize_undone':
+      if (t.turns.some((u) => u.noted?.undo === ev.undo)) {
+        return { ...t, turns: t.turns.map((u) => (u.noted?.undo === ev.undo ? { ...u, noted: { ...u.noted, undone: { ok: ev.ok, message: ev.message } } } : u)) }
+      }
       return { ...t, turns: t.turns.map((u) => (u.entries.some((e) => e.applied?.undo === ev.undo)
         ? { ...u, entries: u.entries.map((e) => (e.applied?.undo === ev.undo ? { ...e, applied: { ...e.applied, undone: { ok: ev.ok, message: ev.message } } } : e)) }
         : u)) }

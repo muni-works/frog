@@ -327,13 +327,45 @@ export function AppliedLine({ applied: a, onUndo }: { applied: NonNullable<Entry
   )
 }
 
+type Noted = NonNullable<Thread['turns'][number]['noted']>
+type UsedNotes = NonNullable<Thread['turns'][number]['usedNotes']>
+
+/** A note Frog kept this turn, under the reply (canvas M2): a ring, "Noted for pond", the note,
+ *  then Undo and Make it a rule. Undo answered, the actions give way to how it went. */
+export function NotedLine({ noted: n, onUndo, onRule }: { noted: Noted; onUndo: (handle: string) => void; onRule: (n: Noted) => void }) {
+  return (
+    <div className="noted" data-row="noted">
+      <span className="noted-ring" aria-hidden="true" />
+      <span className="noted-where">{n.undone?.ok ? 'Forgot for' : 'Noted for'} {n.place}</span>
+      <span className={n.undone?.ok ? 'noted-text gone' : 'noted-text'}>{n.text}</span>
+      {n.undone ? (!n.undone.ok && <span className="noted-fail">{n.undone.message ?? "Couldn't undo"}</span>) : (
+        <span className="noted-acts">
+          <button type="button" className="noted-link" onClick={() => onUndo(n.undo)}>Undo</button>
+          <button type="button" className="noted-link" onClick={() => onRule(n)}>Make it a rule</button>
+        </span>
+      )}
+    </div>
+  )
+}
+
+/** The notes that came back for this turn (canvas M2, "Used 2 notes"): a header, then each line. */
+export function UsedNotesBlock({ used }: { used: UsedNotes }) {
+  const n = used.notes.length
+  return (
+    <div className="used-notes" data-row="used-notes">
+      <div className="used-head"><span className="used-ring" aria-hidden="true" />Used {n} {n === 1 ? 'note' : 'notes'}</div>
+      {used.notes.map((x) => <div key={x.id} className="used-line">{x.text}</div>)}
+    </div>
+  )
+}
+
 const NO_MODELS: Model[] = []
 
 /** Turns a conversation opens on, and adds at a time as you scroll up (enough to fill a tall
  *  window with room to spare). */
 export const TAIL_TURNS = 24
 
-export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, models = NO_MODELS, outbox = [], onResend, onEdit, waiting, onContinue, onPrompt, onShowChange, onUndo, credit, start }: {
+export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, models = NO_MODELS, outbox = [], onResend, onEdit, waiting, onContinue, onPrompt, onShowChange, onUndo, onNoteToRule, credit, start }: {
   thread: Thread
   /** The account's credit left, for the turn-cost card. */
   credit?: string
@@ -358,6 +390,8 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
   onShowChange?: (path: string) => void
   /** Undo a Customize change by its handle (Op::Undo). */
   onUndo?: (handle: string) => void
+  /** "Make it a rule" on a note Frog kept: App sends `note_to_rule`. */
+  onNoteToRule?: (note: { id: string; scope: string }) => void
   /** A new session still starting (ui/Opening.tsx): the live row says how far it's got. */
   start?: StartInfo
 }) {
@@ -388,8 +422,8 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
   }, [from, convo])
   // Handlers change identity every render; turns read them through one stable ref so a
   // streamed delta redraws only the turn it touched.
-  const latest = useRef({ onDecide, onAnswer, onRetry, onEdit, onContinue, onPrompt, onShowChange, onUndo })
-  latest.current = { onDecide, onAnswer, onRetry, onEdit, onContinue, onPrompt, onShowChange, onUndo }
+  const latest = useRef({ onDecide, onAnswer, onRetry, onEdit, onContinue, onPrompt, onShowChange, onUndo, onNoteToRule })
+  latest.current = { onDecide, onAnswer, onRetry, onEdit, onContinue, onPrompt, onShowChange, onUndo, onNoteToRule }
   const cb = useMemo<TurnCallbacks>(() => ({
     onDecide: (a, o) => latest.current.onDecide(a, o),
     onAnswer: (c, o) => latest.current.onAnswer(c, o),
@@ -399,6 +433,7 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
     onPrompt: (t) => latest.current.onPrompt?.(t),
     onShowChange: onShowChange ? (p) => latest.current.onShowChange?.(p) : undefined,
     onUndo: (h) => latest.current.onUndo?.(h),
+    onNoteToRule: (n) => latest.current.onNoteToRule?.({ id: n.id, scope: n.scope }),
   }), [])
   const has = { retry: !!onRetry, edit: !!onEdit, cont: !!onContinue }
   // The live row's fast-changing inputs, through context so the memoized turns don't redraw.
@@ -450,6 +485,7 @@ interface TurnCallbacks {
   onPrompt: (text: string) => void
   onShowChange?: (path: string) => void
   onUndo: (handle: string) => void
+  onNoteToRule: (note: Noted) => void
 }
 
 /** A turn's entries as foldable rows: a finished step that draws as a line is a step (a failed one
@@ -531,13 +567,21 @@ const TurnView = memo(function TurnView({ turn, index, live, ask, question, runn
         ))}
       </div>)}
       <div className="reply-block">
-      {foldRuns(rows(turn.entries, ask, question)).map((r) => r.kind === 'fold'
+      {/* The Note call that kept this turn's note draws as the line under the reply, not as a step. */}
+      {foldRuns(rows(turn.entries, ask, question).filter((r) => r.e.id !== turn.noted?.item)).map((r) => r.kind === 'fold'
         ? <Fold key={r.id} steps={r.steps.map((x) => x.e)} render={(e) => <ToolLine key={e.id} e={e} onShowChange={cb.onShowChange} />} />
         : <Fragment key={r.id}>{draw(r.e, turn.entries, r.n)}</Fragment>)}
       {turn.usage && (turn.reason?.type === 'complete' || turn.reason?.type === 'denied') && (
         <TurnFooter usage={turn.usage} turn={turn} models={models} pinned={false} credit={credit}
           answer={[...turn.entries].reverse().find((e) => e.kind === 'message')?.text ?? ''}
           onRetry={live && !running && hasRetry ? cb.onRetry : undefined} />
+      )}
+      {/* Under the reply and its stats once the turn ends (canvas M2): used_notes comes at its start. */}
+      {turn.reason && turn.noted && <NotedLine noted={turn.noted} onUndo={cb.onUndo} onRule={cb.onNoteToRule} />}
+      {turn.reason && turn.usedNotes && <UsedNotesBlock used={turn.usedNotes} />}
+      {/* A Customize card on no row ("Make it a rule" asks as `note:<id>`) waits after the turn. */}
+      {ask?.proposal && !turn.entries.some((e) => e.id === ask.item) && (
+        <div data-row="box"><ProposalCard ask={ask} proposal={ask.proposal} onDecide={cb.onDecide} /></div>
       )}
       {/* One row from Send on: a new session's start, then the turn's live row (the same node). */}
       {live && (running || start) && <LiveTail entries={turn.entries} tl={turn.tl} waiting={!!ask || !!question} waitItem={ask?.item ?? question?.item} models={models} start={running ? undefined : start} />}
