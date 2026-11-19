@@ -15,6 +15,9 @@ const mac = JSON.parse(readFileSync(b, "utf8"));
 /** docs/design/chrome/spec.md: on the Mac only, for now. */
 const ONE_APP = { split: "mac" };
 const TOL = 1;
+/** The group loses a button's width (spec: 34) for each button the spec keeps off one app. */
+const BUTTON = 34;
+const groupShift = (have, other) => Object.entries(ONE_APP).filter(([id, app]) => app !== have.app && other.controls.some((c) => c.id === id)).length * BUTTON;
 const fromLeft = new Set(["title"]);
 const ids = [...new Set([...web.controls, ...mac.controls].map((c) => c.id))];
 const rows = [];
@@ -29,7 +32,9 @@ for (const id of ids) {
     continue;
   }
   const keys = ["top", "width", "height", fromLeft.has(id) ? "x" : "right"];
-  const off = keys.filter((k) => Math.abs(w[k] - m[k]) > TOL).map((k) => `${k} ${w[k]} vs ${m[k]}`);
+  // The web's group, short of the Mac-only buttons, is expected that much narrower.
+  const expect = (k) => (id === "group" && k === "width" ? m[k] - groupShift(web, mac) + groupShift(mac, web) : m[k]);
+  const off = keys.filter((k) => Math.abs(w[k] - expect(k)) > TOL).map((k) => `${k} ${w[k]} vs ${m[k]}${expect(k) !== m[k] ? ` (expected ${expect(k)})` : ""}`);
   if (off.length) bad++;
   rows.push({ id, ok: !off.length, note: off.join(", ") || "same", web: w, mac: m });
 }

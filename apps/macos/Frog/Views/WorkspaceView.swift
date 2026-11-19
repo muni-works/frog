@@ -87,6 +87,9 @@ struct WorkspaceView: View {
     /// The toolbar's own inset at the window's trailing edge: the inspector's tabs in the title
     /// row are this much narrower than its column, so they start at its hairline.
     static let toolbarTrailing: CGFloat = 8
+    /// What the window controls add to the toolbar's own trailing inset, so the capsule stands
+    /// 8 from the window's edge (spec.md, 1; measured by docs/design/chrome/parity).
+    static let controlsTrailing: CGFloat = 0
     /// Narrowest a column may get; a card that would squeeze it further stays folded.
     static let minColumn: CGFloat = 520
     /// Split panes accept narrower columns: that's the point of splitting.
@@ -715,25 +718,22 @@ struct WorkspaceView: View {
             ToolbarItem(placement: .navigation) { titleBar }
                 .sharedBackgroundVisibility(.hidden)
             ToolbarSpacer(.flexible)
+            // The window controls (docs/design/chrome/spec.md, 1): Split, Commands and the
+            // inspector toggle, rightmost, in one capsule Frog draws (the web draws the same).
             ToolbarItem(placement: .primaryAction) {
-                Button("Split", systemImage: "rectangle.split.2x1") { split() }
-                    .contextMenu {
-                        Button("Split Right") { split(nil, .right) }
-                        Button("Split Down") { split(nil, .bottom) }
-                    }
-                    .help("Split pane (⌘\\)")
-                    .disabled(!panes.canSplit || inMode)
+                WindowControls(
+                    canSplit: panes.canSplit && !inMode,
+                    paletteOn: focused.ui.paletteShown,
+                    inspectorOn: changesVisible(focused) && !inMode,
+                    inspectorEnabled: focused.conversation != nil && !inMode,
+                    split: { split() },
+                    splitRight: { split(nil, .right) },
+                    splitDown: { split(nil, .bottom) },
+                    palette: { focused.ui.paletteShown.toggle() },
+                    inspector: { toggleChanges(focused) })
+                .padding(.trailing, Self.controlsTrailing)
             }
-            ToolbarItem(placement: .primaryAction) {
-                Button("Commands", systemImage: "command") { focused.ui.paletteShown.toggle() }
-                    .help("Command Palette (⌘K)")
-            }
-            // The inspector toggle, rightmost: Changes, Terminal and Preview as tabs of one panel.
-            ToolbarItem(placement: .primaryAction) {
-                Button("Inspector", systemImage: "sidebar.right") { toggleChanges(focused) }
-                    .help("Inspector: changes, terminal, preview (⌥⌘0)")
-                    .disabled(focused.conversation == nil || inMode)
-            }
+            .sharedBackgroundVisibility(.hidden)
             // The top-right inspector's tabs, over its column: the controls sit left of it.
             if let corner = cornerInspector, let c = corner.conversation {
                 ToolbarItem(placement: .primaryAction) {

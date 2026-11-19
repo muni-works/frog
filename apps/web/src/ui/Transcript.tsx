@@ -317,7 +317,7 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
       {/* The first turn keeps its node from Send on: drawn first from the sent message
           (ui/Opening.tsx), then from the engine's turn, whatever number the engine gives it. */}
       {thread.turns.map((turn, ti) => (<Fragment key={ti === 0 ? 'first' : `${ti}-${turn.turn}`}>
-        <TurnView turn={turn} live={ti === lastIdx} start={ti === lastIdx ? start : undefined} ask={ti === lastIdx ? thread.ask : null} question={ti === lastIdx ? thread.question : null}
+        <TurnView turn={turn} index={ti} live={ti === lastIdx} start={ti === lastIdx ? start : undefined} ask={ti === lastIdx ? thread.ask : null} question={ti === lastIdx ? thread.question : null}
           running={ti === lastIdx && thread.running} models={models} credit={credit} cb={cb} hasRetry={has.retry} hasEdit={has.edit} hasContinue={has.cont} />
         {(thread.marks ?? []).filter((m) => m.after === ti + 1).map((m, k) => <Mark key={`m${ti}-${k}`} m={m} />)}
       </Fragment>))}
@@ -367,8 +367,8 @@ function rows(entries: Entry[], ask: Ask | null, question: Question | null) {
 /** One turn. Memoized: the reducer keeps untouched turns the same object, so while the last
  * turn streams the others don't redraw (or re-parse their markdown). Only the live turn gets
  * the session's ask, question and running state. */
-const TurnView = memo(function TurnView({ turn, live, ask, question, running, models, credit, cb, hasRetry, hasEdit, hasContinue, start }: {
-  turn: Turn; live: boolean; ask: Ask | null; question: Question | null; running: boolean; models: Model[]; start?: StartInfo
+const TurnView = memo(function TurnView({ turn, index, live, ask, question, running, models, credit, cb, hasRetry, hasEdit, hasContinue, start }: {
+  turn: Turn; index: number; live: boolean; ask: Ask | null; question: Question | null; running: boolean; models: Model[]; start?: StartInfo
   credit?: string; cb: TurnCallbacks; hasRetry: boolean; hasEdit: boolean; hasContinue: boolean
 }) {
   // One entry as its row. `data-row` says what it is (prose, line, box), and the gaps between
@@ -408,7 +408,8 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
     return <ToolLine e={e} diff={diff} onShowChange={cb.onShowChange} />
   }
   return (
-    <div className="turn">
+    // data-turn-index: where the turn rail finds and jumps to a turn (docs/design/chrome/spec.md).
+    <div className="turn" data-turn-index={index}>
       {/* A turn the credit wall resumed (Op::Continue with wall.ts's note) is one quiet line, not a message. */}
       {resumedLine(turn.input) ? <div className="turn-note" data-row="resumed" role="status">{resumedLine(turn.input)}</div> : (
       <div className="ask-block">

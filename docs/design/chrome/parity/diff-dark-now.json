@@ -1,0 +1,127 @@
+{
+  "format": "frog-chrome-diff/1",
+  "web": "/Users/cam/Developer/frog/.claude/worktrees/preview-pane-ui-1bcdb0/docs/design/chrome/parity/web-dark-now.json",
+  "mac": "/Users/cam/Developer/frog/.claude/worktrees/preview-pane-ui-1bcdb0/docs/design/chrome/parity/mac-dark-now.json",
+  "ok": false,
+  "rows": [
+    {
+      "id": "group",
+      "ok": false,
+      "note": "width 74 vs 108",
+      "web": {
+        "id": "group",
+        "x": 1198,
+        "top": 9,
+        "width": 74,
+        "height": 34,
+        "right": 8
+      },
+      "mac": {
+        "height": 34,
+        "id": "group",
+        "right": 8,
+        "top": 9,
+        "width": 108,
+        "x": 1164
+      }
+    },
+    {
+      "id": "palette",
+      "ok": true,
+      "note": "same",
+      "web": {
+        "id": "palette",
+        "x": 1201,
+        "top": 12,
+        "width": 34,
+        "height": 28,
+        "right": 45
+      },
+      "mac": {
+        "height": 28,
+        "id": "palette",
+        "right": 45,
+        "top": 12,
+        "width": 34,
+        "x": 1201
+      }
+    },
+    {
+      "id": "inspector",
+      "ok": true,
+      "note": "same",
+      "web": {
+        "id": "inspector",
+        "x": 1235,
+        "top": 12,
+        "width": 34,
+        "height": 28,
+        "right": 11
+      },
+      "mac": {
+        "height": 28,
+        "id": "inspector",
+        "right": 11,
+        "top": 12,
+        "width": 34,
+        "x": 1235
+      }
+    },
+    {
+      "id": "rail",
+      "ok": true,
+      "note": "same",
+      "web": {
+        "id": "rail",
+        "x": 1244,
+        "top": 60,
+        "width": 28,
+        "height": 64,
+        "right": 8
+      },
+      "mac": {
+        "height": 64,
+        "id": "rail",
+        "right": 8,
+        "top": 60,
+        "width": 28,
+        "x": 1244
+      }
+    },
+    {
+      "id": "title",
+      "ok": false,
+      "note": "top 14 vs 17.5, width 24 vs 128, height 24 vs 17, x 428.2 vs 270",
+      "web": {
+        "id": "title",
+        "x": 428.2,
+        "top": 14,
+        "width": 24,
+        "height": 24,
+        "right": 827.8
+      },
+      "mac": {
+        "height": 17,
+        "id": "title",
+        "right": 882,
+        "top": 17.5,
+        "width": 128,
+        "x": 270
+      }
+    },
+    {
+      "id": "split",
+      "ok": true,
+      "note": "mac only (spec: one app)",
+      "web": null,
+      "mac": {
+        "height": 28,
+        "id": "split",
+        "right": 79,
+        "top": 12,
+        "width": 34,
+        "x": 1167
+      }
+    }
+  ]
+}
