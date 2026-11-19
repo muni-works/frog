@@ -208,7 +208,12 @@ impl Agent {
             line: line.clone(),
             to: None,
         };
-        let mut card = self.plan(&change, "Make it a rule", false)?.card;
+        // The user pressed "Make it a rule" on the note: that button, as labelled, is the ask.
+        let asked_by = crate::protocol::AskedBy {
+            who: "user".into(),
+            words: "Make it a rule".into(),
+        };
+        let mut card = self.plan(&change, asked_by)?.card;
         card.title = "Make this a rule?".into();
         card.primary = "Add rule".into();
         let item = format!("note:{id}");

@@ -374,12 +374,179 @@ fn norm(s: &str) -> String {
         .to_string()
 }
 
-/// Whether `words` are the user's own: found in one of the messages they typed this turn.
-/// A quote from a tool result, a page or a file isn't in them, so it never counts.
+/// Words, as whole tokens: lower case, letters and digits (an inner `'`, `-`, `_` or `.` keeps
+/// a token together: `don't`, `accept-edits`, `v1.2`). `$25` is `25`.
+pub fn tokens_of(s: &str) -> Vec<String> {
+    norm(s)
+        .split(|c: char| !(c.is_alphanumeric() || matches!(c, '\'' | '-' | '_' | '.')))
+        .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()))
+        .filter(|w| !w.is_empty())
+        .map(String::from)
+        .collect()
+}
+
+/// Whether `words` are the user's own: the same run of whole words in one of the messages
+/// they typed this turn. A quote from a tool result, a page or a file isn't in them, so it
+/// never counts; nor does a word found inside another word.
 pub fn said_by_user(words: &str, user: &[String]) -> bool {
-    let w = norm(words);
-    w.chars().filter(|c| c.is_alphanumeric()).count() >= 2
-        && user.iter().any(|u| norm(u).contains(&w))
+    let w = tokens_of(words);
+    w.iter().map(|t| t.chars().count()).sum::<usize>() >= 2
+        && user.iter().any(|u| {
+            let u = tokens_of(u);
+            u.windows(w.len()).any(|win| win == w.as_slice())
+        })
+}
+
+/// Words that carry no meaning of their own in a rule: left out when checking that the user
+/// named it. Polarity (never, always, not, no, don't) is never filler.
+const FILLER: &[&str] = &[
+    "a", "an", "the", "to", "of", "in", "at", "for", "and", "or", "is", "are", "be", "it", "its",
+    "this", "that", "we", "i", "you", "my", "our", "your", "please", "here", "there", "with", "by",
+    "as", "so", "just", "from", "into", "should", "will", "can",
+];
+
+fn content_tokens(s: &str) -> Vec<String> {
+    tokens_of(s)
+        .into_iter()
+        .filter(|t| !FILLER.contains(&t.as_str()))
+        .collect()
+}
+
+/// Every content word of `line` is a whole word of `typed` (polarity included).
+pub fn names_line(line: &str, typed: &str) -> bool {
+    let want = content_tokens(line);
+    let have = tokens_of(typed);
+    !want.is_empty() && want.iter().all(|w| have.contains(w))
+}
+
+/// Whether `typed` names `phrase` (one or more words, in order).
+fn names_phrase(phrase: &str, typed: &[String]) -> bool {
+    let p = tokens_of(phrase);
+    !p.is_empty() && typed.windows(p.len()).any(|w| w == p.as_slice())
+}
+
+/// Words of a setting's id or label too common to name it on their own.
+const GENERIC: &[&str] = &[
+    "default",
+    "show",
+    "share",
+    "new",
+    "use",
+    "each",
+    "end",
+    "turn",
+    "files",
+    "open",
+    "let",
+    "frog",
+    "run",
+    "keep",
+    "with",
+    "on",
+    "off",
+    "my",
+    "other",
+    "machines",
+    "start",
+    "sessions",
+    "conversations",
+    "commands",
+    "apps",
+    "see",
+    "and",
+    "the",
+    "of",
+    "at",
+    "in",
+    "to",
+];
+
+fn names_setting_row(row: &Setting, typed: &[String]) -> bool {
+    row.id
+        .split('-')
+        .chain(row.label.split(|c: char| !c.is_alphanumeric()))
+        .map(str::to_lowercase)
+        .filter(|w| w.len() >= 3 && !GENERIC.contains(&w.as_str()))
+        .any(|w| typed.contains(&w))
+        || names_phrase(&row.id.replace('-', " "), typed)
+        || names_phrase(&row.label, typed)
+}
+
+/// Whether `typed` names an option value `id` of `row`, by its id or its label.
+fn names_option(row: &Setting, id: &str, typed: &[String]) -> bool {
+    row.options
+        .iter()
+        .filter(|(o, _)| o == id)
+        .any(|(o, label)| names_phrase(o, typed) || names_phrase(label, typed))
+}
+
+/// Whether the user's own `typed` words name this change: the setting (and for a choice its
+/// value), the skill or tool by name, or every content word of the line. The engine's check,
+/// not the model's claim: anything short of it is a proposal.
+pub fn names_change(change: &Change, typed: &str) -> bool {
+    let t = tokens_of(typed);
+    match change {
+        Change::Line { op, line, to, .. } => match op {
+            LineOp::Edit => names_line(to.as_deref().unwrap_or_default(), typed),
+            _ => names_line(line, typed),
+        },
+        Change::Skill { name, .. } => {
+            names_phrase(name, &t) || names_phrase(&name.replace(['-', '_'], " "), &t)
+        }
+        Change::Tool { name, .. } => {
+            let mut parts = name.trim_start_matches("mcp__").splitn(2, "__");
+            let (server, tool) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
+            [tool.to_string(), tool.replace(['-', '_'], " ")]
+                .iter()
+                .any(|p| names_phrase(p, &t))
+                && (names_phrase(server, &t) || tool.contains('_') || tool.len() > 6)
+        }
+        Change::Set { id, value } => {
+            let Some(row) = setting(id) else {
+                return false;
+            };
+            let named = names_setting_row(row, &t);
+            match value {
+                Value::Bool(_) => named,
+                Value::String(v) if !row.options.is_empty() => {
+                    // A word only this setting has as a value names it ("compact"); a value
+                    // shared with another setting, or a bare number, needs the setting too.
+                    let unique = !v.chars().all(|c| c.is_ascii_digit())
+                        && TIERS
+                            .settings
+                            .iter()
+                            .filter(|s| s.options.iter().any(|(o, _)| o == v))
+                            .count()
+                            == 1;
+                    names_option(row, v, &t) && (named || unique)
+                }
+                v => {
+                    let shown = match v {
+                        Value::String(s) => s.clone(),
+                        v => v.to_string(),
+                    };
+                    named && names_phrase(&shown, &t)
+                }
+            }
+        }
+    }
+}
+
+/// The sentence of the user's typed messages that names `change`, for the card's quote; or
+/// the whole message when the naming words span sentences. `None`: the user didn't ask.
+pub fn asking_sentence(change: &Change, user: &[String]) -> Option<String> {
+    user.iter().rev().find_map(|u| {
+        let found = u
+            .split_inclusive(['.', '!', '?', '\n'])
+            .map(str::trim)
+            .find(|s| names_change(change, s))
+            .or_else(|| names_change(change, u).then_some(u.trim()))?;
+        let mut s: String = found.chars().take(240).collect();
+        if found.chars().count() > 240 {
+            s.push('…');
+        }
+        Some(s)
+    })
 }
 
 // ---- line edits: minimal, never a rewrite ----
@@ -702,6 +869,8 @@ mod tests {
     #[test]
     fn tiers_come_from_the_settings_file() {
         assert_eq!(setting("density").unwrap().tier, Tier::Apply);
+        // Notifications silence "a session needs you": not cosmetic.
+        assert_eq!(setting("notifications").unwrap().tier, Tier::Ask);
         assert_eq!(setting("sounds").unwrap().tier, Tier::Apply);
         assert_eq!(setting("monthly-cap").unwrap().tier, Tier::Ask);
         assert_eq!(setting("default-mode").unwrap().tier, Tier::Ask);
@@ -711,6 +880,9 @@ mod tests {
         assert!(setting("machines").is_none());
         assert_eq!(action_tier("line.notes"), Tier::Apply);
         assert_eq!(action_tier("line.project"), Tier::Ask);
+        // Home rules apply to every project; a skill loads its instructions everywhere.
+        assert_eq!(action_tier("line.home"), Tier::Ask);
+        assert_eq!(action_tier("skill"), Tier::Ask);
         assert_eq!(action_tier("tool"), Tier::Ask);
         assert_eq!(action_tier("not-listed"), Tier::Ask);
     }
@@ -776,6 +948,73 @@ mod tests {
         assert!(!said_by_user("set the monthly cap to $250", &user));
         assert!(!said_by_user("", &user));
         assert!(!said_by_user(".", &user));
+        // Whole words only.
+        assert!(!said_by_user("use pnpm her", &user));
+    }
+
+    #[test]
+    fn the_users_words_must_name_the_change() {
+        let set = |id: &str, v: Value| Change::Set {
+            id: id.into(),
+            value: v,
+        };
+        assert!(names_change(
+            &set("density", json!("compact")),
+            "make it compact"
+        ));
+        assert!(names_change(
+            &set("theme", json!("dark")),
+            "dark mode please"
+        ));
+        assert!(!names_change(
+            &set("density", json!("compact")),
+            "look at the logs"
+        ));
+        assert!(names_change(
+            &set("sounds", json!(false)),
+            "turn off the frog sounds"
+        ));
+        assert!(!names_change(&set("sounds", json!(false)), "turn it off"));
+        assert!(names_change(
+            &set("monthly-cap", json!("250")),
+            "raise my monthly cap to $250"
+        ));
+        assert!(!names_change(
+            &set("monthly-cap", json!("250")),
+            "raise it to $250"
+        ));
+        let line = |l: &str| Change::Line {
+            op: LineOp::Add,
+            target: Target::Notes,
+            line: l.into(),
+            to: None,
+        };
+        assert!(names_change(
+            &line("We deploy on Fridays"),
+            "remember we deploy on fridays"
+        ));
+        assert!(!names_change(
+            &line("Always push to main"),
+            "never push to main"
+        ));
+        assert!(!names_change(
+            &line("Use pnpm, not npm"),
+            "no, we use pnpm here"
+        ));
+        let skill = Change::Skill {
+            name: "release-notes".into(),
+            on: false,
+        };
+        assert!(names_change(&skill, "turn off release notes"));
+        assert!(!names_change(&skill, "turn it off"));
+        assert_eq!(
+            asking_sentence(
+                &set("density", json!("compact")),
+                &["thanks. please make it compact! and look at logs".into()]
+            )
+            .as_deref(),
+            Some("please make it compact!")
+        );
     }
 
     #[test]

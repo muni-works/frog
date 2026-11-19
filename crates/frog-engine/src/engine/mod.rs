@@ -1431,10 +1431,16 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             // turn never delivered (it had no tool call to stop at) go now, as the next turn,
             // before the engine goes idle — the first is its input, the rest as `more`, in
             // order, each with its images. Never lost.
-            let parked = take_submitted(&shared);
+            let parked = take_submitted_marked(&shared);
             let late = shared.late_warm.lock().unwrap().take();
             if !parked.is_empty() {
-                let mut parts = parked.into_iter();
+                // A parent's message parked with them goes along, but isn't the user's words.
+                agent.not_typed = parked
+                    .iter()
+                    .filter(|(_, from_parent)| *from_parent)
+                    .map(|(p, _)| p.text.clone())
+                    .collect();
+                let mut parts = parked.into_iter().map(|(p, _)| p);
                 let first = parts.next().expect("checked non-empty");
                 held = Some(Op::Submit {
                     text: first.text,
@@ -1576,10 +1582,15 @@ fn draining(shared: &Shared) -> bool {
     /// messages of the running turn, so the model reads them before its next step (they no
     /// longer wait for the whole turn to end). Exactly once: drained is drained.
     fn take_submitted(shared: &Shared) -> Vec<crate::protocol::Part> {
-        std::mem::take(&mut *shared.submitted.lock().unwrap())
+        take_submitted_marked(shared)
             .into_iter()
             .map(|(part, _)| part)
             .collect()
+    }
+
+    /// The composer's queue with each part's mark: `true` for a parent's message to its child.
+    fn take_submitted_marked(shared: &Shared) -> Vec<(crate::protocol::Part, bool)> {
+        std::mem::take(&mut *shared.submitted.lock().unwrap())
     }
 
 /// Like [`drain_pending`], but for the composer's queue: yields first so the router task
@@ -1969,6 +1980,9 @@ struct Agent {
     /// What the user typed this turn, verbatim (no expanded mentions, wakes or tool output):
     /// the only words that can ask `Customize` for a change.
     user_words: Vec<String>,
+    /// Parent messages parked with the user's follow-ups and run with them as the next turn:
+    /// left out of `user_words` (see `turn::Typed`).
+    not_typed: Vec<String>,
     /// Undo for each `Customize` change, by the handle its event carried.
     undos: HashMap<String, crate::customize::Undo>,
     /// `Customize` offers the user declined this session: never offered again.
@@ -2322,6 +2336,7 @@ impl Agent {
             compiled: None,
             notes,
             user_words: Vec::new(),
+            not_typed: Vec::new(),
             undos: HashMap::new(),
             declined: HashSet::new(),
             noted_turn: None,
@@ -3110,16 +3125,30 @@ impl Agent {
                     for part in &more {
                         self.remember_from(&part.text);
                     }
-                    self.turn_with(&text, images, more, true).await?
+                    self.turn_with(&text, images, more, true, turn::Typed::All)
+                        .await?
                 }
             }
             Op::Act { label, send } => {
-                let text = if send.trim().is_empty() { label } else { send };
-                self.turn(&text, Vec::new()).await?
+                let text = if send.trim().is_empty() {
+                    label.clone()
+                } else {
+                    send
+                };
+                // Only the label the user saw counts as their words, not the hidden `send`.
+                self.turn_with(
+                    &text,
+                    Vec::new(),
+                    Vec::new(),
+                    true,
+                    turn::Typed::Label(label),
+                )
+                .await?
             }
             Op::Continue { note } => {
                 let note = note.unwrap_or_else(|| crate::protocol::CONTINUE_NOTE.to_string());
-                self.turn(&note, Vec::new()).await?
+                self.turn_with(&note, Vec::new(), Vec::new(), true, turn::Typed::None)
+                    .await?
             }
             Op::Shell { command } => self.shell(&command).await,
             Op::Undo { undo } => self.customize_undo(&undo),

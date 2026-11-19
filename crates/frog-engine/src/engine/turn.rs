@@ -2,6 +2,18 @@
 
 use super::*;
 
+/// Which of a turn's text the person typed in this session: only that is the user's words
+/// (for `Customize` and for noting's evidence). Messages from other sessions, wake notices,
+/// the continue note and a button's hidden `send` text are never theirs.
+pub(super) enum Typed {
+    /// The input and every `more` part (a message the person sent).
+    All,
+    /// Nothing (a message from another session, a wake, the continue note).
+    None,
+    /// Only this (a button press counts for what its visible label says).
+    Label(String),
+}
+
 impl Agent {
     /// The composer's queue, drained at a tool-call boundary (see the boundary in `turn`):
     /// every parked follow-up joins the conversation now, in order, each its own user block
@@ -10,13 +22,16 @@ impl Agent {
     /// [`Event::FollowUpsIngested`] so the transcript shows where each landed. Never
     /// reorders: the queue is FIFO and the drain is one take.
     fn ingest_submitted(&mut self) {
-        let parts = take_submitted(&self.shared);
+        let parts = take_submitted_marked(&self.shared);
         if parts.is_empty() {
             return;
         }
-        let texts: Vec<String> = parts.iter().map(|p| p.text.clone()).collect();
-        for part in parts {
-            self.user_words.push(part.text.clone());
+        let texts: Vec<String> = parts.iter().map(|(p, _)| p.text.clone()).collect();
+        for (part, from_parent) in parts {
+            // A parent's message to its child is parked here too: not the person's words.
+            if !from_parent {
+                self.user_words.push(part.text.clone());
+            }
             let (text, named) = crate::image_paths::attach(&part.text);
             let mut text = self.expand_mentions(&text);
             let (extra, files) = self.attach_named(&part.text);
@@ -184,7 +199,8 @@ impl Agent {
                 images: Vec::new(),
             })
             .collect();
-        self.turn_with(&first, Vec::new(), more, true).await
+        self.turn_with(&first, Vec::new(), more, true, Typed::None)
+            .await
     }
 
     /// An informational message from another session ([`Op::Inform`]): logged as read, and
@@ -216,7 +232,7 @@ impl Agent {
             })
             .collect();
         // The notices are the turn's input (that's how it's shown) but not the user's words.
-        self.turn_with(&notices.join("\n\n"), Vec::new(), more, false)
+        self.turn_with(&notices.join("\n\n"), Vec::new(), more, false, Typed::None)
             .await
     }
 
@@ -225,7 +241,8 @@ impl Agent {
         input: &str,
         images: Vec<crate::protocol::Image>,
     ) -> Result<()> {
-        self.turn_with(input, images, Vec::new(), true).await
+        self.turn_with(input, images, Vec::new(), true, Typed::All)
+            .await
     }
 
     /// A turn on `input` and any further messages sent with it (`more`, in order): one user
@@ -238,6 +255,7 @@ impl Agent {
         // `input` is the user's words, not wake notices: only then do `@mentions`, `/skills`
         // and image paths in it expand, and it's kept verbatim through compaction.
         user: bool,
+        typed: Typed,
     ) -> Result<()> {
         // A completed background map can be adopted at a turn boundary. Never wait for it;
         // if it is still running, this turn proceeds with the current prompt.
@@ -290,12 +308,19 @@ impl Agent {
         if user {
             self.conv.inputs.push(input.to_string());
         }
-        // The words that may ask `Customize` for a change: this turn's, as typed.
+        // The words that may ask `Customize` for a change: what the person typed this turn.
         self.user_words.clear();
-        if user {
-            self.user_words.push(raw_input);
+        let parked_from_parent = std::mem::take(&mut self.not_typed);
+        match typed {
+            Typed::All => {
+                self.user_words.push(raw_input);
+                self.user_words.extend(raw_more);
+                // A parent's message parked with the user's follow-ups isn't theirs.
+                self.user_words.retain(|w| !parked_from_parent.contains(w));
+            }
+            Typed::Label(label) => self.user_words.push(label),
+            Typed::None => {}
         }
-        self.user_words.extend(raw_more);
         self.conv.inputs.extend(more.iter().map(|p| p.text.clone()));
         let texts: Vec<String> = more.iter().map(|p| p.text.clone()).collect();
         if let Some(closed) = self.conv.chapters.started(turn, input, &texts) {

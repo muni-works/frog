@@ -137,7 +137,7 @@ impl Rig {
             let e = self.h.events.recv().await.unwrap().event;
             if let Event::PermissionRequest {
                 id,
-                proposal: Some(_),
+                proposal: Some(p),
                 ..
             } = &e
             {
@@ -147,7 +147,7 @@ impl Rig {
                         id: id.clone(),
                         decision: Decision::Allow,
                         note: None,
-                        choice: None,
+                        choice: Some(p.choice.clone()),
                     })
                     .unwrap();
             }

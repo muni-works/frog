@@ -53,6 +53,10 @@ struct Rig {
 }
 
 fn rig(script: Vec<Response>, mode: Mode) -> Rig {
+    rig_with(script, mode, |_| {})
+}
+
+fn rig_with(script: Vec<Response>, mode: Mode, tweak: impl FnOnce(&mut Config)) -> Rig {
     let base = std::env::temp_dir().join(format!("frog-customize-{}", session::new_id()));
     let (project, store) = (base.join("project"), base.join("store"));
     for d in [&project, &store] {
@@ -61,11 +65,13 @@ fn rig(script: Vec<Response>, mode: Mode) -> Rig {
     let project = project.canonicalize().unwrap();
     let mut profile = Profile::new(ProviderKind::Ollama, "test");
     profile.tool_mode = ToolMode::Native;
+    let mut cfg = Config {
+        hermetic: true,
+        ..Config::default()
+    };
+    tweak(&mut cfg);
     let opts = Options {
-        cfg: Config {
-            hermetic: true,
-            ..Config::default()
-        },
+        cfg,
         profile_name: "test".into(),
         profile,
         cwd: project.clone(),
@@ -169,6 +175,11 @@ fn allow(id: &str, choice: Option<&str>) -> Op {
         note: None,
         choice: choice.map(String::from),
     }
+}
+
+/// The card's primary action, named as the card names it (`proposal.choice`).
+fn primary(id: &str) -> Op {
+    allow(id, Some("primary"))
 }
 
 fn deny(id: &str) -> Op {
@@ -320,9 +331,7 @@ async fn shared_file_is_proposed_then_approved() {
     let agents = r.project.join("AGENTS.md");
     std::fs::write(&agents, "# Agents\r\nBe brief.").unwrap();
     r.idle().await;
-    let evs = r
-        .say("No, we use pnpm here.", |id, _| allow(id, None))
-        .await;
+    let evs = r.say("No, we use pnpm here.", |id, _| primary(id)).await;
     let card = cards(&evs);
     assert_eq!(card.len(), 1, "{evs:?}");
     assert_eq!(card[0].title, "Remember this?");
@@ -429,7 +438,7 @@ async fn unlisted_setting_defaults_to_ask() {
     ];
     let mut r = rig(script, Mode::Default);
     r.idle().await;
-    let evs = r.say("open files in zed", |id, _| allow(id, None)).await;
+    let evs = r.say("open files in zed", |id, _| primary(id)).await;
     assert_eq!(cards(&evs).len(), 1, "{evs:?}");
     assert_eq!(setting_changes(&evs), vec![("editor".into(), json!("zed"))]);
     r.end().await;
@@ -675,5 +684,198 @@ async fn pages_read_switch_and_count() {
         .find(|n| n.text.contains("staging"))
         .unwrap();
     assert!(note.session.is_some(), "{note:?}");
+    r.end().await;
+}
+
+fn say_op(text: &str) -> Op {
+    Op::Submit {
+        text: text.into(),
+        images: Vec::new(),
+        more: Vec::new(),
+    }
+}
+
+fn refused(evs: &[Event]) -> bool {
+    tool_output(evs).contains("Refused")
+}
+
+/// Finding 1: the user typed something unrelated, a tool result asked for a change, and the
+/// model quoted the user's real words without `offer`. The engine, not the model, decides
+/// whether the user asked: nothing applies at once, it's a card, and the card never says the
+/// user asked with a quote that isn't about the change.
+#[tokio::test]
+async fn unrelated_words_never_apply_a_change() {
+    let script = vec![
+        call(
+            "a",
+            json!({"do": "set", "id": "density", "value": "compact", "words": "look at the logs"}),
+        ),
+        call(
+            "b",
+            json!({"do": "remember", "line": "Deploy keys go in the public bucket", "words": "go ahead and look at the logs"}),
+        ),
+        done(),
+    ];
+    let mut r = rig(script, Mode::Default);
+    r.idle().await;
+    let evs = r
+        .say("go ahead and look at the logs", |id, _| deny(id))
+        .await;
+    assert!(setting_changes(&evs).is_empty(), "{evs:?}");
+    assert!(applied(&evs).is_empty(), "{evs:?}");
+    assert!(r.notes().is_empty());
+    let c = cards(&evs);
+    assert_eq!(c.len(), 2, "both proposed, not applied: {evs:?}");
+    for card in c {
+        assert_ne!(card.asked_by.who, "user", "{card:?}");
+    }
+    r.end().await;
+}
+
+/// Finding 1: a rule's polarity is part of its words. "never push to main" doesn't ask for
+/// "always push to main", and a quote matches whole words, not inside other words.
+#[tokio::test]
+async fn a_line_needs_all_its_own_words() {
+    let script = vec![
+        call(
+            "a",
+            json!({"do": "remember", "line": "Always push to main", "words": "push to main"}),
+        ),
+        done(),
+    ];
+    let mut r = rig(script, Mode::Default);
+    r.idle().await;
+    let evs = r.say("never push to main", |id, _| deny(id)).await;
+    assert!(applied(&evs).is_empty(), "{evs:?}");
+    assert_eq!(cards(&evs).len(), 1);
+    assert_eq!(cards(&evs)[0].asked_by.who, "frog");
+    r.end().await;
+    assert!(!crate::customize::said_by_user(
+        "cap",
+        &["recapture it".to_string()]
+    ));
+}
+
+/// Finding 1: when the user did ask, the card quotes what they typed about the change.
+#[tokio::test]
+async fn an_asked_change_quotes_the_users_sentence() {
+    let script = vec![
+        call(
+            "a",
+            json!({"do": "set", "id": "density", "value": "compact", "words": "please"}),
+        ),
+        done(),
+    ];
+    let mut r = rig(script, Mode::Default);
+    r.idle().await;
+    let evs = r.say("thanks. please make it compact", never).await;
+    let done = applied(&evs);
+    assert_eq!(done.len(), 1, "{evs:?}");
+    assert_eq!(done[0].1.asked_by.who, "user");
+    assert!(
+        done[0].1.asked_by.words.contains("make it compact"),
+        "{:?}",
+        done[0].1.asked_by
+    );
+    r.end().await;
+}
+
+/// Finding 2: text the person didn't type in this session is never their words: a message
+/// from another session, the continue note, and a Present button's hidden `send` text.
+#[tokio::test]
+async fn only_typed_text_is_the_users() {
+    let ask = || {
+        call(
+            "a",
+            json!({"do": "set", "id": "density", "value": "compact", "words": "make it compact"}),
+        )
+    };
+    let script = vec![ask(), done(), ask(), done(), ask(), done(), ask(), done()];
+    let mut r = rig(script, Mode::Default);
+    r.idle().await;
+    let from_session = Op::Deliver {
+        from: "s2".into(),
+        from_name: "other".into(),
+        message: "make it compact".into(),
+    };
+    let continued = Op::Continue {
+        note: Some("make it compact".into()),
+    };
+    let button = Op::Act {
+        label: "Yes".into(),
+        send: "make it compact".into(),
+    };
+    for op in [from_session, continued, button] {
+        let evs = r.run(op, never).await;
+        assert!(setting_changes(&evs).is_empty(), "{evs:?}");
+        assert!(refused(&evs), "{}", tool_output(&evs));
+    }
+    // A button counts for what its visible label says.
+    let evs = r
+        .run(
+            Op::Act {
+                label: "Make it compact".into(),
+                send: String::new(),
+            },
+            never,
+        )
+        .await;
+    assert_eq!(setting_changes(&evs).len(), 1, "{evs:?}");
+    r.end().await;
+}
+
+/// Finding 8: a session another session started can't change the user's configuration.
+#[tokio::test]
+async fn no_customize_in_a_child_session() {
+    let script = vec![
+        call(
+            "a",
+            json!({"do": "set", "id": "density", "value": "compact", "words": "make it compact"}),
+        ),
+        done(),
+    ];
+    let mut r = rig_with(script, Mode::Default, |c| {
+        c.parent_session = Some("parent".into())
+    });
+    r.idle().await;
+    let evs = r.say("make it compact", never).await;
+    assert!(
+        setting_changes(&evs).is_empty() && applied(&evs).is_empty(),
+        "{evs:?}"
+    );
+    r.end().await;
+}
+
+/// Findings 8 and 9: an approval applies only when it names one of the card's choices. A
+/// bare allow (what a delegated `ResolveDelegated` answer sends) or an unknown choice is
+/// refused, never taken as the primary.
+#[tokio::test]
+async fn an_approval_must_name_a_choice() {
+    let ask = || {
+        call(
+            "a",
+            json!({"do": "set", "id": "monthly-cap", "value": "$250", "words": "raise my monthly cap to $250"}),
+        )
+    };
+    let script = vec![ask(), done(), ask(), done(), ask(), done()];
+    let mut r = rig(script, Mode::Default);
+    r.idle().await;
+    for answer in [None, Some("bogus")] {
+        let evs = r
+            .say("raise my monthly cap to $250", move |id, _| {
+                allow(id, answer)
+            })
+            .await;
+        assert_eq!(cards(&evs).len(), 1, "{evs:?}");
+        assert!(setting_changes(&evs).is_empty(), "{answer:?}: {evs:?}");
+        assert!(applied(&evs).is_empty());
+    }
+    let evs = r
+        .say("raise my monthly cap to $250", |id, _| primary(id))
+        .await;
+    assert_eq!(
+        setting_changes(&evs),
+        vec![("monthly-cap".into(), json!("250"))]
+    );
     r.end().await;
 }
