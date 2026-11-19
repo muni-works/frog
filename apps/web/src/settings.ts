@@ -24,29 +24,20 @@ export interface SettingRow {
   notYet?: { web?: string; mac?: string }
 }
 
-/** The nine sections, in the spec's order, from design/settings.json. Account is where Settings
- *  first opens. */
-export const SECTION_IDS = ['general', 'appearance', 'models', 'permissions', 'connections', 'shortcuts', 'usage', 'account', 'billing'] as const
+/** The thirteen sections, in the spec's order, from design/settings.json, in three runs: the app
+ *  (1), what Frog knows and can do (2: skills, connections, rules, memory, automations, each with a
+ *  page of its own in ./ui/Customize.tsx), and you (3). Account is where Settings first opens. */
+export const SECTION_IDS = ['general', 'appearance', 'models', 'permissions', 'shortcuts', 'skills', 'connections', 'rules', 'memory', 'automations', 'usage', 'account', 'billing'] as const
 export type Section = (typeof SECTION_IDS)[number]
-export const SECTIONS: readonly { id: Section; label: string; aliases?: string[] }[] = file.sections as { id: Section; label: string; aliases?: string[] }[]
+export const SECTIONS: readonly { id: Section; label: string; aliases?: string[]; run: 1 | 2 | 3 }[] = file.sections as { id: Section; label: string; aliases?: string[]; run: 1 | 2 | 3 }[]
 export const ROWS: readonly SettingRow[] = file.rows as SettingRow[]
 
 export const isSection = (s: unknown): s is Section => SECTIONS.some((x) => x.id === s)
 
-/** Sections the web moved to Customize (Connections is what the agent can do, not how the app
- *  behaves): left out of Settings' sidebar and palette here, and their old links open Customize.
- *  Holds whether or not design/settings.json still lists them. */
-const MOVED = /^(connections|mcp)$/
-/** The sections Settings shows on the web. */
-export const WEB_SECTIONS = SECTIONS.filter((s) => !MOVED.test(s.id))
-/** A /settings/<section> path or ?settings= link that now lives in Customize: its section there. */
-export function settingsMovedTo(path: string, search = ''): 'connections' | null {
-  const m = path.match(/^\/settings\/([\w-]+)\/?$/)
-  const q = new URLSearchParams(search).get('settings')
-  return (m && MOVED.test(m[1])) || (q && MOVED.test(q)) ? 'connections' : null
-}
+/** The sections Settings shows on the web: all of them. */
+export const WEB_SECTIONS = SECTIONS
 
-/** A section by its name or an old one (mcp → connections, energy → usage, lend → models). */
+/** A section by its name or an old one (mcp → connections, instructions → rules, energy → usage, lend → models). */
 export const sectionNamed = (s: string | null | undefined): Section | null =>
   SECTIONS.find((x) => x.id === s || (s != null && x.aliases?.includes(s)))?.id ?? null
 

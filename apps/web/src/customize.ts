@@ -1,9 +1,10 @@
-// Customize mode (docs/design/app-shell.md, beside Documentation and Settings): what the agent
-// knows and can do. Settings is how the app behaves; Customize is its skills, connections, rules,
-// memory and automations. Its sections, URLs, the engine's report (docs/customize-api.md) and
-// what a Frog Cloud session really reads. No React here, so routing and the rules are testable.
+// Settings' middle run (docs/design/app-shell.md): what the agent knows and can do, its skills,
+// connections, rules, memory and automations. These were a mode of their own (Customize) and now
+// live in Settings with their own page designs. Their URLs (/settings/<section>/..., and the old
+// /customize/... links), the engine's report (docs/customize-api.md) and what a Frog Cloud session
+// really reads. No React here, so routing and the rules are testable.
 
-/** The five sections, in the sidebar's order. */
+/** The five sections, in the sidebar's order (design/settings.json, run 2). */
 export const CUSTOMIZE_SECTIONS = [
   { id: 'skills', label: 'Skills' },
   { id: 'connections', label: 'Connections' },
@@ -20,7 +21,7 @@ export const customizeLabel = (s: CustomizeSection) => CUSTOMIZE_SECTIONS.find((
 
 export const isCustomizeSection = (s: unknown): s is CustomizeSection => CUSTOMIZE_SECTIONS.some((x) => x.id === s)
 
-/** A page in Customize: a section's list, or one of its detail pages. */
+/** A page in one of these sections: its list, or one of its detail pages. */
 export type CustomizeAt =
   | { section: CustomizeSection; page?: undefined }
   /** Skills › a skill (F2Skill), by name. */
@@ -30,27 +31,28 @@ export type CustomizeAt =
   /** Connections › Add › one result (F10Review), by its id. */
   | { section: 'connections'; page: 'review'; id: string }
 
-/** Customize opens on Skills. */
+/** An old bare /customize link opens Skills. */
 export const FIRST_CUSTOMIZE: CustomizeAt = { section: 'skills' }
 
 /** A page's own URL. */
 export function customizePath(at: CustomizeAt): string {
-  const base = `/customize/${at.section}`
+  const base = `/settings/${at.section}`
   if (at.page === 'skill') return `${base}/${encodeURIComponent(at.name)}`
   if (at.page === 'add') return `${base}/add`
   if (at.page === 'review') return `${base}/add/${encodeURIComponent(at.id)}`
   return base
 }
 
-/** The page a path names: FIRST_CUSTOMIZE for bare /customize, null for any other path. An unknown
- *  section opens Skills; an unknown page under a section opens that section. */
+/** The page a path names: /settings/<one of the five>/..., or an old /customize/... link (bare
+ *  /customize and an unknown section there open Skills). Null for any other path, Settings' other
+ *  sections included. An unknown page under a section opens that section. */
 export function customizeAtOf(path: string): CustomizeAt | null {
-  const m = path.match(/^\/customize(?:\/([\w-]*))?(?:\/([^/]+))?(?:\/([^/]+))?\/?$/)
+  const m = path.match(/^\/(customize|settings)(?:\/([\w-]*))?(?:\/([^/]+))?(?:\/([^/]+))?\/?$/)
   if (!m) return null
-  const raw = m[1] ?? ''
+  const raw = m[2] ?? ''
   const section = isCustomizeSection(raw) ? raw : ALIASES[raw]
-  if (!section) return FIRST_CUSTOMIZE
-  const [a, b] = [m[2], m[3]].map((x) => (x == null ? undefined : safeDecode(x)))
+  if (!section) return m[1] === 'customize' ? FIRST_CUSTOMIZE : null
+  const [a, b] = [m[3], m[4]].map((x) => (x == null ? undefined : safeDecode(x)))
   if (a === 'add' && (section === 'skills' || section === 'connections')) {
     if (b && section === 'connections') return { section, page: 'review', id: b }
     return { section, page: 'add' }
@@ -69,7 +71,7 @@ export function shownAt(at: CustomizeAt, report: Report | null | undefined): Cus
   return at
 }
 
-/** Bare /customize and old names are replaced in the history, not pushed. */
+/** Old /customize links, bare /customize and old names are replaced in the history, not pushed. */
 export const customizePathIsCanonical = (path: string) => {
   const at = customizeAtOf(path)
   return !!at && customizePath(at) === path.replace(/\/+$/, '')
