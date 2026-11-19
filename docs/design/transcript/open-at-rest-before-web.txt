@@ -1,0 +1,9 @@
+apps/web/test/open-at-rest.test.ts on main (3064a9c9), before the fix:
+not ok 1 - a long saved conversation opens at rest: nothing, then its end, in one step
+    drew in 29 steps: 7, 14, 20, 27, 34, 40, 47, 54, 60, 67, 74, 80, 94, 100, 107, 114, 120, 127, 134, 140, 147, 154, 160, 167, 174, 180, 187, 194, 200
+not ok 2 - scrolling up fills in the earlier turns without moving what's on screen
+    earlier turns filled in (200 → 200)
+not ok 3 - a conversation opened mid-reply: its history at once, only the live reply streams
+    history drew in 23 steps: 7, 14, 20, 27, 34, 40, 47, 54, 60, 67, 74, 80, 87, 94, 100, 107, 114, 120, 134, 140, 147, 154, 160
+# pass 0
+# fail 3
