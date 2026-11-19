@@ -363,6 +363,12 @@ impl Agent {
             text.push_str(&self.rules_for(p));
         }
         let mentioned: Vec<String> = pointed.iter().filter_map(|p| self.rel(p)).collect();
+        let asked = std::iter::once(typed.as_str())
+            .chain(texts.iter().map(String::as_str))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let recalled = self.notes_for_turn(turn, &asked, &mentioned);
+        text.push_str(&recalled);
         // The map is part of the system prompt, so after the first turn it's rebuilt only where
         // the history is rewritten anyway (`rebased`): rebuilding it whenever a file changed
         // would re-prefill the whole conversation on the turn after every edit.

@@ -253,3 +253,141 @@ fn fnv(bytes: &[u8]) -> u64 {
         (h ^ u64::from(*b)).wrapping_mul(0x0000_0100_0000_01b3)
     })
 }
+
+// ---- bringing back only what fits ----
+
+/// At most this many notes come back in a turn.
+const PER_TURN_MAX: usize = 5;
+
+impl Agent {
+    /// Bring the notes' vectors up to date with `notes`; `None` (the whole index in the prompt)
+    /// for a subagent, without a store, or when the index can't be written.
+    pub(super) fn sync_note_index(&mut self) {
+        self.note_index = match (&self.memory, self.subagent) {
+            (Some(store), false) => crate::memvec::Index::sync(store, &self.notes).ok(),
+            _ => None,
+        };
+    }
+
+    /// The notes that fit this turn, as a block for the user's message (only the ones not
+    /// already in the conversation), with a `used_notes` event and their last use recorded.
+    pub(super) fn notes_for_turn(&mut self, turn: u64, words: &str, files: &[String]) -> String {
+        if self.subagent {
+            return String::new();
+        }
+        if !self.notes_per_turn || self.notes.is_empty() {
+            return String::new();
+        }
+        self.sync_note_index();
+        let Some(index) = &self.note_index else {
+            return String::new();
+        };
+        let budget = match self.harness.tier {
+            Tier::Weak => 120,
+            Tier::Medium => 250,
+            Tier::Strong => 400,
+        };
+        let mut files: Vec<String> = files.to_vec();
+        files.extend(
+            self.read_by_frog
+                .iter()
+                .filter_map(|p| p.strip_prefix(&self.root).ok())
+                .map(|p| p.display().to_string()),
+        );
+        // The prompt already carries standing guidance; choose among the rest.
+        let rest: Vec<Note> = self
+            .notes
+            .iter()
+            .filter(|n| !self.notes_in_prompt.contains(&note_key(n.scope, &n.id)))
+            .cloned()
+            .collect();
+        let chosen = crate::memvec::choose(&rest, index, words, &files, PER_TURN_MAX, budget);
+        if chosen.is_empty() {
+            return String::new();
+        }
+        let key = note_key;
+        let picked: Vec<&Note> = chosen
+            .iter()
+            .filter_map(|c| {
+                self.notes
+                    .iter()
+                    .find(|n| n.scope == c.scope && n.id == c.id)
+            })
+            .collect();
+        let fresh: Vec<&Note> = picked
+            .iter()
+            .copied()
+            .filter(|n| !self.notes_sent.contains(&key(n.scope, &n.id)))
+            .collect();
+        let block = crate::memory::turn_block(&fresh);
+        let used: Vec<crate::protocol::UsedNote> = picked
+            .iter()
+            .map(|n| crate::protocol::UsedNote {
+                id: n.id.clone(),
+                scope: if n.scope == Scope::Global {
+                    "everywhere"
+                } else {
+                    "project"
+                }
+                .into(),
+                text: n.first_line().to_string(),
+            })
+            .collect();
+        let marks: Vec<(Scope, String)> = picked.iter().map(|n| (n.scope, n.id.clone())).collect();
+        for n in &fresh {
+            self.notes_sent.insert(key(n.scope, &n.id));
+        }
+        let now = chrono::Local::now()
+            .format("%Y-%m-%dT%H:%M:%S%:z")
+            .to_string();
+        if let Some(index) = &mut self.note_index {
+            let _ = index.mark_used(&marks, &now);
+        }
+        self.emit(Event::UsedNotes {
+            turn,
+            notes: used,
+            tokens: self.est.tokens(block.len()) as u64,
+        });
+        block
+    }
+}
+
+fn note_key(s: Scope, id: &str) -> String {
+    format!("{}:{id}", if s == Scope::Global { "g" } else { "p" })
+}
+
+impl Agent {
+    /// The notes' part of the system prompt. A store that fits [`crate::memory::whole_budget`]
+    /// rides whole, so every note applies whatever the message's words. Past it (with vectors
+    /// to choose by), only standing guidance rides, within that budget, and the rest come back
+    /// per turn. Without vectors, the whole index within the model's budget, as before.
+    pub(super) fn place_notes(&mut self) {
+        self.notes_in_prompt.clear();
+        let small = crate::memory::whole_budget(self.harness.tier);
+        let (_, _, over) = crate::memory::index_within(&self.notes, small);
+        self.notes_per_turn = self.note_index.is_some() && over > 0;
+        let (index, each, omitted) = if self.notes_per_turn {
+            let standing: Vec<Note> = self
+                .notes
+                .iter()
+                .filter(|n| crate::memory::standing(n))
+                .cloned()
+                .collect();
+            crate::memory::index_within(&standing, small)
+        } else {
+            crate::memory::index_parts(&self.notes, self.harness.tier, self.window)
+        };
+        for (id, scope, line) in &each {
+            if line.is_some() {
+                self.notes_in_prompt.insert(note_key(*scope, id));
+            }
+        }
+        self.system.push_str(&index);
+        if self.notes_per_turn {
+            self.system.push_str(crate::memory::PER_TURN);
+            self.notes_omitted = 0;
+        } else {
+            self.notes_omitted = omitted;
+        }
+    }
+}

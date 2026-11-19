@@ -2883,6 +2883,54 @@
           "type": "object"
         },
         {
+          "description": "The notes this turn brought back because they fit the user's message: \"Used 2 notes\"\nunder the reply (docs/customize-events.md, Used notes). Only when there were some.",
+          "properties": {
+            "created": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "event": {
+              "const": "used_notes",
+              "type": "string"
+            },
+            "notes": {
+              "items": {
+                "$ref": "#/$defs/UsedNote"
+              },
+              "type": "array"
+            },
+            "seq": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session": {
+              "type": "string"
+            },
+            "tokens": {
+              "description": "What they added to the turn, in estimated tokens (0 when all were already in the\nconversation and weren't sent again).",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "turn": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "event",
+            "turn",
+            "notes",
+            "tokens",
+            "seq",
+            "session",
+            "created"
+          ],
+          "type": "object"
+        },
+        {
           "description": "The answer to [`Op::Undo`]: `ok` false when nothing was undone, with why.",
           "properties": {
             "created": {
@@ -5278,6 +5326,39 @@
             "place",
             "source",
             "undo"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The notes this turn brought back because they fit the user's message: \"Used 2 notes\"\nunder the reply (docs/customize-events.md, Used notes). Only when there were some.",
+          "properties": {
+            "event": {
+              "const": "used_notes",
+              "type": "string"
+            },
+            "notes": {
+              "items": {
+                "$ref": "#/$defs/UsedNote"
+              },
+              "type": "array"
+            },
+            "tokens": {
+              "description": "What they added to the turn, in estimated tokens (0 when all were already in the\nconversation and weren't sent again).",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "turn": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "event",
+            "turn",
+            "notes",
+            "tokens"
           ],
           "type": "object"
         },
@@ -9141,6 +9222,27 @@
       "required": [
         "count",
         "days"
+      ],
+      "type": "object"
+    },
+    "UsedNote": {
+      "description": "One note a turn used.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "scope": {
+          "description": "`project` or `everywhere`.",
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "scope",
+        "text"
       ],
       "type": "object"
     },

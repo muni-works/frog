@@ -884,6 +884,15 @@ pub enum Event {
         from: Option<String>,
         undo: String,
     },
+    /// The notes this turn brought back because they fit the user's message: "Used 2 notes"
+    /// under the reply (docs/customize-events.md, Used notes). Only when there were some.
+    UsedNotes {
+        turn: u64,
+        notes: Vec<UsedNote>,
+        /// What they added to the turn, in estimated tokens (0 when all were already in the
+        /// conversation and weren't sent again).
+        tokens: u64,
+    },
     /// The answer to [`Op::Undo`]: `ok` false when nothing was undone, with why.
     CustomizeUndone {
         undo: String,
@@ -1168,6 +1177,7 @@ impl Event {
                 | Self::PermissionResolved { .. }
                 | Self::CustomizeApplied { .. }
                 | Self::Noted { .. }
+                | Self::UsedNotes { .. }
                 | Self::CustomizeUndone { .. }
                 | Self::QuestionResolved { .. }
                 | Self::AutoApproved { .. }
@@ -1855,6 +1865,15 @@ pub struct Status {
     /// This session only reads (a read-only child): it never opens a PR.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub read_only: bool,
+}
+
+/// One note a turn used.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct UsedNote {
+    pub id: String,
+    /// `project` or `everywhere`.
+    pub scope: String,
+    pub text: String,
 }
 
 fn project_scope() -> String {
