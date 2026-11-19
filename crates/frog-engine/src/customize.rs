@@ -590,6 +590,13 @@ const NOT_WORDS: &[&str] = &[
     "not", "don't", "dont", "never", "no", "without", "isn't", "doesn't", "stop",
 ];
 
+/// The only other words a sentence that applies a cosmetic setting at once may hold.
+const APPLY_FILLER: &[&str] = &[
+    "turn", "switch", "set", "make", "change", "put", "use", "please", "the", "my", "a", "to",
+    "it", "can", "could", "would", "you", "frog", "i", "i'd", "want", "like", "be", "now",
+    "back", "mode", "just", "so", "go", "pls", "plz",
+];
+
 /// Whether one typed sentence asks for this cosmetic setting plainly enough to apply it at
 /// once: the setting named by its own words (not only a value), for a choice the value
 /// named too, for on/off the direction said and only that one, and no negation.
@@ -605,6 +612,37 @@ fn applies_in(change: &Change, typed: &str) -> bool {
     };
     let t = tokens_of(typed);
     if !names_setting_row(row, &t) || t.iter().any(|w| NOT_WORDS.contains(&w.as_str())) {
+        return false;
+    }
+    // About the setting and nothing else: every word is the setting's own, a value of it, a
+    // direction, or filler. Anything more ("fix the sounds player on macOS") and it's a card.
+    let own: Vec<String> = row
+        .id
+        .split('-')
+        .chain(row.label.split(|c: char| !c.is_alphanumeric()))
+        .chain(row.options.iter().flat_map(|(o, l)| {
+            o.split(|c: char| !c.is_alphanumeric())
+                .chain(l.split(|c: char| !c.is_alphanumeric()))
+        }))
+        .map(str::to_lowercase)
+        .collect();
+    if !t.iter().all(|w| {
+        own.contains(w)
+            || APPLY_FILLER.contains(&w.as_str())
+            || ON_WORDS.contains(&w.as_str())
+            || OFF_WORDS.contains(&w.as_str())
+    }) {
+        return false;
+    }
+    // For a choice, only the target value named ("from dark to light" names two).
+    if !row.options.is_empty()
+        && row
+            .options
+            .iter()
+            .filter(|(o, l)| names_phrase(o, &t) || names_phrase(l, &t))
+            .count()
+            != 1
+    {
         return false;
     }
     let has = |ws: &[&str]| t.iter().any(|w| ws.contains(&w.as_str()));
@@ -1334,6 +1372,13 @@ mod tests {
         assert!(!ap(&compact, "don't make the density compact"));
         assert!(ap(&set("theme", json!("dark")), "switch the theme to dark"));
         assert!(!ap(&set("theme", json!("dark")), "dark mode please"));
+        // Review 3, item 11: only a sentence about the setting, naming only the target value.
+        // Anything else in it, and it's a card.
+        assert!(!ap(&set("theme", json!("dark")), "switch from the dark theme to light"));
+        assert!(!ap(&set("theme", json!("light")), "switch from the dark theme to light"));
+        assert!(!ap(&sounds_on, "fix the sounds player on macOS"));
+        assert!(!ap(&set("density", json!("compact")), "the density test fails on compact screens"));
+        assert!(ap(&set("theme", json!("light")), "please switch the theme to light"));
         // Never anything but a cosmetic setting, however plainly asked.
         assert!(!ap(
             &set("monthly-cap", json!("250")),
