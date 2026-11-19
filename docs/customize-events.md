@@ -8,6 +8,13 @@ is the transcript's (canvas frames N7 Remember, N9 Change).
 Code: `crates/frog-engine/src/customize.rs` (tiers, parsing, line edits, undo) and
 `src/engine/customize.rs` (asking and applying). Types: `protocol.rs` (`Proposal`).
 
+## Turning it on
+
+The model gets `Customize` only when the app declares it draws these cards:
+`{"op":"set_client_caps", ..., "customize": true}`. Without it the tool isn't offered and a call
+is refused, so no app is ever sent a card it can't show. Send it once the card, the receipt
+with Undo and `setting_change` are drawn.
+
 ## Tiers
 
 Every change is either:
@@ -164,7 +171,7 @@ at session start and when one changes (lands at once, not queued):
 ## Cost
 
 `Customize` is a deferred tool in project sessions: a plain turn carries only its catalog line,
-about 75 tokens (299 characters). The full definition (about 280 tokens: 387-character
+about 75 tokens (299 characters), and only when the app sent `customize: true`; otherwise nothing. The full definition (about 280 tokens: 387-character
 description, 725-character schema) is sent only once the model calls or loads it. In chats and
 small windows, where tools aren't deferred, the full definition rides each turn. Estimates are
 four characters a token.

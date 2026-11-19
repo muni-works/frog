@@ -534,6 +534,8 @@ struct Shared {
     watching: Mutex<HashMap<String, Event>>,
     /// A client shows questions to someone who can answer (`SetClientCaps { ask }`).
     client_ask: AtomicBool,
+    /// A client draws `Customize` cards (`SetClientCaps { customize }`).
+    client_customize: AtomicBool,
     /// Session tools the client answers (`SetClientCaps { sessions }`).
     sessions: crate::tools::sessions::Hub,
     /// Connected MCP servers, for elicitation answers and app tool calls mid-turn.
@@ -818,6 +820,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         questions: Default::default(),
         watching: Default::default(),
         client_ask: Default::default(),
+        client_customize: Default::default(),
         sessions: Default::default(),
         mcp: Default::default(),
         subagents: Default::default(),
@@ -3189,9 +3192,11 @@ impl Agent {
                 ask,
                 sessions,
                 irc,
+                customize,
             } => {
                 self.shared.panes.set_client(panes);
                 self.shared.client_ask.store(ask, Ordering::Relaxed);
+                self.shared.client_customize.store(customize, Ordering::Relaxed);
                 self.shared.sessions.set_enabled(sessions);
                 if irc {
                     // The bridge: one nick per session, notices and mentions through it.

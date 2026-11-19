@@ -48,6 +48,8 @@ struct Rig {
     h: Handle,
     base: PathBuf,
     project: PathBuf,
+    /// Idles still owed by queued ops (start-up, client caps) before the next turn.
+    idles: usize,
 }
 
 fn rig(script: Vec<Response>, mode: Mode) -> Rig {
@@ -77,12 +79,30 @@ fn rig(script: Vec<Response>, mode: Mode) -> Rig {
         chat: false,
     };
     let h = start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap();
-    Rig { h, base, project }
+    h.ops
+        .send(Op::SetClientCaps {
+            panes: false,
+            ask: false,
+            sessions: false,
+            irc: false,
+            customize: true,
+        })
+        .unwrap();
+    Rig {
+        h,
+        base,
+        project,
+        idles: 2,
+    }
 }
 
 impl Rig {
     async fn idle(&mut self) {
-        while !matches!(self.h.events.recv().await.unwrap().event, Event::Idle) {}
+        while self.idles > 0 {
+            if matches!(self.h.events.recv().await.unwrap().event, Event::Idle) {
+                self.idles -= 1;
+            }
+        }
     }
 
     /// Send `op`, answer each card with `answer`, and collect events until idle.
@@ -471,6 +491,34 @@ async fn change_asked_by_tool_output_is_refused() {
     let out = tool_output(&evs);
     assert_eq!(out.matches("Refused").count(), 2, "{out}");
     assert!(!r.project.join("AGENTS.md").exists());
+    r.end().await;
+}
+
+/// Until an app says it draws the card, the tool isn't offered and a call changes nothing.
+#[tokio::test]
+async fn no_tool_without_a_client_that_draws_the_card() {
+    let script = vec![
+        call(
+            "c",
+            json!({"do": "set", "id": "density", "value": "compact", "words": "make it compact"}),
+        ),
+        done(),
+    ];
+    let mut r = rig(script, Mode::Default);
+    r.h.ops
+        .send(Op::SetClientCaps {
+            panes: false,
+            ask: false,
+            sessions: false,
+            irc: false,
+            customize: false,
+        })
+        .unwrap();
+    r.idles += 1;
+    r.idle().await;
+    let evs = r.say("make it compact", never).await;
+    assert!(setting_changes(&evs).is_empty() && applied(&evs).is_empty());
+    assert!(tool_output(&evs).contains("isn't available"), "{evs:?}");
     r.end().await;
 }
 

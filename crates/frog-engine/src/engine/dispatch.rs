@@ -244,6 +244,9 @@ root {}. Re-`cd` if you need the old location back.</system-note>",
             ));
         }
         if name == crate::customize::TOOL && !self.subagent {
+            if !self.shared.client_customize.load(Ordering::Relaxed) {
+                anyhow::bail!("Customize isn't available here: this app can't show its cards yet");
+            }
             return self.customize(id, input).await;
         }
         if name.starts_with("mcp__") && self.toggles().tools_off.contains(name) {

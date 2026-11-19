@@ -49,6 +49,7 @@ fn shows_questions(h: &Handle) {
             panes: false,
             ask: true,
             sessions: false,
+            customize: false,
         })
         .unwrap();
 }

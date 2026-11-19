@@ -353,6 +353,10 @@ pub enum Op {
         /// deploys.
         #[serde(default)]
         irc: bool,
+        /// The client draws `Customize` cards and receipts (docs/customize-events.md), so the
+        /// model gets the `Customize` tool. Without it nothing can raise a card no app shows.
+        #[serde(default)]
+        customize: bool,
     },
     /// Open a pane. The engine mints the id and answers with [`Event::PaneOpened`]. Terminal
     /// panes are engine-owned shells; preview panes are the client's webviews.
@@ -2103,11 +2107,12 @@ mod tests {
             ask,
             sessions,
             irc,
+            customize,
         } = old
         else {
             panic!("not SetClientCaps");
         };
-        assert!(panes && !ask && !sessions && !irc);
+        assert!(panes && !ask && !sessions && !irc && !customize);
         // Old clients never send `irc`, so the bus stays off until the client says otherwise.
         let wire: Op =
             serde_json::from_str(r#"{"op":"set_client_caps","panes":false,"irc":true}"#).unwrap();
@@ -2117,7 +2122,8 @@ mod tests {
                 panes: false,
                 ask: false,
                 sessions: false,
-                irc: true
+                irc: true,
+                customize: false,
             }
         ));
     }
