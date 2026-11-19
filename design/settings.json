@@ -1,16 +1,20 @@
 {
   "version": 1,
-  "about": "Every setting the Mac and the web show, in order (docs/design/app-shell.md, Settings). Both apps draw their sections from this list; each keeps its own bindings and storage. platform: both = works on the Mac and the web; invite = works on the Mac, and the web shows it under 'On your Mac' with 'Get the Mac app' where the control would be; mac = about the Mac app itself, never on the web; web = a fact only the web needs. notYet.<platform> = the row belongs there but can't work yet, with the reason; that app leaves it out. when = shown only while that toggle row is on. page = drawn on a machine's or provider's own page, not the section's. web = the label and description the web uses for an invitation, where they differ. agent = whether the agent may change it from a conversation at once (apply, with Undo) or only on a card the user approves (ask, also the default for a row without it); see agentActions.",
+  "about": "Every setting the Mac and the web show, in order (docs/design/app-shell.md, Settings). Both apps draw their sections from this list, in three runs (run: 1 the app, 2 what Frog knows and can do, 3 you) with a small gap between runs and no labels. A section with an explainer gets the card at the top of its page: explainer.href is the section's own docs page; until docs/app/manifest.json has that slug, an app links explainer.fallback (an existing page that covers it), or no link without one. Skills, Connections, Rules, Memory and Automations keep their own page designs (they were the Customize mode until it folded into Settings); each keeps its own bindings and storage. platform: both = works on the Mac and the web; invite = works on the Mac, and the web shows it under 'On your Mac' with 'Get the Mac app' where the control would be; mac = about the Mac app itself, never on the web; web = a fact only the web needs. notYet.<platform> = the row belongs there but can't work yet, with the reason; that app leaves it out. when = shown only while that toggle row is on. page = drawn on a machine's or provider's own page, not the section's. web = the label and description the web uses for an invitation, where they differ. agent = whether the agent may change it from a conversation at once (apply, with Undo) or only on a card the user approves (ask, also the default for a row without it); see agentActions.",
   "sections": [
-    { "id": "general", "label": "General" },
-    { "id": "appearance", "label": "Appearance" },
-    { "id": "models", "label": "Models", "aliases": ["lend", "machines"] },
-    { "id": "permissions", "label": "Permissions" },
-    { "id": "connections", "label": "Connections", "aliases": ["mcp"], "movedTo": "customize" },
-    { "id": "shortcuts", "label": "Shortcuts" },
-    { "id": "usage", "label": "Usage", "aliases": ["energy"] },
-    { "id": "account", "label": "Account" },
-    { "id": "billing", "label": "Billing" }
+    {"id": "general", "label": "General", "run": 1},
+    {"id": "appearance", "label": "Appearance", "run": 1},
+    {"id": "models", "label": "Models", "aliases": ["lend", "machines"], "run": 1},
+    {"id": "permissions", "label": "Permissions", "run": 1},
+    {"id": "shortcuts", "label": "Shortcuts", "run": 1},
+    {"id": "skills", "label": "Skills", "run": 2, "explainer": {"bold": "A skill teaches Frog how to do one task your way.", "rest": "It is a short file of steps, read in full only when that task comes up. Its one-line summary rides along on every turn.", "link": "How skills work", "href": "https://frog.toys/docs/skills", "fallback": "skills-and-mcp"}},
+    {"id": "connections", "label": "Connections", "aliases": ["mcp"], "run": 2, "explainer": {"bold": "A connection lets Frog reach something outside your code,", "rest": "like GitHub or a database, through its tools. Each tool you switch on adds a little to every turn.", "link": "How connections work", "href": "https://frog.toys/docs/connections", "fallback": "skills-and-mcp"}},
+    {"id": "rules", "label": "Rules", "aliases": ["instructions"], "run": 2, "explainer": {"bold": "Rules are standing instructions Frog reads on every turn.", "rest": "They live in a file in your repo or your home folder, so your team shares them.", "link": "How rules work", "href": "https://frog.toys/docs/rules", "fallback": "memory-and-frog-md"}},
+    {"id": "memory", "label": "Memory", "run": 2, "explainer": {"bold": "Memory is what Frog has learned from working with you.", "rest": "It notes things on its own, keeps them on this Mac, and brings back only the few that fit the turn.", "link": "How memory works", "href": "https://frog.toys/docs/memory", "fallback": "memory-and-frog-md"}},
+    {"id": "automations", "label": "Automations", "run": 2, "explainer": {"bold": "An automation is a task Frog repeats without you,", "rest": "at a set time or when CI fails. To make one, do the task once in a conversation and say \"keep doing this\".", "link": "How automations work", "href": "https://frog.toys/docs/automations"}},
+    {"id": "usage", "label": "Usage", "aliases": ["energy"], "run": 3},
+    {"id": "account", "label": "Account", "run": 3},
+    {"id": "billing", "label": "Billing", "run": 3}
   ],
   "agentActions": {
     "_about": "What the agent may change from a conversation (Customize tool, docs/customize-events.md), and how: apply = at once, with Undo; ask = one card to approve. A setting's tier is the agent key on its row. Anything unlisted asks.",
@@ -37,7 +41,7 @@
 
     { "id": "auto-note", "agent": "ask", "section": "general", "group": "Memory", "platform": "both", "control": "toggle", "default": true,
       "label": "Notes on its own", "description": "Frog keeps short notes from what you tell it and what it reads in your projects, on this machine, with Undo under the reply. On by default.",
-      "notYet": { "mac": "Drawn on Customize's Memory page (Notes on its own), not in Settings; the engine reads it from Op::Settings.", "web": "Drawn on Customize's Memory page (Notes on its own), not in Settings; the engine reads it from Op::Settings." } },
+      "notYet": { "mac": "Drawn on Settings › Memory's own page (Notes on its own), not in Settings; the engine reads it from Op::Settings.", "web": "Drawn on Settings › Memory's own page (Notes on its own), not in Settings; the engine reads it from Op::Settings." } },
     { "id": "theme", "agent": "apply", "section": "appearance", "platform": "both", "control": "segmented",
       "label": "Theme", "description": "System follows your device's light or dark setting.",
       "options": [ { "id": "system", "label": "System" }, { "id": "light", "label": "Light" }, { "id": "dark", "label": "Dark" } ] },
