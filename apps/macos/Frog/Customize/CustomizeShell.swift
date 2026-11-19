@@ -98,7 +98,7 @@ struct CustomizeHeaderTrailing: View {
             case "memory":
                 guard let n = store.notes?.count else { return nil }
                 let weight = CustomizeFormat.perTurn(r?.memory.tokens).map { ", \($0)" } ?? ""
-                return "\(n) note\(n == 1 ? "" : "s")\(weight), kept on this Mac"
+                return "\(n) note\(n == 1 ? "" : "s")\(weight)"
             default: return nil
             }
         }
@@ -129,6 +129,8 @@ struct CustomizeHeaderTrailing: View {
 struct CustomizeView: View {
     let panes: Panes
     var startConversation: (String) -> Void = { _ in }
+    /// "Make it a rule" on a note: the engine's card, in a conversation; nil without one.
+    var makeRule: ((MemoryNote) -> Void)? = nil
 
     var body: some View {
         let store = panes.customize
@@ -142,7 +144,7 @@ struct CustomizeView: View {
                 case "skills": SkillsPage(store: store) { panes.customizePage = .skill($0) }
                 case "connections": ConnectionsPage(store: store)
                 case "rules": RulesPage(store: store)
-                case "memory": MemoryPage(store: store)
+                case "memory": MemoryPage(store: store, makeRule: makeRule)
                 default: AutomationsPage()
                 }
             }
@@ -159,10 +161,17 @@ struct ExplainerCard: View {
     let section: String
     var catalog = CustomizeCatalog.bundled
 
+    /// Memory's second sentence promises notes taken on their own; until this build lets the
+    /// engine take them, it says what happens today.
+    static func rest(_ section: String, _ e: CustomizeCatalog.Explainer) -> String {
+        guard section == "memory", !CustomizeStore.notesCapability else { return e.rest }
+        return "It keeps the notes you ask for on this Mac, and brings back only the few that fit the turn."
+    }
+
     var body: some View {
         if let e = catalog.explainer(section) {
             HStack(alignment: .center, spacing: 20) {
-                (Text(e.bold).foregroundStyle(Tokens.text).fontWeight(.semibold) + Text(" " + e.rest).foregroundStyle(Tokens.textSecondary))
+                (Text(e.bold).foregroundStyle(Tokens.text).fontWeight(.semibold) + Text(" " + Self.rest(section, e)).foregroundStyle(Tokens.textSecondary))
                     .font(.frog(size: 13))
                     .lineSpacing(3)
                     .fixedSize(horizontal: false, vertical: true)
@@ -351,6 +360,9 @@ struct ActivityMarks: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Self.label(days))
     }
+
+    /// The marks' width for `days` days, so a row without them keeps the column.
+    static func width(_ days: Int) -> CGFloat { CGFloat(max(0, days * 5 - 2)) }
 
     /// "Used 14 times in the last 30 days", or "Never used".
     static func label(_ days: [Int]) -> String {

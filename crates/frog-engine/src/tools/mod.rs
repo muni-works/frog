@@ -328,6 +328,8 @@ pub fn kind(name: &str) -> Kind {
             Kind::Read
         }
         crate::recall::TOOL | crate::title::TOOL => Kind::Read,
+        // Writes only Frog's own notes, after its own checks (`noting`), with Undo.
+        crate::noting::TOOL => Kind::Read,
         crate::background::JOB_OUTPUT | crate::background::JOB_STOP => Kind::Read,
         "TaskOutput" | "TaskStop" => Kind::Read,
         n if sessions::is_tool(n) => Kind::Read,
@@ -398,6 +400,7 @@ pub fn label(name: &str, input: &Value, ctx: &Ctx) -> (String, String) {
         notify::TOOL => s("title"),
         crate::title::TOOL => s("title"),
         crate::next::TOOL => s("text"),
+        crate::noting::TOOL => s("text"),
         "Monitor" => {
             let c = s("command");
             if c.is_empty() {
