@@ -24,6 +24,7 @@ impl Agent {
             || self.cfg.parent_session.is_some()
             || self.memory.is_none()
             || self.harness.tier == Tier::Weak
+            || !self.shared.client_notes.load(Ordering::Relaxed)
         {
             return false;
         }

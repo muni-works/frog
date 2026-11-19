@@ -539,6 +539,8 @@ struct Shared {
     client_ask: AtomicBool,
     /// A client draws `Customize` cards (`SetClientCaps { customize }`).
     client_customize: AtomicBool,
+    /// A client draws the `noted` receipt (`SetClientCaps { notes }`): noting on its own may run.
+    client_notes: AtomicBool,
     /// Session tools the client answers (`SetClientCaps { sessions }`).
     sessions: crate::tools::sessions::Hub,
     /// Connected MCP servers, for elicitation answers and app tool calls mid-turn.
@@ -824,6 +826,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         watching: Default::default(),
         client_ask: Default::default(),
         client_customize: Default::default(),
+        client_notes: Default::default(),
         sessions: Default::default(),
         mcp: Default::default(),
         subagents: Default::default(),
@@ -3216,7 +3219,9 @@ impl Agent {
                 sessions,
                 irc,
                 customize,
+                notes,
             } => {
+                self.shared.client_notes.store(notes, Ordering::Relaxed);
                 self.shared.panes.set_client(panes);
                 self.shared.client_ask.store(ask, Ordering::Relaxed);
                 self.shared.client_customize.store(customize, Ordering::Relaxed);

@@ -186,6 +186,12 @@ a quiet line under that turn's reply (canvas frame M2 Noted): *Noted for pond*, 
 Code: `crates/frog-engine/src/noting.rs` (the tool and every check) and
 `src/engine/noting.rs` (the setting, the receipt, undo, the rule).
 
+**Turning it on.** Noting on its own runs only for a client that draws the receipt:
+`{"op":"set_client_caps", ..., "notes": true}`. Without it (the CLI and TUI, and any app that
+hasn't built the line yet) the `Note` tool isn't offered and a call writes nothing, so Frog never
+keeps a note nobody can see or undo. Send it once the line with Undo and "Make it a rule" is
+drawn. The user's `auto-note` setting is the second switch.
+
 ```json
 {
   "type": "noted",
@@ -222,7 +228,7 @@ Durable: it replays with the transcript, and its Undo still works after a restar
   file, shared). The engine shows the usual card (`permission_request` with `proposal`,
   title "Make this a rule?", primary "Add rule"); approving adds the line, removes the note,
   and emits `customize_applied`, whose Undo puts both back. Frog never writes a rule on its own.
-- Turning it off: the app setting `auto-note` (`design/settings.json`, tier `ask`, default
+- Turning it off (with `notes: true` sent): the app setting `auto-note` (`design/settings.json`, tier `ask`, default
   on), sent with `Op::Settings`. Off, the tool isn't offered and a call writes nothing. Without
   an app, `[memory] auto_note = false` in config.toml. Never on in subagents, sessions another
   session started, or small (Weak-tier) models, which can't do it reliably.
