@@ -1077,6 +1077,21 @@ pub fn write_file(path: &Path, after: Option<String>, private: bool) -> Result<F
 }
 
 fn put(path: &Path, text: Option<&str>, private: bool) -> Result<()> {
+    put_keeping(path, text, private, None)
+}
+
+/// [`put`], with the permission bits to give a file written new (an undo's, taken from the
+/// file it moved aside).
+fn put_keeping(
+    path: &Path,
+    text: Option<&str>,
+    private: bool,
+    keep: Option<std::fs::Permissions>,
+) -> Result<()> {
+    #[cfg(test)]
+    if FAIL_PUT.with(|f| f.borrow().as_deref() == Some(path)) {
+        bail!("{}: failing as the test asked", path.display());
+    }
     if std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
         bail!("{} is a link; Frog writes only real files", path.display());
     }
@@ -1087,7 +1102,7 @@ fn put(path: &Path, text: Option<&str>, private: bool) -> Result<()> {
             }
             _ => Ok(()),
         },
-        Some(t) => write_atomic(path, t, private),
+        Some(t) => write_atomic_keeping(path, t, private, keep),
     }
 }
 
@@ -1095,6 +1110,16 @@ fn put(path: &Path, text: Option<&str>, private: bool) -> Result<()> {
 /// link or old file is followed), then renamed over it. The file keeps its permissions;
 /// private files (Frog's notes) are owner-only.
 pub fn write_atomic(path: &Path, text: &str, private: bool) -> Result<()> {
+    write_atomic_keeping(path, text, private, None)
+}
+
+/// [`write_atomic`]; `keep`: the permissions for a file that isn't there now (an undo's).
+fn write_atomic_keeping(
+    path: &Path,
+    text: &str,
+    private: bool,
+    keep: Option<std::fs::Permissions>,
+) -> Result<()> {
     use std::io::Write;
     let dir = path
         .parent()
@@ -1108,7 +1133,7 @@ pub fn write_atomic(path: &Path, text: &str, private: bool) -> Result<()> {
     // A rename would replace a file its owner made read-only, and split a hard-linked pair
     // (AGENTS.md and CLAUDE.md as one file) into two that disagree.
     writable(path)?;
-    let keep = std::fs::metadata(path).ok().map(|m| m.permissions());
+    let keep = std::fs::metadata(path).ok().map(|m| m.permissions()).or(keep);
     let name = path.file_name().unwrap_or_default().to_string_lossy();
     let tmp = dir.join(format!(".{name}.{}.tmp", crate::session::new_id()));
     let mut o = std::fs::OpenOptions::new();
@@ -1165,6 +1190,8 @@ pub fn remove_if(path: &Path, keep_going: impl FnOnce(&[u8]) -> bool) -> Result<
 thread_local! {
     /// Tests: act as a drive without hard links (exFAT, SMB, NFS, some FUSE drives).
     static NO_HARD_LINKS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Tests: writing this path fails (a full disk, a permissions change mid-undo).
+    static FAIL_PUT: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
 }
 
 fn hard_link(from: &Path, to: &Path) -> std::io::Result<()> {
@@ -1209,6 +1236,55 @@ fn put_back(path: &Path, tmp: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Put every taken file back from aside, newest first, trying them all; any that couldn't be
+/// are named in the returned text ("" when all went back).
+fn put_all_back(taken: &[(&FileUndo, Option<(PathBuf, Vec<u8>)>)]) -> String {
+    let mut errs = String::new();
+    for (f, t) in taken.iter().rev() {
+        if let Some((tmp, _)) = t {
+            if let Err(e) = put_back(&f.path, tmp) {
+                errs.push_str(&format!("; {e:#}"));
+            }
+        }
+    }
+    errs
+}
+
+/// Put back what a crash left moved aside in `dir`: each `.<name>.<id>.undo` file whose
+/// `<name>` isn't there goes back; one whose file was written since stays, never over it.
+pub fn sweep_undo(dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let file = e.file_name();
+        let Some(name) = file
+            .to_str()
+            .and_then(|f| f.strip_prefix('.'))
+            .and_then(|f| f.strip_suffix(".undo"))
+            .and_then(|f| f.rsplit_once('.'))
+            .filter(|(_, id)| is_session_id(id))
+            .map(|(name, _)| name.to_string())
+        else {
+            continue;
+        };
+        let target = dir.join(&name);
+        if !target.exists() && std::fs::symlink_metadata(&target).is_err() {
+            let _ = put_back(&target, &e.path());
+        }
+    }
+}
+
+/// `20261119-120000-ab12`: the ids [`take_aside`] names files with.
+fn is_session_id(id: &str) -> bool {
+    let b = id.as_bytes();
+    b.len() == 20
+        && b[8] == b'-'
+        && b[15] == b'-'
+        && b[..8].iter().chain(&b[9..15]).all(u8::is_ascii_digit)
+        && b[16..].iter().all(u8::is_ascii_hexdigit)
+}
+
 impl FileUndo {
     pub fn undo(&self) -> Result<()> {
         undo_files(std::slice::from_ref(self), "it was left as it is")
@@ -1244,15 +1320,26 @@ fn undo_files(files: &[FileUndo], refused: &str) -> Result<()> {
         }
     }
     if let Some(why) = changed {
-        for (f, t) in taken.iter().rev() {
-            if let Some((tmp, _)) = t {
-                put_back(&f.path, tmp)?;
-            }
-        }
-        bail!("{why}, so {refused}");
+        // Every file goes back, even when one can't: none is left moved aside on its own.
+        let errs = put_all_back(&taken);
+        bail!("{why}, so {refused}{errs}");
     }
-    for (f, t) in taken.iter().rev() {
-        put(&f.path, f.before.as_deref(), f.private)?;
+    for (i, (f, t)) in taken.iter().enumerate().rev() {
+        let keep = t
+            .as_ref()
+            .and_then(|(tmp, _)| std::fs::metadata(tmp).ok())
+            .map(|m| m.permissions());
+        if let Err(e) = put_keeping(&f.path, f.before.as_deref(), f.private, keep) {
+            // Part-way: the files not reached yet go back from aside, and the ones already
+            // undone get the change's text again. All or nothing.
+            let mut errs = put_all_back(&taken[..=i]);
+            for (done, _) in &taken[i + 1..] {
+                if let Err(e) = put(&done.path, done.after.as_deref(), done.private) {
+                    errs.push_str(&format!("; {e:#}"));
+                }
+            }
+            bail!("{e:#}, so {refused}{errs}");
+        }
         if let Some((tmp, _)) = t {
             let _ = std::fs::remove_file(tmp);
         }
@@ -1678,6 +1765,72 @@ mod tests {
             .map(|e| e.file_name().to_string_lossy().to_string())
             .collect();
         assert_eq!(left, ["AGENTS.md"], "nothing left aside");
+    }
+
+    fn names_in(dir: &Path) -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        v.sort();
+        v
+    }
+
+    /// Review 3, item 13: undo puts the file back with the permission bits it had.
+    #[cfg(unix)]
+    #[test]
+    fn undo_keeps_the_files_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("AGENTS.md");
+        std::fs::write(&path, "- a\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+        let u = write_file(&path, Some("- a\n- b\n".into()), false).unwrap();
+        u.undo().unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "- a\n");
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o640);
+    }
+
+    /// Review 3, item 13: a failure part-way through an undo of several files leaves none of
+    /// them moved aside, and none half undone.
+    #[test]
+    fn a_failed_undo_leaves_nothing_aside() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("AGENTS.md"), dir.path().join("NOTE.md"));
+        std::fs::write(&a, "- a\n").unwrap();
+        std::fs::write(&b, "note\n").unwrap();
+        let ua = write_file(&a, Some("- a\n- rule\n".into()), false).unwrap();
+        let ub = write_file(&b, None, false).unwrap();
+        FAIL_PUT.with(|f| *f.borrow_mut() = Some(b.clone()));
+        let r = undo_all(&[ua, ub]);
+        FAIL_PUT.with(|f| *f.borrow_mut() = None);
+        assert!(r.is_err());
+        assert_eq!(names_in(dir.path()), ["AGENTS.md"], "nothing left aside");
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "- a\n- rule\n", "all or nothing");
+    }
+
+    /// Review 3, item 13: a `.<name>.<id>.undo` file a crash left is put back at start-up,
+    /// never over a file written since.
+    #[test]
+    fn the_sweep_puts_back_what_a_crash_left_aside() {
+        let dir = tempfile::tempdir().unwrap();
+        let aside = dir.path().join(".AGENTS.md.20261119-120000-ab12.undo");
+        std::fs::write(&aside, "- a\n").unwrap();
+        sweep_undo(dir.path());
+        assert_eq!(names_in(dir.path()), ["AGENTS.md"]);
+        assert_eq!(std::fs::read_to_string(dir.path().join("AGENTS.md")).unwrap(), "- a\n");
+        // One whose file was written since stays where it is.
+        let aside = dir.path().join(".AGENTS.md.20261119-120001-cd34.undo");
+        std::fs::write(&aside, "old\n").unwrap();
+        sweep_undo(dir.path());
+        assert_eq!(std::fs::read_to_string(dir.path().join("AGENTS.md")).unwrap(), "- a\n");
+        assert!(aside.exists());
+        // Not ours: left alone.
+        std::fs::write(dir.path().join(".x.undo"), "x").unwrap();
+        sweep_undo(dir.path());
+        assert!(dir.path().join(".x.undo").exists());
     }
 
     /// Review 2, item 7: ordinary links are fine. A stow-style link into a dotfiles folder in

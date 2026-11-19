@@ -45,6 +45,28 @@ impl Agent {
     /// `parent_session` (the engine's own children) or `--worker` (how the Mac starts every
     /// child, Race attempts aside, and kept across a resume). Their "user" is an agent, so
     /// they get no Customize, no notes on their own, no "remember …" and no rule from a note.
+    /// Put back anything an undo moved aside when a crash cut it short: in the project's root
+    /// (its rules file), the home rules folder, Frog's notes folders and beside customize.json.
+    pub(super) fn sweep_undos(&self) {
+        if !self.top_level() {
+            return;
+        }
+        let mut dirs = vec![self.root.clone()];
+        // A hermetic engine (tests) never touches the person's own config folder.
+        if !self.cfg.hermetic {
+            dirs.push(crate::config::config_dir());
+        }
+        if let Some(store) = &self.memory {
+            for scope in [crate::memory::Scope::Global, crate::memory::Scope::Project] {
+                dirs.extend(store.scope_dir(scope).map(Path::to_path_buf));
+            }
+        }
+        dirs.extend(self.toggles_path().and_then(|p| p.parent().map(Path::to_path_buf)));
+        for d in dirs {
+            cz::sweep_undo(&d);
+        }
+    }
+
     /// Keep the declined offers with the session, so a resume doesn't offer them again.
     fn save_declined(&self) {
         let Some(store) = &self.store else { return };

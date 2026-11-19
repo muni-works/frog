@@ -1166,6 +1166,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         if let Some(line) = moved {
             agent.notice(Level::Warn, line);
         }
+        agent.sweep_undos();
         agent.connect_mcp();
         // Restore MCP tools that were loaded in a previous session
         if !agent.loaded_tools.is_empty() {
