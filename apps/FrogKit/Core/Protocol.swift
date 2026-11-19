@@ -126,6 +126,10 @@ enum Op: Encodable, Sendable {
     case drain(deadline: Int64)
     /// The update was called off; engines already suspended stay that way.
     case drainAbort
+    /// The app's settings the engine reads (`design/settings.json` ids), such as `auto-note`.
+    case settings(values: [String: JSONValue])
+    /// "Make it a rule" on a note: the engine shows its approval card in this conversation.
+    case noteToRule(id: String, scope: String)
     case shutdown
 
     private enum Key: String, CodingKey {
@@ -135,6 +139,7 @@ enum Op: Encodable, Sendable {
         case ask, choices, other, label, send, note, sessions, from, fromName = "from_name", more
         case deadline, pr, repo, number
         case decline, servers, tools
+        case values, scope
     }
 
     func encode(to encoder: Encoder) throws {
@@ -282,6 +287,13 @@ enum Op: Encodable, Sendable {
             try c.encode(deadline, forKey: .deadline)
         case .drainAbort:
             try c.encode("drain_abort", forKey: .op)
+        case .settings(let values):
+            try c.encode("settings", forKey: .op)
+            try c.encode(values, forKey: .values)
+        case .noteToRule(let id, let scope):
+            try c.encode("note_to_rule", forKey: .op)
+            try c.encode(id, forKey: .id)
+            try c.encode(scope, forKey: .scope)
         case .shutdown:
             try c.encode("shutdown", forKey: .op)
         }

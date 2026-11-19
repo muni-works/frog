@@ -74,7 +74,12 @@ final class TranscriptEdgesTests: XCTestCase {
         // (its "Couldn't start frog" row sits under the live row and isn't measured).
         let ws = Workspace(folder: URL(fileURLWithPath: "/tmp/frog-edges-tests"), fresh: true)
         let c = try XCTUnwrap(ws.conversation)
-        let host = NSHostingView(rootView: Pane(workspace: ws, conversation: c).frame(width: width, height: height).background(Tokens.canvas))
+        // Only this pane reports (`TranscriptMetrics.scope`): an earlier test's transcript still
+        // alive in the host wrote its rows into the dump on a full run (2026-11-19).
+        let scope = UUID().uuidString
+        TranscriptMetrics.shared.scope = scope
+        let host = NSHostingView(rootView: Pane(workspace: ws, conversation: c).frame(width: width, height: height)
+            .background(Tokens.canvas).environment(\.metricsScope, scope))
         host.frame = CGRect(x: 0, y: 0, width: width, height: height)
         // Borderless, so the window keeps its size off any screen's bounds.
         let w = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)

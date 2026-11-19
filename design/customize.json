@@ -41,8 +41,8 @@
       "id": "memory",
       "label": "Memory",
       "explainer": {
-        "bold": "Memory is what Frog noted when you said \"remember this\".",
-        "rest": "Notes stay on this Mac and are read on every turn. Say \"forget that\" to remove one.",
+        "bold": "Memory is what Frog has learned from working with you.",
+        "rest": "It notes things on its own, keeps them on this Mac, and brings back only the few that fit the turn.",
         "link": "How memory works",
         "href": "https://frog.toys/docs/memory",
         "fallback": "memory-and-frog-md"

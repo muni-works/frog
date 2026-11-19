@@ -56,6 +56,9 @@ final class InkRevealTests: XCTestCase {
         try XCTSkipIf(TestRunner.isCI, "display-link animation; not measurable on a CI runner's virtual display")
         let v = view()
         defer { v.window?.close() }
+        // The pen moves on the display's frames: with the display asleep or off it never
+        // starts (0 of 70 characters, in full runs that outlasted the display, 2026-11-19).
+        try TestRunner.skipUnlessTheDisplayDraws(v)
         v.reveal.streaming = true
         TranscriptProbe.reset()
         // A sentence every 0.1 s: ~700 characters a second, inked rather than skipped.

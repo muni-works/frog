@@ -99,6 +99,38 @@ final class ComposerSnapshotTests: XCTestCase {
         })
     }
 
+    /// An account with forty repos: the where menu shows a short ranked list and a search
+    /// (docs/design/composer/spec.md, Where it runs). Writes mac-where-many-<theme>.png.
+    func testRenderWhereMenuManyRepos() throws {
+        let names = ["pond", "loon", "slamwich", "zest", "kyte", "mew", "tang", "ecto", "muni", "frog-site",
+                     "dotfiles", "notes", "blog", "rover", "sparrow", "orbit", "quill", "lattice", "ember", "harbor",
+                     "cobalt", "fern", "glyph", "hollow", "ivy", "jetty", "knot", "lumen", "marsh", "nimbus",
+                     "onyx", "pixel", "quartz", "reef", "sage", "thistle", "umber", "vale", "willow", "yarrow"]
+        var many = lists
+        many.cloudRepos = names.map { "ecto/\($0)" }
+        let s = state { $0.where = .cloud(repo: "ecto/pond", branch: "main"); $0.model = Self.cloud }
+        for (theme, look) in [("dark", NSAppearance.Name.darkAqua), ("light", .aqua)] {
+            let view = TrayPreview(state: s, lists: many, menu: .place, narrow: false, focused: false)
+                .frame(width: 720).padding(24)
+                .frame(width: 768, height: 1400, alignment: .bottom)
+                .background(Tokens.canvas)
+            let host = NSHostingView(rootView: view)
+            host.frame = CGRect(x: 0, y: 0, width: 768, height: 1400)
+            let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.appearance = NSAppearance(named: look)
+            window.contentView = host
+            defer { window.close() }
+            host.layoutSubtreeIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+            host.layoutSubtreeIfNeeded()
+            guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return XCTFail("no bitmap") }
+            host.cacheDisplay(in: host.bounds, to: rep)
+            try FileManager.default.createDirectory(at: outDir, withIntermediateDirectories: true)
+            try XCTUnwrap(rep.representation(using: .png, properties: [:])).write(to: outDir.appending(path: "mac-where-many-\(theme).png"))
+        }
+    }
+
     /// Draws `view` offscreen at `size` and returns its pixels (top row first).
     private func pixels<V: View>(_ view: V, _ size: CGSize) throws -> NSBitmapImageRep {
         let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height).background(Tokens.canvas))

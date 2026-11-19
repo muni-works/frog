@@ -1107,6 +1107,27 @@
             "scope"
           ],
           "type": "object"
+        },
+        {
+          "description": "Settle a flagged pair (`pairs[].key`): `keep: \"newer\"` removes the older note;\n`keep: \"both\"` keeps both and stops flagging them.",
+          "properties": {
+            "change": {
+              "const": "memory_resolve",
+              "type": "string"
+            },
+            "keep": {
+              "type": "string"
+            },
+            "pair": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "change",
+            "pair",
+            "keep"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -2799,6 +2820,131 @@
             "item",
             "undo",
             "card",
+            "seq",
+            "session",
+            "created"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Frog kept a note on its own (or the user's \"remember that …\"): the quiet receipt under\nthe reply (docs/customize-events.md, Noted). Undo with [`Op::Undo`] and `undo`, answered\nby [`Event::CustomizeUndone`]; \"Make it a rule\" is [`Op::NoteToRule`].",
+          "properties": {
+            "created": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "event": {
+              "const": "noted",
+              "type": "string"
+            },
+            "from": {
+              "description": "For `read`: the file it came from, relative to the project.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "description": "The note's id within its scope.",
+              "type": "string"
+            },
+            "item": {
+              "description": "The `Note` tool call that kept it (empty for \"remember that …\").",
+              "type": "string"
+            },
+            "place": {
+              "description": "The project's name (\"pond\"), or `everywhere`: \"Noted for pond\".",
+              "type": "string"
+            },
+            "scope": {
+              "description": "`project` or `everywhere`.",
+              "type": "string"
+            },
+            "seq": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session": {
+              "type": "string"
+            },
+            "source": {
+              "description": "`said`, `correction` or `read` (Frog on its own), or `asked` (\"remember that …\").",
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "turn": {
+              "description": "The turn it was noted in, so it sits under that turn's reply.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "undo": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "item",
+            "id",
+            "text",
+            "scope",
+            "place",
+            "source",
+            "undo",
+            "seq",
+            "session",
+            "created"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The notes this turn brought back because they fit the user's message: \"Used 2 notes\"\nunder the reply (docs/customize-events.md, Used notes). Only when there were some.",
+          "properties": {
+            "created": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "event": {
+              "const": "used_notes",
+              "type": "string"
+            },
+            "notes": {
+              "items": {
+                "$ref": "#/$defs/UsedNote"
+              },
+              "type": "array"
+            },
+            "seq": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session": {
+              "type": "string"
+            },
+            "tokens": {
+              "description": "What they added to the turn, in estimated tokens (0 when all were already in the\nconversation and weren't sent again).",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "turn": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "event",
+            "turn",
+            "notes",
+            "tokens",
             "seq",
             "session",
             "created"
@@ -5143,6 +5289,101 @@
           "type": "object"
         },
         {
+          "description": "Frog kept a note on its own (or the user's \"remember that …\"): the quiet receipt under\nthe reply (docs/customize-events.md, Noted). Undo with [`Op::Undo`] and `undo`, answered\nby [`Event::CustomizeUndone`]; \"Make it a rule\" is [`Op::NoteToRule`].",
+          "properties": {
+            "event": {
+              "const": "noted",
+              "type": "string"
+            },
+            "from": {
+              "description": "For `read`: the file it came from, relative to the project.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "description": "The note's id within its scope.",
+              "type": "string"
+            },
+            "item": {
+              "description": "The `Note` tool call that kept it (empty for \"remember that …\").",
+              "type": "string"
+            },
+            "place": {
+              "description": "The project's name (\"pond\"), or `everywhere`: \"Noted for pond\".",
+              "type": "string"
+            },
+            "scope": {
+              "description": "`project` or `everywhere`.",
+              "type": "string"
+            },
+            "source": {
+              "description": "`said`, `correction` or `read` (Frog on its own), or `asked` (\"remember that …\").",
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "turn": {
+              "description": "The turn it was noted in, so it sits under that turn's reply.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "undo": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "item",
+            "id",
+            "text",
+            "scope",
+            "place",
+            "source",
+            "undo"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The notes this turn brought back because they fit the user's message: \"Used 2 notes\"\nunder the reply (docs/customize-events.md, Used notes). Only when there were some.",
+          "properties": {
+            "event": {
+              "const": "used_notes",
+              "type": "string"
+            },
+            "notes": {
+              "items": {
+                "$ref": "#/$defs/UsedNote"
+              },
+              "type": "array"
+            },
+            "tokens": {
+              "description": "What they added to the turn, in estimated tokens (0 when all were already in the\nconversation and weren't sent again).",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "turn": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "event",
+            "turn",
+            "notes",
+            "tokens"
+          ],
+          "type": "object"
+        },
+        {
           "description": "The answer to [`Op::Undo`]: `ok` false when nothing was undone, with why.",
           "properties": {
             "event": {
@@ -6100,6 +6341,47 @@
       ],
       "type": "object"
     },
+    "GroupItem": {
+      "description": "A coarse group of notes on the map.",
+      "properties": {
+        "count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "description": "Its index; a note's `group` names it.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "label": {
+          "description": "Two words from its notes (\"staging and database\").",
+          "type": "string"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "x": {
+          "description": "Its centre, 0 to 1 on both axes.",
+          "format": "float",
+          "type": "number"
+        },
+        "y": {
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "scope",
+        "x",
+        "y",
+        "count"
+      ],
+      "type": "object"
+    },
     "Hunk": {
       "properties": {
         "lines": {
@@ -6596,6 +6878,17 @@
     },
     "Memory": {
       "properties": {
+        "groups": {
+          "description": "The map's groups (empty in `index` mode).",
+          "items": {
+            "$ref": "#/$defs/GroupItem"
+          },
+          "type": "array"
+        },
+        "mode": {
+          "description": "`whole`: the store fits, so every note rides every call; `per_turn`: past that,\nstanding guidance rides and the rest come back per turn when they fit the message;\n`index`: no vectors here, the whole index within the model's budget.",
+          "type": "string"
+        },
         "notes": {
           "items": {
             "$ref": "#/$defs/NoteItem"
@@ -6607,7 +6900,22 @@
           "minimum": 0,
           "type": "integer"
         },
+        "pairs": {
+          "description": "Pairs that likely duplicate or disagree, for the user to settle (never resolved alone).",
+          "items": {
+            "$ref": "#/$defs/PairItem"
+          },
+          "type": "array"
+        },
+        "similarity": {
+          "description": "How notes are compared: `lexical-1` is word and trigram similarity, not meaning.\n`None` in `index` mode.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "tokens": {
+          "description": "What memory adds to every call: the one fixed line in `per_turn` mode, the whole\nindex in `index` mode.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -6616,7 +6924,10 @@
       "required": [
         "tokens",
         "omitted",
-        "notes"
+        "notes",
+        "mode",
+        "groups",
+        "pairs"
       ],
       "type": "object"
     },
@@ -6746,8 +7057,45 @@
         "created": {
           "type": "string"
         },
+        "from": {
+          "description": "For `read`: the file it came from.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "group": {
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "id": {
           "type": "string"
+        },
+        "in_prompt": {
+          "description": "It rides every call (the whole store, or standing guidance); otherwise it comes back\nonly on turns it fits.",
+          "type": "boolean"
+        },
+        "kind": {
+          "description": "For Frog's own notes: `said`, `correction` or `read`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last_used": {
+          "description": "The last turn it was brought into (RFC 3339).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lit": {
+          "description": "Used in the most recent turn that used any note: lit on the map.",
+          "type": "boolean"
         },
         "missing": {
           "items": {
@@ -6770,6 +7118,14 @@
             "null"
           ]
         },
+        "source": {
+          "description": "`user` (asked for) or `frog` (noted on its own).",
+          "type": "string"
+        },
+        "stale": {
+          "description": "Not used (or written) in 60 days: faded on the map.",
+          "type": "boolean"
+        },
         "text": {
           "type": "string"
         },
@@ -6783,6 +7139,21 @@
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
+        },
+        "x": {
+          "description": "Its place on the map, 0 to 1 on both axes, and its group (`None` in `index` mode).",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "y": {
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
         }
       },
       "required": [
@@ -6794,7 +7165,26 @@
         "cites",
         "missing",
         "tokens",
-        "omitted"
+        "omitted",
+        "source",
+        "in_prompt",
+        "stale",
+        "lit"
+      ],
+      "type": "object"
+    },
+    "NoteRef": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "scope"
       ],
       "type": "object"
     },
@@ -6980,6 +7370,36 @@
           "required": [
             "op",
             "undo"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "\"Make it a rule\" on a [`Event::Noted`] receipt (or a Memory row): proposes adding the\nnote to a rules file on the usual `Customize` card (`permission_request` with\n`proposal`); approving it adds the line, removes the note, and emits\n`customize_applied` whose undo puts both back.",
+          "properties": {
+            "id": {
+              "description": "The note's id.",
+              "type": "string"
+            },
+            "op": {
+              "const": "note_to_rule",
+              "type": "string"
+            },
+            "scope": {
+              "default": "project",
+              "description": "`project` or `everywhere`, as the receipt said.",
+              "type": "string"
+            },
+            "where": {
+              "description": "`project`: the repo's rules file, shared (default); `home`: your rules everywhere.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "op",
+            "id"
           ],
           "type": "object"
         },
@@ -7379,6 +7799,11 @@
               "description": "The IRC agent bus is on (config `[irc] enabled`, a frog cloud Bus DO): the model\ngets the `Irc` tool, and the client relays the bus. Off by default until the DO\ndeploys.",
               "type": "boolean"
             },
+            "notes": {
+              "default": false,
+              "description": "The client draws the `noted` receipt under a reply, with Undo\n(docs/customize-events.md, Noted), so Frog may note things on its own. Without it\nthe `Note` tool isn't offered and nothing is written: no note nobody can see.",
+              "type": "boolean"
+            },
             "op": {
               "const": "set_client_caps",
               "type": "string"
@@ -7776,6 +8201,40 @@
       "required": [
         "bucket_ms",
         "tokens"
+      ],
+      "type": "object"
+    },
+    "PairItem": {
+      "description": "Two notes that likely say the same thing or disagree.",
+      "properties": {
+        "key": {
+          "description": "Stable key, sent back with `memory_resolve`.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "`duplicate` or `disagree`.",
+          "type": "string"
+        },
+        "newer": {
+          "$ref": "#/$defs/NoteRef"
+        },
+        "older": {
+          "$ref": "#/$defs/NoteRef"
+        },
+        "resolutions": {
+          "description": "Always `[\"keep_newer\", \"show_both\"]`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "key",
+        "kind",
+        "older",
+        "newer",
+        "resolutions"
       ],
       "type": "object"
     },
@@ -8967,6 +9426,27 @@
       "required": [
         "count",
         "days"
+      ],
+      "type": "object"
+    },
+    "UsedNote": {
+      "description": "One note a turn used.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "scope": {
+          "description": "`project` or `everywhere`.",
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "scope",
+        "text"
       ],
       "type": "object"
     },

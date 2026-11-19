@@ -295,13 +295,14 @@ final class TranscriptSwitchBenchmarkTests: XCTestCase {
         print("switch: \(name) peak mounted rows \(m.peakRows), row bodies \(m.rowBodies), ink \(String(format: "%.4f", m.ink)), settled \(m.settled), blank-at-end \(m.blankFrames)")
     }
 
-    private func check(_ m: Opened, _ budget: (paint: Double, ready: Double), _ name: String) {
+    private func check(_ m: Opened, _ budget: (paint: Double, ready: Double), _ name: String) throws {
         XCTAssertTrue(m.settled, "\(name): never settled at the end")
         XCTAssertGreaterThan(m.ink, 0.002, "\(name): blank once ready")
+        XCTAssertLessThanOrEqual(m.peakRows, Self.mountedBudget, "\(name): built more rows than are on screen")
+        try TestRunner.skipTimingIfBusy("\(name) (paint \(Int(m.paint * 1000)) ms, ready \(Int(m.ready * 1000)) ms)")
         // CI: the budgets times `TestRunner.slack` (a runner's frames come late); locally as is.
         XCTAssertLessThan(m.paint, budget.paint * TestRunner.slack, "\(name): first paint over budget")
         XCTAssertLessThan(m.ready, budget.ready * TestRunner.slack, "\(name): ready over budget")
-        XCTAssertLessThanOrEqual(m.peakRows, Self.mountedBudget, "\(name): built more rows than are on screen")
     }
 
     func testSwitchTo400RowSession() throws {
@@ -316,7 +317,7 @@ final class TranscriptSwitchBenchmarkTests: XCTestCase {
         report("s400", rows: 400, m)
         filled(c)
         XCTAssertEqual(c.turns.reduce(0) { $0 + $1.items.count }, 400)
-        check(m, Self.budget400, "s400")
+        try check(m, Self.budget400, "s400")
     }
 
     func testSwitchTo5000RowSession() throws {
@@ -331,7 +332,7 @@ final class TranscriptSwitchBenchmarkTests: XCTestCase {
         filled(c)
         print("switch: s5000 older history folded in \(Int(Date().timeIntervalSince(t) * 1000)) ms after ready")
         XCTAssertEqual(c.turns.reduce(0) { $0 + $1.items.count }, 5000)
-        check(m, Self.budget5000, "s5000")
+        try check(m, Self.budget5000, "s5000")
     }
 
     /// Scrolling up builds older rows above, in order, without moving what's on screen.
@@ -428,7 +429,6 @@ final class TranscriptSwitchBenchmarkTests: XCTestCase {
         //   (The ~17 ms seen once on 2026-11-16 came from the two runs above that built no
         //   rows at all.)
         let frameBudget = TranscriptContainer.table ? 0.030 : 0.025
-        XCTAssertLessThan(p50, frameBudget, "scrolling well under 60 fps")
         XCTAssertGreaterThan(TranscriptBench.ink(scroll, in: host), 0.002, "blank at the top")
         // The lazy stack builds older rows above as you near its top ("fills"); the table has
         // every row already, as a height, so there's nothing to fill or hold in place.
@@ -451,6 +451,9 @@ final class TranscriptSwitchBenchmarkTests: XCTestCase {
             // Now 20 (the open's own peak) and 19 (2026-11-16).
             XCTAssertLessThanOrEqual(TranscriptProbe.peakMountedRows, onScreen + 6, "a fill built rows nobody saw")
         }
+        // The frame time last: on a machine with every core queued it measures the machine.
+        try TestRunner.skipTimingIfBusy(String(format: "scroll-up (p50 %.1f ms a step)", p50 * 1000))
+        XCTAssertLessThan(p50, frameBudget, "scrolling well under 60 fps")
     }
 
     /// Going back to a session opened a moment ago reads nothing until its log grows; a new event
@@ -507,6 +510,46 @@ final class ReplayLink: ConversationLink {
 enum TestRunner {
     static let isCI = ProcessInfo.processInfo.environment["CI"].map { !$0.isEmpty && $0 != "0" && $0 != "false" } ?? false
     static let slack: Double = isCI ? 4 : 1
+
+    /// The last minute's load average per core: past 1.5 every core has a queue (nine sessions
+    /// building at once, 2026-11-19: 81 on 16 cores), and a wall-clock timing measures the
+    /// machine, not Frog.
+    static var loadPerCore: Double {
+        var load = [Double](repeating: 0, count: 3)
+        guard getloadavg(&load, 3) > 0 else { return 0 }
+        return load[0] / Double(ProcessInfo.processInfo.activeProcessorCount)
+    }
+
+    /// A timing budget is only checked on a machine with cores to spare: on a busier one the
+    /// test says so and skips, rather than fail or have its budget loosened.
+    static func skipTimingIfBusy(_ what: String) throws {
+        let busy = loadPerCore
+        guard busy > 1.5 else { return }
+        throw XCTSkip(String(format: "%@: load %.1f per core (%d cores), so the timing measures the machine, not Frog; not checked", what, busy, ProcessInfo.processInfo.activeProcessorCount))
+    }
+
+    /// How many frames the display draws for `view`'s window in `seconds`.
+    @MainActor
+    static func framesDrawn(by view: NSView, over seconds: TimeInterval = 0.5) -> Int {
+        final class Counter: NSObject {
+            var frames = 0
+            @objc func tick(_ link: CADisplayLink) { frames += 1 }
+        }
+        let counter = Counter()
+        let link = view.displayLink(target: counter, selector: #selector(Counter.tick(_:)))
+        link.add(to: .main, forMode: .common)
+        RunLoop.main.run(until: Date().addingTimeInterval(seconds))
+        link.invalidate()
+        return counter.frames
+    }
+
+    /// Animation runs on the display's frames: with the display asleep or off (an unattended
+    /// full run, 2026-11-19 07:56 to 08:07) there are none, and a test of it says so and skips.
+    @MainActor
+    static func skipUnlessTheDisplayDraws(_ view: NSView) throws {
+        guard framesDrawn(by: view) == 0 else { return }
+        throw XCTSkip("the display drew no frames in 0.5 s (asleep or off): animation can't be measured on it; not a failure")
+    }
 }
 
 /// Window probes shared by the transcript benchmarks.

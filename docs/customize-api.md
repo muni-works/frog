@@ -33,7 +33,7 @@ open should re-read the snapshot when it sees one.
 ## Tokens
 
 Every `tokens` is what the item adds to **every turn**, measured on the text the engine actually
-puts in the prompt (the skills catalog line, the tool's schema, the memory index line, the rules
+puts in the prompt (the skills catalog line, the tool's schema, the fixed memory line, the rules
 section), counted with the engine's estimator (`context::Estimator`): characters divided by
 `estimate.chars_per_token`. A live session calibrates that ratio against what the provider
 counted; the CLI has no session, so it uses the default 3.5 and says `calibrated: false`. Show
@@ -65,7 +65,9 @@ An item that is off weighs `0`. Its would-be weight is in `tokens_if_on`.
     "items": [Connection]
   },
   "rules": { "tokens": 310, "files": [RulesFile] },
-  "memory": { "tokens": 70, "omitted": 0, "notes": [Note] }
+  "memory": { "tokens": 266, "omitted": 0, "mode": "whole" | "per_turn" | "index",
+              "similarity": "lexical-1" | null,
+              "notes": [Note], "groups": [Group], "pairs": [Pair] }
 }
 ```
 
@@ -197,10 +199,76 @@ first (a new AGENTS.md if none): the same file the agent's `Customize` tool writ
   "path": "/Users/cam/.local/share/frog/memory/projects/…/staging-db-reset-mondays.md",
   "cites": ["db/seed.sql"],
   "missing": [],                         // cited files that are gone
-  "tokens": 18,                          // its line in the memory index (0 if omitted for space)
-  "omitted": false
+  "tokens": 18,                          // its line: every call when in_prompt, else on the turns it comes back
+  "in_prompt": true,                     // rides every call (the whole store, or standing guidance)
+  "omitted": false,                      // only in "index" mode: left out for space
+  "source": "frog",                      // "user" (asked for: /remember, "remember that") or "frog" (noted on its own)
+  "kind": "said" | null,                 // frog's notes: "said", "correction" or "read"
+  "from": "README.md" | null,            // "read" notes: the file it came from
+  "last_used": "2026-11-18T16:02:11-08:00" | null,  // the last turn it was brought into
+  "stale": false,                        // not used (or, never used, not written) in 60 days: fade it
+  "lit": true,                           // used in the most recent turn that used any note: light it
+  "x": 0.4127, "y": 0.2210,              // its place on the map, 0 to 1 (null in "index" mode)
+  "group": 2                             // index into memory.groups (null in "index" mode)
 }
 ```
+
+### Memory: mode, the map, and pairs
+
+`mode` says where notes go (docs/customize-events.md, Used notes):
+
+- `whole`: the store fits a modest budget, so every note rides every call (`in_prompt` on all);
+  `tokens` is that index.
+- `per_turn`: past it, standing guidance (corrections; always / never / don't / prefer / instead
+  notes) rides every call and the rest come back only on turns they fit the message; `tokens`
+  is the standing notes plus one fixed line, and the others' `tokens` count only on turns they
+  come back.
+- `index`: the fallback when the vectors can't be kept: the whole index within the model's
+  budget; `x`, `y`, `group`, `groups`, `pairs` and `similarity` are empty.
+
+**`similarity: "lexical-1"` is word and trigram similarity, not meaning.** Two notes are near
+when they share words or word pieces. Caption the map that way ("Near means they share words"),
+never as notes grouped "by meaning" or "by topic understanding". The tag will change if a
+neural embedder replaces it.
+
+The map (canvas frame M1) is drawn from the same vectors that choose a turn's notes
+(`crates/frog-engine/src/memvec.rs`, `memmap.rs`), computed on this machine with no model:
+
+- **Positions** run 0 to 1 on both axes. They're deterministic: the same notes give the same
+  places on every read and every launch, rebuilt from the files alone. A new note moves the
+  others very little (under 0.05) and never changes their groups: notes are grouped in the order
+  they were written, so a later note can't rearrange earlier ones. Near means they share words;
+  distances are approximate.
+- **Groups** are coarse, and each scope has its own:
+
+```jsonc
+{ "id": 2, "label": "tests and module", "scope": "project", "x": 0.31, "y": 0.62, "count": 5 }
+```
+
+  `label` is the group's two commonest words, as written. Draw it near the group's centre; a
+  note's `group` is its `id`.
+- **Stale** and **lit** come from `last_used` (kept beside the notes, in `.vectors.json`).
+- **Pairs** that likely duplicate or disagree, for the user to settle. Frog never deletes
+  either note on its own:
+
+```jsonc
+{ "key": "p:this-project-uses-npm|p:use-pnpm-never-npm",
+  "kind": "disagree",                    // or "duplicate": the same thing said twice
+  "older": { "id": "this-project-uses-npm", "scope": "project" },
+  "newer": { "id": "use-pnpm-never-npm", "scope": "project" },
+  "resolutions": ["keep_newer", "show_both"] }
+```
+
+  "Two notes disagree about …": quote both, with dates from the notes. **Keep the newer**
+  removes the older note. **Show both** keeps both and stops flagging that pair. Both send
+  `memory_resolve`. Flagging is lexical too, so it can miss a disagreement worded differently,
+  and it can flag notes that only share words. A pair is flagged when the notes share most
+  words and one negates what the other says, or they name different numbers ("port 8912" and
+  "port 8913"); or when they say the same thing.
+
+Everything stays on this machine, beside the notes. A note the user forgets (`/forget`,
+`memory_remove`, Undo, "keep the newer") is pruned from the vectors and the map at once, and
+any "show both" record that names it goes too.
 
 ## Changes
 
@@ -213,6 +281,7 @@ first (a new AGENTS.md if none): the same file the agent's `Customize` tool writ
 { "change": "rule_remove",  "path": "<file>", "n": 28, "old": "<current text>" }
 { "change": "memory_edit",  "id": "<note id>", "scope": "project" | "everywhere", "text": "…" }
 { "change": "memory_remove","id": "<note id>", "scope": "project" | "everywhere" }
+{ "change": "memory_resolve","pair": "<pairs[].key>", "keep": "newer" | "both" }
 ```
 
 On/off is Frog's own choice, kept in `~/.local/share/frog/customize.json` (the same file the

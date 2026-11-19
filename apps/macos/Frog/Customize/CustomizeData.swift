@@ -1,4 +1,5 @@
 import AppKit
+import CoreGraphics
 import Foundation
 
 /// What Customize shows, from what the engine and the files on disk can answer today: skills
@@ -44,11 +45,39 @@ struct CustomizeSkill: Decodable, Identifiable, Hashable {
 struct RuleFile: Identifiable, Hashable {
     enum Scope: Hashable { case project, everywhere }
     let url: URL
-    let scope: Scope
+    var scope: Scope
     /// The file's text, or empty for one not made yet (adding a line makes it).
     var text: String
     var exists: Bool
+    /// From the engine's report, when it has one: whose file it is ("claude_code" for one read
+    /// in place from Claude Code), "always" or "paths", the globs for a path-scoped rule, and
+    /// its weight on every turn.
+    var source: String? = nil
+    var applies: String? = nil
+    var paths: [String] = []
+    var tokens: Int? = nil
+    /// The whole file, which a path-scoped rule costs only on a turn it applies to.
+    var fullTokens: Int? = nil
     var id: URL { url }
+
+    /// "about 210 tokens a turn"; a path-scoped rule weighs nothing until it applies.
+    var weightText: String? {
+        if applies == "paths" {
+            return fullTokens.map { "about \(CustomizeFormat.tokens($0)) when it applies" }
+        }
+        return CustomizeFormat.perTurn(tokens)
+    }
+
+    /// Read in place from Claude Code's files (CLAUDE.md, a .claude folder).
+    var fromClaudeCode: Bool {
+        if let source { return source == "claude_code" }
+        return url.lastPathComponent == "CLAUDE.md" || url.path.contains("/.claude/")
+    }
+
+    /// Where it applies: "Always", or the globs a path-scoped rule waits for.
+    var appliesText: String {
+        applies == "paths" && !paths.isEmpty ? "When working on \(paths.joined(separator: ", "))" : "Always"
+    }
 }
 
 /// A line of a rules file, as a sheet shows it.
@@ -159,6 +188,33 @@ struct MemoryNote: Identifiable, Hashable {
     let url: URL
     /// The conversation it was noted in, once the engine says.
     var from: String? = nil
+    /// From the engine's report: who wrote it ("user" or "frog"), how Frog learned it ("said",
+    /// "correction", "read") and the file it read, when it was last brought into a turn,
+    /// whether it's gone unused for 60 days or was used in the latest turn, its place on the
+    /// map (0 to 1) and its group, and what it adds on a turn it comes back.
+    var source: String? = nil
+    var kind: String? = nil
+    var readFrom: String? = nil
+    var lastUsed: Date? = nil
+    var stale = false
+    var lit = false
+    var place: CGPoint? = nil
+    var group: Int? = nil
+    var tokens: Int? = nil
+
+    /// "Frog noted this in "audit codebase", from reading the repo."
+    var provenance: String? {
+        let place = from.map { " in \u{201C}\($0)\u{201D}" } ?? ""
+        if source == "user" { return "You asked Frog to remember this\(place)." }
+        guard source == "frog" else { return from.map { "From \u{201C}\($0)\u{201D}." } }
+        let how = switch kind {
+        case "correction": ", from a correction"
+        case "read": readFrom.map { ", from reading \($0)" } ?? ", from reading the project"
+        case "said": ", from what you said"
+        default: ""
+        }
+        return "Frog noted this\(place)\(how)."
+    }
     var firstLine: String { body.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty } ?? "" }
 }
 
@@ -448,7 +504,7 @@ final class CustomizeStore {
         skills = r.pageSkills
         connections = r.pageConnections
         notes = r.pageNotes()
-        rules = Self.ruleFiles(found: r.rules.files.map { URL(fileURLWithPath: $0.path) }, folder: folder, home: home)
+        rules = Self.ruleFiles(report: r.rules.files, folder: folder, home: home)
     }
 
     /// A switch, made by the engine; the page redraws from its answer.
@@ -514,7 +570,35 @@ final class CustomizeStore {
         return true
     }
 
+    /// The setting the engine reads for noting on its own (`auto-note`, design/settings.json),
+    /// sent to every live engine when it changes and when one starts.
+    nonisolated static let autoNoteKey = "autoNote"
+    var autoNote: Bool = UserDefaults.standard.object(forKey: CustomizeStore.autoNoteKey) as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(autoNote, forKey: Self.autoNoteKey)
+            guard Self.loads else { return }
+            Library.shared.everyConversation().forEach { $0.link?.send(.settings(values: Self.engineSettings())) }
+        }
+    }
+
+    /// Whether this build shows the receipt line under a reply ("Noted for pond", Undo, Make it
+    /// a rule) and so sends the `notes` capability: the engine notes on its own only for a
+    /// client that does (docs/customize-events.md). Until the transcript has that line, the
+    /// Memory page offers the switch but doesn't say notes are being taken.
+    nonisolated static let notesCapability = false
+
+    /// The app's settings the engine reads (`Op::Settings`).
+    nonisolated static func engineSettings() -> [String: JSONValue] {
+        ["auto-note": .bool(UserDefaults.standard.object(forKey: autoNoteKey) as? Bool ?? true)]
+    }
+
     func forget(_ note: MemoryNote) {
+        // With the engine's report, the engine forgets it, so its map and pairs drop it too.
+        if report != nil {
+            notes?.removeAll { $0.id == note.id && $0.scope == note.scope }
+            change(.memoryRemove(id: note.id, scope: note.scope == .project ? "project" : "everywhere"))
+            return
+        }
         try? MemoryFiles.forget(note)
         notes?.removeAll { $0.id == note.id && $0.scope == note.scope }
     }
@@ -550,6 +634,21 @@ final class CustomizeStore {
         return files.filter { $0.scope == .project } + files.filter { $0.scope == .everywhere }
     }
 
+    /// The report's files, with what it says about each (scope, source, where it applies, weight).
+    static func ruleFiles(report files: [CustomizeReport.RulesFile], folder: URL?, home: URL) -> [RuleFile] {
+        var out = ruleFiles(found: files.map { URL(fileURLWithPath: $0.path) }, folder: folder, home: home)
+        for i in out.indices {
+            guard let f = files.first(where: { $0.path == out[i].url.path }) else { continue }
+            out[i].scope = f.scope == "project" ? .project : .everywhere
+            out[i].source = f.source
+            out[i].applies = f.applies
+            out[i].paths = f.paths ?? []
+            out[i].tokens = f.tokens
+            out[i].fullTokens = f.fullTokens
+        }
+        return out.filter { $0.scope == .project } + out.filter { $0.scope == .everywhere }
+    }
+
     static func mcpJSONNames(_ folder: URL) -> Set<String> {
         guard let data = try? Data(contentsOf: folder.appending(path: ".mcp.json")),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -572,7 +671,14 @@ final class CustomizeStore {
     func stage(report r: CustomizeReport, folder: URL?, rules: [RuleFile]) {
         self.folder = folder
         apply(r)
-        self.rules = rules
+        // The fixture's texts, with what the report says about each file.
+        let meta = Self.ruleFiles(report: r.rules.files, folder: folder, home: home)
+        self.rules = rules.map { f in
+            guard let m = meta.first(where: { $0.url == f.url }) else { return f }
+            var f = f
+            f.source = m.source; f.applies = m.applies; f.paths = m.paths; f.tokens = m.tokens; f.fullTokens = m.fullTokens
+            return f
+        }
     }
     #endif
 }
