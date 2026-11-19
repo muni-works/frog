@@ -766,7 +766,7 @@ body { font-family: var(--font-sans); }
 /* Menus open upward from their chip: rows 28 tall, a 7-radius hover plate, a check on the right. */
 .cz-menu { position: absolute; bottom: calc(100% - 4px); z-index: 6; box-sizing: border-box; max-width: calc(100% - 8px); padding: 4px; display: flex; flex-direction: column; background: var(--card); border: 1px solid var(--line-strong); border-radius: var(--radius-card); box-shadow: var(--shadow-float); font: 13px/16px var(--font-sans); color: var(--fg); }
 .cz-menu > button, .cz-menu .cz-list > button, .cz-menu > a { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 28px; box-sizing: border-box; padding: 0 8px; border: 0; border-radius: var(--radius-plate); background: transparent; color: var(--fg); font: inherit; text-align: left; text-decoration: none; cursor: pointer; white-space: nowrap; }
-.cz-menu > button:hover:not(:disabled), .cz-menu .cz-list > button:hover, .cz-menu > a:hover, .cz-menu button:focus-visible { background: var(--hover); outline: none; }
+.cz-menu > button:hover:not(:disabled), .cz-menu .cz-list > button:hover, .cz-menu > a:hover, .cz-menu button:focus-visible, .cz-menu > a:focus-visible { background: var(--hover); outline: none; }
 .cz-menu > .cz-sep { height: 1px; margin: 4px 8px; background: var(--line); }
 .cz-menu button:disabled { cursor: default; }
 .cz-menu .cz-dim, .cz-menu > button.cz-dim { color: var(--muted); }
@@ -776,6 +776,11 @@ body { font-family: var(--font-sans); }
 .cz-check { margin-left: auto; color: var(--fg); }
 .cz-r + .cz-check { margin-left: 4px; }
 .cz-check.off { visibility: hidden; }
+/* A local model's row hands off to Frog for Mac: where you have it, muted after the name, and a
+   small out-arrow where a cloud row's check sits. */
+.cz-menu .cz-on { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
+.cz-menu .cz-out { margin-left: 4px; color: var(--faint); flex: none; }
+.cz-menu > a.cz-local:hover .cz-out, .cz-menu > a.cz-local:focus-visible .cz-out { color: var(--fg); }
 .cz-filter { display: flex; align-items: center; gap: 8px; padding: 6px 8px 7px; margin-bottom: 2px; border-bottom: 1px solid var(--line); color: var(--faint); }
 .cz-filter input, .cz-bind { flex: 1; min-width: 0; border: 0; background: transparent; outline: none; font: inherit; color: var(--fg); padding: 0; }
 .cz-filter input::placeholder, .cz-bind::placeholder { color: var(--faint); }

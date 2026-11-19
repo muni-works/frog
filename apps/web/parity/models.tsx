@@ -22,6 +22,9 @@ const machines: Machine[] = [
       { id: 'mlx-community/Qwen3-8B-4bit', name: 'Qwen3-8B-4bit', hash: 'aaaaaaaaaaaa11', loaded: false, quant: 'mlx-4bit' },
     ] },
 ]
+// `?machines=none`: what the web has while the gateway reports no machines (today: /v1/machines
+// isn't served); `node`: one paired node and no This Mac. Default: both (test/shoot-models.ts).
+const shown = q.get('machines') === 'none' ? [] : q.get('machines') === 'node' ? machines.slice(1) : machines
 const models: Model[] = [
   { id: 'deepseek-v4.1-flash', context: 131072, input: 1e-7, output: 4e-7, cached: null },
   { id: 'glm-5.3-flash', context: 131072, input: 2e-7, output: 8e-7, cached: null },
@@ -32,6 +35,6 @@ const view = q.get('view') ?? 'picker'
 
 createRoot(document.getElementById('root')!).render(
   view === 'picker'
-    ? <div style={{ padding: '340px 24px 24px', maxWidth: 720 }}><Composer model="glm-5.3-flash" models={models} machines={machines} openModels onModel={() => {}} onManage={() => {}} /></div>
+    ? <div style={{ padding: `${q.get('top') ?? 340}px ${q.get('pad') ?? 24}px 24px`, maxWidth: 720 }}><Composer model="glm-5.3-flash" models={models} machines={shown} openModels onModel={() => {}} onManage={() => {}} /></div>
     : <div className="win"><SettingsPage section="models" account={account} machines={machines} machine={view === 'machine' ? 'n1' : undefined} onOpen={() => {}} onSignOut={() => {}} /></div>,
 )
