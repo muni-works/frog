@@ -244,11 +244,12 @@ struct MarkdownView: View {
         let blocks: [MarkdownBlock]
         let streaming: Bool
         @State private var origin: CGPoint?
+        @Environment(\.metricsScope) private var scope
 
         var body: some View {
             #if os(macOS)
             // Reaching into the gutter by the text view's room, its text on the column's edge.
-            MessageText(blocks: blocks, streaming: streaming, metricsOrigin: origin)
+            MessageText(blocks: blocks, streaming: streaming, metricsOrigin: TranscriptMetrics.shared.accepts(scope) ? origin : nil)
                 .padding(.leading, -MessageTextView.gutterRoom)
                 .background {
                     if TranscriptMetrics.enabled {
