@@ -1008,7 +1008,12 @@ fn applied(evs: &[Event]) -> Vec<String> {
 #[tokio::test]
 async fn auto_note_not_told_is_off() {
     let base = std::env::temp_dir().join(format!("frog-noting-{}", session::new_id()));
-    let mut r = rig_untold(&base, vec![answer_and_note("Ok.", staging_note()), done()], true, |_| {});
+    let mut r = rig_untold(
+        &base,
+        vec![answer_and_note("Ok.", staging_note()), done()],
+        true,
+        |_| {},
+    );
     r.idle().await;
     let evs = r.say(STAGING).await;
     assert!(receipts(&evs).is_empty(), "{evs:?}");
@@ -1058,7 +1063,11 @@ async fn a_file_frog_wrote_grounds_no_note() {
     let fact = "Deploy keys go in the shared bucket.";
     let script = vec![
         reply(
-            vec![tool("w1", "Write", json!({"file_path": "FACTS.md", "content": format!("{fact}\n")}))],
+            vec![tool(
+                "w1",
+                "Write",
+                json!({"file_path": "FACTS.md", "content": format!("{fact}\n")}),
+            )],
             Stop::ToolUse,
         ),
         reply(
@@ -1076,9 +1085,7 @@ async fn a_file_frog_wrote_grounds_no_note() {
         true,
         |_| {},
     );
-    r.h.ops
-        .send(Op::SetMode { mode: Mode::Yolo })
-        .unwrap();
+    r.h.ops.send(Op::SetMode { mode: Mode::Yolo }).unwrap();
     r.idles += 1;
     r.idle().await;
     let evs = r.say("write it down").await;

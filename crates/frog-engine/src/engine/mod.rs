@@ -3538,6 +3538,11 @@ pub(super) fn declined_path(store: &std::path::Path, id: &str) -> PathBuf {
 /// A session's declined offers, one key a line (none when there's no file).
 fn declined_load(store: &std::path::Path, id: &str) -> HashSet<String> {
     std::fs::read_to_string(declined_path(store, id))
-        .map(|t| t.lines().filter(|l| !l.is_empty()).map(String::from).collect())
+        .map(|t| {
+            t.lines()
+                .filter(|l| !l.is_empty())
+                .map(String::from)
+                .collect()
+        })
         .unwrap_or_default()
 }

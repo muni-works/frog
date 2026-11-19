@@ -593,8 +593,8 @@ const NOT_WORDS: &[&str] = &[
 /// The only other words a sentence that applies a cosmetic setting at once may hold.
 const APPLY_FILLER: &[&str] = &[
     "turn", "switch", "set", "make", "change", "put", "use", "please", "the", "my", "a", "to",
-    "it", "can", "could", "would", "you", "frog", "i", "i'd", "want", "like", "be", "now",
-    "back", "mode", "just", "so", "go", "pls", "plz",
+    "it", "can", "could", "would", "you", "frog", "i", "i'd", "want", "like", "be", "now", "back",
+    "mode", "just", "so", "go", "pls", "plz",
 ];
 
 /// Whether one typed sentence asks for this cosmetic setting plainly enough to apply it at
@@ -1133,7 +1133,10 @@ fn write_atomic_keeping(
     // A rename would replace a file its owner made read-only, and split a hard-linked pair
     // (AGENTS.md and CLAUDE.md as one file) into two that disagree.
     writable(path)?;
-    let keep = std::fs::metadata(path).ok().map(|m| m.permissions()).or(keep);
+    let keep = std::fs::metadata(path)
+        .ok()
+        .map(|m| m.permissions())
+        .or(keep);
     let name = path.file_name().unwrap_or_default().to_string_lossy();
     let tmp = dir.join(format!(".{name}.{}.tmp", crate::session::new_id()));
     let mut o = std::fs::OpenOptions::new();
@@ -1549,11 +1552,23 @@ mod tests {
         assert!(!ap(&set("theme", json!("dark")), "dark mode please"));
         // Review 3, item 11: only a sentence about the setting, naming only the target value.
         // Anything else in it, and it's a card.
-        assert!(!ap(&set("theme", json!("dark")), "switch from the dark theme to light"));
-        assert!(!ap(&set("theme", json!("light")), "switch from the dark theme to light"));
+        assert!(!ap(
+            &set("theme", json!("dark")),
+            "switch from the dark theme to light"
+        ));
+        assert!(!ap(
+            &set("theme", json!("light")),
+            "switch from the dark theme to light"
+        ));
         assert!(!ap(&sounds_on, "fix the sounds player on macOS"));
-        assert!(!ap(&set("density", json!("compact")), "the density test fails on compact screens"));
-        assert!(ap(&set("theme", json!("light")), "please switch the theme to light"));
+        assert!(!ap(
+            &set("density", json!("compact")),
+            "the density test fails on compact screens"
+        ));
+        assert!(ap(
+            &set("theme", json!("light")),
+            "please switch the theme to light"
+        ));
         // Never anything but a cosmetic setting, however plainly asked.
         assert!(!ap(
             &set("monthly-cap", json!("250")),
@@ -1876,7 +1891,10 @@ mod tests {
                 let path = path.clone();
                 std::thread::spawn(move || {
                     for j in 0..10 {
-                        let change = Change::Skill { name: format!("s{i}-{j}"), on: false };
+                        let change = Change::Skill {
+                            name: format!("s{i}-{j}"),
+                            on: false,
+                        };
                         toggle_file(&path, &change).unwrap();
                     }
                 })
@@ -1948,7 +1966,11 @@ mod tests {
         FAIL_PUT.with(|f| *f.borrow_mut() = None);
         assert!(r.is_err());
         assert_eq!(names_in(dir.path()), ["AGENTS.md"], "nothing left aside");
-        assert_eq!(std::fs::read_to_string(&a).unwrap(), "- a\n- rule\n", "all or nothing");
+        assert_eq!(
+            std::fs::read_to_string(&a).unwrap(),
+            "- a\n- rule\n",
+            "all or nothing"
+        );
     }
 
     /// Review 3, item 13: a `.<name>.<id>.undo` file a crash left is put back at start-up,
@@ -1960,12 +1982,18 @@ mod tests {
         std::fs::write(&aside, "- a\n").unwrap();
         sweep_undo(dir.path());
         assert_eq!(names_in(dir.path()), ["AGENTS.md"]);
-        assert_eq!(std::fs::read_to_string(dir.path().join("AGENTS.md")).unwrap(), "- a\n");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("AGENTS.md")).unwrap(),
+            "- a\n"
+        );
         // One whose file was written since stays where it is.
         let aside = dir.path().join(".AGENTS.md.20261119-120001-cd34.undo");
         std::fs::write(&aside, "old\n").unwrap();
         sweep_undo(dir.path());
-        assert_eq!(std::fs::read_to_string(dir.path().join("AGENTS.md")).unwrap(), "- a\n");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("AGENTS.md")).unwrap(),
+            "- a\n"
+        );
         assert!(aside.exists());
         // Not ours: left alone.
         std::fs::write(dir.path().join(".x.undo"), "x").unwrap();

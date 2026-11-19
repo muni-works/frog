@@ -1447,7 +1447,8 @@ mod tests {
                 std::thread::spawn(move || {
                     let s = Store::new(&mem, None);
                     for _ in 0..25 {
-                        s.add(Scope::Global, "we deploy on fridays from main").unwrap();
+                        s.add(Scope::Global, "we deploy on fridays from main")
+                            .unwrap();
                     }
                 })
             })
@@ -1459,7 +1460,10 @@ mod tests {
         assert_eq!(notes.len(), 100, "every add kept");
         let ids: std::collections::HashSet<_> = notes.iter().map(|n| n.id.clone()).collect();
         assert_eq!(ids.len(), 100, "each in its own file");
-        assert!(notes.iter().all(|n| n.body == "we deploy on fridays from main"));
+        assert!(
+            notes
+                .iter()
+                .all(|n| n.body == "we deploy on fridays from main")
+        );
     }
-
 }

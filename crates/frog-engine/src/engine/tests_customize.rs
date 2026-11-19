@@ -192,7 +192,12 @@ impl Rig {
         let id = std::fs::read_dir(self.base.join("store"))
             .unwrap()
             .flatten()
-            .filter_map(|e| e.file_name().to_str()?.strip_suffix(".jsonl").map(String::from))
+            .filter_map(|e| {
+                e.file_name()
+                    .to_str()?
+                    .strip_suffix(".jsonl")
+                    .map(String::from)
+            })
             .next()
             .expect("a session log");
         (self.base, id)
@@ -1474,7 +1479,10 @@ async fn only_settings_the_app_applies_are_planned() {
         assert!(applied(&evs).is_empty(), "{text}: no receipt");
         assert!(setting_changes(&evs).is_empty());
         let out = tool_output(&evs);
-        assert!(out.contains("can't be changed from here") && out.contains(place), "{text}: {out}");
+        assert!(
+            out.contains("can't be changed from here") && out.contains(place),
+            "{text}: {out}"
+        );
     }
     r.end().await;
 }
@@ -1506,13 +1514,19 @@ async fn a_declined_offer_stays_declined_across_a_resume() {
 /// resumed child still gets nothing (no Customize, no remembering).
 #[tokio::test]
 async fn a_resumed_child_keeps_its_parent() {
-    let mut r = rig_with(vec![done()], Mode::Default, |c| c.parent_session = Some("mom".into()));
+    let mut r = rig_with(vec![done()], Mode::Default, |c| {
+        c.parent_session = Some("mom".into())
+    });
     r.idle().await;
     let _ = r.say("hi", never).await;
     let (base, id) = r.stop().await;
     let mut again = rig_in(base, Some(id), vec![done()], Mode::Default, |_| {});
     again.idle().await;
     let _ = again.say("remember that we deploy on fridays", never).await;
-    assert!(again.notes().is_empty(), "still a child: {:?}", again.notes());
+    assert!(
+        again.notes().is_empty(),
+        "still a child: {:?}",
+        again.notes()
+    );
     again.end().await;
 }

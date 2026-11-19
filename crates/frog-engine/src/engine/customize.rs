@@ -61,7 +61,10 @@ impl Agent {
                 dirs.extend(store.scope_dir(scope).map(Path::to_path_buf));
             }
         }
-        dirs.extend(self.toggles_path().and_then(|p| p.parent().map(Path::to_path_buf)));
+        dirs.extend(
+            self.toggles_path()
+                .and_then(|p| p.parent().map(Path::to_path_buf)),
+        );
         for d in dirs {
             cz::sweep_undo(&d);
         }
@@ -74,7 +77,8 @@ impl Agent {
         let mut keys: Vec<&str> = self.declined.iter().map(String::as_str).collect();
         keys.sort_unstable();
         let tmp = path.with_extension(format!("declined.{}.tmp", crate::session::new_id()));
-        let ok = std::fs::write(&tmp, keys.join("\n") + "\n").and_then(|_| std::fs::rename(&tmp, &path));
+        let ok =
+            std::fs::write(&tmp, keys.join("\n") + "\n").and_then(|_| std::fs::rename(&tmp, &path));
         if ok.is_err() {
             let _ = std::fs::remove_file(&tmp);
         }
