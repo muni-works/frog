@@ -204,11 +204,12 @@ final class FlushColumnsTests: XCTestCase {
         XCTAssertTrue(panes.items[0].hasTabs, "the conversation has changes, so the pill would have shown")
         let W = shot.size.width
         // Where the pill stood (its top-right corner, under the title bar's row) and down the
-        // window's trailing edge. The window controls (docs/design/chrome/spec.md, 1) are a drawn
-        // capsule now, grey, 8 + 108 from the edge, and the turn rail is under them: the pill's
-        // place is checked left of them.
+        // window's trailing edge. The window controls (docs/design/chrome/spec.md, 1) and the turn
+        // rail are drawn capsules now, not glass, so the offscreen shot shows them, and the rail's
+        // chapter names beside it (grey): the pill's place is checked in the title row, left of
+        // the controls (8 + 108 from the edge).
         for x in stride(from: W - 150, through: W - 126, by: 6) {
-            for y in stride(from: CGFloat(1), through: 80, by: 6) {
+            for y in stride(from: CGFloat(1), through: 49, by: 6) {
                 assertGray(shot, x, y, canvas, "the folded inspector's corner")
             }
         }
