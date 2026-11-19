@@ -148,8 +148,8 @@ can't apply one. Brokers should still leave cards with `proposal` out of `ListAp
 The apps hold the same line: a proposal is answered only with a choice the card offered, named
 by the control that showed it (its primary button and that button's ⌘↩, its alternative). A
 bare allow never becomes the primary, so the app sends nothing and the card stays open. Places
-that don't show the change offer no Allow for a proposal: the Mac's notification (it brings
-Frog forward instead), the sidebar's card (Open only), the phone's push (no buttons, no
+that don't show the change offer no Allow for a proposal: the Mac's notification (tapping it
+opens that session at the card), the sidebar's card (Open only), the phone's push (no buttons, no
 permission id) and the phone's list, watch and widgets (the Mac leaves the proposal out of the
 rows it sends). The Mac's bridge forwards the phone's `choice` exactly.
 
@@ -322,7 +322,8 @@ Durable: it replays with the transcript, and its Undo still works after a restar
 - "remember that …" (or "from now on …", "note to self: …") saves a note as before (with its
   notice) and counts as the turn's one note: only when the phrase opens a typed message
   (`"typed": true`; each `more` part is its own message), never a later sentence or a line of
-  something pasted below it, and never in a child. A paste is part of the typed message: the
+  something pasted below it, and never in a child (typed there, it keeps nothing and says so
+  with the notice `/remember` gets in a child). A paste is part of the typed message: the
   apps don't mark pasted spans, so this opening-only rule is what keeps a pasted document's
   "From now on …" line from becoming a note.
 - **Where the slash commands work** (the one rule; each command only when the message starts
@@ -339,9 +340,10 @@ Durable: it replays with the transcript, and its Undo still works after a restar
     the phone didn't mark, an app's own prompts, another session's message.
 - Text in a composer's field that the person didn't type stays untyped until they edit it:
   the model's next-step suggestion taken with Tab, a chip that fills the field, a queued
-  message taken back with its "x" (keeping the flag it was queued with), and on the web an
-  earlier turn taken back with Edit (the transcript doesn't record whether it was typed, so
-  always untyped until edited). If any untyped piece is in the field, the whole field is
+  message taken back with its "x" (keeping the flag it was queued with; the Mac and the
+  phone), on the web an earlier turn taken back with Edit (the transcript doesn't record
+  whether it was typed, so always untyped until edited), and on the web the last send recalled
+  with the up arrow (typed or untyped as it was sent). If any untyped piece is in the field, the whole field is
   untyped until edited. Sent exactly as filled (whitespace aside), it goes without `typed`.
 - A note's Undo handle works only if Frog issued it: issued handles are kept beside the notes
   (`noted-undos`, the newest 500), so Undo still works after a restart, and a handle made up

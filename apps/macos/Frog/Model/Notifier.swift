@@ -13,6 +13,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
 
     private let center = UNUserNotificationCenter.current()
     private var answers: [String: (Decision) -> Void] = [:]
+    private var opens: [String: () -> Void] = [:]
     private var authorized: Bool?
 
     private enum Action {
@@ -161,9 +162,12 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     /// on the banner, so it gets no Allow: tapping brings frog forward to the card.
     static func offersAllow(_ request: PermissionRequest) -> Bool { request.proposal == nil }
 
-    func needsPermission(project: String, request: PermissionRequest, answer: @escaping (Decision) -> Void) {
+    /// `open`: what tapping the banner itself does, bringing frog forward on the session that
+    /// asked, at its card (review 4, LIVE 4). A proposal's only action.
+    func needsPermission(project: String, request: PermissionRequest, open: @escaping () -> Void = { NSApp.activate() }, answer: @escaping (Decision) -> Void) {
         let allow = Self.offersAllow(request)
-        answers[request.id] = allow ? answer : { _ in NSApp.activate() }
+        answers[request.id] = allow ? answer : { _ in open() }
+        opens[request.id] = open
         updateBadge()
         guard !SingleInstance.isTesting, inBackground else { return }
         let c = UNMutableNotificationContent()
@@ -179,6 +183,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     /// The request was answered (anywhere): drop its notification and handler.
     func resolved(_ id: String) {
         answers[id] = nil
+        opens[id] = nil
         center.removeDeliveredNotifications(withIdentifiers: [id])
         updateBadge()
     }
@@ -276,16 +281,17 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     ) async {
         let id = response.notification.request.content.userInfo["permission"] as? String
         let action = response.actionIdentifier
-        await MainActor.run {
-            if let id, let answer = answers[id] {
-                switch action {
-                case Action.allow: answer(.allow)
-                case Action.deny: answer(.deny)
-                default: NSApp.activate()
-                }
-            } else {
-                NSApp.activate()
-            }
+        await MainActor.run { respond(permission: id, action: action) }
+    }
+
+    /// A banner was answered: Allow or Deny on a permission, else a tap, which opens the
+    /// session that asked (a proposal's banner has no buttons, so it's always this).
+    func respond(permission id: String?, action: String) {
+        guard let id, let answer = answers[id] else { return NSApp.activate() }
+        switch action {
+        case Action.allow: answer(.allow)
+        case Action.deny: answer(.deny)
+        default: (opens[id] ?? { NSApp.activate() })()
         }
     }
 
