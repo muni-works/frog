@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
 import { savedAutoNote, setAutoNote } from '../settings'
+import { NOTES_CAPS } from '../engine/cloud'
 import {
   activityLevels, CLOUD_READS, CUSTOMIZE_INVITES, customizeLabel, customizePath, docsSlugFor, EXPLAINERS, railDay, tokens, toolsLabel, usedLabel, weekDays, weightBars,
   type Automation, type Connection, type CustomizeAt, type CustomizeSection, type Report, type RulesFile, type RunMark, type Skill, type Tool, type Use,
@@ -29,6 +30,9 @@ export interface CustomizeProps {
   machines?: readonly { thisMac?: boolean }[]
   /** Documentation's page slugs, for each explainer's link. */
   docSlugs: readonly string[]
+  /** Whether sessions get the notes capability (`NOTES_CAPS`): the "Notes on its own" switch shows
+   *  only then, as on the Mac. A prop so a test can render both. */
+  notes?: boolean
   onOpen: (at: CustomizeAt) => void
   onDocs: (slug: string) => void
   /** The bar above the page: the phone's menu button, the sidebar toggle when it's folded. */
@@ -326,7 +330,8 @@ function AutoNoteRow() {
 }
 
 function MemoryList(p: CustomizeProps) {
-  return (<><AutoNoteRow /><MemoryNotes {...p} /></>)
+  // While notes are off nothing is noted on its own, so there's no switch or copy saying it is.
+  return (<>{(p.notes ?? NOTES_CAPS) && <AutoNoteRow />}<MemoryNotes {...p} /></>)
 }
 
 function MemoryNotes(p: CustomizeProps) {

@@ -221,6 +221,8 @@ export function Composer(p: ComposerProps) {
   // untyped, so the model's words never count as the person's (docs/customize-events.md).
   const [untyped, setUntyped] = useState<string | null>(null)
   useEffect(() => { if (!text) setUntyped(null) }, [text])
+  // The last send, if it went untyped: up-arrow recall brings it back untyped too.
+  const lastUntyped = useRef<string | null>(null)
   const timer = useTimer(working ? p.startedAt : undefined)
   useEffect(() => { if (p.draft !== undefined) setText(p.draft) }, [p.draft])
   useEffect(() => { if (ref.current) grow(ref.current) }, [text])
@@ -311,7 +313,9 @@ export function Composer(p: ComposerProps) {
     const c = t.match(/^\/compact\b\s*(.*)$/s)
     // While a turn runs it stays typed; compacting mid-turn isn't possible.
     if (c && p.onCompact) { if (!working) { p.onCompact(c[1].trim() || undefined); setText('') } return }
-    p.onSend(t, images, sentTyped(t, untyped))
+    const typedSend = sentTyped(t, untyped)
+    p.onSend(t, images, typedSend)
+    lastUntyped.current = typedSend ? null : t
     setUntyped(null)
     // A notice is about the last thing Frog did for you; it clears on the next send.
     setLocal((l) => ({ ...l, lastSent: t, notice: null }))
@@ -398,6 +402,7 @@ export function Composer(p: ComposerProps) {
     if (i.type === 'dismiss_error' || i.type === 'esc' || i.type === 'error_action') if (paused) setPausedSeen(true)
     setLocal((l) => ({ ...l, error: next.error === tray.error && !local.error ? null : next.error, notice: next.notice, confirm: next.confirm, stackOpen: next.stackOpen, lastSent: next.lastSent, yoloConfirmed: next.yoloConfirmed, dictating: next.dictating, memory: next.memory }))
     if ((i.type === 'recall' || i.type === 'suggestion') && next.draft.text !== text) setText(next.draft.text)
+    if (i.type === 'recall' && next.draft.text !== text) setUntyped(lastUntyped.current)
     for (const e of effects) run(e, next)
   }
   const latest = useRef(dispatch)
