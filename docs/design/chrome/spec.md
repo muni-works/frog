@@ -37,13 +37,13 @@ One control, the **window controls**: a capsule at the conversation's top-right 
 | Surface | A capsule, fill `card` / `Tokens.raised`, no stroke, radius = height / 2 |
 | Size | Height 34, padding 3 on every side; buttons side by side with no gap |
 | Button | 34 × 28, a capsule (radius 14); the states above |
-| Icon | 16 pt / 17 px box |
+| Icon | The SF Symbol at 15 pt regular; the web's SVG drawn so its ink matches (split and inspector at 18, command at 17): 17.5 × 13.5 and 14 × 14 |
 | Accessibility | The group is labelled **Window controls**; buttons **Split**, **Commands**, **Inspector** |
 
 | Button | Mac symbol | Web SVG | Tooltip | Does | Disabled |
 | --- | --- | --- | --- | --- | --- |
 | Split | `rectangle.split.2x1` | rounded rect 18 × 16, r 3, a line down its middle | Split pane (⌘\\) | Splits the focused pane right; right-click: Split Right, Split Down | Can't split; Settings or Documentation |
-| Commands | `command` | the ⌘ loop | Command palette (⌘K) | Opens or closes the palette | never |
+| Commands | `command` | the ⌘ loop | Command palette (⌘K) | Opens or closes the palette. **On** while it shows | never |
 | Inspector | `sidebar.right` | rounded rect 18 × 16, r 3, a line at x 15, three short lines in the right panel | Inspector (⌥⌘0) | Shows or hides the inspector. **On** while it shows | No session; Settings or Documentation |
 
 Width: 108 with three buttons. The rightmost button never moves: a button the app hasn't got
@@ -84,7 +84,7 @@ One design, the Mac's `TimelineRail`, on both.
 | Room | The conversation keeps its width plus 8 + 28 clear on the right for it, so the column centres in what's left |
 | Surface | A capsule, fill `card` / `Tokens.raised`, 28 wide; height `min(room, 360, chapters × 18 + 28)` |
 | Narrow | 14 wide in a narrow split pane (Mac only, while the web has no split) |
-| Accessibility | `Timeline, N turns, in chapter c of C`; arrow keys move between chapters on the web, VoiceOver adjusts on the Mac |
+| Accessibility | `Timeline, N turns, in chapter c of C`; on the web a slider whose arrow keys move between chapters (the Mac's has the label only, for now) |
 
 Marks, drawn inside a 12 pad top and bottom, centred on the rail:
 
@@ -126,14 +126,14 @@ The session's title at the left of the conversation's title row, and its menu.
 
 | | |
 | --- | --- |
-| Place | In the 52 title row, vertically centred; left 16 from the conversation area (right of the sidebar, or of the sidebar toggle when collapsed) |
+| Place | In the 52 title row, vertically centred (top 17.5); its left edge 20 from the conversation area's (the sidebar's edge); with the sidebar collapsed, after its toggle and New session |
 | Title | 13 pt semibold, `fg` / `Tokens.text`, one line, truncated at the tail |
-| Menu affordance | The whole title is the button; a 9 pt semibold chevron down, `muted`, 5 after the text |
-| Hit area | The text and chevron, padded 6 × 4, radius `control` (7); hover and pressed fills from the table above |
+| Menu affordance | The whole title is the button; a 9 pt semibold chevron down (8.5 × 4.9 on the web), `muted`, 5 after the text |
+| Hit area | The text and chevron, 17 tall, no fill; hover and pressed turn the chevron `fg` |
 | Tooltip | Rename, archive or delete this session |
 | Accessibility | **Session menu**, its value the title |
 | Menu | Rename…, Archive (Unarchive when archived), a divider, Delete… (destructive) |
-| Rename | In place: the title becomes a field of the same size; Return saves, Escape or leaving cancels. Double-click the title does the same |
+| Rename | In place: the title becomes a field of the same type, 320 wide; Return or leaving the field saves, Escape cancels; an empty name keeps the old one |
 | Delete | Asks first, then deletes |
 
 **Where the two apps differed, and what was picked:**
@@ -142,8 +142,9 @@ The session's title at the left of the conversation's title row, and its menu.
   (the brand, the breadcrumbs) are 13 semibold already.
 - *The chevron.* A separate button on the web. **The whole title is the button**, as on the Mac:
   a bigger target, and one thing to press.
-- *Rename.* A sheet on the Mac, in place on the web. **In place on both**: no window for one
-  word, and the title stays where you were looking.
+- *Rename.* An alert on the Mac, in place on the web. **In place on both**: no window for one
+  word, and the title stays where you were looking. The web's double-click on the title goes:
+  with the whole title a menu button, the first click opens the menu (Rename… is its first item).
 - *Wording.* "Rename…" and "Delete…" (they ask for more), "Archive"/"Unarchive".
 - *The web's connection words* ("Reconnecting…", "Disconnected", "Update Frog to continue") stay
   web-only, right-aligned in the row before the window controls: a web session is a socket to a

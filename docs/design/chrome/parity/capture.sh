@@ -7,6 +7,7 @@
 #   LOOKS="dark light" docs/design/chrome/parity/capture.sh
 #   PARITY_SKIP_BUILD=1 (use the built parity app) PARITY_SKIP_MAC=1 / PARITY_SKIP_WEB=1
 #   OUT=before (a name for this run's files: <app>-<look>-<OUT>.json/png; default "now")
+#   INSPECTOR=1 opens the inspector in both apps (-FrogInspector / frog.inspector): the on state
 #
 # Writes mac-<look>-<OUT>.{json,png}, web-<look>-<OUT>.{json,png} and diff-<look>-<OUT>.json here.
 # Same needs as ../../parity/capture.sh: Xcode + xcodegen, npm deps in apps/web, Google Chrome.
@@ -43,7 +44,7 @@ for look in $LOOKS; do
     rm -f "$HERE/mac-$look-$OUT.json" "$HERE/mac-$look-$OUT.png"
     HOME="$home" "$APP/Contents/MacOS/Frog" -FrogFolder "$home/code/lilypad" -FrogReplay "$home/parity.jsonl" \
         -FrogReplaySpeed 4 -FrogSnapshotSize $SIZE -FrogOffscreen YES \
-        -FrogChromeMetrics "$HERE/mac-$look-$OUT.json" -FrogSnapshot "$HERE/mac-$look-$OUT.png" -FrogSnapshotDelay ${PARITY_MAC_WAIT:-14} \
+        ${=INSPECTOR:+-FrogInspector YES} -FrogChromeMetrics "$HERE/mac-$look-$OUT.json" -FrogSnapshot "$HERE/mac-$look-$OUT.png" -FrogSnapshotDelay ${PARITY_MAC_WAIT:-14} \
         -ApplePersistenceIgnoreState YES -importedLegacyDefaults YES -autoArchiveChats NO -archivedSessions "()" \
         -NSAppSleepDisabled YES -remoteEnabled NO -density comfortable -verbosity normal -showEnergy NO -verbosityBySession "{}" \
         $style >/dev/null 2>"$WORK/mac-$look.log" || true
@@ -59,13 +60,18 @@ for i in {1..60}; do curl -sf "http://127.0.0.1:$VITE_PORT/" >/dev/null && break
 curl -sf "http://127.0.0.1:$VITE_PORT/" >/dev/null || { print -u2 "capture.sh: vite didn't start:"; cat "$WORK/vite.log" >&2; exit 1; }
 W=${SIZE%x*} H=${SIZE#*x}
 for look in $LOOKS; do
-    node "$HERE/chrome-metrics.mjs" "http://127.0.0.1:$VITE_PORT/s/s_parity" "$HERE/web-$look-$OUT.json" $W $H $look
-    node "$PARITY/web-shot.mjs" "http://127.0.0.1:$VITE_PORT/s/s_parity" "$HERE/web-$look-$OUT.png" $W $H $look >/dev/null
+    storage='{}'; [[ -n ${INSPECTOR:-} ]] && storage='{"frog.inspector":"1","frog.inspectorTab":"changes"}'
+    METRICS_STORAGE=$storage node "$HERE/chrome-metrics.mjs" "http://127.0.0.1:$VITE_PORT/s/s_parity" "$HERE/web-$look-$OUT.json" $W $H $look
+    WEB_SHOT_STORAGE=$storage node "$PARITY/web-shot.mjs" "http://127.0.0.1:$VITE_PORT/s/s_parity" "$HERE/web-$look-$OUT.png" $W $H $look >/dev/null
 done
 fi
 
 rc=0
 for look in $LOOKS; do
+    # Where each icon's ink is inside its button (and the title's), from the pictures.
+    for app in mac web; do
+        [[ -f $HERE/$app-$look-$OUT.json && -f $HERE/$app-$look-$OUT.png ]] && swift "$HERE/ink.swift" "$HERE/$app-$look-$OUT.png" "$HERE/$app-$look-$OUT.json"
+    done
     [[ -f $HERE/web-$look-$OUT.json && -f $HERE/mac-$look-$OUT.json ]] || continue
     node "$HERE/diff-chrome.mjs" "$HERE/web-$look-$OUT.json" "$HERE/mac-$look-$OUT.json" --json "$HERE/diff-$look-$OUT.json" || rc=1
 done

@@ -280,7 +280,8 @@ export default function App() {
     }, { root })
     root.querySelectorAll('[data-turn-index]').forEach((el) => io.observe(el))
     return () => io.disconnect()
-  }, [currentId, turnCount, mode]) // eslint-disable-line react-hooks/exhaustive-deps
+  // The scroller remounts when a column opens or closes (the inspector): observe the new one.
+  }, [currentId, turnCount, mode, inspector]) // eslint-disable-line react-hooks/exhaustive-deps
   const jumpToTurn = useCallback((i: number) => {
     const root = threadScroll.current
     const el = root?.querySelector<HTMLElement>(`[data-turn-index="${i}"]`)

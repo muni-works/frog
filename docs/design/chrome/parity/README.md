@@ -23,9 +23,18 @@ OUT=now LOOKS="dark light" PARITY_SKIP_BUILD=1 docs/design/chrome/parity/capture
   panes) pass when missing from the other. It writes `diff-<look>-<OUT>.json` and exits 1 on a
   difference.
 
-Format `frog-chrome-metrics/1`: `{ app, width, height, look, controls: [{ id, x, top, width,
+Format `frog-chrome-metrics/1`: `{ app, width, height, look, main (where the conversation area starts), controls: [{ id, x, top, width,
 height, right }] }`, ids `group`, `split`, `palette`, `inspector`, `rail`, `title`.
 
 `*-before.*` is main at v0.7.1, before the chrome work: the web had only the title, and its
 inspector button had another label. `*-now.*` is the latest run. Re-run after a change to the
 chrome and commit the JSON and PNGs with it.
+
+The title is compared from the conversation area's left edge (`main` in each dump), on its words:
+the Mac's AX frame for the title menu is the text, so the web measures its `.title-text`.
+
+[`ink.swift`](ink.swift) then reads each picture and adds `ink` to the icon buttons and the title:
+where the drawn pixels are inside the box (anything 40 off the box's commonest colour). The diff
+holds the ink to 1 point too, so an SVG drawn smaller than its SF Symbol fails. Not covered: the
+title's chevron (outside the Mac's AX frame) and states other than rest (the fixture's inspector
+is closed).
