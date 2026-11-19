@@ -28,7 +28,7 @@ pub const TOOL: &str = "Customize";
 
 /// The catalog line (the tool is deferred, so this is all a plain turn carries). The offer rule
 /// lives here: no classifier decides when to offer, the model does.
-pub const CATALOG_LINE: &str = "Customize(do, line?, to?, where?, id?, value?, words, offer?): remember/forget/edit a line, a skill or tool on/off, get/set a setting, when the user asks. After a correction that reads as a standing rule (\"no, we use pnpm here\"), offer once to remember it (offer=true); never repeat a declined offer";
+pub const CATALOG_LINE: &str = "Customize(do, line?, to?, where?, id?, value?, words, offer?): remember/forget/edit a line, a skill or tool on/off, get/set a setting, when the user asks. Without a Note tool, after a correction that reads as a standing rule (\"no, we use pnpm here\"), offer once to remember it (offer=true); never repeat a declined offer";
 
 pub fn spec() -> ToolSpec {
     ToolSpec {
@@ -671,9 +671,22 @@ impl FileUndo {
     }
 }
 
+/// Undo several file changes together: all of them, or none if any file changed since.
+pub fn undo_all(files: &[FileUndo]) -> Result<()> {
+    if let Some(f) = files.iter().find(|f| read_opt(&f.path) != f.after) {
+        bail!("{} changed since, so nothing was undone", f.path.display());
+    }
+    for f in files.iter().rev() {
+        put(&f.path, f.before.as_deref(), f.private)?;
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug)]
 pub enum Undo {
     File(FileUndo),
+    /// Several files changed together (a note made a rule: the rule added, the note removed).
+    Files(Vec<FileUndo>),
     /// A setting the app changed: undo asks it to put back `old` (`None`: the app never told
     /// the engine its value, so undo can't).
     Setting {

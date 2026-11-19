@@ -44,11 +44,39 @@ struct CustomizeSkill: Decodable, Identifiable, Hashable {
 struct RuleFile: Identifiable, Hashable {
     enum Scope: Hashable { case project, everywhere }
     let url: URL
-    let scope: Scope
+    var scope: Scope
     /// The file's text, or empty for one not made yet (adding a line makes it).
     var text: String
     var exists: Bool
+    /// From the engine's report, when it has one: whose file it is ("claude_code" for one read
+    /// in place from Claude Code), "always" or "paths", the globs for a path-scoped rule, and
+    /// its weight on every turn.
+    var source: String? = nil
+    var applies: String? = nil
+    var paths: [String] = []
+    var tokens: Int? = nil
+    /// The whole file, which a path-scoped rule costs only on a turn it applies to.
+    var fullTokens: Int? = nil
     var id: URL { url }
+
+    /// "about 210 tokens a turn"; a path-scoped rule weighs nothing until it applies.
+    var weightText: String? {
+        if applies == "paths" {
+            return fullTokens.map { "about \(CustomizeFormat.tokens($0)) when it applies" }
+        }
+        return CustomizeFormat.perTurn(tokens)
+    }
+
+    /// Read in place from Claude Code's files (CLAUDE.md, a .claude folder).
+    var fromClaudeCode: Bool {
+        if let source { return source == "claude_code" }
+        return url.lastPathComponent == "CLAUDE.md" || url.path.contains("/.claude/")
+    }
+
+    /// Where it applies: "Always", or the globs a path-scoped rule waits for.
+    var appliesText: String {
+        applies == "paths" && !paths.isEmpty ? "When working on \(paths.joined(separator: ", "))" : "Always"
+    }
 }
 
 /// A line of a rules file, as a sheet shows it.
@@ -448,7 +476,7 @@ final class CustomizeStore {
         skills = r.pageSkills
         connections = r.pageConnections
         notes = r.pageNotes()
-        rules = Self.ruleFiles(found: r.rules.files.map { URL(fileURLWithPath: $0.path) }, folder: folder, home: home)
+        rules = Self.ruleFiles(report: r.rules.files, folder: folder, home: home)
     }
 
     /// A switch, made by the engine; the page redraws from its answer.
@@ -550,6 +578,21 @@ final class CustomizeStore {
         return files.filter { $0.scope == .project } + files.filter { $0.scope == .everywhere }
     }
 
+    /// The report's files, with what it says about each (scope, source, where it applies, weight).
+    static func ruleFiles(report files: [CustomizeReport.RulesFile], folder: URL?, home: URL) -> [RuleFile] {
+        var out = ruleFiles(found: files.map { URL(fileURLWithPath: $0.path) }, folder: folder, home: home)
+        for i in out.indices {
+            guard let f = files.first(where: { $0.path == out[i].url.path }) else { continue }
+            out[i].scope = f.scope == "project" ? .project : .everywhere
+            out[i].source = f.source
+            out[i].applies = f.applies
+            out[i].paths = f.paths ?? []
+            out[i].tokens = f.tokens
+            out[i].fullTokens = f.fullTokens
+        }
+        return out.filter { $0.scope == .project } + out.filter { $0.scope == .everywhere }
+    }
+
     static func mcpJSONNames(_ folder: URL) -> Set<String> {
         guard let data = try? Data(contentsOf: folder.appending(path: ".mcp.json")),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -572,7 +615,14 @@ final class CustomizeStore {
     func stage(report r: CustomizeReport, folder: URL?, rules: [RuleFile]) {
         self.folder = folder
         apply(r)
-        self.rules = rules
+        // The fixture's texts, with what the report says about each file.
+        let meta = Self.ruleFiles(report: r.rules.files, folder: folder, home: home)
+        self.rules = rules.map { f in
+            guard let m = meta.first(where: { $0.url == f.url }) else { return f }
+            var f = f
+            f.source = m.source; f.applies = m.applies; f.paths = m.paths; f.tokens = m.tokens; f.fullTokens = m.fullTokens
+            return f
+        }
     }
     #endif
 }

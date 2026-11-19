@@ -9,6 +9,7 @@ import { defaultModel, idOf, spec, useModels } from './models'
 import { plainError } from './errors'
 import type { DecideOpts } from './ui/Transcript'
 import { clearThreads, outOfCredits, useCloud, useRepos, useSessions, useThreads } from './store'
+import { usedRepos } from './repoRank'
 import { once } from './live'
 import { useLayer, useMenu } from './ui/layers'
 import { Composer } from './ui/Composer'
@@ -850,7 +851,7 @@ export default function App() {
             <Pond /><div className="home-page"><HomeHero>
             <div className="home-composer">
               <Composer usage={account ? { sub: account.subscription ?? null, credit: creditLine(account).replace(/ credit$/, ''), onBilling: () => openSettings('billing'), onOpen: refreshAccount } : undefined} repo={view.repo} draft={draft} autoFocus pickRepo={view.pick} suggestion={view.repo ? REPO_SUGGESTIONS : SCRATCH_SUGGESTIONS}
-                recent={[...new Set(sessions.map((s) => s.repo).filter(Boolean))]} repos={repoList.repos.map((r) => r.name)} install={repoList.install} onRepo={(repo) => setView({ kind: 'new', repo })} base={view.base} onBase={(base) => setView((v) => (v.kind === 'new' ? { ...v, base } : v))}
+                recent={usedRepos(sessions)} repos={repoList.repos.map((r) => r.name)} pushed={Object.fromEntries(repoList.repos.map((r) => [r.name, r.pushed_at]))} install={repoList.install} onRepo={(repo) => setView({ kind: 'new', repo })} base={view.base} onBase={(base) => setView((v) => (v.kind === 'new' ? { ...v, base } : v))}
                 onConnectGithub={key && account && !account.handle && !DEV_KEY ? (text) => leave(text || null, 'github', key) : undefined}
                 model={chosenModel} models={models} machines={machines} onManage={() => openSettings('models')} onModel={setNewModel} mode={newMode} onMode={setNewMode}
                 onSend={(text, images) => { setDraft(undefined); start(text, view.repo, images, view.base) }} />

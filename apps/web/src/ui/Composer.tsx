@@ -5,6 +5,7 @@ import { inOutPrice, modelName, placeColor, placeOf, spec, type Model } from '..
 import { machineModels, places, tag, type Machine } from '../machines'
 import { barTone, canCompact, ringLabel, ringTone } from '../usage'
 import { parseRepo } from '../store'
+import { moreLine, pickRepos, rankRepos } from '../repoRank'
 import type { Provider } from '../auth'
 import { safeHref } from './href'
 import { DownloadAppChip, useDownloadChip } from './DownloadChip'
@@ -87,9 +88,12 @@ export interface ComposerProps {
   /** A new session's where menu: the account's repos, search, or a pasted URL. Optional: a
    * session can start without a repo. */
   onRepo?: (repo: string | undefined) => void
+  /** Repos used in Frog, most recent first. */
   recent?: string[]
   /** Repos the Frog GitHub App can reach, plus public ones (GET /v1/repos). */
   repos?: string[]
+  /** Each repo's last push on GitHub (`pushed_at`), for the where menu's order. */
+  pushed?: Readonly<Record<string, string | null>>
   /** The App's install page, to give Frog access to more repos. */
   install?: string
   /** The branch a new session starts from (the where menu's Branch); unset is the default branch. */
@@ -534,14 +538,16 @@ export function Composer(p: ComposerProps) {
       )}
       {menu === 'repo' && !signedOut && p.onRepo && (() => {
         const typed = parseRepo(q)
-        const match = (r: string) => r.toLowerCase().includes(q.trim().toLowerCase())
-        const list = [...new Set([...(p.recent ?? []), ...(p.repos ?? [])])].filter(match)
+        // The best few (repoRank.ts); the rest are a search away, with one line saying how many.
+        const ranked = rankRepos(p.repo, p.recent ?? [], (p.repos ?? []).map((name) => ({ name, pushed_at: p.pushed?.[name] ?? null })))
+        const { shown: list, more } = pickRepos(ranked, q)
+        const line = moreLine(more, !!q.trim())
         const pick = (r: string | undefined) => { p.onRepo!(r); setMenu(null); setQ(''); ref.current?.focus() }
         const tick = (on: boolean) => <I d={P.check} className={`cz-check${on ? '' : ' off'}`} />
         return (
           <div className="cz-menu cz-repos" role="menu" aria-label="Where it runs" style={{ left: 8, width: 340 }} {...nav}>
             <label className="cz-filter"><I d={P.search} />
-              <input autoFocus value={q} placeholder="Search repos, or paste a GitHub URL" aria-label="Search repos, or paste a GitHub URL"
+              <input autoFocus value={q} placeholder="Search your repos" aria-label="Search your repos, or paste a GitHub URL"
                 onChange={(e) => setQ(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); const r = typed ?? list[0]; if (r) pick(r) } }} />
             </label>
@@ -553,6 +559,7 @@ export function Composer(p: ComposerProps) {
                 <button key={r} type="button" role="menuitemradio" aria-checked={r === p.repo} onClick={() => pick(r)}><I d={P.cloud} /><span className="cz-mname">{r}</span>{tick(r === p.repo)}</button>
               ))}
             </div>
+            {line && <div className="cz-menu-note cz-more">{line}</div>}
             {!typed && list.length === 0 && q && <div className="cz-menu-note">No match. Type owner/name or paste a GitHub URL.</div>}
             {p.onConnectGithub && <button type="button" role="menuitem" className="cz-dim" onClick={() => p.onConnectGithub!(text)}>{gh(14)}Connect GitHub to see your repos</button>}
             {/* No repos yet: say why, and make giving access the way on. Before GitHub is connected there's nothing to give access to. */}

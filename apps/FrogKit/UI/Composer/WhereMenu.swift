@@ -6,6 +6,10 @@ struct WhereLists: Equatable {
     var recents: [String] = []
     /// Repos the Frog GitHub App reaches ("owner/name").
     var cloudRepos: [String] = []
+    /// Each repo's last push on GitHub (ISO 8601), for the order (`RepoRank`).
+    var pushed: [String: String] = [:]
+    /// Repos used in Frog Cloud, most recent first.
+    var usedRepos: [String] = []
     var signedIn = false
     /// The current place's branches, for the Branch level.
     var branches: [String] = []
@@ -65,12 +69,14 @@ struct WhereMenu: View {
         case rule(Int)
         case row(Row)
         case note(String)
+        case more(String)
         var id: String {
             switch self {
             case .label(let t): "label-\(t)"
             case .rule(let n): "rule-\(n)"
             case .row(let r): r.id
             case .note(let t): "note-\(t)"
+            case .more: "more"
             }
         }
     }
@@ -125,13 +131,18 @@ struct WhereMenu: View {
             }
         }
         if lists.signedIn {
-            var repos = lists.cloudRepos.filter(matches)
+            // The best few (RepoRank); the rest are a search away, with one line saying how many.
+            let ranked = RepoRank.rank(current: repo == "No repo" ? nil : repo, used: lists.usedRepos,
+                                       repos: lists.cloudRepos.map { ($0, lists.pushed[$0]) })
+            let (shown, more) = RepoRank.pick(ranked, query: filter)
+            var repos = shown
             if let pasted = Self.githubRepo(filter), !repos.contains(pasted) { repos.insert(pasted, at: 0) }
             let noRepo = matches("No repo")
             if !repos.isEmpty || noRepo { out.append(.label("Frog Cloud")) }
             for r in repos {
                 out.append(.row(Row(id: "cloud-\(r)", icon: "cloud", title: r, checked: r == repo) { pick(.chooseCloud(repo: r, branch: "main")) }))
             }
+            if let line = RepoRank.moreLine(more, searching: !q.isEmpty) { out.append(.more(line)) }
             if noRepo {
                 out.append(.row(Row(id: "no-repo", icon: "cloud", title: "No repo", checked: repo == "No repo") { pick(.chooseCloud(repo: "No repo", branch: "")) }))
             }
@@ -209,6 +220,10 @@ struct WhereMenu: View {
                 case .note(let t):
                     Text(t).font(.frog(size: 12)).foregroundStyle(Tokens.textSecondary)
                         .padding(.horizontal, 8).padding(.bottom, 6)
+                case .more(let t):
+                    Text(t).font(.frog(size: 12)).foregroundStyle(Tokens.textTertiary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 8).padding(.vertical, 4)
                 case .row(let r):
                     if let on = r.toggle {
                         ComposerMenuButton(lit: r.id == litID, action: r.run) {

@@ -28,9 +28,9 @@ struct SkillPage: View {
                     }
                     if let uses = skill.uses {
                         let n = uses.reduce(0, +)
-                        SettingsRow("Used", description: (skill.lastUsed.map { "Last in \u{201C}\($0)\u{201D}. " } ?? "") + "The marks are the last \(uses.count) days.") {
+                        SettingsRow("Used", description: n == 0 ? "Not in the last \(uses.count) days." : (skill.lastUsed.map { "Last in \u{201C}\($0)\u{201D}. " } ?? "") + "The marks are the last \(uses.count) days.") {
                             HStack(spacing: 16) {
-                                ActivityMarks(days: uses)
+                                if n > 0 { ActivityMarks(days: uses) }
                                 SettingsValue(n == 0 ? "never" : "\(n) time\(n == 1 ? "" : "s")")
                             }
                         }
