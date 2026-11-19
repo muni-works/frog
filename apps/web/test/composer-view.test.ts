@@ -116,6 +116,13 @@ test("the where menu trims a long repo list, searches all of it, and return pick
   d.document = had;
 });
 
+test("the where menu: a repo named in another case is one row, ticked, in the account's spelling", () => {
+  const s = html({ pickRepo: true, onRepo: noop, repo: "Ecto/Pond", recent: ["ECTO/pond"], repos: ["ecto/pond", "ecto/loon"] });
+  assert.equal(s.match(/>ecto\/pond</gi)?.length, 1, s);
+  assert.ok(!/>Ecto\/Pond</.test(s.slice(s.indexOf("Your repos"))), s);
+  assert.match(s, /aria-checked="true"[^>]*><svg[^]*?>ecto\/pond</);
+});
+
 // First-run audit: with the GitHub App not installed the menu was "No repo" and "Give Frog
 // access to more repos", with no why; and before GitHub was connected it offered the install too.
 test("the where menu with no repos yet says why and leads to GitHub", () => {
