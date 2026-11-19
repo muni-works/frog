@@ -62,8 +62,10 @@ Rules above the tiers:
   change, never the model's quote.
 - **The user's words are only what the person typed**: `Op::Submit` text (and `more` parts)
   the app marked `"typed": true`, which an app sets only for text the person typed or dictated
-  in its composer. Absent means false: an app's own prompts (git actions, onboarding, canned
-  starts, deep links, replays of queued text, a phone relay or bridge), a message from another
+  in its composer (on the phone, its chat composer; the Mac's bridge forwards `typed` only from
+  a paired phone that says so). Absent means false: an app's own prompts (git actions,
+  onboarding, canned starts, deep links, replays of queued text, Siri and notification replies
+  on the phone), a message from another
   session (`<session-message>`), a wake or what's delivered with it, a parent's message to its
   child, and the continue note are never the person's words.
 - **Words that only justify a card.** A Present button's visible label (the model wrote it)
@@ -293,7 +295,10 @@ Durable: it replays with the transcript, and its Undo still works after a restar
   an app, `[memory] auto_note = false` in config.toml. Never on in subagents, sessions another
   session started, or small (Weak-tier) models, which can't do it reliably.
 - "remember that …" in a message still saves a note as before (with its notice) and counts as
-  the turn's one note: only in a typed message (`"typed": true`), never in a child.
+  the turn's one note: only in a typed message (`"typed": true`), never in a child. The
+  explicit commands `/remember`, `/forget`, `/memory` and `/recall` answer any top-level
+  session's submit, typed or not (an editor over ACP, `frog -p`, a bridge, the phone), but only
+  when the message starts with them and is sent alone; never in a child.
 - A note's Undo handle works only if Frog issued it: issued handles are kept beside the notes
   (`noted-undos`, the newest 500), so Undo still works after a restart, and a handle made up
   from a note's id and hash is refused.

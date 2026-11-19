@@ -197,4 +197,22 @@ final class TypedSubmitTests: XCTestCase {
         XCTAssertFalse(CloudSessions.isTop("kid", in: list), "another session started it")
         XCTAssertFalse(CloudSessions.isTop("unlisted", in: list), "not listed yet: unknown, so no caps")
     }
+
+    // MARK: - The phone, over the bridge
+
+    /// The phone's composer goes through `RemoteLink`, which encodes FrogKit's `Op` to a dict:
+    /// typed survives. Siri ("Ask frog …") and a notification's Reply build their own dicts
+    /// with no typed, so the bridge submits them untyped.
+    func testTheBridgeForwardsTypedOnlyFromThePhonesComposer() throws {
+        let composer = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: JSONEncoder().encode(Op.submit("set density to compact", typed: true))) as? [String: Any])
+        XCTAssertTrue(RemoteBridge.typed(composer))
+        let untyped = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: JSONEncoder().encode(Op.submit("hi"))) as? [String: Any])
+        XCTAssertFalse(RemoteBridge.typed(untyped))
+        XCTAssertFalse(RemoteBridge.typed(["op": "submit", "text": "from Siri"]), "Intents.swift")
+        XCTAssertFalse(RemoteBridge.typed(["op": "submit", "text": "from a reply"]), "Notifications.swift")
+        XCTAssertFalse(RemoteBridge.typed(["op": "submit", "text": "x", "typed": "true"]), "only a real true")
+    }
+
 }

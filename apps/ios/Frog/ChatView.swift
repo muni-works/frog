@@ -286,7 +286,9 @@ struct ChatView: View {
     private func send() {
         guard canSend else { return }
         FrogSounds.shared.play(.plip)
-        conversation.submit(draft, images: attachments)
+        // The person typed it in this composer: the one phone send marked typed. Siri intents
+        // and notification replies build their own ops and never are.
+        conversation.submit(draft, images: attachments, typed: true)
         draft = ""
         attachments = []
     }

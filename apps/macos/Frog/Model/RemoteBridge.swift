@@ -581,6 +581,11 @@ final class RemoteBridge {
         return (events, upto)
     }
 
+    /// Whether a paired phone's submit says the person typed it in its composer.
+    nonisolated static func typed(_ op: [String: Any]) -> Bool {
+        op["typed"] as? Bool == true
+    }
+
     private func perform(_ op: [String: Any], in id: String, for client: Client) {
         guard let c = Library.shared.conversation(id) else {
             return client.send(["type": "error", "session": id, "message": "Open this conversation on your Mac to talk to it."])
@@ -591,7 +596,10 @@ final class RemoteBridge {
             let images = (op["images"] as? [[String: String]] ?? []).compactMap { i in
                 i["mime"].flatMap { m in i["data"].map { ToolImage(mime: m, data: $0) } }
             }
-            c.submit(op["text"] as? String ?? "", images: images)
+            // Every bridge client said the paired token first. Typed only when the phone says
+            // its composer sent it (`typed: true`); Siri, notification replies and anything the
+            // phone composes itself don't say it, so they stay untyped.
+            c.submit(op["text"] as? String ?? "", images: images, typed: Self.typed(op))
         case "permission":
             guard let pid = op["id"] as? String, c.permission?.id == pid,
                   let d = (op["decision"] as? String).flatMap(Decision.init(rawValue:)) else { return }
