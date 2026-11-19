@@ -7,7 +7,6 @@ import SwiftUI
 enum SettingsBindings {
     /// Rows drawn inside another row's block, not on their own.
     static let drawnBy: [String: String] = [
-        "mcp-sign-in": "mcp-servers",
         // A machine's models are on its page, which the machines list opens.
         "local-models": "machines",
         // A provider's models open from its row (Models).
@@ -53,9 +52,6 @@ enum SettingsBindings {
         case "sandbox": AnyView(ToggleRow(row: row, key: "sandboxShell", fallback: true))
         case "computer-use": AnyView(ToggleRow(row: row, key: "computerUse", fallback: false))
         case "allowed-commands": AnyView(SettingsRow(row) { OpenConfigButton() })
-        // Connections
-        case "mcp-servers": AnyView(MCPServersRows(row: row))
-        case "mcp-config": AnyView(SettingsRow(row) { OpenConfigButton() })
         // Shortcuts
         case "shortcuts": AnyView(ShortcutRows())
         // Models
@@ -307,77 +303,6 @@ private struct ModeRow: View {
         let line = mode == Mode.default.rawValue && !sandbox ? "Every edit and command asks first." : picked?.description
         SettingsRow(row, description: line) {
             FrogSegmented(label: row.label, options: row.options ?? [], selection: $mode)
-        }
-    }
-}
-
-// MARK: - Connections
-
-/// The servers in config.toml (and projects' .mcp.json) and how each is doing; one that wants a
-/// sign-in has the button for it.
-private struct MCPServersRows: View {
-    let row: SettingsCatalog.Row
-    @State private var servers: [MCPStatus] = []
-    @State private var loading = true
-    @State private var signingIn: Set<String> = []
-
-    var body: some View {
-        Group {
-            SettingsRow(row) {
-                Button("Refresh") { Task { await load() } }.buttonStyle(SettingsButtonStyle())
-                    .help("Ask each server again")
-            }
-            if loading {
-                SettingsRow("Connecting…") { ProgressView().controlSize(.small) }
-            } else if servers.isEmpty {
-                SettingsRow("No servers yet") { EmptyView() }
-            }
-            ForEach(servers) { s in
-                SettingsRow(s.name, description: detail(s)) { state(s) }
-            }
-        }
-        .task { guard SettingsBindings.loads else { return }; await load() }
-    }
-
-    private func detail(_ s: MCPStatus) -> String? {
-        var parts: [String] = []
-        if let e = s.error, s.needsAuth != true { parts.append(e) } else if !s.tools.isEmpty { parts.append(s.tools.joined(separator: ", ")) }
-        parts += s.quarantined.map { "Withheld \($0.tool): its description \($0.reason)" }
-        return parts.isEmpty ? nil : parts.joined(separator: "\n")
-    }
-
-    @ViewBuilder
-    private func state(_ s: MCPStatus) -> some View {
-        if s.connected {
-            SettingsValue("\(s.tools.count) tool\(s.tools.count == 1 ? "" : "s")", help: "Connected")
-        } else if s.needsAuth == true {
-            if signingIn.contains(s.name) {
-                ProgressView().controlSize(.small)
-            } else {
-                Button("Sign in") { signIn(s) }.buttonStyle(SettingsButtonStyle())
-                    .help(s.declined == true ? "Opens \(s.name)'s sign-in in your browser (you declined before)" : "Opens \(s.name)'s sign-in in your browser")
-            }
-        } else {
-            SettingsValue("Not connected")
-        }
-    }
-
-    private func load() async {
-        loading = true
-        servers = (try? await Frog.json([MCPStatus].self, args: ["--mcp", "--json"],
-                                         cwd: FileManager.default.homeDirectoryForCurrentUser)) ?? []
-        loading = false
-    }
-
-    /// The only thing in frog that opens a browser for MCP: a one-shot `frog --mcp-signin`, then
-    /// the list reloads either way, the server's own state being the truth.
-    private func signIn(_ s: MCPStatus) {
-        guard !signingIn.contains(s.name) else { return }
-        signingIn.insert(s.name)
-        Task {
-            try? await Frog.run(args: ["--mcp-signin", s.name], cwd: FileManager.default.homeDirectoryForCurrentUser)
-            await load()
-            signingIn.remove(s.name)
         }
     }
 }

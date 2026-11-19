@@ -133,9 +133,10 @@ struct RootView: View {
         .allowsWindowActivationEvents(true)
         // frog://settings/<section> lands in a window that's already open: without a window
         // claiming it, SwiftUI opens a new, empty one for every link.
-        .handlesExternalEvents(preferring: ["settings"], allowing: ["settings"])
+        .handlesExternalEvents(preferring: ["settings", "customize"], allowing: ["settings", "customize"])
         .onOpenURL { url in
             if let section = SettingsCatalog.bundled.section(for: url) { panes?.showSettings(section) }
+            if let section = CustomizeCatalog.bundled.section(for: url) { panes?.showCustomize(section) }
         }
         .onAppear {
             // Folders handed over (a second copy, Finder, the Dock) open in a window of their

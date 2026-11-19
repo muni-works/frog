@@ -37,9 +37,22 @@ struct UserFooter: View {
                     Button("Continue with GitHub") { signIn("github") }
                     Button("Continue with Google") { signIn("google") }
                 } label: {
-                    row(avatar: nil, title: "Sign in to Frog Cloud",
-                        detail: failure ?? (account.signedIn ? "Access to more powerful models" : "Cloud sessions, $1 free to start"),
-                        warn: failure != nil)
+                    // As on the web: a green Sign in and what it adds.
+                    HStack(spacing: 10) {
+                        Text("Sign in")
+                            .font(.frog(size: 12, weight: .semibold))
+                            .foregroundStyle(Color(light: (1, 1, 1), dark: (0.051, 0.102, 0.063)))
+                            .padding(.horizontal, 14).padding(.vertical, 4)
+                            .background(Color.frog, in: .capsule)
+                        Text(failure ?? "25¢ free, $1 with GitHub")
+                            .font(.frog(size: 11.5))
+                            .foregroundStyle(failure != nil ? .orange : .secondary)
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(8)
+                    .contentShape(.rect)
+                    .hoverPlate(h: 0, v: 0, radius: 10)
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
@@ -47,9 +60,6 @@ struct UserFooter: View {
             }
         }
         .buttonStyle(.plain)
-        .padding(.horizontal, 8)
-        .padding(.bottom, 2)
-        .safeAreaInset(edge: .bottom, spacing: 0) { VersionChip() }
         .task { await account.refresh() }
     }
 
@@ -71,6 +81,8 @@ struct UserFooter: View {
                 Text(detail).font(.frog(size: 11)).foregroundStyle(warn ? .orange : .secondary).lineLimit(1)
             }
             Spacer(minLength: 0)
+            // The version, quietly on the right; it opens About.
+            VersionChip()
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
@@ -135,7 +147,7 @@ struct VersionChip: View {
 
     var body: some View {
         Button { openWindow(id: "about") } label: {
-            Text("Frog \(FrogVersion.short)")
+            Text(FrogVersion.short)
                 .font(.frog(size: 10.5))
                 .foregroundStyle(.tertiary)
                 .padding(.horizontal, 6)
@@ -144,8 +156,5 @@ struct VersionChip: View {
         }
         .buttonStyle(.plain)
         .help("About Frog")
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.leading, 18)
-        .padding(.bottom, 6)
     }
 }

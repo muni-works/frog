@@ -274,6 +274,8 @@ mod tests {
             body: body.into(),
             path: PathBuf::from("/nowhere"),
             missing: Vec::new(),
+            session: None,
+            session_title: None,
         }
     }
 

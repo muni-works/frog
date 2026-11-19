@@ -31,6 +31,8 @@ struct FrogWindow {
     let showDocs: () -> Void
     /// Settings mode in this window (⌘,), on a section or the last one.
     let showSettings: (String?) -> Void
+    /// Customize mode in this window, on a section or the last one.
+    var showCustomize: ((String?) -> Void)? = nil
 }
 
 extension FocusedValues {
@@ -69,7 +71,7 @@ struct FrogCommands: Commands {
     @ObservedObject private var staged = StagedWindow.shared
     #endif
     @Environment(\.openWindow) private var openWindow
-    @AppStorage("compactSidebar") private var compactSidebar = false
+    @AppStorage("compactSidebar") private var compactSidebar = true
 
     #if DEBUG
     private var window: FrogWindow? { focusedWindow ?? staged.window }
@@ -262,6 +264,9 @@ struct FrogCommands: Commands {
                     }
                 }
                 .keyboardShortcut(",")
+                // What the agent knows and can do; the app sidebar has its own row for it.
+                Button("Customize…") { window?.showCustomize?(nil) }
+                    .disabled(window?.showCustomize == nil)
             }
 
             // Help › Frog Documentation: the pages that ship with this build, in the window.

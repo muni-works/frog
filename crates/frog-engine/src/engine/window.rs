@@ -257,6 +257,7 @@ impl Agent {
             self.notice(Level::Info, reply);
             return true;
         }
+        store.set_session(&self.conv.session_id, &self.title());
         let Some(reply) = crate::memory::command(store, &self.notes, text, self.notes_omitted)
         else {
             return false;

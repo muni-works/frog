@@ -641,6 +641,16 @@ body { font-family: var(--font-sans); }
 .cz-card:focus-within { border-color: var(--muted); }
 .cz-card textarea { display: block; width: 100%; box-sizing: border-box; border: 0; background: transparent; resize: none; outline: none; padding: 12px 14px 4px; font: 15px/21px var(--font-sans); color: var(--fg); caret-color: var(--frog); height: 37px; max-height: 226px; overflow-y: auto; }
 .cz-card textarea::placeholder { color: var(--faint); }
+/* The one suggestion (ui/suggestion.ts): drawn over the empty field so it can fade; the
+   placeholder underneath carries the same words for screen readers. Only the tab hint takes clicks. */
+.cz-field { position: relative; }
+.cz-field--sug textarea::placeholder { color: transparent; }
+.cz-sg { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: baseline; gap: 10px; padding: 12px 14px 4px; pointer-events: none; font: 15px/21px var(--font-sans); color: var(--faint); transition: opacity .24s ease-out; }
+.cz-sg.out { opacity: 0; transition-duration: .18s; }
+.cz-sg-text { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cz-tab { pointer-events: auto; flex: none; padding: 0 6px; border: 1px solid var(--line); border-radius: 5px; background: transparent; color: var(--faint); font: 11.5px/16px var(--font-sans); cursor: pointer; }
+.cz-tab:hover { color: var(--fg); }
+@media (prefers-reduced-motion: reduce) { .cz-sg { transition: none; } }
 .cz-sending textarea { color: var(--muted); }
 .cz-i { width: 14px; height: 14px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
 .cz-sp { flex: 1; min-width: 0; }
@@ -750,7 +760,7 @@ body { font-family: var(--font-sans); }
   .cz-chip::after, .cz-act::after, .cz-signin::after { content: ''; position: absolute; inset: -10px -4px; }
 }
 @media (max-width: 760px) {
-  .cz-card textarea { font-size: 16px; } /* 16px keeps iOS from zooming the page on focus */
+  .cz-card textarea, .cz-sg { font-size: 16px; } /* 16px keeps iOS from zooming the page on focus */
   .cz-menu { left: 4px !important; right: 4px !important; width: auto !important; max-width: none; }
 }
 
@@ -851,3 +861,48 @@ body { font-family: var(--font-sans); }
 .settings-page .set-machine { cursor: pointer; }
 .settings-page .set-machine:hover { background: var(--hover); border-radius: 8px; }
 .settings-page .set-machine:hover b { text-decoration: none; }
+
+/* The sidebar, one design with the Mac (web home canvas, Final page): 32 pt rows with 16 pt
+   stroke icons; starters while the list is empty; the foot is one pill, the account, the legal row. */
+.side-nav { display: flex; flex-direction: column; gap: 2px; padding-bottom: 2px; }
+.side-row { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 10px; height: 32px; padding: 0 8px; border-radius: 8px; font-size: 14px; line-height: 20px; color: var(--fg); cursor: pointer; }
+.side-row:hover, .side-row.on { background: var(--hover); }
+.side-row:focus-visible { outline: 2px solid var(--frog); outline-offset: -2px; }
+.side-row .side-ic { flex: none; color: var(--muted); }
+.side-row-t { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.side-row .kb { margin-left: auto; color: var(--faint); font-size: 11.5px; }
+.side-gap { height: 10px; }
+.side-gl { display: block; padding: 14px 8px 4px; font-size: 11.5px; line-height: 16px; font-weight: 600; color: var(--muted); }
+.side-starters { display: flex; flex-direction: column; gap: 2px; }
+.side-st { all: unset; box-sizing: border-box; display: flex; flex-direction: column; gap: 1px; padding: 7px 8px; border-radius: 8px; cursor: pointer; }
+.side-st:hover { background: var(--hover); }
+.side-st:focus-visible { outline: 2px solid var(--frog); outline-offset: -2px; }
+.side-st b { font-weight: 400; font-size: 14px; line-height: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.side-st span { color: var(--faint); font-size: 12px; line-height: 16px; white-space: pre; }
+.side-foot { margin-top: auto; display: flex; flex-direction: column; gap: 8px; padding-top: 8px; }
+.side-pill { all: unset; box-sizing: border-box; height: 36px; border: 1px solid var(--line-strong); border-radius: 999px; padding: 0 6px 0 12px; display: flex; align-items: center; gap: 8px; cursor: pointer; text-decoration: none; }
+.side-pill:hover { background: var(--hover); }
+.side-pill-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; background: var(--frog); }
+.side-pill-dot.wait { background: var(--notice, #ff9f0a); }
+.side-pill-dot.update { background: var(--fg); }
+.side-pill-t { flex: 1; min-width: 0; font-size: 12.5px; line-height: 18px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.side-pill-t b { font-weight: 600; color: var(--fg); }
+.side-pill-go { flex: none; font-size: 11.5px; line-height: 16px; font-weight: 600; border-radius: 999px; padding: 4px 10px; background: var(--hover); color: var(--fg); }
+.side-acct { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 10px; padding: 8px; border-radius: 10px; cursor: pointer; }
+.side-acct:hover { background: var(--hover); }
+.side-acct .go { flex: none; background: var(--frog); color: var(--on-frog, #0d1a10); border-radius: 999px; padding: 4px 14px; font-weight: 600; font-size: 12.5px; line-height: 18px; }
+.side-acct .t { color: var(--muted); font-size: 12px; line-height: 17px; }
+.side-acct .who { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.side-acct .who b { font-weight: 600; font-size: 13px; line-height: 17px; }
+.side-acct .who span { color: var(--muted); font-size: 12px; line-height: 16px; font-variant-numeric: tabular-nums; }
+.side-acct .ver { margin-left: auto; color: var(--faint); font-size: 11.5px; font-variant-numeric: tabular-nums; text-decoration: none; }
+.side-acct .ver:hover { color: var(--muted); }
+.side-legal { display: flex; align-items: center; gap: 12px; padding: 9px 8px 0; border-top: 1px solid var(--line); font-size: 11.5px; line-height: 16px; }
+.side-legal a { color: var(--faint); text-decoration: none; }
+.side-legal a:hover { color: var(--muted); }
+.side-legal-muni { margin-left: auto; display: flex; }
+.side-legal-muni svg { width: 34px; height: 15px; }
+.side-acct-row { display: flex; align-items: center; gap: 4px; }
+.side-acct-row .side-acct { flex: 1; min-width: 0; }
+.side-acct-row .ver { flex: none; padding: 4px 8px; color: var(--faint); font-size: 11.5px; font-variant-numeric: tabular-nums; text-decoration: none; border-radius: 6px; }
+.side-acct-row .ver:hover { color: var(--muted); background: var(--hover); }

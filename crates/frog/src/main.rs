@@ -157,6 +157,18 @@ struct Cli {
     /// connecting doesn't open a browser.
     #[arg(long)]
     mcp: bool,
+    /// What the agent knows and can do here, for the app's Customize pages: skills,
+    /// connections, rules and memory, with what each adds to a turn, its use and whether it's
+    /// on (docs/customize-api.md). JSON with --json; then exit.
+    #[arg(long)]
+    customize: bool,
+    /// Make one Customize change (JSON, docs/customize-api.md), print the snapshot after it
+    /// (JSON with --json), and exit.
+    #[arg(long, value_name = "CHANGE")]
+    customize_change: Option<String>,
+    /// With --customize or --customize-change: don't connect MCP servers (fast, but no tools).
+    #[arg(long)]
+    no_connect: bool,
     /// Sign in to a configured MCP server in the browser, then exit. This is what the app's
     /// "Sign in" button runs; it's the only frog command that opens a browser for MCP.
     #[arg(long, value_name = "SERVER")]
@@ -474,6 +486,12 @@ async fn run() -> Result<bool> {
             "off" => frog_engine::imports::set_claude_mcp(false)?,
             other => anyhow::bail!("--use-claude-mcp takes on or off, not `{other}`"),
         }
+        return Ok(true);
+    }
+    // Customize reads files and connections; it needs no model, so it runs before one is picked.
+    if cli.customize || cli.customize_change.is_some() {
+        let cwd = std::env::current_dir()?;
+        customize(cli.customize_change.as_deref(), cli.json, cli.no_connect, &cfg, &cwd).await?;
         return Ok(true);
     }
     if cli.setup {
@@ -1343,4 +1361,81 @@ async fn memory_command(args: &[String]) -> Result<bool> {
         _ => anyhow::bail!("usage: frog memory dump | forget <name> | clear  [--model M]"),
     }
     Ok(true)
+}
+
+/// `--customize` and `--customize-change`: the snapshot the Customize pages draw, measured
+/// against a large model (a session measures against its own), after a change if one was asked.
+async fn customize(
+    change: Option<&str>,
+    json: bool,
+    no_connect: bool,
+    cfg: &frog_engine::config::Config,
+    cwd: &std::path::Path,
+) -> Result<()> {
+    use frog_engine::customize::{self, report as cz};
+    let memory = frog_engine::memory::Store::new(&frog_engine::memory::default_root(), Some(cwd));
+    let mut error = None;
+    if let Some(text) = change {
+        let change: cz::Edit =
+            serde_json::from_str(text).context("--customize-change takes a change as JSON")?;
+        if let Err(e) = cz::apply(cfg, cwd, false, Some(&memory), &customize::Toggles::path(), &change) {
+            error = Some(format!("{e:#}"));
+        }
+    }
+    if let Some(e) = &error
+        && json
+    {
+        println!("{}", serde_json::json!({ "error": e }));
+        std::process::exit(1);
+    }
+    if let Some(e) = error {
+        anyhow::bail!(e);
+    }
+    let hub = if no_connect {
+        None
+    } else {
+        let servers = frog_engine::mcp::configured(cfg, cwd);
+        Some(frog_engine::mcp::Hub::connect(servers, frog_engine::mcp::Host::headless(cwd)).await)
+    };
+    let report = cz::report(&cz::Ctx {
+        cfg,
+        cwd,
+        chat: false,
+        est: frog_engine::context::Estimator::default(),
+        calibrated: false,
+        tier: frog_engine::harness::Tier::Strong,
+        window: 200_000,
+        small_window: false,
+        hub: hub.as_ref(),
+        connecting: &[],
+        connected: hub.is_some(),
+        memory: Some(&memory),
+    });
+    if let Some(h) = &hub {
+        h.shutdown();
+    }
+    if json {
+        println!("{}", serde_json::to_string(&report)?);
+        return Ok(());
+    }
+    println!("about {} tokens a turn", report.tokens);
+    println!(
+        "skills       {:>6}  (the catalog budget is {})",
+        report.skills.tokens, report.skills.budget_tokens
+    );
+    for s in &report.skills.items {
+        let state = if !s.on { "off" } else if s.shadowed_by.is_some() { "hidden" } else { "" };
+        println!("  /{:<24} {:>5}  {:>3} uses  {state}", s.name, s.tokens, s.use_.count);
+    }
+    println!("connections  {:>6}", report.connections.tokens);
+    for c in &report.connections.items {
+        let on = c.tools.iter().filter(|t| t.state == "on").count();
+        println!("  {:<25} {:>5}  {}  {on} of {} tools on", c.name, c.tokens, c.state, c.tools.len());
+    }
+    println!("rules        {:>6}", report.rules.tokens);
+    for f in &report.rules.files {
+        println!("  {:<40} {:>5}  {} lines", f.path, f.tokens, f.lines.len());
+    }
+    println!("memory       {:>6}  {} notes", report.memory.tokens, report.memory.notes.len());
+    Ok(())
 }

@@ -37,6 +37,10 @@ impl Agent {
         // The client's last `Op::SetMode` applies here, at this decision, not at some later
         // turn boundary (see `Shared::mode`); the durable `ModeChanged` follows in `handle`.
         self.sync_mode();
+        // `Customize` asks on its own card, in every mode (see `engine/customize.rs`).
+        if name == crate::customize::TOOL && !self.subagent {
+            return Decision::Allow;
+        }
         // A monitor's command is a shell command like any other; a bare timer runs nothing.
         let name = match name {
             crate::background::MONITOR
@@ -299,6 +303,7 @@ impl Agent {
                 )),
                 subagent: None,
                 card: None,
+                proposal: None,
             });
             let decision = rx.await.unwrap_or(Decision::Deny);
             self.shared.waits.lock().unwrap().remove(&id);
@@ -685,6 +690,7 @@ impl Agent {
             reason,
             subagent: None,
             card,
+            proposal: None,
         });
         // The bus mirrors the card as one line with a link. IRC never approves: the click
         // happens in the app, on a link the bus can't forge (the id is frog's own).
@@ -1317,6 +1323,7 @@ arrives as a <session-message from=\"parent\"> in this turn."
             ),
             subagent: None,
             card: None,
+            proposal: None,
         });
         let asked_at = self.open_wait(&id, item);
         let asked = Instant::now();

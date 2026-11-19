@@ -26,6 +26,8 @@ export const ICON = {
   sidebarRight: 'M4.7 3.9h14.6a3.5 3.5 0 0 1 3.5 3.5v9.2a3.5 3.5 0 0 1-3.5 3.5H4.7a3.5 3.5 0 0 1-3.5-3.5V7.4a3.5 3.5 0 0 1 3.5-3.5zM16 3.9v16.2M18.6 8h1.4M18.6 10.5h1.4M18.6 13h1.4',
   /** Back to app (the Mac's arrow.left). */
   arrowLeft: 'M19 12H5M11 6l-6 6 6 6',
+  /** Customize (the Mac's wand.and.stars): what the agent knows and can do. */
+  wand: 'M4 20L15 9M13 7l4 4M18 3v3M16.5 4.5h3M20 9v2M19 10h2M10 3v2M9 4h2',
 } as const
 
 /** One of those paths as an inline icon in the current text colour. */
