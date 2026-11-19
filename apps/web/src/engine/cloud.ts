@@ -9,7 +9,12 @@ import type { EngineClient } from './client'
  * gateway serves previews; without them the model isn't offered a preview it can't show. */
 // Customize cards (a `permission_request` with a `proposal`), their receipts with Undo, and
 // `setting_change` are drawn here (docs/customize-events.md), so the engine may offer them.
-export const caps = (previews: boolean): Op => ({ op: 'set_client_caps', ask: true, panes: previews, customize: true })
+// Off until the engine's Customize path passes review: the cards draw, but the engine isn't told
+// so and never offers them. Only ever for a session the person is typing in, never one another
+// session started (it has no one to click the card).
+export const CUSTOMIZE_CAPS = false
+export const caps = (previews: boolean, top = true, customize = CUSTOMIZE_CAPS): Op =>
+  ({ op: 'set_client_caps', ask: true, panes: previews, ...(customize && top ? { customize: true } : {}) })
 
 /** EngineClient over the Frog Cloud gateway: one websocket per subscribed session. */
 export class CloudEngine implements EngineClient {
@@ -18,6 +23,8 @@ export class CloudEngine implements EngineClient {
   /** Ops sent before the session is subscribed (e.g. the first message of a new session). */
   private early = new Map<string, Op[]>()
   private hubs = new Map<string, PreviewHub>()
+  /** Sessions another session started (the list's `parent`): no Customize caps for them. */
+  private children = new Set<string>()
   /** Whether the gateway serves previews: unknown until the session list first answers. */
   previews: boolean | undefined = undefined
 
@@ -33,7 +40,7 @@ export class CloudEngine implements EngineClient {
     }
     const conn = this.gateway.connect(session, { onEnvelope: deliver, onReset, onState: (s) => this.watchers.forEach((w) => w(session, s)) }, after)
     this.conns.set(session, conn)
-    conn.send(caps(this.previews === true))
+    conn.send(caps(this.previews === true, !this.children.has(session)))
     conn.send({ op: 'settings', values: customizableSettings() })
     for (const op of this.early.get(session) ?? []) conn.send(op) // Connection queues until its handshake
     this.early.delete(session)
@@ -52,7 +59,12 @@ export class CloudEngine implements EngineClient {
     if (this.previews === on) return
     this.previews = on
     this.hubs.forEach((h) => h.setAvailable(on))
-    this.conns.forEach((c) => c.send(caps(on)))
+    this.conns.forEach((c, session) => c.send(caps(on, !this.children.has(session))))
+  }
+
+  /** What GET /v1/sessions said about who started whom: a child session never gets Customize. */
+  setChildren(ids: Iterable<string>) {
+    this.children = new Set(ids)
   }
 
   /** The session's preview panes: what they report and how the engine's requests get answered. */

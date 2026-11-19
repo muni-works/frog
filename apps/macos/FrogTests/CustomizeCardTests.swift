@@ -117,4 +117,24 @@ final class CustomizeCardTests: XCTestCase {
         XCTAssertEqual(try json(.permission(id: "p_81", decision: .allow, choice: "notes")) as NSDictionary, ["op": "permission", "id": "p_81", "decision": "allow", "choice": "notes"])
         XCTAssertEqual(try json(.setClientCaps(panes: false, ask: true, customize: true)) as NSDictionary, ["op": "set_client_caps", "panes": false, "ask": true, "customize": true])
     }
+
+    /// Off until the engine's Customize path passes review, and never for a session another
+    /// session started: the links send `customize` only through `ClientCaps`.
+    func testNoAppTellsTheEngineAboutCustomizeYet() throws {
+        func json(_ op: Op) throws -> [String: Any] { try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(op)) as? [String: Any]) }
+        XCTAssertFalse(ClientCaps.customize)
+        XCTAssertFalse(ClientCaps.customize(top: true))
+        XCTAssertNil(try json(.setClientCaps(panes: true, ask: true, sessions: true, customize: ClientCaps.customize(top: true)))["customize"])
+        XCTAssertTrue(ClientCaps.customize(top: true, enabled: true))
+        XCTAssertFalse(ClientCaps.customize(top: false, enabled: true), "a child session has no one to click the card")
+    }
+
+    /// Only the person's own click answers a Customize card: no chief or parent session may.
+    func testACustomizeCardIsNeverDecidedForThePerson() throws {
+        let c = conversation()
+        send(c, #""permission_request","id":"p_81","item":"call_3","name":"Customize","arg":"Remember this?","always":"","proposal":\#(Self.remember)"#)
+        XCTAssertTrue(SessionBroker.personal(tool: "Customize", pending: nil))
+        XCTAssertTrue(SessionBroker.personal(tool: "Bash", pending: c.permission), "a card with a proposal, whatever it's called")
+        XCTAssertFalse(SessionBroker.personal(tool: "Bash", pending: nil))
+    }
 }

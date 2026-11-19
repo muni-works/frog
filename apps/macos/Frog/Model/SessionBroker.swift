@@ -667,6 +667,10 @@ final class SessionBroker {
         let sender = c.sessionID ?? ""
         let input = r.input
         let approval = input["approval_id"]?.string ?? r.id
+        // A Customize card is the person's alone to answer: never a chief's or a parent's.
+        guard !Self.personal(tool: input["tool"]?.string, pending: c.permission) else {
+            return c.replySession(r.id, error: Self.personalOnly)
+        }
         var names = (input["chiefs"]?.array ?? []).compactMap(\.string)
         if names.isEmpty, let one = input["chief"]?.string { names = [one] }
         var why = "no chief is configured"
@@ -738,6 +742,9 @@ final class SessionBroker {
         guard sender != row.id else {
             return c.replySession(r.id, error: "A session can't answer its own card.")
         }
+        guard !Self.personal(tool: row.tool, pending: target.permission) else {
+            return c.replySession(r.id, error: Self.personalOnly)
+        }
         let chief = chiefOf() ?? ""
         let parent = parentOf(row.id) ?? ""
         let allowed = (!chief.isEmpty && sender == chief) || (!parent.isEmpty && sender == parent)
@@ -754,6 +761,12 @@ final class SessionBroker {
             warning: decision != "approve")
         c.replySession(r.id, result: .string("Recorded: \(decision) for \(approval) in \(row.name)."))
     }
+
+    /// A card only the person's own click may answer: a Customize change (it has a `proposal`).
+    static func personal(tool: String?, pending: PermissionRequest?) -> Bool {
+        tool == "Customize" || pending?.proposal != nil
+    }
+    static let personalOnly = "A Customize card is the user's to answer; no session can decide it."
 
     /// The message a chief gets for a delegated approval.
     static func delegation(_ input: JSONValue, approval: String, session: String, name: String) -> String {
@@ -1233,7 +1246,7 @@ final class SessionBroker {
         // A model or mode set while no engine ran (SetSessionModel/Mode) applies now, once.
         let stored = Library.shared.takeStored(id)
         let c = Conversation(folder: folder, arguments: Self.resumeArguments(id, chat: info.isChat),
-                             model: stored.model)
+                             model: stored.model, child: Library.shared.parents[id] != nil)
         Self.apply(stored, to: c)
         background[id] = c
         // A fresh engine isn't armed until it's seen working; nothing scheduled for the old
@@ -1800,7 +1813,7 @@ extension SessionBroker {
         // replayed rather than lost (see `births`).
         let pending = "pending-" + UUID().uuidString
         recordBirth(pending, prompt: req.prompt)
-        let c = Conversation(folder: folder, arguments: Self.engineFlags(req: req, parent: parent), model: model)
+        let c = Conversation(folder: folder, arguments: Self.engineFlags(req: req, parent: parent), model: model, child: true)
         guard c.failure == nil else {
             births[pending] = nil
             saveBirths()

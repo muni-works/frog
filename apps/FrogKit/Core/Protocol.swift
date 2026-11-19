@@ -1018,6 +1018,16 @@ struct PermissionRequest: Decodable, Sendable, Identifiable {
 
 /// A Customize change, as its card asks it or its receipt reports it (docs/customize-events.md;
 /// canvas N7 Remember, N9 Change).
+/// Whether an app tells the engine it draws Customize cards (`set_client_caps` `customize`).
+enum ClientCaps {
+    /// Off until the engine's Customize path passes review: the cards draw, but the engine isn't
+    /// told so and never offers them.
+    static let customize = false
+    /// Only ever for a session the person is typing in: one another session started has no one
+    /// to click its card.
+    static func customize(top: Bool, enabled: Bool = customize) -> Bool { enabled && top }
+}
+
 struct Proposal: Codable, Sendable, Equatable {
     struct Change: Codable, Sendable, Equatable { var old: String?; var new: String? }
     struct Alternative: Codable, Sendable, Equatable { var id: String; var label: String; var `where`: String; var tokensPerTurn: Int? }

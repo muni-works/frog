@@ -7,9 +7,11 @@ import assert from "node:assert/strict";
 import { createElement as h } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import TestRenderer, { act } from "react-test-renderer";
-import { emptyThread, reduce, type Thread } from "../src/engine/thread.ts";
+import { emptyThread, reduce, type Entry, type Thread } from "../src/engine/thread.ts";
+import { lineOf } from "../src/ui/rows.ts";
 import { AppliedLine, ProposalCard, Transcript, type DecideOpts } from "../src/ui/Transcript.tsx";
-import { caps } from "../src/engine/cloud.ts";
+import { caps, CloudEngine, CUSTOMIZE_CAPS } from "../src/engine/cloud.ts";
+import type { Gateway } from "../src/cloud/client.ts";
 import type { Envelope, Proposal } from "../src/cloud/protocol.ts";
 
 let seq = 0;
@@ -100,8 +102,24 @@ test("in the transcript, the card stands in for the waiting call, and the receip
   assert.doesNotMatch(after, /cardx ask proposal/);
 });
 
-test("the engine is told this app draws Customize cards, so it offers the tool here", () => {
-  assert.deepEqual(caps(false), { op: "set_client_caps", ask: true, panes: false, customize: true });
+test("the engine isn't told about Customize cards until its review passes, and never for a child session", async () => {
+  // Off: the cards draw, but no app says so, so the engine never offers the tool.
+  assert.equal(CUSTOMIZE_CAPS, false);
+  assert.deepEqual(caps(false), { op: "set_client_caps", ask: true, panes: false });
+  // Turned on, only for a session the person types in; one another session started has no one to click.
+  assert.deepEqual(caps(false, true, true), { op: "set_client_caps", ask: true, panes: false, customize: true });
+  assert.deepEqual(caps(false, false, true), { op: "set_client_caps", ask: true, panes: false });
+  // What a session actually hears on subscribe: no customize, child or not.
+  const sent: Record<string, unknown[]> = {};
+  const fake = { connect: (id: string) => ({ send: (op: unknown) => (sent[id] ??= []).push(op), close() {} }) };
+  const engine = new CloudEngine(fake as unknown as Gateway);
+  engine.setChildren(["kid"]);
+  engine.subscribe("top", 0, () => {});
+  engine.subscribe("kid", 0, () => {});
+  for (const id of ["top", "kid"]) {
+    const op = sent[id].find((o) => (o as { op: string }).op === "set_client_caps") as Record<string, unknown>;
+    assert.equal("customize" in op, false, id);
+  }
 });
 
 test("setting_change changes this app's own setting; one it doesn't keep is left alone", async () => {
@@ -121,4 +139,12 @@ test("setting_change changes this app's own setting; one it doesn't keep is left
   } finally {
     g.document = had;
   }
+});
+
+test("a Customize call that isn't a card or a receipt never reads \"Customize\" to the person", () => {
+  const e = { id: "c9", kind: "tool", text: "", name: "Customize", arg: "Remember this?", output: "", done: true, outcome: "denied" } as const;
+  const run = lineOf({ ...e, done: false, outcome: undefined } as unknown as Entry);
+  const no = lineOf(e as unknown as Entry);
+  assert.equal(run.verb, "Proposing a change");
+  for (const l of [run, no]) assert.doesNotMatch(`${l.verb} ${l.object}`, /Customize/);
 });
