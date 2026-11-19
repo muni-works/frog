@@ -1,0 +1,39 @@
+{
+  "about": "Chapter cases both apps run for the turn rail (spec.md, 'The turn rail'): apps/web/test/rail.test.ts and apps/macos/FrogTests/ChapterTests.swift. A turn is {input, compacted?}; compacted marks the turn a summary landed in. Expected: each chapter's start index, kind and name.",
+  "words": [
+    ["build named chapters on the rail: a short title per chapter", "build named chapters"],
+    ["let's go middle ground, and push", "go middle ground"],
+    ["can you please profile the frog.app and figure out", "profile the frog.app"],
+    ["nope. i feel like it's a frontend bug", "nope"],
+    ["Install the new build and restart frog", "install the new build"],
+    ["ok so fix the flaky upload retry", "fix the flaky upload"],
+    ["?", ""]
+  ],
+  "conversations": [
+    {
+      "name": "prompts start chapters",
+      "turns": [{ "input": "fix the upload retry" }, { "input": "" }, { "input": "" }, { "input": "now open a PR" }, { "input": "" }],
+      "chapters": [{ "start": 0, "kind": "prompt", "title": "fix the upload retry" }, { "start": 3, "kind": "prompt", "title": "open a pr" }]
+    },
+    {
+      "name": "a summary starts a chapter",
+      "turns": [{ "input": "one" }, { "input": "" }, { "input": "" }, { "input": "", "compacted": true }, { "input": "" }, { "input": "two" }],
+      "chapters": [{ "start": 0, "kind": "prompt", "title": "one" }, { "start": 3, "kind": "compacted", "title": "summarized" }, { "start": 5, "kind": "prompt", "title": "two" }]
+    },
+    {
+      "name": "a long run breaks after six quiet turns",
+      "turns": [{ "input": "go" }, { "input": "" }, { "input": "" }, { "input": "" }, { "input": "" }, { "input": "" }, { "input": "" }, { "input": "" }, { "input": "" }],
+      "chapters": [{ "start": 0, "kind": "prompt", "title": "go" }, { "start": 7, "kind": "run", "title": "on its own, 2 turns" }]
+    },
+    {
+      "name": "a message from another session is not a prompt of yours",
+      "turns": [{ "input": "<session-message from=\"x\">hi</session-message>" }, { "input": "" }, { "input": "<session-message from=\"x\">again</session-message>" }],
+      "chapters": [{ "start": 0, "kind": "prompt", "title": "on its own, 3 turns" }]
+    },
+    {
+      "name": "a prompt with no words keeps what was typed",
+      "turns": [{ "input": "?" }],
+      "chapters": [{ "start": 0, "kind": "prompt", "title": "?" }]
+    }
+  ]
+}

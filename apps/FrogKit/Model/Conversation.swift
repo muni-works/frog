@@ -322,6 +322,17 @@ final class Conversation {
         }
     }
 
+    /// A Frog Cloud session on screen. Its history comes over the gateway as a burst, like a
+    /// reopened local session's: held until the link says `synced` and folded in at once, so it
+    /// opens whole at its end instead of building up event by event (Cam, 2026-11-19: "everything
+    /// streams in individually"). Only what arrives after streams.
+    static func cloud(folder: URL, link: CloudLink, session: String) -> Conversation {
+        let c = Conversation(folder: folder, link: link, replay: false, session: session)
+        c.replaying = true
+        c.cloudSession = session
+        return c
+    }
+
     /// Where older turns come from: the log the newest rows were read from, and how far back
     /// they've been folded in (an index into its events; 0 once all of it is).
     @ObservationIgnored private var history: SessionHistory?

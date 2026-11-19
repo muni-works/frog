@@ -304,8 +304,8 @@ final class ComposerAndTitleFlowTests: FlowTestCase {
         startConversation()
         let menu = try XCTUnwrap(w.menu(.id("title.menu")))
         menu.choose("Rename…")
-        w.type("Renamed by a flow", into: .sheetField)
-        w.press(.sheetButton("Rename"))
+        // In place (docs/design/chrome/spec.md, 3): the title becomes a field; Return saves.
+        w.type("Renamed by a flow", into: .id("title.field"), submit: true)
         expect("the title row reads the new title") { self.w.find(Query(id: "title.menu", text: "Renamed by a flow")) != nil }
         expect("the session took it") { self.c?.title == "Renamed by a flow" }
     }

@@ -10,12 +10,15 @@ enum RepoRank {
     /// Every repo, best first: the current one, then the ones used in Frog (most recent first),
     /// then the rest by their last push on GitHub (newest first, never-pushed last, then by name).
     /// `pushed` is GitHub's ISO 8601 UTC stamp, so comparing the strings orders the times.
+    /// GitHub names ignore case: a pasted "Ecto/Pond" is the account's "ecto/pond", one row, in
+    /// the account's spelling.
     static func rank(current: String?, used: [String], repos: [(name: String, pushed: String?)]) -> [String] {
+        let spelling = Dictionary(repos.map { ($0.name.lowercased(), $0.name) }, uniquingKeysWith: { a, _ in a })
         var out: [String] = []
         var seen = Set<String>()
         func add(_ r: String?) {
-            guard let r, !r.isEmpty, seen.insert(r).inserted else { return }
-            out.append(r)
+            guard let r, !r.isEmpty, seen.insert(r.lowercased()).inserted else { return }
+            out.append(spelling[r.lowercased()] ?? r)
         }
         add(current)
         used.forEach(add)

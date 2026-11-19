@@ -9,10 +9,18 @@ export type RankedRepo = { name: string; pushed_at: string | null }
 
 /** Every repo, best first: the current one, then the ones used in Frog (most recent first), then
  *  the rest by their last push on GitHub (newest first, never-pushed last, then by name).
- *  `pushed_at` is GitHub's ISO 8601 UTC stamp, so comparing the strings orders the times. */
+ *  `pushed_at` is GitHub's ISO 8601 UTC stamp, so comparing the strings orders the times.
+ *  GitHub names ignore case: a pasted "Ecto/Pond" is the account's "ecto/pond", one row, in the
+ *  account's spelling. */
 export function rankRepos(current: string | undefined, used: readonly string[], repos: readonly RankedRepo[]): string[] {
+  const spelling = new Map(repos.map((r) => [r.name.toLowerCase(), r.name]))
   const out: string[] = []
-  const add = (r: string | undefined) => { if (r && !out.includes(r)) out.push(r) }
+  const seen = new Set<string>()
+  const add = (r: string | undefined) => {
+    if (!r || seen.has(r.toLowerCase())) return
+    seen.add(r.toLowerCase())
+    out.push(spelling.get(r.toLowerCase()) ?? r)
+  }
   add(current)
   used.forEach(add)
   const rest = [...repos].sort((a, b) => {

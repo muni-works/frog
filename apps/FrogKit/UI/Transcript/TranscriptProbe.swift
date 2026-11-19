@@ -41,6 +41,11 @@ enum TranscriptProbe {
         if fillLog.count > 32 { fillLog.removeFirst(fillLog.count - 32) }
     }
     private static var mounted: Set<String> = []
+    /// While set, only this conversation's rows count (`ObjectIdentifier(conversation).hashValue`,
+    /// the keys' prefix): a test host keeps earlier tests' transcripts alive, and their rows
+    /// coming and going counted as this one's (the scroll-up benchmark's 108 rows "built" against
+    /// 23 on a full run, 2026-11-19).
+    static var only: Int?
 
     static func reset() {
         rowBodies = 0
@@ -49,6 +54,7 @@ enum TranscriptProbe {
         inkStyles = 0
         inkStyledChars = 0
         mounted = []
+        only = nil
         peakMountedRows = 0
         earlier = 0
         fillSettles = 0
@@ -63,6 +69,7 @@ enum TranscriptProbe {
 
     /// A row (by a key unique across conversations) appeared or disappeared.
     static func mounted(_ key: String, _ on: Bool) {
+        if let only, !key.hasPrefix("\(only)-") { return }
         if on { mounted.insert(key) } else { mounted.remove(key) }
         peakMountedRows = max(peakMountedRows, mounted.count)
     }

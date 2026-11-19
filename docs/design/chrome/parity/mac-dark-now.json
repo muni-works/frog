@@ -1,0 +1,82 @@
+{
+  "app" : "mac",
+  "controls" : [
+    {
+      "height" : 34,
+      "id" : "group",
+      "right" : 8,
+      "top" : 9,
+      "width" : 108,
+      "x" : 1164
+    },
+    {
+      "height" : 28,
+      "id" : "split",
+      "ink" : {
+        "height" : 13.5,
+        "top" : 7.5,
+        "width" : 17.5,
+        "x" : 8.5
+      },
+      "right" : 79,
+      "top" : 12,
+      "width" : 34,
+      "x" : 1167
+    },
+    {
+      "height" : 28,
+      "id" : "palette",
+      "ink" : {
+        "height" : 14,
+        "top" : 7,
+        "width" : 14,
+        "x" : 10
+      },
+      "right" : 45,
+      "top" : 12,
+      "width" : 34,
+      "x" : 1201
+    },
+    {
+      "height" : 28,
+      "id" : "inspector",
+      "ink" : {
+        "height" : 13.5,
+        "top" : 7.5,
+        "width" : 17.5,
+        "x" : 8.5
+      },
+      "right" : 11,
+      "top" : 12,
+      "width" : 34,
+      "x" : 1235
+    },
+    {
+      "height" : 64,
+      "id" : "rail",
+      "right" : 8,
+      "top" : 60,
+      "width" : 28,
+      "x" : 1244
+    },
+    {
+      "height" : 17,
+      "id" : "title",
+      "ink" : {
+        "height" : 13,
+        "top" : 3,
+        "width" : 127.5,
+        "x" : 0.5
+      },
+      "right" : 882,
+      "top" : 17.5,
+      "width" : 128,
+      "x" : 270
+    }
+  ],
+  "format" : "frog-chrome-metrics\/1",
+  "height" : 800,
+  "look" : "dark",
+  "main" : 250,
+  "width" : 1280
+}

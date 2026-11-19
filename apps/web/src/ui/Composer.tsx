@@ -542,6 +542,7 @@ export function Composer(p: ComposerProps) {
         const ranked = rankRepos(p.repo, p.recent ?? [], (p.repos ?? []).map((name) => ({ name, pushed_at: p.pushed?.[name] ?? null })))
         const { shown: list, more } = pickRepos(ranked, q)
         const line = moreLine(more, !!q.trim())
+        const same = (r: string) => r.toLowerCase() === p.repo?.toLowerCase()
         const pick = (r: string | undefined) => { p.onRepo!(r); setMenu(null); setQ(''); ref.current?.focus() }
         const tick = (on: boolean) => <I d={P.check} className={`cz-check${on ? '' : ' off'}`} />
         return (
@@ -551,12 +552,12 @@ export function Composer(p: ComposerProps) {
                 onChange={(e) => setQ(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); const r = typed ?? list[0]; if (r) pick(r) } }} />
             </label>
-            {typed && !list.includes(typed) && <button type="button" role="menuitem" onClick={() => pick(typed)}><I d={P.cloud} />{typed}<span className="cz-r">from GitHub</span></button>}
+            {typed && !list.some((r) => r.toLowerCase() === typed.toLowerCase()) && <button type="button" role="menuitem" onClick={() => pick(typed)}><I d={P.cloud} />{typed}<span className="cz-r">from GitHub</span></button>}
             {!q && <button type="button" role="menuitemradio" aria-checked={!p.repo} onClick={() => pick(undefined)}><I d={P.cloud} />Scratch sandbox{tick(!p.repo)}</button>}
             {list.length > 0 && <div className="cz-menu-h">Your repos</div>}
             <div className="cz-list">
               {list.map((r) => (
-                <button key={r} type="button" role="menuitemradio" aria-checked={r === p.repo} onClick={() => pick(r)}><I d={P.cloud} /><span className="cz-mname">{r}</span>{tick(r === p.repo)}</button>
+                <button key={r} type="button" role="menuitemradio" aria-checked={same(r)} onClick={() => pick(r)}><I d={P.cloud} /><span className="cz-mname">{r}</span>{tick(same(r))}</button>
               ))}
             </div>
             {line && <div className="cz-menu-note cz-more">{line}</div>}

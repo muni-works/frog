@@ -1,0 +1,47 @@
+#!/usr/bin/env node
+// Compares two chrome dumps (frog-chrome-metrics/1): every control the spec puts on both apps
+// must be on both, with its top, width, height and distance from the window's right edge within
+// 1 point. (Its x follows from the right edge at a given width; the title is measured from the
+// conversation area's left edge, `main` in each dump, since the sidebar's width is its own piece.) Controls the spec keeps on one app only are listed in
+// ONE_APP with the reason, and pass when they are missing from the other.
+//
+//   node diff-chrome.mjs <web.json> <mac.json> [--json out.json]
+import { readFileSync, writeFileSync } from "node:fs";
+
+const [a, b] = process.argv.slice(2).filter((x) => !x.startsWith("--"));
+const outAt = process.argv.indexOf("--json");
+const web = JSON.parse(readFileSync(a, "utf8"));
+const mac = JSON.parse(readFileSync(b, "utf8"));
+/** docs/design/chrome/spec.md: on the Mac only, for now. */
+const ONE_APP = { split: "mac" };
+const TOL = 1;
+/** The group loses a button's width (spec: 34) for each button the spec keeps off one app. */
+const BUTTON = 34;
+const groupShift = (have, other) => Object.entries(ONE_APP).filter(([id, app]) => app !== have.app && other.controls.some((c) => c.id === id)).length * BUTTON;
+const fromLeft = new Set(["title"]);
+const ids = [...new Set([...web.controls, ...mac.controls].map((c) => c.id))];
+const rows = [];
+let bad = 0;
+for (const id of ids) {
+  const w = web.controls.find((c) => c.id === id);
+  const m = mac.controls.find((c) => c.id === id);
+  if (!w || !m) {
+    const ok = ONE_APP[id] === (w ? "web" : "mac");
+    if (!ok) bad++;
+    rows.push({ id, ok, note: `${w ? "web" : "mac"} only${ok ? " (spec: one app)" : ""}`, web: w ?? null, mac: m ?? null });
+    continue;
+  }
+  const keys = fromLeft.has(id) ? ["top", "width", "height", "x0"] : ["top", "width", "height", "right"];
+  // The web's group, short of the Mac-only buttons, is expected that much narrower.
+  if (fromLeft.has(id)) { w.x0 = Math.round((w.x - (web.main ?? 0)) * 10) / 10; m.x0 = Math.round((m.x - (mac.main ?? 0)) * 10) / 10; }
+  const expect = (k) => (id === "group" && k === "width" ? m[k] - groupShift(web, mac) + groupShift(mac, web) : m[k]);
+  const off = keys.filter((k) => Math.abs(w[k] - expect(k)) > TOL).map((k) => `${k} ${w[k]} vs ${m[k]}${expect(k) !== m[k] ? ` (expected ${expect(k)})` : ""}`);
+  // The icon's (or title's) ink inside its box, from ink.swift, when both dumps carry it.
+  if (w.ink && m.ink) for (const k of ["x", "top", "width", "height"]) if (Math.abs(w.ink[k] - m.ink[k]) > TOL) off.push(`ink ${k} ${w.ink[k]} vs ${m.ink[k]}`);
+  if (off.length) bad++;
+  rows.push({ id, ok: !off.length, note: off.join(", ") || "same", web: w, mac: m });
+}
+for (const r of rows) console.log(`${r.ok ? "ok  " : "DIFF"} ${r.id.padEnd(10)} ${r.note}`);
+if (outAt > 0) writeFileSync(process.argv[outAt + 1], JSON.stringify({ format: "frog-chrome-diff/1", web: a, mac: b, ok: !bad, rows }, null, 2) + "\n");
+console.log(bad ? `${bad} control(s) differ` : "chrome matches");
+process.exit(bad ? 1 : 0);

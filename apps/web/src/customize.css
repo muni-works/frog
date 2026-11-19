@@ -3,7 +3,9 @@
    F1–F6, F9, mapped onto tokens.css so light and dark both hold. Cards are flat: no stroke. */
 
 .customize-main .titlebar { gap: 8px; }
-.cust-hdr-rt { margin-left: auto; display: flex; align-items: center; gap: 14px; flex: none; font-size: 12.5px; color: var(--muted); }
+.cust-hdr-rt { margin-left: auto; display: flex; align-items: center; gap: 14px; flex: 0 1 auto; min-width: 0; font-size: 12.5px; color: var(--muted); }
+/* The figure gives way first, cut at its end, before the action (spec.md, 3). */
+.cust-hdr-rt .num { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .customize-main .crumbs b.mono { font-family: var(--font-mono); font-weight: 400; font-size: 12.5px; }
 .cust-pill { all: unset; box-sizing: border-box; border: 1px solid var(--line-strong); border-radius: 999px; padding: 3px 13px; font: 12.5px/18px var(--font-sans); color: var(--fg); cursor: pointer; white-space: nowrap; flex: none; text-decoration: none; }
 .cust-pill:hover { background: var(--hover); }

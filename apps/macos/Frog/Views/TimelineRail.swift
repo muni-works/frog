@@ -164,9 +164,9 @@ struct TimelineRail: View {
     /// else is quiet; the chapters carry the shape of the conversation.
     private func signal(_ t: TurnState) -> Color? {
         switch t.end {
-        case nil: conversation.busy ? .accentColor : nil
-        case .error: .red
-        case .looping, .stepLimit, .maxTokens: .orange
+        case nil: conversation.busy ? Tokens.accent : nil
+        case .error: Tokens.warn
+        case .looping, .stepLimit, .maxTokens: Tokens.notice
         default: nil
         }
     }
@@ -200,7 +200,7 @@ struct TimelineRail: View {
             case .compacted:
                 // The summarized break: the line steps out for a moment.
                 ctx.fill(Path(CGRect(x: mid - 1, y: y - 3, width: 2, height: 6)),
-                         with: .color(Color(nsColor: .windowBackgroundColor)))
+                         with: .color(Tokens.raised))
                 ctx.fill(Path(CGRect(x: mid - 4, y: y - 3.5, width: 8, height: 1)), with: .color(.secondary.opacity(0.5)))
                 ctx.fill(Path(CGRect(x: mid - 4, y: y + 2.5, width: 8, height: 1)), with: .color(.secondary.opacity(0.5)))
             case .run:
@@ -269,7 +269,7 @@ struct TimelineRail: View {
         .font(.frog(size: 12))
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
-        .glassEffect(.regular, in: .capsule)
+        .background(Tokens.raised, in: .capsule)
     }
 
     @ViewBuilder
