@@ -341,6 +341,11 @@ final class Workspace {
         start(arguments: [])
     }
 
+    /// A new session that starts on `prompt` at once: the sidebar's starters.
+    func newSession(prompt: String) {
+        start(arguments: []).submit(prompt)
+    }
+
     /// A Frog Cloud session on screen: the same transcript and composer, its engine in a
     /// sandbox through the gateway instead of `frog --serve` here.
     func openCloud(_ id: String) {
@@ -618,6 +623,7 @@ final class Workspace {
         Motion.cut {
             conversation = c
             currentSession = c.cloudSession ?? c.sessionID
+            if let id = currentSession { Library.shared.adopt(id, conversation: c) }
             currentTitle = c.title
             // The id lands when the engine names the session (its first logged event); mirror
             // it here. `onSessionChange` stays the workspace's own hook; this chains beside it

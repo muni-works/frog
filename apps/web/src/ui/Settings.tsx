@@ -5,7 +5,7 @@ import { friendly } from '../cloud/client'
 import { canPull, catalogModel, displayName, memoryLine, runningLine, usesLine, type Machine } from '../machines'
 import type { Mode } from '../cloud/protocol'
 import { modelName, placeColor, usdPerM, type Model } from '../models'
-import { savedDensity, savedTheme, SECTIONS, setDensity, setTheme, webRows, webWords, type Density, type Section, type SettingRow, type Theme } from '../settings'
+import { savedDensity, savedTheme, SECTIONS, setDensity, WEB_SECTIONS, setTheme, webRows, webWords, type Density, type Section, type SettingRow, type Theme } from '../settings'
 import { InvitePill } from './DownloadChip'
 import { ICON, Icon } from './icons'
 import { creditLine, dollars } from './Overlays'
@@ -23,7 +23,7 @@ export function SettingsSidebar({ current, onBack, onOpen }: { current: Section;
         <button type="button" className="row big" onClick={onBack}><Icon d={ICON.arrowLeft} size={17} /><span style={{ flex: 1 }}>Back to app</span><span className="kb">esc</span></button>
       </nav>
       <div className="docs-list">
-        {SECTIONS.map((s) => (
+        {WEB_SECTIONS.map((s) => (
           <button key={s.id} type="button" className={`srow${s.id === current ? ' on' : ''}`} aria-current={s.id === current ? 'page' : undefined} onClick={() => onOpen(s.id)}>
             <span className="stitle">{s.label}</span>
           </button>

@@ -112,3 +112,15 @@ test("/settings/<section> serves the app's page, like /docs/<slug>; deeper paths
   assert.deepEqual(seen, ["/", "/", "/"]);
   assert.equal((await worker.fetch(new Request("https://frog.toys/settings/a/b"), { ASSETS })).status, 404);
 });
+
+test("/customize/<section> and its detail pages serve the app; deeper paths stay 404", async () => {
+  const seen = [];
+  const ASSETS = { fetch: async (u) => { seen.push(new URL(u).pathname); return new Response("<!doctype html>app"); } };
+  for (const path of ["/customize", "/customize/skills", "/customize/rules/", "/customize/skills/release-notes", "/customize/connections/add", "/customize/connections/add/com.supabase%2Fmcp"]) {
+    const r = await worker.fetch(new Request(`https://frog.toys${path}`), { ASSETS });
+    assert.equal(r.status, 200, path);
+  }
+  assert.equal(seen.length, 6);
+  assert.ok(seen.every((p) => p === "/"));
+  assert.equal((await worker.fetch(new Request("https://frog.toys/customize/a/b/c/d"), { ASSETS })).status, 404);
+});

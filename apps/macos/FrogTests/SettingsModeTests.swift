@@ -23,9 +23,10 @@ final class SettingsModeTests: XCTestCase {
         return FileManager.default.temporaryDirectory.appending(path: "frog-snapshots")
     }
 
-    func testTheListIsBundledWithNineSectionsInOrder() {
+    /// Connections moved to Customize (CustomizeModeTests).
+    func testTheListIsBundledWithEightSectionsInOrder() {
         XCTAssertEqual(catalog.sections.map(\.label),
-                       ["General", "Appearance", "Models", "Permissions", "Connections", "Shortcuts", "Usage", "Account", "Billing"])
+                       ["General", "Appearance", "Models", "Permissions", "Shortcuts", "Usage", "Account", "Billing"])
         XCTAssertFalse(catalog.rows.isEmpty)
     }
 
@@ -63,12 +64,12 @@ final class SettingsModeTests: XCTestCase {
         panes.showSettings()
         XCTAssertEqual(panes.mode, .settings)
         XCTAssertEqual(panes.settingsSection, "account", "Account the first time")
-        panes.showSettings("mcp")
-        XCTAssertEqual(panes.settingsSection, "connections")
+        panes.showSettings("lend")
+        XCTAssertEqual(panes.settingsSection, "models")
         panes.backToApp()
         XCTAssertEqual(panes.mode, .threads)
         panes.showSettings()
-        XCTAssertEqual(panes.settingsSection, "connections", "the window keeps its last section")
+        XCTAssertEqual(panes.settingsSection, "models", "the window keeps its last section")
         panes.showSettings("energy")
         XCTAssertEqual(panes.settingsSection, "usage")
         panes.showSettings("nonsense")
