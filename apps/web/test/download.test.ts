@@ -127,25 +127,48 @@ test("the Inspector's Preview tab points at the Mac app rather than dead-ending"
   assert.ok(!withApp.includes("/download"), withApp);
 });
 
-// --- the composer's model menu: the dead rows give way to the chip -------
+// --- the composer's model menu: local models are rows that hand off to the Mac app ----------
 
-const composer = (machines: Machine[]) =>
-  renderToStaticMarkup(createElement(Composer, {
+const composer = (machines: Machine[], ua = MAC_UA) =>
+  asVisitor(ua, () => renderToStaticMarkup(createElement(Composer, {
     machines, openModels: true, models: [], onSend: noop, onMode: noop, onModel: noop,
-  }));
+  })));
+/** The menu's local rows: href, label and the muted machine names. */
+const localRowsOf = (html: string) => [...html.matchAll(/<a class="cz-row cz-local" role="menuitem" href="([^"]+)"[^>]*aria-label="([^"]+)"[^>]*>(.*?)<\/a>/g)]
+  .map(([, href, label, inner]) => ({ href, label, on: /class="cz-on">([^<]*)</.exec(inner)?.[1] ?? null, inner }))
 
-test("the model menu's machine rows give way to one download hint", () => {
-  const html = composer([mew]);
-  assert.match(html, /Runs from the Mac app/);
-  assert.match(html, /href="\/download"/);
-  // No dead machine row beside it: the chip replaces it, it doesn't sit next to it.
-  assert.ok(!/Qwen3-4B/.test(html), `a dead machine model row survived: ${html}`);
-  assert.ok(!/menuitemradio[^>]*disabled title="Runs from the Mac app"/.test(html), html);
+test("with no machines reported, the menu still lists the local models, then one download line", () => {
+  const html = composer([]);
+  const rows = localRowsOf(html);
+  assert.deepEqual(rows.map((r) => r.label.split(",")[0]), ["Qwen3 4B", "Qwen3 8B", "Qwen3 32B", "Qwen3 1.7B", "Gemma 3 4B"]);
+  for (const r of rows) {
+    assert.equal(r.href, "/download", r.label);
+    assert.match(r.label, /, runs on your Mac, get Frog for Mac$/);
+    assert.match(r.inner, /\$0 a token/);
+    // Nothing guessed about where it is.
+    assert.equal(r.on, null);
+  }
+  // Pickable, not dead: no disabled row, no radio that would start a cloud session.
+  assert.ok(!/disabled/.test(html.slice(html.indexOf("Run it on your Mac"), html.indexOf("Runs from the Mac app"))), html);
+  // The download line comes after the models, not instead of them.
+  assert.ok(html.indexOf("Runs from the Mac app") > html.lastIndexOf("cz-local"), html);
 });
 
-test("the model menu keeps its machine rows when they already have the app", () => {
-  // A paired This Mac suppresses the chip, so the rows are what's left to show.
+test("a paired node shows where each model is, and the download line stays until there's a This Mac", () => {
+  const rows = localRowsOf(composer([mew]));
+  assert.equal(rows.find((r) => r.label.startsWith("Qwen3 4B,"))?.on, "mew");
+  assert.match(rows[0].label, /^Qwen3 4B, runs on your Mac \(mew\), get Frog for Mac$/);
+  assert.match(composer([mew]), /Runs from the Mac app/);
+});
+
+test("with the Mac app, rows open Frog for Mac and the download line goes", () => {
   const html = composer([mew, mac]);
-  assert.ok(!html.includes("/download"), `the chip showed to someone with the app: ${html}`);
-  assert.match(html, /Qwen3 4B/, html);
+  const rows = localRowsOf(html);
+  for (const r of rows) assert.equal(r.href, "frog://settings/models");
+  assert.match(rows[1].label, /^Qwen3 8B, runs on your Mac \(This Mac\), opens Frog for Mac$/);
+  assert.ok(!html.includes("/download"), `the download showed to someone with the app: ${html}`);
+});
+
+test("off a Mac the rows point at the Mac app's page, not a .dmg", () => {
+  for (const r of localRowsOf(composer([], PC_UA))) assert.equal(r.href, "/mac");
 });

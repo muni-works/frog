@@ -50,3 +50,13 @@ export function inviteFor({ mac, thisMac }: { mac: boolean; thisMac: boolean }):
   if (!mac) return 'elsewhere'
   return thisMac ? 'open' : 'get'
 }
+
+/** Where picking a local model in the web's model menu goes, by the same invitation: Frog for
+ *  Mac's Models page when the account has the app (the Mac handles only `frog://settings/<section>`
+ *  and `frog://customize/<section>` today, so the model and the typed message can't ride along),
+ *  the download on a Mac without it, and the Mac app's page anywhere else. */
+export function macHandoff(invite: Invite): { href: string; does: string; title: string } {
+  if (invite === 'open') return { href: 'frog://settings/models', does: 'opens Frog for Mac', title: 'Opens in Frog for Mac' }
+  if (invite === 'get') return { href: '/download', does: 'get Frog for Mac', title: 'Runs in Frog for Mac. Download it free' }
+  return { href: '/mac', does: 'runs in Frog for Mac', title: 'Runs on a Mac, in Frog for Mac' }
+}

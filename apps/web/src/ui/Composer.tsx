@@ -2,13 +2,14 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { composing } from './guards'
 import type { Image, Mode } from '../cloud/protocol'
 import { inOutPrice, modelName, placeColor, placeOf, spec, type Model } from '../models'
-import { machineModels, places, tag, type Machine } from '../machines'
+import { localRows, type Machine } from '../machines'
 import { barTone, canCompact, ringLabel, ringTone } from '../usage'
 import { parseRepo } from '../store'
 import { moreLine, pickRepos, rankRepos } from '../repoRank'
 import type { Provider } from '../auth'
 import { safeHref } from './href'
-import { DownloadAppChip, useDownloadChip } from './DownloadChip'
+import { DownloadAppChip, useDownloadChip, usePhone } from './DownloadChip'
+import { hasThisMac, inviteFor, isMacVisitor, macHandoff } from './download'
 import { useFocusTrap, useLayer, useMenu } from './layers'
 import { useSuggestion, type Suggestion } from './suggestion'
 import { derive, error as reducerError, reduce, type ComposerError, type Effect, type Intent, type Pr, type State as Tray } from '../composer'
@@ -141,6 +142,7 @@ const P = {
   folder: 'M2 4.5A1.5 1.5 0 0 1 3.5 3h3L8 4.5h4.5A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5z',
   chevron: 'M5 6.5l3 3 3-3',
   chevronRight: 'M6.5 5l3 3-3 3',
+  out: 'M6 10l4.5-4.5M6.5 5.5h4v4',
   laptop: 'M3.5 4h9v6.5h-9zM2 12.5h12',
   server: 'M3 3h10v4.5H3zM3 8.5h10V13H3zM5.5 5.25h.01M5.5 10.75h.01',
   bolt: 'M9 1.5L3.5 9H8l-1 5.5L12.5 7H8z',
@@ -183,10 +185,11 @@ type MenuName = 'plus' | 'model' | 'mode' | 'repo' | 'branch' | 'signin'
 export function Composer(p: ComposerProps) {
   const [text, setText] = useState(p.draft ?? '')
   const [menu, setMenu] = useState<MenuName | null>(p.pickRepo ? 'repo' : p.openModels ? 'model' : null)
-  // A machine's model runs from the Mac app; where there's an app to send them to, its rows give
-  // way to one download hint, and on a phone (or once they have the app) they stay as they were.
+  // Local models run from the Mac app: the menu lists them all the same, and picking one hands
+  // off to the app (or to getting it), with one quiet download line after them.
   const machineChip = useDownloadChip(p.machines ?? [])
-  const machineRows = machineChip ? [] : machineModels(p.machines ?? [])
+  const phone = usePhone()
+  const handoff = macHandoff(inviteFor({ mac: isMacVisitor(), thisMac: hasThisMac(p.machines ?? []) }))
   const [q, setQ] = useState('')
   // Where the open menu's chip sits, so the menu opens right above it.
   const [at, setAt] = useState<{ left?: number; right?: number }>({ left: 8 })
@@ -498,22 +501,26 @@ export function Composer(p: ComposerProps) {
       {menu === 'model' && (() => {
         const match = (s: string) => s.toLowerCase().includes(q.trim().toLowerCase())
         const cloud = (p.models ?? []).filter((m) => match(modelName(m.id)))
+        const local = localRows(p.machines ?? []).filter((m) => match(m.name))
         return (
           <div className="cz-menu cz-models" role="menu" aria-label="Model" style={{ ...at, width: 'min(400px, calc(100vw - 32px))' }} {...nav}>
             <label className="cz-filter"><I d={P.search} /><input autoFocus value={q} placeholder="Search models" aria-label="Search models" onChange={(e) => setQ(e.target.value)} /></label>
-            {/* The web runs sessions in Frog Cloud, so a machine's model can't be picked here: it
-             * runs from the Mac app. Where there's an app to send them to, one hint; on a phone, or
-             * once they have it, the rows stay as they were. */}
-            <div className="cz-menu-h">{machineChip ? 'Run it on your Mac' : 'Your machines'}</div>
-            {machineChip
-              ? <div className="cz-menu-note"><DownloadAppChip label="Runs from the Mac app" machines={p.machines} /></div>
-              : machineRows.length === 0 && <div className="cz-menu-note">No models on your machines yet. <a href="/mac">Get the Mac app</a></div>}
-            {machineRows.filter((m) => match(m.name)).map((m) => (
-              <button key={m.spec} type="button" role="menuitemradio" aria-checked={false} disabled title="Runs from the Mac app">
-                <I d={P.server} style={{ color: placeColor('local') }} />
-                <span className="cz-mname">{m.name}</span><span className="cz-r">{places(m)}{tag(m) ? `, ${tag(m)}` : ''}</span>
-              </button>
+            {/* The web runs sessions in Frog Cloud, so a local model can't run here: its row is
+             * a link to Frog for Mac (or to getting it), never a cloud pick and never dead. */}
+            {(local.length > 0 || !q.trim()) && <div className="cz-menu-h">Run it on your Mac</div>}
+            {local.map((m) => (
+              <a key={m.key} className="cz-row cz-local" role="menuitem" href={handoff.href} title={handoff.title}
+                aria-label={`${m.name}, runs on your Mac${m.on ? ` (${m.on})` : ''}, ${handoff.does}`}
+                onClick={() => { setMenu(null); setQ('') }}>
+                <I d={P.laptop} style={{ color: placeColor('local') }} />
+                <span className="cz-mname">{m.name}</span>{m.on && <span className="cz-on">{m.on}</span>}
+                <span className="cz-r">$0 a token</span>
+                <I d={P.out} className="cz-out" />
+              </a>
             ))}
+            {!q.trim() && !hasThisMac(p.machines ?? []) && (machineChip
+              ? <div className="cz-menu-note"><DownloadAppChip label="Runs from the Mac app" machines={p.machines} /></div>
+              : phone && <div className="cz-menu-note">Runs from the Mac app. <a href="/mac">Get the Mac app</a></div>)}
             {cloud.length > 0 && <div className="cz-menu-h">Frog Cloud</div>}
             {cloud.map((m) => (
               <button key={m.id} type="button" role="menuitemradio" aria-checked={m.id === p.model} onClick={() => { p.onModel?.(m.id); setMenu(null); setQ('') }}>

@@ -74,6 +74,28 @@ export function machineModels(machines: Machine[]): MachineModel[] {
   return [...rows.values()].sort((a, b) => Number(running(b)) - Number(running(a)) || a.name.localeCompare(b.name))
 }
 
+/** The local models the composer's model menu offers, in the Mac's order: the catalog's `menu`
+ *  entries that run on a Mac, as the Mac's `SuggestedModel.all` (ModelDownloads.swift) reads them. */
+export const menuLocalModels = () => localCatalog.filter((m) => m.menu === true && m.runs_on.includes('metal'))
+
+/** One "Run it on your Mac" row: the model, and where the account already has it ("This Mac,
+ *  mew"), or null when the web can't know. */
+export interface LocalRow { key: string; name: string; on: string | null }
+
+/** The web menu's local rows: the catalog's menu models in order, each saying which of your
+ *  machines hold it when the gateway reports them; then what's on a machine the catalog doesn't
+ *  offer. Nothing is guessed: with no machines reported, `on` stays null. */
+export function localRows(machines: Machine[]): LocalRow[] {
+  const held = new Map(machineModels(machines).map((m) => [m.name.toLowerCase(), m]))
+  const rows: LocalRow[] = menuLocalModels().map((m) => {
+    const h = held.get(m.name.toLowerCase())
+    held.delete(m.name.toLowerCase())
+    return { key: m.id, name: m.name, on: h ? places(h) : null }
+  })
+  for (const h of held.values()) rows.push({ key: h.spec, name: h.name, on: places(h) })
+  return rows
+}
+
 export const running = (m: MachineModel) => m.holds.some((h) => h.action === 'running')
 
 /** What picking it does, when nothing runs it yet: "loads" beats "swaps". */
