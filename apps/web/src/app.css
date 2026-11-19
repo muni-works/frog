@@ -173,8 +173,10 @@ a { color: var(--frog); }
   .titlebar { height: 48px; padding: 0 10px; gap: 6px; }
   .titlebar > span { display: none; }
   .scroll { padding: 12px 0 8px; }
-  .dock { padding: 4px 8px 8px; padding-bottom: max(8px, env(safe-area-inset-bottom)); }
-  .dock > * { margin-inline: 0; }
+  .dock { padding: 4px 0 8px; padding-bottom: max(8px, env(safe-area-inset-bottom)); }
+  /* The composer is part of the column: the transcript's narrow gutter, so its edges are the
+   * column's (docs/design/transcript/spec.md, "Two lines"). */
+  .dock > * { margin-inline: var(--tx-gutter-narrow); }
   .main.home .home-hero { padding: 12px 16px 44px; }
   .main.home h1 { font-size: 24px; text-align: center; }
   .starters { gap: 6px; }

@@ -38,6 +38,18 @@ final class MessageTextTests: XCTestCase {
         board.releaseGlobally()
     }
 
+    /// In a reply a top-level marker hangs in the gutter: it's kept in the copied text, with a
+    /// space, though it takes no room in the line.
+    func testCopyAHungList() throws {
+        let view = MessageTextView(usingTextLayoutManager: false)
+        view.show([.bullet(indent: 0, marker: "•", text: "one"), .bullet(indent: 0, marker: "2.", text: "two")], hang: true)
+        view.selectAll(nil)
+        let board = NSPasteboard(name: NSPasteboard.Name("frog-test-\(UUID().uuidString)"))
+        XCTAssertTrue(view.writeSelection(to: board, types: [.string]))
+        XCTAssertEqual(try XCTUnwrap(board.string(forType: .string)), "• one\n2. two")
+        board.releaseGlobally()
+    }
+
     /// Every block kind in one message, rendered for review: `$TMPDIR/frog-snapshots/message-text.png`.
     func testRenderMessage() throws {
         let md = """

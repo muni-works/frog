@@ -142,3 +142,31 @@ All lengths are points (CSS px on the web), rounded to 0.1.
 Proof the diff works, web against web (`../transcript/metrics/`): 1280 and 1600 match
 (`diff-1280-1600.txt`, exit 0). 1280 against 375 fails, as it should (`diff-1280-375.txt`, 27
 differences, exit 1).
+
+## Edges: two lines down the column
+
+The spec's left and right lines (`../transcript/spec.md`, "Two lines"), measured. The edge
+fixture ([`edges-fixture.mjs`](edges-fixture.mjs), written out as `edges.jsonl`) has every kind of
+row: prose, a paragraph that opens with inline code, a heading, a list, a code block, a table, tool
+lines of every kind with their marks and results, an opened failed test run, the footer and its turn
+line, an error, a question card, a permission card, the waiting row and its stats, an inline visual,
+and the composer. Each app writes `frog-transcript-edges/1` (format in [`edges.mjs`](edges.mjs)):
+every element's left and right edge from the column's box, and which line it claims (`text`, `box`,
+`right`, or `hung` for a mark). [`check-edges.mjs`](check-edges.mjs) prints the table and fails on
+anything more than 0.5 pt off its line, or a kind of row missing.
+
+```bash
+node docs/design/parity/edges.mjs http://127.0.0.1:5173/s/s_parity edges-web.json 1280 2600 dark
+docs/design/parity/mac-edges.sh edges-mac.json          # the parity build, replaying edges.jsonl
+node docs/design/parity/check-edges.mjs edges-web.json edges-mac.json
+```
+
+The tests: `apps/web/test/transcript-edges.test.ts` (headless Chrome, the parity gateway serving
+the fixture; part of `npm test`) and `FrogTests/TranscriptEdgesTests` (the fixture fed to a hosted
+pane, transcript and composer; `TEST_RUNNER_FROG_EDGES_OUT=<dir>` writes its dumps). Regenerate
+`edges.jsonl` after changing the fixture (`node edges-fixture.mjs > edges.jsonl`): the Mac test
+reads the file. The before and after dumps are in `../transcript/edges/`.
+
+Known: twice, the first `mac-edges.sh` run after a rebuild read the table's box at 12 (the table sits
+above the replay window's fold, so it couldn't be checked in pixels); reruns and the hosted-pane
+test read 0. If it fails on that row alone, run it again with a longer `PARITY_MAC_WAIT`.

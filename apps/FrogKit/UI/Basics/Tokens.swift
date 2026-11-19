@@ -161,6 +161,8 @@ enum Tokens {
             static let hang: CGFloat = 26
             /// A line's mark box (icon, live dot, fold chevron).
             static let mark: CGFloat = 18
+            /// A list's marker column: a nested list steps in by this. A top-level list's marker hangs in the gutter, so its words start on the edge.
+            static let marker: CGFloat = 22
             /// A line's hover plate: its height.
             static let plate: CGFloat = 24
             /// How far the plate reaches past the text on each side, so words don't move.

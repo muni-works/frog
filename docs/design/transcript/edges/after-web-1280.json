@@ -1,0 +1,656 @@
+{
+  "format": "frog-transcript-edges/1",
+  "app": "web",
+  "width": 1280,
+  "height": 2600,
+  "look": "dark",
+  "column": 720,
+  "indent": 0,
+  "elements": [
+    {
+      "kind": "prompt",
+      "part": "bubble",
+      "text": "upload_retries_on_503 is flaky. Find out why and fix it.40 m",
+      "left": 349.8,
+      "right": 720,
+      "claims": [
+        "right"
+      ]
+    },
+    {
+      "kind": "thought",
+      "part": "words",
+      "text": "Thought for 1s",
+      "left": 0,
+      "right": 81.5,
+      "claims": [
+        "text"
+      ]
+    },
+    {
+      "kind": "thought",
+      "part": "mark",
+      "text": "",
+      "left": -26,
+      "right": -8,
+      "claims": [
+        "hung"
+      ]
+    },
+    {
+      "kind": "fold",
+      "part": "words",
+      "text": "4 steps 2.2s",
+      "left": 0,
+      "right": 720,
+      "claims": [
+        "text"
+      ]
+    },
+    {
+      "kind": "fold",
+      "part": "mark",
+      "text": "",
+      "left": -26,
+      "right": -8,
+      "claims": [
+        "hung"
+      ]
+    },
+    {
+      "kind": "fold",
+      "part": "result",
+      "text": "2.2s",
+      "left": 697.5,
+      "right": 720,
+      "claims": [
+        "right"
+      ]
+    },
+    {
+      "kind": "line:command",
+      "part": "words",
+      "text": "Failed cargo test -q upload 10 of 11 · 9.0s",
+      "left": 0,
+      "right": 720,
+      "claims": [
+        "text"
+      ]
+    },
+    {
+      "kind": "line:command",
+      "part": "mark",
+      "text": "",
+      "left": -26,
+      "right": -8,
+      "claims": [
+        "hung"
+      ]
+    },
+    {
+      "kind": "line:command",
+      "part": "result",
+      "text": "10 of 11 · 9.0s",
+      "left": 645.2,
+      "right": 720,
+      "claims": [
+        "right"
+      ]
+    },
+    {
+      "kind": "line:command",
+      "part": "opened: failing tests",
+      "text": "upload_retries_on_503",
+      "left": 0,
+      "right": 151.2,
+      "claims": [
+        "text"
+      ]
+    },
+    {
+      "kind": "line:command",
+      "part": "opened: output box",
+      "text": "running 11 tests ..........F failures: upload_retries_on_503",
+      "left": 0,
+      "right": 720,
+      "claims": [
+        "box",
+        "right"
+      ]
+    },
+    {
+      "kind": "line:command",
+      "part": "opened: caption",
+      "text": "Ran in your Frog Cloud sandbox",
+      "left": 0,
+      "right": 162.3,
+      "claims": [
+        "text"
+      ]
+    },
+    {
+      "kind": "prose (opens with code)",
+      "part": "words",
+      "text": "Backoff::delay took no Rng , so the jitter was whatever thre",
+      "left": 0,
+      "right": 519.3,
+      "claims": [
+        "text"
+      ]
+    },
+    {
+      "kind": "prose (opens with code)",
+      "part": "chip background",
+      "text": "",
+      "left": -4,
+      "right": 113.2,
+      "claims": []
+    },
+    {
+      "kind": "heading",
+      "part": "words",
+      "text": "What changed",
+      "left": 0,
+      "right": 93,
+      "claims": [
+        "text"
+      ]
+    },
+    {
+      "kind": "list item",
+      "part": "words",
+      "text": "The delay takes an Rng , so a test can seed it.",
+      "left": 0,
+      "right": 286.7,
+      "claims": [
+        "text"
+      ]
+    },
+    {
+      "kind": "list item",
+      "part": "words",
+      "text": "cargo test -q upload passes eleven of eleven, every run.",
+      "left": 0,
+      "right": 381.7,
+      "claims": [
+        "text"
+      ]
+    },
+    {
+      "kind": "list item",
+      "part": "words",
+      "text": "The jitter is half the base at most.",
+      "left": 0,
+      "right": 208.9,
+      "claims": [
+        "text"
+      ]
+    },
+    {
+      "kind": "code",
+      "part": "box",
+      "text": "",
+      "left": 0,
+      "right": 720,
+      "claims": [
+        "box",
+        "right"
+      ]
+    },
+    {
+      "kind": "table",
+      "part": "box",
+      "text": "",
+      "left": 0,
+      "right": 237.8,
+      "claims": [
+        "box"
+      ]
+    },
+    {
+      "kind": "line:edit",
+      "part": "words",
+      "text": "Edited src/retry.rs + 1 − 1",
+      "left": 0,
+      "right": 720,
+      "claims": [
+        "text"
+      ]
+    },
+    {
+      "kind": "line:edit",
+      "part": "mark",
+      "text": "",
+      "left": -26,
+      "right": -8,
+      "claims": [
+        "hung"
+      ]
+    },
+    {
+      "kind": "line:edit",
+      "part": "result",
+      "text": "+ 1 − 1",
+      "left": 689.7,
+      "right": 720,
+      "claims": [
+        "right"
+      ]
+    },
+    {
+      "kind": "line:command",
+      "part": "words",
+      "text": "Ran cargo test -q upload 11 of 11 · 14s",
+      "left": 0,
+      "right": 720,
+      "claims": [
+        "text"
+      ]
+    },
+    {
+      "kind": "line:command",
+      "part": "mark",
+      "text": "",
+      "left": -26,
+      "right": -8,
+      "claims": [
+        "hung"
+      ]
+    },
+    {
+      "kind": "line:command",
+      "part": "result",
+      "text": "11 of 11 · 14s",
+      "left": 648.3,
+      "right": 720,
+      "claims": [
+        "right"
+      ]
+    },
+    {
+      "kind": "line:search",
+      "part": "words",
+      "text": "Searched thread_rng 3 matches in 2 files",
+      "left": 0,
+      "right": 720,
+      "claims": [
+        "text"
+      ]
+    },
+    {
+      "kind": "line:search",
+      "part": "mark",
+      "text": "",
+      "left": -26,
+      "right": -8,
+      "claims": [
+        "hung"
+      ]
+    },
+    {
+      "kind": "line:search",
+      "part": "result",
+      "text": "3 matches in 2 files",
+      "left": 620,
+      "right": 720,
+      "claims": [
+        "right"
+      ]
+    },
+    {
+      "kind": "prose",
+      "part": "words",
+      "text": "Then the docs, the web and one agent for the rest.",
+      "left": 0,
+      "right": 314.4,
+      "claims": [
+        "text"
+      ]
+    },
+    {
+      "kind": "line:web",
+      "part": "words",
+      "text": "Fetched docs.rs 12 KB",
+      "left": 0,
+      "right": 720,
+      "claims": [
+        "text"
+      ]
+    },
+    {
+      "kind": "line:web",
+      "part": "mark",
+      "text": "",
+      "left": -26,
+      "right": -8,
+      "claims": [
+        "hung"
+      ]
+    },
+    {
+      "kind": "line:web",
+      "part": "result",
+      "text": "12 KB",
+      "left": 688.7,
+      "right": 720,
+      "claims": [
+        "right"
+      ]
+    },
+    {
+      "kind": "line:web",
+      "part": "words",
+      "text": "Searched the web for rust seeded rng test 8 results",
+      "left": 0,
+      "right": 720,
+      "claims": [
+        "text"
+      ]
+    },
+    {
+      "kind": "line:web",
+      "part": "mark",
+      "text": "",
+      "left": -26,
+      "right": -8,
+      "claims": [
+        "hung"
+      ]
+    },
+    {
+      "kind": "line:web",
+      "part": "result",
+      "text": "8 results",
+      "left": 675.1,
+      "right": 720,
+      "claims": [
+        "right"
+      ]
+    },
+    {
+      "kind": "line:other",
+      "part": "words",
+      "text": "Delegated Check every other retry call site Ran an agent · 6",
+      "left": 0,
+      "right": 720,
+      "claims": [
+        "text"
+      ]
+    },
+    {
+      "kind": "line:other",
+      "part": "mark",
+      "text": "",
+      "left": -26,
+      "right": -8,
+      "claims": [
+        "hung"
+      ]
+    },
+    {
+      "kind": "line:other",
+      "part": "result",
+      "text": "Ran an agent · 6 tool calls",
+      "left": 587.7,
+      "right": 720,
+      "claims": [
+        "right"
+      ]
+    },
+    {
+      "kind": "prose",
+      "part": "words",
+      "text": "It wanted to force-push; you said no.",
+      "left": 0,
+      "right": 230.4,
+      "claims": [
+        "text"
+      ]
+    },
+    {
+      "kind": "line:command",
+      "part": "words",
+      "text": "Didn't run git push --force you said no",
+      "left": 0,
+      "right": 720,
+      "claims": [
+        "text"
+      ]
+    },
+    {
+      "kind": "line:command",
+      "part": "mark",
+      "text": "",
+      "left": -26,
+      "right": -8,
+      "claims": [
+        "hung"
+      ]
+    },
+    {
+      "kind": "line:command",
+      "part": "result",
+      "text": "you said no",
+      "left": 661.7,
+      "right": 720,
+      "claims": [
+        "right"
+      ]
+    },
+    {
+      "kind": "visual",
+      "part": "box",
+      "text": "Made a visualretry timingSource",
+      "left": 0,
+      "right": 720,
+      "claims": [
+        "box",
+        "right"
+      ]
+    },
+    {
+      "kind": "visual",
+      "part": "title (inside)",
+      "text": "Made a visual retry timing Source",
+      "left": 36,
+      "right": 666,
+      "claims": []
+    },
+    {
+      "kind": "prose",
+      "part": "words",
+      "text": "All eleven upload tests pass. I ran them once after the chan",
+      "left": 0,
+      "right": 489,
+      "claims": [
+        "text"
+      ]
+    },
+    {
+      "kind": "footer",
+      "part": "words",
+      "text": "Qwen3 Coder Next 56s 1,902 tokens <$0.01",
+      "left": 0,
+      "right": 249.8,
+      "claims": [
+        "text"
+      ]
+    },
+    {
+      "kind": "footer",
+      "part": "turn line (drawn)",
+      "text": "",
+      "left": 521.4,
+      "right": 720,
+      "claims": [
+        "right"
+      ]
+    },
+    {
+      "kind": "footer",
+      "part": "turn line (box)",
+      "text": "",
+      "left": 520,
+      "right": 720,
+      "claims": [
+        "right"
+      ]
+    },
+    {
+      "kind": "prompt",
+      "part": "bubble",
+      "text": "Push it.40 minutes ago·",
+      "left": 645.3,
+      "right": 720,
+      "claims": [
+        "right"
+      ]
+    },
+    {
+      "kind": "error",
+      "part": "box",
+      "text": "Couldn't reach the model. Check your connection and try agai",
+      "left": 0,
+      "right": 720,
+      "claims": [
+        "box",
+        "right"
+      ]
+    },
+    {
+      "kind": "error",
+      "part": "words",
+      "text": "Couldn't reach the model. Check your connection and try agai",
+      "left": 14,
+      "right": 410.1,
+      "claims": []
+    },
+    {
+      "kind": "prompt",
+      "part": "bubble",
+      "text": "nice. open a PR40 minutes ago·",
+      "left": 595.9,
+      "right": 720,
+      "claims": [
+        "right"
+      ]
+    },
+    {
+      "kind": "prose",
+      "part": "words",
+      "text": "Which base should the PR go to?",
+      "left": 0,
+      "right": 203.9,
+      "claims": [
+        "text"
+      ]
+    },
+    {
+      "kind": "question card",
+      "part": "box",
+      "text": "Which base should the PR go to?1mainthe default branch2relea",
+      "left": 0,
+      "right": 720,
+      "claims": [
+        "box",
+        "right"
+      ]
+    },
+    {
+      "kind": "question card",
+      "part": "title (inside)",
+      "text": "Which base should the PR go to?",
+      "left": 16,
+      "right": 229.1,
+      "claims": []
+    },
+    {
+      "kind": "card",
+      "part": "box",
+      "text": "Allow this command?gh pr create --fill⋯Always allow `gh` thi",
+      "left": 0,
+      "right": 720,
+      "claims": [
+        "box",
+        "right"
+      ]
+    },
+    {
+      "kind": "card",
+      "part": "title (inside)",
+      "text": "Allow this command?",
+      "left": 16,
+      "right": 156.8,
+      "claims": []
+    },
+    {
+      "kind": "live",
+      "part": "words",
+      "text": "Waiting for you",
+      "left": 0,
+      "right": 83.8,
+      "claims": [
+        "text"
+      ]
+    },
+    {
+      "kind": "live",
+      "part": "mark",
+      "text": "",
+      "left": -26,
+      "right": -8,
+      "claims": [
+        "hung"
+      ]
+    },
+    {
+      "kind": "stats",
+      "part": "words",
+      "text": "39m 32s waited 39m 31s",
+      "left": 0,
+      "right": 138.5,
+      "claims": [
+        "text"
+      ]
+    },
+    {
+      "kind": "stats",
+      "part": "turn line (drawn)",
+      "text": "",
+      "left": 520,
+      "right": 720,
+      "claims": [
+        "right"
+      ]
+    },
+    {
+      "kind": "stats",
+      "part": "turn line (box)",
+      "text": "",
+      "left": 520,
+      "right": 720,
+      "claims": [
+        "right"
+      ]
+    },
+    {
+      "kind": "composer",
+      "part": "box",
+      "text": "",
+      "left": 0,
+      "right": 720,
+      "claims": [
+        "box",
+        "right"
+      ]
+    },
+    {
+      "kind": "composer",
+      "part": "text (inside)",
+      "text": "Add a follow-up",
+      "left": 15,
+      "right": 705,
+      "claims": []
+    }
+  ]
+}
