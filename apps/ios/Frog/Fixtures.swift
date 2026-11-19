@@ -132,7 +132,7 @@ final class FixturePlayer: ConversationLink {
 
     func send(_ op: Op) {
         switch op {
-        case .permission(_, let decision, _):
+        case .permission(_, let decision, _, _):
             if decision == .deny { stopped = true; finish(.denied) }
             answered?.resume()
             answered = nil

@@ -1,5 +1,6 @@
 import SwiftUI
 import XCTest
+import UserNotifications
 @testable import Frog
 
 /// Customize from the conversation (docs/customize-events.md; canvas N7 Remember, N9 Change): the
@@ -199,6 +200,23 @@ final class CustomizeCardTests: XCTestCase {
         let plain = try XCTUnwrap(c.permission)
         XCTAssertTrue(Notifier.offersAllow(plain))
         XCTAssertTrue(ThreadCardController.offersAllow(plain))
+    }
+
+    /// Review 4, LIVE 4: tapping a proposal's banner opens the session that asked, at its card,
+    /// rather than only bringing frog forward; Allow never answers it.
+    func testTappingAProposalNotificationOpensItsSession() throws {
+        let c = conversation()
+        send(c, #""permission_request","id":"p_91","item":"call_4","name":"Customize","arg":"Remember this?","always":"","proposal":\#(Self.remember)"#)
+        let p = try XCTUnwrap(c.permission)
+        var opened = 0
+        var answered: [Decision] = []
+        Notifier.shared.needsPermission(project: "pond", request: p, open: { opened += 1 }) { answered.append($0) }
+        Notifier.shared.respond(permission: p.id, action: UNNotificationDefaultActionIdentifier)
+        XCTAssertEqual(opened, 1)
+        Notifier.shared.respond(permission: p.id, action: "allow")
+        XCTAssertEqual(opened, 2, "no Allow for a proposal: it opens the card")
+        XCTAssertTrue(answered.isEmpty)
+        Notifier.shared.resolved(p.id)
     }
 
     /// Review 3, item 6: the phone's choice reaches the card exactly; one without a choice the

@@ -259,7 +259,9 @@ struct TurnPanel: View {
         .background(Tokens.raised, in: .rect(cornerRadius: Tokens.Radius.card))
         .shadow(color: .black.opacity(0.3), radius: 24, y: 8)
         .onKeyPress(.escape) { close(); return .handled }
+        #if os(macOS)
         .onExitCommand(perform: close)
+        #endif
     }
 
     private func header(length: UInt64) -> some View {

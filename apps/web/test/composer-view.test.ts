@@ -103,6 +103,40 @@ test("typed: a chip's text put in the field, or an edited-back turn, goes untype
   act(() => r.unmount());
 });
 
+// Review 4, LIVE 1: up-arrow recall refills the field with the last send. It comes back as typed
+// or untyped as it was sent, until the person edits it.
+test("typed: a recalled send keeps whether it was typed, until edited", () => {
+  const sent: [string, boolean | undefined][] = [];
+  const key = (k: string) => ({ key: k, shiftKey: false, metaKey: false, ctrlKey: false, altKey: false, nativeEvent: { isComposing: false }, preventDefault() {} });
+  let r!: TestRenderer.ReactTestRenderer;
+  const props = (restore?: { text: string; images: [] }) => ({ ...base, session: true, chips: [{ text: "remember that we ship on Fridays" }], restore, onSend: (t: string, _i: unknown, typed?: boolean) => { sent.push([t, typed]); } });
+  const box = () => find(r.root, (n) => n.type === "textarea");
+  act(() => { r = TestRenderer.create(h(Composer, props())); });
+  act(() => find(r.root, (n) => n.type === "button" && n.props.className?.includes("cz-sug")).props.onClick());
+  act(() => box().props.onKeyDown(key("Enter")));
+  // Recalled unedited: still the chip's words.
+  act(() => box().props.onKeyDown(key("ArrowUp")));
+  act(() => box().props.onKeyDown(key("Enter")));
+  // An unedited Edit of a past turn, sent and then recalled.
+  act(() => r.update(h(Composer, props({ text: "from now on use tabs", images: [] }))));
+  act(() => box().props.onKeyDown(key("Enter")));
+  act(() => box().props.onKeyDown(key("ArrowUp")));
+  act(() => box().props.onKeyDown(key("Enter")));
+  // Recalled and edited: the person's own words now.
+  act(() => box().props.onKeyDown(key("ArrowUp")));
+  act(() => box().props.onChange({ target: { value: "from now on use spaces", style: {}, scrollHeight: 20 } }));
+  act(() => box().props.onKeyDown(key("Enter")));
+  // A typed send recalls typed.
+  act(() => box().props.onKeyDown(key("ArrowUp")));
+  act(() => box().props.onKeyDown(key("Enter")));
+  assert.deepEqual(sent, [
+    ["remember that we ship on Fridays", false], ["remember that we ship on Fridays", false],
+    ["from now on use tabs", false], ["from now on use tabs", false],
+    ["from now on use spaces", true], ["from now on use spaces", true],
+  ]);
+  act(() => r.unmount());
+});
+
 test("removing a queued chip removes that follow-up", () => {
   const removed: number[] = [];
   let r!: TestRenderer.ReactTestRenderer;

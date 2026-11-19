@@ -76,7 +76,6 @@ targets:
       - path: Shared/PairingCode.swift
         group: Shared
       - path: ../FrogKit/Core/PushCrypto.swift
-        group: FrogKit/Core
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: toys.frog.remote.push

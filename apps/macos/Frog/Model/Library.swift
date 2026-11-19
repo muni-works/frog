@@ -576,6 +576,25 @@ final class Library {
     }
 
     /// Focus the actual pane as well as its window, including another tab in the same group.
+    /// A notification for this session was tapped: frog comes forward on it, out of Settings
+    /// or Documentation, its card in view. Just forward when no window shows it.
+    /// `id`: the engine's session id (what a pane shows); `row`: the sidebar row's (a cloud
+    /// session's gateway id), to open it in the front window when no pane shows it.
+    func reveal(_ id: String?, row: String?) {
+        NSApp.activate()
+        if let id, let (target, panes) = location(for: id), panes.focusSession(id) {
+            panes.backToApp()
+            target.makeKeyAndOrderFront(nil)
+            return
+        }
+        guard let row, let info = sessions.first(where: { $0.id == row }) else { return }
+        let front = windows.values.first { $0.window?.isKeyWindow == true } ?? windows.values.first { $0.window != nil }
+        guard let window = front?.window, let panes = front?.panes else { return }
+        panes.backToApp()
+        panes.open(info, in: panes.focused, window: window)
+        window.makeKeyAndOrderFront(nil)
+    }
+
     func focusSession(_ id: String, excluding window: NSWindow?) -> Bool {
         guard let (target, panes) = location(for: id), target !== window else { return false }
         guard panes.focusSession(id) else { return false }

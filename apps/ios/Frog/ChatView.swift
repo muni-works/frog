@@ -20,6 +20,9 @@ struct ChatView: View {
     @State private var pickingModel = false
     /// Images going with the next message.
     @State private var attachments: [ToolImage] = []
+    /// The field's text as it was filled without the person typing it (a queued message that
+    /// went untyped, taken back): sent unedited it goes untyped (`ComposerTyped`).
+    @State private var untyped: String?
     @State private var pickingPhotos = false
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var showChanges = false
@@ -259,8 +262,9 @@ struct ChatView: View {
         // A queued message's "x" puts it back in the field to edit, ahead of what's typed.
         .onChange(of: conversation.restored) { _, back in
             guard !back.isEmpty else { return }
-            (draft, attachments) = conversation.takeRestored(into: draft, attachments: attachments)
+            (draft, attachments, untyped) = conversation.takeRestored(into: draft, attachments: attachments, untyped: untyped)
         }
+        .onChange(of: draft) { _, now in if now.isEmpty { untyped = nil } }
     }
 
     /// Images for the next message: from Photos, or what's been copied.
@@ -286,10 +290,12 @@ struct ChatView: View {
     private func send() {
         guard canSend else { return }
         FrogSounds.shared.play(.plip)
-        // The person typed it in this composer: the one phone send marked typed. Siri intents
-        // and notification replies build their own ops and never are.
-        conversation.submit(draft, images: attachments, typed: true)
+        // Typed in this composer, unless it's still the unedited text of a message taken back
+        // that went untyped. Siri intents and notification replies build their own ops and
+        // never are.
+        conversation.submit(draft, images: attachments, typed: ComposerTyped.sent(draft, untyped: untyped))
         draft = ""
+        untyped = nil
         attachments = []
     }
 }

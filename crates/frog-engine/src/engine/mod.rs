@@ -3114,13 +3114,21 @@ impl Agent {
     }
 
     /// "Remember that …" in an ordinary message saves a note (and the turn still runs).
+    /// Called only for typed text. In a child it keeps nothing and says so, with the notice
+    /// `/remember` gets there (review 4, LIVE 4).
     fn remember_from(&mut self, text: &str) {
-        if !self.top_level() {
-            return;
-        }
         let Some(note) = crate::memory::detect_remember(text) else {
             return;
         };
+        if !self.top_level() {
+            if !self.subagent {
+                self.notice(
+                    Level::Warn,
+                    "/remember works only in a session you started, not one another session started",
+                );
+            }
+            return;
+        }
         let Some(store) = &self.memory else { return };
         store.set_session(&self.conv.session_id, &self.title());
         let scope = if self.chat {

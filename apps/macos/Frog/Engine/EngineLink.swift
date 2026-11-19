@@ -105,7 +105,11 @@ final class MacEffects: ConversationEffects {
     }
 
     func asked(_ c: Conversation, _ request: PermissionRequest) {
-        Notifier.shared.needsPermission(project: c.folder.lastPathComponent, request: request) { [weak c] d in
+        let (session, row) = (c.sessionID, c.cloudSession ?? c.sessionID)
+        Notifier.shared.needsPermission(
+            project: c.folder.lastPathComponent, request: request,
+            open: { Library.shared.reveal(session, row: row) }
+        ) { [weak c] d in
             c?.answer(d)
         }
     }
