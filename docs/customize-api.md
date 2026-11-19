@@ -26,6 +26,10 @@ come back with `state: "unknown"` and no tools, and everything else is complete.
 
 Nothing here leaves the machine. Use counts live in `~/.local/share/frog/usage.jsonl`.
 
+The agent can make some of the same changes from a conversation (the `Customize` tool, behind
+approval); those arrive as `customize_applied` events (docs/customize-events.md). A page that is
+open should re-read the snapshot when it sees one.
+
 ## Tokens
 
 Every `tokens` is what the item adds to **every turn**, measured on the text the engine actually
@@ -201,7 +205,7 @@ a new `FROG.md` at the project root.
 ## Changes
 
 ```jsonc
-{ "change": "skill",        "id": "<skill id>",  "on": false }
+{ "change": "skill",        "name": "release-notes", "on": false }
 { "change": "connection",   "name": "figma",     "on": false }
 { "change": "tool",         "exposed": "mcp__figma__get_file", "on": false }
 { "change": "rule_add",     "path": "<file>" | null, "scope": "project" | "everywhere", "text": "…" }
@@ -211,8 +215,9 @@ a new `FROG.md` at the project root.
 { "change": "memory_remove","id": "<note id>", "scope": "project" | "everywhere" }
 ```
 
-On/off is Frog's own choice, kept in `~/.config/frog/customize.json`, never written into a
-Claude Code file or a project's `.mcp.json`. The snapshot reflects a change at once; a session
+On/off is Frog's own choice, kept in `~/.local/share/frog/customize.json` (the same file the
+agent's `Customize` tool writes, docs/customize-events.md), never written into a Claude Code file
+or a project's `.mcp.json`. A skill is switched by name: off hides every skill of that name. The snapshot reflects a change at once; a session
 that receives `customize_change` applies it from its next turn, and other sessions when they
 next start.
 
