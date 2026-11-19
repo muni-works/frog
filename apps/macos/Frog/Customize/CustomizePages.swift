@@ -513,29 +513,63 @@ struct CustomizeLinkStyle: ButtonStyle {
     }
 }
 
-// MARK: - Memory (F5Memory)
+// MARK: - Memory (M1Memory)
 
-/// Memory: a dated rail of the notes Frog kept, newest at the top, each with where it applies;
-/// hover one to Forget it.
+/// Memory: what Frog has learned. A card "What Frog knows" holds the "Notes on its own" switch
+/// and, once the engine places the notes, the map: a dot per note where notes sharing words land
+/// close together, faint group outlines, notes used in the last turn lit, unused ones dim, and
+/// an orange dot on a pair that disagrees. Then the pairs that need you, the notes your last
+/// turn used, and every note as a dated rail (what VoiceOver and scanning use; the map is a
+/// picture of the same list).
 struct MemoryPage: View {
     let store: CustomizeStore
+    var makeRule: ((MemoryNote) -> Void)? = nil
+    @State private var selected: String?
 
     var body: some View {
+        @Bindable var store = store
         CustomizeListPage(section: "memory") {
             if let notes = store.notes {
+                KnowsCard(store: store, notes: notes, selected: $selected)
+                if let pairs = store.report?.memory.pairs, !pairs.isEmpty {
+                    SettingsGroupLabel(text: "Needs you")
+                    // Flagging compares words, so this list is a start, not a guarantee.
+                    Text("Frog flags notes that share most of their words. It can miss a disagreement worded differently, and flag two that only sound alike.")
+                        .font(.frog(size: 12)).foregroundStyle(Tokens.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.bottom, 2)
+                    SettingsRows {
+                        ForEach(pairs) { p in PairRow(pair: p, notes: notes) { store.change(.memoryResolve(pair: p.key, keepNewer: $0)) } }
+                    }
+                }
+                let used = notes.filter(\.lit)
+                if !used.isEmpty {
+                    SettingsGroupLabel(text: "Used in your last turn")
+                    SettingsRows {
+                        ForEach(used, id: \.url) { n in
+                            UsedRow(note: n, makeRule: makeRule.map { f in { f(n) } }) { store.forget(n) }
+                        }
+                    }
+                }
                 if notes.isEmpty {
                     SettingsRows {
-                        SettingsRow("No notes yet", description: "Say \"remember this\" in any conversation and Frog keeps a note here.") { EmptyView() }
+                        SettingsRow("No notes yet", description: store.autoNote && CustomizeStore.notesCapability
+                                    ? "Frog notes things as you work: a correction, a preference, a fact about the project. Or say \"remember this\"."
+                                    : "Say \"remember this\" in any conversation and Frog keeps a note here.") { EmptyView() }
                     }
                 } else {
+                    SettingsGroupLabel(text: "All notes")
                     VStack(alignment: .leading, spacing: 0) {
                         ForEach(Array(notes.enumerated()), id: \.element.url) { i, n in
-                            MemoryEvent(note: n, newest: i == 0, project: store.projectName) { store.forget(n) }
+                            MemoryEvent(note: n, newest: i == 0, project: store.projectName, selected: selected == n.id) { store.forget(n) }
                         }
                     }
                     .background(alignment: .topLeading) {
                         Rectangle().fill(Tokens.line).frame(width: 1).padding(.leading, 83).padding(.vertical, 10)
                     }
+                }
+                if let problem = store.changeProblem {
+                    Text(problem).font(.frog(size: 12.5)).foregroundStyle(Tokens.warn).padding(.top, 8)
                 }
             } else {
                 CustomizeLoading()
@@ -544,10 +578,242 @@ struct MemoryPage: View {
     }
 }
 
+/// "What Frog knows": the noting switch, and the map when there's one to draw.
+private struct KnowsCard: View {
+    @Bindable var store: CustomizeStore
+    let notes: [MemoryNote]
+    @Binding var selected: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 14) {
+                Text("What Frog knows").font(.frog(size: 13, weight: .semibold))
+                Spacer()
+                Text("Notes on its own").font(.frog(size: 12.5)).foregroundStyle(Tokens.textSecondary)
+                FrogToggle(label: "Frog notes things on its own", isOn: $store.autoNote)
+                    .help(store.autoNote ? "Frog keeps short notes from what you say and what it reads, with Undo under the reply" : "Frog keeps a note only when you say \"remember this\"")
+            }
+            if !CustomizeStore.notesCapability {
+                Text("This version of Frog doesn't take notes on its own yet. Say \"remember this\" in a conversation to keep one.")
+                    .font(.frog(size: 12.5)).foregroundStyle(Tokens.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let map = MemoryMap.Model(notes: notes, groups: store.report?.memory.groups ?? [], pairs: store.report?.memory.pairs ?? [],
+                                         mode: store.report?.memory.mode) {
+                MemoryMap(model: map, selected: $selected)
+                if let id = selected, let n = notes.first(where: { $0.id == id }) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(n.body).font(.frog(size: 13.5)).fixedSize(horizontal: false, vertical: true)
+                        if let p = n.provenance { Text(p).font(.frog(size: 12.5)).foregroundStyle(Tokens.textTertiary) }
+                    }
+                    .padding(.vertical, 4)
+                }
+                MemoryKey()
+            } else if !notes.isEmpty {
+                Text(notes.count == 1 ? "One note so far. Its place among others shows once there are a few." : "The map shows once Frog has placed your notes.")
+                    .font(.frog(size: 12.5)).foregroundStyle(Tokens.textTertiary)
+            }
+        }
+        .padding(.top, 14).padding(.horizontal, 18).padding(.bottom, 12)
+        .background(CustomizeLook.card, in: .rect(cornerRadius: 14))
+    }
+}
+
+/// The map: one dot per note at the engine's place for it.
+struct MemoryMap: View {
+    struct Model: Equatable {
+        struct Dot: Equatable, Identifiable { let id: String; let text: String; let at: CGPoint; let lit: Bool; let stale: Bool; let flagged: Bool }
+        struct Ring: Equatable, Identifiable { let id: Int; let label: String; let members: [CGPoint]; let center: CGPoint }
+        let dots: [Dot]
+        let rings: [Ring]
+        let pairs: Int
+
+        /// Nil when there's nothing to place: the engine's index mode, no places, or fewer
+        /// than two notes (the list says it better).
+        init?(notes: [MemoryNote], groups: [CustomizeReport.Group], pairs: [CustomizeReport.Pair], mode: String?) {
+            guard mode != "index", notes.count >= 2, notes.allSatisfy({ $0.place != nil }) else { return nil }
+            let flagged = Set(pairs.filter { $0.kind == "disagree" }.map(\.newer.id))
+            dots = notes.map { Dot(id: $0.id, text: $0.body, at: $0.place!, lit: $0.lit, stale: $0.stale && !$0.lit, flagged: flagged.contains($0.id)) }
+            rings = groups.compactMap { g in
+                let members = notes.filter { $0.group == g.id }.compactMap(\.place)
+                return members.isEmpty ? nil : Ring(id: g.id, label: g.label, members: members, center: CGPoint(x: g.x, y: g.y))
+            }
+            self.pairs = pairs.filter { $0.kind == "disagree" }.count
+        }
+
+        /// "23 notes, placed by the words they share, in 4 groups. 3 were used in your last turn."
+        var summary: String {
+            var s = "\(dots.count) notes, placed by the words they share"
+            if !rings.isEmpty { s += ", in \(rings.count) group\(rings.count == 1 ? "" : "s")" }
+            s += "."
+            let lit = dots.filter(\.lit).count
+            if lit > 0 { s += " \(lit) \(lit == 1 ? "was" : "were") used in your last turn." }
+            if pairs > 0 { s += " \(pairs) pair\(pairs == 1 ? "" : "s") disagree\(pairs == 1 ? "s" : "")." }
+            return s
+        }
+    }
+
+    let model: Model
+    @Binding var selected: String?
+    static let height: CGFloat = 236
+    static let inset: CGFloat = 22
+
+    var body: some View {
+        GeometryReader { geo in
+            let place = { (p: CGPoint) in
+                CGPoint(x: Self.inset + p.x * (geo.size.width - 2 * Self.inset), y: Self.inset + p.y * (geo.size.height - 2 * Self.inset))
+            }
+            ZStack(alignment: .topLeading) {
+                ForEach(model.rings) { r in
+                    let pts = r.members.map(place)
+                    let minX = pts.map(\.x).min()! - 22, maxX = pts.map(\.x).max()! + 22
+                    let minY = pts.map(\.y).min()! - 18, maxY = pts.map(\.y).max()! + 18
+                    Ellipse().stroke(Tokens.line, lineWidth: 1)
+                        .frame(width: maxX - minX, height: maxY - minY)
+                        .offset(x: minX, y: minY)
+                    Text(r.label).font(.frog(size: 11.5)).foregroundStyle(Tokens.textTertiary).fixedSize()
+                        .position(x: (minX + maxX) / 2, y: maxY + 9)
+                }
+                ForEach(model.dots) { d in
+                    MapDot(dot: d, selected: selected == d.id) { selected = selected == d.id ? nil : d.id }
+                        .position(place(d.at))
+                }
+            }
+        }
+        .frame(height: Self.height)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(model.summary)
+        .accessibilityHint("Every note is in the list below")
+    }
+}
+
+private struct MapDot: View {
+    let dot: MemoryMap.Model.Dot
+    let selected: Bool
+    let select: () -> Void
+
+    var body: some View {
+        Button(action: select) {
+            ZStack {
+                if dot.lit || selected { Circle().stroke((dot.lit ? Tokens.accent : Tokens.textSecondary).opacity(0.4), lineWidth: 1).frame(width: 18, height: 18) }
+                Circle().fill(dot.lit ? Tokens.accent : dot.stale ? Tokens.lineStrong : Tokens.textTertiary)
+                    .frame(width: dot.lit ? 9 : 8, height: dot.lit ? 9 : 8)
+                if dot.flagged { Circle().fill(Tokens.notice).frame(width: 6, height: 6).offset(x: 9, y: -7) }
+            }
+            .frame(width: 22, height: 22)
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help(dot.text)
+    }
+}
+
+/// What the dots mean, and what nearness means: shared words (the engine's "lexical-1"), not meaning.
+private struct MemoryKey: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 20) {
+                key(Tokens.accent, "used in your last turn")
+                key(Tokens.textTertiary, "a note")
+                key(Tokens.lineStrong, "not used in 60 days")
+            }
+            Text("Near means they share words. Distances are approximate.")
+        }
+        .font(.frog(size: 12))
+        .foregroundStyle(Tokens.textTertiary)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func key(_ c: Color, _ words: String) -> some View {
+        HStack(spacing: 7) { Circle().fill(c).frame(width: 8, height: 8); Text(words) }
+    }
+}
+
+/// A flagged pair: two notes that disagree, or say the same thing.
+private struct PairRow: View {
+    let pair: CustomizeReport.Pair
+    let notes: [MemoryNote]
+    let resolve: (Bool) -> Void
+
+    var body: some View {
+        let older = notes.first { $0.id == pair.older.id }
+        let newer = notes.first { $0.id == pair.newer.id }
+        HStack(alignment: .top, spacing: 14) {
+            NeedsYouDot().padding(.top, 7)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(pair.kind == "disagree" ? "Two notes disagree." : "Two notes say the same thing.").font(.frog(size: 14))
+                Text(Self.quote(older, newer)).font(.frog(size: 12.5)).foregroundStyle(Tokens.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: 8) {
+                Button("Keep the newer") { resolve(true) }.buttonStyle(CustomizePillStyle())
+                    .help("Forget the older note")
+                Button("Show both") { resolve(false) }.buttonStyle(CustomizePillStyle())
+                    .help("Keep both and stop flagging them")
+            }
+            .fixedSize()
+        }
+        .padding(.vertical, 10)
+        .accessibilityElement(children: .contain)
+    }
+
+    /// "\"Uses npm\" from Oct 28, and \"Use pnpm, never npm\" from Nov 17."
+    static func quote(_ older: MemoryNote?, _ newer: MemoryNote?) -> String {
+        func one(_ n: MemoryNote?) -> String {
+            guard let n else { return "a note that's gone" }
+            let when = n.created.map { " from \(CustomizeFormat.day.string(from: $0))" } ?? ""
+            return "\u{201C}\(n.firstLine)\u{201D}\(when)"
+        }
+        return "\(one(older)), and \(one(newer))."
+    }
+}
+
+/// A note the last turn used: where it came from, and on hover, Make it a rule and Forget.
+private struct UsedRow: View {
+    let note: MemoryNote
+    let makeRule: (() -> Void)?
+    let forget: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            Circle().fill(Tokens.accent).frame(width: 8, height: 8).padding(.top, 6).accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(note.body).font(.frog(size: 14)).fixedSize(horizontal: false, vertical: true)
+                if let p = note.provenance { Text(p).font(.frog(size: 12.5)).foregroundStyle(Tokens.textTertiary) }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            ZStack(alignment: .trailing) {
+                Text(note.created.map { CustomizeFormat.day.string(from: $0) } ?? "")
+                    .font(.frog(size: 12)).foregroundStyle(Tokens.textTertiary).monospacedDigit()
+                    .opacity(hovering ? 0 : 1)
+                HStack(spacing: 8) {
+                    Button("Make it a rule") { makeRule?() }.buttonStyle(CustomizePillStyle())
+                        .disabled(makeRule == nil)
+                        .help(makeRule == nil ? "Open a conversation in this project to make it a rule" : "Frog asks in the conversation before it adds the rule")
+                    Button("Forget", action: forget).buttonStyle(CustomizePillStyle())
+                }
+                .opacity(hovering ? 1 : 0)
+            }
+            .fixedSize()
+        }
+        .padding(.vertical, 10)
+        .padding(.horizontal, hovering ? 12 : 0)
+        .background(hovering ? Tokens.hover : .clear, in: .rect(cornerRadius: 10))
+        .padding(.horizontal, hovering ? -12 : 0)
+        .contentShape(.rect)
+        .onHover { hovering = $0 }
+        .accessibilityElement(children: .contain)
+    }
+}
+
 private struct MemoryEvent: View {
     let note: MemoryNote
     let newest: Bool
     let project: String?
+    /// Picked on the map.
+    var selected = false
     let forget: () -> Void
     @State private var hovering = false
 
@@ -568,8 +834,8 @@ private struct MemoryEvent: View {
                     .font(.frog(size: 14))
                     .foregroundStyle(Tokens.text)
                     .fixedSize(horizontal: false, vertical: true)
-                if let from = note.from {
-                    Text("from \u{201C}\(from)\u{201D}").font(.frog(size: 12.5)).foregroundStyle(Tokens.textTertiary)
+                if let p = note.provenance {
+                    Text(p).font(.frog(size: 12.5)).foregroundStyle(Tokens.textTertiary)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -585,8 +851,9 @@ private struct MemoryEvent: View {
         }
         .padding(.vertical, 12)
         .padding(.horizontal, hovering ? 12 : 0)
-        .background(hovering ? CustomizeLook.card : .clear, in: .rect(cornerRadius: 10))
+        .background(hovering || selected ? CustomizeLook.card : .clear, in: .rect(cornerRadius: 10))
         .padding(.horizontal, hovering ? -12 : 0)
+        .opacity(note.stale && !hovering ? 0.6 : 1)
         .contentShape(.rect)
         .onHover { hovering = $0 }
         .accessibilityElement(children: .contain)
