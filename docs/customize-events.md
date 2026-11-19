@@ -294,11 +294,30 @@ Durable: it replays with the transcript, and its Undo still works after a restar
   on), sent with `Op::Settings`. Off, the tool isn't offered and a call writes nothing. Without
   an app, `[memory] auto_note = false` in config.toml. Never on in subagents, sessions another
   session started, or small (Weak-tier) models, which can't do it reliably.
-- "remember that …" in a message still saves a note as before (with its notice) and counts as
-  the turn's one note: only in a typed message (`"typed": true`), never in a child. The
-  explicit commands `/remember`, `/forget`, `/memory` and `/recall` answer any top-level
-  session's submit, typed or not (an editor over ACP, `frog -p`, a bridge, the phone), but only
-  when the message starts with them and is sent alone; never in a child.
+- "remember that …" (or "from now on …", "note to self: …") saves a note as before (with its
+  notice) and counts as the turn's one note: only when the phrase opens a typed message
+  (`"typed": true`; each `more` part is its own message), never a later sentence or a line of
+  something pasted below it, and never in a child. A paste is part of the typed message: the
+  apps don't mark pasted spans, so this opening-only rule is what keeps a pasted document's
+  "From now on …" line from becoming a note.
+- **Where the slash commands work** (the one rule; each command only when the message starts
+  with it and is sent alone, and never as a model turn: anything refused is a notice):
+  - `/memory` and `/recall` only read: they answer in any session a person types in, a
+    `--worker` child included. Never in the engine's own subagent (its messages are the model's).
+  - `/remember` and `/forget` change the person's notes: only in a top-level session, and only
+    from someone addressing it directly. That is text the person typed in an app's composer
+    (`"typed": true`: the Mac, the web, the phone's chat composer through the Mac's bridge), or
+    any message from a client they drive themselves, which never marks typed text: the terminal,
+    `frog -p`, an editor over ACP (the engine's `Config::direct`). Not from `--listen` (a chat
+    bridge or Siri: the sender may not be the owner), and not from an app's untyped sends to a
+    session it hosts (`--serve`, `--serve-ws`): notification replies, Siri, bridged messages
+    the phone didn't mark, an app's own prompts, another session's message.
+- Text in a composer's field that the person didn't type stays untyped until they edit it:
+  the model's next-step suggestion taken with Tab, a chip that fills the field, a queued
+  message taken back with its "x" (keeping the flag it was queued with), and on the web an
+  earlier turn taken back with Edit (the transcript doesn't record whether it was typed, so
+  always untyped until edited). If any untyped piece is in the field, the whole field is
+  untyped until edited. Sent exactly as filled (whitespace aside), it goes without `typed`.
 - A note's Undo handle works only if Frog issued it: issued handles are kept beside the notes
   (`noted-undos`, the newest 500), so Undo still works after a restart, and a handle made up
   from a note's id and hash is refused.

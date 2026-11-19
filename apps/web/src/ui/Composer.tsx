@@ -183,6 +183,10 @@ const speech = (): (new () => SpeechLike) | null => {
 
 type MenuName = 'plus' | 'model' | 'mode' | 'repo' | 'branch' | 'signin'
 
+/** Whether the field's send is the person's own words (`Op::Submit`'s `typed`): yes, unless it's
+ *  still exactly the `untyped` text that filled it (whitespace aside). */
+export const sentTyped = (field: string, untyped: string | null) => untyped === null || field.trim() !== untyped.trim()
+
 export function Composer(p: ComposerProps) {
   const [text, setText] = useState(p.draft ?? '')
   const [menu, setMenu] = useState<MenuName | null>(p.pickRepo ? 'repo' : p.openModels ? 'model' : null)
@@ -212,6 +216,11 @@ export function Composer(p: ComposerProps) {
   // Typing stops the cycle for good; autofocus alone doesn't.
   const [typed, setTyped] = useState(false)
   const sug = useSuggestion(p.suggestion, !typed && !text)
+  // The field's text as it was filled without the person typing it (a suggestion taken with
+  // Tab, a chip that fills, an earlier turn taken back with Edit): sent unedited it goes
+  // untyped, so the model's words never count as the person's (docs/customize-events.md).
+  const [untyped, setUntyped] = useState<string | null>(null)
+  useEffect(() => { if (!text) setUntyped(null) }, [text])
   const timer = useTimer(working ? p.startedAt : undefined)
   useEffect(() => { if (p.draft !== undefined) setText(p.draft) }, [p.draft])
   useEffect(() => { if (ref.current) grow(ref.current) }, [text])
@@ -248,7 +257,11 @@ export function Composer(p: ComposerProps) {
   const file = useRef<HTMLInputElement>(null)
   useEffect(() => {
     if (!p.restore) return
-    setText((t) => (t ? `${p.restore!.text}\n${t}` : p.restore!.text))
+    // Edit on an earlier turn: the transcript doesn't say whether it was typed, so the field
+    // (with whatever was in it) is untyped until edited.
+    const next = text ? `${p.restore.text}\n${text}` : p.restore.text
+    setText(next)
+    setUntyped(next)
     setImages((im) => [...p.restore!.images, ...im])
   }, [p.restore])
   useEffect(() => {
@@ -298,7 +311,8 @@ export function Composer(p: ComposerProps) {
     const c = t.match(/^\/compact\b\s*(.*)$/s)
     // While a turn runs it stays typed; compacting mid-turn isn't possible.
     if (c && p.onCompact) { if (!working) { p.onCompact(c[1].trim() || undefined); setText('') } return }
-    p.onSend(t, images, true)
+    p.onSend(t, images, sentTyped(t, untyped))
+    setUntyped(null)
     // A notice is about the last thing Frog did for you; it clears on the next send.
     setLocal((l) => ({ ...l, lastSent: t, notice: null }))
     setText('')
@@ -333,7 +347,7 @@ export function Composer(p: ComposerProps) {
   // The suggestion, while the field is empty, takes the placeholder's place: the placeholder
   // carries its words for screen readers, and the overlay draws them so they can fade.
   const ghost = !text && !images.length && !working ? sug.text : null
-  const take = () => { if (!ghost) return; setText(ghost); setTyped(true); ref.current?.focus() }
+  const take = () => { if (!ghost) return; setText(ghost); setUntyped(ghost); setTyped(true); ref.current?.focus() }
   const placeholder = ghost ?? (working ? PLACEHOLDER.working : p.session ? PLACEHOLDER.session : PLACEHOLDER.new)
   const dictate = () => {
     const Rec = speech()
@@ -483,7 +497,7 @@ export function Composer(p: ComposerProps) {
         <div className="cz-chips">
           {p.chips.map((c) => (
             <button key={c.text} type="button" className={`cz-sug${c.act ? ' act' : ''}`}
-              onClick={() => { if (c.send && p.onSignIn) { setText(c.text); setMenu('signin') } else if (c.send) p.onSend(c.text, []); else { setText(c.text); ref.current?.focus() } }}>
+              onClick={() => { if (c.send && p.onSignIn) { setText(c.text); setMenu('signin') } else if (c.send) p.onSend(c.text, []); else { setText(c.text); setUntyped(c.text); ref.current?.focus() } }}>
               {c.act ? <span aria-hidden="true">↗ </span> : null}{c.text}
             </button>
           ))}
