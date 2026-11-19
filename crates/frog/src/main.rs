@@ -488,6 +488,12 @@ async fn run() -> Result<bool> {
         }
         return Ok(true);
     }
+    // Customize reads files and connections; it needs no model, so it runs before one is picked.
+    if cli.customize || cli.customize_change.is_some() {
+        let cwd = std::env::current_dir()?;
+        customize(cli.customize_change.as_deref(), cli.json, cli.no_connect, &cfg, &cwd).await?;
+        return Ok(true);
+    }
     if cli.setup {
         let found = frog_engine::imports::report(&cfg, &std::env::current_dir()?);
         if cli.json {
@@ -675,10 +681,6 @@ async fn run() -> Result<bool> {
             }
         }
         hub.shutdown();
-        return Ok(true);
-    }
-    if cli.customize || cli.customize_change.is_some() {
-        customize(cli.customize_change.as_deref(), cli.json, cli.no_connect, &cfg, &cwd).await?;
         return Ok(true);
     }
     if let Some(dir) = &cli.map {
