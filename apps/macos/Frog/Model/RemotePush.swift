@@ -114,6 +114,11 @@ final class RemotePush {
         // A Customize card's change isn't on a banner: no Allow, tap to open the conversation.
         if let proposal = obj["proposal"] as? [String: Any] {
             send(Self.proposalPush(proposal, title: title, folder: folder, session: session), collapse: "perm-\(session)")
+            // The lock screen still shows it waiting on you, with nothing to answer there.
+            sendActivity(session: session, event: "update", state: [
+                "mood": "waiting", "activity": proposal["title"] as? String ?? "A change for you",
+                "steps": steps[session, default: 0], "waiting": true, "permission": "",
+            ])
             return
         }
         let name = obj["name"] as? String ?? ""

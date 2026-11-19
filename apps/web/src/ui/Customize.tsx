@@ -318,7 +318,7 @@ function AutoNoteRow() {
   return (
     <div className="set-group">
       <label className="set-row" data-row="auto-note">
-        <div style={{ flex: 1, minWidth: 0 }}><b>Notes on its own</b><div className="det wrap">Frog keeps short notes from what you tell it and what it reads in your repo, with Undo under the reply.</div></div>
+        <div style={{ flex: 1, minWidth: 0 }}><b>Notes on its own</b><div className="det wrap">When it's on, Frog keeps short notes from what you tell it and what it reads in your repo, with Undo under the reply. Off, only when you say "remember this".</div></div>
         <input type="checkbox" role="switch" aria-label="Notes on its own" checked={on} onChange={(e) => { setAutoNote(e.target.checked); setOn(e.target.checked) }} />
       </label>
     </div>
