@@ -171,6 +171,8 @@ export default function App() {
   /** Settings mode, on a section or the last one. Only with a key. */
   const openSettings = (s?: Section, opts?: { coupon?: boolean }) => {
     if (!keyNow.current) return
+    // Connections lives in Customize now: a caller that still names it lands there.
+    if (s && settingsMovedTo(settingsPath(s))) { openCustomize({ section: 'connections' }); return }
     if (s) setSection(s)
     // Only that visit takes the cursor: a later plain one to Billing doesn't.
     if (opts?.coupon) setCouponAsk((n) => n + 1)
@@ -680,7 +682,7 @@ export default function App() {
           onCustomize={() => openCustomize()} onDocs={() => openDocs()} onSettings={() => openSettings()} />
         {sessions.length === 0 && !listError
           ? <Starters items={repoStarters(repoList.repos.map((r) => r.name))}
-              onStart={(st) => st.pick ? setView({ kind: 'new', pick: true }) : st.github ? openSettings('connections') : start(st.prompt, st.repo)} />
+              onStart={(st) => st.pick ? setView({ kind: 'new', pick: true }) : st.github ? openSettings('account') : start(st.prompt, st.repo)} />
           : <SessionList sessions={sessions} thread={thread} title={title} current={current?.id ?? null} error={listError}
               onOpen={(id) => { setView({ kind: 'session', id }); setDrawer(false) }} onClear={clear} onSearch={() => setPalette(true)}
               onRename={(s) => setRenaming(s.id)} onArchive={archive} onDelete={remove} />}

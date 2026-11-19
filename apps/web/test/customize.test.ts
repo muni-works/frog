@@ -264,3 +264,11 @@ test("the app sidebar's Customize row opens Customize on Skills", async () => {
   assert.equal(p.path(), "/customize/skills");
   p.unmount();
 });
+
+test("the empty list's \"Fix a bug in one of my repos\" opens Settings › Account to connect GitHub", async () => {
+  const p = await signedIn("/", { repos: [] }); // no repos yet: the GitHub starter shows
+  await click(find(p, (n) => typeof n.props.onClick === "function" && shownText(n).startsWith("Fix a bug in one of my repos")));
+  assert.equal(find(p, hasClass("settings-page"))?.props["aria-label"], "Account");
+  assert.equal(p.path(), "/settings/account");
+  p.unmount();
+});
