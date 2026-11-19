@@ -1982,6 +1982,11 @@ struct Agent {
     note_index: Option<crate::memvec::Index>,
     /// Notes already brought into this conversation's history (`p:`/`g:` + id), not resent.
     notes_sent: HashSet<String>,
+    /// Notes the system prompt carries (`p:`/`g:` + id): never brought back per turn.
+    notes_in_prompt: HashSet<String>,
+    /// The store is past `memory::whole_budget`: notes beyond standing guidance come back
+    /// per turn (`memvec`) instead of riding every call.
+    notes_per_turn: bool,
     /// Files the `Read` tool opened this session: the only files a `read` note can come from.
     read_by_frog: HashSet<PathBuf>,
     /// Notes that didn't fit the current model's index.
@@ -2323,6 +2328,8 @@ impl Agent {
             remembered: false,
             note_index: None,
             notes_sent: HashSet::new(),
+            notes_in_prompt: HashSet::new(),
+            notes_per_turn: false,
             read_by_frog: HashSet::new(),
             notes_omitted: 0,
             rules,
