@@ -156,11 +156,11 @@ struct ExplainerCard: View {
                     .lineSpacing(3)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                if let url = URL(string: e.href) {
+                if let url = e.url(has: { AppDocs.bundled?.page($0)?.slug == $0 }) {
                     Link(destination: url) {
                         Text(e.link).font(.frog(size: 12.5)).foregroundStyle(Tokens.text).underline(color: Tokens.lineStrong)
                     }
-                    .help(e.href)
+                    .help(url.absoluteString)
                     .fixedSize()
                 }
             }

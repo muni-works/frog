@@ -47,6 +47,21 @@ final class CustomizeModeTests: XCTestCase {
         XCTAssertFalse(all.sections.map(\.label).contains("Instructions"), "the name Instructions is retired")
     }
 
+    /// No link to a docs page that isn't there: the section's own page once it exists, else the
+    /// page that covers it today, else none.
+    func testDocsLinksGoToPagesThatExist() throws {
+        let e = CustomizeCatalog.Explainer(bold: "", rest: "", link: "How connections work", href: "https://frog.toys/docs/connections", fallback: "skills-and-mcp")
+        XCTAssertEqual(e.url(has: { $0 == "connections" })?.absoluteString, "https://frog.toys/docs/connections")
+        XCTAssertEqual(e.url(has: { $0 == "skills-and-mcp" })?.absoluteString, "https://frog.toys/docs/skills-and-mcp")
+        XCTAssertNil(e.url(has: { _ in false }))
+        let docs = try XCTUnwrap(AppDocs.bundled)
+        let url = try XCTUnwrap(Bundle.main.url(forResource: "customize", withExtension: "json"))
+        let all = try JSONDecoder().decode(CustomizeCatalog.self, from: Data(contentsOf: url))
+        for s in all.sections where s.id != "automations" {
+            XCTAssertNotNil(s.explainer.url(has: { docs.page($0)?.slug == $0 }), "\(s.id) links a page the docs have")
+        }
+    }
+
     func testConnectionsLeftSettings() {
         let settings = SettingsCatalog.bundled
         XCTAssertNil(settings.sections.first { $0.id == "connections" })

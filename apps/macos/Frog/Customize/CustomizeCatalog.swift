@@ -12,6 +12,17 @@ struct CustomizeCatalog: Decodable {
         /// The docs link's words and where it goes (frog.toys/docs/<section>).
         let link: String
         let href: String
+        /// An existing docs page that covers the section, until its own page exists.
+        var fallback: String? = nil
+
+        /// Where the link goes: the section's own page once the docs have it, else the page
+        /// that covers it, else nowhere (no link to a page that isn't there).
+        func url(has: (String) -> Bool) -> URL? {
+            guard let own = URL(string: href) else { return nil }
+            if has(own.lastPathComponent) { return own }
+            guard let fallback, has(fallback) else { return nil }
+            return own.deletingLastPathComponent().appending(path: fallback)
+        }
     }
 
     struct Section: Decodable, Identifiable, Hashable {
