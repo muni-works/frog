@@ -45,7 +45,7 @@ enum SessionNesting {
         var summary: String? {
             let parts = [(running, "running"), (waiting, "waiting"), (unread, "new"), (failed, "failed"), (done, "done")]
                 .filter { $0.0 > 0 }.map { "\($0.0) \($0.1)" }
-            return parts.isEmpty ? nil : parts.joined(separator: " · ")
+            return parts.isEmpty ? nil : parts.joined(separator: ", ")
         }
     }
 

@@ -18,7 +18,7 @@ function look(s: SessionSummary, t: Thread, unread: boolean): { glyph: Glyph; de
   if (t.ask) return { glyph: 'ask', detail: askLine(t.ask.name, t.ask.arg) }
   if (t.question) return { glyph: 'ask', detail: t.question.question }
   if (t.elicitation) return { glyph: 'ask', detail: `${t.elicitation.server} needs your input` }
-  if (outOfCredits(t)) return { glyph: 'paused', detail: 'Paused · out of credit' }
+  if (outOfCredits(t)) return { glyph: 'paused', detail: 'Paused, out of credit' }
   if (t.running) return { glyph: 'run', detail: t.activity?.text ?? 'Working…' }
   if (s.state === 'starting') return { glyph: 'run', detail: 'Starting a sandbox…' }
   if (s.state === 'error') return { glyph: 'fail', detail: null }
@@ -54,13 +54,13 @@ function second(s: SessionSummary, t: Thread): string {
   const live = [...t.turns].reverse().flatMap((u) => [...u.entries].reverse()).find((e) => e.kind === 'message')
   const said = (live && 'text' in live ? (live.text as string) : null) ?? kept.reply
   const snippet = said?.replace(/[#*_`>|]/g, '').replace(/\s+/g, ' ').trim()
-  if (snippet) return [s.repo ? s.repo.split('/')[1] ?? s.repo : null, snippet].filter(Boolean).join(' · ')
+  if (snippet) return [s.repo ? s.repo.split('/')[1] ?? s.repo : null, snippet].filter(Boolean).join(', ')
   // At rest with nothing kept: what it is, not that it's asleep.
   const turns = t.turns.length || kept.turns
   const last = (t.model ?? kept.model)?.split('/').pop()
   // As the picker names it; a pooled model's bare hash means nothing to a person (the Mac's `pooledName`).
   const model = last && /^[0-9a-f]{8,}(@.*)?$/i.test(last) ? 'Shared model' : last
-  return [s.repo ? s.repo.split('/')[1] ?? s.repo : null, turns ? `${turns} turn${turns === 1 ? '' : 's'}` : null, model].filter(Boolean).join(' · ') || (s.repo || 'Scratch sandbox, no repo')
+  return [s.repo ? s.repo.split('/')[1] ?? s.repo : null, turns ? `${turns} turn${turns === 1 ? '' : 's'}` : null, model].filter(Boolean).join(', ') || (s.repo || 'Scratch sandbox, no repo')
 }
 
 // When you last looked at each session, so a turn that ended since gets a dot. Keyed off the

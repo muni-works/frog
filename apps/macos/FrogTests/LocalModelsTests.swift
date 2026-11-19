@@ -67,7 +67,7 @@ final class LocalModelsTests: XCTestCase {
         // Everything already on mew shows, whatever it is.
         // Two checkpoints of one model say which is which (docs/models.md).
         XCTAssertEqual(list.onMachine.map(\.name), ["Gemma 3 1B", "Gemma 3 4B", "GPT Oss 20B", "Qwen2.5 1.5B", "Qwen2.5 7B",
-                                                    "Qwen3 0.6B · 4-bit", "Qwen3 0.6B · bf16", "Qwen3 1.7B", "Qwen3 VL 2B"])
+                                                    "Qwen3 0.6B, 4-bit", "Qwen3 0.6B, bf16", "Qwen3 1.7B", "Qwen3 VL 2B"])
         // The rest of what fits sits behind More models: never a cloud model, never one that won't fit,
         // never one already there in another packaging.
         XCTAssertEqual(list.more.map(\.name), ["Qwen3 4B"])
@@ -93,16 +93,16 @@ final class LocalModelsTests: XCTestCase {
     func testRowWording() throws {
         let q32 = try XCTUnwrap(LocalModelList.build(try Self.mew()).recommended.first)
         XCTAssertEqual(q32.name, "Qwen3 32B")
-        XCTAssertEqual(q32.source, "Hugging Face · mlx-community/Qwen3-32B-4bit")
+        XCTAssertEqual(q32.source, "Hugging Face, mlx-community/Qwen3-32B-4bit")
         XCTAssertEqual(q32.format, "mlx-4bit")
-        XCTAssertEqual(q32.uses, "Coding, uses tools, reasons · 32K context")
+        XCTAssertEqual(q32.uses, "Coding, uses tools, reasons, 32K context")
         XCTAssertEqual(q32.size, "18 GB on disk")
-        XCTAssertEqual(q32.fit, "needs 20 GB of 24 GB · fits")
+        XCTAssertEqual(q32.fit, "needs 20 GB of 24 GB, fits")
 
         let get = try XCTUnwrap(LocalModelList.build(Self.mac(gb: 64)).recommended.first)
         XCTAssertEqual(get.state, .notDownloaded)
         XCTAssertEqual(get.size, "18 GB download")
-        XCTAssertEqual(get.getLabel, "Get · 18 GB")
+        XCTAssertEqual(get.getLabel, "Get, 18 GB")
         XCTAssertEqual(get.get, .on)
 
         // On disk but too big for this machine: still listed (it's there), with why it won't load.
@@ -116,13 +116,13 @@ final class LocalModelsTests: XCTestCase {
         // A model Frog doesn't know reads from its id, with its source.
         let qwen25 = try XCTUnwrap(LocalModelList.build(try Self.mew()).onMachine.first { $0.id == "Qwen/Qwen2.5-7B" })
         XCTAssertEqual(qwen25.name, "Qwen2.5 7B")
-        XCTAssertEqual(qwen25.source, "Hugging Face · Qwen/Qwen2.5-7B")
+        XCTAssertEqual(qwen25.source, "Hugging Face, Qwen/Qwen2.5-7B")
         XCTAssertNil(qwen25.uses)
     }
 
     func testDownloadProgressLine() {
         var r = LocalModelRow(id: "x", name: "Qwen3 32B", fits: true, state: .downloading(done: 4_200_000_000, total: 18_429_850_874, rate: 32_400_000))
-        XCTAssertEqual(r.progressLine, "4.2 of 18 GB · 32 MB/s")
+        XCTAssertEqual(r.progressLine, "4.2 of 18 GB, 32 MB/s")
         r.state = .downloading(done: 0, total: 18_429_850_874, rate: nil)
         XCTAssertEqual(r.progressLine, "0.0 of 18 GB")
     }
@@ -168,7 +168,7 @@ final class LocalModelsTests: XCTestCase {
         XCTAssertTrue(d.canPull)
         var r = try XCTUnwrap(LocalModelList.build(d, now: t0.addingTimeInterval(2)).onMachine.first { $0.id == "mlx-community/Qwen3-4B-4bit" })
         XCTAssertEqual(r.state, .downloading(done: 100_000_000, total: 2_263_022_529, rate: 50_000_000))
-        XCTAssertEqual(r.progressLine, "0.1 of 2.3 GB · 50 MB/s")
+        XCTAssertEqual(r.progressLine, "0.1 of 2.3 GB, 50 MB/s")
         XCTAssertNil(r.note)
         // No bytes for three minutes: still downloading as the node says, with how long it's been stuck.
         d.apply(try Self.report(pulling: pull(100_000_000)), at: t0.addingTimeInterval(182))

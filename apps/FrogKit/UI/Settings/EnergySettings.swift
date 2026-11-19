@@ -92,7 +92,7 @@ struct EnergySettings: View {
         let span = days ? "the last 10 days" : "the last 24 hours"
         guard total.mac + total.dataCenter > 0 else { return "Nothing recorded in \(span)" }
         let g = TurnCostCopy.grams(total.mac + total.dataCenter)
-        return "In \(span) · \(g) CO₂e · \(TurnCostCopy.phone(total.mac + total.dataCenter))"
+        return "In \(span), \(g) CO₂e, \(TurnCostCopy.phone(total.mac + total.dataCenter))"
     }
 
     private func name(_ spec: String) -> String { ModelIdentity.of(spec, in: []).name }

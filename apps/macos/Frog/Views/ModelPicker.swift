@@ -51,7 +51,7 @@ enum ModelPill {
         var node = false
 
         var icon: ModelPlaceIcon { cloud ? .cloud : node ? .node : .mac }
-        var help: String { [model, place, waiting].compactMap { $0 }.joined(separator: " · ") }
+        var help: String { [model, place, waiting].compactMap { $0 }.joined(separator: ", ") }
     }
 
     @MainActor
@@ -135,7 +135,7 @@ struct ModelMenu: View {
     /// A model on this Mac costs nothing a token; a measured speed follows it.
     static func thisMacDetail(_ m: ModelIdentity, tokensPerSecond: Double?) -> String? {
         switch m.state {
-        case .ready: ["$0 a token", tokensPerSecond.map(ModelStats.speedText)].compactMap { $0 }.joined(separator: " · ")
+        case .ready: ["$0 a token", tokensPerSecond.map(ModelStats.speedText)].compactMap { $0 }.joined(separator: ", ")
         case .notDownloaded(let gb): SuggestedModel.gbText(gb)
         default: m.stateLine
         }

@@ -11,7 +11,7 @@ test("raw cloud ids read as names", () => {
 });
 
 test("the picker shows input and output prices per million tokens", () => {
-  assert.equal(inOutPrice({ id: "x", context: null, input: 2e-7, output: 8e-7, cached: null }), "$0.20 in · $0.80 out /M");
+  assert.equal(inOutPrice({ id: "x", context: null, input: 2e-7, output: 8e-7, cached: null }), "$0.20 in, $0.80 out /M");
 });
 
 // First-run audit (2026-11-17): the picker read "from $0.17/M" for GLM-5.3 Flash's $0.165, listed
@@ -22,7 +22,7 @@ test("prices keep three significant figures, as the pricing page does", () => {
   assert.equal(usdPerM(5.5e-7), "$0.55");
   assert.equal(usdPerM(2e-7), "$0.20");
   assert.equal(usdPerM(1.5e-6), "$1.50");
-  assert.equal(inOutPrice({ id: "x", context: null, input: 3.96e-8, output: 5.5e-7, cached: null }), "$0.0396 in · $0.55 out /M");
+  assert.equal(inOutPrice({ id: "x", context: null, input: 3.96e-8, output: 5.5e-7, cached: null }), "$0.0396 in, $0.55 out /M");
 });
 
 test("the picker offers agent-sized models, the default first", () => {

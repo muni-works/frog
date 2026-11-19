@@ -11,7 +11,7 @@ extension PermissionRequest {
     /// Mac, and whether the sandbox holds it (a request with a reason is to leave it).
     static func runsWhere(inCloud cloud: Bool, outsideSandbox: Bool) -> String {
         if cloud { return "Runs in your Frog Cloud sandbox" }
-        return outsideSandbox ? "Runs on this Mac · outside the sandbox" : "Runs on this Mac · sandboxed"
+        return outsideSandbox ? "Runs on this Mac, outside the sandbox" : "Runs on this Mac, sandboxed"
     }
 
     static func question(name: String, arg: String, outsideSandbox: Bool = false, creating: Bool = false) -> String {

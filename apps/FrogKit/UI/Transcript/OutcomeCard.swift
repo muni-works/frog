@@ -78,7 +78,7 @@ struct OutcomeCard: View, Equatable {
 
     /// The footer's copy: the one way out to the diffs, which the card never shows itself.
     static func footer(_ count: Int) -> String {
-        count == 1 ? "1 claim · diffs in the Changes tab" : "\(count) claims · diffs in the Changes tab"
+        count == 1 ? "1 claim, diffs in the Changes tab" : "\(count) claims, diffs in the Changes tab"
     }
 
     private var footer: some View {

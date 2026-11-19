@@ -103,7 +103,7 @@ private struct CatalogRow: View {
         if model.reasoning { parts.append("reasons") }
         if !model.tools { parts.append("no tools") }
         if let p = model.price { parts.append(p) }
-        return parts.joined(separator: " · ")
+        return parts.joined(separator: ", ")
     }
 }
 
@@ -138,8 +138,8 @@ struct FrogCloudCard: View {
     /// Where the key comes from, or nil when there's none. FROG_API_KEY wins over a saved key.
     static func keyLine(_ source: String?) -> String? {
         switch source {
-        case "env": "API key · FROG_API_KEY (from your environment; a saved key is ignored here)"
-        case "keychain": "API key · Keychain"
+        case "env": "API key, FROG_API_KEY (from your environment; a saved key is ignored here)"
+        case "keychain": "API key, Keychain"
         default: nil
         }
     }
