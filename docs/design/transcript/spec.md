@@ -139,6 +139,23 @@ middle dots). Phase 3 adds the turn line at
 its right end. The web's `.turn-foot` and the Mac's footer become this; the web's `.turn-card`
 popover is replaced by the turn panel in phase 3 and stays until then.
 
+### Following
+
+Where the view goes as you send and the reply arrives, the same on both apps (Cam, 2026-11-19:
+"when the user submits a message, the transcript should scroll down to the incoming response").
+
+- **A send brings the view to the end**, from wherever you were reading, so your message and the
+  start of the reply are in view: a message, one queued behind a running turn, a new session's
+  first, and a retried start. It glides, or jumps with reduced motion, the moment you send, not
+  when the engine's turn arrives (a sandbox or model may still be starting).
+- **The view follows the reply** as it grows, until the reply's first line would leave the top of
+  the view. There it **holds**, so a long answer reads from its start: the answer itself after
+  steps, your message when the answer is the turn's first words.
+- **Your own scrolling releases either.** Scroll up and nothing moves you; scroll back to the end
+  and it follows again. An answer already held isn't held a second time: scrolled on to its end
+  yourself, it follows that answer to the end.
+- Opening a session, or coming back to one, shows its end.
+
 ### Parity is measured, not eyeballed
 
 Reuse `docs/design/parity/` (one fixture session rendered by both apps). Add a metrics dump:

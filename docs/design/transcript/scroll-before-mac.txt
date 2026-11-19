@@ -1,11 +1,4 @@
-TableTranscriptParityTests.swift:213: error: -[FrogTests.TableTranscriptParityTests testASendFromFarUpGoesToTheReply] : XCTAssertTrue failed - table false: the send went to the end
-TableTranscriptParityTests.swift:220: error: -[FrogTests.TableTranscriptParityTests testASendFromFarUpGoesToTheReply] : XCTAssertTrue failed - table false: pinned to the end while the reply streams
-TableTranscriptParityTests.swift:213: error: -[FrogTests.TableTranscriptParityTests testASendFromFarUpGoesToTheReply] : XCTAssertTrue failed - table true: the send went to the end
-TableTranscriptParityTests.swift:220: error: -[FrogTests.TableTranscriptParityTests testASendFromFarUpGoesToTheReply] : XCTAssertTrue failed - table true: pinned to the end while the reply streams
-TableTranscriptParityTests.swift:196: error: -[FrogTests.TableTranscriptParityTests testStreamingALongAnswerStaysPinned] : XCTAssertTrue failed - table false, tools true: the newest words drawn, the view at the end
-TableTranscriptParityTests.swift:196: error: -[FrogTests.TableTranscriptParityTests testStreamingALongAnswerStaysPinned] : XCTAssertTrue failed - table false, tools false: the newest words drawn, the view at the end
-TableTranscriptParityTests.swift:196: error: -[FrogTests.TableTranscriptParityTests testStreamingALongAnswerStaysPinned] : XCTAssertTrue failed - table true, tools true: the newest words drawn, the view at the end
-TableTranscriptParityTests.swift:196: error: -[FrogTests.TableTranscriptParityTests testStreamingALongAnswerStaysPinned] : XCTAssertTrue failed - table true, tools false: the newest words drawn, the view at the end
-	 Executed 2 tests, with 8 failures (0 unexpected) in 222.164 (222.165) seconds
-	 Executed 2 tests, with 8 failures (0 unexpected) in 222.164 (222.166) seconds
-	 Executed 2 tests, with 8 failures (0 unexpected) in 222.164 (222.166) seconds
+	 Executed 1 test, with 3 failures (0 unexpected) in 168.917 (168.918) seconds
+TableTranscriptParityTests.swift:245: error: -[FrogTests.TableTranscriptParityTests testASendFromFarUpBringsTheReplyIntoView] : XCTAssertTrue failed - table false: the send went to the end
+TableTranscriptParityTests.swift:245: error: -[FrogTests.TableTranscriptParityTests testASendFromFarUpBringsTheReplyIntoView] : XCTAssertTrue failed - table true: the send went to the end
+TableTranscriptParityTests.swift:253: error: -[FrogTests.TableTranscriptParityTests testASendFromFarUpBringsTheReplyIntoView] : XCTAssertTrue failed - table true: the reply's start is in view

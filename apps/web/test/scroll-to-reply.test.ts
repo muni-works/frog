@@ -1,9 +1,11 @@
-// Sending brings the transcript to the reply (Cam, 2026-11-19): from wherever you were reading,
-// a send takes the view to the bottom so your message and the start of the reply are in view;
-// while the reply streams it stays pinned to the bottom unless you scroll up yourself, and
-// scrolling back to the bottom pins it again. The real App in headless Chrome, signed in to the
-// vendored mock gateway, which streams a long reply for every message; the scroll and the keys
-// are real input (DevTools' Input domain), not script. Skips without Chrome.
+// Sending brings the incoming reply into view (Cam, 2026-11-19; spec, "Following"): from
+// wherever you were reading, a send takes the view to the end, so your message and the start of
+// the reply are in view; the view follows the reply until its first line would leave the top, and
+// holds there so a long answer reads from its start, as the Mac does. Your own scrolling releases
+// either; scrolled on to the end yourself, it follows that answer and doesn't pull you back up.
+// The real App in headless Chrome, signed in to the vendored mock gateway, which streams a long
+// reply for every message; the scroll and the keys are real input (DevTools' Input domain), not
+// script. Skips without Chrome.
 //
 // It failed before the fix: sent from the top of a long session, the view stayed at the top
 // (transcript phase 1, af22536b, followed only from the end, so a send from higher up didn't move).
@@ -125,45 +127,54 @@ async function session_(reducedMotion: boolean) {
   return p;
 }
 
-test("a send from far up the history brings the view to the reply, and it stays pinned while the reply streams", { skip, timeout: 120_000 }, async () => {
+/** Where your last message sits in the view: px from the scroller's top edge (negative: above). */
+const promptTop = (p: Page) => p.eval<number>("(() => { const el = document.querySelector('.scroll'); const me = [...document.querySelectorAll('.tx .me')].pop(); return el && me ? Math.round(me.getBoundingClientRect().top - el.getBoundingClientRect().top) : -9999 })()");
+
+test("a send from far up the history brings the view to the reply, which holds at its start once it's long", { skip, timeout: 120_000 }, async () => {
   const p = await session_(false);
   try {
     // Read from the top, by your own scrolling.
     await wheel(p, -100_000);
     assert.ok(await gap(p) > 2000, `scrolled up to read (${await gap(p)} px from the end)`);
     await sendMessage(p, "and again");
-    // Your message, then the reply's start, in view: at the end within a line.
-    assert.ok(await until(async () => (await gap(p)) < 60, 3000), `the send brought the view to the end (${await gap(p)} px from it)`);
-    // Pinned while it streams: sampled through the reply, never more than a line from the end.
-    const worst: number[] = [];
-    for (let i = 0; i < 20; i++) { await pause(100); worst.push(await gap(p)); }
-    assert.ok(Math.max(...worst) < 80, `pinned to the end while the reply streams (worst ${Math.max(...worst)} px from it)`);
+    // Your message and the reply's start in view: the view went down to them. The mock's reply
+    // fills the view about as fast as the glide arrives, so it lands held: your message at the
+    // top, the reply below it, the rest still coming past the bottom.
+    assert.ok(await until(async () => { const t = await promptTop(p); return t >= 0 && t < 80 }, 3000), `the send brought your message and the reply into view (message ${await promptTop(p)} px down)`);
+    assert.ok(await until(async () => (await gap(p)) > 200, 6000), "the reply grew past the view");
+    const held = await promptTop(p);
+    assert.ok(held >= 0 && held < 80, `held with your message at the top (${held} px down)`);
+    await pause(1000);
+    assert.ok(Math.abs((await promptTop(p)) - held) < 2, `still held as it grows (${await promptTop(p)} px down)`);
   } finally { await p.close(); }
 });
 
-test("scrolling up while it streams lets go; scrolling back to the end pins it again", { skip, timeout: 120_000 }, async () => {
+test("scrolled on to the end yourself, it follows the reply and doesn't pull you back to its start", { skip, timeout: 120_000 }, async () => {
   const p = await session_(false);
   try {
     await sendMessage(p, "one more");
-    assert.ok(await until(async () => (await gap(p)) < 60, 3000), "at the end after the send");
-    await pause(300);
+    assert.ok(await until(async () => { const t = await promptTop(p); return t >= 0 && t < 80 && (await gap(p)) > 200 }, 6000), "held at the reply's start");
+    await wheel(p, 100_000);
+    await pause(200);
+    const worst: number[] = [];
+    for (let i = 0; i < 10; i++) { await pause(100); worst.push(await gap(p)); }
+    assert.ok(Math.max(...worst) < 80, `follows to the end once you scroll there (worst ${Math.max(...worst)} px from it)`);
     await wheel(p, -600);
     const away = await gap(p);
     assert.ok(away > 300, `scrolled up (${away} px from the end)`);
     await pause(800);
-    assert.ok(await gap(p) >= away, `left where you scrolled while the reply grows (${await gap(p)} px from the end)`);
-    await wheel(p, 100_000);
-    await pause(800);
-    assert.ok(await gap(p) < 80, `back at the end it follows again (${await gap(p)} px from it)`);
+    assert.ok(await gap(p) >= away, `left where you scrolled while it grows (${await gap(p)} px from the end)`);
   } finally { await p.close(); }
 });
 
-test("with reduced motion the send jumps to the end", { skip, timeout: 120_000 }, async () => {
+test("with reduced motion the send jumps", { skip, timeout: 120_000 }, async () => {
   const p = await session_(true);
   try {
     await wheel(p, -100_000);
     await sendMessage(p, "reduced");
+    // No glide: a beat later your message is already in view.
     await pause(150);
-    assert.ok(await gap(p) < 60, `jumped to the end (${await gap(p)} px from it)`);
+    const t = await promptTop(p);
+    assert.ok(t >= 0 && t < 700, `your message in view at once (${t} px down)`);
   } finally { await p.close(); }
 });
