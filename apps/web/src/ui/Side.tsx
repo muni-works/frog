@@ -63,6 +63,10 @@ export interface Starter {
   prompt: string
   /** Needs GitHub connected first. */
   github?: boolean
+  /** Starts in this repo ("owner/name"). */
+  repo?: string
+  /** Opens the new session's repo picker instead of starting. */
+  pick?: boolean
 }
 
 /** Signed out, or signed in with nothing yet: a first session a click away. Costs are what a
@@ -73,6 +77,23 @@ export const STARTERS: Starter[] = [
   { title: 'Write a CLI that renames photos', detail: 'About a minute   about 5¢', prompt: 'Write a CLI that renames photos by date taken' },
   { title: 'Fix a bug in one of my repos', detail: 'Connects GitHub first', prompt: '', github: true },
 ]
+
+/** Signed in on a first visit: the account's own repos in place of the generic ones. Only what
+ *  Frog knows is said (the repo's name, how many more there are); nothing about CI or PRs it
+ *  hasn't read. Without repos, the signed-out list. */
+export function repoStarters(repos: readonly string[]): Starter[] {
+  if (repos.length === 0) return STARTERS
+  const short = (r: string) => r.split('/').pop() ?? r
+  const [a, b] = repos
+  const out: Starter[] = [
+    { title: `Find and fix a bug in ${short(a)}`, detail: a, prompt: 'Find a bug in this repo and fix it, with a test that shows it', repo: a },
+  ]
+  if (b) out.push({ title: `Add tests to ${short(b)}`, detail: b, prompt: 'Find the least-tested code in this repo and add tests for it', repo: b })
+  out.push({ title: 'Make a tiny pomodoro timer', detail: 'Scratch sandbox   about 4¢', prompt: 'Make a tiny pomodoro timer' })
+  const more = repos.length - out.filter((s) => s.repo).length
+  out.push({ title: 'Pick another repo', detail: more > 0 ? `${more} more on GitHub` : 'Connect more on GitHub', prompt: '', pick: true })
+  return out
+}
 
 export function Starters({ items = STARTERS, onStart }: { items?: Starter[]; onStart: (s: Starter) => void }) {
   return (

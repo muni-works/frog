@@ -30,7 +30,7 @@ import { DocsPage, DocsSidebar, Shell, type ShellMode } from './ui/Docs'
 import { DOCS, VERSION } from './docs/bundle'
 import { useMacAppChip } from './ui/ChipSlot'
 import { SignedOutSide } from './ui/SignedOut'
-import { LegalRow, SideNav, SidePill, Starters } from './ui/Side'
+import { LegalRow, repoStarters, SideNav, SidePill, Starters } from './ui/Side'
 import { docsPath, docsSlugOf } from './docs/docs'
 import { accountTag, connectCard, finishedTurn, loadMemo, saveMemo, type CardMemo } from './connectCard'
 import { ConnectCard } from './ui/ConnectCard'
@@ -649,7 +649,8 @@ export default function App() {
         <SideNav onNew={() => setView({ kind: 'new' })} newOn={view.kind === 'new'} onSearch={() => setPalette(true)}
           onCustomize={() => openSettings('appearance')} onDocs={() => openDocs()} onSettings={() => openSettings()} />
         {sessions.length === 0 && !listError
-          ? <Starters onStart={(st) => st.github ? openSettings('connections') : start(st.prompt)} />
+          ? <Starters items={repoStarters(repoList.repos.map((r) => r.name))}
+              onStart={(st) => st.pick ? setView({ kind: 'new', pick: true }) : st.github ? openSettings('connections') : start(st.prompt, st.repo)} />
           : <SessionList sessions={sessions} thread={thread} title={title} current={current?.id ?? null} error={listError}
               onOpen={(id) => { setView({ kind: 'session', id }); setDrawer(false) }} onClear={clear} onSearch={() => setPalette(true)}
               onRename={(s) => setRenaming(s.id)} onArchive={archive} onDelete={remove} />}
