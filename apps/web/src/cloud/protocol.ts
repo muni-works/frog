@@ -4,7 +4,10 @@
 export type Decision = "allow" | "allow_always" | "deny";
 
 export type Op =
-  | { op: "submit"; text: string; images?: Image[]; more?: Part[] }
+  /** `typed`: the person typed (or dictated) this text in the composer. Only typed text is their
+   *  own words to the engine (a Customize ask, a note, "remember …"); the app's own prompts
+   *  (git actions, chips, retries, replays) leave it out. */
+  | { op: "submit"; text: string; images?: Image[]; more?: Part[]; typed?: boolean }
   | { op: "interrupt" }
   /** Op::Continue: run a turn on the (repaired) history with `note` as its message; the wall
    *  resumes a turn that stopped on credit with it (wall.ts resumeNote). */
@@ -118,8 +121,8 @@ export type EndReason =
 
 /** protocol.rs `Image`: base64 data with its mime type. */
 export interface Image { mime: string; data: string }
-/** One message of several sent as one turn (Op::Submit's `more`). */
-export interface Part { text: string; images?: Image[] }
+/** One message of several sent as one turn (Op::Submit's `more`); `typed` is this part's own. */
+export interface Part { text: string; images?: Image[]; typed?: boolean }
 
 /** The TodoWrite list (tools/todo.rs); status is pending, in_progress or completed. */
 export interface Todo { content: string; status: string }

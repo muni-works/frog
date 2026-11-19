@@ -240,6 +240,44 @@ test("a follow-up sent while the POST is out goes after the first turn", async (
   w.p.unmount();
 });
 
+test("what you type goes typed (first message and follow-up); Try again's resend of it doesn't", async () => {
+  const w = await world();
+  await type(w.p, "Make a tiny pomodoro timer");
+  await enter(w.p);
+  await type(w.p, "and remember tabs");
+  await enter(w.p);
+  await w.answer({ status: 201, body: { ...summary(), ws: "wss://x" } });
+  const ws = FakeWS.all.at(-1)!;
+  await act(async () => { ws.welcome(); });
+  await tick();
+  await act(async () => { ws.emit({ event: "turn_started", turn: 1, input: "Make a tiny pomodoro timer" }); });
+  await tick(40);
+  await act(async () => { ws.emit({ event: "turn_ended", turn: 1, reason: { type: "complete" } }); });
+  await tick(40);
+  const submits = ws.sent.filter((o) => o.op === "submit").map((o) => [o.text, o.typed]);
+  assert.deepEqual(submits, [["Make a tiny pomodoro timer", true], ["and remember tabs", true]]);
+  w.p.unmount();
+
+  // A POST that failed, then Try again: the same message, sent by the app, untyped.
+  const v = await world();
+  await type(v.p, "Fix the flaky test");
+  await enter(v.p);
+  await v.answer({ status: 503, body: { error: "Frog Cloud is busy." } });
+  await tick(1300);
+  const again = find(v.p, (n) => n.type === "button" && shownText(n) === "Try again");
+  assert.ok(again, "Try again");
+  await act(async () => { (again!.props.onClick as () => void)(); });
+  await tick();
+  await v.answer({ status: 201, body: { ...summary(), ws: "wss://x" } });
+  const ws2 = FakeWS.all.at(-1)!;
+  await act(async () => { ws2.welcome(); });
+  await tick();
+  const resent = ws2.sent.filter((o) => o.op === "submit");
+  assert.deepEqual(resent.map((o) => o.text), ["Fix the flaky test"]);
+  assert.equal(resent[0].typed, undefined, "the app's resend");
+  v.p.unmount();
+});
+
 test("a message is never drawn twice: it leaves the outbox in the commit its turn shows", async () => {
   let worst = 0;
   const w = await world((root) => {
