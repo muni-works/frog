@@ -387,7 +387,6 @@ struct PingLine: View {
                         Task { await Notifier.shared.ask() }
                     }
                     .buttonStyle(.link)
-                    Text("·").foregroundStyle(.tertiary)
                     Button("No thanks") {
                         asked = true
                         notifyWhenDone = false

@@ -222,8 +222,14 @@ struct PairedStore {
     // Through `/usr/bin/security`, the way the engine reads and writes provider keys: an item
     // the app made with SecItemAdd is the app's, so the engine's `security` read of it asked for
     // the login password on every poll. Made by `security`, both sides read it without asking.
-    // Keys are cached here once read; they only change when pairing or un-pairing.
+    // Keys are cached here once read; they only change when pairing or un-pairing. Under
+    // XCTest the cache is the whole store: a test host never runs `security` on the login
+    // Keychain (it shares the developer's). Only the opt-in live-node test (`FROG_LIVE_NODE`)
+    // reads this Mac's real keys.
     private static let cache = KeyCache()
+    static var inMemory: Bool {
+        SingleInstance.isTesting && ProcessInfo.processInfo.environment["FROG_LIVE_NODE"] == nil
+    }
     private final class KeyCache: @unchecked Sendable {
         private let lock = NSLock()
         private var keys: [String: String] = [:]
@@ -235,6 +241,7 @@ struct PairedStore {
 
     func key(for nodeID: String) -> String? {
         if let k = Self.cache[nodeID] { return k }
+        if Self.inMemory { return nil }
         let out = Self.security(["find-generic-password", "-s", service, "-a", "node:\(nodeID)", "-w"])
         guard out.ok else { return nil }
         let k = out.text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -253,6 +260,7 @@ struct PairedStore {
         guard !nodeID.isEmpty, nodeID.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || "_-".contains($0)) }) else {
             throw NSError(domain: "frog.node", code: 1, userInfo: [NSLocalizedDescriptionKey: "The node sent a malformed id."])
         }
+        if Self.inMemory { Self.cache[nodeID] = key; return }
         // `security` run by the app is credited to the app, so name both explicitly: the app,
         // and `security` itself (which the engine reads keys with).
         let line = "add-generic-password -U -s \(service) -a \"node:\(nodeID)\" -l \"frog node \(nodeID)\""
@@ -267,10 +275,12 @@ struct PairedStore {
 
     private func deleteKey(_ nodeID: String) {
         Self.cache[nodeID] = nil
+        if Self.inMemory { return }
         _ = Self.security(["delete-generic-password", "-s", service, "-a", "node:\(nodeID)"])
     }
 
     private static func security(_ args: [String], stdin: String? = nil) -> (ok: Bool, text: String, err: String) {
+        precondition(!inMemory, "a test reached the login Keychain (\(args.first ?? "security"))")
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/security")
         p.arguments = args

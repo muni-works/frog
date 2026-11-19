@@ -13,7 +13,7 @@ struct PlanUsage: View {
                         HStack {
                             Text(sub.name).font(.frog(size: 13, weight: .semibold))
                             Spacer()
-                            Text(sub.over ? "Past allowance · on credit" : "Included allowance")
+                            Text(sub.over ? "Past allowance, on credit" : "Included allowance")
                                 .font(.frog(size: 11)).foregroundStyle(sub.over ? .orange : .secondary)
                         }
                         ForEach(sub.windows, id: \.self) { WindowBar(window: $0) }
@@ -39,7 +39,7 @@ struct WindowBar: View {
             HStack {
                 Text(window.label)
                 Spacer()
-                Text("\(Int(window.fraction * 100))%" + (window.resets.map { " · resets " + CloudFormat.reset($0, weekly: window.kind != "5h") } ?? ""))
+                Text("\(Int(window.fraction * 100))%" + (window.resets.map { ", resets " + CloudFormat.reset($0, weekly: window.kind != "5h") } ?? ""))
                     .foregroundStyle(.secondary)
             }
             .font(.frog(size: 12))

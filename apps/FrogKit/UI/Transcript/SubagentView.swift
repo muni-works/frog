@@ -21,17 +21,17 @@ struct AgentStepRow: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
             if running, let activity = run?.activity {
-                Text("· \(activity)")
+                Text(activity)
                     .foregroundStyle(.tertiary)
                     .lineLimit(1)
                     .truncationMode(.tail)
             } else if failed {
-                Text("· failed")
+                Text("failed")
                     .foregroundStyle(.red)
                     .help(item.result.flatMap { agentFailureHead($0.output) } ?? "")
             }
             if running, let plan = run?.plan {
-                Text("· \(plan.done)/\(plan.total)")
+                Text("\(plan.done)/\(plan.total)")
                     .monospacedDigit()
                     .foregroundStyle(.tertiary)
                     .fixedSize()

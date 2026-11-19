@@ -24,11 +24,11 @@ const fresh = (over: Record<string, unknown> = {}, history?: Record<string, unkn
   history: history ?? [{ kind: "topup", at: "2026-11-02T18:00:00Z", amount_micro_usd: 10_000_000, status: "succeeded" }],
   redeemed: new Set(),
   keys: [
-    { id: "k_this", name: "frog.toys web · ab12", kind: "device", created: "2026-11-01T00:00:00Z", last_used: null, revoked: false, current: true },
+    { id: "k_this", name: "frog.toys web, ab12", kind: "device", created: "2026-11-01T00:00:00Z", last_used: null, revoked: false, current: true },
     { id: "k_cli", name: "laptop cli", kind: "key", created: "2026-11-01T00:00:00Z", last_used: null, revoked: false, current: false },
   ],
 });
-const MACHINES = [{ id: "n1", name: "mew", hardware: "RTX 3090 · 24 GB VRAM", online: true, model: "Qwen3-4B", decode: 58.4, totalBytes: 24 * 2 ** 30, freeBytes: 13 * 2 ** 30,
+const MACHINES = [{ id: "n1", name: "mew", hardware: "RTX 3090, 24 GB VRAM", online: true, model: "Qwen3-4B", decode: 58.4, totalBytes: 24 * 2 ** 30, freeBytes: 13 * 2 ** 30,
   models: [{ id: "Qwen/Qwen3-4B", name: "Qwen3-4B", hash: "bbbbbbbbbbbb22", loaded: true, quant: "bf16" }] }];
 const MODELS = [{ id: "glm-5.3-flash", context_length: 131072, pricing: { prompt: "0.00000004", completion: "0.0000004", input_cache_read: "0.00000001" } }];
 
@@ -193,7 +193,7 @@ test("returning from Settings keeps the new-session draft, and Escape is Back to
 test("Account: identity, Sign out, GitHub and Google Connect, devices and keys with create and revoke", async () => {
   const p = await signedIn("/settings/account", fresh(), { Notification: { permission: "granted", requestPermission: async () => "granted" } });
   const t = shownText(page(p)!);
-  for (const s of ["Ada Lovelace", "ada@example.com", "Sign-ins GitHub Not connected", "Google Not connected", "Devices and keys frog.toys web · ab12", "This browser", "laptop cli"]) assert.ok(t.includes(s), `${s}: ${t}`);
+  for (const s of ["Ada Lovelace", "ada@example.com", "Sign-ins GitHub Not connected", "Google Not connected", "Devices and keys frog.toys web, ab12", "This browser", "laptop cli"]) assert.ok(t.includes(s), `${s}: ${t}`);
   assert.ok(!t.includes("Notifications"), "Notifications moved to General (board 7)");
   await type(find(p, (n) => n.type === "input" && n.props["aria-label"] === "New API key name"), "ci");
   await submit(find(p, (n) => n.type === "form" && hasClass("set-row")(n)));
@@ -215,7 +215,7 @@ test("Models: the machines list and a machine page, and Frog Cloud's credit", as
   const p = await signedIn("/settings/models");
   assert.match(shownText(page(p)!), /Machines mew .*RTX 3090.*Frog Cloud Account .*Credit \$12\.78/);
   await click(find(p, (n) => n.type === "button" && hasClass("set-machine")(n)));
-  assert.match(shownText(page(p)!), /^Status Ready Hardware RTX 3090 · 24 GB VRAM .*Qwen3 4B .*58 tok\/s/);
+  assert.match(shownText(page(p)!), /^Status Ready Hardware RTX 3090, 24 GB VRAM .*Qwen3 4B .*58 tok\/s/);
   // The header says where you are, and Models in it goes back.
   const crumbs = () => shownText(find(p, (n) => n.type === "nav" && n.props["aria-label"] === "Breadcrumb")!);
   assert.equal(crumbs(), "Settings › Models › mew");
@@ -241,7 +241,7 @@ test("Billing: plans, top-up, credit, history and the per-model prices", async (
 test("Billing with a plan: its windows and Change or cancel your plan (the portal)", async () => {
   const sub = { plan: "pro", name: "Pro", over: false, windows: [{ kind: "5h", used: 1, limit: 4, resets_at: "2026-11-18T05:00:00Z" }, { kind: "weekly", used: 2, limit: 4, resets_at: "2026-11-22T00:00:00Z" }] };
   const p = await signedIn("/settings/billing", fresh({ subscription: sub }));
-  assert.match(shownText(page(p)!), /Pro Included allowance This 5 hours 25 % .*This week 50 %/);
+  assert.match(shownText(page(p)!), /Pro Included allowance This 5 hours 25 %, .*This week 50 %/);
   await click(btn(p, "Change or cancel your plan"));
   await settle();
   assert.equal(calls(p, "/v1/billing/portal").length, 1);

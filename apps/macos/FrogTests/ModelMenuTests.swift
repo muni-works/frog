@@ -31,7 +31,7 @@ final class ModelMenuTests: XCTestCase {
 
     func testThisMacRowsSayTheyCostNothing() {
         XCTAssertEqual(ModelMenu.thisMacDetail(model("apple/on-device", "Apple Intelligence", .apple), tokensPerSecond: nil), "$0 a token")
-        XCTAssertEqual(ModelMenu.thisMacDetail(model("local/x", "Qwen3 8B", .mac), tokensPerSecond: 41.4), "$0 a token · 41 tok/s")
+        XCTAssertEqual(ModelMenu.thisMacDetail(model("local/x", "Qwen3 8B", .mac), tokensPerSecond: 41.4), "$0 a token, 41 tok/s")
         XCTAssertEqual(ModelMenu.thisMacDetail(model("local/y", "Qwen3 32B", .mac, .notDownloaded(gb: 18)), tokensPerSecond: nil), "18 GB")
     }
 

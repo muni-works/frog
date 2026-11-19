@@ -60,7 +60,7 @@ final class ChapterTests: XCTestCase {
         XCTAssertEqual(Chapter.words("nope. i feel like it's a frontend bug"), "nope")
         XCTAssertEqual(Chapter.words("Install the new build and restart frog"), "install the new build")
         XCTAssertEqual(Chapter.title(Chapter(turn: UUID(), number: 1, kind: .prompt), TurnState(input: "?"), turns: 1), "?")
-        XCTAssertEqual(Chapter.title(Chapter(turn: UUID(), number: 1, kind: .prompt), TurnState(input: "<session-message from=\"x\">hi</session-message>"), turns: 3), "on its own · 3 turns")
+        XCTAssertEqual(Chapter.title(Chapter(turn: UUID(), number: 1, kind: .prompt), TurnState(input: "<session-message from=\"x\">hi</session-message>"), turns: 3), "on its own, 3 turns")
     }
 
     // MARK: Model titles (`chapter_titled`)
@@ -94,7 +94,7 @@ final class ChapterTests: XCTestCase {
 
     func testModelTitleOverridesEveryKind() {
         var t = TurnState(input: "<session-message from=\"x\">hi</session-message>")
-        XCTAssertEqual(Chapter.title(Chapter(turn: t.id, number: 1, kind: .run), t, turns: 7), "on its own · 7 turns")
+        XCTAssertEqual(Chapter.title(Chapter(turn: t.id, number: 1, kind: .run), t, turns: 7), "on its own, 7 turns")
         t.chapterTitle = "fleet drain"
         XCTAssertEqual(Chapter.title(Chapter(turn: t.id, number: 1, kind: .run), t, turns: 7), "fleet drain")
         XCTAssertEqual(Chapter.title(Chapter(turn: t.id, number: 1, kind: .compacted), t, turns: 2), "fleet drain")

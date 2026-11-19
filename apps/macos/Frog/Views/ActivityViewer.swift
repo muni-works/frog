@@ -178,7 +178,7 @@ struct ActivityViewer: View {
         return [(n(.waiting), "waiting on you"), (n(.running), "working"), (n(.unread), "finished")]
             .filter { $0.0 > 0 }
             .map { "\($0.0) \($0.1)" }
-            .joined(separator: " · ") + " in other conversations"
+            .joined(separator: ", ") + " in other conversations"
     }
 
     // MARK: Left: what's happening

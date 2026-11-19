@@ -213,7 +213,7 @@ export function PreviewPane({ hub, pane, send, machines = [] }: { hub: PreviewHu
           <iframe ref={frame} title={s?.title || 'Preview'} className={page && !failed ? '' : 'pv-hidden'} onLoad={() => id && hub.loaded(id)}
             style={fitted ? { width: fitted.width / fitted.scale, height: fitted.height / fitted.scale, transform: `scale(${fitted.scale})` } : undefined}
             sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads" allow="clipboard-write" referrerPolicy="same-origin" />
-          {hub.inspecting && <div className="pv-toast" role="status">Click an element to mention it · Esc to stop</div>}
+          {hub.inspecting && <div className="pv-toast" role="status">Click an element to mention it, Esc to stop</div>}
         </div>
         {empty && (
           <InspectorEmpty icon={ICON.globe} title="Nothing to preview yet">Run your dev server, then enter its URL or port, or ask Frog to open it.</InspectorEmpty>

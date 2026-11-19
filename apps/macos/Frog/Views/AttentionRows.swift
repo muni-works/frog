@@ -244,7 +244,7 @@ struct TreeRow<Menu: View>: View {
         else if let f = SessionList.worktreeName(session.folder) ?? session.folder?.lastPathComponent { parts.append(f) }
         if let n = line.turns, n > 0 { parts.append("\(n) turn\(n == 1 ? "" : "s")") }
         if !session.model.isEmpty { parts.append(Workspace.modelName(session.model)) }
-        return parts.joined(separator: " · ")
+        return parts.joined(separator: ", ")
     }
 
     /// Settled work reads quieter; a top-level row keeps its size so the monograms line up.

@@ -49,10 +49,10 @@ struct Chapter {
         if let titled = turn.chapterTitle, !titled.isEmpty { return titled }
         switch chapter.kind {
         case .compacted: return "summarized"
-        case .run: return "on its own · \(turns) turn\(turns == 1 ? "" : "s")"
+        case .run: return "on its own, \(turns) turn\(turns == 1 ? "" : "s")"
         case .prompt: break
         }
-        if turn.input.hasPrefix("<") || turn.input.isEmpty { return "on its own · \(turns) turn\(turns == 1 ? "" : "s")" }
+        if turn.input.hasPrefix("<") || turn.input.isEmpty { return "on its own, \(turns) turn\(turns == 1 ? "" : "s")" }
         if let w = words(turn.request), !w.isEmpty { return w }
         // Nothing worded ("?", an emoji): as typed, when it's short.
         let raw = turn.request.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -1,4 +1,3 @@
-import Security
 import XCTest
 @testable import Frog
 
@@ -28,25 +27,16 @@ final class RemoteBridgeTests: XCTestCase {
     }
 
     /// A test host never reads or writes the real Keychain item: it isn't the build that made
-    /// it, so macOS would ask for the login password on every run. The code still behaves
-    /// like a code: stable until a new one is asked for.
+    /// it, so macOS would ask for the login password on every run. Nor a debug build's own
+    /// defaults copy. The code still behaves like a code: stable until a new one is asked for.
     func testTheCodeStaysOutOfTheKeychainUnderTest() {
+        let debugCode = UserDefaults.standard.string(forKey: "remoteBridgeCodeDebug")
         let first = RemoteBridge.token
         XCTAssertEqual(first.count, 20)
         XCTAssertEqual(RemoteBridge.token, first, "the same code until a new one is made")
         RemoteBridge.newToken()
         XCTAssertNotEqual(RemoteBridge.token, first, "a new code replaces it")
-
-        var q: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
-                                kSecAttrService as String: "toys.frog.remote",
-                                kSecAttrAccount as String: "bridge-token",
-                                kSecReturnAttributes as String: true,
-                                kSecMatchLimit as String: kSecMatchLimitOne]
-        q[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUIFail
-        var out: AnyObject?
-        if SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess,
-           let attrs = out as? [String: Any], let made = attrs[kSecAttrModificationDate as String] as? Date {
-            XCTAssertLessThan(made.timeIntervalSinceNow, -5, "this test run didn't write the Keychain item")
-        }
+        XCTAssertEqual(UserDefaults.standard.string(forKey: "remoteBridgeCodeDebug"), debugCode,
+                       "the test's code stays in memory")
     }
 }

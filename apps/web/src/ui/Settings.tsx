@@ -205,7 +205,7 @@ function Profile({ account, onSignOut }: SettingsProps) {
   return (<>
     <div className="f-account">
       <span className="mark" style={{ width: 28, height: 28 }} />
-      <div className="grow"><div className="name"><b>{account?.name ?? firstName(account) ?? 'Signed in'}</b>{account?.handle && <span className="f-badge">GitHub</span>}</div><div className="detail">{[account?.handle && `@${account.handle}`, account?.email].filter(Boolean).join(' · ')}</div></div>
+      <div className="grow"><div className="name"><b>{account?.name ?? firstName(account) ?? 'Signed in'}</b>{account?.handle && <span className="f-badge">GitHub</span>}</div><div className="detail">{[account?.handle && `@${account.handle}`, account?.email].filter(Boolean).join(', ')}</div></div>
       <div className="acts"><button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={onSignOut} title="This browser forgets its key. Your sessions stay in your account.">Sign out</button></div>
     </div>
     <p className="det wrap">Cloud sessions belong to your account, so they show up on every device you sign in on.</p>
@@ -255,7 +255,7 @@ function Keys({ apiKey }: { apiKey: string }) {
         <div key={k.id} className="set-row">
           <div style={{ flex: 1, minWidth: 0 }}>
             <b>{k.name ?? (k.kind === 'device' ? 'A device' : 'API key')}</b>{k.current && <span className="f-badge" style={{ marginLeft: 6 }}>This browser</span>}
-            <div className="det">{k.kind === 'device' ? 'Signed in' : 'API key'} {day(k.created)}{k.last_used ? ` · last used ${day(k.last_used)}` : ''}</div>
+            <div className="det">{k.kind === 'device' ? 'Signed in' : 'API key'} {day(k.created)}{k.last_used ? `, last used ${day(k.last_used)}` : ''}</div>
           </div>
           {!k.current && <button type="button" className="f-btn f-btn--bordered f-btn--small" title={k.kind === 'device' ? 'Signs that device out' : 'That key stops working'} onClick={() => revokeKey(apiKey, k.id).then(load, () => setError("Couldn't revoke it. Try again."))}>Revoke</button>}
         </div>
@@ -395,7 +395,7 @@ function Subscription({ account, apiKey, onSubscribe }: { account: Account | nul
         const f = w.limit ? Math.min(1, w.used / w.limit) : 0
         return (
           <div key={w.kind} className="allow">
-            <div className="allow-h"><span>{w.kind === '5h' ? 'This 5 hours' : 'This week'}</span><span className="det">{Math.round(f * 100)}% · resets {new Date(w.resets_at).toLocaleString(undefined, w.kind === '5h' ? { hour: 'numeric', minute: '2-digit' } : { weekday: 'short' })}</span></div>
+            <div className="allow-h"><span>{w.kind === '5h' ? 'This 5 hours' : 'This week'}</span><span className="det">{Math.round(f * 100)}%, resets {new Date(w.resets_at).toLocaleString(undefined, w.kind === '5h' ? { hour: 'numeric', minute: '2-digit' } : { weekday: 'short' })}</span></div>
             <div className="ctx-bar"><span style={{ width: `${f * 100}%`, background: f >= 1 ? 'var(--warn)' : f > 0.8 ? 'var(--notice)' : 'var(--frog)' }} /></div>
           </div>
         )
@@ -526,7 +526,7 @@ function Machines({ machines, onOpen }: { machines: Machine[]; onOpen: (id: stri
 /** Frog Cloud: who's signed in and the credit, with Add credit in Billing. */
 function FrogCloud({ account, onBilling }: { account: Account | null; onBilling: () => void }) {
   return (<>
-    <div className="set-row"><div style={{ flex: 1 }}>Account</div><span className="det">{[account?.name ?? firstName(account), account?.email].filter(Boolean).join(' · ') || 'Signed in'}</span></div>
+    <div className="set-row"><div style={{ flex: 1 }}>Account</div><span className="det">{[account?.name ?? firstName(account), account?.email].filter(Boolean).join(', ') || 'Signed in'}</span></div>
     <div className="set-row"><div style={{ flex: 1 }}>Credit</div><span className="num">{creditLine(account).replace(/ credit$/, '')}</span><button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={onBilling} title="Opens Billing">Add credit…</button></div>
   </>)
 }
@@ -551,7 +551,7 @@ function MachinePage({ machine: d, machines }: { machine: Machine; machines: rea
       {d.models.map((m) => (
         <div key={m.hash} className="set-row">
           <span className="radio" aria-hidden="true" style={{ borderColor: m.loaded ? placeColor('local') : 'var(--line-strong)' }}>{m.loaded && <span style={{ background: placeColor('local') }} />}</span>
-          <div style={{ flex: 1 }} title={[catalogModel(m.id)?.source.repo ?? m.id, m.quant].filter(Boolean).join(' · ')}>
+          <div style={{ flex: 1 }} title={[catalogModel(m.id)?.source.repo ?? m.id, m.quant].filter(Boolean).join(', ')}>
             {displayName(m.id || m.name)}
             {catalogModel(m.id) && <div className="det">{usesLine(catalogModel(m.id)!)}</div>}
           </div>
