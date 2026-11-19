@@ -58,5 +58,5 @@ export function inviteFor({ mac, thisMac }: { mac: boolean; thisMac: boolean }):
 export function macHandoff(invite: Invite): { href: string; does: string; title: string } {
   if (invite === 'open') return { href: 'frog://settings/models', does: 'opens Frog for Mac', title: 'Opens in Frog for Mac' }
   if (invite === 'get') return { href: '/download', does: 'get Frog for Mac', title: 'Runs in Frog for Mac. Download it free' }
-  return { href: '/mac', does: 'runs in Frog for Mac', title: 'Runs on a Mac, in Frog for Mac' }
+  return { href: '/mac', does: 'learn about Frog for Mac', title: 'Runs on a Mac, in Frog for Mac' }
 }

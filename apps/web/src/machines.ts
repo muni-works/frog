@@ -86,7 +86,12 @@ export interface LocalRow { key: string; name: string; on: string | null }
  *  machines hold it when the gateway reports them; then what's on a machine the catalog doesn't
  *  offer. Nothing is guessed: with no machines reported, `on` stays null. */
 export function localRows(machines: Machine[]): LocalRow[] {
-  const held = new Map(machineModels(machines).map((m) => [m.name.toLowerCase(), m]))
+  // By name, so a Mac's MLX build and a node's bf16 of the same model are one row, holds merged.
+  const held = new Map<string, MachineModel>()
+  for (const m of machineModels(machines)) {
+    const k = m.name.toLowerCase(), had = held.get(k)
+    held.set(k, had ? { ...had, holds: [...had.holds, ...m.holds] } : m)
+  }
   const rows: LocalRow[] = menuLocalModels().map((m) => {
     const h = held.get(m.name.toLowerCase())
     held.delete(m.name.toLowerCase())

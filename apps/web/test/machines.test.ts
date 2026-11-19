@@ -63,6 +63,9 @@ test('local rows say where you have a model, and keep ones the catalog does not 
   assert.equal(rows.find((r) => r.name === 'Qwen3 32B')?.on, null)
   const odd: Machine = { ...mew, models: [{ id: 'someone/Odd-7B', name: 'Odd-7B', hash: 'cccccccccccc33', loaded: false }] }
   assert.deepEqual(localRows([odd]).at(-1), { key: 'node/cccccccccccc', name: 'Odd 7B', on: 'mew' })
+  // The same model as two builds (MLX on a Mac, bf16 on a node) is one row naming both.
+  const mlx: Machine = { ...mac, models: [{ id: 'mlx-community/Qwen3-4B-4bit', name: 'Qwen3-4B-4bit', hash: 'dddddddddddd44', loaded: false }] }
+  assert.equal(localRows([mlx, mew]).find((r) => r.name === 'Qwen3 4B')?.on, 'mew, This Mac')
   // Offline machines say nothing.
   assert.ok(localRows([{ ...mew, online: false }]).every((r) => r.on === null))
 })
