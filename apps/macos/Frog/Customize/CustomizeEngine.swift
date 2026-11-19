@@ -56,7 +56,12 @@ struct CustomizeReport: Decodable, Equatable {
     struct RulesFile: Decodable, Equatable {
         var path: String
         var scope: String
+        var source: String?
+        var kind: String?
+        var applies: String?
+        var paths: [String]?
         var tokens: Int?
+        var fullTokens: Int?
     }
 
     struct Note: Decodable, Equatable {
