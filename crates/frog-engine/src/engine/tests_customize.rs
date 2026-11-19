@@ -1315,28 +1315,38 @@ async fn only_the_newest_undos_are_kept() {
     r.end().await;
 }
 
-/// Review 2, item 10: an explicit slash command at the start of a message works in a
-/// top-level session whether or not the app marked it typed (an editor over ACP, `frog -p`, a
-/// bridge, the phone), and never in a worker. One buried mid-message never fires, and natural
-/// language "remember that …" needs typed text.
+/// Review 3, LIVE 5: `/remember` and `/forget` write and delete notes, so in a session an app
+/// hosts they answer only what the person typed in its composer; untyped there (a
+/// notification reply, a bridged message, an app's prompt) they're refused with a notice,
+/// never a model turn. A client the person drives directly (`frog -p`, an editor over ACP:
+/// `Config::direct`) works untyped. One buried mid-message never fires, and natural language
+/// "remember that …" needs typed text.
 #[tokio::test]
-async fn slash_commands_work_untyped_but_only_at_the_start_and_never_in_a_worker() {
-    let mut r = rig(vec![done(), done(), done()], Mode::Default);
-    r.idle().await;
+async fn slash_saves_need_typed_text_unless_the_client_is_direct() {
     let untyped = |text: &str| Op::Submit {
         typed: false,
         text: text.into(),
         images: Vec::new(),
         more: Vec::new(),
     };
+    let ran_a_turn = |evs: &[Event]| evs.iter().any(|e| matches!(e, Event::TurnStarted { .. }));
+    let mut r = rig(vec![done(), done(), done()], Mode::Default);
+    r.idle().await;
     let evs = r
         .run(untyped("/remember we deploy on fridays"), never)
         .await;
+    assert!(!ran_a_turn(&evs), "answered without a turn");
+    assert!(r.notes().is_empty(), "untyped in an app session: refused");
     assert!(
-        !evs.iter().any(|e| matches!(e, Event::TurnStarted { .. })),
-        "answered without a turn"
+        evs.iter()
+            .any(|e| matches!(e, Event::Notice { message, .. } if message.contains("/remember"))),
+        "{evs:?}"
     );
-    assert_eq!(r.notes().len(), 1, "an untyped slash command still saves");
+    let evs = r.say("/remember we deploy on fridays", never).await;
+    assert!(!ran_a_turn(&evs));
+    assert_eq!(r.notes().len(), 1, "typed: saved");
+    let evs = r.run(untyped("/memory"), never).await;
+    assert!(!ran_a_turn(&evs), "/memory reads, typed or not");
     let _ = r
         .run(
             untyped("please run the tests /remember tests are flaky"),
@@ -1356,9 +1366,41 @@ async fn slash_commands_work_untyped_but_only_at_the_start_and_never_in_a_worker
         .await;
     assert_eq!(r.notes().len(), 2, "natural language typed: saved");
     r.end().await;
+    let mut d = rig_with(vec![done()], Mode::Default, |c| c.direct = true);
+    d.idle().await;
+    let evs = d
+        .run(untyped("/remember we deploy on fridays"), never)
+        .await;
+    assert!(!ran_a_turn(&evs));
+    assert_eq!(
+        d.notes().len(),
+        1,
+        "a direct client's untyped slash command saves"
+    );
+    d.end().await;
+}
+
+/// Review 3, LIVE 4: in a `--worker` child the person can type in, the read-only commands
+/// answer (the Mac has already drawn a finished command row for them); saving and forgetting
+/// are refused with a notice, and none of them starts a model turn.
+#[tokio::test]
+async fn a_worker_answers_read_only_commands_and_refuses_saves() {
+    let ran_a_turn = |evs: &[Event]| evs.iter().any(|e| matches!(e, Event::TurnStarted { .. }));
     let mut w = rig_with(vec![done()], Mode::Default, |c| c.worker = true);
     w.idle().await;
-    let _ = w.say("/remember we deploy on fridays", never).await;
+    for text in [
+        "/memory",
+        "/recall deploy",
+        "/remember we deploy on fridays",
+        "/forget x",
+    ] {
+        let evs = w.say(text, never).await;
+        assert!(!ran_a_turn(&evs), "{text}: no turn");
+        assert!(
+            evs.iter().any(|e| matches!(e, Event::Notice { .. })),
+            "{text}: answered {evs:?}"
+        );
+    }
     assert!(w.notes().is_empty(), "{:?}", w.notes());
     w.end().await;
 }

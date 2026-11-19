@@ -774,7 +774,12 @@ async fn run() -> Result<bool> {
         _ => (profile_name, profile),
     };
     if cli.acp {
-        acp::serve(cfg.clone(), profile_name, profile, store, cli.sandbox).await?;
+        // An editor the person drives: `/remember` and `/forget` work untyped (Config::direct).
+        let cfg = Config {
+            direct: true,
+            ..cfg.clone()
+        };
+        acp::serve(cfg, profile_name, profile, store, cli.sandbox).await?;
         return Ok(true);
     }
     if let Some(addr) = &cli.listen {
@@ -820,7 +825,12 @@ async fn run() -> Result<bool> {
         ws::check_bind(addr, ws_token.as_deref(), insecure)?;
     }
     let handle = frog_engine::spawn_checked(Options {
-        cfg: cfg.clone(),
+        // `frog -p` and the terminal are the person's own (Config::direct); an app over
+        // `--serve` or `--serve-ws` marks what the person typed instead.
+        cfg: Config {
+            direct: !cli.serve && cli.serve_ws.is_none(),
+            ..cfg.clone()
+        },
         profile_name,
         profile,
         cwd,

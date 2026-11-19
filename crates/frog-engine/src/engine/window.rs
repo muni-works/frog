@@ -233,12 +233,38 @@ impl Agent {
         Some(crate::summary::build(&loaded.header, &loaded.events, None))
     }
 
-    /// `/remember`, `/forget`, `/memory` and `/recall`: answered with a notice, no model call.
-    /// Returns false if `text` isn't one of them.
-    pub(super) fn memory_command(&mut self, text: &str) -> bool {
-        // Never in a child: `/remember` and `/forget` change the person's notes.
-        if !self.top_level() || !crate::memory::is_command(text) {
+    /// `/remember`, `/forget`, `/memory` and `/recall`: answered with a notice, no model call,
+    /// in any session but the engine's own subagent (whose messages are the model's, just
+    /// words). Returns false if `text` isn't one of them.
+    ///
+    /// `/memory` and `/recall` only read, so they answer in any session a person types in,
+    /// a `--worker` child included. `/remember` and `/forget` change the person's notes:
+    /// only in a top-level session, and only from text the person typed in an app's composer
+    /// (`typed`) or from a client they drive directly (`Config::direct`: `frog -p`, an editor
+    /// over ACP). Anywhere else they're refused with a notice, never a model turn: the Mac has
+    /// already drawn the command row.
+    pub(super) fn memory_command(&mut self, text: &str, typed: bool) -> bool {
+        if self.subagent {
             return false;
+        }
+        let Some(name) = crate::memory::command_name(text) else {
+            return false;
+        };
+        if matches!(name, "remember" | "forget") {
+            if !self.top_level() {
+                self.notice(
+                    Level::Warn,
+                    format!("/{name} works only in a session you started, not one another session started"),
+                );
+                return true;
+            }
+            if !typed && !self.cfg.direct {
+                self.notice(
+                    Level::Warn,
+                    format!("/{name} works only from what you type in the composer"),
+                );
+                return true;
+            }
         }
         let Some(store) = &self.memory else {
             self.notice(
