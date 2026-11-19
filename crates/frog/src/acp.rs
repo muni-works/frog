@@ -199,13 +199,7 @@ pub async fn serve(
                     &s.turn
                 };
                 *slot.lock().unwrap() = Some(tx);
-                let _ = s.ops.send(frog_engine::protocol::Op::Submit {
-                    text,
-                    images: prompt_images(&req.prompt),
-                    more: Vec::new(),
-                    // Not typed: an editor client's prompt: Frog can't tell it was typed.
-                    typed: false,
-                });
+                let _ = s.ops.send(submit(text, prompt_images(&req.prompt)));
                 let conn = conn.clone();
                 tokio::spawn(async move {
                     let reason = rx.await.unwrap_or(StopReason::Cancelled);
@@ -639,6 +633,20 @@ fn plan(input: &Value) -> Plan {
         })
         .collect();
     Plan::new(entries)
+}
+
+/// What an editor's prompt becomes. Not typed: Frog can't tell an editor client's prompt was
+/// typed. An explicit slash command (`/remember …`) still works, as from any top-level client.
+pub(crate) fn submit(
+    text: String,
+    images: Vec<frog_engine::protocol::Image>,
+) -> frog_engine::protocol::Op {
+    frog_engine::protocol::Op::Submit {
+        text,
+        images,
+        more: Vec::new(),
+        typed: false,
+    }
 }
 
 #[cfg(test)]

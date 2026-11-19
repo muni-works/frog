@@ -1315,23 +1315,46 @@ async fn only_the_newest_undos_are_kept() {
     r.end().await;
 }
 
-/// Review 2, item 10: `/remember` and `/forget` write and delete notes, so they answer only a
-/// typed message in a session the person types in. Untyped (an app's prompt) or in a worker,
-/// the text is just words for the model.
+/// Review 2, item 10: an explicit slash command at the start of a message works in a
+/// top-level session whether or not the app marked it typed (an editor over ACP, `frog -p`, a
+/// bridge, the phone), and never in a worker. One buried mid-message never fires, and natural
+/// language "remember that …" needs typed text.
 #[tokio::test]
-async fn memory_commands_need_typed_text_in_a_top_session() {
-    let mut r = rig(vec![done(), done()], Mode::Default);
+async fn slash_commands_work_untyped_but_only_at_the_start_and_never_in_a_worker() {
+    let mut r = rig(vec![done(), done(), done()], Mode::Default);
     r.idle().await;
-    let untyped = Op::Submit {
+    let untyped = |text: &str| Op::Submit {
         typed: false,
-        text: "/remember we deploy on fridays".into(),
+        text: text.into(),
         images: Vec::new(),
         more: Vec::new(),
     };
-    let _ = r.run(untyped, never).await;
-    assert!(r.notes().is_empty(), "{:?}", r.notes());
-    let _ = r.say("/remember we deploy on fridays", never).await;
-    assert_eq!(r.notes().len(), 1, "typed: saved");
+    let evs = r
+        .run(untyped("/remember we deploy on fridays"), never)
+        .await;
+    assert!(
+        !evs.iter().any(|e| matches!(e, Event::TurnStarted { .. })),
+        "answered without a turn"
+    );
+    assert_eq!(r.notes().len(), 1, "an untyped slash command still saves");
+    let _ = r
+        .run(
+            untyped("please run the tests /remember tests are flaky"),
+            never,
+        )
+        .await;
+    assert_eq!(r.notes().len(), 1, "buried mid-message: just words");
+    let _ = r
+        .run(
+            untyped("remember that the staging box reboots nightly"),
+            never,
+        )
+        .await;
+    assert_eq!(r.notes().len(), 1, "natural language untyped: no note");
+    let _ = r
+        .say("remember that the staging box reboots nightly", never)
+        .await;
+    assert_eq!(r.notes().len(), 2, "natural language typed: saved");
     r.end().await;
     let mut w = rig_with(vec![done()], Mode::Default, |c| c.worker = true);
     w.idle().await;
