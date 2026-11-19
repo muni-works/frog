@@ -154,7 +154,7 @@ enum TurnType {
     /// A list item's marker column: its text starts this far in, whatever the marker ("•", "1.",
     /// "10."), so a list's text lines up; a nested list steps in by one column, putting its
     /// markers under its parent's text.
-    static let markerColumn: CGFloat = (body * 1.6).rounded()
+    static let markerColumn: CGFloat = Tokens.Transcript.Layout.marker
     /// Between a marker's right edge and the item's text.
     static let markerGap: CGFloat = TurnSpace.Inset.row
 
@@ -176,9 +176,7 @@ extension View {
     /// either side in a narrow window. The transcript, the banners above the composer and the
     /// composer share it, so the page is one column from the first turn to the field you type in.
     func turnColumn() -> some View {
-        frame(maxWidth: TurnSpace.measure)
-            .padding(.horizontal, TurnSpace.gutter)
-            .frame(maxWidth: .infinity)
+        modifier(TurnColumn())
     }
 
     /// A line's hover or open plate. It bleeds outward into the gutter rather than padding the
@@ -187,6 +185,20 @@ extension View {
         padding(.horizontal, Tokens.Transcript.Layout.plateBleed)
             .background(.quaternary.opacity(opacity), in: .rect(cornerRadius: Tokens.Transcript.Layout.plateRadius))
             .padding(.horizontal, -Tokens.Transcript.Layout.plateBleed)
+    }
+}
+
+/// The column with the gutter the transcript has at this width (`TranscriptEdge.of`): the
+/// narrow gutter in a narrow pane, so what sits under the transcript keeps its edges.
+private struct TurnColumn: ViewModifier {
+    @State private var width: CGFloat = 0
+
+    func body(content: Content) -> some View {
+        content
+            .frame(maxWidth: TurnSpace.measure)
+            .padding(.horizontal, width > 0 ? TranscriptEdge.of(paneWidth: width).gutter : TurnSpace.gutter)
+            .frame(maxWidth: .infinity)
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width = $0 }
     }
 }
 

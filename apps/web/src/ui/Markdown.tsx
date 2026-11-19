@@ -115,7 +115,8 @@ export function parseStreaming(src: string, cache: { head: string; blocks: Block
 const SAFE = /^(https?:|mailto:)/i
 
 /** Inline Markdown into React nodes: `code`, ***both***, ~~struck~~, **bold**, *em*, [links](url), bare URLs. */
-export function inline(text: string, key = 0): ReactNode[] {
+/** `lead`: this text opens its block (false inside emphasis or a link, which open nothing themselves). */
+export function inline(text: string, key = 0, lead = true): ReactNode[] {
   const out: ReactNode[] = []
   const re = /(`+)([\s\S]*?[^`])\1(?!`)|\*\*\*(?!\s)([\s\S]+?)\*\*\*|~~(?!\s)([\s\S]+?)~~|\*\*([\s\S]+?)\*\*|__([\s\S]+?)__|(?<![\w*])\*(?!\s)([\s\S]+?)(?<!\s)\*(?!\w)|(?<![\w_])_(?!\s)([\s\S]+?)(?<!\s)_(?!\w)|\[([^\]]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)|(https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"])/g
   let last = 0
@@ -123,12 +124,14 @@ export function inline(text: string, key = 0): ReactNode[] {
   while ((m = re.exec(text))) {
     if (m.index > last) out.push(...lines(text.slice(last, m.index), `${key}-${last}`))
     const k = `${key}-${m.index}`
-    if (m[2] !== undefined) out.push(<code key={k}>{m[2]}</code>)
-    else if (m[3] !== undefined) out.push(<strong key={k}><em>{inline(m[3], m.index)}</em></strong>)
-    else if (m[4] !== undefined) out.push(<del key={k}>{inline(m[4], m.index)}</del>)
-    else if (m[5] !== undefined || m[6] !== undefined) out.push(<strong key={k}>{inline(m[5] ?? m[6], m.index)}</strong>)
-    else if (m[7] !== undefined || m[8] !== undefined) out.push(<em key={k}>{inline(m[7] ?? m[8], m.index)}</em>)
-    else if (m[9] !== undefined) out.push(SAFE.test(m[10]) ? <a key={k} href={m[10]} target="_blank" rel="noreferrer">{inline(m[9], m.index)}</a> : <Fragment key={k}>{m[9]}</Fragment>)
+    // Code that opens the paragraph or item: its plate overhangs the column's edge by its own
+    // padding, so its letters start on the edge with the text around them (transcript.css).
+    if (m[2] !== undefined) out.push(<code key={k} className={lead && m.index === 0 ? 'md-lead' : undefined}>{m[2]}</code>)
+    else if (m[3] !== undefined) out.push(<strong key={k}><em>{inline(m[3], m.index, false)}</em></strong>)
+    else if (m[4] !== undefined) out.push(<del key={k}>{inline(m[4], m.index, false)}</del>)
+    else if (m[5] !== undefined || m[6] !== undefined) out.push(<strong key={k}>{inline(m[5] ?? m[6], m.index, false)}</strong>)
+    else if (m[7] !== undefined || m[8] !== undefined) out.push(<em key={k}>{inline(m[7] ?? m[8], m.index, false)}</em>)
+    else if (m[9] !== undefined) out.push(SAFE.test(m[10]) ? <a key={k} href={m[10]} target="_blank" rel="noreferrer">{inline(m[9], m.index, false)}</a> : <Fragment key={k}>{m[9]}</Fragment>)
     else if (m[11] !== undefined) out.push(<a key={k} href={m[11]} target="_blank" rel="noreferrer">{m[11]}</a>)
     last = m.index + m[0].length
   }

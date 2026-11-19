@@ -1,3 +1,1 @@
-$ node docs/design/parity/diff-metrics.mjs docs/design/transcript/metrics/web-1280.json docs/design/transcript/metrics/mac-1280.json
-match: 12 rows, web and mac, within 1 pt
-(exit 0)
+match: 16 rows, web and mac, within 1 pt

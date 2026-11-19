@@ -3,7 +3,7 @@
   "column" : 720,
   "format" : "frog-transcript-metrics\/1",
   "gutter" : 32,
-  "height" : 800,
+  "height" : 168,
   "look" : "dark",
   "mark" : -26,
   "markOnScreen" : true,
@@ -71,7 +71,7 @@
       "kind" : "prose",
       "text" : "Backoff::delay now takes the Rng, and the test passes a seeded one, so the retry timing is the same every run.",
       "top" : 478,
-      "x" : 4
+      "x" : 0
     },
     {
       "fontSize" : 14,
@@ -90,6 +90,14 @@
       "x" : 0
     },
     {
+      "fontSize" : 0,
+      "height" : 16,
+      "kind" : "turnline",
+      "text" : "",
+      "top" : 582,
+      "x" : 520
+    },
+    {
       "fontSize" : 14,
       "height" : 38,
       "kind" : "prompt",
@@ -104,7 +112,31 @@
       "text" : "Allow this command?",
       "top" : 684,
       "x" : 16
+    },
+    {
+      "fontSize" : 12.5,
+      "height" : 24,
+      "kind" : "live",
+      "text" : "Waiting for you",
+      "top" : 844,
+      "x" : 0
+    },
+    {
+      "fontSize" : 11.5,
+      "height" : 16,
+      "kind" : "stats",
+      "text" : "#s · waited #s",
+      "top" : 870,
+      "x" : 0
+    },
+    {
+      "fontSize" : 0,
+      "height" : 16,
+      "kind" : "turnline",
+      "text" : "",
+      "top" : 870,
+      "x" : 520
     }
   ],
-  "width" : 1280
+  "width" : 280
 }

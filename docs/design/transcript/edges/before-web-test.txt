@@ -1,0 +1,212 @@
+TAP version 13
+# Subtest: every element of the edge fixture sits on the column's two lines (1280 wide)
+not ok 1 - every element of the edge fixture sits on the column's two lines (1280 wide)
+  ---
+  duration_ms: 2503.082875
+  location: 'apps/web/test/transcript-edges.test.ts:2:37'
+  failureType: 'testCodeFailure'
+  error: |-
+    5 off at 1280 × 2600:
+    | element | left | right | off |
+    | --- | ---: | ---: | --- |
+    | prompt: bubble (upload_retries_on_503 is fla) | 349.8 | 720 | right ✓ |
+    | thought: words (Thought for 1s) | 0 | 81.5 | text ✓ |
+    | thought: mark | -26 | -8 | hung ✓ |
+    | fold: words (4 steps 2.2s) | 0 | 720 | text ✓ |
+    | fold: mark | -26 | -8 | hung ✓ |
+    | fold: result (2.2s) | 697.5 | 720 | right ✓ |
+    | line:command: words (Failed cargo test -q upload ) | 0 | 720 | text ✓ |
+    | line:command: mark | -26 | -8 | hung ✓ |
+    | line:command: result (10 of 11 · 9.0s) | 645.2 | 720 | right ✓ |
+    | line:command: opened: failing tests (upload_retries_on_503) | 0 | 151.2 | text ✓ |
+    | line:command: opened: output box (running 11 tests ..........F) | 0 | 720 | box ✓, right ✓ |
+    | line:command: opened: caption (Ran in your Frog Cloud sandb) | 0 | 162.3 | text ✓ |
+    | prose (opens with code): words (Backoff::delay took no Rng ,) | 4 | 523.3 | **text +4** |
+    | prose (opens with code): chip background | 0 | 117.2 | (inside) |
+    | heading: words (What changed) | 0 | 93 | text ✓ |
+    | list item: words (The delay takes an Rng , so ) | 22 | 308.7 | **text +22** |
+    | list item: words (cargo test -q upload passes ) | 26 | 407.7 | **text +26** |
+    | list item: words (The jitter is half the base ) | 22 | 230.9 | **text +22** |
+    | code: box | 0 | 720 | box ✓, right ✓ |
+    | table: box | 0 | 237.8 | box ✓ |
+    | line:edit: words (Edited src/retry.rs + 1 − 1) | 0 | 720 | text ✓ |
+    | line:edit: mark | -26 | -8 | hung ✓ |
+    | line:edit: result (+ 1 − 1) | 689.7 | 720 | right ✓ |
+    | line:command: words (Ran cargo test -q upload 11 ) | 0 | 720 | text ✓ |
+    | line:command: mark | -26 | -8 | hung ✓ |
+    | line:command: result (11 of 11 · 14s) | 648.3 | 720 | right ✓ |
+    | line:search: words (Searched thread_rng 3 matche) | 0 | 720 | text ✓ |
+    | line:search: mark | -26 | -8 | hung ✓ |
+    | line:search: result (3 matches in 2 files) | 620 | 720 | right ✓ |
+    | prose: words (Then the docs, the web and o) | 0 | 314.4 | text ✓ |
+    | line:web: words (Fetched docs.rs 12 KB) | 0 | 720 | text ✓ |
+    | line:web: mark | -26 | -8 | hung ✓ |
+    | line:web: result (12 KB) | 688.7 | 720 | right ✓ |
+    | line:web: words (Searched the web for rust se) | 0 | 720 | text ✓ |
+    | line:web: mark | -26 | -8 | hung ✓ |
+    | line:web: result (8 results) | 675.1 | 720 | right ✓ |
+    | line:other: words (Delegated Check every other ) | 0 | 720 | text ✓ |
+    | line:other: mark | -26 | -8 | hung ✓ |
+    | line:other: result (Ran an agent · 6 tool calls) | 587.7 | 720 | right ✓ |
+    | prose: words (It wanted to force-push; you) | 0 | 230.4 | text ✓ |
+    | line:command: words (Didn't run git push --force ) | 0 | 720 | text ✓ |
+    | line:command: mark | -26 | -8 | hung ✓ |
+    | line:command: result (you said no) | 661.7 | 720 | right ✓ |
+    | visual: box (Made a visualretry timingSou) | 0 | 720 | box ✓, right ✓ |
+    | visual: title (inside) (Made a visual retry timing S) | 36 | 666 | (inside) |
+    | prose: words (All eleven upload tests pass) | 0 | 489 | text ✓ |
+    | footer: words (Qwen3 Coder Next 56s 1,902 t) | 0 | 249.8 | text ✓ |
+    | footer: turn line (drawn) | 521.4 | 718.9 | **right -1.1** |
+    | footer: turn line (box) | 520 | 720 | right ✓ |
+    | prompt: bubble (Push it.just now·) | 645.3 | 720 | right ✓ |
+    | error: box (Couldn't reach the model. Ch) | 0 | 720 | box ✓, right ✓ |
+    | error: words (Couldn't reach the model. Ch) | 14 | 410.1 | (inside) |
+    | prompt: bubble (nice. open a PRjust now·) | 595.9 | 720 | right ✓ |
+    | prose: words (Which base should the PR go ) | 0 | 203.9 | text ✓ |
+    | question card: box (Which base should the PR go ) | 0 | 720 | box ✓, right ✓ |
+    | question card: title (inside) (Which base should the PR go ) | 16 | 229.1 | (inside) |
+    | card: box (Allow this command?gh pr cre) | 0 | 720 | box ✓, right ✓ |
+    | card: title (inside) (Allow this command?) | 16 | 156.8 | (inside) |
+    | live: words (Waiting for you) | 0 | 83.8 | text ✓ |
+    | live: mark | -26 | -8 | hung ✓ |
+    | stats: words (3s waited 2s) | 0 | 71.6 | text ✓ |
+    | stats: turn line (drawn) | 537.3 | 720 | right ✓ |
+    | stats: turn line (box) | 520 | 720 | right ✓ |
+    | composer: box | 0 | 720 | box ✓, right ✓ |
+    | composer: text (inside) (Add a follow-up) | 15 | 705 | (inside) |
+    + actual - expected
+    
+    + [
+    +   'prose (opens with code) words "Backoff::delay took no Rng , so the jitter was whatever thre": text off by 4',
+    +   'list item words "The delay takes an Rng , so a test can seed it.": text off by 22',
+    +   'list item words "cargo test -q upload passes eleven of eleven, every run.": text off by 26',
+    +   'list item words "The jitter is half the base at most.": text off by 22',
+    +   'footer turn line (drawn) "": right off by -1.1'
+    + ]
+    - []
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+  actual:
+    0: 'prose (opens with code) words "Backoff::delay took no Rng , so the jitter was whatever thre": text off by 4'
+    1: 'list item words "The delay takes an Rng , so a test can seed it.": text off by 22'
+    2: 'list item words "cargo test -q upload passes eleven of eleven, every run.": text off by 26'
+    3: 'list item words "The jitter is half the base at most.": text off by 22'
+    4: 'footer turn line (drawn) "": right off by -1.1'
+  operator: 'deepStrictEqual'
+  stack: |-
+    edges (apps/web/test/transcript-edges.test.ts:51:10)
+    process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    async Test.run (node:internal/test_runner/test:797:9)
+    async Test.processPendingSubtests (node:internal/test_runner/test:526:7)
+  ...
+# Subtest: and with the inspector open (the column centred in a narrower pane)
+not ok 2 - and with the inspector open (the column centred in a narrower pane)
+  ---
+  duration_ms: 1733.159791
+  location: 'apps/web/test/transcript-edges.test.ts:2:162'
+  failureType: 'testCodeFailure'
+  error: |-
+    5 off at 1600 × 2600:
+    | element | left | right | off |
+    | --- | ---: | ---: | --- |
+    | prompt: bubble (upload_retries_on_503 is fla) | 349.8 | 720 | right ✓ |
+    | thought: words (Thought for 1s) | 0 | 81.5 | text ✓ |
+    | thought: mark | -26 | -8 | hung ✓ |
+    | fold: words (4 steps 2.2s) | 0 | 720 | text ✓ |
+    | fold: mark | -26 | -8 | hung ✓ |
+    | fold: result (2.2s) | 697.5 | 720 | right ✓ |
+    | line:command: words (Failed cargo test -q upload ) | 0 | 720 | text ✓ |
+    | line:command: mark | -26 | -8 | hung ✓ |
+    | line:command: result (10 of 11 · 9.0s) | 645.2 | 720 | right ✓ |
+    | line:command: opened: failing tests (upload_retries_on_503) | 0 | 151.2 | text ✓ |
+    | line:command: opened: output box (running 11 tests ..........F) | 0 | 720 | box ✓, right ✓ |
+    | line:command: opened: caption (Ran in your Frog Cloud sandb) | 0 | 162.3 | text ✓ |
+    | prose (opens with code): words (Backoff::delay took no Rng ,) | 4 | 523.3 | **text +4** |
+    | prose (opens with code): chip background | 0 | 117.2 | (inside) |
+    | heading: words (What changed) | 0 | 93 | text ✓ |
+    | list item: words (The delay takes an Rng , so ) | 22 | 308.7 | **text +22** |
+    | list item: words (cargo test -q upload passes ) | 26 | 407.7 | **text +26** |
+    | list item: words (The jitter is half the base ) | 22 | 230.9 | **text +22** |
+    | code: box | 0 | 720 | box ✓, right ✓ |
+    | table: box | 0 | 237.8 | box ✓ |
+    | line:edit: words (Edited src/retry.rs + 1 − 1) | 0 | 720 | text ✓ |
+    | line:edit: mark | -26 | -8 | hung ✓ |
+    | line:edit: result (+ 1 − 1) | 689.7 | 720 | right ✓ |
+    | line:command: words (Ran cargo test -q upload 11 ) | 0 | 720 | text ✓ |
+    | line:command: mark | -26 | -8 | hung ✓ |
+    | line:command: result (11 of 11 · 14s) | 648.3 | 720 | right ✓ |
+    | line:search: words (Searched thread_rng 3 matche) | 0 | 720 | text ✓ |
+    | line:search: mark | -26 | -8 | hung ✓ |
+    | line:search: result (3 matches in 2 files) | 620 | 720 | right ✓ |
+    | prose: words (Then the docs, the web and o) | 0 | 314.4 | text ✓ |
+    | line:web: words (Fetched docs.rs 12 KB) | 0 | 720 | text ✓ |
+    | line:web: mark | -26 | -8 | hung ✓ |
+    | line:web: result (12 KB) | 688.7 | 720 | right ✓ |
+    | line:web: words (Searched the web for rust se) | 0 | 720 | text ✓ |
+    | line:web: mark | -26 | -8 | hung ✓ |
+    | line:web: result (8 results) | 675.1 | 720 | right ✓ |
+    | line:other: words (Delegated Check every other ) | 0 | 720 | text ✓ |
+    | line:other: mark | -26 | -8 | hung ✓ |
+    | line:other: result (Ran an agent · 6 tool calls) | 587.7 | 720 | right ✓ |
+    | prose: words (It wanted to force-push; you) | 0 | 230.4 | text ✓ |
+    | line:command: words (Didn't run git push --force ) | 0 | 720 | text ✓ |
+    | line:command: mark | -26 | -8 | hung ✓ |
+    | line:command: result (you said no) | 661.7 | 720 | right ✓ |
+    | visual: box (Made a visualretry timingSou) | 0 | 720 | box ✓, right ✓ |
+    | visual: title (inside) (Made a visual retry timing S) | 36 | 666 | (inside) |
+    | prose: words (All eleven upload tests pass) | 0 | 489 | text ✓ |
+    | footer: words (Qwen3 Coder Next 56s 1,902 t) | 0 | 249.8 | text ✓ |
+    | footer: turn line (drawn) | 521.4 | 718.9 | **right -1.1** |
+    | footer: turn line (box) | 520 | 720 | right ✓ |
+    | prompt: bubble (Push it.just now·) | 645.3 | 720 | right ✓ |
+    | error: box (Couldn't reach the model. Ch) | 0 | 720 | box ✓, right ✓ |
+    | error: words (Couldn't reach the model. Ch) | 14 | 410.1 | (inside) |
+    | prompt: bubble (nice. open a PRjust now·) | 595.9 | 720 | right ✓ |
+    | prose: words (Which base should the PR go ) | 0 | 203.9 | text ✓ |
+    | question card: box (Which base should the PR go ) | 0 | 720 | box ✓, right ✓ |
+    | question card: title (inside) (Which base should the PR go ) | 16 | 229.1 | (inside) |
+    | card: box (Allow this command?gh pr cre) | 0 | 720 | box ✓, right ✓ |
+    | card: title (inside) (Allow this command?) | 16 | 156.8 | (inside) |
+    | live: words (Waiting for you) | 0 | 83.8 | text ✓ |
+    | live: mark | -26 | -8 | hung ✓ |
+    | stats: words (4s waited 3s) | 0 | 71.6 | text ✓ |
+    | stats: turn line (drawn) | 531.1 | 720 | right ✓ |
+    | stats: turn line (box) | 520 | 720 | right ✓ |
+    | composer: box | 0 | 720 | box ✓, right ✓ |
+    | composer: text (inside) (Add a follow-up) | 15 | 705 | (inside) |
+    + actual - expected
+    
+    + [
+    +   'prose (opens with code) words "Backoff::delay took no Rng , so the jitter was whatever thre": text off by 4',
+    +   'list item words "The delay takes an Rng , so a test can seed it.": text off by 22',
+    +   'list item words "cargo test -q upload passes eleven of eleven, every run.": text off by 26',
+    +   'list item words "The jitter is half the base at most.": text off by 22',
+    +   'footer turn line (drawn) "": right off by -1.1'
+    + ]
+    - []
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+  actual:
+    0: 'prose (opens with code) words "Backoff::delay took no Rng , so the jitter was whatever thre": text off by 4'
+    1: 'list item words "The delay takes an Rng , so a test can seed it.": text off by 22'
+    2: 'list item words "cargo test -q upload passes eleven of eleven, every run.": text off by 26'
+    3: 'list item words "The jitter is half the base at most.": text off by 22'
+    4: 'footer turn line (drawn) "": right off by -1.1'
+  operator: 'deepStrictEqual'
+  stack: |-
+    edges (apps/web/test/transcript-edges.test.ts:51:10)
+    process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    async Test.run (node:internal/test_runner/test:797:9)
+    async Test.processPendingSubtests (node:internal/test_runner/test:526:7)
+  ...
+1..2
+# tests 2
+# suites 0
+# pass 0
+# fail 2
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 17639.5395

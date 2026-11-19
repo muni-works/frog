@@ -684,6 +684,7 @@ struct TypingBubble: View {
         HStack(alignment: .top, spacing: live ? TurnSpace.Inset.row : 0) {
             MarkdownView(text: text, streaming: live)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .environment(\.hangsListMarkers, true)
             speed
                 .opacity(live ? 1 : 0)
                 .frame(width: live ? nil : 0, alignment: .trailing)

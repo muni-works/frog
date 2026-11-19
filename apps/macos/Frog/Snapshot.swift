@@ -14,7 +14,8 @@ enum Snapshot {
         let path = UserDefaults.standard.string(forKey: "FrogSnapshot") ?? ""
         let metrics = UserDefaults.standard.string(forKey: "FrogMetrics") ?? ""
         let chrome = UserDefaults.standard.string(forKey: "FrogChromeMetrics") ?? ""
-        guard !path.isEmpty || !metrics.isEmpty || !chrome.isEmpty else { return }
+        let edges = UserDefaults.standard.string(forKey: "FrogEdges") ?? ""
+        guard !path.isEmpty || !metrics.isEmpty || !chrome.isEmpty || !edges.isEmpty else { return }
         // A capture shows text as it lands: the ink runs on the display, which an off-screen
         // window doesn't get, so a reply would stay unwritten (and short) in the picture.
         InkReveal.off = true
@@ -39,6 +40,12 @@ enum Snapshot {
                 let measured = mainWindow.map { ChromeMetrics.write(to: URL(fileURLWithPath: chrome), window: $0) } ?? false
                 if !measured { FileHandle.standardError.write(Data("FrogChromeMetrics: no accessibility window to measure\n".utf8)) }
                 ok = ok && measured
+            }
+            if !edges.isEmpty, let window = mainWindow {
+                window.contentView?.layoutSubtreeIfNeeded()
+                let dark = window.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                let data = TranscriptMetrics.shared.edgesJSON(width: window.frame.width, height: window.frame.height, look: dark ? "dark" : "light")
+                ok = ok && (try? data.write(to: URL(fileURLWithPath: edges))) != nil
             }
             if !path.isEmpty {
                 let drawn = write(to: URL(fileURLWithPath: path))

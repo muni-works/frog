@@ -44,21 +44,31 @@ struct MessageText: NSViewRepresentable {
         view.updating = true
         defer { view.updating = false }
         view.reveal.streaming = streaming
-        view.show(blocks, indent: context.environment.transcriptEdge.indent)
+        view.show(blocks, indent: context.environment.transcriptEdge.indent, hang: context.environment.hangsListMarkers)
         view.metricsOrigin = context.environment.metricsHidden ? nil : metricsOrigin
         if metricsOrigin != nil { DispatchQueue.main.async { view.reportMetrics() } }
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView view: MessageTextView, context: Context) -> CGSize? {
-        let width = proposal.width.flatMap { $0.isFinite ? $0 : nil } ?? 640
+        let width = proposal.width.flatMap { $0.isFinite ? $0 : nil } ?? 640 + MessageTextView.gutterRoom
         return CGSize(width: width, height: view.height(for: width))
     }
 }
 
 final class MessageTextView: NSTextView, @MainActor NSLayoutManagerDelegate {
+    /// Room in the gutter, left of the text: the view reaches this far past the column's edge
+    /// (`MeasuredText` pulls it out), and its text starts this far in, on the edge. A top-level
+    /// list's markers and the plate of code that starts a line hang there (spec, "Two lines");
+    /// a view can't draw outside its own bounds.
+    static let gutterRoom: CGFloat = Tokens.Transcript.Layout.hang
+
+    override var textContainerOrigin: NSPoint { NSPoint(x: Self.gutterRoom, y: 0) }
+
     private var shown: [MarkdownBlock] = []
     /// Prose indents by this in a narrow pane (`TranscriptEdge`); code and tables don't.
     private var indent: CGFloat = 0
+    /// A top-level list's markers hang in the gutter (a reply in the column, `hangsListMarkers`).
+    private var hang = false
     var metricsOrigin: CGPoint?
     /// Where each shown block's text sits in the storage, separator included.
     private var ranges: [NSRange] = []
@@ -106,17 +116,18 @@ final class MessageTextView: NSTextView, @MainActor NSLayoutManagerDelegate {
 
     // MARK: Content
 
-    func show(_ blocks: [MarkdownBlock], indent: CGFloat = 0) {
-        let reindent = indent != self.indent
+    func show(_ blocks: [MarkdownBlock], indent: CGFloat = 0, hang: Bool = false) {
+        let reindent = indent != self.indent || hang != self.hang
         guard blocks != shown || reindent, let storage = textStorage else { return }
         self.indent = indent
+        self.hang = hang
         // Blocks before the first difference are untouched; everything after is rebuilt.
         let keep = reindent ? 0 : zip(blocks, shown).prefix(while: { $0 == $1 }).count
         let from = keep < ranges.count ? ranges[keep].location : storage.length
         let tail = NSMutableAttributedString()
         var newRanges = Array(ranges.prefix(keep))
         for (i, block) in blocks.enumerated().dropFirst(keep) {
-            let piece = MessageStyle.piece(block, after: i == 0 ? nil : blocks[i - 1], indent: indent)
+            let piece = MessageStyle.piece(block, after: i == 0 ? nil : blocks[i - 1], indent: indent, hang: hang)
             newRanges.append(NSRange(location: from + tail.length, length: piece.length))
             tail.append(piece)
         }
@@ -193,8 +204,9 @@ final class MessageTextView: NSTextView, @MainActor NSLayoutManagerDelegate {
 
     // MARK: Size
 
-    func height(for width: CGFloat) -> CGFloat {
+    func height(for viewWidth: CGFloat) -> CGFloat {
         guard let container = textContainer, let layout = layoutManager else { return 0 }
+        let width = max(0, viewWidth - Self.gutterRoom)
         if container.containerSize.width != width {
             container.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
         }
@@ -224,10 +236,19 @@ final class MessageTextView: NSTextView, @MainActor NSLayoutManagerDelegate {
             var kind = TranscriptMetrics.Kind.prose
             var text = (storage.string as NSString).substring(with: range)
             var firstChar = range.location
+            var sub = "prose"
             switch block {
-            case .code(_, let code): kind = .code; text = code
-            case .table: kind = .code
+            case .code(_, let code): kind = .code; text = code; sub = "code"
+            case .table: kind = .code; sub = "table"
+            case .heading: sub = "heading"
+            case .bullet where storage.attribute(.frogHungMarker, at: range.location, effectiveRange: nil) is HungMarker:
+                // The words start after the hung marker and its space (both zero-width).
+                let n = ((storage.attribute(.frogHungMarker, at: range.location, effectiveRange: nil) as? HungMarker)?.mark as NSString?)?.length ?? 1
+                sub = "list item"
+                firstChar += n + 1
+                text = (text as NSString).substring(from: min((text as NSString).length, n + 1))
             case .bullet:
+                sub = "list item"
                 // The marker isn't the item's words: they start after its tab.
                 let tab = (text as NSString).range(of: "\t")
                 if tab.location != NSNotFound {
@@ -240,7 +261,20 @@ final class MessageTextView: NSTextView, @MainActor NSLayoutManagerDelegate {
             let first = layout.lineFragmentRect(forGlyphAt: glyphs.location, effectiveRange: nil)
             let last = layout.lineFragmentRect(forGlyphAt: NSMaxRange(glyphs) - 1, effectiveRange: nil)
             let box: CGRect
-            if kind == .prose {
+            if case .table = block {
+                // The table's own box: its cells' blocks, not the glyphs inside their padding.
+                var cells = CGRect.null
+                var at = range.location
+                while at < NSMaxRange(range) {
+                    var run = NSRange()
+                    let style = storage.attribute(.paragraphStyle, at: at, effectiveRange: &run) as? NSParagraphStyle
+                    for b in style?.textBlocks ?? [] {
+                        cells = cells.union(layout.boundsRect(for: b, glyphRange: layout.glyphRange(forCharacterRange: run, actualCharacterRange: nil)))
+                    }
+                    at = max(at + 1, NSMaxRange(run))
+                }
+                box = cells.isNull ? layout.boundingRect(forGlyphRange: glyphs, in: container) : cells
+            } else if kind == .prose {
                 // Every prose line is one fixed line box: the block starts a line above its
                 // first line's bottom (the line fragment also holds the paragraph's gap above).
                 let line = MessageStyle.lineBox
@@ -253,22 +287,51 @@ final class MessageTextView: NSTextView, @MainActor NSLayoutManagerDelegate {
             let x = fragment.minX + layout.location(forGlyphAt: g).x
             let font = storage.attribute(.font, at: firstChar, effectiveRange: nil) as? NSFont
             let k = "\(key)-\(i)"
+            if sub == "prose", storage.attribute(.frogInlineCode, at: firstChar, effectiveRange: nil) != nil { sub = "prose (opens with code)" }
             TranscriptMetrics.shared.set(k, kind: kind, text: text,
-                                         box: box.offsetBy(dx: origin.x, dy: origin.y), fontSize: font?.pointSize ?? 0)
+                                         box: box.offsetBy(dx: origin.x, dy: origin.y), fontSize: font?.pointSize ?? 0, sub: sub)
             TranscriptMetrics.shared.setFirst(k, x: origin.x + (kind == .code ? box.minX : x))
         }
     }
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
-        if let container = textContainer, container.containerSize.width != newSize.width {
-            container.containerSize = NSSize(width: newSize.width, height: .greatestFiniteMagnitude)
+        let width = max(0, newSize.width - Self.gutterRoom)
+        if let container = textContainer, container.containerSize.width != width {
+            container.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
+            // Measured again at the width it settles at (a block measured before is unbounded).
+            if metricsOrigin != nil { DispatchQueue.main.async { [weak self] in self?.reportMetrics() } }
         }
     }
 
     override func layout() {
         super.layout()
         placeCode()
+        let room = NSRect(x: 0, y: 0, width: Self.gutterRoom, height: bounds.height)
+        if gutter.superview == nil {
+            gutter.text = self
+            addSubview(gutter)
+        }
+        if gutter.frame != room { gutter.frame = room }
+        gutter.needsDisplay = true
+        // Measured (only with -FrogMetrics/-FrogEdges) after every layout: a table's cells measured
+        // before the last one can be a pass behind.
+        if metricsOrigin != nil { DispatchQueue.main.async { [weak self] in self?.reportMetrics() } }
+    }
+
+    /// Draws the hung markers and plate overhangs (`GutterMarks`).
+    private let gutter = GutterMarks()
+
+    // Whatever repaints the text repaints the gutter: new blocks, the width, and the ink
+    // reveal's temporary colours (which the layout manager invalidates through the second).
+    override func setNeedsDisplay(_ invalidRect: NSRect) {
+        super.setNeedsDisplay(invalidRect)
+        gutter.needsDisplay = true
+    }
+
+    override func setNeedsDisplay(_ rect: NSRect, avoidAdditionalLayout flag: Bool) {
+        super.setNeedsDisplay(rect, avoidAdditionalLayout: flag)
+        gutter.needsDisplay = true
     }
 
     /// Text above a code block moved (it streamed in, or the width changed): move the block
@@ -340,7 +403,8 @@ final class MessageTextView: NSTextView, @MainActor NSLayoutManagerDelegate {
             let glyphs = layout.glyphRange(forCharacterRange: item.range, actualCharacterRange: nil)
             layout.ensureLayout(forGlyphRange: glyphs)
             let rect = layout.boundingRect(forGlyphRange: glyphs, in: container)
-            let frame = NSRect(x: rect.minX, y: rect.maxY - item.cell.height, width: bounds.width - rect.minX,
+            let x = textContainerOrigin.x + rect.minX
+            let frame = NSRect(x: x, y: rect.maxY - item.cell.height, width: bounds.width - x,
                                height: item.cell.height)
             if let host = codeViews[i] {
                 host.frame = frame
@@ -489,6 +553,23 @@ extension NSAttributedString.Key {
     static let frogCode = NSAttributedString.Key("frogCode")
     /// Inline code: a rounded tint behind it, hugging the glyphs rather than the line.
     static let frogInlineCode = NSAttributedString.Key("frogInlineCode")
+    /// A list marker drawn in the gutter, left of where its zero-width character sits.
+    static let frogHungMarker = NSAttributedString.Key("frogHungMarker")
+}
+
+/// A hung list marker (`.frogHungMarker`): what to draw, right-aligned a gap before the words.
+final class HungMarker: NSObject {
+    let mark: String
+    let color: NSColor
+    let font: NSFont
+    let gap: CGFloat
+
+    init(mark: String, color: NSColor, font: NSFont, gap: CGFloat) {
+        self.mark = mark
+        self.color = color
+        self.font = font
+        self.gap = gap
+    }
 }
 
 /// Inline code sits on a small rounded tint, like claude.ai's: around the glyphs' own height,
@@ -498,35 +579,86 @@ final class InlineCodeLayoutManager: NSLayoutManager {
     static let pad: CGFloat = 2
     static let radius: CGFloat = 4
 
-    override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
-        if let storage = textStorage, let container = textContainers.first {
-            let chars = characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
-            NSColor.labelColor.withAlphaComponent(0.09).setFill()
-            storage.enumerateAttribute(.frogInlineCode, in: chars) { value, range, _ in
-                guard value != nil, let font = storage.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont else { return }
-                // Not written in yet (see `InkReveal`): no tint ahead of the pen.
-                if temporaryAttribute(.foregroundColor, atCharacterIndex: range.location, effectiveRange: nil) as? NSColor == .clear { return }
-                let glyphs = glyphRange(forCharacterRange: range, actualCharacterRange: nil)
-                var g = glyphs.location
-                // One rounded rect per line the code wraps across.
-                while g < NSMaxRange(glyphs) {
-                    var line = NSRange()
-                    let fragment = lineFragmentRect(forGlyphAt: g, effectiveRange: &line)
-                    let run = NSIntersectionRange(line, glyphs)
-                    guard run.length > 0 else { break }
-                    let span = boundingRect(forGlyphRange: run, in: container)
-                    let baseline = fragment.minY + location(forGlyphAt: run.location).y
-                    // The words are padded in the line (`MessageStyle.codePad`: room before the
-                    // run, and a kern on its last character that `span` already includes).
-                    let rect = NSRect(x: span.minX - MessageStyle.codePad, y: baseline - font.ascender - Self.pad,
-                                      width: span.width + MessageStyle.codePad, height: font.ascender - font.descender + Self.pad * 2)
-                    NSBezierPath(roundedRect: rect.offsetBy(dx: origin.x, dy: origin.y),
-                                 xRadius: Self.radius, yRadius: Self.radius).fill()
-                    g = NSMaxRange(run)
-                }
+    /// Inline code's plates for the characters in `chars`, in the text container's coordinates:
+    /// one rounded rect per line the code wraps across. Code that starts a line has its plate
+    /// reach `codePad` past the container's leading edge (drawn by `GutterMarks`).
+    func plates(in chars: NSRange) -> [NSRect] {
+        guard let storage = textStorage, let container = textContainers.first else { return [] }
+        var out: [NSRect] = []
+        storage.enumerateAttribute(.frogInlineCode, in: chars) { value, range, _ in
+            guard value != nil, let font = storage.attribute(.font, at: range.location, effectiveRange: nil) as? NSFont else { return }
+            // Not written in yet (see `InkReveal`): no tint ahead of the pen.
+            if temporaryAttribute(.foregroundColor, atCharacterIndex: range.location, effectiveRange: nil) as? NSColor == .clear { return }
+            let glyphs = glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            var g = glyphs.location
+            while g < NSMaxRange(glyphs) {
+                var line = NSRange()
+                let fragment = lineFragmentRect(forGlyphAt: g, effectiveRange: &line)
+                let run = NSIntersectionRange(line, glyphs)
+                guard run.length > 0 else { break }
+                let span = boundingRect(forGlyphRange: run, in: container)
+                let baseline = fragment.minY + location(forGlyphAt: run.location).y
+                // The words are padded in the line (`MessageStyle.codePad`: room before the
+                // run, and a kern on its last character that `span` already includes).
+                out.append(NSRect(x: span.minX - MessageStyle.codePad, y: baseline - font.ascender - Self.pad,
+                                  width: span.width + MessageStyle.codePad, height: font.ascender - font.descender + Self.pad * 2))
+                g = NSMaxRange(run)
             }
         }
+        return out
+    }
+
+    /// The hung list markers for the characters in `chars`: each mark and where to draw it, in
+    /// the container's coordinates (left of the container's edge, drawn by `GutterMarks`).
+    func hungMarkers(in chars: NSRange) -> [(NSAttributedString, NSPoint)] {
+        guard let storage = textStorage else { return [] }
+        var out: [(NSAttributedString, NSPoint)] = []
+        storage.enumerateAttribute(.frogHungMarker, in: chars) { value, range, _ in
+            guard let m = value as? HungMarker else { return }
+            // Not written in yet (see `InkReveal`): the pen hasn't reached the item.
+            if temporaryAttribute(.foregroundColor, atCharacterIndex: range.location, effectiveRange: nil) as? NSColor == .clear { return }
+            let g = glyphIndexForCharacter(at: range.location)
+            let fragment = lineFragmentRect(forGlyphAt: g, effectiveRange: nil)
+            let at = location(forGlyphAt: g)
+            let s = NSAttributedString(string: m.mark, attributes: [.font: m.font, .foregroundColor: m.color])
+            out.append((s, NSPoint(x: fragment.minX + at.x - m.gap - s.size().width, y: fragment.minY + at.y - m.font.ascender)))
+        }
+        return out
+    }
+
+    static let plateColor = NSColor.labelColor.withAlphaComponent(0.09)
+
+    override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
+        Self.plateColor.setFill()
+        for rect in plates(in: characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)) {
+            NSBezierPath(roundedRect: rect.offsetBy(dx: origin.x, dy: origin.y), xRadius: Self.radius, yRadius: Self.radius).fill()
+        }
         super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
+    }
+}
+
+/// What a message draws in the gutter, left of its text: hung list markers and the overhang of
+/// a code plate that starts a line. NSTextView clips its own drawing to the text container, so
+/// these are drawn by this subview over the text view's room (`MessageTextView.gutterRoom`).
+/// Clicks go through to the text.
+final class GutterMarks: NSView {
+    weak var text: MessageTextView?
+
+    override var isFlipped: Bool { true }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let text, let layout = text.layoutManager as? InlineCodeLayoutManager, let storage = text.textStorage else { return }
+        let origin = text.textContainerOrigin
+        let all = NSRange(location: 0, length: storage.length)
+        InlineCodeLayoutManager.plateColor.setFill()
+        for rect in layout.plates(in: all) where rect.minX < 0 {
+            NSBezierPath(roundedRect: rect.offsetBy(dx: origin.x, dy: origin.y),
+                         xRadius: InlineCodeLayoutManager.radius, yRadius: InlineCodeLayoutManager.radius).fill()
+        }
+        for (mark, at) in layout.hungMarkers(in: all) {
+            mark.draw(at: NSPoint(x: origin.x + at.x, y: origin.y + at.y))
+        }
     }
 }
 
@@ -539,8 +671,8 @@ enum MessageStyle {
     static let lineBox: CGFloat = Tokens.Transcript.body.line
     /// Prose stops here (`Layout.prose`); code and tables use the whole column.
     static let measure: CGFloat = Tokens.Transcript.Layout.prose
-    /// Inline code's plate pads its words this much each side, inside the line (the web's
-    /// `.md code` padding), so a paragraph that opens with code starts 4 in.
+    /// Inline code's plate pads its words this much each side (the web's `.md code` padding):
+    /// room in the line mid-sentence; at the start of a line the plate overhangs the edge.
     static let codePad: CGFloat = TurnSpace.Inset.tight
 
     /// The body face: IBM Plex Sans, like the rest of the transcript (SF until the fonts load).
@@ -597,7 +729,9 @@ enum MessageStyle {
     /// One block, preceded by the newline that separates it from the one before (nil: it's
     /// first). Its gap depends on that block (see `TurnSpace.Scale.gap`); streaming rebuilds
     /// from the first block that changed, so a block is never left with a stale neighbor.
-    static func piece(_ block: MarkdownBlock, after previous: MarkdownBlock?, indent: CGFloat = 0) -> NSAttributedString {
+    /// `hang`: a top-level list's markers hang left of the words (a reply in the transcript's
+    /// column); otherwise every marker sits in a marker column before its words.
+    static func piece(_ block: MarkdownBlock, after previous: MarkdownBlock?, indent: CGFloat = 0, hang: Bool = false) -> NSAttributedString {
         let out = NSMutableAttributedString()
         if previous != nil { out.append(NSAttributedString(string: "\n", attributes: [.font: body])) }
         let gap = TurnSpace.current.gap(block, after: previous)
@@ -608,29 +742,54 @@ enum MessageStyle {
             let font = plex(TurnType.heading(level), weight: .semibold)
             out.append(inline(s, font: font, style: paragraph { $0.paragraphSpacingBefore = gap; prose($0, indent: indent) }))
         case .bullet(let level, let marker, let s):
-            // A fixed marker column: the marker right-aligned to it, the text after it, wrapped
-            // lines hanging under the text. A nested list steps in by one column.
-            let lead = CGFloat(level) * TurnType.markerColumn
+            // The item's words start on the column's edge (a nested list one marker column in
+            // per level), wrapped lines under them; the marker ends a gap before the words. A
+            // top-level marker hangs in the gutter, as a line's mark does (spec, the left line).
             let mark = TurnType.marker(marker, indent: level)
             let markFont = NSFont.monospacedDigitSystemFont(ofSize: TurnType.body, weight: .regular)
             let markWidth = ceil((mark as NSString).size(withAttributes: [.font: markFont]).width)
-            let head = lead + max(TurnType.markerColumn, markWidth + TurnType.markerGap)
-            let style = paragraph {
-                $0.paragraphSpacingBefore = gap
-                // The marker starts where it ends flush with the column (right-aligned by its
-                // measured width, not a leading tab, so a copied list reads "• item").
-                $0.firstLineHeadIndent = head - TurnType.markerGap - markWidth
-                $0.headIndent = head
-                $0.tabStops = [NSTextTab(textAlignment: .left, location: head + indent)]
-                prose($0, indent: indent)
-            }
+            // Outside a reply (a report in a box, Docs) the marker keeps a column of its own.
+            let lead = CGFloat(level) * TurnType.markerColumn
+            let head = hang ? lead : lead + max(TurnType.markerColumn, markWidth + TurnType.markerGap)
+            let markStart = head + indent - TurnType.markerGap - markWidth
             // A bullet is a small glyph: in the text's own color it weighs what a number does in
             // secondary.
             let markColor: NSColor = marker == "•" ? .labelColor : .secondaryLabelColor
-            out.append(NSAttributedString(string: "\(mark)\t", attributes: [
-                .font: markFont, .foregroundColor: markColor, .paragraphStyle: style,
-            ]))
-            out.append(inline(s, font: body, style: style))
+            if markStart < 0 {
+                // No room before the words: the marker is kept in the text (a copied list
+                // reads "• item") but takes no width and is drawn in the gutter by
+                // `InlineCodeLayoutManager`.
+                let style = paragraph {
+                    $0.paragraphSpacingBefore = gap
+                    $0.firstLineHeadIndent = head
+                    $0.headIndent = head
+                    prose($0, indent: indent)
+                }
+                let space = ceil((" " as NSString).size(withAttributes: [.font: markFont]).width * 100) / 100
+                let room = (mark as NSString).size(withAttributes: [.font: markFont]).width
+                out.append(NSAttributedString(string: mark, attributes: [
+                    .font: markFont, .foregroundColor: NSColor.clear, .paragraphStyle: style, .kern: -room,
+                    .frogHungMarker: HungMarker(mark: mark, color: markColor, font: markFont, gap: TurnType.markerGap),
+                ]))
+                out.append(NSAttributedString(string: " ", attributes: [
+                    .font: markFont, .foregroundColor: NSColor.clear, .paragraphStyle: style, .kern: -space,
+                ]))
+                out.append(inline(s, font: body, style: style))
+            } else {
+                let style = paragraph {
+                    $0.paragraphSpacingBefore = gap
+                    // The marker starts where it ends flush with the words (right-aligned by its
+                    // measured width, not a leading tab, so a copied list reads "• item").
+                    $0.firstLineHeadIndent = head - TurnType.markerGap - markWidth
+                    $0.headIndent = head
+                    $0.tabStops = [NSTextTab(textAlignment: .left, location: head + indent)]
+                    prose($0, indent: indent)
+                }
+                out.append(NSAttributedString(string: "\(mark)\t", attributes: [
+                    .font: markFont, .foregroundColor: markColor, .paragraphStyle: style,
+                ]))
+                out.append(inline(s, font: body, style: style))
+            }
         case .quote(let s):
             // The gap above is padding, not margin: a margin after a table collapses into it.
             let block = QuoteTextBlock(gap: gap)
@@ -758,13 +917,11 @@ enum MessageStyle {
             let code = attrs[.frogInlineCode] != nil
             if code {
                 // The plate's padding is room in the line: before the code (on the character
-                // before it, or the paragraph's first indent when it opens with code) and after.
+                // before it) and after. Code that opens a paragraph keeps its letters on the
+                // column's edge and its plate overhangs by the padding (spec, the left line), as
+                // at the start of a wrapped line.
                 if out.length > 0 {
                     out.addAttribute(.kern, value: codePad, range: NSRange(location: out.length - 1, length: 1))
-                } else if let p = style.mutableCopy() as? NSMutableParagraphStyle {
-                    p.firstLineHeadIndent += codePad
-                    style = p
-                    attrs[.paragraphStyle] = p
                 }
             }
             let piece = NSMutableAttributedString(string: text, attributes: attrs)
