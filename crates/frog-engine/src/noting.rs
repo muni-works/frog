@@ -260,19 +260,85 @@ fn same(a: &str, b: &str) -> bool {
     a.chars().count() >= 5 && b.chars().count() >= 5 && stem(a) == stem(b)
 }
 
-/// Most of the note's content words appear in `source`: at least half, and all but one when
-/// there are three or fewer (a correction names what it replaces: "pnpm, not npm").
+/// Every content word of the note is in `source` (give or take an ending), and so is every
+/// word that changes a fact without being a content word: a quantifier or a number.
 pub fn grounded(text: &str, source: &str) -> bool {
     let note = words(text);
-    if note.is_empty() {
+    if note.is_empty() || !keeps_the_facts(text, source) {
         return false;
     }
     let src = words(source);
-    let hits = note
+    note.iter().all(|w| src.iter().any(|s| same(w, s)))
+}
+
+/// Words that change what a sentence claims though they carry little else ("only", "always",
+/// "every"): a note may use one only if its source does.
+const QUANTIFIERS: &[&str] = &[
+    "only",
+    "always",
+    "never",
+    "every",
+    "all",
+    "each",
+    "none",
+    "except",
+    "just",
+    "also",
+    "sometimes",
+    "usually",
+    "rarely",
+    "mostly",
+];
+
+const DAYS_MONTHS: &[&str] = &[
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
+    "weekday",
+    "weekend",
+    "daily",
+    "weekly",
+    "monthly",
+    "yearly",
+];
+
+fn raw_tokens(text: &str) -> Vec<String> {
+    text.to_lowercase()
+        .split(|c: char| !(c.is_alphanumeric() || c == '\''))
+        .filter(|w| !w.is_empty())
+        .map(String::from)
+        .collect()
+}
+
+/// Every quantifier and number in `note` is in `source` too.
+fn keeps_the_facts(note: &str, source: &str) -> bool {
+    let src = raw_tokens(source);
+    raw_tokens(note)
         .iter()
-        .filter(|w| src.iter().any(|s| same(w, s)))
-        .count();
-    hits * 2 >= note.len() && hits + 1 >= note.len().min(3)
+        .filter(|w| QUANTIFIERS.contains(&w.as_str()) || w.chars().any(|c| c.is_ascii_digit()))
+        .all(|w| src.contains(w))
+}
+
+/// A word that names a when (a day, a month, a period) or a number: never a free word.
+fn factual(word: &str) -> bool {
+    let w = word.trim_end_matches('s');
+    DAYS_MONTHS.contains(&w) || word.chars().any(|c| c.is_ascii_digit())
 }
 
 const NEGATION: &[&str] = &[
@@ -291,20 +357,27 @@ fn negated(text: &str) -> bool {
 /// it doesn't flip the quote's polarity. A correction may end by naming what it replaces
 /// (", not npm"): that clause isn't part of the claim.
 fn claim_of(text: &str, quote: &str, kind: Kind) -> bool {
-    let claim = match (kind, text.to_lowercase().rfind(", not ")) {
-        (Kind::Correction, Some(i)) => &text[..i],
+    // ASCII lower case keeps every byte where it was, so the index fits `text` (full lower
+    // case can change lengths: U+212A KELVIN SIGN is three bytes, its `k` one).
+    let claim = match (kind, text.to_ascii_lowercase().rfind(", not ")) {
+        (Kind::Correction, Some(i)) => text.get(..i).unwrap_or(text),
         _ => text,
     };
-    if negated(claim) != negated(quote) {
+    if negated(claim) != negated(quote) || !keeps_the_facts(claim, quote) {
         return false;
     }
     let note = words(claim);
     let src = words(quote);
-    let hits = note
+    let missed: Vec<&String> = note
         .iter()
-        .filter(|w| src.iter().any(|s| same(w, s)))
-        .count();
-    let misses = note.len() - hits;
+        .filter(|w| !src.iter().any(|s| same(w, s)))
+        .collect();
+    // The free word may rephrase ("database"), never add a when or a number.
+    if missed.iter().any(|w| factual(w)) {
+        return false;
+    }
+    let hits = note.len() - missed.len();
+    let misses = missed.len();
     let allowed = if note.len() >= 2 {
         (note.len() / 4).max(1)
     } else {
@@ -577,6 +650,58 @@ mod tests {
         let e = ev(&user, &existing);
         let p = said("The project uses pnpm, not npm", "we use pnpm");
         assert!(check(&p, &e).unwrap_err().0.contains("already"));
+    }
+
+    /// Review 2, item 3: a character whose lower case is longer (U+212A KELVIN SIGN, U+0130)
+    /// never panics the claim check, which would take the session down.
+    #[test]
+    fn claims_with_wide_lowercase_never_panic() {
+        for text in [
+            "The \u{212A}elvin build is slow, not fast.",
+            "\u{0130}stanbul staging is slow, not fast.",
+            "\u{212A}\u{212A}\u{212A}, not the old one is used.",
+            "a\u{212A}, not b is the build tool here.",
+            "The \u{0130}\u{0130} build, not the old one.",
+        ] {
+            let _ = claim_of(text, "the kelvin build is slow", Kind::Correction);
+            let p = Proposal {
+                text: text.into(),
+                kind: Kind::Correction,
+                quote: "the build is slow".into(),
+                path: String::new(),
+                scope: Scope::Project,
+            };
+            let user = vec!["the build is slow".to_string()];
+            let _ = check(&p, &ev(&user, &[]));
+        }
+    }
+
+    /// Review 2, item 9: a word that changes the fact can't ride along free: a quantifier
+    /// ("only", "always", "every") or a day, month or number the quote doesn't have.
+    #[test]
+    fn a_free_word_cant_change_the_fact() {
+        let user = vec!["we deploy on fridays".to_string()];
+        for text in [
+            "The team only deploys on Fridays.",
+            "The team always deploys on Fridays.",
+            "The team deploys on Mondays and Fridays.",
+            "The team deploys on Fridays at 5.",
+        ] {
+            let p = said(text, "we deploy on fridays");
+            assert!(check(&p, &ev(&user, &[])).is_err(), "{text}");
+        }
+        let p = said("The team deploys on Fridays.", "we deploy on fridays");
+        assert!(check(&p, &ev(&user, &[])).is_ok());
+    }
+
+    /// Review 2, item 9: a `read` note is what the file says, every content word of it (one
+    /// miss in a long note), not half.
+    #[test]
+    fn read_notes_need_nearly_every_word() {
+        let file = "Tests live in spec/, one file per module. Deploys run from CI.";
+        assert!(grounded("Tests live in spec/, one file per module.", file));
+        assert!(!grounded("Tests live in spec/ and deploy keys.", file));
+        assert!(!grounded("Deploys run from laptops.", file));
     }
 
     #[test]

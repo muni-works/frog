@@ -142,6 +142,11 @@ impl Rig {
 
     /// Send `op`, allow any card, collect events until idle.
     async fn run(&mut self, op: Op) -> Vec<Event> {
+        self.run_hook(op, || {}).await
+    }
+
+    /// [`Self::run`], with `hook` run when a card arrives, before it's allowed.
+    async fn run_hook(&mut self, op: Op, mut hook: impl FnMut()) -> Vec<Event> {
         self.h.ops.send(op).unwrap();
         let mut evs = Vec::new();
         loop {
@@ -152,6 +157,7 @@ impl Rig {
                 ..
             } = &e
             {
+                hook();
                 self.h
                     .ops
                     .send(Op::Permission {
@@ -350,6 +356,30 @@ async fn undo_survives_a_restart_and_never_clobbers() {
     let (ok, why) = undone(&evs).remove(0);
     assert!(!ok && why.contains("edited since"), "{why}");
     assert_eq!(std::fs::read_to_string(&path).unwrap(), edited);
+    r.end().await;
+}
+
+/// Review 2, item 9: a note undo handle counts only if Frog issued it (recorded beside the
+/// notes when the receipt went out, so it still works after a restart): one made up from a
+/// note's id and hash is refused.
+#[tokio::test]
+async fn only_issued_note_handles_undo() {
+    let mut r = rig(vec![answer_and_note("Done.", staging_note())]);
+    r.idle().await;
+    let handle = receipts(&r.say(STAGING).await).remove(0).undo;
+    let issued = r.base.join("noted-undos");
+    let text = std::fs::read_to_string(&issued).unwrap();
+    assert!(text.lines().any(|l| l == handle), "{text}");
+    // As if never issued: the same string, made up.
+    std::fs::write(&issued, "").unwrap();
+    let evs = r
+        .run(Op::Undo {
+            undo: handle.clone(),
+        })
+        .await;
+    let (ok, why) = undone(&evs).remove(0);
+    assert!(!ok && why.contains("didn't issue"), "{why}");
+    assert!(note_file(&r.base, &handle).exists());
     r.end().await;
 }
 
@@ -652,6 +682,64 @@ async fn make_it_a_rule_then_undo() {
     r.end().await;
 }
 
+/// Review 2, item 4: "Make it a rule" is all or nothing. A rules file that appears while the
+/// card is open (AGENTS.md now winning over CLAUDE.md) voids it; a note that can't be removed
+/// takes the rule back; a note edited while the card was open is left, and so is the rule
+/// file.
+#[cfg(unix)]
+#[tokio::test]
+async fn make_it_a_rule_is_all_or_nothing() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut r = rig(vec![answer_and_note("Ok.", staging_note())]);
+    r.idle().await;
+    let evs = r.say(STAGING).await;
+    let n = receipts(&evs).remove(0);
+    let id = n.undo.rsplit(':').next().unwrap().to_string();
+    let note_path = note_file(&r.base, &n.undo);
+    let to_rule = || Op::NoteToRule {
+        id: id.clone(),
+        scope: n.scope.clone(),
+        place: None,
+    };
+    // A different file would be written than the card showed.
+    let claude = r.project.join("CLAUDE.md");
+    std::fs::write(&claude, "# Rules\n").unwrap();
+    let agents = r.project.join("AGENTS.md");
+    let evs = r
+        .run_hook(to_rule(), || std::fs::write(&agents, "# Agents\n").unwrap())
+        .await;
+    assert!(applied(&evs).is_empty(), "{evs:?}");
+    assert_eq!(std::fs::read_to_string(&agents).unwrap(), "# Agents\n");
+    assert_eq!(std::fs::read_to_string(&claude).unwrap(), "# Rules\n");
+    assert!(note_path.exists());
+    // The note can't be removed (its folder is read-only): the rule is taken back.
+    let dir = note_path.parent().unwrap().to_path_buf();
+    let evs = r
+        .run_hook(to_rule(), || {
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap()
+        })
+        .await;
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(applied(&evs).is_empty(), "{evs:?}");
+    assert_eq!(std::fs::read_to_string(&agents).unwrap(), "# Agents\n");
+    assert!(note_path.exists());
+    // The note was edited while the card was open: nothing changes.
+    let evs = r
+        .run_hook(to_rule(), || {
+            let t = std::fs::read_to_string(&note_path).unwrap();
+            std::fs::write(&note_path, format!("{t}\nEdited.\n")).unwrap();
+        })
+        .await;
+    assert!(applied(&evs).is_empty(), "{evs:?}");
+    assert_eq!(std::fs::read_to_string(&agents).unwrap(), "# Agents\n");
+    assert!(
+        std::fs::read_to_string(&note_path)
+            .unwrap()
+            .contains("Edited.")
+    );
+    r.end().await;
+}
+
 // ---- slice 2: each turn brings back only the notes that fit ----
 
 /// Fifty notes on varied subjects, one of them about staging.
@@ -891,4 +979,13 @@ async fn standing_guidance_applies_with_no_shared_words() {
         }
         r.end().await;
     }
+}
+
+fn applied(evs: &[Event]) -> Vec<String> {
+    evs.iter()
+        .filter_map(|e| match e {
+            Event::CustomizeApplied { undo, .. } => Some(undo.clone()),
+            _ => None,
+        })
+        .collect()
 }

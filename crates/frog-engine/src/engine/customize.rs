@@ -164,21 +164,7 @@ unless the user brings it up.",
             }
             _ => (change, planned.card),
         };
-        // The file written must be the one the card showed: one created or relinked while
-        // the card was open voids the approval.
-        if let Change::Line { target, .. } = &change
-            && *target != Target::Notes
-        {
-            let now = self.line_place(*target)?.1.map(|p| p.display().to_string());
-            if now != card.path {
-                anyhow::bail!(
-                    "Not changed: the file it would write changed while the card was open \
-(the card showed {}, now it would be {}). Ask again if it's still wanted.",
-                    card.path.as_deref().unwrap_or("none"),
-                    now.as_deref().unwrap_or("none")
-                );
-            }
-        }
+        self.same_file_as_card(&change, &card)?;
         let undo = self.apply_change(&change)?;
         let handle = self.keep_undo(undo);
         let summary = format!(
@@ -194,6 +180,25 @@ unless the user brings it up.",
         Ok(tools::Output::text(format!(
             "{summary} The user can undo it from the transcript."
         )))
+    }
+
+    /// The file written must be the one the card showed: one created or relinked while the
+    /// card was open voids the approval.
+    pub(super) fn same_file_as_card(&self, change: &Change, card: &Proposal) -> Result<()> {
+        if let Change::Line { target, .. } = change
+            && *target != Target::Notes
+        {
+            let now = self.line_place(*target)?.1.map(|p| p.display().to_string());
+            if now != card.path {
+                anyhow::bail!(
+                    "Not changed: the file it would write changed while the card was open \
+(the card showed {}, now it would be {}). Ask again if it's still wanted.",
+                    card.path.as_deref().unwrap_or("none"),
+                    now.as_deref().unwrap_or("none")
+                );
+            }
+        }
+        Ok(())
     }
 
     /// Keep an undo and return its handle; past [`MAX_UNDOS`] the oldest is dropped, so a
