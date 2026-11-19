@@ -136,11 +136,11 @@ struct WhereMenu: View {
                                        repos: lists.cloudRepos.map { ($0, lists.pushed[$0]) })
             let (shown, more) = RepoRank.pick(ranked, query: filter)
             var repos = shown
-            if let pasted = Self.githubRepo(filter), !repos.contains(pasted) { repos.insert(pasted, at: 0) }
+            if let pasted = Self.githubRepo(filter), !repos.contains(where: { $0.lowercased() == pasted.lowercased() }) { repos.insert(pasted, at: 0) }
             let noRepo = matches("No repo")
             if !repos.isEmpty || noRepo { out.append(.label("Frog Cloud")) }
             for r in repos {
-                out.append(.row(Row(id: "cloud-\(r)", icon: "cloud", title: r, checked: r == repo) { pick(.chooseCloud(repo: r, branch: "main")) }))
+                out.append(.row(Row(id: "cloud-\(r)", icon: "cloud", title: r, checked: r.lowercased() == repo?.lowercased()) { pick(.chooseCloud(repo: r, branch: "main")) }))
             }
             if let line = RepoRank.moreLine(more, searching: !q.isEmpty) { out.append(.more(line)) }
             if noRepo {
