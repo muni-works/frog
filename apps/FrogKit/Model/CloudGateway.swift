@@ -124,6 +124,8 @@ final class CloudLink: ConversationLink {
     private var stopped = false
     private var attempt = 0
     private var queue: [Data] = []
+    /// Ops waiting for the socket (tests read what a fresh link sends).
+    var queued: [Data] { queue }
     /// The replay ends at the welcome's `last_seq`. `frog --serve` says `idle` when it's ready;
     /// the gateway doesn't, so the link says it once caught up, unless a turn is still open.
     private var caughtUpAt: UInt64?
@@ -147,6 +149,9 @@ final class CloudLink: ConversationLink {
         if connect { open() }
         // As on the web: questions get a card; a preview pane would need the sandbox's network.
         send(.setClientCaps(panes: false, ask: true, customize: ClientCaps.customize(top: top), notes: ClientCaps.notes(top: top)))
+        // The app's settings the engine reads (auto-note, and the ids a card may change), as a
+        // local engine gets them: not told, it doesn't note on its own.
+        if let values = Conversation.engineSettings?() { send(.settings(values: values)) }
     }
 
     func send(_ op: Op) {

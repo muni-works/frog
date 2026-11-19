@@ -51,6 +51,12 @@ export function provisional(t: Thread, o: Opening): Thread {
   return { ...t, running: false, turns: [{ turn: 0, input: o.text, ...(o.images.length ? { images: o.images } : {}), entries: [] }] }
 }
 
+/** A message's submit, with its own `typed` (the person typed it in the composer): the first
+ *  send and any resend of it go the same, so a resend never drops or gains the flag. */
+export function submitOp(m: { text: string; images: Image[]; typed?: boolean }): { op: 'submit'; text: string; images?: Image[]; typed?: true } {
+  return { op: 'submit', text: m.text, ...(m.images.length ? { images: m.images } : {}), ...(m.typed ? { typed: true } : {}) }
+}
+
 /** Messages still waiting on their turn. A delivered one goes in the same render its turn shows,
  * not an effect later, so the bubble is never drawn twice. */
 export function undelivered<M extends { text: string; seen: number }>(list: M[] | undefined, turns: { input: string }[]): M[] | undefined {

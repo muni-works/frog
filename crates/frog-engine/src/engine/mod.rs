@@ -1166,6 +1166,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         if let Some(line) = moved {
             agent.notice(Level::Warn, line);
         }
+        agent.sweep_undos();
         agent.connect_mcp();
         // Restore MCP tools that were loaded in a previous session
         if !agent.loaded_tools.is_empty() {
@@ -2017,8 +2018,14 @@ struct Agent {
     /// The store is past `memory::whole_budget`: notes beyond standing guidance come back
     /// per turn (`memvec`) instead of riding every call.
     notes_per_turn: bool,
-    /// Files the `Read` tool opened this session: the only files a `read` note can come from.
+    /// Files a `Read` call succeeded on this session: the only files a `read` note can come from.
     read_by_frog: HashSet<PathBuf>,
+    /// Files Frog's Edit or Write changed this session: the model's own text, never a `read`
+    /// note's grounds (nor is anything changed since `started`, by Bash or anyone).
+    written_by_frog: HashSet<PathBuf>,
+    /// When this session began (its log's `created` on a resume): a file changed after it
+    /// isn't a fact Frog read.
+    started: std::time::SystemTime,
     /// Notes that didn't fit the current model's index.
     notes_omitted: usize,
     /// Rule files for this project, and the scoped ones already shown this session.
@@ -2127,12 +2134,22 @@ impl Agent {
         let mut resumed_model: Option<String> = None;
         // An agent started it: the resume keeps its worker egress policy whatever the flags.
         let mut resumed_worker = false;
+        // The session that started it, kept too: a resumed child is still a child.
+        let mut resumed_parent: Option<String> = None;
+        // When the session began: a file changed since then isn't a fact Frog read, after a
+        // resume too.
+        let mut resumed_created: Option<i64> = None;
+        // Offers the person declined in this session: never made again, after a resume too.
+        let mut resumed_declined: HashSet<String> = HashSet::new();
         let mut resumed_chapters = crate::chapter::Tracker::default();
         let (session_id, messages, seq, turn, log, inputs, unfinished) = match (&o.resume, &o.store)
         {
             (Some(id), Some(dir)) => {
                 let l = session::load(dir, id).map_err(|e| ConfigError(format!("{e:#}")))?;
                 resumed_worker = l.header.worker;
+                resumed_parent = l.header.parent.clone();
+                resumed_created = Some(l.header.created);
+                resumed_declined = declined_load(dir, id);
                 let log = Log::open(dir, id).map_err(|e| ConfigError(format!("{e:#}")))?;
                 let (seq, turn) = (l.last_seq(), l.last_turn());
                 resumed_map = l.repo_map.clone();
@@ -2206,6 +2223,9 @@ impl Agent {
         let intended_model = resumed_model.unwrap_or_else(|| o.profile_name.clone());
         *shared.journal.header.lock().unwrap() = (o.cwd.clone(), o.profile_name.clone());
         o.cfg.worker |= resumed_worker;
+        if o.cfg.parent_session.is_none() {
+            o.cfg.parent_session = resumed_parent;
+        }
         shared.journal.worker.store(o.cfg.worker, Ordering::Relaxed);
         *shared.journal.parent.lock().unwrap() = o.cfg.parent_session.clone();
         shared.journal.start_session(session_id.clone(), seq, log);
@@ -2355,7 +2375,7 @@ impl Agent {
             card_words: Vec::new(),
             undos: HashMap::new(),
             undo_order: Default::default(),
-            declined: HashSet::new(),
+            declined: resumed_declined,
             noted_turn: None,
             remembered: false,
             note_index: None,
@@ -2363,6 +2383,11 @@ impl Agent {
             notes_in_prompt: HashSet::new(),
             notes_per_turn: false,
             read_by_frog: HashSet::new(),
+            written_by_frog: HashSet::new(),
+            started: resumed_created
+                .and_then(|ms| u64::try_from(ms).ok())
+                .map(|ms| std::time::UNIX_EPOCH + std::time::Duration::from_millis(ms))
+                .unwrap_or_else(std::time::SystemTime::now),
             notes_omitted: 0,
             rules,
             repo_map: Default::default(),
@@ -3512,3 +3537,20 @@ mod tests;
 /// The transcript's sentence after a denied command ends the turn.
 pub(crate) const DENIED_ENDING: &str =
     "Stopped here because you denied that command. The work so far is kept; say how to go on.";
+
+/// Where a session's declined offers are kept: beside its log.
+pub(super) fn declined_path(store: &std::path::Path, id: &str) -> PathBuf {
+    store.join(format!("{id}.declined"))
+}
+
+/// A session's declined offers, one key a line (none when there's no file).
+fn declined_load(store: &std::path::Path, id: &str) -> HashSet<String> {
+    std::fs::read_to_string(declined_path(store, id))
+        .map(|t| {
+            t.lines()
+                .filter(|l| !l.is_empty())
+                .map(String::from)
+                .collect()
+        })
+        .unwrap_or_default()
+}

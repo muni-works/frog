@@ -185,16 +185,10 @@ impl Store {
         let cites = self.cites(scope, &body);
         create_private_dir(dir)?;
         let base = slug(&body);
-        let mut id = base.clone();
-        let mut n = 2;
-        while dir.join(format!("{id}.md")).exists() {
-            id = format!("{base}-{n}");
-            n += 1;
-        }
         let session = self.session.lock().unwrap().clone();
-        let note = Note {
-            path: dir.join(format!("{id}.md")),
-            id,
+        let mut note = Note {
+            path: dir.join(format!("{base}.md")),
+            id: base.clone(),
             created: chrono::Local::now()
                 .format("%Y-%m-%dT%H:%M:%S%:z")
                 .to_string(),
@@ -209,7 +203,29 @@ impl Store {
             turn: None,
             from: None,
         };
-        write_private(&note.path, &render(&note))?;
+        // Claim the first free id atomically: two sessions adding the same note at once each
+        // get a file of their own.
+        let mut n = 2;
+        loop {
+            // Skip the ids already taken; the claim below settles a race for a free one.
+            if note.path.exists() {
+                note.id = format!("{base}-{n}");
+                note.path = dir.join(format!("{}.md", note.id));
+                n += 1;
+                continue;
+            }
+            match write_private_new(&note.path, &render(&note)) {
+                Ok(()) => break,
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    note.id = format!("{base}-{n}");
+                    note.path = dir.join(format!("{}.md", note.id));
+                    n += 1;
+                }
+                Err(e) => {
+                    return Err(e).with_context(|| format!("writing {}", note.path.display()));
+                }
+            }
+        }
         Ok((note, redacted))
     }
 
@@ -519,10 +535,39 @@ pub(crate) fn create_private_dir(dir: &Path) -> Result<()> {
         .with_context(|| format!("creating {}", dir.display()))
 }
 
-/// Write via a temp file, readable only by the user.
+/// Write a new file only (`AlreadyExists` if `path` is there), readable only by the user,
+/// whole: a fresh temp file beside it, linked into place (a link never replaces a file), or
+/// where links don't work a file created new.
+fn write_private_new(path: &Path, text: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    let tmp = path.with_file_name(format!(".{name}.{}.tmp", crate::session::new_id()));
+    let mut o = std::fs::OpenOptions::new();
+    o.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
+    let written = (|| {
+        let mut f = o.open(&tmp)?;
+        f.write_all(text.as_bytes())?;
+        f.sync_all()
+    })();
+    let placed = written.and_then(|()| match std::fs::hard_link(&tmp, path) {
+        Err(e) if e.kind() != std::io::ErrorKind::AlreadyExists => {
+            let mut f = o.open(path)?;
+            f.write_all(text.as_bytes())
+        }
+        r => r,
+    });
+    let _ = std::fs::remove_file(&tmp);
+    placed
+}
+
+/// Write via a temp file of its own (a fresh name, so two writers never share one), readable
+/// only by the user.
 pub(crate) fn write_private(path: &Path, text: &str) -> Result<()> {
     use std::io::Write;
-    let tmp = path.with_extension("md.tmp");
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    let tmp = path.with_file_name(format!(".{name}.{}.tmp", crate::session::new_id()));
     let mut o = std::fs::OpenOptions::new();
     o.write(true).create(true).truncate(true);
     #[cfg(unix)]
@@ -1388,5 +1433,37 @@ mod tests {
         assert_eq!(recall_query("/recall auth bug"), Some("auth bug"));
         assert_eq!(recall_query("/memory"), None);
         assert!(is_command("/recall x"));
+    }
+
+    /// Review 3, item 14: two sessions adding the same note at once each keep theirs, in a
+    /// file of its own and whole (no shared temp name to collide on).
+    #[test]
+    fn two_sessions_adding_at_once_lose_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let mem = dir.path().join("memory");
+        let threads: Vec<_> = (0..4)
+            .map(|_| {
+                let mem = mem.clone();
+                std::thread::spawn(move || {
+                    let s = Store::new(&mem, None);
+                    for _ in 0..25 {
+                        s.add(Scope::Global, "we deploy on fridays from main")
+                            .unwrap();
+                    }
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().unwrap();
+        }
+        let notes = Store::new(&mem, None).load();
+        assert_eq!(notes.len(), 100, "every add kept");
+        let ids: std::collections::HashSet<_> = notes.iter().map(|n| n.id.clone()).collect();
+        assert_eq!(ids.len(), 100, "each in its own file");
+        assert!(
+            notes
+                .iter()
+                .all(|n| n.body == "we deploy on fridays from main")
+        );
     }
 }

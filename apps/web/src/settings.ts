@@ -172,10 +172,26 @@ export function pinModel(m: string | null, s: Store | null = store()) {
 
 export const pinnedModel = (s: Store | null = store()): string | null => { try { return s?.getItem(DEFAULT_MODEL_KEY) ?? null } catch { return null } }
 
-/** The settings this app keeps that Customize may change (docs/customize-events.md), as the
- *  engine names them: their current values (`Op::Settings`), so a card can quote the old one. */
-export function customizableSettings(): Record<string, string> {
-  return { theme: savedTheme(), density: savedDensity() }
+export const AUTO_NOTE_KEY = 'frog.autoNote'
+
+/** Noting on its own (`auto-note`, Settings › Memory): on unless turned off in this browser. */
+export const savedAutoNote = (s: Store | null = store()): boolean => { try { return s?.getItem(AUTO_NOTE_KEY) !== 'off' } catch { return true } }
+
+const listeners = new Set<() => void>()
+/** Called when a setting the engine reads changes here, so open sessions hear it. */
+export function onSettings(fn: () => void): () => void { listeners.add(fn); return () => { listeners.delete(fn) } }
+
+export function setAutoNote(on: boolean, s: Store | null = store()) {
+  try { s?.setItem(AUTO_NOTE_KEY, on ? 'on' : 'off') } catch { /* private mode */ }
+  listeners.forEach((f) => f())
+}
+
+/** The settings this app applies, as the engine names them, with their current values
+ *  (`Op::Settings`, sent on every connection): the engine plans a Customize change only for
+ *  these ids, and reads auto-note from here (not told, it doesn't note). Exactly the ids
+ *  `applySetting` applies. */
+export function customizableSettings(): Record<string, string | boolean> {
+  return { theme: savedTheme(), density: savedDensity(), 'auto-note': savedAutoNote() }
 }
 
 /** A `setting_change` from Customize, or its undo: applied to this app's own setting. False for
@@ -183,5 +199,6 @@ export function customizableSettings(): Record<string, string> {
 export function applySetting(id: string, value: unknown): boolean {
   if (id === 'theme' && (value === 'system' || value === 'light' || value === 'dark')) { setTheme(value); return true }
   if (id === 'density' && (value === 'comfortable' || value === 'compact')) { setDensity(value); applyDensity(value); return true }
+  if (id === 'auto-note' && typeof value === 'boolean') { setAutoNote(value); return true }
   return false
 }

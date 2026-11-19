@@ -45,6 +45,45 @@ impl Agent {
     /// `parent_session` (the engine's own children) or `--worker` (how the Mac starts every
     /// child, Race attempts aside, and kept across a resume). Their "user" is an agent, so
     /// they get no Customize, no notes on their own, no "remember …" and no rule from a note.
+    /// Put back anything an undo moved aside when a crash cut it short: in the project's root
+    /// (its rules file), the home rules folder, Frog's notes folders and beside customize.json.
+    pub(super) fn sweep_undos(&self) {
+        if !self.top_level() {
+            return;
+        }
+        let mut dirs = vec![self.root.clone()];
+        // A hermetic engine (tests) never touches the person's own config folder.
+        if !self.cfg.hermetic {
+            dirs.push(crate::config::config_dir());
+        }
+        if let Some(store) = &self.memory {
+            for scope in [crate::memory::Scope::Global, crate::memory::Scope::Project] {
+                dirs.extend(store.scope_dir(scope).map(Path::to_path_buf));
+            }
+        }
+        dirs.extend(
+            self.toggles_path()
+                .and_then(|p| p.parent().map(Path::to_path_buf)),
+        );
+        for d in dirs {
+            cz::sweep_undo(&d);
+        }
+    }
+
+    /// Keep the declined offers with the session, so a resume doesn't offer them again.
+    fn save_declined(&self) {
+        let Some(store) = &self.store else { return };
+        let path = super::declined_path(store, &self.conv.session_id);
+        let mut keys: Vec<&str> = self.declined.iter().map(String::as_str).collect();
+        keys.sort_unstable();
+        let tmp = path.with_extension(format!("declined.{}.tmp", crate::session::new_id()));
+        let ok =
+            std::fs::write(&tmp, keys.join("\n") + "\n").and_then(|_| std::fs::rename(&tmp, &path));
+        if ok.is_err() {
+            let _ = std::fs::remove_file(&tmp);
+        }
+    }
+
     pub(super) fn top_level(&self) -> bool {
         !self.subagent && !self.cfg.worker && self.cfg.parent_session.is_none()
     }
@@ -182,6 +221,7 @@ rules or tools. Don't retry; tell the session that started you if it matters."
                 Answer::Took(p) => p,
                 Answer::NotNow => {
                     self.declined.insert(key);
+                    self.save_declined();
                     return Ok(tools::Output::text(format!(
                         "The user said not now. Leave it, and don't offer it again this \
 session.{refused_note}"
@@ -467,7 +507,17 @@ unless the user brings it up.",
             }
             Change::Set { id, value } => {
                 let row = cz::setting(id).context("no such setting")?;
-                let old = self.shared.settings.lock().unwrap().get(id).cloned();
+                // Only a setting the app applies (it reported it in `Op::Settings`): a receipt
+                // always means the change took effect.
+                let Some(old) = self.shared.settings.lock().unwrap().get(id).cloned() else {
+                    anyhow::bail!(
+                        "{} can't be changed from here: change it in Settings › {}",
+                        row.label,
+                        row.section
+                    );
+                };
+                // Declared with no value (null): the app applies it but didn't say its value.
+                let old = (!old.is_null()).then_some(old);
                 if old.as_ref() == Some(value) {
                     anyhow::bail!("{} is already {}", row.label, cz::show_value(row, value));
                 }
@@ -578,11 +628,7 @@ unless the user brings it up.",
             }
             Change::Skill { .. } | Change::Tool { .. } => {
                 let path = self.toggles_path().context("no session store")?;
-                // A switch file that doesn't parse is an error, never rewritten as all on.
-                let next = cz::Toggles::load_strict(&path)?
-                    .with(change)
-                    .context("it's already that way")?;
-                cz::Undo::File(cz::write_file(&path, Some(next.render()), false)?)
+                cz::Undo::File(cz::toggle_file(&path, change)?)
             }
             Change::Set { id, value } => {
                 let old = self

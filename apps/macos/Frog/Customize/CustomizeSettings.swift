@@ -15,6 +15,7 @@ enum CustomizeSettings {
         "sounds": .toggle("playfulSounds", false),
         "notifications": .toggle("notifyWhenDone", true),
         "show-energy": .toggle(ModelStats.energyKey, false),
+        "auto-note": .toggle(CustomizeStore.autoNoteKey, true),
     ]
 
     /// A `setting_change`: written where Settings keeps it, and applied (the theme at once; the
@@ -28,6 +29,10 @@ enum CustomizeSettings {
             return true
         case (.toggle(let key, _), .bool(let v)):
             defaults.set(v, forKey: key)
+            // Noting on its own: every live engine hears it, not only the one that changed it.
+            if id == "auto-note", defaults == .standard {
+                Library.shared.everyConversation().forEach { $0.link?.send(.settings(values: CustomizeStore.engineSettings())) }
+            }
             return true
         default:
             return false

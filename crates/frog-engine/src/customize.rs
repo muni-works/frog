@@ -76,6 +76,8 @@ pub struct Setting {
     /// Option ids and labels, for segmented controls and menus that list them.
     pub options: Vec<(String, String)>,
     pub tier: Tier,
+    /// The Settings section it's in, as labeled ("Usage"): where to change it by hand.
+    pub section: String,
 }
 
 struct Tiers {
@@ -95,6 +97,16 @@ fn tier(v: &Value) -> Tier {
 
 fn tiers(json: &str) -> Tiers {
     let v: Value = serde_json::from_str(json).expect("design/settings.json parses");
+    let section = |id: &str| {
+        v["sections"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|s| s["id"].as_str() == Some(id))
+            .and_then(|s| s["label"].as_str())
+            .unwrap_or("")
+            .to_string()
+    };
     let settings = v["rows"]
         .as_array()
         .into_iter()
@@ -121,6 +133,7 @@ fn tiers(json: &str) -> Tiers {
                 })
                 .collect(),
             tier: tier(&r["agent"]),
+            section: section(r["section"].as_str().unwrap_or("")),
         })
         .collect();
     let actions = v["agentActions"]
@@ -144,6 +157,11 @@ pub const COSMETIC: &[&str] = &[
     "sounds",
     "show-energy",
 ];
+
+/// Every setting's id.
+pub fn settings_ids() -> impl Iterator<Item = &'static str> {
+    TIERS.settings.iter().map(|s| s.id.as_str())
+}
 
 pub fn setting(id: &str) -> Option<&'static Setting> {
     TIERS.settings.iter().find(|s| s.id == id)
@@ -572,6 +590,13 @@ const NOT_WORDS: &[&str] = &[
     "not", "don't", "dont", "never", "no", "without", "isn't", "doesn't", "stop",
 ];
 
+/// The only other words a sentence that applies a cosmetic setting at once may hold.
+const APPLY_FILLER: &[&str] = &[
+    "turn", "switch", "set", "make", "change", "put", "use", "please", "the", "my", "a", "to",
+    "it", "can", "could", "would", "you", "frog", "i", "i'd", "want", "like", "be", "now", "back",
+    "mode", "just", "so", "go", "pls", "plz",
+];
+
 /// Whether one typed sentence asks for this cosmetic setting plainly enough to apply it at
 /// once: the setting named by its own words (not only a value), for a choice the value
 /// named too, for on/off the direction said and only that one, and no negation.
@@ -587,6 +612,37 @@ fn applies_in(change: &Change, typed: &str) -> bool {
     };
     let t = tokens_of(typed);
     if !names_setting_row(row, &t) || t.iter().any(|w| NOT_WORDS.contains(&w.as_str())) {
+        return false;
+    }
+    // About the setting and nothing else: every word is the setting's own, a value of it, a
+    // direction, or filler. Anything more ("fix the sounds player on macOS") and it's a card.
+    let own: Vec<String> = row
+        .id
+        .split('-')
+        .chain(row.label.split(|c: char| !c.is_alphanumeric()))
+        .chain(row.options.iter().flat_map(|(o, l)| {
+            o.split(|c: char| !c.is_alphanumeric())
+                .chain(l.split(|c: char| !c.is_alphanumeric()))
+        }))
+        .map(str::to_lowercase)
+        .collect();
+    if !t.iter().all(|w| {
+        own.contains(w)
+            || APPLY_FILLER.contains(&w.as_str())
+            || ON_WORDS.contains(&w.as_str())
+            || OFF_WORDS.contains(&w.as_str())
+    }) {
+        return false;
+    }
+    // For a choice, only the target value named ("from dark to light" names two).
+    if !row.options.is_empty()
+        && row
+            .options
+            .iter()
+            .filter(|(o, l)| names_phrase(o, &t) || names_phrase(l, &t))
+            .count()
+            != 1
+    {
         return false;
     }
     let has = |ws: &[&str]| t.iter().any(|w| ws.contains(&w.as_str()));
@@ -804,10 +860,15 @@ impl Toggles {
 
     /// Read, change, write. A file that doesn't parse is an error, never "everything on"
     /// written back over what the user turned off.
+    /// Change the switches in `file` (the Settings pages' `--customize-change`), under the
+    /// same folder lock as a conversation's switch, so neither drops the other's.
     pub fn update_in(file: &Path, f: impl FnOnce(&mut Self)) -> Result<()> {
-        let mut t = Self::load_strict(file)?;
-        f(&mut t);
-        write_atomic(file, &t.render(), false)
+        std::fs::create_dir_all(parent_of(file))?;
+        locked(&[parent_of(file)], || {
+            let mut t = Self::load_strict(file)?;
+            f(&mut t);
+            write_atomic(file, &t.render(), false)
+        })
     }
 
     pub fn skill_on(&self, name: &str) -> bool {
@@ -1021,6 +1082,21 @@ pub fn write_file(path: &Path, after: Option<String>, private: bool) -> Result<F
 }
 
 fn put(path: &Path, text: Option<&str>, private: bool) -> Result<()> {
+    put_keeping(path, text, private, None)
+}
+
+/// [`put`], with the permission bits to give a file written new (an undo's, taken from the
+/// file it moved aside).
+fn put_keeping(
+    path: &Path,
+    text: Option<&str>,
+    private: bool,
+    keep: Option<std::fs::Permissions>,
+) -> Result<()> {
+    #[cfg(test)]
+    if FAIL_PUT.with(|f| f.borrow().as_deref() == Some(path)) {
+        bail!("{}: failing as the test asked", path.display());
+    }
     if std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
         bail!("{} is a link; Frog writes only real files", path.display());
     }
@@ -1031,7 +1107,7 @@ fn put(path: &Path, text: Option<&str>, private: bool) -> Result<()> {
             }
             _ => Ok(()),
         },
-        Some(t) => write_atomic(path, t, private),
+        Some(t) => write_atomic_keeping(path, t, private, keep),
     }
 }
 
@@ -1039,6 +1115,16 @@ fn put(path: &Path, text: Option<&str>, private: bool) -> Result<()> {
 /// link or old file is followed), then renamed over it. The file keeps its permissions;
 /// private files (Frog's notes) are owner-only.
 pub fn write_atomic(path: &Path, text: &str, private: bool) -> Result<()> {
+    write_atomic_keeping(path, text, private, None)
+}
+
+/// [`write_atomic`]; `keep`: the permissions for a file that isn't there now (an undo's).
+fn write_atomic_keeping(
+    path: &Path,
+    text: &str,
+    private: bool,
+    keep: Option<std::fs::Permissions>,
+) -> Result<()> {
     use std::io::Write;
     let dir = path
         .parent()
@@ -1052,7 +1138,10 @@ pub fn write_atomic(path: &Path, text: &str, private: bool) -> Result<()> {
     // A rename would replace a file its owner made read-only, and split a hard-linked pair
     // (AGENTS.md and CLAUDE.md as one file) into two that disagree.
     writable(path)?;
-    let keep = std::fs::metadata(path).ok().map(|m| m.permissions());
+    let keep = std::fs::metadata(path)
+        .ok()
+        .map(|m| m.permissions())
+        .or(keep);
     let name = path.file_name().unwrap_or_default().to_string_lossy();
     let tmp = dir.join(format!(".{name}.{}.tmp", crate::session::new_id()));
     let mut o = std::fs::OpenOptions::new();
@@ -1109,6 +1198,8 @@ pub fn remove_if(path: &Path, keep_going: impl FnOnce(&[u8]) -> bool) -> Result<
 thread_local! {
     /// Tests: act as a drive without hard links (exFAT, SMB, NFS, some FUSE drives).
     static NO_HARD_LINKS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Tests: writing this path fails (a full disk, a permissions change mid-undo).
+    static FAIL_PUT: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
 }
 
 fn hard_link(from: &Path, to: &Path) -> std::io::Result<()> {
@@ -1153,6 +1244,145 @@ fn put_back(path: &Path, tmp: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Run `f` holding the lock on `dirs` (each once, in order): an exclusive `flock` on the folder
+/// itself, so two Frog processes changing the same files take turns and nothing lands in the
+/// folder. Elsewhere than Unix, `f` just runs.
+pub fn locked<T>(dirs: &[&Path], f: impl FnOnce() -> Result<T>) -> Result<T> {
+    let mut dirs: Vec<&Path> = dirs.to_vec();
+    dirs.sort();
+    dirs.dedup();
+    #[cfg(unix)]
+    let _held: Vec<std::fs::File> = dirs
+        .iter()
+        .filter_map(|d| {
+            let f = std::fs::File::open(d).ok()?;
+            use std::os::fd::AsRawFd;
+            // SAFETY: a valid descriptor this function owns; the lock goes with it on drop.
+            (unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) } == 0).then_some(f)
+        })
+        .collect();
+    f()
+}
+
+fn parent_of(path: &Path) -> &Path {
+    path.parent()
+        .filter(|d| !d.as_os_str().is_empty())
+        .unwrap_or(Path::new("."))
+}
+
+/// Switch a skill or tool in `customize.json` (`path`): read, changed and written under the
+/// folder's lock, so two sessions switching at once both keep theirs. A file that doesn't
+/// parse is an error, never rewritten as all on.
+pub fn toggle_file(path: &Path, change: &Change) -> Result<FileUndo> {
+    std::fs::create_dir_all(parent_of(path))?;
+    locked(&[parent_of(path)], || {
+        let next = Toggles::load_strict(path)?
+            .with(change)
+            .context("it's already that way")?;
+        write_file(path, Some(next.render()), false)
+    })
+}
+
+/// Append `line` to a private list (owner-only), trimmed to the newest `max` once it holds
+/// twice that, under the folder's lock so a trim never drops another session's append.
+pub fn append_trimmed(path: &Path, line: &str, max: usize) -> Result<()> {
+    use std::io::Write;
+    crate::memory::create_private_dir(parent_of(path))?;
+    locked(&[parent_of(path)], || {
+        let mut o = std::fs::OpenOptions::new();
+        o.create(true).append(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
+        writeln!(o.open(path)?, "{line}")?;
+        let text = std::fs::read_to_string(path)?;
+        let lines: Vec<&str> = text.lines().collect();
+        if lines.len() > 2 * max {
+            let mut keep = lines[lines.len() - max..].join("\n");
+            keep.push('\n');
+            write_atomic(path, &keep, true)?;
+        }
+        Ok(())
+    })
+}
+
+/// Remove every line equal to `line` from a private list, under the folder's lock (see [`append_trimmed`]).
+pub fn remove_listed(path: &Path, line: &str) -> Result<()> {
+    locked(&[parent_of(path)], || {
+        let text = match std::fs::read_to_string(path) {
+            Ok(t) => t,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(e.into()),
+        };
+        let mut keep: String = text
+            .lines()
+            .filter(|l| *l != line)
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !keep.is_empty() {
+            keep.push('\n');
+        }
+        write_atomic(path, &keep, true)
+    })
+}
+
+/// Put every taken file back from aside, newest first, trying them all; any that couldn't be
+/// are named in the returned text ("" when all went back).
+fn put_all_back(taken: &[(&FileUndo, Option<(PathBuf, Vec<u8>)>)]) -> String {
+    let mut errs = String::new();
+    for (f, t) in taken.iter().rev() {
+        if let Some((tmp, _)) = t {
+            if let Err(e) = put_back(&f.path, tmp) {
+                errs.push_str(&format!("; {e:#}"));
+            }
+        }
+    }
+    errs
+}
+
+/// Put back what a crash left moved aside in `dir`: each `.<name>.<id>.undo` file whose
+/// `<name>` isn't there goes back; one whose file was written since stays, never over it.
+pub fn sweep_undo(dir: &Path) {
+    // Under the folder's lock, so it never puts a file back in the middle of another
+    // process's undo.
+    let _ = locked(&[dir], || {
+        sweep_undo_locked(dir);
+        Ok(())
+    });
+}
+
+fn sweep_undo_locked(dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let file = e.file_name();
+        let Some(name) = file
+            .to_str()
+            .and_then(|f| f.strip_prefix('.'))
+            .and_then(|f| f.strip_suffix(".undo"))
+            .and_then(|f| f.rsplit_once('.'))
+            .filter(|(_, id)| is_session_id(id))
+            .map(|(name, _)| name.to_string())
+        else {
+            continue;
+        };
+        let target = dir.join(&name);
+        if !target.exists() && std::fs::symlink_metadata(&target).is_err() {
+            let _ = put_back(&target, &e.path());
+        }
+    }
+}
+
+/// `20261119-120000-ab12`: the ids [`take_aside`] names files with.
+fn is_session_id(id: &str) -> bool {
+    let b = id.as_bytes();
+    b.len() == 20
+        && b[8] == b'-'
+        && b[15] == b'-'
+        && b[..8].iter().chain(&b[9..15]).all(u8::is_ascii_digit)
+        && b[16..].iter().all(u8::is_ascii_hexdigit)
+}
+
 impl FileUndo {
     pub fn undo(&self) -> Result<()> {
         undo_files(std::slice::from_ref(self), "it was left as it is")
@@ -1168,6 +1398,13 @@ pub fn undo_all(files: &[FileUndo]) -> Result<()> {
 /// written between the check and the undo is lost: a file changed since is put back as it
 /// was found, and nothing is undone.
 fn undo_files(files: &[FileUndo], refused: &str) -> Result<()> {
+    // Under the same lock a toggle takes, so another session's switch never reads the file
+    // while it's moved aside.
+    let dirs: Vec<&Path> = files.iter().map(|f| parent_of(&f.path)).collect();
+    locked(&dirs, || undo_files_locked(files, refused))
+}
+
+fn undo_files_locked(files: &[FileUndo], refused: &str) -> Result<()> {
     let mut taken: Vec<(&FileUndo, Option<(PathBuf, Vec<u8>)>)> = Vec::new();
     let mut changed = None;
     for f in files {
@@ -1188,15 +1425,26 @@ fn undo_files(files: &[FileUndo], refused: &str) -> Result<()> {
         }
     }
     if let Some(why) = changed {
-        for (f, t) in taken.iter().rev() {
-            if let Some((tmp, _)) = t {
-                put_back(&f.path, tmp)?;
-            }
-        }
-        bail!("{why}, so {refused}");
+        // Every file goes back, even when one can't: none is left moved aside on its own.
+        let errs = put_all_back(&taken);
+        bail!("{why}, so {refused}{errs}");
     }
-    for (f, t) in taken.iter().rev() {
-        put(&f.path, f.before.as_deref(), f.private)?;
+    for (i, (f, t)) in taken.iter().enumerate().rev() {
+        let keep = t
+            .as_ref()
+            .and_then(|(tmp, _)| std::fs::metadata(tmp).ok())
+            .map(|m| m.permissions());
+        if let Err(e) = put_keeping(&f.path, f.before.as_deref(), f.private, keep) {
+            // Part-way: the files not reached yet go back from aside, and the ones already
+            // undone get the change's text again. All or nothing.
+            let mut errs = put_all_back(&taken[..=i]);
+            for (done, _) in &taken[i + 1..] {
+                if let Err(e) = put(&done.path, done.after.as_deref(), done.private) {
+                    errs.push_str(&format!("; {e:#}"));
+                }
+            }
+            bail!("{e:#}, so {refused}{errs}");
+        }
         if let Some((tmp, _)) = t {
             let _ = std::fs::remove_file(tmp);
         }
@@ -1316,6 +1564,25 @@ mod tests {
         assert!(!ap(&compact, "don't make the density compact"));
         assert!(ap(&set("theme", json!("dark")), "switch the theme to dark"));
         assert!(!ap(&set("theme", json!("dark")), "dark mode please"));
+        // Review 3, item 11: only a sentence about the setting, naming only the target value.
+        // Anything else in it, and it's a card.
+        assert!(!ap(
+            &set("theme", json!("dark")),
+            "switch from the dark theme to light"
+        ));
+        assert!(!ap(
+            &set("theme", json!("light")),
+            "switch from the dark theme to light"
+        ));
+        assert!(!ap(&sounds_on, "fix the sounds player on macOS"));
+        assert!(!ap(
+            &set("density", json!("compact")),
+            "the density test fails on compact screens"
+        ));
+        assert!(ap(
+            &set("theme", json!("light")),
+            "please switch the theme to light"
+        ));
         // Never anything but a cosmetic setting, however plainly asked.
         assert!(!ap(
             &set("monthly-cap", json!("250")),
@@ -1615,6 +1882,137 @@ mod tests {
             .map(|e| e.file_name().to_string_lossy().to_string())
             .collect();
         assert_eq!(left, ["AGENTS.md"], "nothing left aside");
+    }
+
+    fn names_in(dir: &Path) -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        v.sort();
+        v
+    }
+
+    /// Review 3, item 14: two sessions switching skills at once both keep their switch:
+    /// customize.json is read, changed and written under a lock.
+    #[test]
+    fn toggles_from_two_sessions_at_once_are_both_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("customize.json");
+        let threads: Vec<_> = (0..8)
+            .map(|i| {
+                let path = path.clone();
+                std::thread::spawn(move || {
+                    for j in 0..10 {
+                        let change = Change::Skill {
+                            name: format!("s{i}-{j}"),
+                            on: false,
+                        };
+                        toggle_file(&path, &change).unwrap();
+                    }
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().unwrap();
+        }
+        assert_eq!(Toggles::load_strict(&path).unwrap().skills_off.len(), 80);
+    }
+
+    /// Review 3, item 14: an append (and its trim) waits for another session holding the
+    /// folder's lock, so a trim's rewrite never drops an append made meanwhile.
+    #[test]
+    fn appends_wait_for_the_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("noted-undos");
+        append_trimmed(&path, "h0", 2).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        locked(&[dir.path()], || {
+            let p = path.clone();
+            std::thread::spawn(move || {
+                append_trimmed(&p, "h1", 2).unwrap();
+                tx.send(()).unwrap();
+            });
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            assert!(rx.try_recv().is_err(), "waiting for the lock");
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), "h0\n");
+            Ok(())
+        })
+        .unwrap();
+        rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "h0\nh1\n");
+        for i in 2..6 {
+            append_trimmed(&path, &format!("h{i}"), 2).unwrap();
+        }
+        // Past twice the newest two, it's trimmed back to them.
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "h3\nh4\nh5\n");
+    }
+
+    /// Review 3, item 13: undo puts the file back with the permission bits it had.
+    #[cfg(unix)]
+    #[test]
+    fn undo_keeps_the_files_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("AGENTS.md");
+        std::fs::write(&path, "- a\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+        let u = write_file(&path, Some("- a\n- b\n".into()), false).unwrap();
+        u.undo().unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "- a\n");
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o640);
+    }
+
+    /// Review 3, item 13: a failure part-way through an undo of several files leaves none of
+    /// them moved aside, and none half undone.
+    #[test]
+    fn a_failed_undo_leaves_nothing_aside() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("AGENTS.md"), dir.path().join("NOTE.md"));
+        std::fs::write(&a, "- a\n").unwrap();
+        std::fs::write(&b, "note\n").unwrap();
+        let ua = write_file(&a, Some("- a\n- rule\n".into()), false).unwrap();
+        let ub = write_file(&b, None, false).unwrap();
+        FAIL_PUT.with(|f| *f.borrow_mut() = Some(b.clone()));
+        let r = undo_all(&[ua, ub]);
+        FAIL_PUT.with(|f| *f.borrow_mut() = None);
+        assert!(r.is_err());
+        assert_eq!(names_in(dir.path()), ["AGENTS.md"], "nothing left aside");
+        assert_eq!(
+            std::fs::read_to_string(&a).unwrap(),
+            "- a\n- rule\n",
+            "all or nothing"
+        );
+    }
+
+    /// Review 3, item 13: a `.<name>.<id>.undo` file a crash left is put back at start-up,
+    /// never over a file written since.
+    #[test]
+    fn the_sweep_puts_back_what_a_crash_left_aside() {
+        let dir = tempfile::tempdir().unwrap();
+        let aside = dir.path().join(".AGENTS.md.20261119-120000-ab12.undo");
+        std::fs::write(&aside, "- a\n").unwrap();
+        sweep_undo(dir.path());
+        assert_eq!(names_in(dir.path()), ["AGENTS.md"]);
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("AGENTS.md")).unwrap(),
+            "- a\n"
+        );
+        // One whose file was written since stays where it is.
+        let aside = dir.path().join(".AGENTS.md.20261119-120001-cd34.undo");
+        std::fs::write(&aside, "old\n").unwrap();
+        sweep_undo(dir.path());
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("AGENTS.md")).unwrap(),
+            "- a\n"
+        );
+        assert!(aside.exists());
+        // Not ours: left alone.
+        std::fs::write(dir.path().join(".x.undo"), "x").unwrap();
+        sweep_undo(dir.path());
+        assert!(dir.path().join(".x.undo").exists());
     }
 
     /// Review 2, item 7: ordinary links are fine. A stow-style link into a dotfiles folder in

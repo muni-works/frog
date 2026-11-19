@@ -495,8 +495,11 @@ final class RemoteBridge {
                 if state.busy, let t = state.started { row["since"] = t.timeIntervalSince1970 * 1000 }
                 // The open question, so a list or a watch can answer it without the thread:
                 // what it would do, why it asks, and what "always" would cover.
+                // A Customize card isn't one: its change shows only in the conversation, so the
+                // list, a watch and a widget get no question to Allow (review 3, item 7).
                 if let line = state.permission,
-                   let q = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] {
+                   let q = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+                   q["proposal"] == nil || q["proposal"] is NSNull {
                     var question: [String: Any] = ["id": q["id"] ?? "", "name": q["name"] ?? "", "arg": String((q["arg"] as? String ?? "").prefix(200))]
                     if let r = q["reason"] as? String, !r.isEmpty { question["reason"] = r }
                     if let a = q["always"] as? String, !a.isEmpty { question["always"] = a }
@@ -581,6 +584,15 @@ final class RemoteBridge {
         return (events, upto)
     }
 
+    /// The phone's answer to the open card, exactly as it gave it: the decision and, for a
+    /// Customize card, the choice its control named ("Just for me" stays just for me). Without
+    /// a choice the card offered, a proposal is left open (`Conversation.answer`).
+    static func answerPermission(_ op: [String: Any], on c: Conversation) {
+        guard let pid = op["id"] as? String, c.permission?.id == pid,
+              let d = (op["decision"] as? String).flatMap(Decision.init(rawValue:)) else { return }
+        c.answer(d, choice: op["choice"] as? String)
+    }
+
     /// Whether a paired phone's submit says the person typed it in its composer.
     nonisolated static func typed(_ op: [String: Any]) -> Bool {
         op["typed"] as? Bool == true
@@ -601,9 +613,7 @@ final class RemoteBridge {
             // phone composes itself don't say it, so they stay untyped.
             c.submit(op["text"] as? String ?? "", images: images, typed: Self.typed(op))
         case "permission":
-            guard let pid = op["id"] as? String, c.permission?.id == pid,
-                  let d = (op["decision"] as? String).flatMap(Decision.init(rawValue:)) else { return }
-            c.answer(d)
+            Self.answerPermission(op, on: c)
         case "answer":
             // The open Ask, from a watch: the picked labels and/or words of its own.
             guard let qid = op["id"] as? String, c.question?.id == qid else { return }

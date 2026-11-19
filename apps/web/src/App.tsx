@@ -20,7 +20,7 @@ import { usePreviewHub } from './ui/PreviewPane'
 import type { PreviewHub } from './preview'
 import { SessionList } from './ui/SessionList'
 import { Pin } from './ui/pin'
-import { firstTitle, stuck, provisional, undelivered, withOpening, type Opening } from './ui/Opening'
+import { firstTitle, stuck, provisional, submitOp, undelivered, withOpening, type Opening } from './ui/Opening'
 import { useMachines } from './machines'
 import { creditLine, Palette, type Command } from './ui/Overlays'
 import { TurnRail } from './ui/TurnRail'
@@ -29,7 +29,7 @@ import { SettingsPage, SettingsSidebar } from './ui/Settings'
 import { pinModel, pinnedModel, rememberPick, sectionOfQuery, setTheme, settingsPath, settingsSectionOf, startingModel, toggledTheme, WEB_SECTIONS, type Section } from './settings'
 import { CustomizePage } from './ui/Customize'
 import { customizeAtOf, customizePath, customizePathIsCanonical, FIRST_CUSTOMIZE, isCustomizeSection, shownAt, type Automation, type CustomizeAt, type Report } from './customize'
-import { proposalChoice, Transcript } from './ui/Transcript'
+import { permissionOp, Transcript } from './ui/Transcript'
 import { safeHref } from './ui/href'
 import { askLine } from './ui/ask'
 import { sessionMissing, viewAfterArchive } from './ui/guards'
@@ -490,13 +490,13 @@ export default function App() {
 
   // What you sent, shown at once: until the engine starts it as a turn it waits here, with a
   // clock (queued until the socket is up), one tick (on the wire), or Not sent.
-  type Out = { id: number; text: string; images: Image[]; state: 'sending' | 'sent' | 'failed'; at: number; seen: number }
+  type Out = { id: number; text: string; images: Image[]; typed?: boolean; state: 'sending' | 'sent' | 'failed'; at: number; seen: number }
   const [outbox, setOutbox] = useState<Record<string, Out[]>>({})
   const outSeq = useRef(0)
   // `typed`: from the composer's field (Op::Submit's `typed`); the app's own prompts leave it out.
   const send = useCallback((id: string, text: string, images: Image[] = [], typed = false) => {
-    setOutbox((o) => ({ ...o, [id]: [...(o[id] ?? []), { id: ++outSeq.current, text, images, state: 'sending', at: Date.now(), seen: thread(id).turns.filter((u) => u.input === text).length }] }))
-    cloud?.send(id, { op: 'submit', text, ...(images.length ? { images } : {}), ...(typed ? { typed: true } : {}) })
+    setOutbox((o) => ({ ...o, [id]: [...(o[id] ?? []), { id: ++outSeq.current, text, images, typed, state: 'sending', at: Date.now(), seen: thread(id).turns.filter((u) => u.input === text).length }] }))
+    cloud?.send(id, submitOp({ text, images, typed }))
   }, [cloud, thread])
 
 
@@ -559,11 +559,9 @@ export default function App() {
   const decide = useCallback((id: string, allow: boolean, opts?: DecideOpts) => {
     const ask = thread(id).ask
     if (!ask) return
-    const note = opts?.note?.trim()
-    // A Customize card's allow always names its choice (⌘↩ included); a plain card's never does.
-    const choice = allow ? (ask.proposal ? proposalChoice(ask.proposal, opts?.choice) : undefined) : undefined
-    const always = opts?.always && !ask.proposal
-    cloud?.send(id, { op: 'permission', id: ask.id, decision: allow ? (always ? 'allow_always' : 'allow') : 'deny', ...(note && !allow ? { note } : {}), ...(choice ? { choice } : {}) })
+    // A Customize card's allow names a choice the card offered, or nothing goes.
+    const op = permissionOp(ask, allow, opts)
+    if (op) cloud?.send(id, op)
   }, [thread, cloud])
 
   const rename = (s: SessionSummary, to: string) => {
@@ -639,7 +637,8 @@ export default function App() {
       if (e.key === ',') { e.preventDefault(); openSettings() }
       // A permission card hidden under another mode isn't answered from there.
       if (mode !== 'threads') return
-      if (current && ct?.ask && e.key === 'Enter') { e.preventDefault(); decide(current.id, true) }
+      // ⌘↩ is the card's primary button: on a Customize card it names the primary's choice.
+      if (current && ct?.ask && e.key === 'Enter') { e.preventDefault(); decide(current.id, true, ct.ask.proposal ? { choice: ct.ask.proposal.choice ?? 'primary' } : undefined) }
       if (current && ct?.ask && e.key === '.') { e.preventDefault(); decide(current.id, false) }
     }
     window.addEventListener('keydown', k)
@@ -704,7 +703,8 @@ export default function App() {
     const m = outbox[id]?.find((x) => x.id === n)
     if (!m) return
     setOutbox((o) => ({ ...o, [id]: (o[id] ?? []).filter((x) => x.id !== n) }))
-    send(id, m.text, m.images)
+    // Its own flag again: a typed message stays typed, an app's prompt untyped.
+    send(id, m.text, m.images, m.typed)
   }
 
   // ---------- signed in ----------

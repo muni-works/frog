@@ -559,10 +559,6 @@ root {}. Re-`cd` if you need the old location back.</system-note>",
             let (id, name, input) = uses[index].clone();
             // Taken for every call, so a mismatch drops all the early runs after it.
             let started_early = early.take(index, &name, &input);
-            // Run now or early, a Read is what a `read` note may come from (`noting`).
-            if name == "Read" {
-                self.note_reads(&input);
-            }
             let key = format!("{name}\u{0}{input}");
             let count = guard.counts.entry(key.clone()).or_insert(0);
             // Reading a pane again is polling, not looping: what's there changes.
@@ -774,6 +770,15 @@ Don't repeat it. {}",
                 }
             };
             let mut out = out;
+            // Only a Read that succeeded is what a `read` note may come from, and only of a
+            // file Frog didn't write (`noting`).
+            if outcome == ToolOutcome::Ok {
+                match &*name {
+                    "Read" => self.note_reads(&input),
+                    "Edit" | "Write" => self.note_writes(&input),
+                    _ => {}
+                }
+            }
             // Captured before the item's parts move into its event: the egress note's key and
             // command, and a call worth a line, queued for a gist when it finished (see the
             // queue after `ItemCompleted`). The tools whose own `display` already says what

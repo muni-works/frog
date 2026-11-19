@@ -21,7 +21,8 @@ const MAX_FILE: u64 = 1 << 20;
 impl Agent {
     /// Whether Frog notes things on its own in this session: never for a subagent or a session
     /// another one started (its "user" is an agent), nor on a small model, which can't do it
-    /// reliably; otherwise the app's `auto-note` setting, else config, else on.
+    /// reliably; otherwise the app's `auto-note` setting, else config, else off: an app that
+    /// never said (a link that sent caps only) gets no noting on its own.
     pub(super) fn auto_note(&self) -> bool {
         if !self.top_level()
             || self.memory.is_none()
@@ -32,11 +33,20 @@ impl Agent {
         }
         match self.shared.settings.lock().unwrap().get(noting::SETTING) {
             Some(Value::Bool(on)) => *on,
-            _ => self.cfg.memory.auto_note.unwrap_or(true),
+            _ => self.cfg.memory.auto_note.unwrap_or(false),
         }
     }
 
-    /// Remember the files a `Read` call opens, as candidates for a `read` note.
+    /// Remember a file Frog's Edit or Write changed: never grounds for a `read` note.
+    pub(super) fn note_writes(&mut self, input: &Value) {
+        if let Some(p) = input["file_path"].as_str() {
+            let path = self.ctx.resolve(p);
+            self.written_by_frog
+                .insert(std::fs::canonicalize(&path).unwrap_or(path));
+        }
+    }
+
+    /// Remember the files a `Read` call succeeded on, as candidates for a `read` note.
     pub(super) fn note_reads(&mut self, input: &Value) {
         let mut paths: Vec<&str> = input["file_path"].as_str().into_iter().collect();
         if let Some(files) = input["files"].as_array() {
@@ -113,10 +123,16 @@ impl Agent {
         }
         let abs = std::fs::canonicalize(self.ctx.resolve(path)).ok()?;
         let root = std::fs::canonicalize(&self.root).ok()?;
-        if !abs.starts_with(&root) || !self.read_by_frog.contains(&abs) {
+        if !abs.starts_with(&root)
+            || !self.read_by_frog.contains(&abs)
+            || self.written_by_frog.contains(&abs)
+            || self.created.contains(&abs)
+        {
             return None;
         }
-        if std::fs::metadata(&abs).ok()?.len() > MAX_FILE {
+        let meta = std::fs::metadata(&abs).ok()?;
+        // Changed since this engine started (Frog's Bash, or anyone): not a fact Frog read.
+        if meta.len() > MAX_FILE || meta.modified().ok()? >= self.started {
             return None;
         }
         let text = std::fs::read_to_string(&abs).ok()?;
@@ -139,34 +155,11 @@ impl Agent {
             .unwrap_or_default()
     }
 
-    fn set_issued(&self, handles: &[String]) -> Result<()> {
-        let path = self.issued_path().context("no session store")?;
-        let keep = &handles[handles.len().saturating_sub(MAX_ISSUED)..];
-        let mut text = keep.join("\n");
-        if !text.is_empty() {
-            text.push('\n');
-        }
-        cz::write_atomic(&path, &text, true)
-    }
-
     /// Record one issued handle: appended (two sessions noting at once both keep theirs),
     /// trimmed to the newest [`MAX_ISSUED`] once the file holds twice that.
     fn add_issued(&self, handle: &str) -> Result<()> {
-        use std::io::Write;
         let path = self.issued_path().context("no session store")?;
-        if let Some(dir) = path.parent() {
-            crate::memory::create_private_dir(dir)?;
-        }
-        let mut o = std::fs::OpenOptions::new();
-        o.create(true).append(true);
-        #[cfg(unix)]
-        std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
-        writeln!(o.open(&path)?, "{handle}")?;
-        let issued = self.issued();
-        if issued.len() > 2 * MAX_ISSUED {
-            self.set_issued(&issued)?;
-        }
-        Ok(())
+        cz::append_trimmed(&path, handle, MAX_ISSUED)
     }
 
     /// The receipt for a note just kept.
@@ -211,8 +204,7 @@ impl Agent {
             let (Some(scope), Some(hash), Some(id)) = (scope, hash, id) else {
                 anyhow::bail!("that isn't an undo handle");
             };
-            let mut issued = self.issued();
-            if !issued.iter().any(|h| h == handle) {
+            if !self.issued().iter().any(|h| h == handle) {
                 anyhow::bail!("Frog didn't issue that undo, so the note was left as it is");
             }
             let scope = match scope {
@@ -233,8 +225,9 @@ impl Agent {
             if !cz::remove_if(&note.path, |bytes| format!("{:016x}", fnv(bytes)) == hash)? {
                 anyhow::bail!("the note was edited since, so it was left as it is");
             }
-            issued.retain(|h| h != handle);
-            let _ = self.set_issued(&issued);
+            if let Some(path) = self.issued_path() {
+                let _ = cz::remove_listed(&path, handle);
+            }
             self.notes = store.load();
             Ok("Undone.".to_string())
         })())

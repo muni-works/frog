@@ -589,8 +589,9 @@ final class CustomizeStore {
 
     /// The app's settings the engine reads (`Op::Settings`).
     nonisolated static func engineSettings() -> [String: JSONValue] {
-        // With the settings a conversation may change, so a Customize card can quote the old value.
-        CustomizeSettings.current().merging(["auto-note": .bool(UserDefaults.standard.object(forKey: autoNoteKey) as? Bool ?? true)]) { $1 }
+        // Exactly the settings this app applies (auto-note among them), with their values: the
+        // engine plans a Customize change only for these, and a card quotes the old value.
+        CustomizeSettings.current()
     }
 
     func forget(_ note: MemoryNote) {

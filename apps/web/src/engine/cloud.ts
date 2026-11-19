@@ -1,6 +1,6 @@
 import { Gateway, type Connection, type ConnectionState } from '../cloud/client'
 import type { Op } from '../cloud/protocol'
-import { applySetting, customizableSettings } from '../settings'
+import { applySetting, customizableSettings, onSettings } from '../settings'
 import { PreviewHub } from '../preview'
 import type { EngineClient } from './client'
 
@@ -32,7 +32,10 @@ export class CloudEngine implements EngineClient {
   /** Whether the gateway serves previews: unknown until the session list first answers. */
   previews: boolean | undefined = undefined
 
-  constructor(readonly gateway: Gateway) {}
+  constructor(readonly gateway: Gateway) {
+    // A setting the engine reads changed here (auto-note): every open session hears it.
+    onSettings(() => this.conns.forEach((c) => c.send({ op: 'settings', values: customizableSettings() })))
+  }
 
   subscribe(session: string, after: number, onEnvelope: Parameters<EngineClient['subscribe']>[2], onReset?: () => void) {
     // The engine's requests to a preview pane are this client's to answer, not the transcript's.
