@@ -9,6 +9,7 @@ import TestRenderer, { act } from "react-test-renderer";
 import { emptyThread, reduce, type Thread } from "../src/engine/thread.ts";
 import { NotedLine, Transcript, UsedNotesBlock } from "../src/ui/Transcript.tsx";
 import type { Proposal } from "../src/cloud/protocol.ts";
+import { caps, NOTES_CAPS } from "../src/engine/cloud.ts";
 import type { Envelope } from "../src/cloud/protocol.ts";
 
 let seq = 0;
@@ -82,4 +83,11 @@ test("Make it a rule: the engine's card, on no row, waits after the turn; approv
 
 test("one note reads singular", () => {
   assert.match(renderToStaticMarkup(h(UsedNotesBlock, { used: { tokens: 8, notes: [{ id: "n_1", scope: "project", text: "x" }] } })), /Used 1 note</);
+});
+
+test("the engine isn't told to keep notes until the review passes, and never for a child session", () => {
+  assert.equal(NOTES_CAPS, false);
+  assert.equal("notes" in caps(false), false);
+  assert.deepEqual(caps(false, true, false, true), { op: "set_client_caps", ask: true, panes: false, notes: true });
+  assert.equal("notes" in caps(false, false, false, true), false);
 });

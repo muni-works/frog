@@ -97,6 +97,14 @@ final class NotedLinesTests: XCTestCase {
     func testMakeItARuleOnTheWire() throws {
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(Op.noteToRule(id: "n_4", scope: "project"))) as? [String: Any])
         XCTAssertEqual(json as NSDictionary, ["op": "note_to_rule", "id": "n_4", "scope": "project"])
+        // Held off with Customize, and never for a session another session started.
+        XCTAssertFalse(ClientCaps.notes)
+        XCTAssertFalse(ClientCaps.notes(top: true))
+        XCTAssertFalse(ClientCaps.notes(top: false, enabled: true))
+        let on = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(Op.setClientCaps(panes: false, ask: true, notes: ClientCaps.notes(top: true, enabled: true)))) as? [String: Any])
+        XCTAssertEqual(on as NSDictionary, ["op": "set_client_caps", "panes": false, "ask": true, "notes": true])
+        let off = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(Op.setClientCaps(panes: false, ask: true, notes: ClientCaps.notes(top: true)))) as? [String: Any])
+        XCTAssertNil(off["notes"])
     }
 
     /// The lines as drawn, for review: `TEST_RUNNER_FROG_NOTED_OUT=<dir>`.

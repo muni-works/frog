@@ -13,8 +13,11 @@ import type { EngineClient } from './client'
 // so and never offers them. Only ever for a session the person is typing in, never one another
 // session started (it has no one to click the card).
 export const CUSTOMIZE_CAPS = false
-export const caps = (previews: boolean, top = true, customize = CUSTOMIZE_CAPS): Op =>
-  ({ op: 'set_client_caps', ask: true, panes: previews, ...(customize && top ? { customize: true } : {}) })
+// The same for noting on its own (`notes`): the noted line with Undo and Make it a rule draws,
+// held off with Customize.
+export const NOTES_CAPS = false
+export const caps = (previews: boolean, top = true, customize = CUSTOMIZE_CAPS, notes = NOTES_CAPS): Op =>
+  ({ op: 'set_client_caps', ask: true, panes: previews, ...(customize && top ? { customize: true } : {}), ...(notes && top ? { notes: true } : {}) })
 
 /** EngineClient over the Frog Cloud gateway: one websocket per subscribed session. */
 export class CloudEngine implements EngineClient {

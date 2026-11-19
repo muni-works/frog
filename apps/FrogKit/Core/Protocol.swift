@@ -112,7 +112,7 @@ enum Op: Encodable, Sendable {
     /// What this client can do, sent once after the engine starts.
     /// `customize`: this app draws Customize cards, their receipts and `setting_change`
     /// (docs/customize-events.md), so the engine may offer the tool.
-    case setClientCaps(panes: Bool, ask: Bool = false, sessions: Bool = false, customize: Bool = false)
+    case setClientCaps(panes: Bool, ask: Bool = false, sessions: Bool = false, customize: Bool = false, notes: Bool = false)
     /// Undo a Customize change by its handle; `customize_undone` answers.
     case undo(String)
     /// The answer to a `sessionRequest`: JSON (or text) for the model, or an error.
@@ -145,7 +145,7 @@ enum Op: Encodable, Sendable {
         case deadline, pr, repo, number
         case decline, servers, tools
         case values, scope
-        case choice, customize, undo
+        case choice, customize, undo, notes
     }
 
     func encode(to encoder: Encoder) throws {
@@ -261,12 +261,13 @@ enum Op: Encodable, Sendable {
             try c.encode(id, forKey: .id)
             try c.encode(mention, forKey: .mention)
             try c.encodeIfPresent(context, forKey: .context)
-        case .setClientCaps(let panes, let ask, let sessions, let customize):
+        case .setClientCaps(let panes, let ask, let sessions, let customize, let notes):
             try c.encode("set_client_caps", forKey: .op)
             try c.encode(panes, forKey: .panes)
             if ask { try c.encode(ask, forKey: .ask) }
             if sessions { try c.encode(sessions, forKey: .sessions) }
             if customize { try c.encode(customize, forKey: .customize) }
+            if notes { try c.encode(notes, forKey: .notes) }
         case .undo(let handle):
             try c.encode("undo", forKey: .op)
             try c.encode(handle, forKey: .undo)
@@ -1026,6 +1027,9 @@ enum ClientCaps {
     /// Only ever for a session the person is typing in: one another session started has no one
     /// to click its card.
     static func customize(top: Bool, enabled: Bool = customize) -> Bool { enabled && top }
+    /// Noting on its own (`notes`): the noted line draws, held off with Customize.
+    static let notes = false
+    static func notes(top: Bool, enabled: Bool = notes) -> Bool { enabled && top }
 }
 
 struct Proposal: Codable, Sendable, Equatable {
