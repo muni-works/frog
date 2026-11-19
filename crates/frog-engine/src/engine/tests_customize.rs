@@ -539,3 +539,139 @@ fn tool_cost_in_tokens() {
     assert!(line < 100, "{line}");
     assert!(full < 500, "{full}");
 }
+
+// ---- the Customize pages, over the socket ----
+
+/// The pages' op answers with the snapshot; switching a skill off takes it out of the next
+/// request's prompt; loading a skill (by `/name` and by the tool) logs a use; a note remembered
+/// in a session records that session.
+#[tokio::test]
+async fn pages_read_switch_and_count() {
+    let base = std::env::temp_dir().join(format!("frog-customize-pages-{}", session::new_id()));
+    let (project, store) = (base.join("project"), base.join("store"));
+    let tag = session::new_id().replace(|c: char| !c.is_ascii_alphanumeric(), "");
+    let (slash, tool) = (format!("slash{tag}"), format!("tool{tag}"));
+    for name in [&slash, &tool] {
+        let dir = project.join(".frog/skills").join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("SKILL.md"),
+            format!("---\nname: {name}\ndescription: A skill for {name} work.\n---\nDo it.\n"),
+        )
+        .unwrap();
+    }
+    std::fs::create_dir_all(&store).unwrap();
+    let project = project.canonicalize().unwrap();
+    let mut profile = Profile::new(ProviderKind::Ollama, "test");
+    profile.tool_mode = ToolMode::Native;
+    let script = vec![
+        done(),
+        reply(
+            vec![Block::ToolUse {
+                id: "s".into(),
+                name: crate::skills::TOOL.into(),
+                input: json!({"name": tool}),
+            }],
+            Stop::ToolUse,
+        ),
+        done(),
+        done(),
+        done(),
+    ];
+    let client = scripted::Client::new(script);
+    let sent = client.sent.clone();
+    let opts = Options {
+        cfg: Config {
+            hermetic: true,
+            ..Config::default()
+        },
+        profile_name: "test".into(),
+        profile,
+        cwd: project.clone(),
+        mode: Mode::Default,
+        can_ask: true,
+        resume: None,
+        store: Some(store),
+        sandbox: false,
+        rich: false,
+        subagent: false,
+        chat: false,
+    };
+    let h = start(opts, Provider::Scripted(client)).unwrap();
+    let mut r = Rig {
+        h,
+        base,
+        project,
+        idles: 1,
+    };
+    r.idle().await;
+    let report = |evs: &[Event]| {
+        evs.iter()
+            .find_map(|e| match e {
+                Event::Customize { report, error } => Some((report.clone(), error.clone())),
+                _ => None,
+            })
+            .expect("a customize answer")
+    };
+
+    let (rep, error) = report(&r.run(Op::Customize, never).await);
+    assert_eq!(error, None);
+    let mine = rep.skills.items.iter().find(|s| s.name == slash).unwrap();
+    assert!(mine.on && mine.tokens > 0);
+
+    // Used by `/name`, then by the tool.
+    r.say(&format!("/{slash} please"), never).await;
+    r.say("use the other one", never).await;
+    let uses = crate::customize::usage::summary();
+    let id = |name: &str| {
+        r.project
+            .join(".frog/skills")
+            .join(name)
+            .join("SKILL.md")
+            .display()
+            .to_string()
+    };
+    for name in [&slash, &tool] {
+        let u = &uses[&(crate::customize::usage::Kind::Skill, id(name))];
+        assert_eq!(u.count, 1, "{name}");
+        assert!(u.last.as_ref().unwrap().session.is_some());
+    }
+
+    // Off: the answer says so, and the next request's prompt doesn't carry it.
+    let off = crate::customize::report::Edit::Skill {
+        name: slash.clone(),
+        on: false,
+    };
+    let (rep, error) = report(&r.run(Op::CustomizeChange { change: off }, never).await);
+    assert_eq!(error, None);
+    let mine = rep.skills.items.iter().find(|s| s.name == slash).unwrap();
+    assert_eq!((mine.on, mine.tokens), (false, 0));
+    r.say("anything", never).await;
+    let last = sent.lock().unwrap().last().cloned().unwrap();
+    assert!(
+        !last.contains(&format!("- {slash}:")),
+        "switched off, still in the prompt"
+    );
+    assert!(last.contains(&format!("- {tool}:")));
+
+    // A change that can't be made answers with why, and the report as things are.
+    let bad = crate::customize::report::Edit::Skill {
+        name: "no-such-skill".into(),
+        on: false,
+    };
+    let (_, error) = report(&r.run(Op::CustomizeChange { change: bad }, never).await);
+    assert!(error.is_some_and(|e| e.contains("no-such-skill")));
+
+    // A note remembered here records this session.
+    r.say("/remember The staging database resets on Mondays", never)
+        .await;
+    let (rep, _) = report(&r.run(Op::Customize, never).await);
+    let note = rep
+        .memory
+        .notes
+        .iter()
+        .find(|n| n.text.contains("staging"))
+        .unwrap();
+    assert!(note.session.is_some(), "{note:?}");
+    r.end().await;
+}

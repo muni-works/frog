@@ -326,6 +326,15 @@ pub enum Op {
         #[serde(default)]
         decline: bool,
     },
+    /// The Customize snapshot: skills, connections, rules and memory, with what each adds to a
+    /// turn, its use and whether it's on (docs/customize-api.md). Answered with
+    /// [`Event::Customize`].
+    Customize,
+    /// A change a Customize page makes (a switch, a rules line, a note). Answered with
+    /// [`Event::Customize`] as things are after it, with `error` set if it failed.
+    CustomizeChange {
+        change: crate::customize::report::Edit,
+    },
     /// Have the model server prefill this conversation now, so the next turn starts warm:
     /// when a client shows the conversation, and as the user types (`draft`, the composer's
     /// text so far, as the next message). Dropped mid-turn and on servers that can't prefill;
@@ -980,6 +989,14 @@ pub enum Event {
     Notice {
         level: Level,
         message: String,
+    },
+    /// The answer to [`Op::Customize`] and [`Op::CustomizeChange`]: a reply, not history, so
+    /// it isn't journaled or replayed.
+    Customize {
+        report: Box<crate::customize::report::Report>,
+        /// Why a [`Op::CustomizeChange`] wasn't made; the report is as things still are.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
     },
     /// The configured MCP servers and how each is doing, the whole list, sent whenever one
     /// connects, fails, or a sign-in changes its state. Durable, so a replayed session shows

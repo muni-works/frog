@@ -302,13 +302,21 @@ impl Agent {
         // append to the list, and the prefix before them stays cached. One search tool loads
         // both kinds, in the MCP tools' place.
         if !self.subagent {
-            let off = self.toggles().tools_off;
+            let toggles = self.toggles();
+            let off = toggles.tools_off;
+            // A connection switched off sends none of its tools.
+            let servers_off: Vec<String> = toggles
+                .servers_off
+                .iter()
+                .map(|s| crate::mcp::exposed_name(s, ""))
+                .collect();
             let mcp: Vec<ToolSpec> = self
                 .mcp
                 .specs()
                 .into_iter()
                 .filter(|s| s.name != crate::mcp::SEARCH_TOOL)
                 .filter(|s| !off.contains(&*s.name))
+                .filter(|s| !servers_off.iter().any(|p| s.name.starts_with(p.as_str())))
                 .collect();
             if !held.is_empty() || self.mcp.deferred() {
                 specs.push(crate::mcp::search_spec());
