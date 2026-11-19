@@ -525,7 +525,7 @@ final class Conversation {
 
     private static func isMemoryCommand(_ text: String) -> Bool {
         let name = text.split(whereSeparator: \.isWhitespace).first ?? ""
-        return ["/remember", "/forget", "/memory"].contains(String(name))
+        return ["/remember", "/forget", "/memory", "/recall"].contains(String(name))
     }
 
     /// Take a queued message back for editing: it leaves the queue and goes back to the
@@ -536,11 +536,15 @@ final class Conversation {
     }
 
     /// The composer's field and attachments with every taken-back message restored, oldest
-    /// first; `restored` is emptied.
-    func takeRestored(into draft: String, attachments: [ToolImage]) -> (text: String, images: [ToolImage]) {
+    /// first; `restored` is emptied. `untyped`: the field's untyped origin (`ComposerTyped`)
+    /// before, and after: the whole new field when any piece of it is text the person didn't
+    /// type (a message that went untyped, or the field still the unedited fill it was), else nil.
+    func takeRestored(into draft: String, attachments: [ToolImage], untyped: String? = nil) -> (text: String, images: [ToolImage], untyped: String?) {
         let back = restored
         restored = []
-        return back.reversed().reduce((text: draft, images: attachments)) { $1.restore(into: $0.text, attachments: $0.images) }
+        let out = back.reversed().reduce((text: draft, images: attachments)) { $1.restore(into: $0.text, attachments: $0.images) }
+        let fill = untyped != nil && !ComposerTyped.sent(draft, untyped: untyped)
+        return (out.text, out.images, back.contains { !$0.typed } || fill ? out.text : nil)
     }
 
     func interrupt() {
@@ -1634,5 +1638,19 @@ extension UInt64 {
 private extension Event {
     var isSynced: Bool {
         if case .synced = self { true } else { false }
+    }
+}
+
+/// Whether what a composer sends is the person's own words (`Op.submit`'s `typed`). The field
+/// can hold text nobody typed: the model's next-step suggestion accepted with Tab, a message
+/// taken back out of the queue that went untyped (an app's prompt, a git Fix, a button's hidden
+/// send). The composer keeps that text as the field's `untyped` origin; sent unedited it stays
+/// untyped, and any edit makes it the person's (docs/customize-events.md).
+enum ComposerTyped {
+    /// `field`: what goes. `untyped`: the field's text as it was filled without the person
+    /// typing it, if it was.
+    static func sent(_ field: String, untyped: String?) -> Bool {
+        guard let untyped else { return true }
+        return field.trimmingCharacters(in: .whitespacesAndNewlines) != untyped.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

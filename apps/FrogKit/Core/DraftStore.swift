@@ -15,6 +15,9 @@ struct ComposerDraft: Codable, Equatable {
     /// Where the cursor sat (UTF-16 offset), so it comes back where typing left it.
     var cursor: Int
     var saved: Date
+    /// The field's untyped origin (`ComposerTyped`): restored and moved with the draft, so a
+    /// suggestion or app prompt doesn't turn typed by a relaunch or a move to a worktree.
+    var untyped: String? = nil
 }
 
 @MainActor

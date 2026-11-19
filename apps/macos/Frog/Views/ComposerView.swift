@@ -21,6 +21,9 @@ struct ComposerView: View {
     @State var racing = false
     /// Images to send with the message.
     @State var attachments: [ToolImage] = []
+    /// The field's text as it was filled without the person typing it (a suggestion taken with
+    /// Tab, an untyped message taken back), until sent: unedited, it goes untyped (`ComposerTyped`).
+    @State var untyped: String?
     @State var dictation = Dictation()
     @State var downloads = ModelDownloads.shared
     /// Restores the draft when this conversation appears; saves it as it's typed.
@@ -394,7 +397,9 @@ struct ComposerView: View {
                 onMentionKey: handleMentionKey,
                 onTab: {
                     guard text.isEmpty, let ghost else { return false }
+                    // The model wrote it: unedited, it isn't the person's words.
                     text = ghost
+                    untyped = ghost
                     return true
                 },
                 onPasteImages: { attachments += $0 },
@@ -442,7 +447,7 @@ struct ComposerView: View {
         }
         .onChange(of: conversation.restored) { _, back in
             guard !back.isEmpty else { return }
-            (text, attachments) = conversation.takeRestored(into: text, attachments: attachments)
+            (text, attachments, untyped) = conversation.takeRestored(into: text, attachments: attachments, untyped: untyped)
             controller.focus()
         }
         .onChange(of: conversation.panes.insert) { _, mention in
@@ -450,7 +455,10 @@ struct ComposerView: View {
             conversation.panes.insert = nil
             controller.insert(mention)
         }
-        .onChange(of: text, initial: true) { conversation.panes.noteDraft(text) }
+        .onChange(of: text, initial: true) {
+            conversation.panes.noteDraft(text)
+            if text.isEmpty { untyped = nil }
+        }
         .task(id: text) {
             try? await Task.sleep(for: .milliseconds(400))
             guard !Task.isCancelled else { return }
@@ -497,25 +505,28 @@ struct ComposerView: View {
         controller.flush()
         guard Self.hasWords(text) || !attachments.isEmpty, !waitingForModel else { return }
         local.lastSent = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // What the person typed (or dictated), unless it's still an unedited suggestion or
+        // taken-back untyped text: their own words to the engine (`Op.submit`).
+        let typed = ComposerTyped.sent(text, untyped: untyped)
+        untyped = nil
         if let start = conversation.start, start.failed || start.stuck(at: .now) {
             // A start that failed: what's typed starts it again, in place (the web's retry).
             let message = text
             text = ""
             attachments = []
             let words = message.trimmingCharacters(in: .whitespacesAndNewlines)
-            workspace.retryStart(conversation, text: words.isEmpty ? nil : words, typed: true)
+            workspace.retryStart(conversation, text: words.isEmpty ? nil : words, typed: typed)
             return
         }
         if !conversation.started, conversation.cloudSession == nil, let target = workspace.cloudTarget {
             let message = text
             text = ""
             attachments = []
-            Task { await workspace.runInCloud(message, repo: .some(target), typed: true) }
+            Task { await workspace.runInCloud(message, repo: .some(target), typed: typed) }
             return
         }
         dictation.cancel()
-        // What the person typed (or dictated): their own words to the engine (`Op.submit`).
-        conversation.submit(text, images: attachments, typed: true)
+        conversation.submit(text, images: attachments, typed: typed)
         FrogSounds.shared.play(.plip)
         text = ""
         attachments = []

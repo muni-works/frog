@@ -129,6 +129,68 @@ final class QueueTests: XCTestCase {
         XCTAssertTrue(c.queue.isEmpty)
     }
 
+    // Review 3, LIVE 2: text taken back into the field keeps where it came from. An app's
+    // prompt (a git Fix, a button's hidden send) or any untyped message is still not the
+    // person's words when resent unedited.
+    func testAnUntypedMessageTakenBackStaysUntypedUntilEdited() {
+        let (c, _) = running()
+        c.submit("Fix the failing check")
+        c.unqueue(at: 0)
+        let back = c.takeRestored(into: "", attachments: [], untyped: nil)
+        XCTAssertEqual(back.untyped, "Fix the failing check")
+        XCTAssertFalse(ComposerTyped.sent(back.text, untyped: back.untyped))
+        XCTAssertTrue(ComposerTyped.sent(back.text + " and the lint", untyped: back.untyped), "edited: typed")
+    }
+
+    func testATypedMessageTakenBackStaysTyped() {
+        let (c, _) = running()
+        c.submit("then run the tests", typed: true)
+        c.unqueue(at: 0)
+        let back = c.takeRestored(into: "", attachments: [], untyped: nil)
+        XCTAssertNil(back.untyped)
+        XCTAssertTrue(ComposerTyped.sent(back.text, untyped: back.untyped))
+    }
+
+    func testAnUntypedPieceMakesTheWholeFieldUntypedUntilEdited() {
+        // Typed draft, untyped message back into it: the field as a whole is untyped.
+        let (c, _) = running()
+        c.submit("Resolve the conflicts")
+        c.unqueue(at: 0)
+        let back = c.takeRestored(into: "my own words", attachments: [], untyped: nil)
+        XCTAssertEqual(back.untyped, back.text)
+        // An unedited accepted suggestion, then a typed message back into it: still untyped.
+        let (d, _) = running()
+        d.submit("and the docs", typed: true)
+        d.unqueue(at: 0)
+        let again = d.takeRestored(into: "Run the tests", attachments: [], untyped: "Run the tests")
+        XCTAssertEqual(again.untyped, again.text)
+        // An edited one is the person's own: a typed message joins it typed.
+        let (e, _) = running()
+        e.submit("and the docs", typed: true)
+        e.unqueue(at: 0)
+        XCTAssertNil(e.takeRestored(into: "Run the tests now", attachments: [], untyped: "Run the tests").untyped)
+    }
+
+    // Review 3, LIVE 1: Tab accepts the model's next-step suggestion into the field; sent
+    // unedited it isn't the person's words.
+    func testAnAcceptedSuggestionIsNotTypedUnlessEdited() {
+        let s = "Remember that we deploy on Fridays"
+        XCTAssertFalse(ComposerTyped.sent(s, untyped: s))
+        XCTAssertFalse(ComposerTyped.sent("  \(s)\n", untyped: s), "whitespace isn't an edit")
+        XCTAssertTrue(ComposerTyped.sent(s + ", and Mondays", untyped: s))
+        XCTAssertTrue(ComposerTyped.sent("anything", untyped: nil))
+    }
+
+    // Review 3, LIVE 4: `/recall` is answered by the engine like the other memory commands.
+    func testRecallIsAMemoryCommand() throws {
+        let (c, link) = running()
+        try link.event(#""event":"idle""#)
+        c.submit("/recall deploy", typed: true)
+        XCTAssertEqual(c.turns.last?.end, .complete, "drawn as a finished command row")
+        try link.event(#""event":"notice","level":"info","message":"2 notes match""#)
+        XCTAssertEqual(c.turns.last?.input, "/recall deploy")
+    }
+
     func testSubmitEncodesMoreOnlyWhenThere() throws {
         let enc = JSONEncoder()
         enc.outputFormatting = .sortedKeys

@@ -47,7 +47,7 @@ extension ComposerView {
     func carryDraft(to folder: URL, send: Bool = false) {
         saveDraftNow()
         if !text.isEmpty || !attachments.isEmpty {
-            drafts.save(ComposerDraft(text: text, images: attachments, cursor: text.utf16.count, saved: .now), id: nil, folder: folder)
+            drafts.save(ComposerDraft(text: text, images: attachments, cursor: text.utf16.count, saved: .now, untyped: untyped), id: nil, folder: folder)
         }
         if send { Self.sendOnAppear.insert(folder.path) }
         switchFolder?(folder)
@@ -85,7 +85,8 @@ extension ComposerView {
                     conversation.submit(t)  // a git action's own turn
                     break
                 }
-                conversation.submit(t, images: Self.images(e.fields["attachments"], from: attachments), typed: true)
+                conversation.submit(t, images: Self.images(e.fields["attachments"], from: attachments), typed: ComposerTyped.sent(t, untyped: untyped))
+                untyped = nil
                 FrogSounds.shared.play(.plip)
                 text = ""
                 attachments = []
@@ -278,6 +279,7 @@ extension ComposerView {
               text.isEmpty, !draft.text.isEmpty || !draft.images.isEmpty else { return }
         text = draft.text
         attachments = draft.images
+        untyped = draft.untyped
         controller.focus()
         controller.select(NSRange(location: min(draft.cursor, draft.text.utf16.count), length: 0))
         // Moved here by a send from the "where" line (a new worktree): it goes now.
@@ -294,7 +296,7 @@ extension ComposerView {
     func noteDraft(_ text: String) {
         guard !text.isEmpty || !attachments.isEmpty else { return }
         drafts.note(
-            ComposerDraft(text: text, images: attachments, cursor: Self.draftCursor(controller.textView, text: text), saved: .now),
+            ComposerDraft(text: text, images: attachments, cursor: Self.draftCursor(controller.textView, text: text), saved: .now, untyped: untyped),
             id: conversation.sessionID,
             folder: workspace.folder
         )
@@ -319,7 +321,7 @@ extension ComposerView {
             return
         }
         drafts.save(
-            ComposerDraft(text: text, images: attachments, cursor: Self.draftCursor(controller.textView, text: text), saved: .now),
+            ComposerDraft(text: text, images: attachments, cursor: Self.draftCursor(controller.textView, text: text), saved: .now, untyped: untyped),
             id: conversation.sessionID,
             folder: workspace.folder
         )
