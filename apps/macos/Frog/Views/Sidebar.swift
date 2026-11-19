@@ -1482,6 +1482,11 @@ struct CompactSessionRow<Menu: View>: View {
                 Text(blank ? "New session" : session.displayTitle).lineLimit(expandTitle ? 3 : 1).truncationMode(.tail)
                     .font(.frog(size: 13))
                     .foregroundStyle(Color.primary.opacity(selected || running ? 1 : blank ? 0.5 : 0.82))
+                if session.isCloud {
+                    // The thread runs in the cloud: a glyph, never the words "Frog Cloud".
+                    Image(systemName: "cloud").font(.frog(size: 10)).foregroundStyle(.tertiary)
+                        .help("Runs in Frog Cloud")
+                }
                 if let suffix, showSuffix {
                     Text(suffix).lineLimit(1)
                         .font(.frog(size: 11)).foregroundStyle(.tertiary)

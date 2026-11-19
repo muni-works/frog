@@ -443,6 +443,12 @@ final class Library {
         conversations[id]?.value
     }
 
+    /// A conversation went on screen: findable by id at once, before (or without) any live
+    /// event, so the sidebar's card can read a thread that's open but idle or detached.
+    func adopt(_ id: String, conversation c: Conversation) {
+        if conversations[id]?.value !== c { conversations[id] = WeakConversation(value: c) }
+    }
+
     /// Every conversation open on this Mac right now.
     var open: [Conversation] {
         conversations.values.compactMap(\.value)

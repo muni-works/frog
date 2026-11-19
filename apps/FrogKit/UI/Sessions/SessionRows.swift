@@ -222,7 +222,9 @@ struct ConversationRowLabel: View {
                     .foregroundStyle(Tokens.textSecondary)
                     .lineLimit(1)
             } else if showPlace {
-                Text(idleLine)
+                // A cloud thread leads with the cloud glyph instead of the words "Frog Cloud".
+                ((session.isCloud ? Text(Image(systemName: "cloud")) + Text(idleLine.isEmpty ? "" : "  ") : Text(""))
+                    + Text(idleLine))
                     .font(.frog(size: Tokens.Size.meta))
                     .foregroundStyle(Tokens.textTertiary)
                     .lineLimit(1)
@@ -234,6 +236,7 @@ struct ConversationRowLabel: View {
     private var idleLine: String {
         var parts: [String] = []
         if session.isChat { parts.append("Chat") }
+        else if session.isCloud && session.cwd == "/Frog Cloud" { /* the cloud glyph says it */ }
         else if let f = session.folder?.lastPathComponent, !f.isEmpty { parts.append(f) }
         if let turns, turns > 0 { parts.append("\(turns) turn\(turns == 1 ? "" : "s")") }
         if !session.model.isEmpty { parts.append(ModelIdentity.rowName(session.model)) }

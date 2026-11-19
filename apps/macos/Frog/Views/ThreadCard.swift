@@ -207,22 +207,30 @@ private struct ThreadCard: View {
                     .background(Tokens.hover, in: .rect(cornerRadius: 8))
             }
             Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 6) {
-                if let place {
+                if session.isCloud || place != nil {
                     GridRow {
                         label("Where")
-                        Text(place).font(.frog(size: 12)).lineLimit(1)
+                        HStack(spacing: 5) {
+                            // The thread's own place: a cloud glyph when it runs in the cloud.
+                            if session.isCloud {
+                                Image(systemName: "cloud").font(.frog(size: 11)).foregroundStyle(.secondary)
+                                    .help("This thread runs in Frog Cloud")
+                            }
+                            if let place { Text(place).font(.frog(size: 12)).lineLimit(1) }
+                        }
                     }
                 }
                 if !session.model.isEmpty {
                     GridRow {
                         label("Model")
-                        // Where the model runs comes from the model, not the folder.
+                        // Where the model runs is its dot's color (green cloud, blue local),
+                        // never words: "Frog Cloud" beside a cloud thread read as either.
                         let id = ModelIdentity.of(session.model, in: [])
                         HStack(spacing: 5) {
                             Circle().fill(Color.place(id.place)).frame(width: 6, height: 6)
                             Text(id.name).font(.frog(size: 12)).lineLimit(1)
-                            Text(id.place.label).font(.frog(size: 12)).foregroundStyle(.secondary).lineLimit(1)
                         }
+                        .help(id.place.label)
                     }
                 }
                 if let spent {
@@ -321,10 +329,12 @@ private struct ThreadCard: View {
     /// The open permission ask, when the thread is loaded and waiting on one.
     private var permission: PermissionRequest? { library.conversation(session.id)?.permission }
 
-    /// "frog   gateway-auth": the folder, then the worktree when there is one. Chats have none.
+    /// "frog   gateway-auth": the folder, then the worktree when there is one. Chats, and a
+    /// cloud thread with no project of its own, have none (the cloud glyph says where).
     private var place: String? {
         guard !session.isChat, let folder = session.folder else { return nil }
-        let base = session.isCloud ? "Frog Cloud" : folder.lastPathComponent
+        if session.isCloud && session.cwd == "/Frog Cloud" { return nil }
+        let base = folder.lastPathComponent
         if let wt = SessionList.worktreeName(folder) { return "\(base)   \(wt)" }
         return base
     }
