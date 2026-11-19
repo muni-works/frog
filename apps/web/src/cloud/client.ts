@@ -190,6 +190,13 @@ export class Connection {
    * may count only the kept envelopes, and frog serve already moves a restored engine's seqs
    * above what a resuming peer has.) */
   private checkFirst = false;
+  /** The history a welcome replays, held until it's all here and then handed on at once, so a
+   *  saved conversation opens whole at its end instead of drawing in burst by burst as the
+   *  network delivers it (Cam, 2026-11-19). Up to the welcome's `last_seq`, or until the stream
+   *  goes quiet (that figure may count only kept envelopes, so it can be out of reach). */
+  private historyTo = 0;
+  private held: Envelope[] = [];
+  private heldTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly gw: Gateway,
@@ -285,6 +292,7 @@ export class Connection {
       this.failures = 0;
       this.set({ state: "live", welcome: v.welcome });
       const to = typeof w.last_seq === "number" ? w.last_seq : 0;
+      if (to > this.lastSeq) { this.historyTo = to; this.quiet(); }
       if (!this.unacked.length || to <= this.lastSeq) return this.flush();
       this.replayTo = to;
       this.holdTimer = setTimeout(() => this.flush(), 1000);
@@ -305,8 +313,30 @@ export class Connection {
       const i = this.unacked.findIndex((op) => op.text === v.input);
       if (this.unacked.length) this.unacked.splice(i >= 0 ? i : 0, 1);
     }
-    this.handlers.onEnvelope(v as Envelope);
+    if (this.historyTo) {
+      this.held.push(v as Envelope);
+      if (this.lastSeq >= this.historyTo) this.release();
+      else this.quiet();
+    } else {
+      this.handlers.onEnvelope(v as Envelope);
+    }
     if (this.replayTo && this.lastSeq >= this.replayTo) this.flush();
+  }
+
+  /** The history stream went quiet before reaching `historyTo`: it's all here. */
+  private quiet() {
+    if (this.heldTimer) clearTimeout(this.heldTimer);
+    this.heldTimer = setTimeout(() => this.release(), 300);
+  }
+
+  /** Hand the held history on, all at once (the store folds it into one frame). */
+  private release() {
+    if (this.heldTimer) clearTimeout(this.heldTimer);
+    this.heldTimer = null;
+    this.historyTo = 0;
+    const held = this.held;
+    this.held = [];
+    for (const env of held) this.handlers.onEnvelope(env);
   }
 
   private closed(ws: WebSocket, code: number, reason: string) {
@@ -315,6 +345,8 @@ export class Connection {
     this.ws = null;
     this.live = false;
     this.replayTo = 0;
+    // Whatever history came before the socket closed is kept, not dropped.
+    if (this.historyTo || this.held.length) this.release();
     if (this.holdTimer) clearTimeout(this.holdTimer);
     if (this.state.state === "refused" || this.state.state === "unauthorized") return;
     if (this.stopped || code === CLOSE_REFUSED || code === CLOSE_DELETED) {

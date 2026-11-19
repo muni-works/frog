@@ -131,11 +131,12 @@ final class CloudLink: ConversationLink {
     private var maxTurn = 0
     private let encoder = JSONEncoder()
 
-    init(gateway: CloudGateway, session: String, after: UInt64 = 0) {
+    /// `connect: false` (tests): no socket; frames are fed to `take` instead.
+    init(gateway: CloudGateway, session: String, after: UInt64 = 0, connect: Bool = true) {
         self.gateway = gateway
         id = session
         lastSeq = after
-        open()
+        if connect { open() }
         // As on the web: questions get a card; a preview pane would need the sandbox's network.
         send(.setClientCaps(panes: false, ask: true))
     }
@@ -194,7 +195,8 @@ final class CloudLink: ConversationLink {
         }
     }
 
-    private func take(_ data: Data) {
+    /// One frame from the gateway: the welcome, then envelopes (internal for the tests).
+    func take(_ data: Data) {
         guard !live else {
             var object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
             let event = object?["event"] as? String
@@ -227,6 +229,7 @@ final class CloudLink: ConversationLink {
                 onEvent(env)
             }
             catchUp()
+            if caughtUpAt != nil { quiet() }
             return
         }
         let v = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
@@ -243,11 +246,34 @@ final class CloudLink: ConversationLink {
         for d in queue { task?.send(.string(String(decoding: d, as: UTF8.self))) { _ in } }
         queue.removeAll()
         catchUp()
+        if caughtUpAt != nil { quiet() }
     }
+
+    /// The replay went quiet before reaching the welcome's `last_seq` (it may count only kept
+    /// envelopes): it's all here.
+    private func quiet() {
+        quietTask?.cancel()
+        quietTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled, let self, self.caughtUpAt != nil else { return }
+            self.caughtUpAt = self.lastSeq
+            self.catchUp()
+        }
+    }
+    private var quietTask: Task<Void, Never>?
+    /// `synced` goes once, after the first catch-up: the conversation holds the history until it.
+    private var saidSynced = false
 
     private func catchUp() {
         guard let at = caughtUpAt, lastSeq >= at else { return }
         caughtUpAt = nil
+        quietTask?.cancel()
+        // The history is all here: the conversation folds it in at once (`Conversation.cloud`).
+        if !saidSynced {
+            saidSynced = true
+            let synced = #"{"seq":\#(lastSeq),"session":"\#(id)","created":0,"event":"synced","upto":\#(lastSeq)}"#
+            if let env = try? JSONDecoder.frog.decode(Envelope.self, from: Data(synced.utf8)) { onEvent(env) }
+        }
         guard !openTurn else { return }
         let idle = #"{"seq":\#(lastSeq),"session":"\#(id)","created":0,"event":"idle"}"#
         if let env = try? JSONDecoder().decode(Envelope.self, from: Data(idle.utf8)) { onEvent(env) }

@@ -264,6 +264,10 @@ function AskCard({ ask, onDecide }: { ask: Ask; onDecide: Decide }) {
 
 const NO_MODELS: Model[] = []
 
+/** Turns a conversation opens on, and adds at a time as you scroll up (enough to fill a tall
+ *  window with room to spare). */
+export const TAIL_TURNS = 24
+
 export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, models = NO_MODELS, outbox = [], onResend, onEdit, waiting, onContinue, onPrompt, onShowChange, credit, start }: {
   thread: Thread
   /** The account's credit left, for the turn-cost card. */
@@ -292,6 +296,29 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
 }) {
   // The live turn is the last one by position: turn numbers can repeat after a resume.
   const lastIdx = thread.turns.length - 1
+  // A long conversation opens on its tail (Cam, 2026-11-19): the newest turns, and the ones
+  // above as you scroll up to them (the sentinel below), the view held still by the browser's
+  // scroll anchoring. Another conversation starts over from its own tail.
+  const convo = `${thread.turns[0]?.turn ?? ''}:${thread.turns[0]?.at ?? ''}`
+  const [win, setWin] = useState<{ convo: string; from: number | null }>({ convo, from: null })
+  const from = win.convo === convo && win.from !== null ? win.from : Math.max(0, thread.turns.length - TAIL_TURNS)
+  const earlier = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = earlier.current
+    if (!el || from === 0) return
+    const root = el.closest('.scroll')
+    const io = new IntersectionObserver((seen) => {
+      if (seen.some((s) => s.isIntersecting)) setWin({ convo, from: Math.max(0, from - TAIL_TURNS) })
+    }, { root, rootMargin: '800px 0px 0px 0px' })
+    io.observe(el)
+    return () => io.disconnect()
+  }, [from, convo])
+  // The turn rail asks for a turn above the window (App.tsx, jumpToTurn): draw down to it.
+  useEffect(() => {
+    const show = (e: Event) => { const i = (e as CustomEvent<number>).detail; if (i < from) setWin({ convo, from: i }) }
+    window.addEventListener('frog:show-turn', show)
+    return () => window.removeEventListener('frog:show-turn', show)
+  }, [from, convo])
   // Handlers change identity every render; turns read them through one stable ref so a
   // streamed delta redraws only the turn it touched.
   const latest = useRef({ onDecide, onAnswer, onRetry, onEdit, onContinue, onPrompt, onShowChange })
@@ -313,10 +340,11 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
   }), [thread.startedAt, thread.live, thread.pulse, thread.firstOutputAt, thread.askedAt, thread.activity, thread.elicitation])
   return (
     <LiveContext.Provider value={live}>
-      {(thread.marks ?? []).filter((m) => m.after === 0).map((m, i) => <Mark key={`m0-${i}`} m={m} />)}
+      {from > 0 && <div ref={earlier} className="tx-earlier" aria-hidden="true" />}
+      {from === 0 && (thread.marks ?? []).filter((m) => m.after === 0).map((m, i) => <Mark key={`m0-${i}`} m={m} />)}
       {/* The first turn keeps its node from Send on: drawn first from the sent message
           (ui/Opening.tsx), then from the engine's turn, whatever number the engine gives it. */}
-      {thread.turns.map((turn, ti) => (<Fragment key={ti === 0 ? 'first' : `${ti}-${turn.turn}`}>
+      {thread.turns.map((turn, ti) => ti < from ? null : (<Fragment key={ti === 0 ? 'first' : `${ti}-${turn.turn}`}>
         <TurnView turn={turn} index={ti} live={ti === lastIdx} start={ti === lastIdx ? start : undefined} ask={ti === lastIdx ? thread.ask : null} question={ti === lastIdx ? thread.question : null}
           running={ti === lastIdx && thread.running} models={models} credit={credit} cb={cb} hasRetry={has.retry} hasEdit={has.edit} hasContinue={has.cont} />
         {(thread.marks ?? []).filter((m) => m.after === ti + 1).map((m, k) => <Mark key={`m${ti}-${k}`} m={m} />)}

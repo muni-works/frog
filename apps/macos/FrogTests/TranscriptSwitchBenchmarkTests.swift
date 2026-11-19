@@ -217,10 +217,12 @@ final class TranscriptSwitchBenchmarkTests: XCTestCase {
         case .log:
             let history = SessionHistory.open(session, at: url!)
             c = Conversation(folder: URL(fileURLWithPath: "/tmp/demo"), link: link, replay: true, session: session, history: history)
+            TranscriptProbe.only = ObjectIdentifier(c).hashValue
             m.decode = Date().timeIntervalSince(picked)
             upto = c.lastSeq
         case .replay:
             c = Conversation(folder: URL(fileURLWithPath: "/tmp/demo"), link: link, replay: true, session: session)
+            TranscriptProbe.only = ObjectIdentifier(c).hashValue
             // The engine's pipe: each line decoded (off the main thread in the app, but it's the
             // same work and it's on the way to the first paint), then delivered.
             var envs: [Envelope] = []

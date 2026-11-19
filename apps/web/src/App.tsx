@@ -306,13 +306,18 @@ export default function App() {
       setVisibleTurns(new Set(on))
     }, { root })
     root.querySelectorAll('[data-turn-index]').forEach((el) => io.observe(el))
-    return () => io.disconnect()
+    // Turns above the tail are drawn as you scroll up (Transcript's window): observe them too.
+    const mo = new MutationObserver(() => root.querySelectorAll('[data-turn-index]').forEach((el) => io.observe(el)))
+    mo.observe(root, { childList: true, subtree: true })
+    return () => { io.disconnect(); mo.disconnect() }
   // The scroller remounts when a column opens or closes (the inspector): observe the new one.
   }, [currentId, turnCount, mode, inspector]) // eslint-disable-line react-hooks/exhaustive-deps
-  const jumpToTurn = useCallback((i: number) => {
+  const jumpToTurn = useCallback((i: number, again = true) => {
     const root = threadScroll.current
-    const el = root?.querySelector<HTMLElement>(`[data-turn-index="${i}"]`)
-    if (!root || !el) return
+    if (!root) return
+    const el = root.querySelector<HTMLElement>(`[data-turn-index="${i}"]`)
+    // Above the window a long conversation opens on: have it drawn, then jump on the next frame.
+    if (!el) { if (again) { window.dispatchEvent(new CustomEvent('frog:show-turn', { detail: i })); requestAnimationFrame(() => requestAnimationFrame(() => jumpToTurn(i, false))) } return }
     root.scrollTop += el.getBoundingClientRect().top - root.getBoundingClientRect().top - parseFloat(getComputedStyle(root).paddingTop)
   }, [])
   // The rail's turns: once the conversation has one, in threads mode. A summary lands before the

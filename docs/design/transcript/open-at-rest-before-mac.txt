@@ -1,0 +1,6 @@
+	 Executed 3 tests, with 3 failures (0 unexpected) in 2.725 (2.727) seconds
+	 Executed 3 tests, with 3 failures (0 unexpected) in 2.725 (2.728) seconds
+	 Executed 3 tests, with 3 failures (0 unexpected) in 2.725 (2.729) seconds
+OpenAtRestTests.swift:61: error: -[FrogTests.OpenAtRestTests testALongSavedConversationOpensWholeAtOnce] : XCTAssertEqual failed: ("[7, 14, 20, 27, 34, 40, 47, 54, 60, 67, 74, 80, 87, 94, 100, 107, 11
+OpenAtRestTests.swift:69: error: -[FrogTests.OpenAtRestTests testAConversationOpenedMidReplyShowsItsHistoryAtOnceAndOnlyTheReplyStreams] : XCTAssertEqual failed: ("[7, 14, 20, 27, 34, 40, 47, 54, 60, 
+OpenAtRestTests.swift:86: error: -[FrogTests.OpenAtRestTests testAHistoryShorterThanTheWelcomeSaidStillShows] : XCTAssertEqual failed: ("200") is not equal to ("0") - held while more may come
