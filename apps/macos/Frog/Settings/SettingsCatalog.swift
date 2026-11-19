@@ -8,6 +8,8 @@ struct SettingsCatalog: Decodable {
         let id: String
         let label: String
         var aliases: [String]? = nil
+        /// The mode a section moved to (Connections → Customize): Settings leaves it out.
+        var movedTo: String? = nil
     }
 
     struct Option: Decodable, Hashable {
@@ -46,8 +48,15 @@ struct SettingsCatalog: Decodable {
               let c = try? JSONDecoder().decode(SettingsCatalog.self, from: data) else {
             return SettingsCatalog(version: 1, sections: [], rows: [])
         }
-        return c
+        return c.withoutMoved
     }()
+
+    /// The list without sections that moved to another mode, nor their rows.
+    var withoutMoved: SettingsCatalog {
+        let moved = Set(sections.filter { $0.movedTo != nil }.map(\.id))
+        return SettingsCatalog(version: version, sections: sections.filter { !moved.contains($0.id) },
+                               rows: rows.filter { !moved.contains($0.section) })
+    }
 
     /// The rows the Mac draws, in order: everything but the web's own, minus what can't work
     /// here yet. A section's rows by default; a machine's or provider's page with `page`.

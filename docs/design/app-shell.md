@@ -159,8 +159,10 @@ and the web show the same nine sections, drawn the same way from one list of row
 Lend folds into Models: "Lend this Mac" was the same switch as "Share with my other machines".
 
 Connections moved to Customize (below): Settings is how the app behaves, Customize is what the
-agent knows and can do. `frog://settings/mcp` and `frog://settings/connections` open
-Customize › Connections.
+agent knows and can do. Its section stays in `design/settings.json` marked `"movedTo":
+"customize"` (with its rows, which the web's invitations still use) until both apps have moved;
+an app leaves a moved section out of Settings. `frog://settings/mcp` and
+`frog://settings/connections` open Customize › Connections.
 
 ### One list of rows
 
