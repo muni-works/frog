@@ -23,7 +23,7 @@ final class BillingTests: XCTestCase {
         c.ingest(try envelope(
             #""event":"billing_limit","window":"5h","reason":"5-hour plan limit reached; add credit to keep going at usage prices","balance_micro":4200000"#))
         let transcript = c.turns.flatMap { $0.items }.map(\.text).joined()
-        XCTAssertTrue(transcript.contains("5-hour allowance used · billing credit at usage prices"), transcript)
+        XCTAssertTrue(transcript.contains("5-hour allowance used, billing credit at usage prices"), transcript)
         XCTAssertTrue(transcript.contains("$4.20 left"), transcript)
         // The provider's raw JSON never reaches the transcript.
         XCTAssertFalse(transcript.contains("insufficient_quota"), transcript)

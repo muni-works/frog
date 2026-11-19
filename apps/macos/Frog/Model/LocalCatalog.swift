@@ -73,7 +73,7 @@ enum LocalCatalog {
         var caps = m.capabilities.joined(separator: ", ")
         if let f = caps.first { caps = f.uppercased() + caps.dropFirst() }
         guard let c = m.context else { return caps }
-        return caps + " · \(c / 1024)K context"
+        return caps + ", \(c / 1024)K context"
     }
 }
 
@@ -135,14 +135,14 @@ struct LocalModelRow: Equatable, Identifiable {
     var downloadBytes: UInt64?
 
     /// "Get · 18 GB".
-    var getLabel: String { ["Get", downloadBytes.map { LocalModelRow.gbDecimal($0) }].compactMap { $0 }.joined(separator: " · ") }
+    var getLabel: String { ["Get", downloadBytes.map { LocalModelRow.gbDecimal($0) }].compactMap { $0 }.joined(separator: ", ") }
 
     /// "4.2 of 18 GB · 32 MB/s".
     var progressLine: String? {
         guard case .downloading(let done, let total, let rate) = state else { return nil }
         let amount = "\(Self.gbDecimal(done, unit: false)) of \(Self.gbDecimal(total))"
         guard let rate, rate > 0 else { return amount }
-        return amount + " · \(Int((rate / 1e6).rounded())) MB/s"
+        return amount + ", \(Int((rate / 1e6).rounded())) MB/s"
     }
 
     /// A download's size as Hugging Face and the model menu write it (decimal GB): "18 GB",
@@ -179,7 +179,7 @@ extension LocalModelList {
         func fitLine(_ need: UInt64?) -> (String?, Bool) {
             guard let need, d.totalBytes > 0 else { return (nil, true) }
             let n = Device.gb(need), t = Device.gb(d.totalBytes)
-            if need <= usable { return ("needs \(n) of \(t) · fits", true) }
+            if need <= usable { return ("needs \(n) of \(t), fits", true) }
             if need > d.totalBytes { return ("needs \(n), \(where_) has \(t)", false) }
             return ("needs \(n) of \(t), too little left for macOS and your apps", false)
         }
@@ -193,7 +193,7 @@ extension LocalModelList {
             var r = LocalModelRow(
                 id: id, name: c?.name ?? LocalCatalog.displayName(id),
                 spec: m.map { "node/\($0.weightsHash.prefix(12))" },
-                source: c.map { "\($0.source.host) · \($0.source.repo)" } ?? (repoLike ? "Hugging Face · \(id)" : nil),
+                source: c.map { "\($0.source.host), \($0.source.repo)" } ?? (repoLike ? "Hugging Face, \(id)" : nil),
                 sourceURL: c?.source.url ?? (repoLike ? URL(string: "https://huggingface.co/\(id)") : nil),
                 format: m?.quant ?? c?.format,
                 uses: c.map(LocalCatalog.usesLine),
@@ -317,7 +317,7 @@ extension LocalModelList {
         var all = list.recommended + list.onMachine + list.more
         let counts = Dictionary(all.map { ($0.name, 1) }, uniquingKeysWith: +)
         for i in all.indices where counts[all[i].name, default: 0] > 1 {
-            if let v = ModelIdentity.cleanName(all[i].id).variant ?? all[i].format { all[i].name += " · \(v)" }
+            if let v = ModelIdentity.cleanName(all[i].id).variant ?? all[i].format { all[i].name += ", \(v)" }
         }
         let a = list.recommended.count, b = a + list.onMachine.count
         list.recommended = Array(all[..<a]); list.onMachine = Array(all[a..<b]); list.more = Array(all[b...])

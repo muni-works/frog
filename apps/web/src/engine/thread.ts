@@ -122,11 +122,11 @@ function apply(t: Thread, ev: Event, created: number): Thread {
       return { ...t, running: true, ended: null, next: null, startedAt: created, live: null, pulse: 0, firstOutputAt: null, askedAt: null, turns: [...t.turns, { turn: ev.turn, input: ev.input, images: ev.images, more: ev.more, entries: [], at: created }] }
     }
     case 'compacted':
-      return { ...t, compacting: false, marks: [...(t.marks ?? []), { after: t.turns.length, text: `Compacted · ${kilo(ev.tokens_before)} → ${kilo(ev.tokens_after)} tokens` }] }
+      return { ...t, compacting: false, marks: [...(t.marks ?? []), { after: t.turns.length, text: `Compacted, ${kilo(ev.tokens_before)} → ${kilo(ev.tokens_after)} tokens` }] }
     case 'compaction_failed':
       return { ...t, compacting: false, marks: [...(t.marks ?? []), { after: t.turns.length, text: "Couldn't compact: the conversation doesn't fit even summarized. Start a new session.", failed: true }] }
     case 'context_pruned':
-      return { ...t, marks: [...(t.marks ?? []), { after: t.turns.length, text: `Trimmed ${ev.results} old tool result${ev.results === 1 ? '' : 's'} · ${kilo(ev.tokens_before)} → ${kilo(ev.tokens_after)} tokens` }] }
+      return { ...t, marks: [...(t.marks ?? []), { after: t.turns.length, text: `Trimmed ${ev.results} old tool result${ev.results === 1 ? '' : 's'}, ${kilo(ev.tokens_before)} → ${kilo(ev.tokens_after)} tokens` }] }
     case 'next_suggested':
       return { ...t, next: { text: ev.text, act: !!ev.act } }
     case 'turn_ended': {

@@ -36,7 +36,7 @@ struct ProjectGlance: Equatable, Sendable {
         }
         if lines >= 1000 { parts.append("\(lines / 1000)k lines") } else if lines > 0 { parts.append("\(lines) lines") }
         if changed > 0 { parts.append(changed == 1 ? "1 uncommitted change" : "\(changed) uncommitted changes") }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+        return parts.isEmpty ? nil : parts.joined(separator: ", ")
     }
 
     /// Up to three starting points, most specific first.

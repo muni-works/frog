@@ -158,7 +158,7 @@ function Stats({ info, row, rate, quiet, now, graph, keep }: { info: LiveInfo; r
   return (
     <div className="live-stats">
       <span className="live-figures" title={hover.join('\n') || undefined}>
-        {parts.map((p, i) => <span key={i}>{i > 0 && <span className="dot" aria-hidden="true"> · </span>}{p}</span>)}
+        {parts.map((p, i) => <span key={i}>{i > 0 && <span className="gap" aria-hidden="true" />}{p}</span>)}
       </span>
       {graph}
     </div>

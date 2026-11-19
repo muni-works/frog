@@ -159,7 +159,7 @@ test("a finished think settles to 'Thought for Ns'; an old log reads 'Thought'; 
 test("the stats: time after the first second, tokens never with decimals, tok/s; a card's wait", () => {
   const r: Entry = { id: "r1", kind: "reasoning", text: "", output: "", done: false };
   const html = tail([r], info({ live: { output: 1212, soFar: true, slow: false, cached: 11_900 } }));
-  assert.equal(text(html, "live-stats"), "31s · 1,212 tokens");
+  assert.equal(text(html, "live-stats"), "31s, 1,212 tokens");
   assert.match(html, /title="[^"]*Written 1,212 tokens so far/, "the hover says 'so far' while it is a count");
   assert.match(html, /title="[^"]*Read 11,900 tokens from cache/, "cache from the engine's figure");
   // The line keeps its height with nothing in it, so the row doesn't grow when the time shows.
@@ -167,7 +167,7 @@ test("the stats: time after the first second, tokens never with decimals, tok/s;
   const waiting = tail([tool("t1", "Bash", "cargo test")], info({ startedAt: Date.now() - 39_000, askedAt: Date.now() - 6_000 }), true);
   assert.match(waiting, /data-state="waiting"/, "amber only when waiting on a person");
   assert.equal(text(waiting, "live-label"), "Waiting for you");
-  assert.equal(text(waiting, "live-stats"), "39s · waited 6s");
+  assert.equal(text(waiting, "live-stats"), "39s, waited 6s");
   const writing = tail([{ id: "m", kind: "message", text: "The jitter", output: "", done: false }], info({ live: { output: 40, soFar: true, slow: true, cached: null } }));
   assert.doesNotMatch(writing, /data-row="live"/, "an answer writing has no row");
   assert.match(writing, /data-row="stats"/, "only its stats, under the text");

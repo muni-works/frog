@@ -160,7 +160,7 @@ test("compaction leaves a mark after the turn it followed", () => {
     { event: "turn_ended", turn: 1, reason: { type: "complete" } },
     { event: "compacted", tokens_before: 82_000, tokens_after: 9_100 },
   ].reduce((t, e) => reduce(t, env(e as Event)), emptyThread);
-  assert.deepEqual(t.marks, [{ after: 1, text: "Compacted · 82k → 9k tokens" }]);
+  assert.deepEqual(t.marks, [{ after: 1, text: "Compacted, 82k → 9k tokens" }]);
 });
 
 test("a repeated turn_started is the same turn, and a reused number after an ending is a new one", () => {

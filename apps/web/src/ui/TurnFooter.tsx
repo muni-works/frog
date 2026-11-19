@@ -38,8 +38,8 @@ export function TurnFooter({ usage, turn, models, answer, pinned, onRetry, credi
       <span className="turn-line">
         {id && <span className="turn-model">{modelName(id)}</span>}
         {/* Who served a Frog Cloud turn reads as Frog Cloud, whoever's GPUs answered (Cam, 2026-11-12). */}
-        {usage.served_by && <><span className="dot" aria-hidden="true"> · </span><span className="turn-model">{servedByName(usage.served_by)}</span></>}
-        {parts.map((p, i) => <Fragment key={i}>{(i > 0 || id) && <span className="dot" aria-hidden="true"> · </span>}{p}</Fragment>)}
+        {usage.served_by && <><span className="gap" aria-hidden="true" /><span className="turn-model">{servedByName(usage.served_by)}</span></>}
+        {parts.map((p, i) => <Fragment key={i}>{(i > 0 || id) && <span className="gap" aria-hidden="true" />}{p}</Fragment>)}
       </span>
       <span className="hover-acts">
         {answer && <CopyButton text={answer} label="Copy answer" />}

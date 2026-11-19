@@ -246,3 +246,4 @@
 @container transcript (max-width: 419px) {
   .tx .turn-graph .pace { display: none; }
 }
+.gap { display: inline-block; width: 10px; }

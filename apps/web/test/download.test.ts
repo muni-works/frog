@@ -14,9 +14,9 @@ import type { Machine } from "../src/machines.ts";
 
 const noop = () => {};
 
-const mac: Machine = { id: "this-mac", name: "studio", thisMac: true, hardware: "M4 Max · 64 GB unified", online: true, model: null, totalBytes: 64 * 2 ** 30,
+const mac: Machine = { id: "this-mac", name: "studio", thisMac: true, hardware: "M4 Max, 64 GB unified", online: true, model: null, totalBytes: 64 * 2 ** 30,
   models: [{ id: "mlx-community/Qwen3-8B-4bit", name: "Qwen3-8B-4bit", hash: "aaaaaaaaaaaa11", loaded: true }] };
-const mew: Machine = { id: "n1", name: "mew", hardware: "RTX 3090 · 24 GB VRAM", online: true, model: "Qwen3-4B", decode: 58.4, totalBytes: 24 * 2 ** 30,
+const mew: Machine = { id: "n1", name: "mew", hardware: "RTX 3090, 24 GB VRAM", online: true, model: "Qwen3-4B", decode: 58.4, totalBytes: 24 * 2 ** 30,
   models: [{ id: "Qwen/Qwen3-4B", name: "Qwen3-4B", hash: "bbbbbbbbbbbb22", loaded: true }] };
 
 // --- gate 1: the platform -------------------------------------------------

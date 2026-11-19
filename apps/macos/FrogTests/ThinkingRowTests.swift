@@ -135,15 +135,15 @@ final class ThinkingRowTests: XCTestCase {
 
     func testStats() {
         XCTAssertEqual(LiveStats(elapsed: 0.4, tokens: nil, soFar: false, perSecond: nil, slow: false).text, "", "time after the first second")
-        XCTAssertEqual(LiveStats(elapsed: 19.4, tokens: 1105, soFar: true, perSecond: 58, slow: false).text, "19s · 1,105 tokens · 58 tok/s")
-        XCTAssertEqual(LiveStats(elapsed: 27, tokens: 1610, soFar: true, perSecond: 12, slow: true).text, "27s · 1,610 tokens · 12 tok/s · Slow",
+        XCTAssertEqual(LiveStats(elapsed: 19.4, tokens: 1105, soFar: true, perSecond: 58, slow: false).text, "19s, 1,105 tokens, 58 tok/s")
+        XCTAssertEqual(LiveStats(elapsed: 27, tokens: 1610, soFar: true, perSecond: 12, slow: true).text, "27s, 1,610 tokens, 12 tok/s, Slow",
                        "the engine's slow, not the Mac's own")
         XCTAssertEqual(LiveStats(elapsed: 125, tokens: nil, soFar: false, perSecond: nil, slow: false).text, "2m 5s")
-        XCTAssertEqual(LiveStats(elapsed: 39, tokens: 1212, soFar: false, perSecond: 40, slow: false, waited: 6.4).text, "39s · waited 6s",
+        XCTAssertEqual(LiveStats(elapsed: 39, tokens: 1212, soFar: false, perSecond: 40, slow: false, waited: 6.4).text, "39s, waited 6s",
                        "waiting on you: the clock and how long (board 8, C)")
         XCTAssertEqual(LiveStats(elapsed: 7 * 86_400, tokens: nil, soFar: false, perSecond: nil, slow: false, waited: 7 * 86_400).text,
-                       "10080m 0s · waited 10080m 0s", "the clock shows at any length, as on the web")
-        XCTAssertEqual(LiveStats(elapsed: 40, tokens: 900, soFar: true, perSecond: nil, slow: false, quiet: 12).text, "40s · 900 tokens · no output for 12s",
+                       "10080m 0s, waited 10080m 0s", "the clock shows at any length, as on the web")
+        XCTAssertEqual(LiveStats(elapsed: 40, tokens: 900, soFar: true, perSecond: nil, slow: false, quiet: 12).text, "40s, 900 tokens, no output for 12s",
                        "an answer writing with nothing arriving")
         let s = LiveStats(elapsed: 9, tokens: 388, soFar: true, perSecond: 58, slow: false, cached: 11_900, firstToken: 0.8, thinking: true)
         XCTAssertTrue(s.help.contains("Thinking for 9 seconds"))
@@ -155,8 +155,8 @@ final class ThinkingRowTests: XCTestCase {
     /// The dump writes the stats' ticking figures as the web's metrics.mjs does.
     @MainActor
     func testTheDumpWritesTickingFiguresAsHashes() {
-        XCTAssertEqual(TranscriptMetrics.ticking("10080m 0s · waited 10080m 0s"), "#s · waited #s")
-        XCTAssertEqual(TranscriptMetrics.ticking("19s · 1,105 tokens · 58 tok/s · Slow"), "#s · # tokens · # tok/s · Slow")
+        XCTAssertEqual(TranscriptMetrics.ticking("10080m 0s, waited 10080m 0s"), "#s, waited #s")
+        XCTAssertEqual(TranscriptMetrics.ticking("19s, 1,105 tokens, 58 tok/s, Slow"), "#s, # tokens, # tok/s, Slow")
     }
 
     func testStatsFromThePulse() {

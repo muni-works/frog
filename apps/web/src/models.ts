@@ -58,7 +58,7 @@ export const modelName = (id: string) => NAMES[currentId(id)] ?? humanize(id)
 export function price(m: Model) {
   if (m.input == null || m.output == null) return ''
   const f = (x: number) => `$${(x * 1e6).toFixed(x * 1e6 < 1 ? 2 : 1)}`
-  return `${f(m.input)} in · ${f(m.output)} out per M tokens`
+  return `${f(m.input)} in, ${f(m.output)} out per M tokens`
 }
 
 /** A per-token price as dollars per million tokens: three significant figures, at least cents,
@@ -73,7 +73,7 @@ export const outputPrice = (m: Model) => (m.output == null ? '' : `${usdPerM(m.o
 
 /** "$0.20 in · $0.80 out /M": both per-million prices, as the picker shows them. */
 export const inOutPrice = (m: Model) =>
-  m.input == null || m.output == null ? outputPrice(m) : `${usdPerM(m.input)} in · ${usdPerM(m.output)} out /M`
+  m.input == null || m.output == null ? outputPrice(m) : `${usdPerM(m.input)} in, ${usdPerM(m.output)} out /M`
 
 /** The model a new session starts on: DeepSeek V4.1 Flash while Frog Cloud lists it, else the
  *  first it lists. Nothing is built in: no list, no default. Same pick as the engine's
