@@ -15,6 +15,33 @@ The model gets `Customize` only when the app declares it draws these cards:
 is refused, so no app is ever sent a card it can't show. Send it once the card, the receipt
 with Undo and `setting_change` are drawn.
 
+### Before either capability is on for Frog Cloud sessions
+
+The engine sees one peer in a cloud session, the gateway, so these rules hold there only if
+the gateway (in its own repository) does all of this. None of it can be checked from here:
+
+1. **Forwards these ops to the engine unchanged, unknown fields included:** `set_client_caps`
+   (`customize`, `notes`), `settings` (`values` and `client`), `submit`'s `typed`, `client` and
+   each `more` part's `typed`, `detach`, and `permission`'s `choice`. And delivers
+   `setting_change` to the apps with its `client`. A gateway that rebuilds ops from known
+   fields drops these, and the features turn off (caps), plan nothing (`client`), or let any
+   app's text count as typed if it sets `typed` itself.
+2. **Never marks its own ops typed**: its prompts, a notification reply, a relay.
+3. **Tells a respawned engine what the old one was told.** The apps send caps and settings on
+   every welcome they get. If the gateway brings up a new engine (a sandbox woken from sleep)
+   without the apps reconnecting, it must either replay the latest `set_client_caps` and each
+   attached app's latest `settings` to it, or close the apps' sockets so they reconnect and
+   send them. Otherwise the new engine has no caps and no settings: features off, auto-note off.
+4. **Sends `detach` for an app whose socket closed without one** (a crashed tab, a lost
+   network), `{"op":"detach","client":<id>}` with the id from that app's `settings`. Without
+   it a gone app's `auto-note: false` keeps auto-note off until the engine restarts (the safe
+   direction, but wrong).
+5. **Lists `parent` for every child session** in `GET /v1/sessions`. Both apps send caps only
+   for a session listed with no `parent` (or that they created), so a child listed without
+   one gets the caps.
+6. **Starts a child session's engine as a worker** (`--worker`, or with its parent recorded),
+   so the engine itself refuses Customize, noting and "remember that" there whatever the caps.
+
 ## Tiers
 
 Every change is either:
