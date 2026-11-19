@@ -304,25 +304,28 @@ fn skills(ctx: &Ctx, toggles: &Toggles, uses: &Uses) -> Skills {
 }
 
 fn connections(ctx: &Ctx, toggles: &Toggles, uses: &Uses) -> Connections {
+    let (status, detail, loaded) = match ctx.hub {
+        Some(h) => (h.status(), h.detail(), h.loaded()),
+        None => Default::default(),
+    };
+    connections_from(ctx, toggles, uses, status, detail, &loaded)
+}
+
+/// [`connections`] from what the hub knows: each server's status and detail, and the tools
+/// loaded on demand (sent every turn even when the rest are deferred).
+pub(crate) fn connections_from(
+    ctx: &Ctx,
+    toggles: &Toggles,
+    uses: &Uses,
+    status: Vec<crate::mcp::ServerStatus>,
+    detail: Vec<crate::mcp::ServerDetail>,
+    loaded: &[String],
+) -> Connections {
     let configured = crate::mcp::configured_from(ctx.cfg, ctx.cwd);
-    let status: BTreeMap<String, crate::mcp::ServerStatus> = ctx
-        .hub
-        .map(|h| {
-            h.status()
-                .into_iter()
-                .map(|s| (s.name.clone(), s))
-                .collect()
-        })
-        .unwrap_or_default();
-    let detail: BTreeMap<String, crate::mcp::ServerDetail> = ctx
-        .hub
-        .map(|h| {
-            h.detail()
-                .into_iter()
-                .map(|d| (d.name.clone(), d))
-                .collect()
-        })
-        .unwrap_or_default();
+    let status: BTreeMap<String, crate::mcp::ServerStatus> =
+        status.into_iter().map(|s| (s.name.clone(), s)).collect();
+    let detail: BTreeMap<String, crate::mcp::ServerDetail> =
+        detail.into_iter().map(|d| (d.name.clone(), d)).collect();
 
     // Tools the model would be offered, to know whether they're sent or loaded on demand.
     let offered: usize = detail
@@ -381,7 +384,8 @@ fn connections(ctx: &Ctx, toggles: &Toggles, uses: &Uses) -> Connections {
                     (None, false) => "off",
                 };
                 let tokens_if_on = ctx.tokens(crate::mcp::spec_chars(name, t));
-                let tokens = if on && state == "on" && !deferred {
+                let sent = !deferred || loaded.contains(&exposed);
+                let tokens = if on && state == "on" && sent {
                     tokens_if_on
                 } else {
                     0
@@ -636,21 +640,14 @@ fn listed_rules_files(cfg: &Config, cwd: &Path, chat: bool) -> Vec<PathBuf> {
     out
 }
 
-/// Where a new line goes when the page doesn't name a file: the first project instruction
-/// file (or a new `FROG.md` at the project root), or the home `FROG.md` for everywhere.
-pub fn default_rules_file(cfg: &Config, cwd: &Path, scope: &str) -> PathBuf {
-    let home = crate::config::config_dir().join("FROG.md");
+/// Where a new line goes when the page doesn't name a file: the project's own instruction file
+/// (the same one the agent's `Customize` tool writes, [`super::project_file`]), or the home
+/// `FROG.md` for everywhere.
+pub fn default_rules_file(cwd: &Path, scope: &str) -> PathBuf {
     if scope != "project" {
-        return home;
+        return crate::config::config_dir().join("FROG.md");
     }
-    let root = cwd
-        .ancestors()
-        .find(|d| d.join(".git").exists())
-        .unwrap_or(cwd);
-    crate::prompt::instruction_files(cwd, cfg)
-        .into_iter()
-        .find(|f| f.starts_with(root))
-        .unwrap_or_else(|| root.join("FROG.md"))
+    super::project_file(cwd)
 }
 
 /// Make a change. `memory` is the store notes live in (`None` for no memory); `toggles` is the
@@ -688,7 +685,7 @@ pub fn apply(
         Edit::RuleAdd { path, scope, text } => {
             let file = match path {
                 Some(p) => listed(cfg, cwd, chat, p)?,
-                None => default_rules_file(cfg, cwd, scope),
+                None => default_rules_file(cwd, scope),
             };
             lines::add(&file, text)
         }

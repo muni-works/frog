@@ -401,6 +401,7 @@ impl Agent {
                 } else {
                     crate::memory::Scope::Project
                 };
+                store.set_session(&self.conv.session_id, &self.title());
                 let (note, _) = store.add(scope, line)?;
                 cz::Undo::File(cz::FileUndo {
                     after: cz::read_opt(&note.path),

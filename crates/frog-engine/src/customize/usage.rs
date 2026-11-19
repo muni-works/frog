@@ -15,6 +15,8 @@ pub const KEEP_DAYS: i64 = 90;
 pub const STRIP_DAYS: usize = 30;
 /// Past this size the file is folded on the next write.
 const FOLD_OVER: u64 = 256 * 1024;
+/// The size the last fold in this process left.
+static LAST_FOLD: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -130,7 +132,10 @@ pub(crate) fn record_in(
     if let Some(dir) = file.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let big = std::fs::metadata(file).is_ok_and(|m| m.len() > FOLD_OVER);
+    // Past the threshold, and grown well past what the last fold left: a folded file that is
+    // itself big (many items, many days) isn't rewritten on every use.
+    let floor = FOLD_OVER.max(2 * LAST_FOLD.load(std::sync::atomic::Ordering::Relaxed));
+    let big = std::fs::metadata(file).is_ok_and(|m| m.len() > floor);
     if let Ok(mut f) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -200,8 +205,9 @@ pub(crate) fn fold_in(file: &Path, now: DateTime<Local>) {
         .map(|s| s + "\n")
         .collect();
     let tmp = file.with_extension("jsonl.tmp");
-    if std::fs::write(&tmp, text).is_ok() {
-        let _ = std::fs::rename(&tmp, file);
+    let len = text.len() as u64;
+    if std::fs::write(&tmp, text).is_ok() && std::fs::rename(&tmp, file).is_ok() {
+        LAST_FOLD.store(len, std::sync::atomic::Ordering::Relaxed);
     }
 }
 

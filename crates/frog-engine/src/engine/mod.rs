@@ -2162,6 +2162,9 @@ impl Agent {
         }
         shared.bg.seed_ids(bg_ids.iter().map(String::as_str));
         shared.bg.lost_on_restart(&lost_bg);
+        if let Some(store) = &o.store {
+            crate::customize::Toggles::use_store(store);
+        }
         let skills = if o.subagent {
             Default::default()
         } else {

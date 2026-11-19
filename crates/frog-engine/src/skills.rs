@@ -51,7 +51,7 @@ pub fn discover(cwd: &Path) -> BTreeMap<String, Skill> {
 }
 
 /// Skills visible from `cwd`: the project's, and the user's own unless `user` is false. Skills
-/// switched off in Customize are left out (and don't hide one of the same name further down).
+/// switched off in Customize (by name) are left out.
 pub fn discover_in(cwd: &Path, user: bool) -> BTreeMap<String, Skill> {
     discover_with(cwd, user, &crate::customize::Toggles::current())
 }

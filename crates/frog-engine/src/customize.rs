@@ -488,6 +488,8 @@ pub fn tokens(text: &str) -> i64 {
 
 // ---- toggles ----
 
+static STORE_PATH: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
 /// Skills, MCP tools and whole connections the user turned off. Kept beside Frog's notes, as
 /// `customize.json` (`~/.local/share/frog/customize.json`); everything not listed is on.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -504,15 +506,28 @@ pub struct Toggles {
 }
 
 impl Toggles {
-    /// The file outside a session (the CLI, the catalog filter): where a session with the
-    /// default store keeps it too.
+    /// The file the process reads switches from (the CLI, the catalog filter): beside the
+    /// session store's notes, as a session keeps it ([`Self::use_store`]), else the data dir.
     pub fn path() -> PathBuf {
         if cfg!(test) {
             // Tests never read or write your real choices; this file is never written.
             return std::env::temp_dir()
                 .join(format!("frog-customize-test-{}.json", std::process::id()));
         }
-        crate::config::data_dir().join("customize.json")
+        STORE_PATH
+            .get()
+            .cloned()
+            .unwrap_or_else(|| crate::config::data_dir().join("customize.json"))
+    }
+
+    /// A session's store decides where its switches live (`<store>/../customize.json`), and a
+    /// sandbox runs with its own store: point [`Self::path`] there, so the catalog filter and
+    /// the session read the same file. The first store wins; every session in a process shares
+    /// one.
+    pub fn use_store(store: &Path) {
+        if let Some(dir) = store.parent() {
+            let _ = STORE_PATH.set(dir.join("customize.json"));
+        }
     }
 
     /// Read, change, write.

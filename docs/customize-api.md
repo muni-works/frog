@@ -180,9 +180,9 @@ The project and home instruction files (FROG.md, AGENTS.md, CLAUDE.md) and the r
 an editor. Edit and remove name a line by `n` **and** its current `text`; if the file changed
 since the page read it, the change fails rather than touching the wrong line.
 
-`home_file` in the change below is where a new "everywhere" line goes when there is no home file
-yet: `~/.config/frog/FROG.md`. A new project line goes in the first project instruction file, or
-a new `FROG.md` at the project root.
+A `rule_add` without a `path` goes to `~/.config/frog/FROG.md` for "everywhere" (created if
+missing), and for "project" to the project's AGENTS.md, FROG.md or CLAUDE.md, whichever exists
+first (a new AGENTS.md if none): the same file the agent's `Customize` tool writes.
 
 ### Note
 

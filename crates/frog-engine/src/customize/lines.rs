@@ -62,6 +62,10 @@ fn one_line(text: &str) -> Result<&str> {
 }
 
 fn write(path: &Path, lines: &[String], trailing_newline: bool) -> Result<()> {
+    // Through a symlink (`CLAUDE.md` -> `AGENTS.md` is common), write the file it points at,
+    // so the rename doesn't replace the link with a copy.
+    let real = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let path = real.as_path();
     let mut text = lines.join("\n");
     if trailing_newline && !text.is_empty() {
         text.push('\n');
@@ -162,6 +166,29 @@ mod tests {
         let fresh = dir.join("new/FROG.md");
         add(&fresh, "Be brief.").unwrap();
         assert_eq!(std::fs::read_to_string(&fresh).unwrap(), "Be brief.\n");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_file_stays_a_link() {
+        let dir =
+            std::env::temp_dir().join(format!("frog-lines-link-{}", crate::session::new_id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("AGENTS.md"), "Use pnpm.\n").unwrap();
+        std::os::unix::fs::symlink("AGENTS.md", dir.join("CLAUDE.md")).unwrap();
+        add(&dir.join("CLAUDE.md"), "Be brief.").unwrap();
+        assert!(
+            dir.join("CLAUDE.md")
+                .symlink_metadata()
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("AGENTS.md")).unwrap(),
+            "Use pnpm.\nBe brief.\n"
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 }
