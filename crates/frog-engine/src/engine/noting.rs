@@ -168,21 +168,8 @@ impl Agent {
     /// Record one issued handle: appended (two sessions noting at once both keep theirs),
     /// trimmed to the newest [`MAX_ISSUED`] once the file holds twice that.
     fn add_issued(&self, handle: &str) -> Result<()> {
-        use std::io::Write;
         let path = self.issued_path().context("no session store")?;
-        if let Some(dir) = path.parent() {
-            crate::memory::create_private_dir(dir)?;
-        }
-        let mut o = std::fs::OpenOptions::new();
-        o.create(true).append(true);
-        #[cfg(unix)]
-        std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
-        writeln!(o.open(&path)?, "{handle}")?;
-        let issued = self.issued();
-        if issued.len() > 2 * MAX_ISSUED {
-            self.set_issued(&issued)?;
-        }
-        Ok(())
+        cz::append_trimmed(&path, handle, MAX_ISSUED)
     }
 
     /// The receipt for a note just kept.

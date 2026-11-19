@@ -624,11 +624,7 @@ unless the user brings it up.",
             }
             Change::Skill { .. } | Change::Tool { .. } => {
                 let path = self.toggles_path().context("no session store")?;
-                // A switch file that doesn't parse is an error, never rewritten as all on.
-                let next = cz::Toggles::load_strict(&path)?
-                    .with(change)
-                    .context("it's already that way")?;
-                cz::Undo::File(cz::write_file(&path, Some(next.render()), false)?)
+                cz::Undo::File(cz::toggle_file(&path, change)?)
             }
             Change::Set { id, value } => {
                 let old = self

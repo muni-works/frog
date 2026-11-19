@@ -1236,6 +1236,67 @@ fn put_back(path: &Path, tmp: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Run `f` holding the lock on `dirs` (each once, in order): an exclusive `flock` on the folder
+/// itself, so two Frog processes changing the same files take turns and nothing lands in the
+/// folder. Elsewhere than Unix, `f` just runs.
+pub fn locked<T>(dirs: &[&Path], f: impl FnOnce() -> Result<T>) -> Result<T> {
+    let mut dirs: Vec<&Path> = dirs.to_vec();
+    dirs.sort();
+    dirs.dedup();
+    #[cfg(unix)]
+    let _held: Vec<std::fs::File> = dirs
+        .iter()
+        .filter_map(|d| {
+            let f = std::fs::File::open(d).ok()?;
+            use std::os::fd::AsRawFd;
+            // SAFETY: a valid descriptor this function owns; the lock goes with it on drop.
+            (unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) } == 0).then_some(f)
+        })
+        .collect();
+    f()
+}
+
+fn parent_of(path: &Path) -> &Path {
+    path.parent()
+        .filter(|d| !d.as_os_str().is_empty())
+        .unwrap_or(Path::new("."))
+}
+
+/// Switch a skill or tool in `customize.json` (`path`): read, changed and written under the
+/// folder's lock, so two sessions switching at once both keep theirs. A file that doesn't
+/// parse is an error, never rewritten as all on.
+pub fn toggle_file(path: &Path, change: &Change) -> Result<FileUndo> {
+    std::fs::create_dir_all(parent_of(path))?;
+    locked(&[parent_of(path)], || {
+        let next = Toggles::load_strict(path)?
+            .with(change)
+            .context("it's already that way")?;
+        write_file(path, Some(next.render()), false)
+    })
+}
+
+/// Append `line` to a private list (owner-only), trimmed to the newest `max` once it holds
+/// twice that, under the folder's lock so a trim never drops another session's append.
+pub fn append_trimmed(path: &Path, line: &str, max: usize) -> Result<()> {
+    use std::io::Write;
+    crate::memory::create_private_dir(parent_of(path))?;
+    locked(&[parent_of(path)], || {
+        let mut o = std::fs::OpenOptions::new();
+        o.create(true).append(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
+        writeln!(o.open(path)?, "{line}")?;
+        let text = std::fs::read_to_string(path)?;
+        let lines: Vec<&str> = text.lines().collect();
+        if lines.len() > 2 * max {
+            let mut keep = lines[lines.len() - max..].join("\n");
+            keep.push('\n');
+            write_atomic(path, &keep, true)?;
+        }
+        Ok(())
+    })
+}
+
 /// Put every taken file back from aside, newest first, trying them all; any that couldn't be
 /// are named in the returned text ("" when all went back).
 fn put_all_back(taken: &[(&FileUndo, Option<(PathBuf, Vec<u8>)>)]) -> String {
@@ -1300,6 +1361,13 @@ pub fn undo_all(files: &[FileUndo]) -> Result<()> {
 /// written between the check and the undo is lost: a file changed since is put back as it
 /// was found, and nothing is undone.
 fn undo_files(files: &[FileUndo], refused: &str) -> Result<()> {
+    // Under the same lock a toggle takes, so another session's switch never reads the file
+    // while it's moved aside.
+    let dirs: Vec<&Path> = files.iter().map(|f| parent_of(&f.path)).collect();
+    locked(&dirs, || undo_files_locked(files, refused))
+}
+
+fn undo_files_locked(files: &[FileUndo], refused: &str) -> Result<()> {
     let mut taken: Vec<(&FileUndo, Option<(PathBuf, Vec<u8>)>)> = Vec::new();
     let mut changed = None;
     for f in files {
@@ -1775,6 +1843,58 @@ mod tests {
             .collect();
         v.sort();
         v
+    }
+
+    /// Review 3, item 14: two sessions switching skills at once both keep their switch:
+    /// customize.json is read, changed and written under a lock.
+    #[test]
+    fn toggles_from_two_sessions_at_once_are_both_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("customize.json");
+        let threads: Vec<_> = (0..8)
+            .map(|i| {
+                let path = path.clone();
+                std::thread::spawn(move || {
+                    for j in 0..10 {
+                        let change = Change::Skill { name: format!("s{i}-{j}"), on: false };
+                        toggle_file(&path, &change).unwrap();
+                    }
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().unwrap();
+        }
+        assert_eq!(Toggles::load_strict(&path).unwrap().skills_off.len(), 80);
+    }
+
+    /// Review 3, item 14: an append (and its trim) waits for another session holding the
+    /// folder's lock, so a trim's rewrite never drops an append made meanwhile.
+    #[test]
+    fn appends_wait_for_the_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("noted-undos");
+        append_trimmed(&path, "h0", 2).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        locked(&[dir.path()], || {
+            let p = path.clone();
+            std::thread::spawn(move || {
+                append_trimmed(&p, "h1", 2).unwrap();
+                tx.send(()).unwrap();
+            });
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            assert!(rx.try_recv().is_err(), "waiting for the lock");
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), "h0\n");
+            Ok(())
+        })
+        .unwrap();
+        rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "h0\nh1\n");
+        for i in 2..6 {
+            append_trimmed(&path, &format!("h{i}"), 2).unwrap();
+        }
+        // Past twice the newest two, it's trimmed back to them.
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "h3\nh4\nh5\n");
     }
 
     /// Review 3, item 13: undo puts the file back with the permission bits it had.
