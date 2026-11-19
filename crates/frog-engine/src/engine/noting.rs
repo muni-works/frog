@@ -155,16 +155,6 @@ impl Agent {
             .unwrap_or_default()
     }
 
-    fn set_issued(&self, handles: &[String]) -> Result<()> {
-        let path = self.issued_path().context("no session store")?;
-        let keep = &handles[handles.len().saturating_sub(MAX_ISSUED)..];
-        let mut text = keep.join("\n");
-        if !text.is_empty() {
-            text.push('\n');
-        }
-        cz::write_atomic(&path, &text, true)
-    }
-
     /// Record one issued handle: appended (two sessions noting at once both keep theirs),
     /// trimmed to the newest [`MAX_ISSUED`] once the file holds twice that.
     fn add_issued(&self, handle: &str) -> Result<()> {
@@ -214,8 +204,7 @@ impl Agent {
             let (Some(scope), Some(hash), Some(id)) = (scope, hash, id) else {
                 anyhow::bail!("that isn't an undo handle");
             };
-            let mut issued = self.issued();
-            if !issued.iter().any(|h| h == handle) {
+            if !self.issued().iter().any(|h| h == handle) {
                 anyhow::bail!("Frog didn't issue that undo, so the note was left as it is");
             }
             let scope = match scope {
@@ -236,8 +225,9 @@ impl Agent {
             if !cz::remove_if(&note.path, |bytes| format!("{:016x}", fnv(bytes)) == hash)? {
                 anyhow::bail!("the note was edited since, so it was left as it is");
             }
-            issued.retain(|h| h != handle);
-            let _ = self.set_issued(&issued);
+            if let Some(path) = self.issued_path() {
+                let _ = cz::remove_listed(&path, handle);
+            }
             self.notes = store.load();
             Ok("Undone.".to_string())
         })())

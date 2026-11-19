@@ -1297,6 +1297,26 @@ pub fn append_trimmed(path: &Path, line: &str, max: usize) -> Result<()> {
     })
 }
 
+/// Remove every line equal to `line` from a private list, under the folder's lock (see [`append_trimmed`]).
+pub fn remove_listed(path: &Path, line: &str) -> Result<()> {
+    locked(&[parent_of(path)], || {
+        let text = match std::fs::read_to_string(path) {
+            Ok(t) => t,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(e.into()),
+        };
+        let mut keep: String = text
+            .lines()
+            .filter(|l| *l != line)
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !keep.is_empty() {
+            keep.push('\n');
+        }
+        write_atomic(path, &keep, true)
+    })
+}
+
 /// Put every taken file back from aside, newest first, trying them all; any that couldn't be
 /// are named in the returned text ("" when all went back).
 fn put_all_back(taken: &[(&FileUndo, Option<(PathBuf, Vec<u8>)>)]) -> String {
