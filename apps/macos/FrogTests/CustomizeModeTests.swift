@@ -87,6 +87,11 @@ final class CustomizeModeTests: XCTestCase {
         XCTAssertEqual(panes.mode, .settings, "Settings' own sections stay in Settings")
         let link = try XCTUnwrap(URL(string: "frog://settings/mcp"))
         XCTAssertEqual(SettingsCatalog.bundled.section(for: link), "connections")
+        // The web's "Open in Frog for Mac" pill.
+        XCTAssertEqual(CustomizeCatalog.bundled.section(for: try XCTUnwrap(URL(string: "frog://customize/connections"))), "connections")
+        XCTAssertEqual(CustomizeCatalog.bundled.section(for: try XCTUnwrap(URL(string: "frog-dev://customize/mcp"))), "connections")
+        XCTAssertNotNil(CustomizeCatalog.bundled.section(for: try XCTUnwrap(URL(string: "frog://customize"))), "no section: the first")
+        XCTAssertNil(CustomizeCatalog.bundled.section(for: try XCTUnwrap(URL(string: "frog://settings/general"))))
     }
 
     func testBreadcrumbs() {

@@ -42,6 +42,14 @@ struct CustomizeCatalog: Decodable {
         return sections.first { $0.id == name || ($0.aliases ?? []).contains(name) }?.id
     }
 
+    /// `frog://customize/<section>` (`frog-dev://` for a Debug build): the section it opens, the
+    /// first one for a section this build doesn't draw. The web's "Open in Frog for Mac" uses it.
+    func section(for url: URL) -> String? {
+        guard url.scheme == "frog" || url.scheme == "frog-dev", url.host() == "customize" else { return nil }
+        let first = url.pathComponents.first { $0 != "/" }
+        return section(named: first) ?? sections.first?.id
+    }
+
     func label(_ id: String) -> String { sections.first { $0.id == id }?.label ?? "Customize" }
 
     func explainer(_ id: String) -> Explainer? { sections.first { $0.id == id }?.explainer }
