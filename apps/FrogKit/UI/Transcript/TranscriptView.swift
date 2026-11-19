@@ -75,7 +75,7 @@ struct TranscriptView: View {
     private var table: some View {
         TableTranscript(conversation: conversation, actions: actions, jump: jump, onVisibleTurns: onVisibleTurns,
                         track: track, space: space, showThinking: verbosity.showsThinking, handle: tableHandle,
-                        insets: safeInsets)
+                        insets: safeInsets, sends: conversation.sends)
             .ignoresSafeArea(.container, edges: .vertical)
             .background {
                 // The toolbar and the composer, which the rows scroll under.
@@ -184,6 +184,17 @@ struct TranscriptView: View {
                         proxy.scrollTo(Self.end, anchor: .bottom)
                     }
                 }
+                // You sent something: to the end, and pinned there, from wherever you were reading
+                // (Cam, 2026-11-19): your message and the start of the reply in view. A jump with
+                // reduced motion. After this update, as for a new turn above.
+                .onChange(of: conversation.sends) {
+                    following = true
+                    track.unpark()
+                    DispatchQueue.main.async {
+                        guard following else { return }
+                        withAnimation(reduceMotion ? nil : .snappy(duration: 0.3)) { proxy.scrollTo(Self.end, anchor: .bottom) }
+                    }
+                }
                 // Follow the answer as it streams: while following, content that grows takes the
                 // view back to the bottom. The size-change anchor alone loses the bottom once the
                 // lazy stack re-estimates rows it hasn't laid out.
@@ -211,7 +222,6 @@ struct TranscriptView: View {
                         #endif
                         if atTop { DispatchQueue.main.async { showEarlier(proxy) } }
                     }
-                    let growth = new.contentHeight - old.contentHeight
                     if track.userScrolling {
                         // Only your own scrolling ends a stop: back at the end, it follows again.
                         following = new.atBottom
@@ -229,32 +239,9 @@ struct TranscriptView: View {
                         track.unpark()
                         return follow(proxy)
                     }
-                    if following, conversation.busy, growth > 0, let live = liveAnswer,
-                       let answer = track.answerFrame(live.item),
-                       case let top = live.first ? track.lastTurnTop : answer.minY,
-                       top < new.visibleTop + growth + topInset + 4,
-                       // Long by its own laid-out size: from where it starts to where the answer
-                       // ends, plus the fixed space under the last row, taller than what the view
-                       // shows. The growth above can't say so alone: right after a turn goes in,
-                       // the lazy stack reports a content height that counts rows it hasn't laid
-                       // out by estimate, hundreds of points that are gone a frame later, and a
-                       // one-line answer stopped following and left the view short of the end.
-                       // (The end row's position carries the same estimate, so it can't stand in.)
-                       answer.maxY + space.turn + TurnSpace.bottom - top > new.visibleHeight - topInset - 4 {
-                        // Keeping to the bottom would push the answer's start above the top:
-                        // stop at its start instead (the prompt, when it's the turn's first
-                        // words), and read from there. Only for an answer: a turn of tool calls
-                        // and short notes keeps following, however long it gets. Not animated, and
-                        // after this update: an animated scroll on the lazy stack aims at where it
-                        // estimated the row while the content keeps growing under it, and can
-                        // stop past the laid-out end, a blank transcript until you scroll.
-                        following = false
-                        track.park(at: old.contentHeight)
-                        let target = live.first ? firstRow(of: conversation.turns[conversation.turns.count - 1])
-                            : TranscriptRow.ID(turn: live.turn, part: live.item)
-                        DispatchQueue.main.async { proxy.scrollTo(target, anchor: .top) }
-                        return
-                    }
+                    // While it streams the view stays pinned to the end, however long the answer
+                    // (Cam, 2026-11-19). It used to stop a long answer at its first line
+                    // (6b5c6f2c); only your own scrolling lets go now.
                     // Only growth needs chasing (shrinking clamps to the bottom anyway).
                     guard following, !new.atBottom, new.contentHeight > old.contentHeight else { return }
                     follow(proxy)
@@ -420,15 +407,6 @@ struct TranscriptView: View {
                 #endif
             }
         }
-    }
-
-    /// The answer being written now, when it's the last thing in the transcript: whether it's
-    /// the turn's first words (nothing ran before it), for where a long one stops.
-    private var liveAnswer: (turn: TurnState.ID, item: String, first: Bool)? {
-        guard let turn = conversation.turns.last, let last = turn.items.last,
-              last.kind == .message, !last.done else { return nil }
-        let first = !turn.items.dropLast().contains { if case .tool = $0.kind { true } else { false } }
-        return (turn.id, last.id, first)
     }
 
     /// Where the view is against the end of the content.

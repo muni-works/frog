@@ -41,6 +41,8 @@ struct TableTranscript: NSViewRepresentable {
     let handle: TableTranscriptHandle
     /// The toolbar above and the composer below, which the content scrolls under.
     var insets = EdgeInsets()
+    /// `Conversation.sends`: each send takes the table to its end and pins it there.
+    var sends = 0
 
     func makeCoordinator() -> TableTranscriptController {
         TableTranscriptController(conversation: conversation, actions: actions, track: track)
@@ -61,6 +63,11 @@ struct TableTranscript: NSViewRepresentable {
         c.onVisibleTurns = onVisibleTurns
         c.configure(space: space, showThinking: showThinking)
         c.setInsets(top: insets.top, bottom: insets.bottom)
+        // You sent something: to the end, pinned, from wherever you were (as the lazy stack does).
+        if sends != c.sends {
+            c.sends = sends
+            DispatchQueue.main.async { c.toEnd() }
+        }
         if let id = jump.wrappedValue {
             // Not inside SwiftUI's update: the binding, and the scroll (rows may still be coming).
             DispatchQueue.main.async {
@@ -168,6 +175,8 @@ final class TableTranscriptController: NSObject, NSTableViewDataSource, NSTableV
     private var stopped = false
     /// Keeping to the end as content grows.
     private(set) var following = true
+    /// The last `Conversation.sends` the table went to the end for.
+    var sends = 0
     private var programmatic = false
     private var liveScrolling = false
     private var lastVisible: [TurnState.ID] = []
@@ -179,6 +188,7 @@ final class TableTranscriptController: NSObject, NSTableViewDataSource, NSTableV
         self.conversation = conversation
         self.actions = actions
         self.track = track
+        sends = conversation.sends
         super.init()
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("transcript"))
         column.resizingMask = .autoresizingMask
@@ -419,9 +429,9 @@ final class TableTranscriptController: NSObject, NSTableViewDataSource, NSTableV
             table.noteHeightOfRows(withIndexesChanged: IndexSet(rows))
         }
         if above != 0 { scrollTo(y: visible.minY + above) }
-        if following {
-            if !parkAtLongAnswer() { scrollToEnd() }
-        }
+        // Pinned while it streams, however long the answer (Cam, 2026-11-19; it used to stop a
+        // long one at its start, as the lazy stack did).
+        if following { scrollToEnd() }
         report()
     }
 
@@ -553,24 +563,6 @@ final class TableTranscriptController: NSObject, NSTableViewDataSource, NSTableV
         following = false
         scrollTo(y: table.rect(ofRow: row).minY - insetTop)
         report()
-    }
-
-    /// Keeping to the end would push the answer being written above the top of the view: stop
-    /// at its start instead, and read from there (as the lazy stack does).
-    private func parkAtLongAnswer() -> Bool {
-        guard conversation.busy, let turn = conversation.turns.last, let last = turn.items.last,
-              last.kind == .message, !last.done else { return false }
-        let first = !turn.items.dropLast().contains { if case .tool = $0.kind { true } else { false } }
-        let rowID = first ? (TurnView.hasHead(turn) ? TranscriptRow.ID(turn: turn.id, part: "head") : TranscriptRow.ID(turn: turn.id, part: last.id))
-            : TranscriptRow.ID(turn: turn.id, part: last.id)
-        guard let row = index[rowID] else { return false }
-        let top = table.rect(ofRow: row).minY
-        let clip = scroll.contentView.bounds.height - insetTop - insetBottom
-        guard table.frame.height - top > clip + 4 else { return false }
-        following = false
-        track.park(at: table.frame.height)
-        scrollTo(y: top - insetTop)
-        return true
     }
 
     private func userScrolled() {

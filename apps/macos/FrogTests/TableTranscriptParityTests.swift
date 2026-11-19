@@ -175,19 +175,10 @@ final class TableTranscriptParityTests: XCTestCase {
         }
     }
 
-    /// The other side of following: an answer taller than the window stops at its start, so it
-    /// reads from the top, instead of the view keeping to its end. (The short answer above must
-    /// not stop; this one must.)
-    /// Both ways an answer starts: after tool calls (it stops at the answer), and as the turn's
-    /// first words (it stops at the prompt above them).
-    func testStreamingALongAnswerStopsAtItsStart() throws {
-        // CI (`TestRunner.isCI`): skipped. On the macOS 26 runner the stop lands late: in 3 of 50
-        // runs (probe run 44340604147) the answer's start went 33-91 pt above the top before the
-        // view stopped (lazy stack, and once the table), and the lazy stack wasn't left at the
-        // start. That is an open product difference on macOS 26, not this test's timing (the hang
-        // it also used to hit was the new-turn scroll inside SwiftUI's update, fixed). Locally
-        // every assertion holds.
-        try XCTSkipIf(TestRunner.isCI, "the stop at a long answer's start lands late on the macOS 26 runner (open)")
+    /// A long answer streams with the view pinned to its end (Cam, 2026-11-19): it used to stop
+    /// at the answer's start (6b5c6f2c) and leave the rest to scroll to. Both ways an answer
+    /// starts: after tool calls, and as the turn's first words.
+    func testStreamingALongAnswerStaysPinned() throws {
         for table in [false, true] {
           for tools in [true, false] {
             let c = open(table: table, turns: 30)
@@ -197,32 +188,37 @@ final class TableTranscriptParityTests: XCTestCase {
                 send(c, #""item_completed","id":"t99","item":{"type":"tool_call","name":"Bash","arg":"ls","input":{"command":"ls"},"outcome":"ok","output":"ok","display":null}"#)
             }
             send(c, #""item_started","id":"live","kind":{"type":"message"}"#)
-            // How far the answer's first words went above the top of the view while it streamed.
-            var overshoot: CGFloat = 0
             for i in 0..<40 {
                 let para = "line\(i) of a long answer, a paragraph that wraps in the window. "
                 send(c, #""item_delta","id":"live","delta":{"type":"text","text":\#(Self.json(para + "\n\n"))}"#)
                 wait(timeout: 5) { self.drawnText().contains("line\(i) ") }
-                if let s = self.scrollView, let start = self.views(self.host, MessageTextView.self).first(where: { $0.string.hasPrefix("line0 ") }) {
-                    overshoot = max(overshoot, s.contentView.bounds.minY - start.convert(start.bounds, to: s.contentView).minY)
-                }
             }
-            // It stops when the start would leave the view, not after: the start never went above
-            // the top on the way (within the transcript's own 24 pt of slack).
-            XCTAssertLessThan(overshoot, 24, "table \(table), tools \(tools): the answer's start scrolled out of view before it stopped")
-            XCTAssertTrue(wait() { self.drawnText().contains("line39 ") }, "table \(table): the streamed words are drawn")
-            // The answer's first words at the top of the view, and the view short of the end.
-            XCTAssertTrue(wait() {
-                guard let s = self.scrollView,
-                      let start = self.views(self.host, MessageTextView.self).first(where: { $0.string.hasPrefix("line0 ") })
-                else { return false }
-                let clip = s.contentView.bounds
-                let top = start.convert(start.bounds, to: s.contentView).minY
-                // Below the prompt when it's the turn's first words.
-                return top >= clip.minY - 2 && top < clip.minY + (tools ? 120 : 220) && !self.atEnd()
-            }, "table \(table), tools \(tools): a long answer stops at its start")
+            XCTAssertTrue(wait() { self.drawnText().contains("line39 ") && self.atEnd() },
+                          "table \(table), tools \(tools): the newest words drawn, the view at the end")
             close()
           }
+        }
+    }
+
+    /// Sending from far up the history (Cam, 2026-11-19): the view goes to the end, so your
+    /// message and the start of the reply are in view, and stays there while the reply streams.
+    /// Read from turn 1 by the rail's jump, which stops following as your own scrolling does.
+    func testASendFromFarUpGoesToTheReply() throws {
+        for table in [false, true] {
+            let c = open(table: table, turns: 60)
+            XCTAssertTrue(wait() { self.atEnd() }, "table \(table): opens at the end")
+            jumpBox.id = c.turns[0].id
+            XCTAssertTrue(wait() { self.visible.contains(c.turns[0].id) && !self.atEnd() }, "table \(table): reading turn 1")
+            c.submit("and again")
+            XCTAssertTrue(wait(timeout: 3) { self.atEnd() }, "table \(table): the send went to the end")
+            send(c, #""turn_started","turn":61,"input":"and again""#)
+            send(c, #""item_started","id":"r61","kind":{"type":"message"}"#)
+            for i in 0..<30 {
+                send(c, #""item_delta","id":"r61","delta":{"type":"text","text":\#(Self.json("reply\(i), a paragraph that wraps in the window, and then some more words.\n\n"))}"#)
+                wait(timeout: 5) { self.drawnText().contains("reply\(i),") }
+            }
+            XCTAssertTrue(wait() { self.drawnText().contains("reply29,") && self.atEnd() }, "table \(table): pinned to the end while the reply streams")
+            close()
         }
     }
 

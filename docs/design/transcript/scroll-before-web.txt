@@ -1,0 +1,7 @@
+not ok 1 - a send from far up the history brings the view to the reply, and it stays pinned while the reply streams
+  error: 'the send brought the view to the end (18191 px from it)'
+ok 2 - scrolling up while it streams lets go; scrolling back to the end pins it again
+not ok 3 - with reduced motion the send jumps to the end
+  error: 'jumped to the end (24239 px from it)'
+# pass 1
+# fail 2
