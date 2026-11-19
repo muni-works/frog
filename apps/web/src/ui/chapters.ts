@@ -51,7 +51,7 @@ export function chapterWords(text: string): string {
 /** A chapter's name: the engine's title once written, else what you asked, else what kind of stretch it is. */
 export function chapterTitle(c: Chapter, t: ChapterTurn, turns: number): string {
   if (t.chapterTitle) return t.chapterTitle
-  const own = `on its own · ${turns} turn${turns === 1 ? '' : 's'}`
+  const own = `on its own, ${turns} turn${turns === 1 ? '' : 's'}`
   if (c.kind === 'compacted') return 'summarized'
   if (c.kind === 'run') return own
   if (t.input.startsWith('<') || t.input === '') return own

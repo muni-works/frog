@@ -23,12 +23,12 @@
     {
       "name": "a long run breaks after six quiet turns",
       "turns": [{ "input": "go" }, { "input": "" }, { "input": "" }, { "input": "" }, { "input": "" }, { "input": "" }, { "input": "" }, { "input": "" }, { "input": "" }],
-      "chapters": [{ "start": 0, "kind": "prompt", "title": "go" }, { "start": 7, "kind": "run", "title": "on its own · 2 turns" }]
+      "chapters": [{ "start": 0, "kind": "prompt", "title": "go" }, { "start": 7, "kind": "run", "title": "on its own, 2 turns" }]
     },
     {
       "name": "a message from another session is not a prompt of yours",
       "turns": [{ "input": "<session-message from=\"x\">hi</session-message>" }, { "input": "" }, { "input": "<session-message from=\"x\">again</session-message>" }],
-      "chapters": [{ "start": 0, "kind": "prompt", "title": "on its own · 3 turns" }]
+      "chapters": [{ "start": 0, "kind": "prompt", "title": "on its own, 3 turns" }]
     },
     {
       "name": "a prompt with no words keeps what was typed",
