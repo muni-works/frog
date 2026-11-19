@@ -200,6 +200,13 @@ struct ConversationRowLabel: View {
                 Spacer(minLength: 4)
                 if let status = RowStatus.derive(live: live, end: end ?? session.end, prs: prs) {
                     RowStatusView(status: status).opacity(hideStatus ? 0 : 1)
+                } else if showPlace {
+                    // Idle: the meta slot holds the age ("1m" for under a minute, never "now").
+                    let age = SessionAge.short(session.modifiedDate)
+                    Text(age == "now" ? "1m" : age)
+                        .font(.frog(size: Tokens.Size.meta)).monospacedDigit()
+                        .foregroundStyle(Tokens.textTertiary)
+                        .opacity(hideStatus ? 0 : 1)
                 }
             }
             if let detail, !detail.isEmpty {

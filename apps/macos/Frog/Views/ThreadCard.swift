@@ -18,6 +18,7 @@ final class ThreadCardController {
 
     private(set) var current: Request?
     @ObservationIgnored private var panel: CardPanel?
+    @ObservationIgnored private var anchor: AnchorBox?
     @ObservationIgnored private var overRow: String?
     @ObservationIgnored private var overCard = false
     @ObservationIgnored private var opening: Task<Void, Never>?
@@ -91,6 +92,7 @@ final class ThreadCardController {
         guard GitCardController.shared.current == nil else { return }
         guard let rect = box.screenRect, let window = box.view?.window else { return }
         current = r
+        anchor = box
         let panel = self.panel ?? makePanel()
         self.panel = panel
         if panel.parent !== window {
@@ -100,6 +102,12 @@ final class ThreadCardController {
         place(panel, beside: rect, on: window.screen)
         panel.orderFront(nil)
         watch(window)
+    }
+
+    /// Re-fit the panel after its content grew (git stats arrived).
+    func refit() {
+        guard let panel, let rect = anchor?.screenRect else { return }
+        place(panel, beside: rect, on: panel.screen)
     }
 
     /// Just past the sidebar's edge, its top level with the row's.
@@ -174,6 +182,8 @@ private struct ThreadCardHost: View {
 /// The card: title and age, the live line, then where and on what.
 private struct ThreadCard: View {
     let request: ThreadCardController.Request
+    /// The tree's uncommitted changes, read once when the card opens.
+    @State private var git: GitInfo?
     private var session: SessionInfo { request.session }
     private var library: Library { request.library }
 
@@ -215,8 +225,42 @@ private struct ThreadCard: View {
                         }
                     }
                 }
+                if let spent {
+                    GridRow {
+                        label("Spent")
+                        Text(spent).font(.frog(size: 12)).monospacedDigit().lineLimit(1)
+                    }
+                }
+                if let git, git.changed > 0 {
+                    GridRow {
+                        label("Changes")
+                        HStack(spacing: 6) {
+                            Text("+\(git.added)").foregroundStyle(Tokens.placeCloud)
+                            Text("−\(git.removed)").foregroundStyle(Tokens.warn)
+                            Text("\(git.changed) file\(git.changed == 1 ? "" : "s")").foregroundStyle(.secondary)
+                        }
+                        .font(.frog(size: 12)).monospacedDigit()
+                    }
+                }
             }
-            if waiting {
+            if let p = permission {
+                // Answer in place: the one decision the card can make without the thread's
+                // context. Anything with a preview or a note goes through Open.
+                HStack(spacing: 6) {
+                    Button("Allow once") {
+                        library.conversation(session.id)?.answer(.allow)
+                        ThreadCardController.shared.close()
+                    }
+                    .buttonStyle(.glassProminent)
+                    .help(p.arg)
+                    Button("Open") {
+                        ThreadCardController.shared.close()
+                        request.open()
+                    }
+                    .buttonStyle(.glass)
+                }
+                .controlSize(.small)
+            } else if waiting {
                 Button("Open to answer") {
                     ThreadCardController.shared.close()
                     request.open()
@@ -224,6 +268,11 @@ private struct ThreadCard: View {
                 .buttonStyle(.glassProminent)
                 .controlSize(.small)
             }
+        }
+        .task(id: session.id) {
+            guard !session.isChat, !session.isCloud, let folder = session.folder else { return }
+            git = await Git.status(folder)
+            ThreadCardController.shared.refit()
         }
         .padding(.horizontal, 14).padding(.vertical, 12)
         .frame(width: 320, alignment: .leading)
@@ -246,23 +295,31 @@ private struct ThreadCard: View {
         return a == "now" ? "1m" : a
     }
 
-    /// What it's saying now: its question while it waits, the step in hand while it works,
-    /// else the end of its last word. Nothing when the thread isn't loaded and is idle.
+    /// What it's saying now: the sidebar's own status line (the ask, the step in hand, the end of
+    /// its last word), else a word for the live state.
     private var line: String? {
-        if let c = library.conversation(session.id) {
-            if let q = c.question { return q.question }
-            if c.permission != nil || c.elicitation != nil { return "Waiting on you" }
-            if let l = c.liveActivity { return l }
-            if let last = c.turns.last, let summary = Conversation.summaryIfEnded(last) { return summary }
-            return nil
-        }
+        if let text = library.rowLine(session).text { return text }
         switch library.live[session.id] {
         case .running: return "Working…"
         case .waiting: return "Waiting on you"
         case .unread: return "Finished while you were away"
-        case nil: return session.firstInput.flatMap { $0 == session.displayTitle ? nil : $0 }
+        case nil: return nil
         }
     }
+
+    /// Tokens and dollars over the loaded thread's turns; nil when it isn't loaded.
+    private var spent: String? {
+        guard let c = library.conversation(session.id) else { return nil }
+        let usages = c.turns.compactMap(\.usage)
+        guard !usages.isEmpty else { return nil }
+        let tokens = usages.reduce(UInt64(0)) { $0 + $1.inputTokens + $1.outputTokens }
+        let costs = usages.compactMap { ModelStats.shared.cost(of: $0, spec: $0.model ?? session.model) }
+        let dollars = costs.isEmpty ? nil : Dollars.format(costs.reduce(0, +))
+        return ["\(tokens.tokens) tokens", dollars].compactMap { $0 }.joined(separator: ", ")
+    }
+
+    /// The open permission ask, when the thread is loaded and waiting on one.
+    private var permission: PermissionRequest? { library.conversation(session.id)?.permission }
 
     /// "frog   gateway-auth": the folder, then the worktree when there is one. Chats have none.
     private var place: String? {
