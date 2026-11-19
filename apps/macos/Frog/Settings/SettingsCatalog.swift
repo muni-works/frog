@@ -68,6 +68,7 @@ struct SettingsCatalog: Decodable {
     func section(for url: URL) -> String? {
         guard url.scheme == "frog" || url.scheme == "frog-dev", url.host() == "settings" else { return nil }
         let first = url.pathComponents.first { $0 != "/" }
-        return section(named: first) ?? sections.first(where: { $0.id == "account" })?.id
+        // Connections moved to Customize: its names pass through, and showSettings sends them on.
+        return section(named: first) ?? CustomizeCatalog.bundled.section(named: first) ?? sections.first(where: { $0.id == "account" })?.id
     }
 }
