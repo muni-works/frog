@@ -1,0 +1,4 @@
+	 Executed 1 test, with 3 failures (0 unexpected) in 168.917 (168.918) seconds
+TableTranscriptParityTests.swift:245: error: -[FrogTests.TableTranscriptParityTests testASendFromFarUpBringsTheReplyIntoView] : XCTAssertTrue failed - table false: the send went to the end
+TableTranscriptParityTests.swift:245: error: -[FrogTests.TableTranscriptParityTests testASendFromFarUpBringsTheReplyIntoView] : XCTAssertTrue failed - table true: the send went to the end
+TableTranscriptParityTests.swift:253: error: -[FrogTests.TableTranscriptParityTests testASendFromFarUpBringsTheReplyIntoView] : XCTAssertTrue failed - table true: the reply's start is in view

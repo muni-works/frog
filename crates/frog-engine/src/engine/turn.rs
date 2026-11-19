@@ -363,6 +363,12 @@ impl Agent {
             text.push_str(&self.rules_for(p));
         }
         let mentioned: Vec<String> = pointed.iter().filter_map(|p| self.rel(p)).collect();
+        let asked = std::iter::once(typed.as_str())
+            .chain(texts.iter().map(String::as_str))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let recalled = self.notes_for_turn(turn, &asked, &mentioned);
+        text.push_str(&recalled);
         // The map is part of the system prompt, so after the first turn it's rebuilt only where
         // the history is rewritten anyway (`rebased`): rebuilding it whenever a file changed
         // would re-prefill the whole conversation on the turn after every edit.
@@ -795,7 +801,15 @@ impl Agent {
             continuing = false;
             reply_text.clear();
             let called = uses.clone();
+            // A reply that answered and then only kept a note (and maybe suggested what's
+            // next) is done: another model round would only say "noted". Saves that round.
+            let closing = !silent
+                && called.iter().any(|(_, n, _)| n == crate::noting::TOOL)
+                && called
+                    .iter()
+                    .all(|(_, n, _)| n == crate::noting::TOOL || n == crate::next::TOOL);
             match self.run_tools(uses, &mut guard, streamed.early).await? {
+                Batch::Continue if closing => break EndReason::Complete,
                 Batch::Continue => {
                     let results = self.conv.messages.last().map(|m| m.content.as_slice());
                     if progressed(&called, results.unwrap_or_default()) {

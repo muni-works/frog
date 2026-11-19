@@ -276,6 +276,9 @@ mod tests {
             missing: Vec::new(),
             session: None,
             session_title: None,
+            kind: None,
+            turn: None,
+            from: None,
         }
     }
 

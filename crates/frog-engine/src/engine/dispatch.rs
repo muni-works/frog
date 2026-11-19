@@ -346,6 +346,9 @@ root {}. Re-`cd` if you need the old location back.</system-note>",
             self.set_title(title.clone());
             return Ok(tools::Output::text(format!("Session titled \"{title}\".")));
         }
+        if name == crate::noting::TOOL && !self.subagent {
+            return self.note(id, input);
+        }
         if name == crate::next::TOOL {
             self.conv.next = Some(crate::next::parse(input)?);
             return Ok(tools::Output::text("Suggested."));
@@ -556,6 +559,10 @@ root {}. Re-`cd` if you need the old location back.</system-note>",
             let (id, name, input) = uses[index].clone();
             // Taken for every call, so a mismatch drops all the early runs after it.
             let started_early = early.take(index, &name, &input);
+            // Run now or early, a Read is what a `read` note may come from (`noting`).
+            if name == "Read" {
+                self.note_reads(&input);
+            }
             let key = format!("{name}\u{0}{input}");
             let count = guard.counts.entry(key.clone()).or_insert(0);
             // Reading a pane again is polling, not looping: what's there changes.

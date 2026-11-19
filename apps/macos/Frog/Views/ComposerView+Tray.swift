@@ -236,6 +236,7 @@ extension ComposerView {
         guard CloudSessions.shared.available else { return }
         let r = try? await CloudSessions.shared.gateway?.repos()
         cloudRepos = r?.repos.map(\.name) ?? []
+        cloudPushed = Dictionary(r?.repos.compactMap { repo in repo.pushed_at.map { (repo.name, $0) } } ?? [], uniquingKeysWith: { a, _ in a })
     }
 
     func reveal(_ s: String) {
@@ -325,6 +326,36 @@ extension ComposerView {
         controller.focus()
         controller.beginDictation()
         dictation.start(show: { controller.showDictation($0) }, done: { controller.endDictation() })
+    }
+
+    #if DEBUG
+    /// Flow tests: what the "Choose a folder…" panel returns (nil: cancelled), so no panel
+    /// opens on the screen.
+    nonisolated(unsafe) static var pickFolderForTesting: (() -> URL?)?
+    #endif
+
+    /// The where menu's "Choose a folder…": the system folder panel, then the new session moves
+    /// there as it does for a recent folder (through the reducer, so the draft goes along).
+    /// Run once the menu has closed, not while its popover is going away.
+    func chooseFolderFromPanel() {
+        DispatchQueue.main.async {
+            guard let url = pickFolder() else { return }
+            let git = FileManager.default.fileExists(atPath: url.appending(path: ".git").path)
+            dispatch(.chooseFolder(folder: url.path, branch: "", git: git, dirty: false))
+        }
+    }
+
+    func pickFolder() -> URL? {
+        #if DEBUG
+        if let pick = Self.pickFolderForTesting { return pick() }
+        #endif
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.prompt = "Choose"
+        panel.message = "Choose a folder for this session"
+        guard panel.runModal() == .OK else { return nil }
+        return panel.url
     }
 
     func attachFromPanel(images: Bool) {

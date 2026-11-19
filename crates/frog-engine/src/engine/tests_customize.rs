@@ -86,6 +86,7 @@ fn rig(script: Vec<Response>, mode: Mode) -> Rig {
             sessions: false,
             irc: false,
             customize: true,
+            notes: false,
         })
         .unwrap();
     Rig {
@@ -512,6 +513,7 @@ async fn no_tool_without_a_client_that_draws_the_card() {
             sessions: false,
             irc: false,
             customize: false,
+            notes: false,
         })
         .unwrap();
     r.idles += 1;

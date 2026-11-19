@@ -29,10 +29,17 @@ const s = merge(cases.base, shot.given) as State
 const models: Model[] = [{ id: 'glm-5.3-flash', context: 131072, input: 2e-7, output: 8e-7, cached: null }]
 const w = s.where
 const session = w.kind === 'session'
+// `?menu=where`: the where menu open on an account with forty repos (test/shoot-where.ts).
+const whereMenu = q.get('menu') === 'where'
+const NAMES = ['pond', 'loon', 'slamwich', 'zest', 'kyte', 'mew', 'tang', 'ecto', 'muni', 'frog-site',
+  'dotfiles', 'notes', 'blog', 'rover', 'sparrow', 'orbit', 'quill', 'lattice', 'ember', 'harbor',
+  'cobalt', 'fern', 'glyph', 'hollow', 'ivy', 'jetty', 'knot', 'lumen', 'marsh', 'nimbus',
+  'onyx', 'pixel', 'quartz', 'reef', 'sage', 'thistle', 'umber', 'vale', 'willow', 'yarrow']
+const manyRepos = NAMES.map((n, i) => ({ name: `ecto/${n}`, private: false, pushed_at: new Date(Date.UTC(2026, 10, 18) - i * 86400000).toISOString() }))
 const repo = w.kind === 'session' ? w.repo ?? undefined : w.kind === 'cloud' ? w.repo : w.kind === 'folder' && w.git ? 'muni-works/frog' : undefined
 
 createRoot(document.getElementById('root')!).render(
-  <div style={{ padding: `${shot.name === 'stack' ? 150 : 24}px 16px 16px`, maxWidth: 720 }}>
+  <div style={{ padding: `${whereMenu ? 1100 : shot.name === 'stack' ? 150 : 24}px 16px 16px`, maxWidth: 720 }}>
     <Composer
       session={session}
       repo={repo}
@@ -47,6 +54,7 @@ createRoot(document.getElementById('root')!).render(
       model="glm-5.3-flash" models={models} onModel={() => {}}
       mode={s.mode === 'accept_edits' ? 'accept-edits' : s.mode} onMode={() => {}}
       onRepo={session ? undefined : () => {}}
+      {...(whereMenu ? { pickRepo: true, recent: ['ecto/tang', 'ecto/pond'], repos: manyRepos.map((r) => r.name), pushed: Object.fromEntries(manyRepos.map((r) => [r.name, r.pushed_at])) } : {})}
       onSend={() => {}}
       tray={{ error: s.error, stackOpen: s.stackOpen, notice: s.notice, ...(w.kind === 'chat' ? { where: w } : {}) }}
     />

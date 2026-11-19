@@ -70,6 +70,9 @@ final class Library {
     @ObservationIgnored var focused: String?
     @ObservationIgnored private var windows: [ObjectIdentifier: WeakWindow] = [:]
     @ObservationIgnored private var conversations: [String: WeakConversation] = [:]
+
+    /// Every conversation with an engine open now (for a setting each engine reads).
+    func everyConversation() -> [Conversation] { conversations.values.compactMap(\.value) }
     @ObservationIgnored private var refreshing: Task<Void, Never>?
     /// What the coalesced refresh still owes: every call's scope, merged, until a listing
     /// answers it. A call cancels the one waiting, so its ids must carry over.

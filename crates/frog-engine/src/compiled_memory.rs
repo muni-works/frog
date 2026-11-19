@@ -43,6 +43,10 @@ pub enum Compiled {
 pub struct Settings {
     #[serde(default)]
     pub compiled: Compiled,
+    /// `auto_note = false`: Frog never notes things on its own (`noting`). Unset is on; an
+    /// app's `auto-note` setting wins over this.
+    #[serde(default)]
+    pub auto_note: Option<bool>,
 }
 
 /// Where a project's blob lives (the global memory folder for a chat).
