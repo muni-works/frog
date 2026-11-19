@@ -83,6 +83,7 @@ fn session(script: Vec<Response>, app: bool) -> (Handle, Fixed, PathBuf) {
                 panes: true,
                 ask: true,
                 sessions: true,
+                customize: false,
             })
             .unwrap();
     }
