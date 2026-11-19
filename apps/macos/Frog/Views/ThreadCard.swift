@@ -8,6 +8,10 @@ import SwiftUI
 @MainActor
 @Observable
 final class ThreadCardController {
+    /// Whether the card may answer `p` in place. A Customize card's change isn't shown here,
+    /// so it gets Open only, never Allow.
+    nonisolated static func offersAllow(_ p: PermissionRequest) -> Bool { p.proposal == nil }
+
     static let shared = ThreadCardController()
 
     struct Request {
@@ -260,7 +264,15 @@ private struct ThreadCard: View {
                     }
                 }
             }
-            if let p = permission {
+            if let p = permission, !ThreadCardController.offersAllow(p) {
+                // A Customize card's change isn't shown here: Open, to the card, only.
+                Button("Open to answer") {
+                    ThreadCardController.shared.close()
+                    request.open()
+                }
+                .buttonStyle(.glassProminent)
+                .controlSize(.small)
+            } else if let p = permission {
                 // Answer in place: the one decision the card can make without the thread's
                 // context. Anything with a preview or a note goes through Open.
                 HStack(spacing: 6) {

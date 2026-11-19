@@ -157,15 +157,21 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
 
     // MARK: Permission requests
 
+    /// Whether a notification may answer `request` with Allow. A Customize card's change isn't
+    /// on the banner, so it gets no Allow: tapping brings frog forward to the card.
+    static func offersAllow(_ request: PermissionRequest) -> Bool { request.proposal == nil }
+
     func needsPermission(project: String, request: PermissionRequest, answer: @escaping (Decision) -> Void) {
-        answers[request.id] = answer
+        let allow = Self.offersAllow(request)
+        answers[request.id] = allow ? answer : { _ in NSApp.activate() }
         updateBadge()
         guard !SingleInstance.isTesting, inBackground else { return }
         let c = UNMutableNotificationContent()
-        c.title = "\(project) needs permission"
-        c.body = "\(request.name): \(request.arg)"
+        c.title = allow ? "\(project) needs permission" : "\(project) has a change for you"
+        c.body = allow ? "\(request.name): \(request.arg)" : (request.proposal?.title ?? request.arg)
         c.sound = .default
-        c.categoryIdentifier = Action.category
+        // No buttons for a proposal: the ask category opens frog at the card.
+        c.categoryIdentifier = allow ? Action.category : Category.ask
         c.userInfo = ["permission": request.id]
         post(c, id: request.id)
     }

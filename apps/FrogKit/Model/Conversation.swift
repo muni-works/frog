@@ -652,13 +652,16 @@ final class Conversation {
     func answer(_ decision: Decision, note: String? = nil, choice: String? = nil) {
         guard let p = permission else { return }
         let note = note?.trimmingCharacters(in: .whitespacesAndNewlines)
-        // A Customize card's allow always names its choice (⌘↩, the sidebar and a notification
-        // included), and is never "always"; a plain card's never names one.
+        // A Customize card is answered only with a choice the card offered, named by the
+        // control that showed it (its primary button and ⌘↩, its alternative), and never
+        // "always". A bare allow (a notification, the sidebar, a bridged or delegated answer)
+        // sends nothing: the card stays open for the person. A plain card never names one.
         var decision = decision
         var choice = decision == .deny ? nil : choice
         if let proposal = p.proposal, decision != .deny {
+            guard let picked = choice, let offered = proposal.choice(for: picked) else { return }
             decision = .allow
-            choice = proposal.choice(for: choice)
+            choice = offered
         } else if p.proposal == nil {
             choice = nil
         }

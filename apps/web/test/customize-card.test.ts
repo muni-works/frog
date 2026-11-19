@@ -9,7 +9,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import TestRenderer, { act } from "react-test-renderer";
 import { emptyThread, reduce, type Entry, type Thread } from "../src/engine/thread.ts";
 import { lineOf } from "../src/ui/rows.ts";
-import { AppliedLine, ProposalCard, proposalChoice, Transcript, type DecideOpts } from "../src/ui/Transcript.tsx";
+import { AppliedLine, ProposalCard, permissionOp, proposalChoice, Transcript, type DecideOpts } from "../src/ui/Transcript.tsx";
 import { caps, CloudEngine, CUSTOMIZE_CAPS } from "../src/engine/cloud.ts";
 import type { Gateway } from "../src/cloud/client.ts";
 import type { Envelope, Proposal } from "../src/cloud/protocol.ts";
@@ -177,8 +177,16 @@ test("a Customize call that isn't a card or a receipt never reads \"Customize\" 
 });
 
 test("every allow on a Customize card names its choice: primary or the alternative's exact id, nothing else", () => {
-  // What App's decide sends on an allow (⌘↩ included, which passes no choice).
-  assert.equal(proposalChoice(remember), "primary");
+  // Review 3, item 6: a bare allow is never turned into the primary; the control that showed
+  // the card names its choice (the primary button and its ⌘↩ pass the primary's id).
+  assert.equal(proposalChoice(remember), undefined);
+  assert.equal(proposalChoice(remember, "primary"), "primary");
+  const ask = { id: "p1", proposal: remember };
+  assert.equal(permissionOp(ask, true), null, "a bare allow sends nothing");
+  assert.equal(permissionOp(ask, true, { always: true }), null);
+  assert.deepEqual(permissionOp(ask, true, { choice: "notes" }), { op: "permission", id: "p1", decision: "allow", choice: "notes" });
+  assert.deepEqual(permissionOp(ask, false), { op: "permission", id: "p1", decision: "deny" });
+  assert.deepEqual(permissionOp({ id: "b1" }, true, { always: true }), { op: "permission", id: "b1", decision: "allow_always" });
   assert.equal(proposalChoice({ ...remember, choice: "primary" }, "primary"), "primary");
   assert.equal(proposalChoice(remember, "notes"), "notes");
   assert.equal(proposalChoice(remember, "bogus"), undefined, "not on the card: no choice, so the engine changes nothing");

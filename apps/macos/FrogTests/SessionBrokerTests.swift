@@ -1594,7 +1594,7 @@ final class SessionBrokerTests: XCTestCase {
         XCTAssertTrue(targetLink.sent.isEmpty, "nothing reached the engine")
         XCTAssertNotNil(target.permission, "still the person's to answer")
         // The person's own click names the choice, as every Customize allow must.
-        target.answer(.allow)
+        target.answer(.allow, choice: "primary")
         XCTAssertEqual(targetLink.sent.last?["choice"] as? String, "primary")
     }
 

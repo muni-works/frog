@@ -129,26 +129,61 @@ final class CustomizeCardTests: XCTestCase {
         XCTAssertFalse(ClientCaps.customize(top: false, enabled: true), "a child session has no one to click the card")
     }
 
-    /// Every allow on a Customize card names its choice: "primary" (the button, ⌘↩, the sidebar,
-    /// a notification) or the alternative's exact id; never "always", and a plain card never.
-    func testEveryAllowNamesItsChoice() throws {
+    /// Review 3, item 6: a Customize card is answered only with a choice the card offered,
+    /// named by the control that showed it (the primary button and its ⌘↩, the alternative). A
+    /// bare allow (a notification, the sidebar, a delegated or bridged answer that dropped the
+    /// choice) and "always" change nothing: nothing goes, and the card stays the person's.
+    func testOnlyAChoiceTheCardOfferedAnswersIt() throws {
         let link = QueueLink()
         let c = Conversation(folder: URL(fileURLWithPath: "/tmp/frog-customize"), link: link, replay: false, session: "s")
         let ask = { [self] (id: String) in send(c, #""permission_request","id":"\#(id)","item":"call_3","name":"Customize","arg":"Remember this?","always":"","proposal":\#(Self.remember)"#) }
-        ask("p1"); c.answer(.allow)
+        ask("p1"); c.answer(.allow, choice: "primary")
         XCTAssertEqual(link.sent.last?["choice"] as? String, "primary")
         ask("p2"); c.answer(.allow, choice: "notes")
         XCTAssertEqual(link.sent.last?["choice"] as? String, "notes")
-        ask("p3"); c.answer(.allowAlways)
-        XCTAssertEqual(link.sent.last?["decision"] as? String, "allow")
-        XCTAssertEqual(link.sent.last?["choice"] as? String, "primary")
-        ask("p4"); c.answer(.allow, choice: "bogus")
-        XCTAssertNil(link.sent.last?["choice"], "not on the card: no choice, so the engine changes nothing")
-        ask("p5"); c.answer(.deny)
+        let before = link.sent.count
+        ask("p3"); c.answer(.allow)
+        XCTAssertEqual(link.sent.count, before, "a bare allow never becomes the primary")
+        XCTAssertEqual(c.permission?.id, "p3", "still open")
+        c.answer(.allowAlways)
+        XCTAssertEqual(link.sent.count, before)
+        c.answer(.allow, choice: "bogus")
+        XCTAssertEqual(link.sent.count, before, "not on the card")
+        c.answer(.deny)
+        XCTAssertEqual(link.sent.last?["decision"] as? String, "deny")
         XCTAssertNil(link.sent.last?["choice"])
         send(c, #""permission_request","id":"p6","item":"b1","name":"Bash","arg":"ls","always":"""#)
         c.answer(.allow, choice: "primary")
         XCTAssertNil(link.sent.last?["choice"], "a plain card has no choice")
+    }
+
+    /// Review 3, item 7: places that don't show the change get no Allow for a proposal card.
+    func testProposalCardsGetNoAllowAwayFromTheCard() throws {
+        let c = conversation()
+        send(c, #""permission_request","id":"p_81","item":"call_3","name":"Customize","arg":"Remember this?","always":"","proposal":\#(Self.remember)"#)
+        let p = try XCTUnwrap(c.permission)
+        XCTAssertFalse(Notifier.offersAllow(p), "the notification opens the conversation instead")
+        XCTAssertFalse(ThreadCardController.offersAllow(p), "the sidebar card offers Open only")
+        let push = RemotePush.proposalPush(["title": "Remember this?"], title: "pond", folder: "pond", session: "s")
+        XCTAssertEqual((push["aps"] as? [String: Any])?["category"] as? String, "ASK", "the phone's banner has no Allow")
+        XCTAssertNil(push["permission"], "and no id to answer with")
+        send(c, #""permission_request","id":"b1","item":"b1","name":"Bash","arg":"ls","always":"""#)
+        let plain = try XCTUnwrap(c.permission)
+        XCTAssertTrue(Notifier.offersAllow(plain))
+        XCTAssertTrue(ThreadCardController.offersAllow(plain))
+    }
+
+    /// Review 3, item 6: the phone's choice reaches the card exactly; one without a choice the
+    /// card offered changes nothing.
+    func testTheBridgeForwardsThePhonesChoice() throws {
+        let link = QueueLink()
+        let c = Conversation(folder: URL(fileURLWithPath: "/tmp/frog-customize"), link: link, replay: false, session: "s")
+        send(c, #""permission_request","id":"p1","item":"call_3","name":"Customize","arg":"Remember this?","always":"","proposal":\#(Self.remember)"#)
+        RemoteBridge.answerPermission(["op": "permission", "id": "p1", "decision": "allow"], on: c)
+        XCTAssertNil(link.sent.last?["choice"], "bare: nothing sent")
+        XCTAssertNotNil(c.permission)
+        RemoteBridge.answerPermission(["op": "permission", "id": "p1", "decision": "allow", "choice": "notes"], on: c)
+        XCTAssertEqual(link.sent.last?["choice"] as? String, "notes", "Just for me stays just for me")
     }
 
     /// A Frog Cloud session is top-level for the capability gate only when the list says so: listed

@@ -111,6 +111,11 @@ final class RemotePush {
 
     private func asked(_ obj: [String: Any], session: String) {
         let (title, folder) = title(session)
+        // A Customize card's change isn't on a banner: no Allow, tap to open the conversation.
+        if let proposal = obj["proposal"] as? [String: Any] {
+            send(Self.proposalPush(proposal, title: title, folder: folder, session: session), collapse: "perm-\(session)")
+            return
+        }
         let name = obj["name"] as? String ?? ""
         let arg = obj["arg"] as? String ?? ""
         let subtitle: String
@@ -150,6 +155,21 @@ final class RemotePush {
             "mood": "waiting", "activity": question, "steps": steps[session, default: 0],
             "waiting": true, "permission": obj["id"] as? String ?? "",
         ])
+    }
+
+    /// A Customize card on the phone: the ask category (no buttons) and no permission id, so
+    /// nothing but the card in the conversation can answer it (review 3, item 7).
+    static func proposalPush(_ proposal: [String: Any], title: String, folder: String?, session: String) -> [String: Any] {
+        [
+            "aps": [
+                "alert": ["title": title, "subtitle": "frog has a change for you" + (folder.map { " in \($0)" } ?? ""),
+                          "body": proposal["title"] as? String ?? "Open to see it"],
+                "category": "ASK",
+                "thread-id": session,
+                "sound": "default",
+            ],
+            "session": session,
+        ]
     }
 
     /// frog's own question (the `Ask` tool): the options in the body; answered in the app, or on the watch.

@@ -764,7 +764,7 @@ struct ProposalCardView: View {
                 .font(.frog(size: Tokens.Size.meta)).foregroundStyle(Tokens.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 8) {
-                Button(p.primary) { conversation.answer(.allow) }
+                Button(p.primary) { conversation.answer(.allow, choice: p.choice ?? "primary") }
                     .buttonStyle(CardButtonStyle(primary: true))
                     .keyboardShortcut(.return, modifiers: .command)
                     .accessibilityIdentifier("customize.primary")
