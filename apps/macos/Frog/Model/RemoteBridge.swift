@@ -49,7 +49,13 @@ final class RemoteBridge {
                                            kSecAttrService as String: "toys.frog.remote",
                                            kSecAttrAccount as String: "bridge-token"] }
 
+        /// Under XCTest the code lives here, never in the Keychain: the test host is signed
+        /// differently from the app that made the real item, so reading it raises the
+        /// system's "Frog wants to use your confidential information" prompt on every run.
+        nonisolated(unsafe) static var testCode: String?
+
         static func read() -> String? {
+            if SingleInstance.isTesting { return testCode }
             var q = query
             q[kSecReturnData as String] = true
             q[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -59,6 +65,7 @@ final class RemoteBridge {
         }
 
         static func write(_ code: String) {
+            if SingleInstance.isTesting { testCode = code.isEmpty ? nil : code; return }
             SecItemDelete(query as CFDictionary)
             guard !code.isEmpty else { return }
             var q = query
