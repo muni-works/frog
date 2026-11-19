@@ -102,7 +102,9 @@ async function open(url: string, w: number, h: number, reducedMotion = false): P
   const evalJS = async <T,>(expr: string) => ((await call("Runtime.evaluate", { expression: expr, returnByValue: true, awaitPromise: true })) as { result: { value: T } }).result.value;
   return {
     eval: evalJS, call,
-    close: async () => { ws.close(); proc.kill(); await new Promise((r) => proc.once("exit", r)); rmSync(profile, { recursive: true, force: true }); },
+    // Chrome's helpers can still be writing the profile after the browser exits (Linux CI:
+    // ENOTEMPTY): retry, and never fail a test over a temp folder.
+    close: async () => { ws.close(); proc.kill(); await new Promise((r) => proc.once("exit", r)); try { rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); } catch { /* left in tmp */ } },
   };
 }
 
@@ -172,9 +174,7 @@ test("with reduced motion the send jumps", { skip, timeout: 120_000 }, async () 
   try {
     await wheel(p, -100_000);
     await sendMessage(p, "reduced");
-    // No glide: a beat later your message is already in view.
-    await pause(150);
-    const t = await promptTop(p);
-    assert.ok(t >= 0 && t < 700, `your message in view at once (${t} px down)`);
+    // No glide to wait for: your message is in view as soon as the page has drawn it.
+    assert.ok(await until(async () => { const t = await promptTop(p); return t >= 0 && t < 700 }, 1000), `your message in view at once (${await promptTop(p)} px down)`);
   } finally { await p.close(); }
 });
