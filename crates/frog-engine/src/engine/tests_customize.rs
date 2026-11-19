@@ -518,7 +518,11 @@ async fn no_tool_without_a_client_that_draws_the_card() {
     r.idle().await;
     let evs = r.say("make it compact", never).await;
     assert!(setting_changes(&evs).is_empty() && applied(&evs).is_empty());
-    assert!(tool_output(&evs).contains("isn't available"), "{evs:?}");
+    let out = tool_output(&evs);
+    assert!(
+        out.contains("no `Customize` tool") || out.contains("isn't available"),
+        "{out}"
+    );
     r.end().await;
 }
 

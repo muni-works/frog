@@ -6847,6 +6847,11 @@
               "description": "The client shows [`Event::Question`]s to a person who can answer them, so the model\ngets the `Ask` tool.",
               "type": "boolean"
             },
+            "customize": {
+              "default": false,
+              "description": "The client draws `Customize` cards and receipts (docs/customize-events.md), so the\nmodel gets the `Customize` tool. Without it nothing can raise a card no app shows.",
+              "type": "boolean"
+            },
             "irc": {
               "default": false,
               "description": "The IRC agent bus is on (config `[irc] enabled`, a frog cloud Bus DO): the model\ngets the `Irc` tool, and the client relays the bus. Off by default until the DO\ndeploys.",
