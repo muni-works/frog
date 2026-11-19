@@ -678,7 +678,7 @@ async fn run() -> Result<bool> {
         return Ok(true);
     }
     if cli.customize || cli.customize_change.is_some() {
-        customize(&cli, &cfg, &cwd).await?;
+        customize(cli.customize_change.as_deref(), cli.json, cli.no_connect, &cfg, &cwd).await?;
         return Ok(true);
     }
     if let Some(dir) = &cli.map {
@@ -1363,11 +1363,17 @@ async fn memory_command(args: &[String]) -> Result<bool> {
 
 /// `--customize` and `--customize-change`: the snapshot the Customize pages draw, measured
 /// against a large model (a session measures against its own), after a change if one was asked.
-async fn customize(cli: &Cli, cfg: &frog_engine::config::Config, cwd: &std::path::Path) -> Result<()> {
+async fn customize(
+    change: Option<&str>,
+    json: bool,
+    no_connect: bool,
+    cfg: &frog_engine::config::Config,
+    cwd: &std::path::Path,
+) -> Result<()> {
     use frog_engine::customize;
     let memory = frog_engine::memory::Store::new(&frog_engine::memory::default_root(), Some(cwd));
     let mut error = None;
-    if let Some(text) = &cli.customize_change {
+    if let Some(text) = change {
         let change: customize::Change =
             serde_json::from_str(text).context("--customize-change takes a change as JSON")?;
         if let Err(e) = customize::apply(cfg, cwd, false, Some(&memory), &change) {
@@ -1375,7 +1381,7 @@ async fn customize(cli: &Cli, cfg: &frog_engine::config::Config, cwd: &std::path
         }
     }
     if let Some(e) = &error
-        && cli.json
+        && json
     {
         println!("{}", serde_json::json!({ "error": e }));
         std::process::exit(1);
@@ -1383,7 +1389,7 @@ async fn customize(cli: &Cli, cfg: &frog_engine::config::Config, cwd: &std::path
     if let Some(e) = error {
         anyhow::bail!(e);
     }
-    let hub = if cli.no_connect {
+    let hub = if no_connect {
         None
     } else {
         let servers = frog_engine::mcp::configured(cfg, cwd);
@@ -1406,14 +1412,14 @@ async fn customize(cli: &Cli, cfg: &frog_engine::config::Config, cwd: &std::path
     if let Some(h) = &hub {
         h.shutdown();
     }
-    if cli.json {
+    if json {
         println!("{}", serde_json::to_string(&report)?);
         return Ok(());
     }
     println!("about {} tokens a turn", report.tokens);
     println!(
-        "skills       {:>6}  ({} of a {} budget)",
-        report.skills.tokens, report.skills.tokens, report.skills.budget_tokens
+        "skills       {:>6}  (the catalog budget is {})",
+        report.skills.tokens, report.skills.budget_tokens
     );
     for s in &report.skills.items {
         let state = if !s.on { "off" } else if s.shadowed_by.is_some() { "hidden" } else { "" };

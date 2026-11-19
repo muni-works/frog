@@ -404,6 +404,198 @@
       ],
       "type": "object"
     },
+    "Change": {
+      "description": "One change a Customize page makes. See `docs/customize-api.md`.",
+      "oneOf": [
+        {
+          "properties": {
+            "change": {
+              "const": "skill",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "on": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "change",
+            "id",
+            "on"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "change": {
+              "const": "connection",
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "on": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "change",
+            "name",
+            "on"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "change": {
+              "const": "tool",
+              "type": "string"
+            },
+            "exposed": {
+              "type": "string"
+            },
+            "on": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "change",
+            "exposed",
+            "on"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "change": {
+              "const": "rule_add",
+              "type": "string"
+            },
+            "path": {
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "scope": {
+              "default": "project",
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "change",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "change": {
+              "const": "rule_edit",
+              "type": "string"
+            },
+            "n": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "old": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "change",
+            "path",
+            "n",
+            "old",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "change": {
+              "const": "rule_remove",
+              "type": "string"
+            },
+            "n": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "old": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "change",
+            "path",
+            "n",
+            "old"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "change": {
+              "const": "memory_edit",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "scope": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "change",
+            "id",
+            "scope",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "change": {
+              "const": "memory_remove",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "scope": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "change",
+            "id",
+            "scope"
+          ],
+          "type": "object"
+        }
+      ]
+    },
     "ChartKind": {
       "enum": [
         "bar",
@@ -423,6 +615,98 @@
       },
       "required": [
         "label"
+      ],
+      "type": "object"
+    },
+    "ConnectionItem": {
+      "properties": {
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "instructions_tokens": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "on": {
+          "type": "boolean"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "tokens": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tokens_if_all_on": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tools": {
+          "items": {
+            "$ref": "#/$defs/ToolItem"
+          },
+          "type": "array"
+        },
+        "use": {
+          "$ref": "#/$defs/UseInfo"
+        },
+        "waiting": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "scope",
+        "source",
+        "on",
+        "state",
+        "tokens",
+        "tokens_if_all_on",
+        "instructions_tokens",
+        "tools",
+        "use"
+      ],
+      "type": "object"
+    },
+    "Connections": {
+      "properties": {
+        "deferred": {
+          "type": "boolean"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/ConnectionItem"
+          },
+          "type": "array"
+        },
+        "tokens": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "tokens",
+        "deferred",
+        "items"
       ],
       "type": "object"
     },
@@ -3130,6 +3414,45 @@
           "type": "object"
         },
         {
+          "description": "The answer to [`Op::Customize`] and [`Op::CustomizeChange`]: a reply, not history, so\nit isn't journaled or replayed.",
+          "properties": {
+            "created": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "error": {
+              "description": "Why a [`Op::CustomizeChange`] wasn't made; the report is as things still are.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "event": {
+              "const": "customize",
+              "type": "string"
+            },
+            "report": {
+              "$ref": "#/$defs/Report"
+            },
+            "seq": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "report",
+            "seq",
+            "session",
+            "created"
+          ],
+          "type": "object"
+        },
+        {
           "description": "The configured MCP servers and how each is doing, the whole list, sent whenever one\nconnects, fails, or a sign-in changes its state. Durable, so a replayed session shows\nthe same \"not signed in\" rows: a tool the user configured must never vanish silently.",
           "properties": {
             "created": {
@@ -3697,6 +4020,22 @@
           "type": "object"
         }
       ]
+    },
+    "EstimateInfo": {
+      "properties": {
+        "calibrated": {
+          "type": "boolean"
+        },
+        "chars_per_token": {
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "chars_per_token",
+        "calibrated"
+      ],
+      "type": "object"
     },
     "Event": {
       "description": "Engine → client.",
@@ -5046,6 +5385,30 @@
           "type": "object"
         },
         {
+          "description": "The answer to [`Op::Customize`] and [`Op::CustomizeChange`]: a reply, not history, so\nit isn't journaled or replayed.",
+          "properties": {
+            "error": {
+              "description": "Why a [`Op::CustomizeChange`] wasn't made; the report is as things still are.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "event": {
+              "const": "customize",
+              "type": "string"
+            },
+            "report": {
+              "$ref": "#/$defs/Report"
+            }
+          },
+          "required": [
+            "event",
+            "report"
+          ],
+          "type": "object"
+        },
+        {
           "description": "The configured MCP servers and how each is doing, the whole list, sent whenever one\nconnects, fails, or a sign-in changes its state. Durable, so a replayed session shows\nthe same \"not signed in\" rows: a tool the user configured must never vanish silently.",
           "properties": {
             "event": {
@@ -5840,6 +6203,29 @@
         }
       ]
     },
+    "LastInfo": {
+      "properties": {
+        "at": {
+          "type": "string"
+        },
+        "session": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "at"
+      ],
+      "type": "object"
+    },
     "Layout": {
       "description": "Positions in points, origin top-left.",
       "properties": {
@@ -5894,6 +6280,23 @@
       ],
       "type": "string"
     },
+    "LineInfo": {
+      "properties": {
+        "n": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "n",
+        "text"
+      ],
+      "type": "object"
+    },
     "LineKind": {
       "enum": [
         "context",
@@ -5937,6 +6340,32 @@
       "required": [
         "name",
         "connected"
+      ],
+      "type": "object"
+    },
+    "Memory": {
+      "properties": {
+        "notes": {
+          "items": {
+            "$ref": "#/$defs/NoteItem"
+          },
+          "type": "array"
+        },
+        "omitted": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tokens": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "tokens",
+        "omitted",
+        "notes"
       ],
       "type": "object"
     },
@@ -6052,6 +6481,69 @@
         "w",
         "h",
         "rank"
+      ],
+      "type": "object"
+    },
+    "NoteItem": {
+      "properties": {
+        "cites": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "created": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "missing": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "omitted": {
+          "type": "boolean"
+        },
+        "path": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "session": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "text": {
+          "type": "string"
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tokens": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "scope",
+        "created",
+        "text",
+        "path",
+        "cites",
+        "missing",
+        "tokens",
+        "omitted"
       ],
       "type": "object"
     },
@@ -6524,6 +7016,36 @@
           "required": [
             "op",
             "server"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The Customize snapshot: skills, connections, rules and memory, with what each adds to a\nturn, its use and whether it's on (docs/customize-api.md). Answered with\n[`Event::Customize`].",
+          "properties": {
+            "op": {
+              "const": "customize",
+              "type": "string"
+            }
+          },
+          "required": [
+            "op"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A change a Customize page makes (a switch, a rules line, a note). Answered with\n[`Event::Customize`] as things are after it, with `error` set if it failed.",
+          "properties": {
+            "change": {
+              "$ref": "#/$defs/Change"
+            },
+            "op": {
+              "const": "customize_change",
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "change"
           ],
           "type": "object"
         },
@@ -7086,6 +7608,45 @@
       ],
       "type": "object"
     },
+    "Report": {
+      "properties": {
+        "connections": {
+          "$ref": "#/$defs/Connections"
+        },
+        "estimate": {
+          "$ref": "#/$defs/EstimateInfo"
+        },
+        "memory": {
+          "$ref": "#/$defs/Memory"
+        },
+        "project": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rules": {
+          "$ref": "#/$defs/Rules"
+        },
+        "skills": {
+          "$ref": "#/$defs/Skills"
+        },
+        "tokens": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "estimate",
+        "tokens",
+        "skills",
+        "connections",
+        "rules",
+        "memory"
+      ],
+      "type": "object"
+    },
     "ReportKind": {
       "enum": [
         "console",
@@ -7103,6 +7664,79 @@
         "error"
       ],
       "type": "string"
+    },
+    "Rules": {
+      "properties": {
+        "files": {
+          "items": {
+            "$ref": "#/$defs/RulesFile"
+          },
+          "type": "array"
+        },
+        "tokens": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "tokens",
+        "files"
+      ],
+      "type": "object"
+    },
+    "RulesFile": {
+      "properties": {
+        "applies": {
+          "type": "string"
+        },
+        "full_tokens": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "lines": {
+          "items": {
+            "$ref": "#/$defs/LineInfo"
+          },
+          "type": "array"
+        },
+        "path": {
+          "type": "string"
+        },
+        "paths": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "tokens": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "path",
+        "scope",
+        "source",
+        "kind",
+        "applies",
+        "paths",
+        "tokens",
+        "full_tokens",
+        "lines"
+      ],
+      "type": "object"
     },
     "Series": {
       "properties": {
@@ -7214,6 +7848,101 @@
       "required": [
         "label",
         "text"
+      ],
+      "type": "object"
+    },
+    "SkillItem": {
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "full_tokens": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "on": {
+          "type": "boolean"
+        },
+        "path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "scope": {
+          "type": "string"
+        },
+        "shadowed_by": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "type": "string"
+        },
+        "tokens": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tokens_if_on": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "use": {
+          "$ref": "#/$defs/UseInfo"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "description",
+        "scope",
+        "source",
+        "on",
+        "tokens",
+        "tokens_if_on",
+        "full_tokens",
+        "use"
+      ],
+      "type": "object"
+    },
+    "Skills": {
+      "properties": {
+        "budget_tokens": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/SkillItem"
+          },
+          "type": "array"
+        },
+        "names_only": {
+          "type": "boolean"
+        },
+        "tokens": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "tokens",
+        "budget_tokens",
+        "names_only",
+        "items"
       ],
       "type": "object"
     },
@@ -7419,6 +8148,57 @@
         "danger"
       ],
       "type": "string"
+    },
+    "ToolItem": {
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "exposed": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "read_only": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "state": {
+          "type": "string"
+        },
+        "tokens": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tokens_if_on": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "use": {
+          "$ref": "#/$defs/UseInfo"
+        },
+        "why": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "exposed",
+        "description",
+        "state",
+        "tokens",
+        "tokens_if_on",
+        "use"
+      ],
+      "type": "object"
     },
     "ToolMode": {
       "oneOf": [
@@ -7771,6 +8551,38 @@
         "input_tokens",
         "output_tokens",
         "model_calls"
+      ],
+      "type": "object"
+    },
+    "UseInfo": {
+      "properties": {
+        "count": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "days": {
+          "items": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "last": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LastInfo"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "count",
+        "days"
       ],
       "type": "object"
     },
