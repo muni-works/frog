@@ -264,7 +264,7 @@ final class Panes {
     /// documentation. Switching only flips this: the panes stay as they are underneath, so
     /// coming back finds the same thread, scroll position, draft and inspector tab, and a
     /// running turn never notices.
-    enum ShellMode: Equatable { case threads, docs, settings, customize }
+    enum ShellMode: Equatable { case threads, docs, settings }
     private(set) var mode = ShellMode.threads
     /// The documentation page last shown, for the life of the window.
     private(set) var docsPage: String?
@@ -273,36 +273,26 @@ final class Panes {
     /// Settings › Models › the machine whose page is open, until Back or another section.
     var settingsMachine: String?
 
-    /// The Customize section last shown, for the life of the window; Skills the first time.
-    private(set) var customizeSection = "skills"
-    /// A page under the section (a skill, Add, a server's review), until Back or another section.
+    /// The open section is one of Settings' agent sections (Skills, Connections, Rules, Memory,
+    /// Automations), which draw their own pages (`CustomizeView`), not rows.
+    var inCustomizeSection: Bool { SettingsCatalog.bundled.drawsOwnPage(settingsSection) }
+    /// The section the agent pages read: the open one.
+    var customizeSection: String { settingsSection }
+    /// A page under an agent section (a skill, Add, a server's review), until Back or another section.
     var customizePage: CustomizePage?
-    /// What Customize shows for this window's folder.
+    /// What the agent sections show for this window's folder.
     let customize = CustomizeStore()
 
-    /// Customize mode (what the agent knows and can do), on `section` (an id or an old name)
-    /// if given, else the last one; on `page` under it if given.
-    func showCustomize(_ section: String? = nil, page: CustomizePage? = nil) {
-        if let s = CustomizeCatalog.bundled.section(named: section), s != customizeSection {
-            customizeSection = s
-            customizePage = nil
-        }
-        if let page { customizePage = page }
-        customize.focus(focused.workspace.isChat ? nil : focused.workspace.folder)
-        mode = .customize
-    }
-
-    /// Settings mode (⌘,), on `section` (an id or an old tab name) if given, else the last one.
-    /// A name Settings no longer has but Customize does (Connections, `mcp`) opens Customize.
-    func showSettings(_ section: String? = nil) {
-        if SettingsCatalog.bundled.section(named: section) == nil, let c = CustomizeCatalog.bundled.section(named: section) {
-            showCustomize(c)
-            return
-        }
+    /// Settings mode (⌘,), on `section` (an id or an old tab name) if given, else the last one;
+    /// on `page` under it if given. Another section starts at its top.
+    func showSettings(_ section: String? = nil, page: CustomizePage? = nil) {
         if let s = SettingsCatalog.bundled.section(named: section), s != settingsSection {
             settingsSection = s
             settingsMachine = nil
+            customizePage = nil
         }
+        if let page { customizePage = page }
+        if inCustomizeSection { customize.focus(focused.workspace.isChat ? nil : focused.workspace.folder) }
         mode = .settings
     }
 

@@ -153,7 +153,7 @@ struct ConnectionsPage: View {
             }
             SettingsGroupLabel(text: "Servers")
             SettingsRows {
-                SettingsRow("Ask each server again", description: "Connections are checked when Customize opens.") {
+                SettingsRow("Ask each server again", description: "Connections are checked when this page opens.") {
                     Button("Refresh") { Task { await store.loadServers() } }.buttonStyle(SettingsButtonStyle())
                         .help("Ask each server again")
                 }

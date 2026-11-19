@@ -1,16 +1,9 @@
 import AppKit
 import SwiftUI
 
-/// Customize mode (docs/design/app-shell.md › Customize): what the agent knows and can do,
-/// beside Settings (how the app behaves). Built the way Settings mode is: the sidebar turns
-/// into Back to app and the five sections, the title bar shows "Customize › Skills", and the
-/// page draws on Settings' 720 column with Settings' rows.
-
-extension EnvironmentValues {
-    /// Puts the window in Customize mode, on a section (by id or an old name) or the last one.
-    /// The app sidebar's Customize row calls this.
-    @Entry var showCustomize: ((String?) -> Void)?
-}
+/// Settings' agent sections (docs/design/app-shell.md › Settings): Skills, Connections, Rules,
+/// Memory and Automations, what the agent knows and can do. Each draws its own page on
+/// Settings' 720 column with Settings' rows; the title bar shows "Settings › Skills".
 
 /// A page under a section.
 enum CustomizePage: Hashable {
@@ -22,28 +15,13 @@ enum CustomizePage: Hashable {
     case review(ServerDraft)
 }
 
-/// The sidebar: Settings' own, with Customize's five rows.
-struct CustomizeSidebar: View {
-    let selected: String
-    let maxHeight: CGFloat
-    let open: (String) -> Void
-    let back: () -> Void
-
-    var body: some View {
-        SettingsSidebar(selected: selected, maxHeight: maxHeight, open: open, back: back,
-                        catalog: CustomizeCatalog.bundled.asSettingsCatalog)
-            .accessibilityElement(children: .contain)
-            .accessibilityLabel("Customize")
-    }
-}
-
-/// "Customize › Skills", "Customize › Skills › /release-notes", "Customize › Connections › Add › postgres".
+/// "Settings › Skills", "Settings › Skills › /release-notes", "Settings › Connections › Add › postgres".
 struct CustomizeCrumbs: View {
     let panes: Panes
     private let catalog = CustomizeCatalog.bundled
 
     var body: some View {
-        ShellCrumbs(root: "Customize", trail: Self.trail(section: panes.customizeSection, page: panes.customizePage,
+        ShellCrumbs(root: "Settings", trail: Self.trail(section: panes.customizeSection, page: panes.customizePage,
                                                         catalog: catalog) { panes.customizePage = $0 })
     }
 
@@ -60,7 +38,7 @@ struct CustomizeCrumbs: View {
 
     /// The window's title for the same place, as plain words.
     static func title(section: String, page: CustomizePage?) -> String {
-        (["Customize"] + trail(section: section, page: page) { _ in }.map(\.label)).joined(separator: " › ")
+        (["Settings"] + trail(section: section, page: page) { _ in }.map(\.label)).joined(separator: " › ")
     }
 }
 

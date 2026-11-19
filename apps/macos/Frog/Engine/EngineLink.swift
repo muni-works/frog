@@ -59,7 +59,7 @@ extension Conversation {
             // The Mac shows the engine's panes (a shared terminal, a live preview) and puts
             // the model's questions to the user, and lets sessions reach each other.
             engine.send(.setClientCaps(panes: true, ask: true, sessions: true))
-            // The app's settings the engine reads (noting on its own, from Customize › Memory).
+            // The app's settings the engine reads (noting on its own, from Settings › Memory).
             engine.send(.settings(values: CustomizeStore.engineSettings()))
         } catch {
             self.init(folder: folder, link: nil, replay: replay, session: session,

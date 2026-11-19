@@ -42,13 +42,18 @@ enum AppTheme {
     }
 }
 
-/// The sidebar in Settings mode: Back to app, then one row per section.
+/// The sidebar in Settings mode: Back to app, then one row per section, in three runs (how
+/// the app behaves; what the agent knows and can do; usage and the account) with a small gap
+/// between them and no labels.
 struct SettingsSidebar: View {
     let selected: String
     let maxHeight: CGFloat
     let open: (String) -> Void
     let back: () -> Void
     var catalog = SettingsCatalog.bundled
+
+    /// The space between two runs of sections.
+    static let runGap: CGFloat = 10
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
@@ -58,12 +63,13 @@ struct SettingsSidebar: View {
             .buttonStyle(.plain)
             .help("Back to your threads (Esc)")
             .padding(.bottom, 6)
-            ForEach(catalog.sections) { s in
+            ForEach(Array(catalog.sections.enumerated()), id: \.element.id) { i, s in
                 Button { open(s.id) } label: {
                     ShellRow(symbol: nil, title: s.label, selected: s.id == selected)
                 }
                 .buttonStyle(.plain)
                 .accessibilityAddTraits(s.id == selected ? .isSelected : [])
+                .padding(.top, i > 0 && catalog.sections[i - 1].run != s.run ? Self.runGap : 0)
             }
             Spacer(minLength: 0)
         }
@@ -93,7 +99,7 @@ struct SettingsCrumbs: View {
     }
 }
 
-/// A mode's breadcrumbs in the title bar (Settings, Customize): the mode, then the way down to
+/// A mode's breadcrumbs in the title bar (Settings): the mode, then the way down to
 /// the page. Every step but the last is a link back to it.
 struct ShellCrumbs: View {
     struct Step {

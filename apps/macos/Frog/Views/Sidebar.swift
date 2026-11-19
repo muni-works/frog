@@ -106,7 +106,6 @@ struct SessionList: View {
     @Environment(\.switchFolder) private var switchFolder
     @Environment(\.showDocs) private var showDocs
     @Environment(\.showSettings) private var showSettings
-    @Environment(\.showCustomize) private var showCustomize
 
     /// Conversations shown per project before "Show more".
     static let groupLimit = 5
@@ -1139,15 +1138,9 @@ struct SessionList: View {
             .font(.frog(size: 13))
             .padding(.horizontal, 8)
             .frame(height: 32)
-            // Customize and Settings sit right under the two verbs, as on the web. Documentation
-            // is hidden for now (Cam, 2026-11-19); the palette and Help menu still open it.
-            if let showCustomize {
-                Button { showCustomize(nil) } label: {
-                    navRow("slider.horizontal.3", "Customize")
-                }
-                .buttonStyle(.plain)
-                .help("Customize: what Frog knows and can do")
-            }
+            // Settings sits right under the two verbs, as on the web; skills, connections, rules,
+            // memory and automations are its sections. Documentation is hidden for now (Cam,
+            // 2026-11-19); the palette and Help menu still open it.
             if let showSettings {
                 Button { showSettings(nil) } label: { navRow("gearshape", "Settings", key: "⌘,") }
                     .buttonStyle(.plain)

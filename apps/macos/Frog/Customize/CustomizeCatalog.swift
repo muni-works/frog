@@ -1,9 +1,9 @@
 import Foundation
 
-/// Customize's five sections and each list page's explainer (design/customize.json, bundled
-/// like design/settings.json). Settings is how the app behaves; Customize is what the agent
-/// knows and can do. docs/design/app-shell.md › Customize has the rules.
-struct CustomizeCatalog: Decodable {
+/// Settings' five agent sections (Skills, Connections, Rules, Memory, Automations: run 2 of
+/// design/settings.json) and each list page's explainer. Settings' other runs are how the app
+/// behaves; these are what the agent knows and can do. docs/design/app-shell.md has the rules.
+struct CustomizeCatalog {
     struct Explainer: Decodable, Hashable {
         /// The one bold sentence saying what the thing is.
         let bold: String
@@ -25,7 +25,7 @@ struct CustomizeCatalog: Decodable {
         }
     }
 
-    struct Section: Decodable, Identifiable, Hashable {
+    struct Section: Identifiable, Hashable {
         let id: String
         let label: String
         var aliases: [String]? = nil
@@ -35,14 +35,19 @@ struct CustomizeCatalog: Decodable {
     let version: Int
     let sections: [Section]
 
-    static let bundled: CustomizeCatalog = {
-        guard let url = Bundle.main.url(forResource: "customize", withExtension: "json"),
-              let data = try? Data(contentsOf: url),
-              let c = try? JSONDecoder().decode(CustomizeCatalog.self, from: data) else {
-            return CustomizeCatalog(version: 1, sections: [])
-        }
-        return c
-    }()
+    /// The sections of the bundled settings list that carry an explainer.
+    static let bundled = CustomizeCatalog(SettingsCatalog.bundled)
+
+    init(version: Int, sections: [Section]) {
+        self.version = version
+        self.sections = sections
+    }
+
+    init(_ settings: SettingsCatalog) {
+        self.init(version: settings.version, sections: settings.sections.compactMap { s in
+            s.explainer.map { Section(id: s.id, label: s.label, aliases: s.aliases, explainer: $0) }
+        })
+    }
 
     /// A section by its id or an old name (mcp → connections, instructions → rules).
     func section(named name: String?) -> String? {
@@ -50,20 +55,7 @@ struct CustomizeCatalog: Decodable {
         return sections.first { $0.id == name || ($0.aliases ?? []).contains(name) }?.id
     }
 
-    /// `frog://customize/<section>` (`frog-dev://` for a Debug build): the section it opens, the
-    /// first one for a section this build doesn't draw. The web's "Open in Frog for Mac" uses it.
-    func section(for url: URL) -> String? {
-        guard url.scheme == "frog" || url.scheme == "frog-dev", url.host() == "customize" else { return nil }
-        let first = url.pathComponents.first { $0 != "/" }
-        return section(named: first) ?? sections.first?.id
-    }
-
-    func label(_ id: String) -> String { sections.first { $0.id == id }?.label ?? "Customize" }
+    func label(_ id: String) -> String { sections.first { $0.id == id }?.label ?? "Settings" }
 
     func explainer(_ id: String) -> Explainer? { sections.first { $0.id == id }?.explainer }
-
-    /// The sidebar's rows, in the shape Settings' sidebar draws.
-    var asSettingsCatalog: SettingsCatalog {
-        SettingsCatalog(version: version, sections: sections.map { .init(id: $0.id, label: $0.label) }, rows: [])
-    }
 }
