@@ -27,36 +27,53 @@ The tier is data, in `design/settings.json`: an `agent` key on a setting's row
 
 | key | tier |
 |---|---|
-| `line.notes` (Frog's own notes) | apply |
+| `line.notes` (Frog's own notes) | ask |
 | `line.home` (`~/.config/frog/FROG.md`, every project) | ask |
 | `line.project` (the repo's AGENTS.md, shared) | ask |
 | `skill` (turning one on loads its instructions everywhere) | ask |
 | `tool` (a connection's tool) | ask |
 
-Only cosmetic changes and Frog's own private notes apply. Settings marked apply: theme,
-density, detail, playful, sounds, show-energy. Marked ask: notifications (off silences "a
+Nothing that writes text applies without a card: Frog's notes ask too, so an edit always shows
+its old and new text. Only the six cosmetic settings can apply: theme, density, detail,
+playful, sounds, show-energy (`customize::COSMETIC`; the engine clamps everything else to ask,
+whatever the data says, and a test keeps the two equal). Marked ask: notifications (off silences "a
 session needs you"), money (monthly-cap, default-model), permissions (default-mode, sandbox,
 computer-use, allowed-commands), sharing (share-usage, share-models, lend-battery), auto-note.
 **Anything without a key asks.**
 
 Rules above the tiers:
 
-- **The engine decides who asked, not the model.** A change applies at once (apply tier) only
-  when what the person typed this turn names it: the setting (and for a choice, its value:
-  "make it compact"), the skill or tool by name, or every content word of the line, polarity
-  included ("never push to main" doesn't name "always push to main"). Anything short of that
-  is an **offer**: always a card, made at most once, with `asked_by.who` `frog`. The model's
-  `offer` flag can only make a change an offer, never the reverse.
+- **The engine decides who asked, not the model.** `asked_by.who` is `user` only when a
+  sentence the person typed this turn names the change: the setting (and for a choice, its
+  value), the skill or tool by name, or every content word of the line, polarity included
+  ("never push to main" doesn't name "always push to main"). Anything short of that is an
+  **offer**: always a card, made at most once, with `asked_by.who` `frog`. The model's `offer`
+  flag can only make a change an offer, never the reverse.
+- **Applying at once needs more.** A cosmetic setting applies without a card only when one
+  typed sentence names the setting itself (a value alone isn't enough: "make it compact" is a
+  card, "make the density compact" applies), for a choice its value too, for on/off the
+  direction and only that one ("sounds are great" never turns sounds off; "sounds off and on"
+  says neither), and no negation ("don't turn off the sounds"). Never one the person said not
+  now to this session: asked again, it's a card.
 - **Only the user's words start a change.** The model quotes them (`words`); a quote that
   isn't, word for word, in what the person typed this turn is refused outright: no card, no
-  change. On a card the user asked for, `asked_by.words` is the sentence the engine found that
-  names the change, never the model's quote.
-- **The user's words are only what the person typed in this session**: their message and
-  the follow-ups queued with it. Not a message from another session (`<session-message>`), a
-  wake or what's delivered with it, a parent's message to its child, the continue note, or a
-  Present button's hidden `send` text: a button press counts only for its visible label.
-- **Never from another session.** `Customize` is refused in a subagent and in a session
-  another session started (`parent_session`): its "user" is an agent.
+  change. A whole short reply ("y", "k", an emoji) counts when the quote is all of it. On a
+  card the user asked for, `asked_by.words` is the sentence the engine found that names the
+  change, never the model's quote.
+- **The user's words are only what the person typed**: `Op::Submit` text (and `more` parts)
+  the app marked `"typed": true`, which an app sets only for text the person typed or dictated
+  in its composer. Absent means false: an app's own prompts (git actions, onboarding, canned
+  starts, deep links, replays of queued text, a phone relay or bridge), a message from another
+  session (`<session-message>`), a wake or what's delivered with it, a parent's message to its
+  child, and the continue note are never the person's words.
+- **Words that only justify a card.** A Present button's visible label (the model wrote it)
+  and, on `Op::Continue`, the typed words of the turn it picks back up can make an offer a
+  card, never apply a change or make `asked_by.who` `user`. A button's hidden `send` never
+  counts.
+- **Never in a child.** `Customize` (spec and call), noting on its own, Make it a rule and
+  "remember …" are refused in a subagent and in a session another session started:
+  `parent_session` (the engine's own children) or `--worker` (how the Mac starts every child;
+  kept across a resume). Its "user" is an agent.
 
 Ask-tier cards come up in every mode, yolo and auto included: a change to Frog's own reach is
 never a classifier's call. A session with nobody to ask (headless) changes nothing.
@@ -123,8 +140,12 @@ fails). That keeps a proposal the user's own: a delegated answer (`ResolveDelega
 chief or a parent session answering through the session broker) sends a bare allow, so it
 can't apply one. Brokers should still leave cards with `proposal` out of `ListApprovals`.
 
-`permission_resolved` follows as usual. A declined offer is never made again in that session
-(the engine refuses it before any card). The file a line is written to must be the one the
+`permission_resolved` follows once the answer is known for what it did: `allow` only when a
+choice on the card was taken. An allow naming no choice is recorded `deny` with
+`"outcome":"no_choice"`; a card nobody answered in time is `deny` with `"outcome":"timed_out"`
+and is not the person declining (it may be offered again; the model is told nothing changed).
+A declined offer is never made again in that session (the engine refuses it before any card),
+and a declined change asked for again is a card, never applied at once. The file a line is written to must be the one the
 card showed (`path`): if another rules file appears or a link changes while the card is open,
 the approval is void and nothing is written.
 
@@ -185,7 +206,7 @@ at session start and when one changes (lands at once, not queued):
   (`{"skills_off": [...], "tools_off": ["mcp__server__tool"]}`). Off skills leave the catalog;
   off tools leave the tool list and are refused if called.
 - Lines are minimal edits: append one `- line`, remove one line, or replace one line keeping its
-  indent and marker. Nothing else in the file moves (line endings included). A line that's
+  indent and marker (`- `, `* `, or a number: `1. `, `2) `). Nothing else in the file moves (line endings included). A line that's
   already there, missing, or ambiguous is refused before any card. A rule stays a rule: no
   heading, quote, table, rule line, fence or comment, and forget/edit never match frontmatter
   or headings.
@@ -194,9 +215,16 @@ at session start and when one changes (lands at once, not queued):
 - A rules file that can't be read or isn't UTF-8 is an error shown to the user, never treated
   as empty; a `customize.json` that doesn't parse is an error on write, never rewritten.
 - Writes never go through a link that leaves the project (or, for home rules, the home rules
-  folder), and never create a dangling link's target; a link inside (`CLAUDE.md` →
-  `AGENTS.md`) is followed, and the card's `path` and `where` name the real file. Every write
-  is a fresh temp file beside the target, renamed over it, keeping the file's permissions.
+  folder), except to an existing Markdown file in the user's own home (a stow-style dotfiles
+  `FROG.md`, a monorepo's `AGENTS.md -> ../AGENTS.md`), and never create a dangling link's
+  target; a link inside (`CLAUDE.md` → `AGENTS.md`) is followed, and the card's `path` and
+  `where` name the real file. A link anywhere else (`AGENTS.md -> ~/.ssh/authorized_keys`), a
+  read-only file, or a hard-linked pair (AGENTS.md and CLAUDE.md as one file) is refused before
+  any card; asked to remember a line there, the card offers it just for the person, in Frog's
+  notes. Every write is a fresh temp file beside the target, renamed over it, keeping the
+  file's permissions. Undo moves the file aside to check it and puts it back with a hard link,
+  or where links don't work (exFAT, SMB, NFS, some FUSE drives) a copy created new: a refused
+  undo never leaves the file renamed aside, and never replaces one written since.
 
 ## Cost
 
@@ -257,13 +285,18 @@ Durable: it replays with the transcript, and its Undo still works after a restar
   `"where":"home"` for the user's own rules everywhere; the default is the project's rules
   file, shared). The engine shows the usual card (`permission_request` with `proposal`,
   title "Make this a rule?", primary "Add rule"); approving adds the line, removes the note,
-  and emits `customize_applied`, whose Undo puts both back. Frog never writes a rule on its own.
+  and emits `customize_applied`, whose Undo puts both back. All or nothing: the file must be
+  the one the card showed, the note is removed only if it's still what the card showed, and if
+  it can't be, the rule is taken back. Frog never writes a rule on its own. Refused in a child.
 - Turning it off (with `notes: true` sent): the app setting `auto-note` (`design/settings.json`, tier `ask`, default
   on), sent with `Op::Settings`. Off, the tool isn't offered and a call writes nothing. Without
   an app, `[memory] auto_note = false` in config.toml. Never on in subagents, sessions another
   session started, or small (Weak-tier) models, which can't do it reliably.
 - "remember that …" in a message still saves a note as before (with its notice) and counts as
-  the turn's one note.
+  the turn's one note: only in a typed message (`"typed": true`), never in a child.
+- A note's Undo handle works only if Frog issued it: issued handles are kept beside the notes
+  (`noted-undos`, the newest 500), so Undo still works after a restart, and a handle made up
+  from a note's id and hash is refused.
 
 What can become a note, checked in Rust after the model proposes it (anything doubtful notes
 nothing):
@@ -274,10 +307,13 @@ nothing):
 - Provenance: `said`/`correction` need the user's exact words from this turn (`quote`, only
   what the person typed: see the user's words above) *and* the note must say what the quote
   says: nearly every content word of the note in the quote itself (one miss, or one in four
-  for a long note), with the quote's polarity kept. A correction may end by naming what it
+  for a long note; the free word never a day, month or number), with the quote's polarity
+  kept, and every quantifier ("only", "always", "every") and number in the note also in the
+  quote. A correction may end by naming what it
   replaces (", not npm"). So a real quote with text from a tool result, page, MCP response or
   another part of the message attached is refused. `read` needs a file inside the project that
-  Frog's `Read` opened this session, and the note's words must be in that file. `read` notes
+  Frog's `Read` opened this session, and every content word, quantifier and number of the note
+  must be in that file. `read` notes
   are always project notes. A turn nobody typed (a wake, a session started by another) notes
   nothing.
 - Nothing that reads like an instruction (imperative, or addressed to an agent) is kept, of
