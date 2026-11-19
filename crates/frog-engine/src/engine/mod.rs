@@ -2023,7 +2023,8 @@ struct Agent {
     /// Files Frog's Edit or Write changed this session: the model's own text, never a `read`
     /// note's grounds (nor is anything changed since `started`, by Bash or anyone).
     written_by_frog: HashSet<PathBuf>,
-    /// When this engine started: a file changed after it isn't a fact Frog read.
+    /// When this session began (its log's `created` on a resume): a file changed after it
+    /// isn't a fact Frog read.
     started: std::time::SystemTime,
     /// Notes that didn't fit the current model's index.
     notes_omitted: usize,
@@ -2135,6 +2136,9 @@ impl Agent {
         let mut resumed_worker = false;
         // The session that started it, kept too: a resumed child is still a child.
         let mut resumed_parent: Option<String> = None;
+        // When the session began: a file changed since then isn't a fact Frog read, after a
+        // resume too.
+        let mut resumed_created: Option<i64> = None;
         // Offers the person declined in this session: never made again, after a resume too.
         let mut resumed_declined: HashSet<String> = HashSet::new();
         let mut resumed_chapters = crate::chapter::Tracker::default();
@@ -2144,6 +2148,7 @@ impl Agent {
                 let l = session::load(dir, id).map_err(|e| ConfigError(format!("{e:#}")))?;
                 resumed_worker = l.header.worker;
                 resumed_parent = l.header.parent.clone();
+                resumed_created = Some(l.header.created);
                 resumed_declined = declined_load(dir, id);
                 let log = Log::open(dir, id).map_err(|e| ConfigError(format!("{e:#}")))?;
                 let (seq, turn) = (l.last_seq(), l.last_turn());
@@ -2379,7 +2384,10 @@ impl Agent {
             notes_per_turn: false,
             read_by_frog: HashSet::new(),
             written_by_frog: HashSet::new(),
-            started: std::time::SystemTime::now(),
+            started: resumed_created
+                .and_then(|ms| u64::try_from(ms).ok())
+                .map(|ms| std::time::UNIX_EPOCH + std::time::Duration::from_millis(ms))
+                .unwrap_or_else(std::time::SystemTime::now),
             notes_omitted: 0,
             rules,
             repo_map: Default::default(),

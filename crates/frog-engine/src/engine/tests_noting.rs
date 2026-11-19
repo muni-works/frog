@@ -1057,11 +1057,16 @@ async fn a_failed_read_grounds_no_note() {
 }
 
 /// Review 3, item 10: a file Frog wrote or changed this session is the model's own text, never
-/// grounds for a `read` note, even after it reads it back.
+/// grounds for a `read` note, even after it reads it back (and even with its time set back, so
+/// it's Frog's own record that refuses it, not the clock).
 #[tokio::test]
 async fn a_file_frog_wrote_grounds_no_note() {
     let fact = "Deploy keys go in the shared bucket.";
     let script = vec![
+        reply(
+            vec![tool("r0", "Read", json!({"file_path": "FACTS.md"}))],
+            Stop::ToolUse,
+        ),
         reply(
             vec![tool(
                 "w1",
@@ -1070,6 +1075,7 @@ async fn a_file_frog_wrote_grounds_no_note() {
             )],
             Stop::ToolUse,
         ),
+        done(),
         reply(
             vec![tool("r1", "Read", json!({"file_path": "FACTS.md"}))],
             Stop::ToolUse,
@@ -1085,10 +1091,19 @@ async fn a_file_frog_wrote_grounds_no_note() {
         true,
         |_| {},
     );
+    // There before the session (so not one Frog created): Frog's Write changes it.
+    from_before(&r.project.join("FACTS.md"), "nothing yet\n");
     r.h.ops.send(Op::SetMode { mode: Mode::Yolo }).unwrap();
     r.idles += 1;
     r.idle().await;
-    let evs = r.say("write it down").await;
+    let _ = r.say("write it down").await;
+    assert_eq!(
+        std::fs::read_to_string(r.project.join("FACTS.md")).unwrap(),
+        format!("{fact}\n"),
+        "Frog wrote it"
+    );
+    from_before(&r.project.join("FACTS.md"), &format!("{fact}\n"));
+    let evs = r.say("now note it").await;
     assert!(receipts(&evs).is_empty(), "{:?}", note_outputs(&evs));
     assert!(r.notes().is_empty());
     r.end().await;

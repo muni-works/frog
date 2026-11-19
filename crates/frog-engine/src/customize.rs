@@ -860,10 +860,15 @@ impl Toggles {
 
     /// Read, change, write. A file that doesn't parse is an error, never "everything on"
     /// written back over what the user turned off.
+    /// Change the switches in `file` (the Settings pages' `--customize-change`), under the
+    /// same folder lock as a conversation's switch, so neither drops the other's.
     pub fn update_in(file: &Path, f: impl FnOnce(&mut Self)) -> Result<()> {
-        let mut t = Self::load_strict(file)?;
-        f(&mut t);
-        write_atomic(file, &t.render(), false)
+        std::fs::create_dir_all(parent_of(file))?;
+        locked(&[parent_of(file)], || {
+            let mut t = Self::load_strict(file)?;
+            f(&mut t);
+            write_atomic(file, &t.render(), false)
+        })
     }
 
     pub fn skill_on(&self, name: &str) -> bool {
@@ -1337,6 +1342,15 @@ fn put_all_back(taken: &[(&FileUndo, Option<(PathBuf, Vec<u8>)>)]) -> String {
 /// Put back what a crash left moved aside in `dir`: each `.<name>.<id>.undo` file whose
 /// `<name>` isn't there goes back; one whose file was written since stays, never over it.
 pub fn sweep_undo(dir: &Path) {
+    // Under the folder's lock, so it never puts a file back in the middle of another
+    // process's undo.
+    let _ = locked(&[dir], || {
+        sweep_undo_locked(dir);
+        Ok(())
+    });
+}
+
+fn sweep_undo_locked(dir: &Path) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
