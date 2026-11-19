@@ -30,6 +30,31 @@ final class SessionRegistryTests: XCTestCase {
         XCTAssertEqual(files, ["open-sessions.json"])
     }
 
+    /// Review 3, item 15: a queued message keeps its own `typed` through the save and the
+    /// relaunch's resend: typed stays typed, an app's prompt stays untyped.
+    func testQueuedMessagesKeepTheirTypedFlagAcrossARelaunch() throws {
+        let link = QueueLink()
+        let c = Conversation(folder: URL(fileURLWithPath: "/tmp/demo"), link: link, replay: false)
+        c.submit("then run the tests", typed: true)
+        c.submit("Fix the failing check")
+        var saved = OpenSession(id: "a", cwd: "/tmp/demo", model: nil, window: 0, pane: 0, turnRunning: true)
+        saved.keep(queue: c.queue)
+        let url = FileManager.default.temporaryDirectory.appending(path: "frog-registry-\(UUID().uuidString).json")
+        var all = OpenSessions()
+        all.sessions = [saved]
+        SessionRegistry.save(all, to: url)
+        let back = try XCTUnwrap(SessionRegistry.load(url)?.sessions.first)
+        let d = Conversation(folder: URL(fileURLWithPath: "/tmp/demo"), link: QueueLink(), replay: false)
+        back.resend(into: d)
+        XCTAssertEqual(d.queue.map(\.text), ["then run the tests", "Fix the failing check"])
+        XCTAssertEqual(d.queue.map(\.typed), [true, false])
+        // A file from before the flag was kept: everything resends untyped.
+        let old = try JSONDecoder().decode(OpenSession.self, from: Data(#"{"id":"a","cwd":"/tmp","window":0,"pane":0,"turnRunning":true,"userStopped":false,"queued":["x"],"suspendedByUpdate":false}"#.utf8))
+        let e = Conversation(folder: URL(fileURLWithPath: "/tmp/demo"), link: QueueLink(), replay: false)
+        old.resend(into: e)
+        XCTAssertEqual(e.queue.map(\.typed), [false])
+    }
+
     func testMissingOrCorruptFileLoadsAsNothing() throws {
         let url = FileManager.default.temporaryDirectory.appending(path: "frog-registry-\(UUID().uuidString).json")
         XCTAssertNil(SessionRegistry.load(url))

@@ -16,9 +16,27 @@ struct OpenSession: Codable, Equatable, Sendable {
     var userStopped = false
     /// Messages typed while a turn ran, not yet sent; they're sent after the restore.
     var queued: [String] = []
+    /// Each queued message's own `typed` (`Op.submit`), in order; absent in files from before
+    /// it was kept, and then all resend untyped.
+    var queuedTyped: [Bool]? = nil
     /// The turn was suspended by an app update's drain (`Op::Drain`), so it carries on at
     /// relaunch on this session's stored model — with the update notice, not the crash one.
     var suspendedByUpdate = false
+
+    /// Keep a conversation's queue: each message's text and its own `typed`.
+    mutating func keep(queue: [Conversation.Queued]) {
+        queued = queue.map(\.text)
+        queuedTyped = queue.map(\.typed)
+    }
+
+    /// The relaunch's resend of the queue: each message with the flag it was queued with, so a
+    /// typed one stays the person's words and an app's prompt never becomes them.
+    @MainActor
+    func resend(into c: Conversation) {
+        for (i, text) in queued.enumerated() {
+            c.submit(text, typed: queuedTyped.flatMap { $0.indices.contains(i) ? $0[i] : nil } ?? false)
+        }
+    }
 }
 
 /// Everything open, written on every change to
@@ -197,7 +215,8 @@ final class SessionRegistry {
                     pane: p,
                     turnRunning: running,
                     userStopped: c.userStopped,
-                    queued: c.queue.map(\.text)
+                    queued: c.queue.map(\.text),
+                    queuedTyped: c.queue.map(\.typed)
                 ))
             }
         }
@@ -239,7 +258,7 @@ final class SessionRegistry {
             case (_, .continue): c.continueInterrupted()
             case (_, .reopen): break
             }
-            for text in s.queued { c.submit(text) }
+            s.resend(into: c)
         }
     }
 
