@@ -76,6 +76,8 @@ pub struct Setting {
     /// Option ids and labels, for segmented controls and menus that list them.
     pub options: Vec<(String, String)>,
     pub tier: Tier,
+    /// The Settings section it's in, as labeled ("Usage"): where to change it by hand.
+    pub section: String,
 }
 
 struct Tiers {
@@ -95,6 +97,16 @@ fn tier(v: &Value) -> Tier {
 
 fn tiers(json: &str) -> Tiers {
     let v: Value = serde_json::from_str(json).expect("design/settings.json parses");
+    let section = |id: &str| {
+        v["sections"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|s| s["id"].as_str() == Some(id))
+            .and_then(|s| s["label"].as_str())
+            .unwrap_or("")
+            .to_string()
+    };
     let settings = v["rows"]
         .as_array()
         .into_iter()
@@ -121,6 +133,7 @@ fn tiers(json: &str) -> Tiers {
                 })
                 .collect(),
             tier: tier(&r["agent"]),
+            section: section(r["section"].as_str().unwrap_or("")),
         })
         .collect();
     let actions = v["agentActions"]
@@ -144,6 +157,11 @@ pub const COSMETIC: &[&str] = &[
     "sounds",
     "show-energy",
 ];
+
+/// Every setting's id.
+pub fn settings_ids() -> impl Iterator<Item = &'static str> {
+    TIERS.settings.iter().map(|s| s.id.as_str())
+}
 
 pub fn setting(id: &str) -> Option<&'static Setting> {
     TIERS.settings.iter().find(|s| s.id == id)

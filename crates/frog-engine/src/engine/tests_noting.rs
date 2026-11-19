@@ -77,6 +77,21 @@ fn rig_cfg(
     notes: bool,
     tweak: impl FnOnce(&mut Config),
 ) -> Rig {
+    let r = rig_untold(base, script, notes, tweak);
+    // As the apps do on every link: the `auto-note` setting (on).
+    let mut values = serde_json::Map::new();
+    values.insert(crate::noting::SETTING.into(), json!(true));
+    r.h.ops.send(Op::Settings { values }).unwrap();
+    r
+}
+
+/// A rig whose app never sent `auto-note`.
+fn rig_untold(
+    base: &Path,
+    script: Vec<Response>,
+    notes: bool,
+    tweak: impl FnOnce(&mut Config),
+) -> Rig {
     let (project, store) = (base.join("project"), base.join("store"));
     for d in [&project, &store] {
         std::fs::create_dir_all(d).unwrap();
@@ -988,4 +1003,18 @@ fn applied(evs: &[Event]) -> Vec<String> {
             _ => None,
         })
         .collect()
+}
+
+/// Review 3, item 9: an app that never said `auto-note` (a cloud link that sent caps only, an
+/// older app) gets no noting on its own: not told is off.
+#[tokio::test]
+async fn auto_note_not_told_is_off() {
+    let base = std::env::temp_dir().join(format!("frog-noting-{}", session::new_id()));
+    let mut r = rig_untold(&base, vec![answer_and_note("Ok.", staging_note()), done()], true, |_| {});
+    r.idle().await;
+    let evs = r.say(STAGING).await;
+    assert!(receipts(&evs).is_empty(), "{evs:?}");
+    assert!(r.notes().is_empty());
+    assert!(!r.sent.lock().unwrap()[0].contains("<tool Note>"));
+    r.end().await;
 }

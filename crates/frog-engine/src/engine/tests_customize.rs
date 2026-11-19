@@ -57,6 +57,18 @@ fn rig(script: Vec<Response>, mode: Mode) -> Rig {
 }
 
 fn rig_with(script: Vec<Response>, mode: Mode, tweak: impl FnOnce(&mut Config)) -> Rig {
+    let mut r = rig_bare(script, mode, tweak);
+    // As the apps do: declare the settings it applies (`Op::Settings`). Null: applied, value
+    // not reported.
+    let values = crate::customize::settings_ids()
+        .map(|id| (id.to_string(), serde_json::Value::Null))
+        .collect();
+    r.h.ops.send(Op::Settings { values }).unwrap();
+    r
+}
+
+/// A rig whose app declared no settings.
+fn rig_bare(script: Vec<Response>, mode: Mode, tweak: impl FnOnce(&mut Config)) -> Rig {
     let base = std::env::temp_dir().join(format!("frog-customize-{}", session::new_id()));
     let (project, store) = (base.join("project"), base.join("store"));
     for d in [&project, &store] {
@@ -1403,4 +1415,41 @@ async fn a_worker_answers_read_only_commands_and_refuses_saves() {
     }
     assert!(w.notes().is_empty(), "{:?}", w.notes());
     w.end().await;
+}
+
+/// Review 3, item 8: a receipt always means the change took effect. The engine plans only
+/// settings the app declared it applies (the ids in its `Op::Settings`); any other answers
+/// that it can't be changed from here and where to change it, with no card and no receipt.
+#[tokio::test]
+async fn only_settings_the_app_applies_are_planned() {
+    let script = vec![
+        call(
+            "c",
+            json!({"do": "set", "id": "monthly-cap", "value": "10", "words": "set my monthly cap to $10"}),
+        ),
+        done(),
+        call(
+            "d",
+            json!({"do": "set", "id": "detail", "value": "quiet", "words": "set the detail to quiet"}),
+        ),
+        done(),
+    ];
+    let mut r = rig_bare(script, Mode::Default, |_| {});
+    r.idle().await;
+    let mut values = serde_json::Map::new();
+    values.insert("theme".into(), json!("system"));
+    values.insert("density".into(), json!("comfortable"));
+    r.h.ops.send(Op::Settings { values }).unwrap();
+    for (text, place) in [
+        ("set my monthly cap to $10", "Settings › Usage"),
+        ("set the detail to quiet", "Settings › Appearance"),
+    ] {
+        let evs = r.say(text, |id, _| primary(id)).await;
+        assert!(cards(&evs).is_empty(), "{text}: no card {evs:?}");
+        assert!(applied(&evs).is_empty(), "{text}: no receipt");
+        assert!(setting_changes(&evs).is_empty());
+        let out = tool_output(&evs);
+        assert!(out.contains("can't be changed from here") && out.contains(place), "{text}: {out}");
+    }
+    r.end().await;
 }

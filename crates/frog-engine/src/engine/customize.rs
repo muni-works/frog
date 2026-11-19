@@ -467,7 +467,17 @@ unless the user brings it up.",
             }
             Change::Set { id, value } => {
                 let row = cz::setting(id).context("no such setting")?;
-                let old = self.shared.settings.lock().unwrap().get(id).cloned();
+                // Only a setting the app applies (it reported it in `Op::Settings`): a receipt
+                // always means the change took effect.
+                let Some(old) = self.shared.settings.lock().unwrap().get(id).cloned() else {
+                    anyhow::bail!(
+                        "{} can't be changed from here: change it in Settings › {}",
+                        row.label,
+                        row.section
+                    );
+                };
+                // Declared with no value (null): the app applies it but didn't say its value.
+                let old = (!old.is_null()).then_some(old);
                 if old.as_ref() == Some(value) {
                     anyhow::bail!("{} is already {}", row.label, cz::show_value(row, value));
                 }

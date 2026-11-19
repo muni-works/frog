@@ -21,7 +21,8 @@ const MAX_FILE: u64 = 1 << 20;
 impl Agent {
     /// Whether Frog notes things on its own in this session: never for a subagent or a session
     /// another one started (its "user" is an agent), nor on a small model, which can't do it
-    /// reliably; otherwise the app's `auto-note` setting, else config, else on.
+    /// reliably; otherwise the app's `auto-note` setting, else config, else off: an app that
+    /// never said (a link that sent caps only) gets no noting on its own.
     pub(super) fn auto_note(&self) -> bool {
         if !self.top_level()
             || self.memory.is_none()
@@ -32,7 +33,7 @@ impl Agent {
         }
         match self.shared.settings.lock().unwrap().get(noting::SETTING) {
             Some(Value::Bool(on)) => *on,
-            _ => self.cfg.memory.auto_note.unwrap_or(true),
+            _ => self.cfg.memory.auto_note.unwrap_or(false),
         }
     }
 
