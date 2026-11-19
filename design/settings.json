@@ -6,7 +6,7 @@
     { "id": "appearance", "label": "Appearance" },
     { "id": "models", "label": "Models", "aliases": ["lend", "machines"] },
     { "id": "permissions", "label": "Permissions" },
-    { "id": "connections", "label": "Connections", "aliases": ["mcp"] },
+    { "id": "connections", "label": "Connections", "aliases": ["mcp"], "movedTo": "customize" },
     { "id": "shortcuts", "label": "Shortcuts" },
     { "id": "usage", "label": "Usage", "aliases": ["energy"] },
     { "id": "account", "label": "Account" },

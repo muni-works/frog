@@ -151,13 +151,18 @@ and the web show the same nine sections, drawn the same way from one list of row
 | Appearance | Appearance | Theme, Density, Detail, Playful frog, Frog sounds | none |
 | Models | Models, Machines, Lend | Default model, your machines, Frog Cloud | Pair a machine; run models on this computer; rename or unpair; share with other machines (your own keys and servers wait while the Mac hides adding them) |
 | Permissions | Permissions | The mode new sessions start in | Work in folders on your computer; use other apps |
-| Connections | MCP | The server list and each one's state | Sign in to a server |
 | Shortcuts | Shortcuts | Each app's own keys, read-only | none |
 | Usage | Energy, and spend and the cap from Models | Spend this week and month, a monthly cap, energy | Measured energy for this Mac |
 | Account | the Mac's footer and Billing | Name, email, Sign out, sign-ins, devices and keys | none |
 | Billing | Billing | Plan, credit, a code, credit added, prices | none |
 
 Lend folds into Models: "Lend this Mac" was the same switch as "Share with my other machines".
+
+Connections moved to Customize (below): Settings is how the app behaves, Customize is what the
+agent knows and can do. Its section stays in `design/settings.json` marked `"movedTo":
+"customize"` (with its rows, which the web's invitations still use) until both apps have moved;
+an app leaves a moved section out of Settings. `frog://settings/mcp` and
+`frog://settings/connections` open Customize › Connections.
 
 ### One list of rows
 
@@ -193,7 +198,8 @@ Lend folds into Models: "Lend this Mac" was the same switch as "Share with my ot
 ### Links
 
 - `frog.toys/settings/<section>` and `frog://settings/<section>` open that section. An old
-  section name (`mcp`, `energy`, `lend`) opens the section it became.
+  section name (`energy`, `lend`) opens the section it became; `mcp` and `connections` open
+  Customize › Connections.
 - `?settings=account|billing` on the web (Stripe and api.frog.toys land there) still opens
   Settings mode on that section.
 - A setting's row can link to its documentation page, and a documentation page can link to
@@ -246,3 +252,18 @@ Each step can ship by itself. Steps 2 and 4 don't depend on each other.
   repo; first-request HTML may need a build step that renders the pages.
 - **Mac window size.** Settings as a mode uses the main window's size. A small window
   makes for narrow settings rows; the minimum window width may need to rise.
+
+## Customize
+
+A third mode beside Documentation and Settings, built the same way: the sidebar becomes Back to
+app (esc) and five rows (Skills, Connections, Rules, Memory, Automations), the title bar shows
+breadcrumbs ("Customize › Skills"), the page has no title, and the column is 720 wide.
+
+- `design/customize.json` is the shared list: the five sections, old names (`mcp`,
+  `instructions`), and each list page's explainer card (one bold sentence, one more, a link to
+  `frog.toys/docs/<section>`).
+- The header's right side carries the page's one figure and one action ("Add a connection").
+- Weight and use figures (tokens a turn, uses in 30 days) come from the engine; until it
+  answers, an app leaves the figure out rather than draw a number it made up.
+- Detail pages (a skill, Add, a connection's review) are plain Settings rows.
+

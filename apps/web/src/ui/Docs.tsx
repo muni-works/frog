@@ -8,8 +8,9 @@ import { useResizable } from './resize'
 // pages and the main area showing one. The thread you were in stays mounted underneath, hidden,
 // so going back finds its transcript, draft, running turn and right sidebar tab as they were.
 
-/** Threads, Documentation, or Settings (./Settings.tsx): what the sidebar lists and the main area shows. */
-export type ShellMode = 'threads' | 'docs' | 'settings'
+/** Threads, Documentation, Settings (./Settings.tsx) or Customize (./Customize.tsx): what the
+ *  sidebar lists and the main area shows. */
+export type ShellMode = 'threads' | 'docs' | 'settings' | 'customize'
 
 /** Shown or hidden, never unmounted: React keeps the subtree's state while it's hidden. */
 export function Keep({ on, children }: { on: boolean; children: ReactNode }) {
@@ -23,8 +24,8 @@ interface ShellProps {
   before?: ReactNode
   /** The sidebar's first row, the same in every mode. */
   brand: ReactNode
-  side: { threads: ReactNode; docs: ReactNode; settings?: ReactNode }
-  main: { threads: ReactNode; docs: ReactNode; settings?: ReactNode }
+  side: { threads: ReactNode; docs: ReactNode; settings?: ReactNode; customize?: ReactNode }
+  main: { threads: ReactNode; docs: ReactNode; settings?: ReactNode; customize?: ReactNode }
   /** The right sidebar: it belongs to a thread, so it's hidden outside Threads mode. */
   inspector?: ReactNode
   /** Palette, overlays, toasts: over every mode. */
@@ -49,12 +50,14 @@ export function Shell({ mode, className, before, brand, side, main, inspector, a
         <Keep on={threads}>{side.threads}</Keep>
         {mode === 'docs' && side.docs}
         {mode === 'settings' && side.settings}
+        {mode === 'customize' && side.customize}
       </aside>
       <div className={`side-grip${dragging ? ' on' : ''}`} role="separator" aria-orientation="vertical" aria-label="Resize the sidebar"
         onPointerDown={(e) => grab(e, (e.currentTarget.previousElementSibling as HTMLElement | null)?.offsetWidth ?? width)} onDoubleClick={reset} />
       <Keep on={threads}>{main.threads}</Keep>
       {mode === 'docs' && main.docs}
       {mode === 'settings' && main.settings}
+      {mode === 'customize' && main.customize}
       <Keep on={threads}>{inspector}</Keep>
       {after}
     </div>

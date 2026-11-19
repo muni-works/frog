@@ -47,7 +47,7 @@ export function SideNav({ onNew, onSearch, onCustomize, onDocs, onSettings, newO
     <nav aria-label="Main" className="side-nav">
       <SideRow icon={IC.new} label="New session" kb="⌘N" on={newOn} onClick={onNew} />
       <SideRow icon={IC.search} label="Search" kb="⌘K" onClick={onSearch} />
-      <SideRow icon={IC.customize} label="Customize" onClick={onCustomize} title="Theme, density and detail" />
+      <SideRow icon={IC.customize} label="Customize" onClick={onCustomize} title="Skills, connections, rules, memory and automations" />
       {/* Documentation is hidden for now (Cam, 2026-11-19); `onDocs` stays wired for its return. */}
       {SHOW_DOCS && <SideRow icon={IC.docs} label="Documentation" onClick={onDocs} />}
       <SideRow icon={IC.settings} label="Settings" kb="⌘," onClick={onSettings} />
