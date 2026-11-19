@@ -31,6 +31,7 @@ mod call;
 mod compact;
 mod customize;
 mod dispatch;
+mod noting;
 mod permit;
 mod project;
 #[cfg(test)]
@@ -39,6 +40,8 @@ mod tests_compact;
 mod tests_customize;
 #[cfg(test)]
 mod tests_ingest;
+#[cfg(test)]
+mod tests_noting;
 #[cfg(test)]
 mod tests_prompt;
 mod turn;
@@ -1967,6 +1970,12 @@ struct Agent {
     undos: HashMap<String, crate::customize::Undo>,
     /// `Customize` offers the user declined this session: never offered again.
     declined: HashSet<String>,
+    /// The turn Frog last kept a note in: one a turn at most (`noting`).
+    noted_turn: Option<u64>,
+    /// "Remember that …" kept a note from the message this turn answers, so `Note` doesn't.
+    remembered: bool,
+    /// Files the `Read` tool opened this session: the only files a `read` note can come from.
+    read_by_frog: HashSet<PathBuf>,
     /// Notes that didn't fit the current model's index.
     notes_omitted: usize,
     /// Rule files for this project, and the scoped ones already shown this session.
@@ -2302,6 +2311,9 @@ impl Agent {
             user_words: Vec::new(),
             undos: HashMap::new(),
             declined: HashSet::new(),
+            noted_turn: None,
+            remembered: false,
+            read_by_frog: HashSet::new(),
             notes_omitted: 0,
             rules,
             repo_map: Default::default(),
@@ -2814,6 +2826,7 @@ impl Agent {
     }
 
     fn end_turn(&mut self, turn: u64, reason: EndReason) {
+        self.remembered = false;
         // Only a turn that finished its answer counts as the work being done.
         if reason == EndReason::Complete
             && self.cfg.git.open_pr_when_done == crate::config::OpenPr::Auto
@@ -3048,6 +3061,7 @@ impl Agent {
                     msg.push_str(&format!(" (redacted: {})", redacted.join(", ")));
                 }
                 msg.push_str(" — /forget removes it");
+                self.remembered = true;
                 self.notes = store.load();
                 self.apply_harness();
                 self.notice(Level::Info, msg);
@@ -3092,6 +3106,9 @@ impl Agent {
             }
             Op::Shell { command } => self.shell(&command).await,
             Op::Undo { undo } => self.customize_undo(&undo),
+            Op::NoteToRule { id, scope, place } => {
+                self.note_to_rule(&id, &scope, place.as_deref()).await
+            }
             Op::ApprovalDigest => {
                 let summary = self.digest.summary();
                 self.emit(Event::ApprovalDigest { summary });

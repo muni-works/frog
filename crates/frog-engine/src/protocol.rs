@@ -224,6 +224,20 @@ pub enum Op {
     Undo {
         undo: String,
     },
+    /// "Make it a rule" on a [`Event::Noted`] receipt (or a Memory row): proposes adding the
+    /// note to a rules file on the usual `Customize` card (`permission_request` with
+    /// `proposal`); approving it adds the line, removes the note, and emits
+    /// `customize_applied` whose undo puts both back.
+    NoteToRule {
+        /// The note's id.
+        id: String,
+        /// `project` or `everywhere`, as the receipt said.
+        #[serde(default = "project_scope")]
+        scope: String,
+        /// `project`: the repo's rules file, shared (default); `home`: your rules everywhere.
+        #[serde(default, rename = "where", skip_serializing_if = "Option::is_none")]
+        place: Option<String>,
+    },
     /// The app's current values of its settings (`design/settings.json` ids), so `Customize`
     /// can read them and quote the old value on a card. Optional; send again on change.
     Settings {
@@ -843,6 +857,28 @@ pub enum Event {
         undo: String,
         card: Box<Proposal>,
     },
+    /// Frog kept a note on its own (or the user's "remember that …"): the quiet receipt under
+    /// the reply (docs/customize-events.md, Noted). Undo with [`Op::Undo`] and `undo`, answered
+    /// by [`Event::CustomizeUndone`]; "Make it a rule" is [`Op::NoteToRule`].
+    Noted {
+        /// The `Note` tool call that kept it (empty for "remember that …").
+        item: String,
+        /// The turn it was noted in, so it sits under that turn's reply.
+        turn: Option<u64>,
+        /// The note's id within its scope.
+        id: String,
+        text: String,
+        /// `project` or `everywhere`.
+        scope: String,
+        /// The project's name ("pond"), or `everywhere`: "Noted for pond".
+        place: String,
+        /// `said`, `correction` or `read` (Frog on its own), or `asked` ("remember that …").
+        source: String,
+        /// For `read`: the file it came from, relative to the project.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        from: Option<String>,
+        undo: String,
+    },
     /// The answer to [`Op::Undo`]: `ok` false when nothing was undone, with why.
     CustomizeUndone {
         undo: String,
@@ -1126,6 +1162,7 @@ impl Event {
                 | Self::ItemsDiscarded { .. }
                 | Self::PermissionResolved { .. }
                 | Self::CustomizeApplied { .. }
+                | Self::Noted { .. }
                 | Self::CustomizeUndone { .. }
                 | Self::QuestionResolved { .. }
                 | Self::AutoApproved { .. }
@@ -1813,6 +1850,10 @@ pub struct Status {
     /// This session only reads (a read-only child): it never opens a PR.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub read_only: bool,
+}
+
+fn project_scope() -> String {
+    "project".into()
 }
 
 fn default_open_pr() -> String {

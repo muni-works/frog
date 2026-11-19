@@ -2806,6 +2806,83 @@
           "type": "object"
         },
         {
+          "description": "Frog kept a note on its own (or the user's \"remember that …\"): the quiet receipt under\nthe reply (docs/customize-events.md, Noted). Undo with [`Op::Undo`] and `undo`, answered\nby [`Event::CustomizeUndone`]; \"Make it a rule\" is [`Op::NoteToRule`].",
+          "properties": {
+            "created": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "event": {
+              "const": "noted",
+              "type": "string"
+            },
+            "from": {
+              "description": "For `read`: the file it came from, relative to the project.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "description": "The note's id within its scope.",
+              "type": "string"
+            },
+            "item": {
+              "description": "The `Note` tool call that kept it (empty for \"remember that …\").",
+              "type": "string"
+            },
+            "place": {
+              "description": "The project's name (\"pond\"), or `everywhere`: \"Noted for pond\".",
+              "type": "string"
+            },
+            "scope": {
+              "description": "`project` or `everywhere`.",
+              "type": "string"
+            },
+            "seq": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session": {
+              "type": "string"
+            },
+            "source": {
+              "description": "`said`, `correction` or `read` (Frog on its own), or `asked` (\"remember that …\").",
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "turn": {
+              "description": "The turn it was noted in, so it sits under that turn's reply.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "undo": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "item",
+            "id",
+            "text",
+            "scope",
+            "place",
+            "source",
+            "undo",
+            "seq",
+            "session",
+            "created"
+          ],
+          "type": "object"
+        },
+        {
           "description": "The answer to [`Op::Undo`]: `ok` false when nothing was undone, with why.",
           "properties": {
             "created": {
@@ -5143,6 +5220,68 @@
           "type": "object"
         },
         {
+          "description": "Frog kept a note on its own (or the user's \"remember that …\"): the quiet receipt under\nthe reply (docs/customize-events.md, Noted). Undo with [`Op::Undo`] and `undo`, answered\nby [`Event::CustomizeUndone`]; \"Make it a rule\" is [`Op::NoteToRule`].",
+          "properties": {
+            "event": {
+              "const": "noted",
+              "type": "string"
+            },
+            "from": {
+              "description": "For `read`: the file it came from, relative to the project.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "description": "The note's id within its scope.",
+              "type": "string"
+            },
+            "item": {
+              "description": "The `Note` tool call that kept it (empty for \"remember that …\").",
+              "type": "string"
+            },
+            "place": {
+              "description": "The project's name (\"pond\"), or `everywhere`: \"Noted for pond\".",
+              "type": "string"
+            },
+            "scope": {
+              "description": "`project` or `everywhere`.",
+              "type": "string"
+            },
+            "source": {
+              "description": "`said`, `correction` or `read` (Frog on its own), or `asked` (\"remember that …\").",
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "turn": {
+              "description": "The turn it was noted in, so it sits under that turn's reply.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "undo": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "item",
+            "id",
+            "text",
+            "scope",
+            "place",
+            "source",
+            "undo"
+          ],
+          "type": "object"
+        },
+        {
           "description": "The answer to [`Op::Undo`]: `ok` false when nothing was undone, with why.",
           "properties": {
             "event": {
@@ -6980,6 +7119,36 @@
           "required": [
             "op",
             "undo"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "\"Make it a rule\" on a [`Event::Noted`] receipt (or a Memory row): proposes adding the\nnote to a rules file on the usual `Customize` card (`permission_request` with\n`proposal`); approving it adds the line, removes the note, and emits\n`customize_applied` whose undo puts both back.",
+          "properties": {
+            "id": {
+              "description": "The note's id.",
+              "type": "string"
+            },
+            "op": {
+              "const": "note_to_rule",
+              "type": "string"
+            },
+            "scope": {
+              "default": "project",
+              "description": "`project` or `everywhere`, as the receipt said.",
+              "type": "string"
+            },
+            "where": {
+              "description": "`project`: the repo's rules file, shared (default); `home`: your rules everywhere.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "op",
+            "id"
           ],
           "type": "object"
         },

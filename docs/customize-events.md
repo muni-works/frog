@@ -176,6 +176,80 @@ description, 725-character schema) is sent only once the model calls or loads it
 small windows, where tools aren't deferred, the full definition rides each turn. Estimates are
 four characters a token.
 
+## Noted: Frog keeps a note on its own
+
+Frog notes durable things without being asked: a correction ("no, we use pnpm"), a stated
+preference, a lasting fact it read in the project. Each turn it may keep one, and the app draws
+a quiet line under that turn's reply (canvas frame M2 Noted): *Noted for pond*, the sentence,
+**Undo**, **Make it a rule**.
+
+Code: `crates/frog-engine/src/noting.rs` (the tool and every check) and
+`src/engine/noting.rs` (the setting, the receipt, undo, the rule).
+
+```json
+{
+  "type": "noted",
+  "item": "call_7",
+  "turn": 12,
+  "id": "the-staging-database-is-wiped-every-monday",
+  "text": "The staging database is wiped every Monday.",
+  "scope": "project",
+  "place": "pond",
+  "source": "said",
+  "undo": "note:project:9f2c4a1be03d7765:the-staging-database-is-wiped-every-monday"
+}
+```
+
+| field | meaning |
+| --- | --- |
+| `item` | the `Note` tool call that kept it (in the turn's items; draw the line after the reply, not at the call) |
+| `turn` | the turn it belongs to: draw it under that turn's reply |
+| `id`, `scope` | the note, as the Customize report names it (`scope`: `project` or `everywhere`) |
+| `text` | the note, one sentence, at most 160 characters |
+| `place` | "Noted for **pond**": the project's folder name, or `everywhere` for a note about the user |
+| `source` | `said` (the user stated it), `correction` (the user corrected Frog), `read` (Frog read it in a project file) |
+| `from` | only with `read`: the file, relative to the project |
+| `undo` | the handle for Undo |
+
+Durable: it replays with the transcript, and its Undo still works after a restart.
+
+- **Undo** sends `{"op":"undo","undo":"<handle>"}`, answered by `customize_undone` as for any
+  change. It removes exactly that note, and refuses (`ok: false`) when the note was edited
+  since or is already gone. The handle carries what was written, so it works from a replayed
+  receipt in a new engine.
+- **Make it a rule** sends `{"op":"note_to_rule","id":"<id>","scope":"project"}` (optionally
+  `"where":"home"` for the user's own rules everywhere; the default is the project's rules
+  file, shared). The engine shows the usual card (`permission_request` with `proposal`,
+  title "Make this a rule?", primary "Add rule"); approving adds the line, removes the note,
+  and emits `customize_applied`, whose Undo puts both back. Frog never writes a rule on its own.
+- Turning it off: the app setting `auto-note` (`design/settings.json`, tier `ask`, default
+  on), sent with `Op::Settings`. Off, the tool isn't offered and a call writes nothing. Without
+  an app, `[memory] auto_note = false` in config.toml. Never on in subagents, sessions another
+  session started, or small (Weak-tier) models, which can't do it reliably.
+- "remember that …" in a message still saves a note as before (with its notice) and counts as
+  the turn's one note.
+
+What can become a note, checked in Rust after the model proposes it (anything doubtful notes
+nothing):
+
+- One short sentence, three words or more, one a turn, not a duplicate of a note already kept.
+- Never a secret or personal data: keys, tokens, passwords, email addresses, phone numbers
+  are refused outright, not redacted.
+- Provenance: `said`/`correction` need the user's exact words from this turn (`quote`) *and*
+  the note's own words must mostly be the user's, so a real quote with text from a tool result,
+  page or MCP response attached is refused. `read` needs a file inside the project that Frog's
+  `Read` opened this session, the note's words must be in that file, and nothing that reads
+  like an instruction (imperative, or addressed to an agent) is kept. `read` notes are always
+  project notes. A turn nobody typed (a wake, a session started by another) notes nothing.
+- A note is always data to the model, never an instruction, framed in the prompt exactly as
+  `/remember` notes are. Notes are written to the list, not the prompt, mid-session: the
+  conversation already has the fact, and rebuilding the system prompt would re-prefill.
+
+Cost: the `Note` tool rides every turn while noting is on (it can't be deferred: the model
+uses it unprompted), about 176 tokens (705 characters), in the cached prefix. A turn that
+answers and then only notes (or notes and suggests a next step) ends there, so noting costs no
+extra model round, only the call's own output, about 40 tokens.
+
 ## Not here yet
 
 Automations ("keep doing this", N8), catalog search, and the card's drawing.
