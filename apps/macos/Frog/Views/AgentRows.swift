@@ -50,7 +50,7 @@ struct AgentRow: View {
             // Over an hour usually means a stale clock (a replayed start), not a real run.
             if secs >= 1, secs < 3600 { parts.append(ActivityWords.duration(secs)) }
         }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+        return parts.isEmpty ? nil : parts.joined(separator: ", ")
     }
 
     static func plan(_ agent: AgentRowInfo) -> (done: Int, total: Int)? {
@@ -70,7 +70,7 @@ struct AgentRow: View {
                     .lineLimit(1)
                     .layoutPriority(1)
                 if let detail {
-                    Text("· " + detail.text)
+                    Text(detail.text)
                         .font(.frog(size: 11.5))
                         .foregroundStyle(detail.color.map { AnyShapeStyle($0) } ?? AnyShapeStyle(.secondary))
                         .lineLimit(1)
@@ -180,7 +180,7 @@ struct AgentFoldRow: View {
                     .frame(width: AttentionMetrics.disclosure)
                 if list.done > 0 { Text("\(list.done) done") }
                 if list.failed > 0 {
-                    Text("\(list.done > 0 ? " · " : "")\(list.failed) failed").foregroundStyle(.red.opacity(0.8))
+                    Text("\(list.failed) failed").foregroundStyle(.red.opacity(0.8)).padding(.leading, list.done > 0 ? 10 : 0)
                 }
                 Spacer(minLength: 0)
             }

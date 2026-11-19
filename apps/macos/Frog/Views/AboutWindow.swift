@@ -160,7 +160,7 @@ enum FrogVersion {
     /// What a bug report wants: "Frog 0.7.0 (2004) · macOS 26.1".
     static var full: String {
         let os = ProcessInfo.processInfo.operatingSystemVersion
-        return "Frog \(short) (\(build)) · macOS \(os.majorVersion).\(os.minorVersion)"
+        return "Frog \(short) (\(build)), macOS \(os.majorVersion).\(os.minorVersion)"
     }
     /// The release's notes on GitHub (what Sparkle's appcast links to as well).
     static var releaseNotes: URL { repo.appending(path: "releases/tag/v\(short)") }

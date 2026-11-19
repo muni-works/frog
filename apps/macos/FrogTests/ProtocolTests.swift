@@ -75,7 +75,7 @@ final class ProtocolTests: XCTestCase {
         guard case .billingLimit(let b) = live.event else { return XCTFail() }
         XCTAssertEqual(b.window, "5h")
         XCTAssertEqual(b.balanceMicros, 4_200_000)
-        XCTAssertEqual(b.line, "5-hour allowance used · billing credit at usage prices · $4.20 left")
+        XCTAssertEqual(b.line, "5-hour allowance used, billing credit at usage prices, $4.20 left")
 
         // The end reason carries the same shape.
         let ended = try decode(#"{"seq":13,"session":"s","created":0,"event":"turn_ended","turn":2,"reason":{"type":"billing_limit","window":"credit","reason":"Insufficient credits"},"usage":{"context_tokens":null,"input_tokens":0,"output_tokens":0,"model_calls":0,"tokens_per_sec":null}}"#)
@@ -87,7 +87,7 @@ final class ProtocolTests: XCTestCase {
         // Old logs (or a bare window) still decode; the engine never sent balance.
         let old = try decode(#"{"seq":14,"session":"s","created":0,"event":"billing_limit","window":"weekly"}"#)
         guard case .billingLimit(let w) = old.event else { return XCTFail() }
-        XCTAssertEqual(w.line, "Weekly allowance used · billing credit at usage prices")
+        XCTAssertEqual(w.line, "Weekly allowance used, billing credit at usage prices")
         XCTAssertNil(w.reason)
 
         // No billing body ever renders as a provider dump.

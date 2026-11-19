@@ -68,7 +68,7 @@ struct DiagramCanvas: View {
     private func laneHeader(_ g: Diagram.Group, _ b: Diagram.Layout.NodeBox) -> some View {
         let members = diagram.nodes.filter { $0.group == g.id }
         let label = members.count > 1
-            ? "\(g.label ?? g.id) · \(members.map(\.label).joined(separator: ", ")) · \(members.count)"
+            ? "\(g.label ?? g.id), \(members.map(\.label).joined(separator: ", ")), \(members.count)"
             : (g.label ?? g.id)
         return Text(label)
             .font(.frog(size: 13, weight: .medium))
@@ -532,7 +532,7 @@ struct FittedDiagram: View {
         let bundles = inline.edges.filter { $0.bundle != nil }
         guard !bundles.isEmpty else { return nil }
         let count = bundles.reduce(0) { $0 + ($1.bundle?.count ?? 0) }
-        return "\(diagram.edges.count) messages in \(inline.edges.count) rows · \(bundles.count) bundles (\(count))"
+        return "\(diagram.edges.count) messages in \(inline.edges.count) rows, \(bundles.count) bundles (\(count))"
     }
 }
 

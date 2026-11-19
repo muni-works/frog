@@ -39,7 +39,7 @@ struct ModelLabel: View {
             HStack(spacing: 5) {
                 PlaceIcon(place: model.place)
                 Text(model.name).foregroundStyle(model.place.color.opacity(0.75))
-                Text("· \(model.stateLine ?? model.place.label)").foregroundStyle(.tertiary)
+                Text("\(model.stateLine ?? model.place.label)").foregroundStyle(.tertiary)
             }
             .lineLimit(1)
         case .menu:
@@ -62,14 +62,14 @@ struct ModelLabel: View {
                     }
                     Group {
                         if let line = model.stateLine {
-                            let text = [line, detail].compactMap { $0 }.joined(separator: " · ")
+                            let text = [line, detail].compactMap { $0 }.joined(separator: ", ")
                             if let symbol = model.state.symbol {
                                 Label(text, systemImage: symbol).labelStyle(StateLineStyle())
                             } else {
                                 Text(text)
                             }
                         } else {
-                            Text([showsPlace ? model.place.label : nil, detail].compactMap { $0 }.joined(separator: " · "))
+                            Text([showsPlace ? model.place.label : nil, detail].compactMap { $0 }.joined(separator: ", "))
                         }
                     }
                     .font(.caption)

@@ -7,9 +7,9 @@ final class EngineEndTests: XCTestCase {
     /// "call 2 done in 12.6s · first token 11.7s · … · ToolUse", timing traces, as if it crashed.
     func testAKilledEngineSaysSoNotItsTimingTraces() {
         let stderr = """
-        call 1 done in 6.3s · first token 5.7s · 117395 in, 48 out · ToolUse
-        call 2 thinking → vercel/zai/glm-5.3-flash · ~123386 tokens in · 50 tools · reply up to 16384
-        call 2 done in 12.6s · first token 11.7s · 117509 in, 73 out · ToolUse
+        call 1 done in 6.3s, first token 5.7s, 117395 in, 48 out, ToolUse
+        call 2 thinking → vercel/zai/glm-5.3-flash, ~123386 tokens in, 50 tools, reply up to 16384
+        call 2 done in 12.6s, first token 11.7s, 117509 in, 73 out, ToolUse
         """
         let line = EngineProcess.endDescription(stderr: stderr, out: "", signal: 15, exit: "signal 15")
         XCTAssertEqual(line, "The frog engine was stopped from outside frog (SIGTERM).")
@@ -18,10 +18,10 @@ final class EngineEndTests: XCTestCase {
     /// A real failure keeps its words: the error line, with the traces around it dropped.
     func testARealErrorKeepsItsLine() {
         let stderr = """
-        call 1 done in 2.0s · first token 1.0s · 10 in, 5 out · ToolUse
+        call 1 done in 2.0s, first token 1.0s, 10 in, 5 out, ToolUse
         thread 'main' panicked at src/engine/turn.rs:12:5:
         index out of bounds
-        call 2 thinking → m · ~10 tokens in · 1 tools · reply up to 100
+        call 2 thinking → m, ~10 tokens in, 1 tools, reply up to 100
         """
         let line = EngineProcess.endDescription(stderr: stderr, out: "", signal: 6, exit: "signal 6")
         XCTAssertEqual(line, "index out of bounds")

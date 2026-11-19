@@ -86,7 +86,7 @@ struct StepLine: Equatable {
             break
         case .ok, .failed:
             if let tests = item.result?.tests {
-                result = ["\(tests.passed) of \(tests.total)", time].filter { !$0.isEmpty }.joined(separator: " · ")
+                result = ["\(tests.passed) of \(tests.total)", time].filter { !$0.isEmpty }.joined(separator: ", ")
             } else if kind == .command {
                 result = place.isEmpty ? "" : "in \(place)"
             } else if diff == nil {
@@ -621,7 +621,7 @@ struct ThoughtLineView: View {
                 } content: {
                     Text(words).font(LineType.sans).foregroundStyle(Tokens.textSecondary).fixedSize().metricsFirstWord()
                     if let gist {
-                        Text(verbatim: "· \(gist)").font(LineType.sans).foregroundStyle(Tokens.textTertiary).lineLimit(1)
+                        Text(verbatim: gist).font(LineType.sans).foregroundStyle(Tokens.textTertiary).lineLimit(1)
                     }
                     Spacer(minLength: 0)
                 }
@@ -630,7 +630,7 @@ struct ThoughtLineView: View {
             .focusable()
             .onHover { hovered = $0 }
             .help(open ? "Hide the thought" : "Show the thought")
-            .metricsRow(.thought, [words, gist.map { "· \($0)" } ?? ""].filter { !$0.isEmpty }.joined(separator: " "),
+            .metricsRow(.thought, [words, gist ?? ""].filter { !$0.isEmpty }.joined(separator: " "),
                         key: item.id, fontSize: LineType.status.size)
             if open {
                 ThinkingOutline(item: item)

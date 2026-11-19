@@ -46,7 +46,7 @@ struct MachinesRows: View {
         Group {
             ForEach(devices.machines) { d in
                 Button { openMachine?(d.id) } label: {
-                    SettingsRow(d.name + (d.role == .thisMac ? "  ·  This Mac" : ""), description: d.hardwareLine) {
+                    SettingsRow(d.name + (d.role == .thisMac ? ", This Mac" : ""), description: d.hardwareLine) {
                         HStack(spacing: 8) {
                             Text(d.runningLine).font(.frog(size: 12)).foregroundStyle(d.model != nil ? Tokens.text : Tokens.textTertiary).lineLimit(1)
                             Circle().fill(Tokens.placeLocal.opacity(d.online ? 1 : 0.25)).frame(width: 7, height: 7)
@@ -92,7 +92,7 @@ struct FrogCloudRows: View {
                 SignInRows()
             } else {
                 SettingsRow("Account") {
-                    SettingsValue(account.me.map { [$0.name, $0.email].compactMap { $0 }.joined(separator: " · ") } ?? "Signed in")
+                    SettingsValue(account.me.map { [$0.name, $0.email].compactMap { $0 }.joined(separator: ", ") } ?? "Signed in")
                 }
             }
             if let me = account.me {
@@ -321,7 +321,7 @@ struct SpentRow: View {
     @State private var stats = SettingsBindings.stats
     var body: some View {
         SettingsRow(row) {
-            SettingsValue("\(ModelStats.spent(stats.spentThisWeek)) this week · \(ModelStats.spent(stats.spentThisMonth)) this month",
+            SettingsValue("\(ModelStats.spent(stats.spentThisWeek)) this week, \(ModelStats.spent(stats.spentThisMonth)) this month",
                           help: "Estimated on this Mac from each model's prices; Billing has what Frog Cloud charged")
         }
     }

@@ -129,7 +129,7 @@ struct EventLine: Equatable {
     var session: String?
 
     /// The collapsed line as text: "monitor mon-8 · timed out · no match after 2400s".
-    var line: String { ([title] + fields.filter { !$0.isEmpty }).joined(separator: " · ") }
+    var line: String { ([title] + fields.filter { !$0.isEmpty }).joined(separator: ", ") }
 
     init(glyph: String, title: String, fields: [String], payload: String, warning: Bool = false, log: String? = nil, session: String? = nil) {
         self.glyph = glyph
@@ -170,7 +170,7 @@ struct EventLine: Equatable {
         let first = lines.first.map(String.init) ?? ""
         self.init(
             glyph: message.isSystem ? "bell" : "arrow.turn.down.right",
-            title: "\(who) · \(message.isSystem ? "notice" : "message")",
+            title: "\(who), \(message.isSystem ? "notice" : "message")",
             fields: [first],
             payload: lines.count > 1 || first.count > 140 ? message.body : "",
             session: message.isSystem ? nil : message.from)
@@ -202,7 +202,6 @@ struct EventLineView: View {
                     .frame(width: TurnSpace.Inset.icon)
                 title
                 ForEach(Array(event.fields.filter { !$0.isEmpty }.enumerated()), id: \.offset) { i, field in
-                    Text("·").foregroundStyle(.tertiary)
                     Text(field)
                         .lineLimit(1)
                         .truncationMode(.middle)

@@ -179,7 +179,7 @@ struct PrStackMenu: View {
     static func detail(_ pr: ComposerModel.Pr) -> String {
         if pr.access == false { return "no access" }
         switch pr.state {
-        case .failing, .checks: return "\(pr.state.short) · \(pr.checks.ok) of \(pr.checks.total)"
+        case .failing, .checks: return "\(pr.state.short), \(pr.checks.ok) of \(pr.checks.total)"
         default: return pr.state.short
         }
     }

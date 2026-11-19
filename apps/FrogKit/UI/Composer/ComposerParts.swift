@@ -74,7 +74,7 @@ struct QueuedMessages: View {
     var body: some View {
         VStack(alignment: .leading, spacing: TurnSpace.Inset.tight) {
             HStack(alignment: .firstTextBaseline, spacing: TurnSpace.Inset.row) {
-                Text("QUEUED · \(conversation.queue.count)")
+                Text("QUEUED, \(conversation.queue.count)")
                     .font(.frog(size: Tokens.Size.label, weight: .semibold))
                     .tracking(0.6)
                     .foregroundStyle(Tokens.textSecondary)
