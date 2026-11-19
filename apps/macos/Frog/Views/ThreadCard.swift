@@ -220,49 +220,43 @@ private struct ThreadCard: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Tokens.hover, in: .rect(cornerRadius: 8))
             }
-            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 6) {
+            // One glyph column, then the value: every line starts on the same edge and the
+            // glyph says what the line is. A line with nothing to say isn't drawn.
+            VStack(alignment: .leading, spacing: 7) {
                 if session.isCloud || place != nil {
-                    GridRow {
-                        label("Where")
-                        HStack(spacing: 5) {
-                            // The thread's own place: a cloud glyph when it runs in the cloud.
-                            if session.isCloud {
-                                Image(systemName: "cloud").font(.frog(size: 11)).foregroundStyle(.secondary)
-                                    .help("This thread runs in Frog Cloud")
-                            }
-                            if let place { Text(place).font(.frog(size: 12)).lineLimit(1) }
-                        }
+                    metaLine {
+                        Image(systemName: session.isCloud ? "cloud" : "folder")
+                            .help(session.isCloud ? "Runs in Frog Cloud" : "Project")
+                    } value: {
+                        if let place { Text(place.base) }
+                        if let wt = place?.worktree { Text(wt).foregroundStyle(.tertiary) }
                     }
                 }
                 if !session.model.isEmpty {
-                    GridRow {
-                        // No "Model" label: the name and its dot say what it is.
-                        Color.clear.frame(width: 1, height: 1)
-                        // Where the model runs is its dot's color (green cloud, blue local),
-                        // never words: "Frog Cloud" beside a cloud thread read as either.
-                        let id = ModelIdentity.of(session.model, in: [])
-                        HStack(spacing: 5) {
-                            Circle().fill(Color.place(id.place)).frame(width: 6, height: 6)
-                            Text(id.name).font(.frog(size: 12)).lineLimit(1)
-                        }
-                        .help(id.place.label)
+                    // Where the model runs is its dot's color (green cloud, blue local), never words.
+                    let id = ModelIdentity.of(session.model, in: [])
+                    metaLine {
+                        Circle().fill(Color.place(id.place)).frame(width: 6, height: 6)
+                    } value: {
+                        Text(id.name)
+                    }
+                    .help(id.place.label)
+                }
+                if let git, git.changed > 0 {
+                    metaLine {
+                        Image(systemName: "plus.forwardslash.minus")
+                    } value: {
+                        Text("+\(git.added)").foregroundStyle(Tokens.placeCloud)
+                        Text("−\(git.removed)").foregroundStyle(Tokens.warn)
+                        Text("\(git.changed) file\(git.changed == 1 ? "" : "s")").foregroundStyle(.secondary)
                     }
                 }
                 if let spent {
-                    GridRow {
-                        label("Spent")
-                        Text(spent).font(.frog(size: 12)).monospacedDigit().lineLimit(1)
-                    }
-                }
-                if let git, git.changed > 0 {
-                    GridRow {
-                        label("Changes")
-                        HStack(spacing: 6) {
-                            Text("+\(git.added)").foregroundStyle(Tokens.placeCloud)
-                            Text("−\(git.removed)").foregroundStyle(Tokens.warn)
-                            Text("\(git.changed) file\(git.changed == 1 ? "" : "s")").foregroundStyle(.secondary)
-                        }
-                        .font(.frog(size: 12)).monospacedDigit()
+                    metaLine {
+                        Image(systemName: "dollarsign")
+                    } value: {
+                        Text(spent.tokens)
+                        if let d = spent.dollars { Text(d).foregroundStyle(.secondary) }
                     }
                 }
             }
@@ -303,8 +297,15 @@ private struct ThreadCard: View {
         .padding(8)
     }
 
-    private func label(_ s: String) -> some View {
-        Text(s).font(.frog(size: 11)).foregroundStyle(.tertiary)
+    /// A metadata line: a 14 pt glyph column, then the value's parts 6 pt apart.
+    private func metaLine<G: View, V: View>(@ViewBuilder glyph: () -> G, @ViewBuilder value: () -> V) -> some View {
+        HStack(spacing: 8) {
+            glyph()
+                .font(.frog(size: 11)).foregroundStyle(.secondary)
+                .frame(width: 14)
+            HStack(spacing: 6) { value() }
+                .font(.frog(size: 12)).monospacedDigit().lineLimit(1)
+        }
     }
 
     private var title: String {
@@ -331,26 +332,23 @@ private struct ThreadCard: View {
     }
 
     /// Tokens and dollars over the loaded thread's turns; nil when it isn't loaded.
-    private var spent: String? {
+    private var spent: (tokens: String, dollars: String?)? {
         guard let c = library.conversation(session.id) else { return nil }
         let usages = c.turns.compactMap(\.usage)
         guard !usages.isEmpty else { return nil }
         let tokens = usages.reduce(UInt64(0)) { $0 + $1.inputTokens + $1.outputTokens }
         let costs = usages.compactMap { ModelStats.shared.cost(of: $0, spec: $0.model ?? session.model) }
-        let dollars = costs.isEmpty ? nil : Dollars.format(costs.reduce(0, +))
-        return ["\(tokens.tokens) tokens", dollars].compactMap { $0 }.joined(separator: ", ")
+        return ("\(tokens.tokens) tokens", costs.isEmpty ? nil : Dollars.format(costs.reduce(0, +)))
     }
 
     /// The open permission ask, when the thread is loaded and waiting on one.
     private var permission: PermissionRequest? { library.conversation(session.id)?.permission }
 
-    /// "frog   gateway-auth": the folder, then the worktree when there is one. Chats, and a
-    /// cloud thread with no project of its own, have none (the cloud glyph says where).
-    private var place: String? {
+    /// The folder, and the worktree when there is one. Chats, and a cloud thread with no
+    /// project of its own, have none (the cloud glyph alone says where).
+    private var place: (base: String, worktree: String?)? {
         guard !session.isChat, let folder = session.folder else { return nil }
         if session.isCloud && session.cwd == "/Frog Cloud" { return nil }
-        let base = folder.lastPathComponent
-        if let wt = SessionList.worktreeName(folder) { return "\(base)   \(wt)" }
-        return base
+        return (folder.lastPathComponent, SessionList.worktreeName(folder))
     }
 }
