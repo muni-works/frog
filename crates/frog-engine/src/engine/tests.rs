@@ -4158,7 +4158,7 @@ async fn turns_write_a_summary_that_recall_and_remember_that_find() {
     // /recall answers from the summary without a model call, by keyword and by file.
     h.ops
         .send(Op::Submit {
-            typed: false,
+            typed: true,
             text: "/recall widget paint".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -4175,7 +4175,7 @@ async fn turns_write_a_summary_that_recall_and_remember_that_find() {
     assert!(n.contains("files: src/widget.rs"));
     h.ops
         .send(Op::Submit {
-            typed: false,
+            typed: true,
             text: "/recall file:widget.rs".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -4210,7 +4210,7 @@ async fn turns_write_a_summary_that_recall_and_remember_that_find() {
     // The note is in the next turn's system prompt and Recall finds both sources.
     h.ops
         .send(Op::Submit {
-            typed: false,
+            typed: true,
             text: "/recall lazily".into(),
             images: Vec::new(),
             more: Vec::new(),
