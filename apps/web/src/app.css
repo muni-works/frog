@@ -43,7 +43,8 @@ a { color: var(--frog); }
 .home-sub p { margin: 0; }
 .home-sub b { color: var(--fg); font-weight: 600; }
 .starters { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
-.titlebar { display: flex; align-items: center; gap: 10px; height: 52px; flex: none; padding: 0 8px 0 20px; }
+/* The title row is an opaque surface in every mode (docs/design/chrome/spec.md, 3): pages scroll in their own .scroll beneath it. */
+.titlebar { display: flex; align-items: center; gap: 10px; height: 52px; flex: none; padding: 0 8px 0 20px; background: var(--canvas); position: relative; z-index: 3; }
 .scroll { flex: 1; overflow-y: auto; display: flex; justify-content: center; padding: 20px 0 12px; } /* the gutter is the column's own (transcript.css) */
 .col { width: 100%; max-width: 720px; display: flex; flex-direction: column; gap: 12px; } /* Settings and Documentation pages; the transcript's own column is .tx (transcript.css) */
 .dock { display: flex; justify-content: center; padding: 6px 0 12px; container: dock / inline-size; }

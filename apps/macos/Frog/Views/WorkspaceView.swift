@@ -93,6 +93,8 @@ struct WorkspaceView: View {
     /// What the window controls add to the toolbar's own trailing inset, so the capsule stands
     /// 8 from the window's edge (spec.md, 1; measured by docs/design/chrome/parity).
     static let controlsTrailing: CGFloat = 0
+    /// Between a mode's header items and the window controls.
+    static let headerGap: CGFloat = 12
     /// Narrowest a column may get; a card that would squeeze it further stays folded.
     static let minColumn: CGFloat = 520
     /// Split panes accept narrower columns: that's the point of splitting.
@@ -537,6 +539,11 @@ struct WorkspaceView: View {
             docsLayer
             settingsLayer
             customizeLayer
+            // The title row is an opaque surface over a mode's page: it scrolls beneath the
+            // crumbs and controls, never through them (docs/design/chrome/spec.md, 3).
+            if inMode {
+                HeaderSurface().padding(.leading, extent(sessions: docked.sessions))
+            }
 
             GeometryReader { geo in
                 sessions(room: max(120, geo.size.height))
@@ -748,15 +755,14 @@ struct WorkspaceView: View {
             ToolbarItem(placement: .navigation) { titleBar }
                 .sharedBackgroundVisibility(.hidden)
             ToolbarSpacer(.flexible)
-            // Customize: the page's one figure and one action, at the header's right.
-            if panes.mode == .customize {
-                ToolbarItem(placement: .primaryAction) { CustomizeHeaderTrailing(panes: panes) }
-                    .sharedBackgroundVisibility(.hidden)
-            }
             // The window controls (docs/design/chrome/spec.md, 1): Split, Commands and the
             // inspector toggle, rightmost, in one capsule Frog draws (the web draws the same).
+            // A mode's own header items (Customize's figure and action) share the item, left of
+            // the capsule with a gap, so they can never run under it (spec.md, 3).
             ToolbarItem(placement: .primaryAction) {
-                WindowControls(
+                HStack(spacing: Self.headerGap) {
+                    if panes.mode == .customize { CustomizeHeaderTrailing(panes: panes) }
+                    WindowControls(
                     canSplit: panes.canSplit && !inMode,
                     paletteOn: focused.ui.paletteShown,
                     inspectorOn: changesVisible(focused) && !inMode,
@@ -766,6 +772,7 @@ struct WorkspaceView: View {
                     splitDown: { split(nil, .bottom) },
                     palette: { focused.ui.paletteShown.toggle() },
                     inspector: { toggleChanges(focused) })
+                }
                 .padding(.trailing, Self.controlsTrailing)
             }
             .sharedBackgroundVisibility(.hidden)
@@ -1157,5 +1164,22 @@ private struct FolderDocument: ViewModifier {
     let folder: URL?
     func body(content: Content) -> some View {
         if let folder { content.navigationDocument(folder) } else { content }
+    }
+}
+
+/// The title row's surface over a page: the canvas, from the page's top up through the title
+/// bar, so what scrolls under the toolbar is hidden behind it (docs/design/chrome/spec.md, 3).
+struct HeaderSurface: View {
+    var body: some View {
+        // Laid out at the safe area's top with no height, drawing the title bar's height above
+        // it: the band covers exactly the title row, whatever its height.
+        GeometryReader { g in
+            FrogCanvas.color
+                .frame(width: g.size.width, height: g.safeAreaInsets.top)
+                .offset(y: -g.safeAreaInsets.top)
+        }
+        .frame(height: 0)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
