@@ -32,15 +32,19 @@ final class CustomizeModeTests: XCTestCase {
 
     // MARK: The list and the mode
 
-    func testFiveSectionsEachWithAnExplainerAndADocsLink() {
-        XCTAssertEqual(catalog.sections.map(\.label), ["Skills", "Connections", "Rules", "Memory", "Automations"])
-        for s in catalog.sections {
+    func testFiveSectionsEachWithAnExplainerAndADocsLink() throws {
+        let url = try XCTUnwrap(Bundle.main.url(forResource: "customize", withExtension: "json"))
+        let all = try JSONDecoder().decode(CustomizeCatalog.self, from: Data(contentsOf: url))
+        XCTAssertEqual(all.sections.map(\.label), ["Skills", "Connections", "Rules", "Memory", "Automations"])
+        // This build draws Connections; the other pages come next, and stay out of sight till then.
+        XCTAssertEqual(catalog.sections.map(\.id), ["connections"])
+        for s in all.sections {
             XCTAssertEqual(s.explainer.href, "https://frog.toys/docs/\(s.id)")
             XCTAssertTrue(s.explainer.link.hasPrefix("How "), s.id)
             XCTAssertFalse(s.explainer.bold.isEmpty)
             XCTAssertFalse(s.explainer.rest.isEmpty)
         }
-        XCTAssertFalse(catalog.sections.map(\.label).contains("Instructions"), "the name Instructions is retired")
+        XCTAssertFalse(all.sections.map(\.label).contains("Instructions"), "the name Instructions is retired")
     }
 
     func testConnectionsLeftSettings() {
@@ -50,26 +54,21 @@ final class CustomizeModeTests: XCTestCase {
         XCTAssertFalse(settings.rows.contains { $0.id.hasPrefix("mcp-") })
     }
 
-    func testModeRemembersItsSectionAndTakesOldNames() {
+    func testModeRemembersItsPage() {
         let panes = Panes(Workspace(folder: URL(fileURLWithPath: "/tmp/demo"), fresh: true))
         defer { panes.stopAll() }
         CustomizeStore.loads = false
         defer { CustomizeStore.loads = true }
         panes.showCustomize()
         XCTAssertEqual(panes.mode, .customize)
-        XCTAssertEqual(panes.customizeSection, "skills", "Skills the first time")
-        panes.showCustomize("instructions")
-        XCTAssertEqual(panes.customizeSection, "rules")
-        panes.customizePage = .skill("commit")
+        XCTAssertEqual(panes.customizeSection, "connections")
+        panes.customizePage = .add("connections")
         panes.backToApp()
         XCTAssertEqual(panes.mode, .threads)
         panes.showCustomize()
-        XCTAssertEqual(panes.customizeSection, "rules", "the window keeps its last section")
-        XCTAssertEqual(panes.customizePage, .skill("commit"), "and the page under it")
-        panes.showCustomize("memory")
-        XCTAssertNil(panes.customizePage, "another section starts at its list")
-        panes.showCustomize("nonsense")
-        XCTAssertEqual(panes.customizeSection, "memory")
+        XCTAssertEqual(panes.customizePage, .add("connections"), "the window keeps its page")
+        panes.showCustomize("skills")
+        XCTAssertEqual(panes.customizeSection, "connections", "a section this build doesn't draw changes nothing")
     }
 
     /// Everything that used to open Settings › Connections opens Customize › Connections.
@@ -91,8 +90,8 @@ final class CustomizeModeTests: XCTestCase {
     }
 
     func testBreadcrumbs() {
-        XCTAssertEqual(CustomizeCrumbs.title(section: "skills", page: nil), "Customize › Skills")
-        XCTAssertEqual(CustomizeCrumbs.title(section: "skills", page: .skill("release-notes")), "Customize › Skills › /release-notes")
+        XCTAssertEqual(CustomizeCrumbs.title(section: "connections", page: nil), "Customize › Connections")
+        XCTAssertEqual(CustomizeCrumbs.title(section: "connections", page: .add("connections")), "Customize › Connections › Add")
         let d = ServerDraft(name: "postgres", command: "npx", args: ["-y", "pg"])
         XCTAssertEqual(CustomizeCrumbs.title(section: "connections", page: .review(d)), "Customize › Connections › Add › postgres")
         var went: CustomizePage?? = .none
@@ -121,13 +120,6 @@ final class CustomizeModeTests: XCTestCase {
         let s = try JSONDecoder().decode([CustomizeSkill].self, from: Data(json.utf8))[0]
         XCTAssertTrue(s.builtIn)
         XCTAssertNil(s.file)
-    }
-
-    func testSkillGroups() {
-        let skills = [CustomizeSkill(name: "a", description: "", path: "/a", project: true),
-                      CustomizeSkill(name: "b", description: "", path: "/b", project: false)]
-        XCTAssertEqual(SkillsPage.groups(skills, project: "pond").map(\.label), ["In pond", "Everywhere"])
-        XCTAssertEqual(SkillsPage.groups([skills[1]], project: nil).map(\.label), ["Everywhere"])
     }
 
     // MARK: VoiceOver
@@ -456,15 +448,8 @@ final class CustomizeModeTests: XCTestCase {
         CustomizeStore.loads = false
         defer { CustomizeStore.loads = true }
         let pages: [(String, String, CustomizePage?, Bool)] = [
-            ("skills", "skills", nil, false),
-            ("skills", "skills-with-engine-report", nil, true),
-            ("connections", "connections-with-engine-report", nil, true),
-            ("memory", "memory-with-engine-report", nil, true),
             ("connections", "connections", nil, false),
-            ("rules", "rules", nil, false),
-            ("memory", "memory", nil, false),
-            ("automations", "automations", nil, false),
-            ("skills", "skill", .skill("release-notes"), false),
+            ("connections", "connections-with-engine-report", nil, true),
             ("connections", "add", .add("connections"), false),
             ("connections", "review", .review(ServerDraft.parse("https://mcp.supabase.com/mcp")!), false),
         ]
@@ -490,7 +475,7 @@ final class CustomizeModeTests: XCTestCase {
         CustomizeStore.loads = false
         defer { CustomizeStore.loads = true }
         let cases: [(String, String, CustomizePage?)] = [
-            ("memory", "memory", nil), ("connections", "connections", nil), ("skills", "skill", .skill("release-notes")),
+            ("connections", "connections", nil),
             ("connections", "review", .review(ServerDraft.parse("https://mcp.supabase.com/mcp")!)),
         ]
         for (look, name) in [(NSAppearance.Name.darkAqua, "dark"), (.aqua, "light")] {
