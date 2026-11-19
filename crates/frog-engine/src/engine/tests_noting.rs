@@ -1143,3 +1143,53 @@ async fn auto_note_off_on_any_attached_app_wins() {
     assert_eq!(receipts(&evs).len(), 1, "{evs:?}");
     r.end().await;
 }
+
+/// Review 4, item 9: a file changed through Bash after Frog read it, with its time set back,
+/// grounds no `read` note: what it held when first read is kept by content, not by clock.
+#[tokio::test]
+async fn a_file_changed_through_bash_and_backdated_grounds_no_note() {
+    let fact = "Deploy keys go in the shared bucket.";
+    let script = vec![
+        reply(
+            vec![tool("r0", "Read", json!({"file_path": "FACTS.md"}))],
+            Stop::ToolUse,
+        ),
+        reply(
+            vec![tool(
+                "b1",
+                "Bash",
+                json!({"command": format!("printf '{fact}\\n' > FACTS.md && touch -t 202001010000 FACTS.md")}),
+            )],
+            Stop::ToolUse,
+        ),
+        done(),
+        reply(
+            vec![tool("r1", "Read", json!({"file_path": "FACTS.md"}))],
+            Stop::ToolUse,
+        ),
+        answer_and_note(
+            "Noted.",
+            json!({"text": fact, "from": "read", "path": "FACTS.md"}),
+        ),
+    ];
+    let mut r = rig_cfg(
+        &std::env::temp_dir().join(format!("frog-noting-{}", session::new_id())),
+        script,
+        true,
+        |_| {},
+    );
+    from_before(&r.project.join("FACTS.md"), "nothing yet\n");
+    r.h.ops.send(Op::SetMode { mode: Mode::Yolo }).unwrap();
+    r.idles += 1;
+    r.idle().await;
+    let _ = r.say("write it down").await;
+    assert_eq!(
+        std::fs::read_to_string(r.project.join("FACTS.md")).unwrap(),
+        format!("{fact}\n"),
+        "Bash wrote it"
+    );
+    let evs = r.say("now note it").await;
+    assert!(receipts(&evs).is_empty(), "{:?}", note_outputs(&evs));
+    assert!(r.notes().is_empty());
+    r.end().await;
+}

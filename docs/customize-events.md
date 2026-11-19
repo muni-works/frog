@@ -363,9 +363,15 @@ nothing):
   quote. A correction may end by naming what it
   replaces (", not npm"). So a real quote with text from a tool result, page, MCP response or
   another part of the message attached is refused. `read` needs a file inside the project that
-  a `Read` call succeeded on this session, that Frog's Edit or Write didn't change and that
-  nothing changed since the engine started (so never text the model wrote itself), and every content word, quantifier and number of the note
-  must be in that file. `read` notes
+  a `Read` call succeeded on this session, that Frog's Edit or Write didn't change, whose time
+  is from before the session began, and whose content is still exactly what that first Read saw
+  (a hash, checked again after every tool call but a Read, so a change through Bash with its
+  time set back is caught too), and every content word, quantifier and number of the note
+  must be in that file. What that guarantees: nothing this session wrote to the file after
+  Frog first read it, by any tool, and nothing its Edit or Write wrote at all. What it
+  doesn't: text an earlier session wrote (Frog's Write or Bash in another session, committed
+  or not, is the repo's text now), and a file this session wrote through Bash before its first
+  Read with the time set back. `read` notes
   are always project notes. A turn nobody typed (a wake, a session started by another) notes
   nothing.
 - Nothing that reads like an instruction (imperative, or addressed to an agent) is kept, of

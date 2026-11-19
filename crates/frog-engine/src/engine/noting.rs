@@ -18,6 +18,18 @@ const MAX_ISSUED: usize = 500;
 /// The largest file a `read` note is checked against.
 const MAX_FILE: u64 = 1 << 20;
 
+/// A file's content hash, `None` if it can't be read or is over [`MAX_FILE`].
+fn content_hash(path: &Path) -> Option<u64> {
+    use std::hash::{Hash, Hasher};
+    if std::fs::metadata(path).ok()?.len() > MAX_FILE {
+        return None;
+    }
+    let bytes = std::fs::read(path).ok()?;
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut h);
+    Some(h.finish())
+}
+
 impl Agent {
     /// Whether Frog notes things on its own in this session: never for a subagent or a session
     /// another one started (its "user" is an agent), nor on a small model, which can't do it
@@ -58,8 +70,21 @@ impl Agent {
         }
         for p in paths {
             let path = self.ctx.resolve(p);
-            self.read_by_frog
-                .insert(std::fs::canonicalize(&path).unwrap_or(path));
+            let path = std::fs::canonicalize(&path).unwrap_or(path);
+            self.read_hashes
+                .entry(path.clone())
+                .or_insert_with(|| content_hash(&path));
+            self.read_by_frog.insert(path);
+        }
+    }
+
+    /// After a tool call that may write (anything but a Read): a read file whose content
+    /// moved from what its first read saw is the session's doing, not a fact Frog read.
+    pub(super) fn note_changes_after_read(&mut self) {
+        for (path, first) in &self.read_hashes {
+            if !self.changed_after_read.contains(path) && content_hash(path) != *first {
+                self.changed_after_read.insert(path.clone());
+            }
         }
     }
 
@@ -133,6 +158,12 @@ impl Agent {
         let meta = std::fs::metadata(&abs).ok()?;
         // Changed since this engine started (Frog's Bash, or anyone): not a fact Frog read.
         if meta.len() > MAX_FILE || meta.modified().ok()? >= self.started {
+            return None;
+        }
+        // And by content, which a backdated time can't hide: it holds what its first read
+        // saw, and never held anything else after a tool call since.
+        let first = self.read_hashes.get(&abs).copied().flatten()?;
+        if self.changed_after_read.contains(&abs) || content_hash(&abs) != Some(first) {
             return None;
         }
         let text = std::fs::read_to_string(&abs).ok()?;

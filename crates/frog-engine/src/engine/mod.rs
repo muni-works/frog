@@ -2032,6 +2032,13 @@ struct Agent {
     notes_per_turn: bool,
     /// Files a `Read` call succeeded on this session: the only files a `read` note can come from.
     read_by_frog: HashSet<PathBuf>,
+    /// What each of those held when first read (a content hash; `None`: unreadable or too
+    /// big then). A `read` note needs the file to hold exactly that still, and never to have
+    /// held anything else after a tool call since: changed by any tool, Bash included, with
+    /// its time set back or not, it's no longer a fact Frog read (review 4, item 9).
+    read_hashes: HashMap<PathBuf, Option<u64>>,
+    /// Read files whose content changed after their first read (seen after a tool call).
+    changed_after_read: HashSet<PathBuf>,
     /// Files Frog's Edit or Write changed this session: the model's own text, never a `read`
     /// note's grounds (nor is anything changed since `started`, by Bash or anyone).
     written_by_frog: HashSet<PathBuf>,
@@ -2396,6 +2403,8 @@ impl Agent {
             notes_in_prompt: HashSet::new(),
             notes_per_turn: false,
             read_by_frog: HashSet::new(),
+            read_hashes: HashMap::new(),
+            changed_after_read: HashSet::new(),
             written_by_frog: HashSet::new(),
             started: resumed_created
                 .and_then(|ms| u64::try_from(ms).ok())
