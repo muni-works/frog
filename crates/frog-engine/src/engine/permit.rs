@@ -308,6 +308,7 @@ impl Agent {
             let decision = rx.await.unwrap_or(Decision::Deny);
             self.shared.waits.lock().unwrap().remove(&id);
             self.emit(Event::PermissionResolved {
+                outcome: None,
                 id,
                 decision,
                 item: Some(item.into()),
@@ -743,6 +744,7 @@ impl Agent {
         }
         self.shared.waits.lock().unwrap().remove(&id);
         self.emit(Event::PermissionResolved {
+            outcome: None,
             id,
             decision,
             item: Some(item.into()),
@@ -1334,6 +1336,7 @@ arrives as a <session-message from=\"parent\"> in this turn."
         self.timing.user_ms += ms(asked.elapsed());
         self.shared.waits.lock().unwrap().remove(&id);
         self.emit(Event::PermissionResolved {
+            outcome: None,
             id,
             decision,
             item: Some(item.into()),

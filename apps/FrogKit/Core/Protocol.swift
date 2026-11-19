@@ -63,7 +63,10 @@ enum Op: Encodable, Sendable {
     /// `from`). The client that can host sessions carries it out.
     case continueSession(from: String, why: String)
     /// `more`: further messages sent with this one (queued follow-ups), run as the same turn.
-    case submit(String, images: [ToolImage] = [], more: [MessagePart] = [])
+    /// `typed`: the person typed (or dictated) this text in the composer. Only typed text is
+    /// their own words to the engine (a Customize ask, a note, "remember …"); the app's own
+    /// prompts (git actions, starters, deep links, replays) leave it false.
+    case submit(String, images: [ToolImage] = [], more: [MessagePart] = [], typed: Bool = false)
     case shell(String)
     /// A press on a `Present` actions button; runs a turn with `send` (or the label).
     case act(label: String, send: String)
@@ -145,17 +148,18 @@ enum Op: Encodable, Sendable {
         case deadline, pr, repo, number
         case decline, servers, tools
         case values, scope
-        case choice, customize, undo, notes
+        case choice, customize, undo, notes, typed
     }
 
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: Key.self)
         switch self {
-        case .submit(let text, let images, let more):
+        case .submit(let text, let images, let more, let typed):
             try c.encode("submit", forKey: .op)
             try c.encode(text, forKey: .text)
             if !images.isEmpty { try c.encode(images, forKey: .images) }
             if !more.isEmpty { try c.encode(more, forKey: .more) }
+            if typed { try c.encode(true, forKey: .typed) }
         case .act(let label, let send):
             try c.encode("act", forKey: .op)
             try c.encode(label, forKey: .label)
@@ -908,27 +912,32 @@ struct ToolImage: Codable, Sendable, Hashable {
 }
 
 /// One message the user typed, when several go as one turn (`Op.submit`'s `more`).
+/// `typed`: as on `Op.submit`, this part's own (a queued git action's prompt stays false).
 struct MessagePart: Codable, Sendable, Hashable {
     var text: String
     var images: [ToolImage] = []
+    var typed = false
 
-    init(text: String, images: [ToolImage] = []) {
+    init(text: String, images: [ToolImage] = [], typed: Bool = false) {
         self.text = text
         self.images = images
+        self.typed = typed
     }
 
-    private enum Key: String, CodingKey { case text, images }
+    private enum Key: String, CodingKey { case text, images, typed }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Key.self)
         text = try c.decode(String.self, forKey: .text)
         images = try c.decodeIfPresent([ToolImage].self, forKey: .images) ?? []
+        typed = try c.decodeIfPresent(Bool.self, forKey: .typed) ?? false
     }
 
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: Key.self)
         try c.encode(text, forKey: .text)
         if !images.isEmpty { try c.encode(images, forKey: .images) }
+        if typed { try c.encode(true, forKey: .typed) }
     }
 }
 

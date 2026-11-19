@@ -231,10 +231,11 @@ final class Conversation {
     /// Queued messages taken back out (their "x"), for the composer to put back in its field.
     var restored: [Queued] = []
 
-    /// A message sent while a turn was running.
+    /// A message sent while a turn was running. `typed`: as `submit`'s.
     struct Queued: Equatable {
         var text: String
         var images: [ToolImage] = []
+        var typed = false
 
         /// The composer's field and attachments with this message back in them: its text first,
         /// then a blank line and whatever was already typed; its images ahead of the rest.
@@ -405,13 +406,15 @@ final class Conversation {
 
     // MARK: - Actions
 
-    func submit(_ text: String, images: [ToolImage] = []) {
+    /// `typed`: the person typed (or dictated) it in the composer (`Op.submit`); only the
+    /// composer's send passes true, never the app's own prompts.
+    func submit(_ text: String, images: [ToolImage] = [], typed: Bool = false) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !images.isEmpty else { return }
         Self.userActivity?(self)
         sends += 1
         if busy || replaying {
-            queue.append(Queued(text: text, images: images))
+            queue.append(Queued(text: text, images: images, typed: typed))
             return
         }
         if text.hasPrefix("!") {
@@ -426,12 +429,12 @@ final class Conversation {
             turns.append(TurnState(number: nil, input: text, end: .complete, sentAt: .now))
             busy = true
             awaitingCommand = true
-            link?.send(.submit(text, images: []))
+            link?.send(.submit(text, images: [], typed: typed))
             return
         }
         turns.append(TurnState(number: nil, input: text, images: images, sentAt: .now))
         busy = true
-        link?.send(.submit(text, images: images))
+        link?.send(.submit(text, images: images, typed: typed))
     }
 
     /// A new cloud session's first message (`CloudStart`): drawn as the first turn now and sent
@@ -442,7 +445,7 @@ final class Conversation {
         sends += 1
         turns.append(TurnState(number: nil, input: start.text, sentAt: start.since))
         busy = true
-        link?.send(.submit(start.text, images: []))
+        link?.send(.submit(start.text, images: [], typed: start.typed))
     }
 
     /// A fresh start for a first turn whose start failed: the same turn (its text may be what
@@ -453,7 +456,7 @@ final class Conversation {
         self.start = start
         sends += 1
         busy = true
-        link?.send(.submit(start.text, images: []))
+        link?.send(.submit(start.text, images: [], typed: start.typed))
     }
 
     /// The start failed: the row says why, and nothing is running.
@@ -465,13 +468,16 @@ final class Conversation {
 
     /// The sandbox is up but no turn came: the first message (or what was typed instead) goes
     /// again, to the same session, as the same first turn.
-    func resendStart(_ text: String? = nil) {
+    /// `typed`: `text` is what the person typed instead. Try again's resend of the message as
+    /// it was is the app's, so it goes untyped.
+    func resendStart(_ text: String? = nil, typed: Bool = false) {
         guard let start, start.handedAt == nil, let i = turns.indices.first, turns[i].number == nil else { return }
+        let typed = text != nil && typed
         let text = text ?? turns[i].input
         turns[i].input = text
         start.resent()
         busy = true
-        link?.send(.submit(text, images: []))
+        link?.send(.submit(text, images: [], typed: typed))
     }
 
     /// Whether `turn`'s live row is the start's (`CloudStart`): the first turn, until the row has
@@ -483,19 +489,20 @@ final class Conversation {
     /// The engine is free: everything queued goes as the next turn, together, in order, each
     /// message its own block (and bubble). A `!command` or memory command can't join a turn,
     /// so one at the front goes alone, and the run of messages before the next one goes after.
+    /// Each message keeps its own `typed`: a queued git prompt never borrows a typed one's.
     private func flushQueue() {
         guard !queue.isEmpty else { return }
         let head = queue.removeFirst()
-        guard Self.joinable(head.text) else { return submit(head.text, images: head.images) }
+        guard Self.joinable(head.text) else { return submit(head.text, images: head.images, typed: head.typed) }
         var more: [MessagePart] = []
         while let next = queue.first, Self.joinable(next.text) {
-            more.append(MessagePart(text: next.text, images: next.images))
+            more.append(MessagePart(text: next.text, images: next.images, typed: next.typed))
             queue.removeFirst()
         }
-        guard !more.isEmpty else { return submit(head.text, images: head.images) }
+        guard !more.isEmpty else { return submit(head.text, images: head.images, typed: head.typed) }
         turns.append(TurnState(number: nil, input: head.text, images: head.images, more: more, sentAt: .now))
         busy = true
-        link?.send(.submit(head.text, images: head.images, more: more))
+        link?.send(.submit(head.text, images: head.images, more: more, typed: head.typed))
     }
 
     private static func joinable(_ text: String) -> Bool {

@@ -67,6 +67,19 @@ test("no bare queued count: each follow-up is a chip with its words", () => {
 
 const find = (root: ReactTestInstance, pred: (n: ReactTestInstance) => boolean) => root.find(pred);
 
+test("typed: the field's send is typed; a chip's isn't", () => {
+  const sent: [string, boolean | undefined][] = [];
+  let r!: TestRenderer.ReactTestRenderer;
+  act(() => { r = TestRenderer.create(h(Composer, { ...base, session: true, chips: [{ text: "Run the tests", send: true }], onSend: (t, _i, typed) => sent.push([t, typed]) })); });
+  const chip = find(r.root, (n) => n.type === "button" && n.props.className?.includes("cz-sug"));
+  act(() => chip.props.onClick());
+  const box = find(r.root, (n) => n.type === "textarea");
+  act(() => box.props.onChange({ target: { value: "remember tabs", style: {}, scrollHeight: 20 } }));
+  act(() => box.props.onKeyDown({ key: "Enter", shiftKey: false, metaKey: false, ctrlKey: false, nativeEvent: { isComposing: false }, preventDefault() {} }));
+  assert.deepEqual(sent, [["Run the tests", undefined], ["remember tabs", true]]);
+  act(() => r.unmount());
+});
+
 test("removing a queued chip removes that follow-up", () => {
   const removed: number[] = [];
   let r!: TestRenderer.ReactTestRenderer;

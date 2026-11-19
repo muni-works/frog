@@ -191,6 +191,12 @@ pub enum Op {
         /// They run as the same turn, each its own block of the user's message.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         more: Vec<Part>,
+        /// The person typed or dictated `text` in the composer. An app sets it only then:
+        /// never for its own prompts (git actions, onboarding, canned starts, deep links,
+        /// replays, a relay or bridge). Absent is false. Only typed text can ask `Customize`
+        /// for a change, back a note, or save a "remember …" note.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        typed: bool,
     },
     /// The user pressed a button in a `Present` actions block. Runs a turn like [`Op::Submit`]
     /// with `send` (or `label` when `send` is empty) as the message.
@@ -650,6 +656,11 @@ pub enum Event {
         /// the wait, for the turn's timeline. Absent in older logs and on a withdrawal.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         asked: Option<i64>,
+        /// Why the record says `deny` when the person didn't press "Not now": `timed_out` (no
+        /// answer in time) or `no_choice` (an allow that named no choice on a Customize
+        /// card, so nothing was applied). Absent: the decision is the person's own.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        outcome: Option<String>,
     },
     /// The user answered (or dismissed) a [`Event::Question`].
     QuestionResolved {
@@ -1326,6 +1337,9 @@ pub struct Part {
     pub text: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub images: Vec<Image>,
+    /// The person typed this one in the composer (see [`Op::Submit`]'s `typed`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub typed: bool,
 }
 
 /// An MCP App (`ui://` resource) to render for a tool result. The HTML and the raw
@@ -1985,6 +1999,17 @@ mod tests {
             ["b", "c"]
         );
         assert_eq!(more[1].images.len(), 1);
+        // `typed` is absent unless an app says the person typed it, per message.
+        assert!(matches!(serde_json::from_str::<Op>(old).unwrap(), Op::Submit { typed: false, .. }));
+        let op: Op = serde_json::from_str(
+            r#"{"op":"submit","text":"a","typed":true,"more":[{"text":"b","typed":true},{"text":"c"}]}"#,
+        )
+        .unwrap();
+        let Op::Submit { typed, more, .. } = &op else {
+            panic!("not a submit")
+        };
+        assert!(*typed && more[0].typed && !more[1].typed);
+        assert!(serde_json::to_string(&op).unwrap().contains(r#""typed":true"#));
         // Logged turns from before parse too.
         let started: Event =
             serde_json::from_str(r#"{"event":"turn_started","turn":1,"input":"x"}"#).unwrap();
@@ -2330,6 +2355,7 @@ mod tests {
     #[test]
     fn waits_round_trip() {
         let e = Event::PermissionResolved {
+            outcome: None,
             id: "p".into(),
             decision: Decision::Allow,
             item: Some("t1".into()),

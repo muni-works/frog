@@ -503,18 +503,19 @@ struct ComposerView: View {
             text = ""
             attachments = []
             let words = message.trimmingCharacters(in: .whitespacesAndNewlines)
-            workspace.retryStart(conversation, text: words.isEmpty ? nil : words)
+            workspace.retryStart(conversation, text: words.isEmpty ? nil : words, typed: true)
             return
         }
         if !conversation.started, conversation.cloudSession == nil, let target = workspace.cloudTarget {
             let message = text
             text = ""
             attachments = []
-            Task { await workspace.runInCloud(message, repo: .some(target)) }
+            Task { await workspace.runInCloud(message, repo: .some(target), typed: true) }
             return
         }
         dictation.cancel()
-        conversation.submit(text, images: attachments)
+        // What the person typed (or dictated): their own words to the engine (`Op.submit`).
+        conversation.submit(text, images: attachments, typed: true)
         FrogSounds.shared.play(.plip)
         text = ""
         attachments = []

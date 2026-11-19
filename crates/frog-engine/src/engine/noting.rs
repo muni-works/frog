@@ -12,6 +12,9 @@ use anyhow::Context as _;
 /// undo works after a restart (from a replayed receipt) and never removes a note edited since.
 const UNDO_PREFIX: &str = "note:";
 
+/// The most issued note undo handles kept on file; older receipts can't undo.
+const MAX_ISSUED: usize = 500;
+
 /// The largest file a `read` note is checked against.
 const MAX_FILE: u64 = 1 << 20;
 
@@ -20,8 +23,7 @@ impl Agent {
     /// another one started (its "user" is an agent), nor on a small model, which can't do it
     /// reliably; otherwise the app's `auto-note` setting, else config, else on.
     pub(super) fn auto_note(&self) -> bool {
-        if self.subagent
-            || self.cfg.parent_session.is_some()
+        if !self.top_level()
             || self.memory.is_none()
             || self.harness.tier == Tier::Weak
             || !self.shared.client_notes.load(Ordering::Relaxed)
@@ -73,7 +75,16 @@ impl Agent {
             notes: &self.notes,
             project: !self.chat,
         };
-        let (text, scope) = noting::check(&p, &ev).map_err(|r| anyhow::anyhow!(r.0))?;
+        // The checks are text handling on the model's words: whatever they hit, a note is
+        // only refused, never the session taken down.
+        let checked =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| noting::check(&p, &ev)))
+                .unwrap_or_else(|_| {
+                    Err(noting::Refused(
+                        "Not noted: it couldn't be checked. Don't retry.".into(),
+                    ))
+                });
+        let (text, scope) = checked.map_err(|r| anyhow::anyhow!(r.0))?;
         let store = self.memory.as_ref().context("no notes here")?;
         store.set_session(&self.conv.session_id, &self.title());
         let note = store.add_noted(
@@ -113,8 +124,58 @@ impl Agent {
         Some((text, rel))
     }
 
+    /// Where issued note undo handles are kept, beside Frog's notes, so an undo works after
+    /// a restart but a handle made up from a note's id and hash doesn't.
+    fn issued_path(&self) -> Option<PathBuf> {
+        self.store
+            .as_ref()
+            .and_then(|s| s.parent().map(|p| p.join("noted-undos")))
+    }
+
+    fn issued(&self) -> Vec<String> {
+        self.issued_path()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .map(|t| t.lines().map(String::from).collect())
+            .unwrap_or_default()
+    }
+
+    fn set_issued(&self, handles: &[String]) -> Result<()> {
+        let path = self.issued_path().context("no session store")?;
+        let keep = &handles[handles.len().saturating_sub(MAX_ISSUED)..];
+        let mut text = keep.join("\n");
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        cz::write_atomic(&path, &text, true)
+    }
+
+    /// Record one issued handle: appended (two sessions noting at once both keep theirs),
+    /// trimmed to the newest [`MAX_ISSUED`] once the file holds twice that.
+    fn add_issued(&self, handle: &str) -> Result<()> {
+        use std::io::Write;
+        let path = self.issued_path().context("no session store")?;
+        if let Some(dir) = path.parent() {
+            crate::memory::create_private_dir(dir)?;
+        }
+        let mut o = std::fs::OpenOptions::new();
+        o.create(true).append(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
+        writeln!(o.open(&path)?, "{handle}")?;
+        let issued = self.issued();
+        if issued.len() > 2 * MAX_ISSUED {
+            self.set_issued(&issued)?;
+        }
+        Ok(())
+    }
+
     /// The receipt for a note just kept.
     pub(super) fn emit_noted(&self, item: &str, note: &Note, source: &str) {
+        let undo = undo_handle(note);
+        if let Err(e) = self.add_issued(&undo) {
+            // The note stands; only its undo is lost. Say so rather than offer one that fails.
+            self.notice(Level::Warn, format!("couldn't keep the note's undo: {e:#}"));
+        }
         let place = match note.scope {
             Scope::Global => "everywhere".to_string(),
             Scope::Project => self
@@ -137,7 +198,7 @@ impl Agent {
             place,
             source: source.into(),
             from: note.from.clone(),
-            undo: undo_handle(note),
+            undo,
         });
     }
 
@@ -150,6 +211,10 @@ impl Agent {
             let (Some(scope), Some(hash), Some(id)) = (scope, hash, id) else {
                 anyhow::bail!("that isn't an undo handle");
             };
+            let mut issued = self.issued();
+            if !issued.iter().any(|h| h == handle) {
+                anyhow::bail!("Frog didn't issue that undo, so the note was left as it is");
+            }
             let scope = match scope {
                 "project" => Scope::Project,
                 "everywhere" => Scope::Global,
@@ -168,6 +233,8 @@ impl Agent {
             if !cz::remove_if(&note.path, |bytes| format!("{:016x}", fnv(bytes)) == hash)? {
                 anyhow::bail!("the note was edited since, so it was left as it is");
             }
+            issued.retain(|h| h != handle);
+            let _ = self.set_issued(&issued);
             self.notes = store.load();
             Ok("Undone.".to_string())
         })())
@@ -188,8 +255,8 @@ impl Agent {
         scope: &str,
         place: Option<&str>,
     ) -> Result<()> {
-        if self.subagent {
-            return Ok(());
+        if !self.top_level() {
+            anyhow::bail!("a session another session started can't change rules");
         }
         let scope = if scope == "everywhere" {
             Scope::Global
@@ -206,6 +273,9 @@ impl Agent {
             _ => Target::Project,
         };
         let line = note.first_line().to_string();
+        // The note as the card shows it: it's removed only if it's still exactly this.
+        let shown = std::fs::read(&note.path)?;
+        let shown_text = String::from_utf8(shown.clone()).context("the note isn't text")?;
         let change = Change::Line {
             op: LineOp::Add,
             target,
@@ -221,17 +291,43 @@ impl Agent {
         card.title = "Make this a rule?".into();
         card.primary = "Add rule".into();
         let item = format!("note:{id}");
-        if self.propose(&item, &card).await?.is_none() {
+        if !matches!(
+            self.propose(&item, &card).await?,
+            super::customize::Answer::Took(_)
+        ) {
             return Ok(());
         }
+        // All or nothing: the file the card showed, the rule added, then the note removed only
+        // if it's still what the card showed; anything short of that takes the rule back.
+        self.same_file_as_card(&change, &card)?;
         let rule = match self.apply_change(&change)? {
             cz::Undo::File(f) => f,
             _ => anyhow::bail!("unexpected undo"),
         };
-        let note_undo = cz::write_file(&note.path, None, true)?;
-        let handle = new_id();
-        self.undos
-            .insert(handle.clone(), cz::Undo::Files(vec![rule, note_undo]));
+        let removed = cz::remove_if(&note.path, |now| now == shown.as_slice());
+        let why = match removed {
+            Ok(true) => None,
+            Ok(false) => Some("the note changed while the card was open".to_string()),
+            Err(e) => Some(format!("the note couldn't be removed ({e:#})")),
+        };
+        if let Some(why) = why {
+            let back = rule.undo();
+            self.customize_reload();
+            match back {
+                Ok(()) => anyhow::bail!("{why}, so the rule wasn't added"),
+                Err(e) => anyhow::bail!(
+                    "{why}, and the rule added to {} couldn't be taken back ({e:#})",
+                    rule.path.display()
+                ),
+            }
+        }
+        let note_undo = cz::FileUndo {
+            path: note.path.clone(),
+            before: Some(shown_text),
+            after: None,
+            private: true,
+        };
+        let handle = self.keep_undo(cz::Undo::Files(vec![rule, note_undo]));
         self.customize_reload();
         self.emit(Event::CustomizeApplied {
             item,

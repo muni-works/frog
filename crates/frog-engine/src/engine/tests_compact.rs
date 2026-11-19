@@ -65,6 +65,7 @@ fn engine(
 async fn turn(h: &mut Handle, prompt: &str) -> Vec<Event> {
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: prompt.into(),
             images: Vec::new(),
             more: Vec::new(),

@@ -26,8 +26,9 @@ export class CloudEngine implements EngineClient {
   /** Ops sent before the session is subscribed (e.g. the first message of a new session). */
   private early = new Map<string, Op[]>()
   private hubs = new Map<string, PreviewHub>()
-  /** Sessions another session started (the list's `parent`): no Customize caps for them. */
-  private children = new Set<string>()
+  /** Sessions known to be the person's own: listed with no `parent`, or created here. Unknown
+   * parentage (not listed yet) is a child's: no Customize or notes caps until it's known. */
+  private tops = new Set<string>()
   /** Whether the gateway serves previews: unknown until the session list first answers. */
   previews: boolean | undefined = undefined
 
@@ -43,7 +44,7 @@ export class CloudEngine implements EngineClient {
     }
     const conn = this.gateway.connect(session, { onEnvelope: deliver, onReset, onState: (s) => this.watchers.forEach((w) => w(session, s)) }, after)
     this.conns.set(session, conn)
-    conn.send(caps(this.previews === true, !this.children.has(session)))
+    conn.send(caps(this.previews === true, this.tops.has(session)))
     conn.send({ op: 'settings', values: customizableSettings() })
     for (const op of this.early.get(session) ?? []) conn.send(op) // Connection queues until its handshake
     this.early.delete(session)
@@ -62,12 +63,26 @@ export class CloudEngine implements EngineClient {
     if (this.previews === on) return
     this.previews = on
     this.hubs.forEach((h) => h.setAvailable(on))
-    this.conns.forEach((c, session) => c.send(caps(on, !this.children.has(session))))
+    this.conns.forEach((c, session) => c.send(caps(on, this.tops.has(session))))
   }
 
-  /** What GET /v1/sessions said about who started whom: a child session never gets Customize. */
-  setChildren(ids: Iterable<string>) {
-    this.children = new Set(ids)
+  /** What GET /v1/sessions said about who started whom: only a session listed with no parent is
+   * the person's own. An open session whose standing changed hears its caps again. */
+  setParents(sessions: Iterable<{ id: string; parent?: string | null }>) {
+    const next = new Set(this.created)
+    for (const s of sessions) if (!s.parent) next.add(s.id)
+    const was = this.tops
+    this.tops = next
+    this.conns.forEach((c, session) => {
+      if (was.has(session) !== next.has(session)) c.send(caps(this.previews === true, next.has(session)))
+    })
+  }
+
+  /** Sessions this client created for the person (the composer's new session): top-level. */
+  private created = new Set<string>()
+  markCreated(session: string) {
+    this.created.add(session)
+    if (!this.tops.has(session)) this.setParents([...this.tops].map((id) => ({ id })).concat({ id: session }))
   }
 
   /** The session's preview panes: what they report and how the engine's requests get answered. */

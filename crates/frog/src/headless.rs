@@ -55,15 +55,22 @@ impl Status {
     }
 }
 
+/// What `-p` sends. Not typed: it may be a script, and nobody is there to see a change. An
+/// explicit slash command (`/remember …`) still works, as from any top-level client.
+pub(crate) fn submit(prompt: String) -> Op {
+    Op::Submit {
+        text: prompt,
+        images: Vec::new(),
+        more: Vec::new(),
+        typed: false,
+    }
+}
+
 /// Run one prompt. Assistant text goes to stdout, everything else to stderr.
 /// With `json`, every event envelope is printed as a JSON line instead.
 /// Returns false if the turn didn't complete.
 pub async fn print(mut h: Handle, prompt: String, json: bool) -> Result<bool> {
-    h.ops.send(Op::Submit {
-        text: prompt,
-        images: Vec::new(),
-        more: Vec::new(),
-    })?;
+    h.ops.send(submit(prompt))?;
     // No Shutdown here: the router cancels the running turn on it, and Shutdown sent
     // right after Submit races the turn into a cancel-at-birth. The turn ends on its
     // own and the engine exits when the handle drops (or on the Shutdown below).
@@ -284,5 +291,74 @@ mod kids_tests {
             more: Vec::new(),
         });
         assert!(k.settled());
+    }
+}
+
+/// Review 2, item 10: an explicit slash command keeps working from clients that can't vouch
+/// the text was typed: `frog -p` and an editor over ACP send untyped submits, and
+/// `/remember …` from either still saves a note in a top-level session.
+#[cfg(test)]
+mod slash_tests {
+    use frog_engine::config::{Config, Profile, ProviderKind};
+    use frog_engine::{Event, Mode, Op, Options};
+
+    async fn remembered_via(op: Op) -> Vec<String> {
+        let base = std::env::temp_dir().join(format!(
+            "frog-slash-{}-{}",
+            std::process::id(),
+            frog_engine::session::new_id()
+        ));
+        let (project, store) = (base.join("project"), base.join("store"));
+        std::fs::create_dir_all(project.join(".git")).unwrap();
+        std::fs::create_dir_all(&store).unwrap();
+        let opts = Options {
+            cfg: Config {
+                hermetic: true,
+                ..Config::default()
+            },
+            profile_name: "test".into(),
+            // Never called: a memory command answers without the model.
+            profile: Profile::new(ProviderKind::Ollama, "test"),
+            cwd: project.canonicalize().unwrap(),
+            mode: Mode::Default,
+            can_ask: false,
+            resume: None,
+            store: Some(store),
+            sandbox: false,
+            rich: false,
+            subagent: false,
+            chat: false,
+        };
+        let mut h = frog_engine::spawn(opts).unwrap();
+        while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
+        h.ops.send(op).unwrap();
+        let mut notices = Vec::new();
+        loop {
+            match h.events.recv().await.unwrap().event {
+                Event::Notice { message, .. } => notices.push(message),
+                Event::TurnStarted { .. } => panic!("a slash command runs no turn"),
+                Event::Idle => break,
+                _ => {}
+            }
+        }
+        h.ops.send(Op::Shutdown).unwrap();
+        while h.events.recv().await.is_some() {}
+        let _ = std::fs::remove_dir_all(base);
+        notices
+    }
+
+    #[tokio::test]
+    async fn slash_remember_works_from_headless_and_acp() {
+        for op in [
+            super::submit("/remember we deploy on fridays".into()),
+            crate::acp::submit("/remember we deploy on fridays".into(), Vec::new()),
+        ] {
+            assert!(matches!(op, Op::Submit { typed: false, .. }));
+            let notices = remembered_via(op).await;
+            assert!(
+                notices.iter().any(|n| n.starts_with("remembered")),
+                "{notices:?}"
+            );
+        }
     }
 }

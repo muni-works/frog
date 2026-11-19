@@ -310,6 +310,7 @@ impl Kids {
             },
         );
         handle.ops.send(Op::Submit {
+            typed: false,
             text: prompt.clone(),
             images: Vec::new(),
             more: Vec::new(),
@@ -423,6 +424,7 @@ impl Kids {
                         decision,
                         item: _,
                         asked,
+                        outcome,
                     } => {
                         let mut s = state.lock().unwrap();
                         s.needs_you = s.needs_you.saturating_sub(1);
@@ -430,6 +432,7 @@ impl Kids {
                         cards.retain(|c| *c != id);
                         relay.unrelay(&id);
                         relay.emit(Event::PermissionResolved {
+                            outcome,
                             id,
                             decision,
                             item: Some(id2.clone()),
@@ -465,6 +468,7 @@ impl Kids {
             for id in cards {
                 relay.unrelay(&id);
                 relay.emit(Event::PermissionResolved {
+                    outcome: None,
                     id,
                     decision: crate::protocol::Decision::Deny,
                     item: None,

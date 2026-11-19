@@ -616,9 +616,11 @@ pub fn forward(
             decision,
             item: _,
             asked,
+            outcome,
         } => {
             reg.unrelay(&id);
             reg.emit(Event::PermissionResolved {
+                outcome,
                 id,
                 decision,
                 item: Some(item.clone()),

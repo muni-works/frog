@@ -1798,6 +1798,13 @@
                 "null"
               ]
             },
+            "outcome": {
+              "description": "Why the record says `deny` when the person didn't press \"Not now\": `timed_out` (no\nanswer in time) or `no_choice` (an allow that named no choice on a Customize\ncard, so nothing was applied). Absent: the decision is the person's own.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "seq": {
               "format": "uint64",
               "minimum": 0,
@@ -4600,6 +4607,13 @@
                 "string",
                 "null"
               ]
+            },
+            "outcome": {
+              "description": "Why the record says `deny` when the person didn't press \"Not now\": `timed_out` (no\nanswer in time) or `no_choice` (an allow that named no choice on a Customize\ncard, so nothing was applied). Absent: the decision is the person's own.",
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [
@@ -7233,6 +7247,10 @@
             },
             "text": {
               "type": "string"
+            },
+            "typed": {
+              "description": "The person typed or dictated `text` in the composer. An app sets it only then:\nnever for its own prompts (git actions, onboarding, canned starts, deep links,\nreplays, a relay or bridge). Absent is false. Only typed text can ask `Customize`\nfor a change, back a note, or save a \"remember …\" note.",
+              "type": "boolean"
             }
           },
           "required": [
@@ -8269,6 +8287,10 @@
         },
         "text": {
           "type": "string"
+        },
+        "typed": {
+          "description": "The person typed this one in the composer (see [`Op::Submit`]'s `typed`).",
+          "type": "boolean"
         }
       },
       "required": [

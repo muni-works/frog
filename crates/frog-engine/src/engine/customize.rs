@@ -21,6 +21,19 @@ pub(super) enum Pick {
     Alternative,
 }
 
+/// What came of a card.
+pub(super) enum Answer {
+    /// The person took one of its choices.
+    Took(Pick),
+    /// The person pressed "Not now".
+    NotNow,
+    /// Nobody answered in time (or the wait ended): not the person saying no.
+    NoAnswer,
+}
+
+/// The most undo handles kept; the oldest goes first (its change stays, its undo doesn't).
+const MAX_UNDOS: usize = if cfg!(test) { 3 } else { 64 };
+
 /// A change ready to ask about or apply: its card, and the alternative's change if any.
 pub(super) struct Planned {
     pub(super) card: Proposal,
@@ -28,6 +41,14 @@ pub(super) struct Planned {
 }
 
 impl Agent {
+    /// A session a person types in. Never a subagent, nor a session another one started:
+    /// `parent_session` (the engine's own children) or `--worker` (how the Mac starts every
+    /// child, Race attempts aside, and kept across a resume). Their "user" is an agent, so
+    /// they get no Customize, no notes on their own, no "remember …" and no rule from a note.
+    pub(super) fn top_level(&self) -> bool {
+        !self.subagent && !self.cfg.worker && self.cfg.parent_session.is_none()
+    }
+
     /// Where skill and tool toggles live: beside Frog's notes (none without a session store).
     fn toggles_path(&self) -> Option<PathBuf> {
         self.store
@@ -50,7 +71,7 @@ impl Agent {
     pub(super) async fn customize(&mut self, item: &str, input: &Value) -> Result<tools::Output> {
         // Only a person can change their configuration: never a subagent, never a session
         // another session started (its "user" is an agent).
-        if self.subagent || self.cfg.parent_session.is_some() {
+        if !self.top_level() {
             self.decision(item, "customize", "deny", "a session started by another", 0);
             anyhow::bail!(
                 "Refused: a session started by another session can't change the user's settings, \
@@ -67,8 +88,19 @@ rules or tools. Don't retry; tell the session that started you if it matters."
         };
         // The engine decides who asked, from what the person typed this turn: the sentence
         // that names this change. The model's `offer` and `words` can only make it a proposal.
+        // Words that may only justify a card (a button's label, the typed words a Continue
+        // carries) never make the person the one who asked.
         let asked = cz::asking_sentence(&change, &self.user_words).filter(|_| !offer);
-        if asked.is_none() && !cz::said_by_user(&words, &self.user_words) {
+        let heard: Vec<String> = self
+            .user_words
+            .iter()
+            .chain(&self.card_words)
+            .cloned()
+            .collect();
+        if asked.is_none()
+            && !cz::said_by_user(&words, &heard)
+            && !cz::whole_message(&words, &heard)
+        {
             self.decision(
                 item,
                 "customize",
@@ -91,24 +123,77 @@ rules or tools. Don't retry; tell the session that started you if it matters."
         // Anything the user didn't name themselves is an offer: proposed, at most once.
         let offer = asked.is_none();
         let key = declined_key(&change);
-        if offer && self.declined.contains(&key) {
+        let declined = self.declined.contains(&key);
+        if offer && declined {
             anyhow::bail!(
                 "The user already said not now to this in this session. Don't offer it again."
             );
         }
-        let planned = self.plan(&change, asked_by)?;
-        let tier = if offer { Tier::Ask } else { change.tier() };
-        let pick = match tier {
-            Tier::Apply => Pick::Primary,
-            Tier::Ask => match self.propose(item, &planned.card).await? {
-                Some(p) => p,
-                None => {
+        // A shared rules file Frog won't write (a link out of the project, a hard-linked
+        // pair, a read-only file) still leaves a private way: the same line in the notes.
+        let mut refused = None;
+        let change = match change {
+            Change::Line {
+                op: LineOp::Add,
+                target: Target::Project,
+                line,
+                ..
+            } if !self.chat => match self.line_place(Target::Project).and_then(|(_, p)| {
+                // Only the file itself refused, not the line (already there, not a rule).
+                let p = p.context("no file")?;
+                cz::read_opt(&p)?;
+                cz::writable(&p)
+            }) {
+                Err(e) if self.note_after(LineOp::Add, &line, None).is_ok() => {
+                    refused = Some(format!("{e:#}"));
+                    Change::Line {
+                        op: LineOp::Add,
+                        target: Target::Notes,
+                        line,
+                        to: None,
+                    }
+                }
+                _ => Change::Line {
+                    op: LineOp::Add,
+                    target: Target::Project,
+                    line,
+                    to: None,
+                },
+            },
+            c => c,
+        };
+        let mut planned = self.plan(&change, asked_by)?;
+        if refused.is_some() {
+            planned.card.title = "Keep this just for you?".into();
+            planned.card.primary = "Just for me".into();
+        }
+        let refused_note = refused
+            .map(|why| {
+                format!(" The shared rules file was refused ({why}), so it went to the notes.")
+            })
+            .unwrap_or_default();
+        // At once only a cosmetic setting the person named, with its value or direction, in
+        // what they typed, and never one they said not now to: everything else is a card.
+        let at_once = !offer && !declined && cz::applies(&change, &self.user_words);
+        let pick = if at_once {
+            Pick::Primary
+        } else {
+            match self.propose(item, &planned.card).await? {
+                Answer::Took(p) => p,
+                Answer::NotNow => {
                     self.declined.insert(key);
+                    return Ok(tools::Output::text(format!(
+                        "The user said not now. Leave it, and don't offer it again this \
+session.{refused_note}"
+                    )));
+                }
+                Answer::NoAnswer => {
                     return Ok(tools::Output::text(
-                        "The user said not now. Leave it, and don't offer it again this session.",
+                        "No answer on the card in time, so nothing changed. Don't ask again \
+unless the user brings it up.",
                     ));
                 }
-            },
+            }
         };
         let (change, card) = match (pick, planned.alternative) {
             (Pick::Alternative, Some(alt)) => {
@@ -122,9 +207,28 @@ rules or tools. Don't retry; tell the session that started you if it matters."
             }
             _ => (change, planned.card),
         };
-        // The file written must be the one the card showed: one created or relinked while
-        // the card was open voids the approval.
-        if let Change::Line { target, .. } = &change
+        self.same_file_as_card(&change, &card)?;
+        let undo = self.apply_change(&change)?;
+        let handle = self.keep_undo(undo);
+        let summary = format!(
+            "Done: {} ({}).",
+            card.title.trim_end_matches('?'),
+            card.place
+        );
+        self.emit(Event::CustomizeApplied {
+            item: item.into(),
+            undo: handle,
+            card: Box::new(card),
+        });
+        Ok(tools::Output::text(format!(
+            "{summary} The user can undo it from the transcript.{refused_note}"
+        )))
+    }
+
+    /// The file written must be the one the card showed: one created or relinked while the
+    /// card was open voids the approval.
+    pub(super) fn same_file_as_card(&self, change: &Change, card: &Proposal) -> Result<()> {
+        if let Change::Line { target, .. } = change
             && *target != Target::Notes
         {
             let now = self.line_place(*target)?.1.map(|p| p.display().to_string());
@@ -137,22 +241,21 @@ rules or tools. Don't retry; tell the session that started you if it matters."
                 );
             }
         }
-        let undo = self.apply_change(&change)?;
+        Ok(())
+    }
+
+    /// Keep an undo and return its handle; past [`MAX_UNDOS`] the oldest is dropped, so a
+    /// long session doesn't hold every file's text before and after forever.
+    pub(super) fn keep_undo(&mut self, undo: cz::Undo) -> String {
         let handle = new_id();
         self.undos.insert(handle.clone(), undo);
-        let summary = format!(
-            "Done: {} ({}).",
-            card.title.trim_end_matches('?'),
-            card.place
-        );
-        self.emit(Event::CustomizeApplied {
-            item: item.into(),
-            undo: handle,
-            card: Box::new(card),
-        });
-        Ok(tools::Output::text(format!(
-            "{summary} The user can undo it from the transcript."
-        )))
+        self.undo_order.push_back(handle.clone());
+        while self.undo_order.len() > MAX_UNDOS {
+            if let Some(old) = self.undo_order.pop_front() {
+                self.undos.remove(&old);
+            }
+        }
+        handle
     }
 
     fn customize_get(&self, id: &str) -> Result<tools::Output> {
@@ -522,8 +625,10 @@ rules or tools. Don't retry; tell the session that started you if it matters."
 
     /// The card, through the same pending map and `Op::Permission` as every approval. In every
     /// mode (yolo and auto included: a change to Frog's own reach is the user's call, never a
-    /// classifier's). `None`: not now (or nobody to ask, or no answer in time).
-    pub(super) async fn propose(&mut self, item: &str, card: &Proposal) -> Result<Option<Pick>> {
+    /// classifier's). The record (`PermissionResolved`) is emitted once the answer is known
+    /// for what it did: an allow naming no choice is recorded as `deny`, `no_choice`, and no
+    /// answer in time as `deny`, `timed_out`, never as the person saying no.
+    pub(super) async fn propose(&mut self, item: &str, card: &Proposal) -> Result<Answer> {
         if !self.can_ask {
             self.decision(
                 item,
@@ -553,14 +658,15 @@ rules or tools. Don't retry; tell the session that started you if it matters."
         });
         let asked = Instant::now();
         let timeout = self.cfg.approval_timeout_secs;
+        // `None`: nobody answered (timed out, or the wait was dropped).
         let decision = if timeout == 0 {
-            rx.await.unwrap_or(Decision::Deny)
+            rx.await.ok()
         } else {
             match tokio::time::timeout(Duration::from_secs(timeout), rx).await {
-                Ok(d) => d.unwrap_or(Decision::Deny),
+                Ok(d) => d.ok(),
                 Err(_) => {
                     self.shared.pending.lock().unwrap().remove(&id);
-                    Decision::Deny
+                    None
                 }
             }
         };
@@ -568,23 +674,33 @@ rules or tools. Don't retry; tell the session that started you if it matters."
         self.shared.waits.lock().unwrap().remove(&id);
         self.shared.notes.lock().unwrap().remove(&id);
         let choice = self.shared.choices.lock().unwrap().remove(&id);
-        self.emit(Event::PermissionResolved {
-            id,
-            decision,
-            item: Some(item.into()),
-            asked: Some(asked_at),
-        });
-        if decision == Decision::Deny {
-            return Ok(None);
-        }
         // An allow names the choice it takes. None (a delegated answer, or a client that
         // doesn't draw the card) or one not on the card applies nothing.
-        match choice.as_deref() {
-            Some(c) if c == card.choice => Ok(Some(Pick::Primary)),
-            Some(c) if card.alternative.as_ref().is_some_and(|a| a.id == c) => {
-                Ok(Some(Pick::Alternative))
-            }
-            other => {
+        let answer = match decision {
+            None => Err("timed_out"),
+            Some(Decision::Deny) => Ok(Answer::NotNow),
+            Some(_) => match choice.as_deref() {
+                Some(c) if c == card.choice => Ok(Answer::Took(Pick::Primary)),
+                Some(c) if card.alternative.as_ref().is_some_and(|a| a.id == c) => {
+                    Ok(Answer::Took(Pick::Alternative))
+                }
+                _ => Err("no_choice"),
+            },
+        };
+        self.emit(Event::PermissionResolved {
+            id,
+            decision: match answer {
+                Ok(Answer::Took(_)) => Decision::Allow,
+                _ => Decision::Deny,
+            },
+            item: Some(item.into()),
+            asked: Some(asked_at),
+            outcome: answer.as_ref().err().map(|o| o.to_string()),
+        });
+        match answer {
+            Ok(a) => Ok(a),
+            Err("timed_out") => Ok(Answer::NoAnswer),
+            Err(_) => {
                 self.decision(
                     item,
                     "customize",
@@ -595,7 +711,7 @@ rules or tools. Don't retry; tell the session that started you if it matters."
                 anyhow::bail!(
                     "Not changed: the approval didn't name a choice on the card ({}). Only the \
 user's own answer on the card applies it.",
-                    other.unwrap_or("none")
+                    choice.as_deref().unwrap_or("none")
                 )
             }
         }
@@ -608,7 +724,7 @@ user's own answer on the card applies it.",
         } else {
             match self.undos.remove(handle) {
                 None => Err(anyhow::anyhow!(
-                    "nothing to undo for that (already undone?)"
+                    "nothing to undo for that (already undone, or too long ago)"
                 )),
                 Some(cz::Undo::File(f)) => f.undo().map(|_| "Undone.".to_string()),
                 Some(cz::Undo::Setting {

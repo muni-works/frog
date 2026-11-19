@@ -211,7 +211,7 @@ export default function App() {
   const firsts = useRef<Record<string, string>>({})
   // Follow-ups typed while Frog works wait here (per session) and go together, in order, as the
   // next turn once this one ends, like the Mac app. × takes one back into the field.
-  const [queue, setQueue] = useState<Record<string, { text: string; images: Image[] }[]>>({})
+  const [queue, setQueue] = useState<Record<string, { text: string; images: Image[]; typed?: boolean }[]>>({})
   const [restore, setRestore] = useState<{ text: string; images: Image[] } | null>(null)
   const [conn, setConn] = useState<Record<string, ConnectionState>>({})
   const [menuOpen, setMenuOpen] = useState(false)
@@ -381,7 +381,8 @@ export default function App() {
     const q = queue[current.id]
     if (!q?.length || !fresh(q)) return
     const [head, ...rest] = q
-    cloud?.send(current.id, { op: 'submit', text: head.text, ...(head.images.length ? { images: head.images } : {}), ...(rest.length ? { more: rest.map((m) => ({ text: m.text, ...(m.images.length ? { images: m.images } : {}) })) } : {}) })
+    // Each message keeps its own `typed`: a git action's queued turn never borrows a typed one's.
+    cloud?.send(current.id, { op: 'submit', text: head.text, ...(head.images.length ? { images: head.images } : {}), ...(rest.length ? { more: rest.map((m) => ({ text: m.text, ...(m.images.length ? { images: m.images } : {}), ...(m.typed ? { typed: true } : {}) })) } : {}), ...(head.typed ? { typed: true } : {}) })
     setQueue((all) => ({ ...all, [current.id]: [] }))
   }, [current, ct, queue, opening, cloud])
   // The first turn started: the session is open.
@@ -492,14 +493,15 @@ export default function App() {
   type Out = { id: number; text: string; images: Image[]; state: 'sending' | 'sent' | 'failed'; at: number; seen: number }
   const [outbox, setOutbox] = useState<Record<string, Out[]>>({})
   const outSeq = useRef(0)
-  const send = useCallback((id: string, text: string, images: Image[] = []) => {
+  // `typed`: from the composer's field (Op::Submit's `typed`); the app's own prompts leave it out.
+  const send = useCallback((id: string, text: string, images: Image[] = [], typed = false) => {
     setOutbox((o) => ({ ...o, [id]: [...(o[id] ?? []), { id: ++outSeq.current, text, images, state: 'sending', at: Date.now(), seen: thread(id).turns.filter((u) => u.input === text).length }] }))
-    cloud?.send(id, { op: 'submit', text, ...(images.length ? { images } : {}) })
+    cloud?.send(id, { op: 'submit', text, ...(images.length ? { images } : {}), ...(typed ? { typed: true } : {}) })
   }, [cloud, thread])
 
 
   const [pending, setPending] = useState<string | null>(null)
-  const start = useCallback(async (text: string, repo?: string, images: Image[] = [], base?: string, slot?: string, before?: Promise<unknown>) => {
+  const start = useCallback(async (text: string, repo?: string, images: Image[] = [], base?: string, slot?: string, before?: Promise<unknown>, typed = false) => {
     if (!cloud) return
     // Open the session at once, as a placeholder, and adopt the real one when the gateway
     // answers: starting a conversation should feel instant, not wait on a round trip. The view,
@@ -514,6 +516,7 @@ export default function App() {
     try {
       await before // Try again: the failed sandbox goes first, so it doesn't count against the running limit
       const s = await cloud.gateway.create({ ...(repo ? { repo } : {}), ...(repo && base ? { base } : {}), ...(chosenModel ? { model: spec(chosenModel) } : {}) })
+      cloud.markCreated(s.id) // the person's own session, before the list says so
       slots.current[s.id] = slots.current[temp]
       firsts.current[s.id] = firsts.current[temp]
       setSessions((all) => [s, ...all.filter((x) => x.id !== s.id && x.id !== temp)])
@@ -523,22 +526,23 @@ export default function App() {
       setView((v) => (v.kind === 'session' && v.id === temp ? { kind: 'session', id: s.id } : v))
       if (newMode !== 'default') cloud.send(s.id, { op: 'set_mode', mode: newMode })
       // Not through the outbox: the status row speaks for the first message until its turn starts.
-      cloud.send(s.id, { op: 'submit', text, ...(images.length ? { images } : {}) }) // queued until the session's socket is live
+      cloud.send(s.id, { op: 'submit', text, ...(images.length ? { images } : {}), ...(typed ? { typed: true } : {}) }) // queued until the session's socket is live
     } catch (e) {
       // Said in place, on the status row, with Try again: the message stays where it is.
       const why = `Couldn't start a sandbox: ${friendly(e)}`
       setOpening((o) => (o[temp] ? { ...o, [temp]: { ...o[temp], failed: why, row: { ...o[temp].row, state: 'error', error: why } } } : o))
     }
   }, [cloud, setSessions, chosenModel, newMode])
-  /** A session that couldn't start, started again in place: the same message, the same composer. */
-  const retry = useCallback((id: string, text?: string, images: Image[] = []) => {
+  /** A session that couldn't start, started again in place: the same message, the same composer.
+   *  `typed`: `text` was typed instead; the message again as it was is the app's resend, untyped. */
+  const retry = useCallback((id: string, text?: string, images: Image[] = [], typed = false) => {
     const o = opening[id]
     if (!o || !cloud) return
     if (stuck(o)) {
       // The sandbox is up but no turn started: the message (or what you typed instead) again, to the same session.
       const next = { text: text ?? o.text, images: text === undefined ? o.images : images }
       setOpening((all) => ({ ...all, [id]: { ...o, ...next, runningAt: Date.now() } }))
-      cloud.send(id, { op: 'submit', text: next.text, ...(next.images.length ? { images: next.images } : {}) })
+      cloud.send(id, { op: 'submit', text: next.text, ...(next.images.length ? { images: next.images } : {}), ...(text !== undefined && typed ? { typed: true } : {}) })
       return
     }
     setOpening(({ [id]: _, ...rest }) => rest)
@@ -548,7 +552,7 @@ export default function App() {
       setSessions((all) => all.filter((x) => x.id !== id))
       gone = cloud.gateway.remove(id).catch(() => { /* gone already, or it'll be in the list to delete */ })
     }
-    start(text ?? o.text, o.repo, text === undefined ? o.images : images, o.base, slots.current[id] ?? id, gone)
+    start(text ?? o.text, o.repo, text === undefined ? o.images : images, o.base, slots.current[id] ?? id, gone, text !== undefined && typed)
   }, [opening, cloud, setSessions, start])
   useEffect(() => { if (pending && cloud) { setPending(null); start(pending) } }, [pending, cloud, start])
 
@@ -879,9 +883,9 @@ export default function App() {
               queued={queue[current.id]} restore={restore} vision={ct.vision} insert={preview?.insert} onText={preview ? (t) => preview.noteDraft(t) : undefined}
               onUnqueue={(i) => setQueue((all) => ({ ...all, [current.id]: (all[current.id] ?? []).filter((_, j) => j !== i) }))}
               asking={mode === 'threads' && !!ct.ask}
-              onSend={(text, images) => { pin.send(); return failedStart ? retry(current.id, text, images) : (ct.running || opening[current.id]
-                ? setQueue((all) => ({ ...all, [current.id]: [...(all[current.id] ?? []), { text, images }] }))
-                : send(current.id, text, images)) }} onStop={() => cloud?.send(current.id, { op: 'interrupt' })} onGit={() => push(current)} />}
+              onSend={(text, images, typed) => { pin.send(); return failedStart ? retry(current.id, text, images, typed) : (ct.running || opening[current.id]
+                ? setQueue((all) => ({ ...all, [current.id]: [...(all[current.id] ?? []), { text, images, ...(typed ? { typed } : {}) }] }))
+                : send(current.id, text, images, typed)) }} onStop={() => cloud?.send(current.id, { op: 'interrupt' })} onGit={() => push(current)} />}
             {!paused && <CreditWarning account={account} addedCents={lastAdded} avg={avgTurn} onAdd={() => openSettings('billing')} />}
           </div>
         </>)}
@@ -894,7 +898,7 @@ export default function App() {
                 recent={usedRepos(sessions)} repos={repoList.repos.map((r) => r.name)} pushed={Object.fromEntries(repoList.repos.map((r) => [r.name, r.pushed_at]))} install={repoList.install} onRepo={(repo) => setView({ kind: 'new', repo })} base={view.base} onBase={(base) => setView((v) => (v.kind === 'new' ? { ...v, base } : v))}
                 onConnectGithub={key && account && !account.handle && !DEV_KEY ? (text) => leave(text || null, 'github', key) : undefined}
                 model={chosenModel} models={models} machines={machines} onManage={() => openSettings('models')} onModel={setNewModel} mode={newMode} onMode={setNewMode}
-                onSend={(text, images) => { setDraft(undefined); start(text, view.repo, images, view.base) }} />
+                onSend={(text, images, typed) => { setDraft(undefined); start(text, view.repo, images, view.base, undefined, undefined, typed) }} />
               <CreditWarning account={account} addedCents={lastAdded} avg={avgTurn} onAdd={() => openSettings('billing')} />
             </div>
             </HomeHero></div>

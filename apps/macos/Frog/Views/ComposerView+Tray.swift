@@ -77,8 +77,15 @@ extension ComposerView {
         case "queued":
             // The reducer cleared the draft state already; the view's own field follows it.
             // The images go with the text: Conversation.submit queues them behind the turn.
+            // A git action's turn (Fix, Resolve conflicts) queues too, with text the field
+            // doesn't hold (as the web tells them apart): that one isn't typed, and the draft stays.
+            // The reducer's draft is the field as it was, so the person's send matches it.
             if case .string(let t) = e.fields["text"] {
-                conversation.submit(t, images: Self.images(e.fields["attachments"], from: attachments))
+                guard t == text.trimmingCharacters(in: .whitespacesAndNewlines) else {
+                    conversation.submit(t)  // a git action's own turn
+                    break
+                }
+                conversation.submit(t, images: Self.images(e.fields["attachments"], from: attachments), typed: true)
                 FrogSounds.shared.play(.plip)
                 text = ""
                 attachments = []

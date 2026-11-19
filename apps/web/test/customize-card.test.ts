@@ -113,13 +113,40 @@ test("the engine isn't told about Customize cards until its review passes, and n
   const sent: Record<string, unknown[]> = {};
   const fake = { connect: (id: string) => ({ send: (op: unknown) => (sent[id] ??= []).push(op), close() {} }) };
   const engine = new CloudEngine(fake as unknown as Gateway);
-  engine.setChildren(["kid"]);
+  engine.setParents([{ id: "top" }, { id: "kid", parent: "top" }]);
   engine.subscribe("top", 0, () => {});
   engine.subscribe("kid", 0, () => {});
   for (const id of ["top", "kid"]) {
     const op = sent[id].find((o) => (o as { op: string }).op === "set_client_caps") as Record<string, unknown>;
     assert.equal("customize" in op, false, id);
   }
+});
+
+// Review 2, item 11: unknown parentage means no capability. A session the list doesn't hold yet
+// counts as a child until the list (or this client's own create) says it's the person's.
+test("a session of unknown parentage gets no Customize caps until the list says it's top-level", async () => {
+  const { CloudEngine: Engine } = await import("../src/engine/cloud.ts");
+  const sent: Record<string, Record<string, unknown>[]> = {};
+  const fake = { connect: (id: string) => ({ send: (op: Record<string, unknown>) => (sent[id] ??= []).push(op), close() {} }) };
+  const engine = new Engine(fake as unknown as Gateway);
+  const capsOf = (id: string) => sent[id].filter((o) => o.op === "set_client_caps");
+  // Turned on for the check: the real constants stay off.
+  const on = (await import("../src/engine/cloud.ts")).caps(false, true, true, true);
+  assert.equal((on as Record<string, unknown>).customize, true);
+  engine.subscribe("early", 0, () => {});
+  assert.deepEqual(capsOf("early"), [{ op: "set_client_caps", ask: true, panes: false }]);
+  // The list answers: listed with no parent is top; a child, and one still unlisted, aren't.
+  engine.setParents([{ id: "early" }, { id: "kid", parent: "early" }]);
+  assert.equal(capsOf("early").length, 2, "its standing changed, so it hears caps again");
+  engine.subscribe("kid", 0, () => {});
+  engine.subscribe("unlisted", 0, () => {});
+  assert.equal(capsOf("kid").length, 1);
+  assert.equal(capsOf("unlisted").length, 1);
+  // A session this client just created is the person's before the list says so.
+  engine.markCreated("mine");
+  engine.subscribe("mine", 0, () => {});
+  engine.setParents([{ id: "early" }]);
+  assert.equal(capsOf("mine").length, 1, "still top after a list that doesn't hold it yet");
 });
 
 test("setting_change changes this app's own setting; one it doesn't keep is left alone", async () => {

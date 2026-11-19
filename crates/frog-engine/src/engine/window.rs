@@ -236,7 +236,8 @@ impl Agent {
     /// `/remember`, `/forget`, `/memory` and `/recall`: answered with a notice, no model call.
     /// Returns false if `text` isn't one of them.
     pub(super) fn memory_command(&mut self, text: &str) -> bool {
-        if self.subagent || !crate::memory::is_command(text) {
+        // Never in a child: `/remember` and `/forget` change the person's notes.
+        if !self.top_level() || !crate::memory::is_command(text) {
             return false;
         }
         let Some(store) = &self.memory else {

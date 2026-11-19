@@ -141,7 +141,7 @@ final class FixturePlayer: ConversationLink {
             answered?.resume()
             answered = nil
             finish(.cancelled)
-        case .submit(let text, _, _):
+        case .submit(let text, _, _, _):
             // A recording can't answer something new; frog says so, kindly.
             let n = (conversation.turns.compactMap(\.number).max() ?? 1) + 1
             let reply = "This is a recorded session, so I can't act on that here. Connect to frog on your Mac and I'll get right on it."

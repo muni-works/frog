@@ -53,12 +53,19 @@ final class Race: Identifiable {
         self.prompt = prompt
         self.checkCommand = check.flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0 }
         for (i, (dir, model)) in zip(dirs, models).enumerated() {
-            let c = Conversation(folder: dir, arguments: ["--yolo", "--sandbox"], model: model)
+            let c = Self.attempt(in: dir, model: model)
             c.onSessionChange = { [weak self] in self?.update(i) }
             // Queued until the engine is ready.
             c.submit(prompt)
             attempts.append(Attempt(id: i, dir: dir, model: model, conversation: c))
         }
+    }
+
+    /// One attempt's conversation. It is the app's, not a session the person types in: a child,
+    /// so no Customize caps (and not a `--worker`). `make`: tests record the call.
+    static func attempt(in dir: URL, model: String,
+                        make: @MainActor (URL, [String], String?, Bool) -> Conversation = Conversation.init(folder:arguments:model:child:)) -> Conversation {
+        make(dir, ["--yolo", "--sandbox"], model, true)
     }
 
     var allFinished: Bool { attempts.allSatisfy(\.finished) }

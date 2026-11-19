@@ -67,7 +67,8 @@ export interface ComposerProps {
   /** When the engine asks before acting; the chip shows once the engine (or a new session) says. */
   mode?: Mode | null
   onMode?: (mode: Mode) => void
-  onSend: (text: string, images: Image[]) => void
+  /** `typed`: the person typed (or dictated) it in the field; a chip or a git action's turn isn't. */
+  onSend: (text: string, images: Image[], typed?: boolean) => void
   /** Suggestion chips over the card while it's empty. `send` chips send on click; others fill
    * the field. `act` marks one that acts outside the project (push, deploy). */
   chips?: { text: string; send?: boolean; act?: boolean }[]
@@ -297,7 +298,7 @@ export function Composer(p: ComposerProps) {
     const c = t.match(/^\/compact\b\s*(.*)$/s)
     // While a turn runs it stays typed; compacting mid-turn isn't possible.
     if (c && p.onCompact) { if (!working) { p.onCompact(c[1].trim() || undefined); setText('') } return }
-    p.onSend(t, images)
+    p.onSend(t, images, true)
     // A notice is about the last thing Frog did for you; it clears on the next send.
     setLocal((l) => ({ ...l, lastSent: t, notice: null }))
     setText('')

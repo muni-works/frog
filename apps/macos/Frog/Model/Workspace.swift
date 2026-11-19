@@ -348,9 +348,12 @@ final class Workspace {
 
     /// A Frog Cloud session on screen: the same transcript and composer, its engine in a
     /// sandbox through the gateway instead of `frog --serve` here.
-    func openCloud(_ id: String) {
+    /// `top`: whether the person types in it, not another session (Customize caps). Nil: the
+    /// list says, and a session it doesn't hold yet counts as a child.
+    func openCloud(_ id: String, top: Bool? = nil) {
         guard id != conversation?.cloudSession, let gateway = CloudSessions.shared.gateway else { return }
-        let c = Conversation.cloud(folder: folder, link: CloudLink(gateway: gateway, session: id, top: CloudSessions.isTop(id)), session: id)
+        let top = top ?? CloudSessions.isTop(id)
+        let c = Conversation.cloud(folder: folder, link: CloudLink(gateway: gateway, session: id, top: top), session: id)
         incoming?.stop(reason: "open superseded")
         incoming = c
         selection = id
@@ -364,7 +367,8 @@ final class Workspace {
     /// that repo.
     var cloudTarget: String??
 
-    func runInCloud(_ text: String, repo: String?? = nil) async {
+    /// `typed`: the person typed `text` in the composer (`Op.submit`'s `typed`).
+    func runInCloud(_ text: String, repo: String?? = nil, typed: Bool = false) async {
         Funnel.track("handoff_clicked", ["from": "mac", "to": "cloud", "where": "composer"])
         let folder = folder
         // Off the main thread: it runs git and waits, which spins the main run loop.
@@ -376,7 +380,8 @@ final class Workspace {
             do {
                 guard let s = try await CloudSessions.shared.create(repo: repo) else { return }
                 cloudTarget = nil
-                openCloud(s.id)
+                // The person started it just now: no parent.
+                openCloud(s.id, top: true)
             } catch {
                 raceError = CloudFailure.text(error, doing: "start a Frog Cloud session")
             }
@@ -384,7 +389,7 @@ final class Workspace {
         }
         // One conversation from Send to its first turn (`CloudStart`, the web's #447): the
         // message is the first turn at once, and its live row says how far the start has got.
-        let start = CloudStart(text: text, repo: repo)
+        let start = CloudStart(text: text, repo: repo, typed: typed)
         let link = PendingCloudLink()
         let c = Conversation(folder: folder, link: link, replay: false)
         start.onRetry = { [weak self, weak c] in
@@ -411,7 +416,7 @@ final class Workspace {
         guard c.start === start else { return }
         start.session = s.id
         c.cloudSession = s.id
-        // Started here by the person: top-level.
+        // The person started it from here: no parent.
         link.attach(CloudLink(gateway: gateway, session: s.id, top: true))
         if conversation === c {
             selection = s.id
@@ -440,12 +445,13 @@ final class Workspace {
     /// Try again on a start that failed: the sandbox is up but no turn came, so the message (or
     /// `text`, typed instead) goes again to the same session; otherwise a fresh sandbox, in
     /// place, and the failed one goes (it holds nothing yet).
-    func retryStart(_ c: Conversation, text: String? = nil) {
+    /// `typed`: the person typed `text` in the composer; the message again as it was goes untyped.
+    func retryStart(_ c: Conversation, text: String? = nil, typed: Bool = false) {
         guard let old = c.start, old.handedAt == nil, let link = c.link as? PendingCloudLink,
               let gateway = CloudSessions.shared.gateway else { return }
-        if old.stuck(at: .now) { return c.resendStart(text) }
+        if old.stuck(at: .now) { return c.resendStart(text, typed: typed) }
         guard old.failed else { return }
-        let start = CloudStart(text: text ?? c.turns.first?.input ?? old.text, repo: old.repo)
+        let start = CloudStart(text: text ?? c.turns.first?.input ?? old.text, repo: old.repo, typed: text != nil && typed)
         start.onRetry = old.onRetry
         link.reset()
         c.cloudSession = nil

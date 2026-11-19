@@ -258,7 +258,7 @@ impl Agent {
             if !self.chat {
                 specs.push(crate::folder::spec());
             }
-            if self.shared.client_customize.load(Ordering::Relaxed) {
+            if self.shared.client_customize.load(Ordering::Relaxed) && self.top_level() {
                 specs.push(crate::customize::spec());
             }
             if self.auto_note() {
