@@ -14,6 +14,7 @@ pub mod compiled_memory;
 pub mod config;
 pub mod context;
 pub mod credentials;
+pub mod customize;
 pub mod delegation;
 pub mod digest;
 pub mod diagram;

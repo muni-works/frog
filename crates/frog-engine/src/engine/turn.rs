@@ -328,6 +328,7 @@ impl Agent {
         // `/skill-name ...` loads that skill ahead of the request.
         let input = match crate::skills::expand_command(&self.skills, &typed) {
             Some((expanded, name)) => {
+                self.record_skill_use(&name);
                 self.conv.skills_loaded.insert(name);
                 expanded
             }
@@ -368,6 +369,7 @@ impl Agent {
         for part in more {
             let input = match crate::skills::expand_command(&self.skills, &part.text) {
                 Some((expanded, name)) => {
+                    self.record_skill_use(&name);
                     self.conv.skills_loaded.insert(name);
                     expanded
                 }

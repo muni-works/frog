@@ -98,18 +98,23 @@ pub fn system_head(cwd: &Path, cfg: &Config) -> String {
     s.push_str(IDENTITY);
     for f in memory_files(cwd, cfg) {
         if let Ok(text) = std::fs::read_to_string(&f) {
-            s.push_str(&format!(
-                "\n# Instructions from {}\n{}\n",
-                // Relative to the repo, so every worktree's head reads the same.
-                f.strip_prefix(cwd)
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_else(|_| f.display().to_string()),
-                text.trim()
-            ));
+            s.push_str(&instruction_block(cwd, &f, &text));
         }
     }
     client_instructions(&mut s);
     s
+}
+
+/// One instruction file as the system prompt carries it.
+pub fn instruction_block(cwd: &Path, f: &Path, text: &str) -> String {
+    format!(
+        "\n# Instructions from {}\n{}\n",
+        // Relative to the repo, so every worktree's head reads the same.
+        f.strip_prefix(cwd)
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| f.display().to_string()),
+        text.trim()
+    )
 }
 
 /// This session's own facts: its working directory, the date, the model. Kept late in the

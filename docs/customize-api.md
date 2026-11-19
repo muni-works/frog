@@ -11,7 +11,11 @@ change it. One snapshot, one change call, the same JSON from two ways in:
 Both answer with a **report** (below): the CLI prints it, the socket sends it as the event
 `{"event":"customize","report":{…}}`. A change answers with the report as it is after the
 change, so a page redraws from the answer. A change that fails answers `{"error":"…"}` on the CLI
-(exit status 1) and an `error` event on the socket; nothing is half-applied.
+(exit status 1), and on the socket the same `customize` event with `"error":"…"` beside the
+report as things still are; nothing is half-applied.
+
+On the socket the op is answered between steps, like any op the session's work loop takes: if
+a turn is running, the answer comes when it ends. A page that must draw at once uses the CLI.
 
 The `customize` event is a reply, not session history: it is not journaled and is never replayed.
 A client that doesn't know it ignores it (`unknown` in FrogKit).
@@ -30,6 +34,11 @@ section), counted with the engine's estimator (`context::Estimator`): characters
 `estimate.chars_per_token`. A live session calibrates that ratio against what the provider
 counted; the CLI has no session, so it uses the default 3.5 and says `calibrated: false`. Show
 them as estimates ("about 820 tokens"); they are close, not exact.
+
+Budgets that depend on the model (how much of the rules and memory fit) are the session's
+model's on the socket; the CLI measures against a large model (200k window). A small-window
+model (under 16k) carries no skills catalog and no connection instructions, so those weigh 0
+there.
 
 An item that is off weighs `0`. Its would-be weight is in `tokens_if_on`.
 
@@ -76,6 +85,8 @@ An item that is off weighs `0`. Its would-be weight is in `tokens_if_on`.
   "days": [0,0,0,1,0, …, 1,1],
   "last": { "at": "2026-11-16T10:04:00-08:00", "session": "c1f…", "title": "0.7.1 notes" } | null
 }
+// `title` is the session's first message (up to 80 characters) when it was used; look the
+// session up by `session` for its current title.
 ```
 
 ### Skill
@@ -109,6 +120,8 @@ home one of the same name; the shadowed one weighs nothing and can't be switched
   "source": "frog",                      // config.toml; "project" for .mcp.json; "claude_code"
   "on": true,                            // the whole connection
   "state": "connected" | "connecting" | "needs_sign_in" | "declined" | "failed" | "off" | "unknown",
+  // "declined": the person already said no to its sign-in; still offer the button.
+  // "unknown": the CLI ran with --no-connect.
   "error": null,                         // one line when failed
   "waiting": null | "sign_in",           // "allow" is reserved, see Gaps
   "tokens": 2160,                        // tools that are on, plus the server's instructions
