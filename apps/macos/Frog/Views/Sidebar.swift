@@ -1138,19 +1138,14 @@ struct SessionList: View {
             .font(.frog(size: 13))
             .padding(.horizontal, 8)
             .frame(height: 32)
-            // Customize, Documentation and Settings sit under the two verbs, as on the web.
-            Color.clear.frame(height: 10)
+            // Customize and Settings sit right under the two verbs, as on the web. Documentation
+            // is hidden for now (Cam, 2026-11-19); the palette and Help menu still open it.
             if let showSettings {
                 Button { showSettings("appearance") } label: {
                     navRow("slider.horizontal.3", "Customize")
                 }
                 .buttonStyle(.plain)
                 .help("Theme, density and detail")
-            }
-            if let showDocs {
-                Button(action: showDocs) { navRow("book", "Documentation") }
-                    .buttonStyle(.plain)
-                    .help("Frog documentation")
             }
             if let showSettings {
                 Button { showSettings(nil) } label: { navRow("gearshape", "Settings", key: "⌘,") }
