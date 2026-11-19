@@ -181,9 +181,9 @@ enum MemoryFiles {
                 }
                 return dir
             }
-            let up = dir.deletingLastPathComponent()
-            if up.path == dir.path { return folder }
-            dir = up
+            // At the top with no checkout found: the folder is its own project, as for the engine.
+            if dir.pathComponents.count <= 1 { return folder }
+            dir = dir.deletingLastPathComponent().standardizedFileURL
         }
     }
 
@@ -339,7 +339,7 @@ struct ServerDraft: Hashable {
         let file = folder.appending(path: ".mcp.json")
         var root: [String: Any] = [:]
         if let data = try? Data(contentsOf: file) {
-            guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw AddError.unreadable }
+            guard let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { throw AddError.unreadable }
             root = obj
         }
         var servers = root["mcpServers"] as? [String: Any] ?? [:]

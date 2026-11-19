@@ -209,13 +209,14 @@ private struct ConnectionRow: View {
 
     @ViewBuilder
     private var control: some View {
+        // Connected: the squares and the line under them say it all.
         if server.connected {
-            SettingsValue("\(server.tools.count) tool\(server.tools.count == 1 ? "" : "s")", help: "Connected")
+            EmptyView()
         } else if server.needsAuth == true {
             if store.signingIn.contains(server.name) {
                 ProgressView().controlSize(.small)
             } else {
-                Button("Sign in") { store.signIn(server.name) }.buttonStyle(CustomizePillStyle())
+                Button("Sign in") { store.signIn(server.name) }.buttonStyle(CustomizePillStyle()).fixedSize()
                     .help(server.declined == true ? "Opens \(server.name)'s sign-in in your browser (you declined before)" : "Opens \(server.name)'s sign-in in your browser")
             }
         } else {

@@ -192,6 +192,8 @@ struct CustomizePillStyle: ButtonStyle {
             .background(primary ? Tokens.accent : (configuration.isPressed ? Tokens.hover : .clear), in: Capsule())
             .overlay { if !primary { Capsule().strokeBorder(Tokens.lineStrong) } }
             .contentShape(Capsule())
+            // Room for the stroke's outer half, which a tight frame clips (as FrogPillMenu).
+            .padding(1)
             .opacity(configuration.isPressed ? 0.85 : 1)
     }
 }
