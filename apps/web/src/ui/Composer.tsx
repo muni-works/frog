@@ -9,6 +9,7 @@ import type { Provider } from '../auth'
 import { safeHref } from './href'
 import { DownloadAppChip, useDownloadChip } from './DownloadChip'
 import { useFocusTrap, useLayer, useMenu } from './layers'
+import { useSuggestion, type Suggestion } from './suggestion'
 import { derive, error as reducerError, reduce, type ComposerError, type Effect, type Intent, type Pr, type State as Tray } from '../composer'
 
 export const gh = (n: number) => (
@@ -68,6 +69,9 @@ export interface ComposerProps {
   /** Suggestion chips over the card while it's empty. `send` chips send on click; others fill
    * the field. `act` marks one that acts outside the project (push, deploy). */
   chips?: { text: string; send?: boolean; act?: boolean }[]
+  /** One suggestion shown in the empty field, muted, with a "tab" hint: Tab (or the hint) puts it
+   * in. A list cycles slowly until you type (ui/suggestion.ts); one string stays put. */
+  suggestion?: Suggestion
   /** Messages sent while Frog works: they go together when the turn ends. × removes one. */
   queued?: { text: string; images: Image[] }[]
   onUnqueue?: (i: number) => void
@@ -197,6 +201,9 @@ export function Composer(p: ComposerProps) {
     el.style.height = el.value ? `${Math.min(el.scrollHeight, 226)}px` : ''
   }
   const working = p.state === 'working', paused = p.state === 'paused'
+  // Typing stops the cycle for good; autofocus alone doesn't.
+  const [typed, setTyped] = useState(false)
+  const sug = useSuggestion(p.suggestion, !typed && !text)
   const timer = useTimer(working ? p.startedAt : undefined)
   useEffect(() => { if (p.draft !== undefined) setText(p.draft) }, [p.draft])
   useEffect(() => { if (ref.current) grow(ref.current) }, [text])
@@ -315,7 +322,11 @@ export function Composer(p: ComposerProps) {
     ...p.tray,
   }
   const d = derive(tray)
-  const placeholder = working ? PLACEHOLDER.working : p.session ? PLACEHOLDER.session : PLACEHOLDER.new
+  // The suggestion, while the field is empty, takes the placeholder's place: the placeholder
+  // carries its words for screen readers, and the overlay draws them so they can fade.
+  const ghost = !text && !images.length && !working ? sug.text : null
+  const take = () => { if (!ghost) return; setText(ghost); setTyped(true); ref.current?.focus() }
+  const placeholder = ghost ?? (working ? PLACEHOLDER.working : p.session ? PLACEHOLDER.session : PLACEHOLDER.new)
   const dictate = () => {
     const Rec = speech()
     // Without the browser's recognition, the field takes focus for the OS keyboard's own mic.
@@ -629,12 +640,21 @@ export function Composer(p: ComposerProps) {
           </div>
         )}
         <label htmlFor="cz" className="sr">Message Frog</label>
+        <div className={`cz-field${ghost ? ' cz-field--sug' : ''}`}>
+        {ghost && (
+          <div className={`cz-sg${sug.out ? ' out' : ''}`}>
+            <span className="cz-sg-text" aria-hidden="true">{ghost}</span>
+            <button type="button" className="cz-tab" tabIndex={-1} aria-label={`Use suggestion: ${ghost}`} onClick={take}>tab</button>
+          </div>
+        )}
         <textarea
           id="cz" ref={ref} rows={1} placeholder={placeholder} value={text} aria-label="Message Frog"
-          onChange={(e) => { setText(e.target.value); grow(e.target) }}
+          onChange={(e) => { setText(e.target.value); if (e.target.value) setTyped(true); grow(e.target) }}
           onPaste={(e) => { const fs = [...e.clipboardData.files].filter((f) => f.type.startsWith('image/')); if (fs.length) { e.preventDefault(); attach(fs) } }}
           onKeyDown={(e) => {
             if (composing(e)) return
+            // Tab takes the suggestion only while it shows; otherwise it moves focus as ever.
+            if (e.key === 'Tab' && ghost && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) { e.preventDefault(); take(); return }
             if (e.key === 'Enter' && !e.shiftKey && !e.metaKey) { e.preventDefault(); send() }
             if (e.key === 'Escape') dispatch({ type: 'esc' })
             if (e.key === 'ArrowUp' && !text) dispatch({ type: 'recall' })
@@ -643,6 +663,7 @@ export function Composer(p: ComposerProps) {
             if (e.key === '.' && (e.ctrlKey || e.metaKey) && !p.asking) { e.preventDefault(); dispatch({ type: 'cycle_mode' }) }
           }}
         />
+        </div>
         <div className="cz-controls">
           <button type="button" className={`cz-chip cz-attach${menu === 'plus' ? ' open' : ''}`} onClick={() => toggle('plus')} aria-label="Attach" aria-expanded={menu === 'plus'}>
             <I d={P.plus} />

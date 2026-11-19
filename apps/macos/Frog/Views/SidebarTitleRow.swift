@@ -33,7 +33,7 @@ struct SidebarTitleRow: View {
 struct SidebarViewOptions: View {
     @AppStorage("sidebarGroup") private var grouping = SessionList.Grouping.date
     @AppStorage("sidebarSort") private var sort = SessionList.Sort.activity
-    @AppStorage("compactSidebar") private var compactSidebar = false
+    @AppStorage("compactSidebar") private var compactSidebar = true
     @SceneStorage("sidebarArchived") private var showArchived = false
 
     var body: some View {

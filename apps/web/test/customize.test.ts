@@ -256,3 +256,11 @@ test("the dev sample is only ever loaded behind import.meta.env.DEV", () => {
   assert.equal(uses.length, 1);
   assert.match(uses[0], /import\.meta\.env\.DEV && .*import\('\.\/customize\.sample'\)/);
 });
+
+test("the app sidebar's Customize row opens Customize on Skills", async () => {
+  const p = await signedIn("/");
+  await click(find(p, (n) => n.type === "button" && shownText(n) === "Customize"));
+  assert.equal(page(p)?.props["aria-label"], "Skills");
+  assert.equal(p.path(), "/customize/skills");
+  p.unmount();
+});

@@ -294,6 +294,9 @@ final class CloudAccount {
         if noKeychain { return nil }
         #endif
         #if os(macOS)
+        // A test host never reads the login Keychain, `noKeychain` or not: it shares the
+        // developer's, and its key comes from `keyProvider`.
+        if SingleInstance.isTesting { return nil }
         return macKey()
         #else
         // The phone's own sign-in key (CloudPhone keeps it under the same service and account).
@@ -308,6 +311,7 @@ final class CloudAccount {
     #if os(macOS)
     nonisolated private static func macKey() -> String? {
         if let env = ProcessInfo.processInfo.environment["FROG_API_KEY"], !env.isEmpty { return env }
+        precondition(!SingleInstance.isTesting, "a test reached the login Keychain (frog/cloud)")
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/security")
         p.arguments = ["find-generic-password", "-s", "frog", "-a", "cloud", "-w"]

@@ -11,6 +11,7 @@ pub mod checkpoint;
 pub mod cloud_login;
 pub mod codemap;
 pub mod compiled_memory;
+pub mod customize;
 pub mod config;
 pub mod context;
 pub mod credentials;
