@@ -63,21 +63,25 @@ fn one_line(text: &str) -> Result<&str> {
 
 fn write(path: &Path, lines: &[String], trailing_newline: bool) -> Result<()> {
     // Through a symlink (`CLAUDE.md` -> `AGENTS.md` is common), write the file it points at,
-    // so the rename doesn't replace the link with a copy.
-    let real = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    let path = real.as_path();
+    // so the rename doesn't replace the link with a copy. Never a link to nothing: its target
+    // would be created wherever it points.
+    let real = match path.canonicalize() {
+        Ok(real) => real,
+        Err(_) if std::fs::symlink_metadata(path).is_ok() => {
+            bail!("{} is a link to a file that doesn't exist", path.display())
+        }
+        Err(_) => path.to_path_buf(),
+    };
     let mut text = lines.join("\n");
     if trailing_newline && !text.is_empty() {
         text.push('\n');
     }
-    let tmp = path.with_extension("customize.tmp");
-    std::fs::write(&tmp, text)?;
-    std::fs::rename(&tmp, path)?;
-    Ok(())
+    // A fresh temp name, created new, beside the file; the file keeps its permissions.
+    super::write_atomic(&real, &text, false)
 }
 
 fn load(path: &Path) -> Result<(Vec<String>, bool)> {
-    let text = std::fs::read_to_string(path)?;
+    let text = super::read_opt(path)?.unwrap_or_default();
     let trailing = text.ends_with('\n') || text.is_empty();
     Ok((text.lines().map(String::from).collect(), trailing))
 }
@@ -108,7 +112,7 @@ pub fn remove(path: &Path, n: usize, old: &str) -> Result<()> {
 /// Add a line at the end, creating the file (and its folder) if there isn't one.
 pub fn add(path: &Path, text: &str) -> Result<()> {
     let text = one_line(text)?;
-    if !path.exists() {
+    if std::fs::symlink_metadata(path).is_err() {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }

@@ -328,11 +328,8 @@ async fn undo_survives_a_restart_and_never_clobbers() {
     let mut r = rig_at(&base, vec![answer_and_note("Done.", staging_note())]);
     r.idle().await;
     let handle = receipts(&r.say(STAGING).await).remove(0).undo;
-    let dir = base.join("memory/projects");
-    let path = walkdir(&dir)
-        .into_iter()
-        .find(|p| p.extension().is_some_and(|e| e == "md"))
-        .unwrap();
+    // The note's own file (its id ends the handle), not a session summary beside it.
+    let path = note_file(&base, &handle);
     let edited = std::fs::read_to_string(&path)
         .unwrap()
         .replace("Monday", "Sunday");
@@ -341,6 +338,44 @@ async fn undo_survives_a_restart_and_never_clobbers() {
     let (ok, why) = undone(&evs).remove(0);
     assert!(!ok && why.contains("edited since"), "{why}");
     assert_eq!(std::fs::read_to_string(&path).unwrap(), edited);
+    r.end().await;
+}
+
+/// The note file an undo handle (`note:<scope>:<hash>:<id>`) names.
+fn note_file(base: &Path, handle: &str) -> PathBuf {
+    let id = handle.rsplit(':').next().unwrap();
+    walkdir(&base.join("memory"))
+        .into_iter()
+        .find(|p| {
+            p.file_name()
+                .is_some_and(|n| n == format!("{id}.md").as_str())
+        })
+        .unwrap()
+}
+
+/// Finding 9: undo removes only a note Frog wrote. A handle for a note the user wrote
+/// themselves (even with the right hash) leaves it alone.
+#[tokio::test]
+async fn undo_removes_only_notes_frog_wrote() {
+    let mut r = rig(vec![answer_and_note("Done.", staging_note())]);
+    r.idle().await;
+    let handle = receipts(&r.say(STAGING).await).remove(0).undo;
+    let path = note_file(&r.base, &handle);
+    let mine = std::fs::read_to_string(&path)
+        .unwrap()
+        .replace("source: frog", "source: user");
+    std::fs::write(&path, &mine).unwrap();
+    let mut parts: Vec<&str> = handle.splitn(4, ':').collect();
+    let hash = format!("{:016x}", super::noting::fnv(mine.as_bytes()));
+    parts[2] = &hash;
+    let evs = r
+        .run(Op::Undo {
+            undo: parts.join(":"),
+        })
+        .await;
+    let (ok, why) = undone(&evs).remove(0);
+    assert!(!ok, "{why}");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), mine);
     r.end().await;
 }
 

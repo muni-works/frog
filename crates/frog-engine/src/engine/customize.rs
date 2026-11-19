@@ -190,19 +190,29 @@ rules or tools. Don't retry; tell the session that started you if it matters."
         Ok(match target {
             Target::Notes if self.chat => ("Frog's notes, for every project".into(), None),
             Target::Notes => (format!("Frog's notes for {name}, only you"), None),
-            Target::Home => (
-                "your rules for every project (~/.config/frog/FROG.md)".into(),
-                Some(self.home_rules()),
-            ),
-            Target::Project => {
-                let file = cz::project_file(&self.root);
-                let fname = file
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_string();
+            Target::Home => {
+                // Never through a link out of the home rules folder; the card shows the
+                // file really written.
+                let dir = crate::config::config_dir();
+                let file = cz::safe_target(&self.home_rules(), &dir)?;
                 (
-                    format!("{fname} in {name}, shared with everyone who works in it"),
+                    format!("your rules for every project ({})", file.display()),
+                    Some(file),
+                )
+            }
+            Target::Project => {
+                // A repo can ship AGENTS.md as a link anywhere: write only a file inside it,
+                // and show that file.
+                let file = cz::safe_target(&cz::project_file(&self.root), &self.root)?;
+                let shown = std::fs::canonicalize(&self.root)
+                    .ok()
+                    .and_then(|r| file.strip_prefix(r).ok().map(Path::to_path_buf))
+                    .unwrap_or_else(|| file.clone());
+                (
+                    format!(
+                        "{} in {name}, shared with everyone who works in it",
+                        shown.display()
+                    ),
                     Some(file),
                 )
             }
@@ -280,7 +290,11 @@ rules or tools. Don't retry; tell the session that started you if it matters."
                     }
                 };
                 // A shared file has a private way out: the same line in Frog's own notes.
-                if *target == Target::Project && *op == LineOp::Add {
+                // Not when the notes already have it: approving would only fail.
+                if *target == Target::Project
+                    && *op == LineOp::Add
+                    && self.note_after(LineOp::Add, line, None).is_ok()
+                {
                     let (place, _) = self.line_place(Target::Notes)?;
                     card.alternative = Some(Alternative {
                         id: "notes".into(),
@@ -380,7 +394,7 @@ rules or tools. Don't retry; tell the session that started you if it matters."
         }
         let (_, path) = self.line_place(target)?;
         let path = path.context("no file for that")?;
-        let text = cz::read_opt(&path).unwrap_or_default();
+        let text = cz::read_opt(&path)?.unwrap_or_default();
         let after = match op {
             LineOp::Add => cz::add_line(&text, line)?,
             LineOp::Remove => cz::remove_line(&text, line)?,
@@ -444,7 +458,7 @@ rules or tools. Don't retry; tell the session that started you if it matters."
                 store.set_session(&self.conv.session_id, &self.title());
                 let (note, _) = store.add(scope, line)?;
                 cz::Undo::File(cz::FileUndo {
-                    after: cz::read_opt(&note.path),
+                    after: cz::read_opt(&note.path)?,
                     path: note.path,
                     before: None,
                     private: true,
@@ -461,8 +475,8 @@ rules or tools. Don't retry; tell the session that started you if it matters."
             }
             Change::Skill { .. } | Change::Tool { .. } => {
                 let path = self.toggles_path().context("no session store")?;
-                let next = self
-                    .toggles()
+                // A switch file that doesn't parse is an error, never rewritten as all on.
+                let next = cz::Toggles::load_strict(&path)?
                     .with(change)
                     .context("it's already that way")?;
                 cz::Undo::File(cz::write_file(&path, Some(next.render()), false)?)
@@ -481,6 +495,7 @@ rules or tools. Don't retry; tell the session that started you if it matters."
                 cz::Undo::Setting {
                     id: id.clone(),
                     old,
+                    new: value.clone(),
                 }
             }
         };
@@ -596,14 +611,22 @@ user's own answer on the card applies it.",
                     "nothing to undo for that (already undone?)"
                 )),
                 Some(cz::Undo::File(f)) => f.undo().map(|_| "Undone.".to_string()),
-                Some(cz::Undo::Setting { id, old: Some(old) }) => {
-                    self.shared
-                        .settings
-                        .lock()
-                        .unwrap()
-                        .insert(id.clone(), old.clone());
-                    self.emit(Event::SettingChange { id, value: old });
-                    Ok("Undone.".to_string())
+                Some(cz::Undo::Setting {
+                    id,
+                    old: Some(old),
+                    new,
+                }) => {
+                    // Only over the value the change set: a newer one the user picked stays.
+                    let mut settings = self.shared.settings.lock().unwrap();
+                    if settings.get(&id) != Some(&new) {
+                        drop(settings);
+                        Err(anyhow::anyhow!("it changed since, so it was left as it is"))
+                    } else {
+                        settings.insert(id.clone(), old.clone());
+                        drop(settings);
+                        self.emit(Event::SettingChange { id, value: old });
+                        Ok("Undone.".to_string())
+                    }
                 }
                 Some(cz::Undo::Setting { old: None, .. }) => Err(anyhow::anyhow!(
                     "the app never said what it was before, so it can't be put back from here"

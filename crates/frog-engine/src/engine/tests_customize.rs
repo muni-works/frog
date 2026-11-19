@@ -879,3 +879,173 @@ async fn an_approval_must_name_a_choice() {
     );
     r.end().await;
 }
+
+fn errors(evs: &[Event]) -> String {
+    tool_output(evs)
+}
+
+/// Finding 4: a project rules file that isn't UTF-8 is an error shown to the user, never
+/// replaced by one line.
+#[tokio::test]
+async fn a_non_utf8_rules_file_is_left_alone() {
+    let script = vec![
+        call(
+            "a",
+            json!({"do": "remember", "line": "Use pnpm", "where": "project", "words": "remember to use pnpm"}),
+        ),
+        done(),
+    ];
+    let mut r = rig(script, Mode::Default);
+    let agents = r.project.join("AGENTS.md");
+    let bytes = [b'#', 0xff, b'\n'];
+    std::fs::write(&agents, bytes).unwrap();
+    r.idle().await;
+    let evs = r.say("remember to use pnpm", never).await;
+    assert!(
+        cards(&evs).is_empty() && applied(&evs).is_empty(),
+        "{evs:?}"
+    );
+    assert!(errors(&evs).contains("UTF-8"), "{}", errors(&evs));
+    assert_eq!(std::fs::read(&agents).unwrap(), bytes);
+    r.end().await;
+}
+
+/// Finding 5: a repo's AGENTS.md linked outside the project is never written through; a
+/// link inside shows its real file on the card.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_rules_link_out_of_the_project_is_refused() {
+    let ask = || {
+        call(
+            "a",
+            json!({"do": "remember", "line": "Use pnpm", "where": "project", "words": "remember to use pnpm"}),
+        )
+    };
+    let mut r = rig(vec![ask(), done(), ask(), done()], Mode::Default);
+    let outside = r.base.join("zshrc");
+    std::fs::write(&outside, "export X=1\n").unwrap();
+    std::os::unix::fs::symlink(&outside, r.project.join("AGENTS.md")).unwrap();
+    r.idle().await;
+    let evs = r.say("remember to use pnpm", |id, _| primary(id)).await;
+    assert!(
+        cards(&evs).is_empty() && applied(&evs).is_empty(),
+        "{evs:?}"
+    );
+    assert_eq!(std::fs::read_to_string(&outside).unwrap(), "export X=1\n");
+    // Inside the project: the card names the real file.
+    std::fs::remove_file(r.project.join("AGENTS.md")).unwrap();
+    std::fs::create_dir_all(r.project.join("docs")).unwrap();
+    std::fs::write(r.project.join("docs/RULES.md"), "- a\n").unwrap();
+    std::os::unix::fs::symlink("docs/RULES.md", r.project.join("AGENTS.md")).unwrap();
+    let evs = r.say("remember to use pnpm", |id, _| primary(id)).await;
+    let c = cards(&evs);
+    assert_eq!(c.len(), 1, "{evs:?}");
+    assert!(
+        c[0].path.as_deref().unwrap().ends_with("docs/RULES.md"),
+        "{:?}",
+        c[0].path
+    );
+    assert_eq!(
+        std::fs::read_to_string(r.project.join("docs/RULES.md")).unwrap(),
+        "- a\n- Use pnpm\n"
+    );
+    assert!(
+        r.project
+            .join("AGENTS.md")
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    r.end().await;
+}
+
+/// Finding 7: undoing a setting the user has changed since leaves their newer value.
+#[tokio::test]
+async fn setting_undo_refuses_after_a_newer_value() {
+    let script = vec![
+        call(
+            "c",
+            json!({"do": "set", "id": "density", "value": "compact", "words": "make it compact"}),
+        ),
+        done(),
+    ];
+    let mut r = rig(script, Mode::Default);
+    r.idle().await;
+    let mut values = serde_json::Map::new();
+    values.insert("density".into(), json!("comfortable"));
+    r.h.ops.send(Op::Settings { values }).unwrap();
+    let evs = r.say("make it compact", never).await;
+    let undo = applied(&evs)[0].0.clone();
+    // The user picks another value in Settings; the app says so.
+    let mut values = serde_json::Map::new();
+    values.insert("density".into(), json!("comfortable"));
+    r.h.ops.send(Op::Settings { values }).unwrap();
+    let evs = r.run(Op::Undo { undo }, never).await;
+    assert!(setting_changes(&evs).is_empty(), "{evs:?}");
+    assert!(
+        evs.iter().any(|e| matches!(e, Event::CustomizeUndone { ok: false, message, .. } if message.contains("changed since"))),
+        "{evs:?}"
+    );
+    r.end().await;
+}
+
+/// Finding 9: "Just for me" isn't offered when Frog's notes already have the line.
+#[tokio::test]
+async fn no_alternative_when_the_notes_have_it() {
+    let script = vec![
+        call(
+            "a",
+            json!({"do": "remember", "line": "Use pnpm", "words": "remember to use pnpm"}),
+        ),
+        done(),
+        call(
+            "b",
+            json!({"do": "remember", "line": "Use pnpm", "where": "project", "words": "remember to use pnpm"}),
+        ),
+        done(),
+    ];
+    let mut r = rig(script, Mode::Default);
+    r.idle().await;
+    let evs = r.say("remember to use pnpm", never).await;
+    assert_eq!(applied(&evs).len(), 1, "{evs:?}");
+    let evs = r.say("remember to use pnpm", |id, _| deny(id)).await;
+    let c = cards(&evs);
+    assert_eq!(c.len(), 1, "{evs:?}");
+    assert!(c[0].alternative.is_none(), "{:?}", c[0].alternative);
+    r.end().await;
+}
+
+/// Finding 9: the file written is the one the card showed. One created while the card was
+/// open (here AGENTS.md, which would now win over CLAUDE.md) voids the approval.
+#[tokio::test]
+async fn the_card_file_is_the_file_written() {
+    let script = vec![
+        call(
+            "a",
+            json!({"do": "remember", "line": "Use pnpm", "where": "project", "words": "remember to use pnpm"}),
+        ),
+        done(),
+    ];
+    let mut r = rig(script, Mode::Default);
+    std::fs::write(r.project.join("CLAUDE.md"), "- a\n").unwrap();
+    r.idle().await;
+    let project = r.project.clone();
+    let evs = r
+        .say("remember to use pnpm", move |id, p| {
+            assert!(p.path.as_deref().unwrap().ends_with("CLAUDE.md"));
+            std::fs::write(project.join("AGENTS.md"), "- b\n").unwrap();
+            primary(id)
+        })
+        .await;
+    assert!(applied(&evs).is_empty(), "{evs:?}");
+    assert_eq!(
+        std::fs::read_to_string(r.project.join("CLAUDE.md")).unwrap(),
+        "- a\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(r.project.join("AGENTS.md")).unwrap(),
+        "- b\n"
+    );
+    r.end().await;
+}
