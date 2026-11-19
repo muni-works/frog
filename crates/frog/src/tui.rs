@@ -390,6 +390,7 @@ impl Tui {
                     id,
                     decision: Decision::Deny,
                     note: Some(note.to_string()),
+                    choice: None,
                 });
                 return true;
             }
@@ -405,6 +406,7 @@ impl Tui {
                 id,
                 decision,
                 note: None,
+                choice: None,
             });
             if matches!(
                 line.to_lowercase().as_str(),
@@ -462,6 +464,7 @@ impl Tui {
                 id,
                 decision: Decision::Deny,
                 note: None,
+                choice: None,
             });
             self.send(Op::Interrupt);
             return true;
@@ -659,6 +662,7 @@ pub async fn run(h: Handle, cfg: Config, queued: Option<String>) -> Result<()> {
         ask: true,
         sessions: false,
         irc: false,
+        customize: false,
     });
     if !tui.drain_startup(false).await {
         return Ok(());
