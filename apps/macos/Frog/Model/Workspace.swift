@@ -350,7 +350,7 @@ final class Workspace {
     /// sandbox through the gateway instead of `frog --serve` here.
     func openCloud(_ id: String) {
         guard id != conversation?.cloudSession, let gateway = CloudSessions.shared.gateway else { return }
-        let c = Conversation.cloud(folder: folder, link: CloudLink(gateway: gateway, session: id), session: id)
+        let c = Conversation.cloud(folder: folder, link: CloudLink(gateway: gateway, session: id, top: CloudSessions.isTop(id)), session: id)
         incoming?.stop(reason: "open superseded")
         incoming = c
         selection = id
@@ -411,7 +411,8 @@ final class Workspace {
         guard c.start === start else { return }
         start.session = s.id
         c.cloudSession = s.id
-        link.attach(CloudLink(gateway: gateway, session: s.id))
+        // Started here by the person: top-level.
+        link.attach(CloudLink(gateway: gateway, session: s.id, top: true))
         if conversation === c {
             selection = s.id
             currentSession = s.id
