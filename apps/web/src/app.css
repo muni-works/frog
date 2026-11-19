@@ -300,7 +300,8 @@ button.sgroup:hover .chev2, button.sgroup:focus-visible .chev2, button.sgroup[ar
 .chrome-btn:disabled { opacity: 0.35; cursor: default; }
 .chrome-btn:focus-visible { outline: 2px solid var(--frog); outline-offset: -2px; }
 .main { position: relative; }
-.main.has-rail > .scroll, .main.has-rail > .dock { padding-right: 36px; }
+/* Room for the rail beside the column, as the Mac keeps it; a phone has no rail. */
+@media (min-width: 761px) { .main.has-rail > .scroll, .main.has-rail > .dock { padding-right: 36px; } }
 .turn-rail { position: absolute; top: 60px; right: 8px; width: 28px; border-radius: 14px; background: var(--card); z-index: 4; touch-action: none; cursor: pointer; }
 .turn-rail:focus-visible { outline: 2px solid var(--frog); outline-offset: 2px; }
 .turn-rail svg { display: block; }
@@ -316,7 +317,7 @@ button.sgroup:hover .chev2, button.sgroup:focus-visible .chev2, button.sgroup[ar
 .rail-label .rail-muted { color: var(--muted); }
 .rail-label .rail-num { font-variant-numeric: tabular-nums; }
 .rail-label .rail-prompt { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
-@media (max-width: 760px) { .turn-rail { display: none; } .main.has-rail > .scroll { padding-right: 0; } .main.has-rail > .dock { padding-right: 8px; } }
+@media (max-width: 760px) { .turn-rail { display: none; } }
 /* Read receipts on your messages. */
 .me { position: relative; }
 .ticks { display: inline-flex; padding: 0 4px; color: var(--faint); opacity: .7; }
