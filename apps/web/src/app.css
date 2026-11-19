@@ -615,6 +615,16 @@ body { font-family: var(--font-sans); }
 .cz-card:focus-within { border-color: var(--muted); }
 .cz-card textarea { display: block; width: 100%; box-sizing: border-box; border: 0; background: transparent; resize: none; outline: none; padding: 12px 14px 4px; font: 15px/21px var(--font-sans); color: var(--fg); caret-color: var(--frog); height: 37px; max-height: 226px; overflow-y: auto; }
 .cz-card textarea::placeholder { color: var(--faint); }
+/* The one suggestion (ui/suggestion.ts): drawn over the empty field so it can fade; the
+   placeholder underneath carries the same words for screen readers. Only the tab hint takes clicks. */
+.cz-field { position: relative; }
+.cz-field--sug textarea::placeholder { color: transparent; }
+.cz-sg { position: absolute; top: 0; left: 0; right: 0; display: flex; align-items: baseline; gap: 10px; padding: 12px 14px 4px; pointer-events: none; font: 15px/21px var(--font-sans); color: var(--faint); transition: opacity .24s ease-out; }
+.cz-sg.out { opacity: 0; transition-duration: .18s; }
+.cz-sg-text { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cz-tab { pointer-events: auto; flex: none; padding: 0 6px; border: 1px solid var(--line); border-radius: 5px; background: transparent; color: var(--faint); font: 11.5px/16px var(--font-sans); cursor: pointer; }
+.cz-tab:hover { color: var(--fg); }
+@media (prefers-reduced-motion: reduce) { .cz-sg { transition: none; } }
 .cz-sending textarea { color: var(--muted); }
 .cz-i { width: 14px; height: 14px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
 .cz-sp { flex: 1; min-width: 0; }
@@ -724,7 +734,7 @@ body { font-family: var(--font-sans); }
   .cz-chip::after, .cz-act::after, .cz-signin::after { content: ''; position: absolute; inset: -10px -4px; }
 }
 @media (max-width: 760px) {
-  .cz-card textarea { font-size: 16px; } /* 16px keeps iOS from zooming the page on focus */
+  .cz-card textarea, .cz-sg { font-size: 16px; } /* 16px keeps iOS from zooming the page on focus */
   .cz-menu { left: 4px !important; right: 4px !important; width: auto !important; max-width: none; }
 }
 

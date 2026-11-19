@@ -25,6 +25,7 @@ test("signed out, the sidebar is the signed-in layout: top rows, starters, then 
   assert.deepEqual(order, ["side-starters", "side-pill", "signin-row", "side-legal"]);
   // The main column is still the landing.
   assert.ok(shownText(mainCol(p)).includes("What should we work on?"));
+  assert.ok(shownText(mainCol(p)).includes("What is Frog?"));
   p.unmount();
 });
 

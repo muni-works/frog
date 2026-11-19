@@ -29,11 +29,14 @@ use tokio_util::sync::CancellationToken;
 
 mod call;
 mod compact;
+mod customize;
 mod dispatch;
 mod permit;
 mod project;
 #[cfg(test)]
 mod tests_compact;
+#[cfg(test)]
+mod tests_customize;
 #[cfg(test)]
 mod tests_ingest;
 #[cfg(test)]
@@ -517,6 +520,11 @@ struct Shared {
     /// A note the user sent with a permission answer, by request id, until the
     /// agent picks it up.
     notes: Mutex<HashMap<String, String>>,
+    /// The alternative a user picked on a `Customize` card, by request id, until the agent
+    /// picks it up.
+    choices: Mutex<HashMap<String, String>>,
+    /// The app's settings as it last reported them (`Op::Settings`), plus changes made since.
+    settings: Mutex<serde_json::Map<String, Value>>,
     /// Open `Ask` questions, answered by `Op::Answer`.
     questions: Mutex<HashMap<String, oneshot::Sender<crate::protocol::Answer>>>,
     /// The open ones a child's watcher raised (see `child_watch`), by id, as sent. They
@@ -526,6 +534,8 @@ struct Shared {
     watching: Mutex<HashMap<String, Event>>,
     /// A client shows questions to someone who can answer (`SetClientCaps { ask }`).
     client_ask: AtomicBool,
+    /// A client draws `Customize` cards (`SetClientCaps { customize }`).
+    client_customize: AtomicBool,
     /// Session tools the client answers (`SetClientCaps { sessions }`).
     sessions: crate::tools::sessions::Hub,
     /// Connected MCP servers, for elicitation answers and app tool calls mid-turn.
@@ -805,9 +815,12 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         pending: Default::default(),
         waits: Default::default(),
         notes: Default::default(),
+        choices: Default::default(),
+        settings: Default::default(),
         questions: Default::default(),
         watching: Default::default(),
         client_ask: Default::default(),
+        client_customize: Default::default(),
         sessions: Default::default(),
         mcp: Default::default(),
         subagents: Default::default(),
@@ -999,16 +1012,26 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                         break;
                     }
                 }
-                Op::Permission { id, decision, note } => {
+                Op::Permission {
+                    id,
+                    decision,
+                    note,
+                    choice,
+                } => {
                     if let Some(tx) = router.pending.lock().unwrap().remove(&id) {
                         if let Some(n) = note.filter(|n| !n.trim().is_empty()) {
                             router.notes.lock().unwrap().insert(id.clone(), n);
+                        }
+                        if let Some(c) = choice {
+                            router.choices.lock().unwrap().insert(id.clone(), c);
                         }
                         let _ = tx.send(decision);
                     } else {
                         router.bg.answer(&id, decision, note);
                     }
                 }
+                // State, not a turn: the app's settings land at once.
+                Op::Settings { values } => router.settings.lock().unwrap().extend(values),
                 Op::Answer { id, answer } => {
                     if let Some(tx) = router.questions.lock().unwrap().remove(&id) {
                         let _ = tx.send(answer);
@@ -1937,6 +1960,13 @@ struct Agent {
     /// Compiled memory, while this model's server keeps it (see `compiled_memory`).
     compiled: Option<crate::compiled_memory::Session>,
     notes: Vec<crate::memory::Note>,
+    /// What the user typed this turn, verbatim (no expanded mentions, wakes or tool output):
+    /// the only words that can ask `Customize` for a change.
+    user_words: Vec<String>,
+    /// Undo for each `Customize` change, by the handle its event carried.
+    undos: HashMap<String, crate::customize::Undo>,
+    /// `Customize` offers the user declined this session: never offered again.
+    declined: HashSet<String>,
     /// Notes that didn't fit the current model's index.
     notes_omitted: usize,
     /// Rule files for this project, and the scoped ones already shown this session.
@@ -2266,6 +2296,9 @@ impl Agent {
             memory,
             compiled: None,
             notes,
+            user_words: Vec::new(),
+            undos: HashMap::new(),
+            declined: HashSet::new(),
             notes_omitted: 0,
             rules,
             repo_map: Default::default(),
@@ -2327,6 +2360,7 @@ impl Agent {
             }
             None => agent.refresh_repo_map(&[]),
         }
+        agent.drop_skills_off();
         agent.apply_harness();
         if agent.cfg.energy && !agent.subagent {
             agent.meter = crate::energy::Meter::new();
@@ -3053,6 +3087,7 @@ impl Agent {
                 self.turn(&note, Vec::new()).await?
             }
             Op::Shell { command } => self.shell(&command).await,
+            Op::Undo { undo } => self.customize_undo(&undo),
             Op::ApprovalDigest => {
                 let summary = self.digest.summary();
                 self.emit(Event::ApprovalDigest { summary });
@@ -3157,9 +3192,11 @@ impl Agent {
                 ask,
                 sessions,
                 irc,
+                customize,
             } => {
                 self.shared.panes.set_client(panes);
                 self.shared.client_ask.store(ask, Ordering::Relaxed);
+                self.shared.client_customize.store(customize, Ordering::Relaxed);
                 self.shared.sessions.set_enabled(sessions);
                 if irc {
                     // The bridge: one nick per session, notices and mentions through it.
@@ -3181,6 +3218,7 @@ impl Agent {
             | Op::ClearInbox
             | Op::DismissWakes
             | Op::Permission { .. }
+            | Op::Settings { .. }
             | Op::Answer { .. }
             | Op::SessionReply { .. }
             | Op::Elicit { .. }

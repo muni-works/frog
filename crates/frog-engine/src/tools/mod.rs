@@ -318,6 +318,8 @@ pub fn kind(name: &str) -> Kind {
         crate::compiled_memory::TOOL => Kind::Edit,
         // Moving into a folder hands over its files and shell: always asks.
         crate::folder::TOOL => Kind::Exec,
+        // Proposes or applies on its own terms (`engine/customize.rs`), never a plain read.
+        crate::customize::TOOL => Kind::Edit,
         // frog's own tools that only read, or only touch frog's state (todos, titles, other
         // sessions through their own approvals): they never ask.
         "Read" | "Glob" | "Grep" | "TodoWrite" | "CodeMap" | "Docs" | "Diagram" => Kind::Read,
