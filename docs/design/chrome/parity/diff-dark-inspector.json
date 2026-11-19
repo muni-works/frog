@@ -1,0 +1,171 @@
+{
+  "format": "frog-chrome-diff/1",
+  "web": "/Users/cam/Developer/frog/.claude/worktrees/preview-pane-ui-1bcdb0/docs/design/chrome/parity/web-dark-inspector.json",
+  "mac": "/Users/cam/Developer/frog/.claude/worktrees/preview-pane-ui-1bcdb0/docs/design/chrome/parity/mac-dark-inspector.json",
+  "ok": true,
+  "rows": [
+    {
+      "id": "group",
+      "ok": true,
+      "note": "same",
+      "web": {
+        "height": 34,
+        "id": "group",
+        "right": 428,
+        "top": 9,
+        "width": 74,
+        "x": 778
+      },
+      "mac": {
+        "height": 34,
+        "id": "group",
+        "right": 428,
+        "top": 9,
+        "width": 108,
+        "x": 744
+      }
+    },
+    {
+      "id": "palette",
+      "ok": true,
+      "note": "same",
+      "web": {
+        "height": 28,
+        "id": "palette",
+        "ink": {
+          "height": 14,
+          "top": 7.5,
+          "width": 14,
+          "x": 10.5
+        },
+        "right": 465,
+        "top": 12,
+        "width": 34,
+        "x": 781
+      },
+      "mac": {
+        "height": 28,
+        "id": "palette",
+        "ink": {
+          "height": 14,
+          "top": 7,
+          "width": 14,
+          "x": 10
+        },
+        "right": 465,
+        "top": 12,
+        "width": 34,
+        "x": 781
+      }
+    },
+    {
+      "id": "inspector",
+      "ok": true,
+      "note": "same",
+      "web": {
+        "height": 28,
+        "id": "inspector",
+        "ink": {
+          "height": 14,
+          "top": 7,
+          "width": 18,
+          "x": 8
+        },
+        "right": 431,
+        "top": 12,
+        "width": 34,
+        "x": 815
+      },
+      "mac": {
+        "height": 28,
+        "id": "inspector",
+        "ink": {
+          "height": 13.5,
+          "top": 7.5,
+          "width": 17.5,
+          "x": 8.5
+        },
+        "right": 431,
+        "top": 12,
+        "width": 34,
+        "x": 815
+      }
+    },
+    {
+      "id": "rail",
+      "ok": true,
+      "note": "same",
+      "web": {
+        "height": 64,
+        "id": "rail",
+        "right": 428,
+        "top": 60,
+        "width": 28,
+        "x": 824
+      },
+      "mac": {
+        "height": 64,
+        "id": "rail",
+        "right": 428,
+        "top": 60,
+        "width": 28,
+        "x": 824
+      }
+    },
+    {
+      "id": "title",
+      "ok": true,
+      "note": "same",
+      "web": {
+        "height": 17,
+        "id": "title",
+        "ink": {
+          "height": 13,
+          "top": 3.5,
+          "width": 126.5,
+          "x": 1
+        },
+        "right": 862.1,
+        "top": 17.5,
+        "width": 127.9,
+        "x": 290,
+        "x0": 20
+      },
+      "mac": {
+        "height": 17,
+        "id": "title",
+        "ink": {
+          "height": 13,
+          "top": 3,
+          "width": 127.5,
+          "x": 0.5
+        },
+        "right": 882,
+        "top": 17.5,
+        "width": 128,
+        "x": 270,
+        "x0": 20
+      }
+    },
+    {
+      "id": "split",
+      "ok": true,
+      "note": "mac only (spec: one app)",
+      "web": null,
+      "mac": {
+        "height": 28,
+        "id": "split",
+        "ink": {
+          "height": 13.5,
+          "top": 7.5,
+          "width": 17.5,
+          "x": 8.5
+        },
+        "right": 499,
+        "top": 12,
+        "width": 34,
+        "x": 747
+      }
+    }
+  ]
+}

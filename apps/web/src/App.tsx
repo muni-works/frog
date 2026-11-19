@@ -23,6 +23,8 @@ import { Pin } from './ui/pin'
 import { firstTitle, stuck, provisional, undelivered, withOpening, type Opening } from './ui/Opening'
 import { useMachines } from './machines'
 import { creditLine, Palette, type Command } from './ui/Overlays'
+import { TurnRail } from './ui/TurnRail'
+import { WindowControls } from './ui/WindowControls'
 import { SettingsPage, SettingsSidebar } from './ui/Settings'
 import { pinModel, pinnedModel, rememberPick, sectionOfQuery, setTheme, settingsMovedTo, settingsPath, settingsSectionOf, startingModel, toggledTheme, WEB_SECTIONS, type Section } from './settings'
 import { CustomizePage, CustomizeSidebar } from './ui/Customize'
@@ -290,6 +292,41 @@ export default function App() {
   const live = useMemo(() => (current && !current.id.startsWith(PENDING) ? [current.id] : []), [current])
   const { thread, threads } = useThreads(cloud, live)
   const ct = current ? thread(current.id) : null
+  // The turn rail (docs/design/chrome/spec.md, 2): which turns are on screen, and a jump to one.
+  const [visibleTurns, setVisibleTurns] = useState<ReadonlySet<number>>(new Set())
+  const [winHeight, setWinHeight] = useState(() => (typeof window === 'undefined' ? 800 : window.innerHeight))
+  useEffect(() => { const r = () => setWinHeight(window.innerHeight); window.addEventListener('resize', r); return () => window.removeEventListener('resize', r) }, [])
+  const turnCount = view.kind === 'session' && ct ? ct.turns.length : 0
+  useEffect(() => {
+    const root = threadScroll.current
+    if (!root || !turnCount || typeof IntersectionObserver === 'undefined') { setVisibleTurns(new Set()); return }
+    const on = new Set<number>()
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) { const i = Number((e.target as HTMLElement).dataset.turnIndex); if (e.isIntersecting) on.add(i); else on.delete(i) }
+      setVisibleTurns(new Set(on))
+    }, { root })
+    root.querySelectorAll('[data-turn-index]').forEach((el) => io.observe(el))
+    // Turns above the tail are drawn as you scroll up (Transcript's window): observe them too.
+    const mo = new MutationObserver(() => root.querySelectorAll('[data-turn-index]').forEach((el) => io.observe(el)))
+    mo.observe(root, { childList: true, subtree: true })
+    return () => { io.disconnect(); mo.disconnect() }
+  // The scroller remounts when a column opens or closes (the inspector): observe the new one.
+  }, [currentId, turnCount, mode, inspector]) // eslint-disable-line react-hooks/exhaustive-deps
+  const jumpToTurn = useCallback((i: number, again = true) => {
+    const root = threadScroll.current
+    if (!root) return
+    const el = root.querySelector<HTMLElement>(`[data-turn-index="${i}"]`)
+    // Above the window a long conversation opens on: have it drawn, then jump on the next frame.
+    if (!el) { if (again) { window.dispatchEvent(new CustomEvent('frog:show-turn', { detail: i })); requestAnimationFrame(() => requestAnimationFrame(() => jumpToTurn(i, false))) } return }
+    root.scrollTop += el.getBoundingClientRect().top - root.getBoundingClientRect().top - parseFloat(getComputedStyle(root).paddingTop)
+  }, [])
+  // The rail's turns: once the conversation has one, in threads mode. A summary lands before the
+  // turn after it (thread.marks), which starts a chapter, as the Mac's compaction notice does.
+  const railTurns = useMemo(() => {
+    if (mode !== 'threads' || view.kind !== 'session' || !ct?.turns.length) return null
+    const compacted = new Set((ct.marks ?? []).filter((m) => !m.failed && m.text.startsWith('Compacted')).map((m) => m.after))
+    return ct.turns.map((t, i) => ({ turn: t.turn, input: t.input, more: t.more, images: t.images, reason: t.reason, compacted: i > 0 && compacted.has(i) }))
+  }, [mode, view.kind, ct?.turns, ct?.marks]) // eslint-disable-line react-hooks/exhaustive-deps
   // Still opening: no turn yet. Its sent message and status row stand in (ui/Opening.tsx).
   const op = current && ct && ct.turns.length === 0 ? opening[current.id] : undefined
   const failedStart = !!op && (!!op.failed || current?.state === 'error' || stuck(op))
@@ -589,6 +626,8 @@ export default function App() {
       // Signed out there's no palette, no settings and no session to answer: nothing to open.
       if (!key) return
       if (e.key === 'k') { e.preventDefault(); setPalette((p) => !p) }
+      // ⌥⌘0: the inspector, as on the Mac. By key code: ⌥ changes the character.
+      if (e.altKey && e.code === 'Digit0' && current) { e.preventDefault(); setInspector(!inspector) }
       if (e.key === 'n') { e.preventDefault(); setMode('threads'); setView({ kind: 'new' }) }
       if (e.key === ',') { e.preventDefault(); openSettings() }
       // A permission card hidden under another mode isn't answered from there.
@@ -598,7 +637,7 @@ export default function App() {
     }
     window.addEventListener('keydown', k)
     return () => window.removeEventListener('keydown', k)
-  }, [key, current, ct, decide, mode])
+  }, [key, current, ct, decide, mode, inspector]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const commands: Command[] = [
     { id: 'c-new', label: 'New session', hint: '⌘N', run: () => key && go({ kind: 'new' }) },
@@ -737,40 +776,39 @@ export default function App() {
         </footer>
       </main>
       ) :
-      <main className="main">
+      <main className={`main${railTurns ? ' has-rail' : ''}`}>
         {current ? (<div className="titlebar">
           <Burger />
           {collapsed && sideToggle(false)}
-          <div className="title-wrap">
+          {/* The header (docs/design/chrome/spec.md, 3): the whole title is the session menu's
+              button, as on the Mac; Rename… edits it in place. */}
+          <div className="title-wrap title-menu">
             {current && renaming === current.id ? (
               <input className="f-field title-edit" autoFocus defaultValue={title(current)} aria-label="Session name"
                 onBlur={(e) => rename(current, e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') rename(current, (e.target as HTMLInputElement).value); if (e.key === 'Escape') setRenaming(null) }} />
             ) : (
-              <b style={{ fontSize: 14 }} onDoubleClick={() => current && setRenaming(current.id)} title={current ? 'Double-click to rename' : undefined}>{current ? title(current) : 'New session'}</b>
+              <button type="button" className="title-btn" aria-label="Session menu" aria-haspopup="menu" aria-expanded={menuOpen}
+                title="Rename, archive or delete this session" onClick={() => setMenuOpen(!menuOpen)}>
+                <b className="title-text">{current ? title(current) : 'New session'}</b>
+                <svg aria-hidden="true" className="title-chev" width="8.5" height="4.9" viewBox="3.7 7.7 16.6 9.6" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><path d="M5 9l7 7 7-7" /></svg>
+              </button>
             )}
-            {current && (
-              <div className="title-menu">
-                <button type="button" className="ic-btn title-chev" aria-label="Session menu" title="Session menu" aria-expanded={menuOpen} onClick={() => setMenuOpen(!menuOpen)}>
-                  <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6" /></svg>
-                </button>
-                {menuOpen && (
-                  <div className="f-card cz-menu" role="menu" aria-label="Session" style={{ top: 30, bottom: 'auto', left: 0, right: 'auto', width: 200 }} onMouseLeave={() => setMenuOpen(false)} {...titleNav}>
-                    <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); setRenaming(current.id) }}>Rename</button>
-                    <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); archive(current, !current.archived) }}>{current.archived ? 'Unarchive' : 'Archive'}</button>
-                    <button type="button" role="menuitem" style={{ color: 'var(--warn)' }} onClick={() => { setMenuOpen(false); remove(current) }}>Delete session</button>
-                  </div>
-                )}
+            {current && menuOpen && (
+              <div className="f-card cz-menu" role="menu" aria-label="Session" style={{ top: 26, bottom: 'auto', left: 0, right: 'auto', width: 200 }} onMouseLeave={() => setMenuOpen(false)} {...titleNav}>
+                <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); setRenaming(current.id) }}>Rename…</button>
+                <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); archive(current, !current.archived) }}>{current.archived ? 'Unarchive' : 'Archive'}</button>
+                <div className="cz-sep" role="separator" />
+                <button type="button" role="menuitem" style={{ color: 'var(--warn)' }} onClick={() => { setMenuOpen(false); remove(current) }}>Delete…</button>
               </div>
             )}
           </div>
           <span style={{ flex: 1 }} />
           {current && !opening[current.id] && <span style={{ fontSize: 12, color: cs?.state === 'live' ? 'var(--frog)' : 'var(--muted)' }}>{cs?.state === 'live' ? '' : cs?.state === 'connecting' ? (cs.attempt ? 'Reconnecting…' : 'Connecting…') : cs?.state === 'refused' ? 'Update Frog to continue' : cs?.state === 'closed' ? (cs.code === 4004 ? 'Session deleted' : 'Disconnected') : ''}</span>}
-          {current && !inspector && <button type="button" className="ic-btn" onClick={() => setInspector(!inspector)} aria-pressed={inspector} aria-label={inspector ? 'Hide inspector' : 'Show inspector'} title={inspector ? 'Hide inspector' : 'Inspector'}>
-            <svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M15 4v16" />{inspector && <path d="M15 4h3a3 3 0 0 1 3 3v10a3 3 0 0 1-3 3h-3z" fill="currentColor" stroke="none" opacity=".35" />}</svg>
-          </button>}
+          {current && <WindowControls palette={() => setPalette((p) => !p)} paletteOpen={palette} inspector={() => setInspector(!inspector)} inspectorOpen={inspector} />}
         </div>) : <>{collapsed && <div className="side-float">{sideToggle(false)}</div>}<div className="phone-bar floating"><Burger /><b>Frog</b></div></>}
 
+        {railTurns && <TurnRail turns={railTurns} visible={visibleTurns} running={!!ct?.running} room={Math.max(46, winHeight - 220)} onJump={jumpToTurn} />}
         {/* A link to a session this account doesn't have (deleted, or never was) says so. */}
         {sessionMissing(view, sessions, sessionsLoaded) && (
           <div className="main home">

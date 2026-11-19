@@ -1,0 +1,85 @@
+{
+  "format": "frog-chrome-diff/1",
+  "web": "/Users/cam/Developer/frog/.claude/worktrees/preview-pane-ui-1bcdb0/docs/design/chrome/parity/web-dark-before.json",
+  "mac": "/Users/cam/Developer/frog/.claude/worktrees/preview-pane-ui-1bcdb0/docs/design/chrome/parity/mac-dark-before.json",
+  "ok": false,
+  "rows": [
+    {
+      "id": "title",
+      "ok": false,
+      "note": "top 14 vs 17.5, width 24 vs 128, height 24 vs 17, x 428.2 vs 270",
+      "web": {
+        "id": "title",
+        "x": 428.2,
+        "top": 14,
+        "width": 24,
+        "height": 24,
+        "right": 827.8
+      },
+      "mac": {
+        "height": 17,
+        "id": "title",
+        "right": 882,
+        "top": 17.5,
+        "width": 128,
+        "x": 270
+      }
+    },
+    {
+      "id": "split",
+      "ok": true,
+      "note": "mac only (spec: one app)",
+      "web": null,
+      "mac": {
+        "height": 52,
+        "id": "split",
+        "right": 85,
+        "top": 0,
+        "width": 40,
+        "x": 1155
+      }
+    },
+    {
+      "id": "palette",
+      "ok": false,
+      "note": "mac only",
+      "web": null,
+      "mac": {
+        "height": 52,
+        "id": "palette",
+        "right": 49,
+        "top": 0,
+        "width": 36,
+        "x": 1195
+      }
+    },
+    {
+      "id": "inspector",
+      "ok": false,
+      "note": "mac only",
+      "web": null,
+      "mac": {
+        "height": 52,
+        "id": "inspector",
+        "right": 4,
+        "top": 0,
+        "width": 45,
+        "x": 1231
+      }
+    },
+    {
+      "id": "rail",
+      "ok": false,
+      "note": "mac only",
+      "web": null,
+      "mac": {
+        "height": 64,
+        "id": "rail",
+        "right": 8,
+        "top": 60,
+        "width": 28,
+        "x": 1244
+      }
+    }
+  ]
+}

@@ -99,4 +99,42 @@ final class ChapterTests: XCTestCase {
         XCTAssertEqual(Chapter.title(Chapter(turn: t.id, number: 1, kind: .run), t, turns: 7), "fleet drain")
         XCTAssertEqual(Chapter.title(Chapter(turn: t.id, number: 1, kind: .compacted), t, turns: 2), "fleet drain")
     }
+
+    // MARK: Shared cases (docs/design/chrome/rail-cases.json, also run by apps/web/test/rail.test.ts)
+
+    private struct Cases: Decodable {
+        struct Conv: Decodable { let name: String; let turns: [T]; let chapters: [C] }
+        struct T: Decodable { let input: String; let compacted: Bool? }
+        struct C: Decodable, Equatable { let start: Int; let kind: String; let title: String }
+        let words: [[String]]
+        let conversations: [Conv]
+    }
+
+    private func sharedCases() throws -> Cases {
+        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .appendingPathComponent("../../../docs/design/chrome/rail-cases.json").standardized
+        return try JSONDecoder().decode(Cases.self, from: Data(contentsOf: url))
+    }
+
+    func testSharedChapterWordsMatchTheWeb() throws {
+        for pair in try sharedCases().words {
+            XCTAssertEqual(Chapter.words(pair[0]), pair[1], pair[0])
+        }
+    }
+
+    func testSharedChaptersMatchTheWeb() throws {
+        for conv in try sharedCases().conversations {
+            let turns = conv.turns.map { t in
+                turn(t.input, notice: t.compacted == true ? "Summarized the conversation to save context (2 → 1 tokens)" : nil)
+            }
+            let chapters = Chapter.of(turns)
+            let starts = Chapter.starts(of: chapters, in: turns)
+            let got = chapters.indices.map { c -> Cases.C in
+                let end = c + 1 < starts.count ? starts[c + 1] : turns.count
+                let kind = switch chapters[c].kind { case .prompt: "prompt"; case .compacted: "compacted"; case .run: "run" }
+                return Cases.C(start: starts[c], kind: kind, title: Chapter.title(chapters[c], turns[starts[c]], turns: end - starts[c]))
+            }
+            XCTAssertEqual(got, conv.chapters, conv.name)
+        }
+    }
 }

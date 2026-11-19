@@ -12,7 +12,9 @@ final class Pane: Identifiable {
     var workspace: Workspace
     let ui = WindowState()
     /// The changes card: asked for, and floated over the conversation because it didn't fit.
-    var showChanges = false
+    /// `-FrogInspector YES` starts it open: the chrome parity's inspector-open capture
+    /// (docs/design/chrome/parity). Unset, as it always is otherwise, it starts closed.
+    var showChanges = UserDefaults.standard.bool(forKey: "FrogInspector")
     var peekChanges = false
     /// Another folder's workspace on its way in (see `Panes.open`).
     @ObservationIgnored var incoming: Workspace?

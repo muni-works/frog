@@ -43,7 +43,8 @@ a { color: var(--frog); }
 .home-sub p { margin: 0; }
 .home-sub b { color: var(--fg); font-weight: 600; }
 .starters { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
-.titlebar { display: flex; align-items: center; gap: 10px; height: 52px; flex: none; padding: 0 16px; }
+/* The title row is an opaque surface in every mode (docs/design/chrome/spec.md, 3): pages scroll in their own .scroll beneath it. */
+.titlebar { display: flex; align-items: center; gap: 10px; height: 52px; flex: none; padding: 0 8px 0 20px; background: var(--canvas); position: relative; z-index: 3; }
 .scroll { flex: 1; overflow-y: auto; display: flex; justify-content: center; padding: 20px 0 12px; } /* the gutter is the column's own (transcript.css) */
 .col { width: 100%; max-width: 720px; display: flex; flex-direction: column; gap: 12px; } /* Settings and Documentation pages; the transcript's own column is .tx (transcript.css) */
 .dock { display: flex; justify-content: center; padding: 6px 0 12px; container: dock / inline-size; }
@@ -145,7 +146,7 @@ a { color: var(--frog); }
 .plan-item { display: flex; gap: 8px; color: var(--muted); } .plan-item.in_progress { color: var(--fg); } .plan-item.completed { color: var(--faint); text-decoration: line-through; }
 .plan-item span { width: 12px; flex: none; color: var(--frog); }
 .title-menu { position: relative; }
-.title-edit { font-size: 14px; font-weight: 600; padding: 2px 6px; max-width: 420px; }
+.title-edit { font-size: 13px; font-weight: 600; line-height: 17px; padding: 0; width: 320px; max-width: 100%; border: 0; background: transparent; box-shadow: none; outline: none; color: var(--fg); }
 /* The queue above the tray: one small-caps QUEUED · n label, then quiet raised rows —
    separation by fill, no lines. An entry's images show as small chips beside its text. */
 .me-imgs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
@@ -291,6 +292,33 @@ button.sgroup:hover .chev2, button.sgroup:focus-visible .chev2, button.sgroup[ar
 @media (prefers-reduced-motion: reduce) { .ghost, .ghost-me, .ghost-line { animation: none; } }
 .ic-btn { width: 30px; height: 30px; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; }
 .ic-btn:hover, .ic-btn[aria-pressed="true"], .ic-btn[aria-expanded="true"] { background: var(--hover); color: var(--fg); }
+/* The window controls and the turn rail: docs/design/chrome/spec.md, 1 and 2. The Mac draws the
+   same from WindowControls.swift and TimelineRail.swift; parity/ measures both. */
+.window-controls { display: flex; flex: none; height: 34px; padding: 3px; box-sizing: border-box; border-radius: 17px; background: var(--card); }
+.chrome-btn { width: 34px; height: 28px; display: grid; place-items: center; border: 0; padding: 0; border-radius: 14px; background: transparent; color: var(--muted); cursor: pointer; }
+.chrome-btn:hover:not(:disabled) { background: var(--hover); color: var(--fg); }
+.chrome-btn:active:not(:disabled), .chrome-btn[aria-pressed="true"] { background: var(--well); color: var(--fg); }
+.chrome-btn:disabled { opacity: 0.35; cursor: default; }
+.chrome-btn:focus-visible { outline: 2px solid var(--frog); outline-offset: -2px; }
+.main { position: relative; }
+/* Room for the rail beside the column, as the Mac keeps it; a phone has no rail. */
+@media (min-width: 761px) { .main.has-rail > .scroll, .main.has-rail > .dock { padding-right: 36px; } }
+.turn-rail { position: absolute; top: 60px; right: 8px; width: 28px; border-radius: 14px; background: var(--card); z-index: 4; touch-action: none; cursor: pointer; }
+.turn-rail:focus-visible { outline: 2px solid var(--frog); outline-offset: 2px; }
+.turn-rail svg { display: block; }
+.turn-rail .rail-line { fill: color-mix(in srgb, var(--fg) 14%, transparent); }
+.turn-rail .rail-thumb { fill: color-mix(in srgb, var(--fg) 9%, transparent); }
+.turn-rail .rail-dot { fill: color-mix(in srgb, var(--fg) 40%, transparent); }
+.turn-rail .rail-dot.here { fill: color-mix(in srgb, var(--fg) 85%, transparent); }
+.turn-rail .rail-run { stroke: color-mix(in srgb, var(--fg) 35%, transparent); }
+.turn-rail .rail-run.here { stroke: color-mix(in srgb, var(--fg) 70%, transparent); }
+.turn-rail .rail-break rect { fill: color-mix(in srgb, var(--muted) 50%, transparent); }
+.turn-rail .rail-ring { stroke: color-mix(in srgb, var(--fg) 60%, transparent); }
+.rail-label { position: absolute; right: calc(100% + 8px); display: flex; gap: 6px; align-items: center; white-space: nowrap; font-size: 12px; line-height: 16px; padding: 5px 10px; border-radius: 13px; background: var(--card); color: var(--fg); pointer-events: none; }
+.rail-label .rail-muted { color: var(--muted); }
+.rail-label .rail-num { font-variant-numeric: tabular-nums; }
+.rail-label .rail-prompt { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 760px) { .turn-rail { display: none; } }
 /* Read receipts on your messages. */
 .me { position: relative; }
 .ticks { display: inline-flex; padding: 0 4px; color: var(--faint); opacity: .7; }
@@ -391,9 +419,12 @@ body.resizing { cursor: col-resize; user-select: none; }
 .stag, .ssearch kbd { background: var(--hover); }
 /* The title, then its menu chevron right beside it, as in Claude. */
 .title-wrap { display: flex; align-items: center; gap: 2px; min-width: 0; }
-.title-wrap > b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.title-btn { display: flex; align-items: center; gap: 5px; min-width: 0; height: 17px; padding: 0; border: 0; background: none; color: var(--fg); font: inherit; cursor: default; }
+.title-btn .title-text { font-size: 13px; font-weight: 600; line-height: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.title-btn .title-chev { flex: none; color: var(--muted); }
+.title-btn:hover .title-chev, .title-btn[aria-expanded="true"] .title-chev { color: var(--fg); }
+.title-btn:focus-visible { outline: 2px solid var(--frog); outline-offset: 3px; border-radius: 4px; }
 .title-wrap .title-menu { position: relative; }
-.title-chev { width: 24px; height: 24px; }
 @keyframes shimmer-text { from { background-position: 100% 0; } to { background-position: -150% 0; } }
 @keyframes breathe { 0%, 100% { opacity: .35; transform: scale(.8); } 50% { opacity: 1; transform: scale(1); } }
 /* The live row's thought cross-fade (transcript.css): out 180 ms, in 240 ms, overlapping, no movement. */
@@ -719,6 +750,7 @@ body { font-family: var(--font-sans); }
 .cz-menu { position: absolute; bottom: calc(100% - 4px); z-index: 6; box-sizing: border-box; max-width: calc(100% - 8px); padding: 4px; display: flex; flex-direction: column; background: var(--card); border: 1px solid var(--line-strong); border-radius: var(--radius-card); box-shadow: var(--shadow-float); font: 13px/16px var(--font-sans); color: var(--fg); }
 .cz-menu > button, .cz-menu .cz-list > button, .cz-menu > a { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 28px; box-sizing: border-box; padding: 0 8px; border: 0; border-radius: var(--radius-plate); background: transparent; color: var(--fg); font: inherit; text-align: left; text-decoration: none; cursor: pointer; white-space: nowrap; }
 .cz-menu > button:hover:not(:disabled), .cz-menu .cz-list > button:hover, .cz-menu > a:hover, .cz-menu button:focus-visible { background: var(--hover); outline: none; }
+.cz-menu > .cz-sep { height: 1px; margin: 4px 8px; background: var(--line); }
 .cz-menu button:disabled { cursor: default; }
 .cz-menu .cz-dim, .cz-menu > button.cz-dim { color: var(--muted); }
 .cz-menu .cz-r { margin-left: auto; color: var(--muted); font-size: 12px; }
