@@ -226,6 +226,8 @@ async fn handle(mut sock: TcpStream, token: &str, t: &Template) -> Result<()> {
         text: turn.text,
         images: Vec::new(),
         more: Vec::new(),
+        // Not typed: a message from a chat bridge, not the composer.
+        typed: false,
     })?;
     h.ops.send(Op::Shutdown)?;
     let (mut ended, mut gone) = (false, false);

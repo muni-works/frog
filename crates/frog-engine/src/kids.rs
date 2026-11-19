@@ -310,6 +310,7 @@ impl Kids {
             },
         );
         handle.ops.send(Op::Submit {
+            typed: false,
             text: prompt.clone(),
             images: Vec::new(),
             more: Vec::new(),

@@ -203,6 +203,8 @@ pub async fn serve(
                     text,
                     images: prompt_images(&req.prompt),
                     more: Vec::new(),
+                    // Not typed: an editor client's prompt: Frog can't tell it was typed.
+                    typed: false,
                 });
                 let conn = conn.clone();
                 tokio::spawn(async move {

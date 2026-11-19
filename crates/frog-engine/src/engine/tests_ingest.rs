@@ -94,6 +94,7 @@ async fn two_queued_messages_ingest_once_in_order_at_the_boundary() {
 
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "first turn".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -105,9 +106,11 @@ async fn two_queued_messages_ingest_once_in_order_at_the_boundary() {
     }
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "one".into(),
             images: Vec::new(),
             more: vec![Part {
+                typed: false,
                 text: "two".into(),
                 images: Vec::new(),
             }],
@@ -189,6 +192,7 @@ async fn two_queued_messages_ingest_once_in_order_at_the_boundary() {
     // Nothing left parked: a later submit runs as its own turn, as before.
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "after".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -241,6 +245,7 @@ async fn a_message_sent_midstream_lands_at_the_next_boundary_not_during_the_call
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "go".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -251,6 +256,7 @@ async fn a_message_sent_midstream_lands_at_the_next_boundary_not_during_the_call
     }
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "queued midstream".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -328,6 +334,7 @@ async fn an_image_queued_midturn_ingests_with_its_text() {
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "go".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -342,6 +349,7 @@ async fn an_image_queued_midturn_ingests_with_its_text() {
     };
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "".into(),
             images: vec![png],
             more: Vec::new(),

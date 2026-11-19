@@ -945,6 +945,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                 } if from == "parent" && router.working.load(Ordering::Relaxed) => {
                     router.submitted.lock().unwrap().push((
                         crate::protocol::Part {
+                            typed: false,
                             text: crate::tools::sessions::wrap(&from, &from_name, &message),
                             images: Vec::new(),
                         },
@@ -1103,13 +1104,22 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                         break;
                     }
                 }
-                Op::Submit { text, images, more } => {
+                Op::Submit {
+                    text,
+                    images,
+                    more,
+                    typed,
+                } => {
                     // Mid-turn the turn loop owns this queue: the parts park in order, and
                     // its next tool-call boundary delivers them as user messages of the
                     // running turn (see `turn`). Nothing is running: straight through, a
                     // turn of its own, as before.
                     if router.working.load(Ordering::Relaxed) {
-                        let mut all = vec![crate::protocol::Part { text, images }];
+                        let mut all = vec![crate::protocol::Part {
+                            text,
+                            images,
+                            typed,
+                        }];
                         all.extend(more);
                         router
                             .submitted
@@ -1117,7 +1127,12 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                             .unwrap()
                             .extend(all.into_iter().map(|p| (p, false)));
                     } else if work_tx
-                        .send(Op::Submit { text, images, more })
+                        .send(Op::Submit {
+                            text,
+                            images,
+                            more,
+                            typed,
+                        })
                         .is_err()
                     {
                         break;
@@ -1434,15 +1449,12 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             let parked = take_submitted_marked(&shared);
             let late = shared.late_warm.lock().unwrap().take();
             if !parked.is_empty() {
-                // A parent's message parked with them goes along, but isn't the user's words.
-                agent.not_typed = parked
-                    .iter()
-                    .filter(|(_, from_parent)| *from_parent)
-                    .map(|(p, _)| p.text.clone())
-                    .collect();
+                // Each keeps its own `typed`: a parent's message parked with them goes along,
+                // but was never typed (its part says so), so it isn't the user's words.
                 let mut parts = parked.into_iter().map(|(p, _)| p);
                 let first = parts.next().expect("checked non-empty");
                 held = Some(Op::Submit {
+                    typed: first.typed,
                     text: first.text,
                     images: first.images,
                     more: parts.collect(),
@@ -1980,9 +1992,6 @@ struct Agent {
     /// What the user typed this turn, verbatim (no expanded mentions, wakes or tool output):
     /// the only words that can ask `Customize` for a change.
     user_words: Vec<String>,
-    /// Parent messages parked with the user's follow-ups and run with them as the next turn:
-    /// left out of `user_words` (see `turn::Typed`).
-    not_typed: Vec<String>,
     /// Undo for each `Customize` change, by the handle its event carried.
     undos: HashMap<String, crate::customize::Undo>,
     /// `Customize` offers the user declined this session: never offered again.
@@ -2336,7 +2345,6 @@ impl Agent {
             compiled: None,
             notes,
             user_words: Vec::new(),
-            not_typed: Vec::new(),
             undos: HashMap::new(),
             declined: HashSet::new(),
             noted_turn: None,
@@ -3118,14 +3126,23 @@ impl Agent {
 
     async fn handle(&mut self, op: Op) -> Result<()> {
         match op {
-            Op::Submit { text, images, more } => {
+            Op::Submit {
+                text,
+                images,
+                more,
+                typed,
+            } => {
                 // A memory command is answered alone; one sent with others is just words.
                 if !more.is_empty() || !self.memory_command(&text) {
-                    self.remember_from(&text);
-                    for part in &more {
+                    // Only what the person typed saves a note (never an app's own prompt or
+                    // another session's), and never in a child.
+                    if typed {
+                        self.remember_from(&text);
+                    }
+                    for part in more.iter().filter(|p| p.typed) {
                         self.remember_from(&part.text);
                     }
-                    self.turn_with(&text, images, more, true, turn::Typed::All)
+                    self.turn_with(&text, images, more, true, turn::Typed::Parts(typed))
                         .await?
                 }
             }

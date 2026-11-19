@@ -203,6 +203,8 @@ pub async fn run(r: Run<'_>) -> Result<RunResult> {
             text: turn.prompt.clone(),
             images: Vec::new(),
             more: Vec::new(),
+            // Not typed: a benchmark prompt, not a person.
+            typed: false,
         })?;
         let mut at = Place {
             turn: i as u32,

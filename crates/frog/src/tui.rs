@@ -448,10 +448,12 @@ impl Tui {
                 command: cmd.trim().into(),
             });
         } else {
+            // The person typed this line at the prompt.
             self.send(Op::Submit {
                 text: line.into(),
                 images: Vec::new(),
                 more: Vec::new(),
+                typed: true,
             });
         }
         true
@@ -582,6 +584,7 @@ impl Tui {
                 text: format!("/{cmd}"),
                 images: Vec::new(),
                 more: Vec::new(),
+                typed: true,
             },
             _ => {
                 render::warn(&format!("  unknown command /{name} — try /help"));

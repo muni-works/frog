@@ -63,6 +63,8 @@ pub async fn print(mut h: Handle, prompt: String, json: bool) -> Result<bool> {
         text: prompt,
         images: Vec::new(),
         more: Vec::new(),
+        // Not typed: `-p` may be a script; nobody is there to see a change.
+        typed: false,
     })?;
     // No Shutdown here: the router cancels the running turn on it, and Shutdown sent
     // right after Submit races the turn into a cancel-at-birth. The turn ends on its

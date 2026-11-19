@@ -106,6 +106,7 @@ pub async fn run(
     }
     let mut child = Child(crate::engine::spawn_child(opts)?);
     child.0.ops.send(Op::Submit {
+        typed: false,
         text: prompt,
         images: Vec::new(),
         more: Vec::new(),

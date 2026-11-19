@@ -161,6 +161,7 @@ impl Rig {
 
     async fn say(&mut self, text: &str) -> Vec<Event> {
         self.run(Op::Submit {
+            typed: true,
             text: text.into(),
             images: Vec::new(),
             more: Vec::new(),

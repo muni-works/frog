@@ -441,7 +441,7 @@ impl Win {
         if let Some(cmd) = t.strip_prefix('!') {
             self.send(Op::Shell { command: cmd.to_string() });
         } else {
-            self.send(Op::Submit { text: t.to_string(), images: vec![], more: vec![] });
+            self.send(Op::Submit { text: t.to_string(), images: vec![], more: vec![], typed: true });
         }
     }
 

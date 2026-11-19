@@ -235,6 +235,7 @@ fn gateway_opus() -> Profile {
 async fn turn_again(h: &mut Handle, prompt: &str) -> Vec<Envelope> {
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: prompt.into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -359,6 +360,7 @@ async fn run(h: &mut Handle, prompt: &str) -> Vec<Envelope> {
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: prompt.into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -392,11 +394,13 @@ async fn submit_with_more_runs_one_turn_with_every_message_in_order() {
         data: "AAAA".into(),
     };
     let part = |t: &str, images: Vec<Image>| Part {
+        typed: false,
         text: t.into(),
         images,
     };
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "alpha-msg".into(),
             images: Vec::new(),
             more: vec![
@@ -607,6 +611,7 @@ async fn drain_between_tools_suspends() {
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "go".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -700,6 +705,7 @@ async fn drain_abort_lets_the_turn_continue() {
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "go".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -786,6 +792,7 @@ async fn drain_abort_lets_the_turn_continue() {
     while !matches!(h2.events.recv().await.unwrap().event, Event::Idle) {}
     h2.ops
         .send(Op::Submit {
+            typed: false,
             text: "again".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -851,6 +858,7 @@ async fn drain_kills_long_tool() {
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "go".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -2524,6 +2532,7 @@ async fn use_folder_moves_a_chat_into_a_project() {
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "what's in my project?".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -2629,6 +2638,7 @@ async fn a_bash_cd_logs_the_shell_cwd() {
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "work in the worktree".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -2813,6 +2823,7 @@ async fn clear_drops_queued_shell_output() {
     }
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "hello".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -3140,6 +3151,7 @@ async fn bash_falls_back_to_the_session_root_when_cwd_is_deleted() {
     // Turn 2: the echo still works, from the session root, with a notice about it.
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "keep going".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -3218,6 +3230,7 @@ async fn session_resumes_with_history_replay_and_continuing_seq() {
 
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "more".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -3274,6 +3287,7 @@ async fn subscribe_while_starting_replays_before_the_first_idle() {
 
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "more".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -3579,6 +3593,7 @@ async fn a_call_in_flight_reports_as_waiting_on_the_model() {
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "hi".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -3674,6 +3689,7 @@ async fn a_birth_death_keeps_turn_ones_prompt_in_the_log_for_replay() {
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "the only prompt".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -3794,6 +3810,7 @@ async fn a_deliver_landing_mid_call_does_not_cancel_the_running_turn() {
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "work".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -3857,6 +3874,7 @@ async fn drain_resume_continues_on_the_stored_model_with_the_note() {
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "go".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -3951,6 +3969,7 @@ async fn drain_during_model_stream_keeps_the_partial_text() {
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "go".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -4025,6 +4044,7 @@ async fn memory_commands_answer_without_a_model_call() {
 
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "/memory".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -4105,6 +4125,7 @@ async fn turns_write_a_summary_that_recall_and_remember_that_find() {
     until_idle(&mut h).await;
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "fix the widget\nit doesn't paint".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -4136,6 +4157,7 @@ async fn turns_write_a_summary_that_recall_and_remember_that_find() {
     // /recall answers from the summary without a model call, by keyword and by file.
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "/recall widget paint".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -4152,6 +4174,7 @@ async fn turns_write_a_summary_that_recall_and_remember_that_find() {
     assert!(n.contains("files: src/widget.rs"));
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "/recall file:widget.rs".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -4163,6 +4186,7 @@ async fn turns_write_a_summary_that_recall_and_remember_that_find() {
     // "Remember that …" saves a note and the turn still runs.
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "Remember that widgets paint lazily. Now say hi".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -4184,6 +4208,7 @@ async fn turns_write_a_summary_that_recall_and_remember_that_find() {
     // The note is in the next turn's system prompt and Recall finds both sources.
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "/recall lazily".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -4335,6 +4360,7 @@ async fn stale_reads_are_pruned_when_the_turn_ends_and_logged() {
     // nothing warms it: the scripted provider has no prefill).
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "again".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -4381,6 +4407,7 @@ async fn an_edit_leaves_the_next_turns_prompt_cached() {
     let first = calls(&run(&mut h, "add two.rs").await);
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "thanks".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -4589,6 +4616,7 @@ async fn a_mode_set_mid_turn_governs_the_next_permission_decision() {
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "write both".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -5061,6 +5089,7 @@ async fn late_mcp_tools_wait_for_the_next_turn() {
     .expect("MCP server never connected");
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "again".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -5102,6 +5131,7 @@ fn offered_tools(sent: &[String]) -> Vec<String> {
 async fn run_now(h: &mut Handle, prompt: &str) -> Vec<Envelope> {
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: prompt.into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -5905,6 +5935,7 @@ fn ask_call() -> Block {
 async fn ask_turn(h: &mut Handle, answer: Option<Answer>) -> String {
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "fix it".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -5977,6 +6008,7 @@ async fn an_interrupt_dismisses_the_question() {
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "fix it".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -6265,6 +6297,7 @@ async fn clear_inbox_drops_queued_messages_so_a_stop_stays_stopped() {
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "work".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -6355,6 +6388,7 @@ async fn clear_inbox_drops_a_parked_parent_message_so_a_stop_stays_stopped() {
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "work".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -6406,6 +6440,7 @@ async fn deliver_while_busy_waits_for_the_turn_boundary() {
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "who's around?".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -6495,6 +6530,7 @@ async fn an_irc_mention_delivers_at_the_turn_boundary_not_mid_turn() {
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "check the channel".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -6557,6 +6593,7 @@ async fn the_irc_tool_is_absent_until_the_client_declares_the_bus() {
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "read the channel".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -6605,6 +6642,7 @@ async fn a_permission_card_posts_a_notice_with_a_link_never_an_approval() {
     h.bus.lock().unwrap().as_ref().unwrap().set_channel("#frog");
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "fix add".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -6660,6 +6698,7 @@ async fn the_irc_tool_reads_quarantined_lines_and_posts_within_the_cap() {
     bus.arrive(crate::irc::Line::at("f-peer", "#frog", "release out", 999).unwrap());
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "read the channel".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -6696,6 +6735,7 @@ async fn queued_delivers_run_together_as_one_turn_in_order() {
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "who's around?".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -6767,6 +6807,7 @@ async fn session_tools_need_a_client_that_hosts_sessions() {
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "list".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -6800,6 +6841,7 @@ async fn sessions_capability_offers_the_tools_and_frames_messages() {
     caps(&h, true);
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "hi".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -6894,6 +6936,7 @@ async fn archive_session_round_trips_through_the_client() {
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "tidy up".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -6959,6 +7002,7 @@ async fn move_session_round_trips_through_the_client() {
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "re-file it".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -7038,6 +7082,7 @@ async fn a_refused_move_changes_no_engine_state() {
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "try the move".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -7158,6 +7203,7 @@ mod egress_tests {
         while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
         h.ops
             .send(Op::Submit {
+                typed: false,
                 text: text.into(),
                 images: Vec::new(),
                 more: Vec::new(),
@@ -7893,6 +7939,7 @@ async fn turn_timing_keeps_permission_waits_out_of_tool_time() {
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "nap".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -7996,6 +8043,7 @@ async fn permission_requests_preview_the_exact_edit() {
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "fix add".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -8100,6 +8148,7 @@ async fn file_tools_stay_rooted_in_the_session_worktree() {
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "make a file".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -8209,6 +8258,7 @@ async fn an_absolute_write_into_the_main_checkout_asks_and_stays_out() {
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "write it".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -8253,6 +8303,7 @@ async fn an_absolute_write_into_the_main_checkout_asks_and_stays_out() {
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "write it".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -8311,6 +8362,7 @@ async fn rewind_restores_files_and_branches_the_conversation() {
     let sid = evs[0].session.clone();
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "create notes".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -8319,6 +8371,7 @@ async fn rewind_restores_files_and_branches_the_conversation() {
     until_idle(&mut h).await;
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "bump notes".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -8384,6 +8437,7 @@ async fn rewind_in_a_git_repo_undoes_shell_commands_too() {
     let sid = until_idle(&mut h).await[0].session.clone();
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "make a mess".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -8436,6 +8490,7 @@ async fn preview_actions_ask_and_round_trip_through_the_client() {
     until_idle(&mut h).await;
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "try it".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -8574,6 +8629,7 @@ async fn a_small_window_still_gets_the_panes() {
     until_idle(&mut h).await;
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "open the preview".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -8627,6 +8683,7 @@ async fn a_preview_that_cannot_load_says_so() {
     until_idle(&mut h).await;
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "open it".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -9061,6 +9118,7 @@ async fn a_broken_stream_discards_what_started_early() {
     // The early read never counted: the write still needs a read first.
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "edit it".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -9325,6 +9383,7 @@ async fn interrupting_cancels_early_tools() {
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "look".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -9402,6 +9461,7 @@ async fn interrupt_cancels_a_running_bash_tool() {
     h.ops.send(Op::SetMode { mode: Mode::Yolo }).unwrap();
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "sleep".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -9502,6 +9562,7 @@ async fn drive(h: &mut Handle, done: impl Fn(&Event) -> bool) -> Vec<Envelope> {
 fn submit(h: &Handle, text: &str) {
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: text.into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -10957,6 +11018,7 @@ async fn a_compaction_emits_what_it_kept() {
     until_idle(&mut h).await;
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "fix the login bug".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -11297,6 +11359,7 @@ async fn writes_and_unknowns_still_ask_in_default_mode() {
         while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
         h.ops
             .send(Op::Submit {
+                typed: false,
                 text: "go".into(),
                 images: Vec::new(),
                 more: Vec::new(),
@@ -11781,6 +11844,7 @@ async fn a_non_public_webfetch_still_asks_in_default_mode() {
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "go".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -11853,6 +11917,7 @@ async fn turn_answering(
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "go".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -12108,6 +12173,7 @@ async fn next_turn(
 ) -> Vec<Envelope> {
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: prompt.into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -12712,6 +12778,7 @@ async fn loop_collect(
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "go".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -13186,6 +13253,7 @@ async fn memory_tool_is_offered_only_with_compiled_memory() {
     until_idle(&mut h).await;
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "hello".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -13291,6 +13359,7 @@ async fn start_session_refuses_a_model_its_gateway_does_not_list() {
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "start three".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -13931,7 +14000,7 @@ async fn prs_bind_from_gh_pr_create_and_by_hand() {
     let (mut h, _) = engine_sent(script, Some(store.clone()), None, None, root.clone());
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
     h.ops
-        .send(Op::Submit { text: "open a pr".into(), images: Vec::new(), more: Vec::new() })
+        .send(Op::Submit { typed: false, text: "open a pr".into(), images: Vec::new(), more: Vec::new() })
         .unwrap();
     let mut sid = String::new();
     let mut evs = Vec::new();
@@ -14080,6 +14149,7 @@ async fn a_session_with_a_server_that_wants_a_sign_in_opens_no_browser() {
     //    `Idle` first and the loop above already consumed it, so the turn is driven by hand.)
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "hello".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -14295,6 +14365,7 @@ async fn signing_in_from_the_session_installs_the_tools() {
     // And the tools are now offered to the model.
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "hello".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -14531,6 +14602,7 @@ mod open_pr_tests {
         );
         h.ops
             .send(Op::Submit {
+                typed: false,
                 text: "anything else?".into(),
                 images: Vec::new(),
                 more: Vec::new(),
@@ -14627,6 +14699,7 @@ async fn a_warmed_draft_is_the_prefix_of_the_turn_that_sends_it() {
     assert!(got[0].request.contains("fix the bug in parse"));
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "fix the bug in parse".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -14669,6 +14742,7 @@ async fn a_new_sessions_first_message_is_warmed_too() {
 async fn run_no_wait(h: &mut Handle, prompt: &str) -> Vec<Envelope> {
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: prompt.into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -14768,6 +14842,7 @@ async fn a_draft_typed_mid_turn_is_warmed_when_the_turn_ends() {
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "go".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -14811,6 +14886,7 @@ async fn a_message_sent_mid_turn_makes_the_held_draft_stale() {
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "go".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -14822,6 +14898,7 @@ async fn a_message_sent_mid_turn_makes_the_held_draft_stale() {
     warm(&h, Some("half a thought"));
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "the whole thought".into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -15080,6 +15157,7 @@ async fn turns_keep_their_pace_and_stream_a_live_count() {
 async fn stop_on_ask(h: &mut Handle, text: &str, ms: u64) -> Vec<Envelope> {
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: text.into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -15211,6 +15289,7 @@ async fn permission_waits_are_timed() {
     let mut h = engine(script, true);
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: "write it".into(),
             images: Vec::new(),
             more: Vec::new(),

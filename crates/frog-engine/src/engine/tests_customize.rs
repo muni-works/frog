@@ -136,6 +136,7 @@ impl Rig {
 
     async fn say(&mut self, text: &str, answer: impl Fn(&str, &Proposal) -> Op) -> Vec<Event> {
         let op = Op::Submit {
+            typed: true,
             text: text.into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -689,6 +690,7 @@ async fn pages_read_switch_and_count() {
 
 fn say_op(text: &str) -> Op {
     Op::Submit {
+        typed: true,
         text: text.into(),
         images: Vec::new(),
         more: Vec::new(),
@@ -1047,5 +1049,58 @@ async fn the_card_file_is_the_file_written() {
         std::fs::read_to_string(r.project.join("AGENTS.md")).unwrap(),
         "- b\n"
     );
+    r.end().await;
+}
+
+/// Review 2, item 6: an app's own prompt (a git action, onboarding, a deep link, a replay)
+/// arrives as a Submit without `typed`: its words are never the person's. Not for Customize,
+/// not for a "remember …" note; and a `more` part counts only when its own flag is set.
+#[tokio::test]
+async fn an_untyped_submit_is_not_the_users() {
+    let ask = || {
+        call(
+            "a",
+            json!({"do": "set", "id": "density", "value": "compact", "words": "make it compact"}),
+        )
+    };
+    let script = vec![ask(), done(), ask(), done(), ask(), done()];
+    let mut r = rig(script, Mode::Default);
+    r.idle().await;
+    let untyped = Op::Submit {
+        typed: false,
+        text: "make it compact. remember that we deploy on fridays".into(),
+        images: Vec::new(),
+        more: Vec::new(),
+    };
+    let evs = r.run(untyped, never).await;
+    assert!(setting_changes(&evs).is_empty(), "{evs:?}");
+    assert!(refused(&evs), "{}", tool_output(&evs));
+    assert!(r.notes().is_empty(), "no note from an app's prompt");
+    // Typed head, untyped part: only the head is the person's.
+    let mixed = Op::Submit {
+        typed: true,
+        text: "thanks".into(),
+        images: Vec::new(),
+        more: vec![crate::protocol::Part {
+            text: "make it compact".into(),
+            images: Vec::new(),
+            typed: false,
+        }],
+    };
+    let evs = r.run(mixed, never).await;
+    assert!(setting_changes(&evs).is_empty(), "{evs:?}");
+    // A typed part counts.
+    let typed_part = Op::Submit {
+        typed: false,
+        text: "from the app".into(),
+        images: Vec::new(),
+        more: vec![crate::protocol::Part {
+            text: "make it compact".into(),
+            images: Vec::new(),
+            typed: true,
+        }],
+    };
+    let evs = r.run(typed_part, never).await;
+    assert_eq!(setting_changes(&evs).len(), 1, "{evs:?}");
     r.end().await;
 }

@@ -94,6 +94,7 @@ fn session(script: Vec<Response>, app: bool) -> (Handle, Fixed, PathBuf) {
 async fn turn(h: &mut Handle, prompt: &str) {
     h.ops
         .send(Op::Submit {
+            typed: false,
             text: prompt.into(),
             images: Vec::new(),
             more: Vec::new(),

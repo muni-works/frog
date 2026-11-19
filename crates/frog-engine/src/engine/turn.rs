@@ -6,8 +6,9 @@ use super::*;
 /// (for `Customize` and for noting's evidence). Messages from other sessions, wake notices,
 /// the continue note and a button's hidden `send` text are never theirs.
 pub(super) enum Typed {
-    /// The input and every `more` part (a message the person sent).
-    All,
+    /// The input when its flag is set, and each `more` part whose own `typed` is set
+    /// (`Op::Submit`'s `typed`: the person typed it in the composer).
+    Parts(bool),
     /// Nothing (a message from another session, a wake, the continue note).
     None,
     /// Only this (a button press counts for what its visible label says).
@@ -28,8 +29,9 @@ impl Agent {
         }
         let texts: Vec<String> = parts.iter().map(|(p, _)| p.text.clone()).collect();
         for (part, from_parent) in parts {
-            // A parent's message to its child is parked here too: not the person's words.
-            if !from_parent {
+            // Only what the person typed: a parent's message to its child is parked here too,
+            // and an app's own prompt queued behind a turn carries no `typed`.
+            if part.typed && !from_parent {
                 self.user_words.push(part.text.clone());
             }
             let (text, named) = crate::image_paths::attach(&part.text);
@@ -195,6 +197,7 @@ impl Agent {
         let more = wrapped
             .into_iter()
             .map(|text| Part {
+                typed: false,
                 text,
                 images: Vec::new(),
             })
@@ -227,6 +230,7 @@ impl Agent {
         let more = delivered
             .into_iter()
             .map(|text| Part {
+                typed: false,
                 text,
                 images: Vec::new(),
             })
@@ -241,7 +245,7 @@ impl Agent {
         input: &str,
         images: Vec<crate::protocol::Image>,
     ) -> Result<()> {
-        self.turn_with(input, images, Vec::new(), true, Typed::All)
+        self.turn_with(input, images, Vec::new(), true, Typed::Parts(false))
             .await
     }
 
@@ -261,7 +265,11 @@ impl Agent {
         // if it is still running, this turn proceeds with the current prompt.
         self.poll_repo_map();
         let raw_input = input.to_string();
-        let raw_more: Vec<String> = more.iter().map(|p| p.text.clone()).collect();
+        let raw_more: Vec<String> = more
+            .iter()
+            .filter(|p| p.typed)
+            .map(|p| p.text.clone())
+            .collect();
         let (input, named) = match user {
             true => crate::image_paths::attach(input),
             false => (input.to_string(), Vec::new()),
@@ -274,7 +282,11 @@ impl Agent {
                 let (text, named) = crate::image_paths::attach(&p.text);
                 let mut images = p.images;
                 images.extend(named);
-                Part { text, images }
+                Part {
+                    text,
+                    images,
+                    typed: p.typed,
+                }
             })
             .collect();
         self.conv.turn += 1;
@@ -310,13 +322,12 @@ impl Agent {
         }
         // The words that may ask `Customize` for a change: what the person typed this turn.
         self.user_words.clear();
-        let parked_from_parent = std::mem::take(&mut self.not_typed);
         match typed {
-            Typed::All => {
-                self.user_words.push(raw_input);
+            Typed::Parts(head) => {
+                if head {
+                    self.user_words.push(raw_input);
+                }
                 self.user_words.extend(raw_more);
-                // A parent's message parked with the user's follow-ups isn't theirs.
-                self.user_words.retain(|w| !parked_from_parent.contains(w));
             }
             Typed::Label(label) => self.user_words.push(label),
             Typed::None => {}
