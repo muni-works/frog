@@ -116,6 +116,19 @@ impl Agent {
             self.toggles_path()
                 .and_then(|p| p.parent().map(Path::to_path_buf)),
         );
+        // A linked rules file is written, and moved aside, where it really is.
+        let targets: &[Target] = if self.cfg.hermetic {
+            &[Target::Project]
+        } else {
+            &[Target::Project, Target::Home]
+        };
+        for &target in targets {
+            if let Ok((_, Some(file))) = self.line_place(target) {
+                dirs.extend(file.parent().map(Path::to_path_buf));
+            }
+        }
+        dirs.sort();
+        dirs.dedup();
         for d in dirs {
             cz::sweep_undo(&d);
         }

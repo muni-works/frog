@@ -267,10 +267,17 @@ final class Library {
         #else
         try? FileManager.default.trashItem(at: log, resultingItemURL: nil)
         #endif
+        // The offers it declined go with it (review 4, item 12).
+        try? FileManager.default.removeItem(at: Self.declinedFile(id))
         archived.remove(id)
         UserDefaults.standard.set(Array(archived), forKey: "archivedSessions")
         if appChildren.remove(id) != nil { UserDefaults.standard.set(Array(appChildren), forKey: "appChildSessions") }
         onOrderInvalidated?()
+    }
+
+    /// Where the engine keeps a session's declined offers: beside its log.
+    nonisolated static func declinedFile(_ id: String) -> URL {
+        FrogPaths.sessions.appending(path: "\(id).declined")
     }
 
     /// Plain chats archive themselves after this long without activity, unless pinned, live or

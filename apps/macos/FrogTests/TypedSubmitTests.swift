@@ -175,7 +175,8 @@ final class TypedSubmitTests: XCTestCase {
     }
 
     /// Review 4, item 7: an attempt reopened later is still a child (the library keeps it, as
-    /// it keeps a parent row), so it gets no Customize or notes caps; deleting it forgets it.
+    /// it keeps a parent row), so it gets no Customize or notes caps; deleting it forgets it,
+    /// and takes its declined offers with it (item 12).
     func testARaceAttemptReopenedIsStillAChild() {
         let trash = Library.trash
         defer { Library.trash = trash }
@@ -184,8 +185,13 @@ final class TypedSubmitTests: XCTestCase {
         XCTAssertFalse(Library.shared.isChild(id))
         Library.shared.markChild(id)
         XCTAssertTrue(Library.shared.isChild(id))
+        // Item 12: its declined offers go with it.
+        let declined = Library.declinedFile(id)
+        try? FileManager.default.createDirectory(at: declined.deletingLastPathComponent(), withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: declined.path, contents: Data("line:x\n".utf8))
         Library.shared.delete(id)
         XCTAssertFalse(Library.shared.isChild(id))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: declined.path))
     }
 
     // MARK: - Cloud links

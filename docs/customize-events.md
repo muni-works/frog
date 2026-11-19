@@ -158,7 +158,8 @@ choice on the card was taken. An allow naming no choice is recorded `deny` with
 `"outcome":"no_choice"`; a card nobody answered in time is `deny` with `"outcome":"timed_out"`
 and is not the person declining (it may be offered again; the model is told nothing changed).
 A declined offer is never made again in that session (the engine refuses it before any card;
-declines are kept beside the session log, `<id>.declined`, so a resume keeps them),
+declines are kept beside the session log, `<id>.declined`, so a resume keeps them, a fork
+carries them, and deleting the session on the Mac removes them),
 and a declined change asked for again is a card, never applied at once. The file a line is written to must be the one the
 card showed (`path`): if another rules file appears or a link changes while the card is open,
 the approval is void and nothing is written.
@@ -195,10 +196,16 @@ or a setting whose old value the app never reported. Each file is moved aside be
 checked, so a write landing between the check and the undo is put back, never lost. A restored
 file keeps the permission bits it had; if writing one file fails part-way, the files not reached
 go back from aside and the ones already undone get the change's text again (all or nothing). At
-start-up a top-level engine puts back any `.<name>.<id>.undo` file a crash left in the project
-root, the home rules folder, Frog's notes folders or beside customize.json, never over a file
-written since. Toggles, their undo and `noted-undos` are changed under an exclusive lock on
-their folder, and a note's id is claimed atomically, so two sessions at once lose nothing. Undo handles last for the engine process. `Op::Undo` is queued
+start-up a top-level engine puts back a `.<name>.<id>.undo` file a crash left in the project
+root, the real folder of a linked rules file, the home rules folder, Frog's notes folders or
+beside customize.json, never over a file written since, and only one from the last ten minutes
+(an undo cut short by a crash the app came straight back from). An older one is left as it is
+and nothing is said, since the person may have deleted the file or switched to a branch
+without it; one over a day old is removed. Toggles, their undo and `noted-undos` are changed
+under an exclusive lock on their folder (a `flock`; on a drive without one, a `.frog-lock` file
+created only if absent, taken over after a minute if its process died), and a note's id is
+claimed atomically, so two sessions at once lose nothing. Waiting for another Frog's lock gives
+up after ten seconds with an error saying so; the work never runs unlocked. Undo handles last for the engine process. `Op::Undo` is queued
 like other ops, so during a running turn it lands when the turn ends.
 
 ## Settings the app owns: `setting_change` and `Op::Settings`
@@ -213,11 +220,23 @@ Sent on apply and on undo. Live only (never replayed), so a reconnect can't re-a
 change. Values are the row's option ids (`"compact"`, `"25"`), a bool for toggles, or the raw
 string/number for menus without options and fields.
 
-The app sends its values whenever a link opens (a local engine's start, a Frog Cloud link's
-open) and when one changes (lands at once, not queued). **The ids it sends are the settings it
-applies, and the engine plans a change only for those**: anything else is answered "can't be
+The app sends its values on every connection (a local engine's start, every Frog Cloud
+welcome, a reconnect included, since a sandbox woken from sleep runs a new engine) and when
+one changes (lands at once, not queued), with its capabilities alongside. Each send is the
+app's whole set and replaces its last. A link that isn't the person's conversation (the Mac's
+short-lived rename link) sends neither caps nor settings.
+
+**Several apps can share one engine** (a cloud session open on the Mac and the web), so each
+app names itself: `client`, an id it keeps while it runs (`mac-…`, `ios-…`, `web-…`), on
+`settings` and on typed `submit`s, and `{"op":"detach","client":…}` when it closes the
+session. The engine keeps each app's set apart and drops it on `detach`. **A change is planned
+only for a setting the app the person typed in applies**: anything else is answered "can't be
 changed from here: change it in Settings › <section>", with no card and no receipt, so a
-receipt always means the change took effect. A `null` value declares an id applied with its
+receipt always means the change took effect where they are. The `setting_change` names that
+app (`client`), and any other app leaves it alone. `auto-note` isn't one device's last word:
+off if any attached app says off, on if one says on and none off (until a synced account
+setting exists). An app that sends no `client` is the engine's one unnamed client, as before;
+an app that crashes without `detach` keeps counting, which can only hold `auto-note` off. A `null` value declares an id applied with its
 value unknown. The Mac sends its seven appearance and notification rows plus `auto-note`; the
 web sends `theme`, `density` and `auto-note`.
 
@@ -326,6 +345,13 @@ Durable: it replays with the transcript, and its Undo still works after a restar
   with the notice `/remember` gets in a child). A paste is part of the typed message: the
   apps don't mark pasted spans, so this opening-only rule is what keeps a pasted document's
   "From now on …" line from becoming a note.
+- **Known limit: pasted text counts as typed.** The composers don't mark pasted spans (doing it
+  would take span offsets kept through every edit in three composers, sent with the message,
+  and an engine check that skips them), so a paste is part of the typed message. For notes the
+  opening-only rule above is the guard. For settings, a pasted "make it dark" that opens the
+  message can plan a cosmetic change (an Apply-tier row changes at once with a receipt and
+  Undo; anything costly or risky is Ask-tier and still a card). Text filled without typing
+  (below) is not affected.
 - **Where the slash commands work** (the one rule; each command only when the message starts
   with it and is sent alone, and never as a model turn: anything refused is a notice):
   - `/memory` and `/recall` only read: they answer in any session a person types in, a

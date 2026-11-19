@@ -3575,7 +3575,7 @@ pub(crate) const DENIED_ENDING: &str =
 
 /// Where a session's declined offers are kept: beside its log.
 pub(super) fn declined_path(store: &std::path::Path, id: &str) -> PathBuf {
-    store.join(format!("{id}.declined"))
+    crate::session::declined_path(store, id)
 }
 
 /// A session's declined offers, one key a line (none when there's no file).
