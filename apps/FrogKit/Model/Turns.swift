@@ -67,6 +67,8 @@ struct ItemState: Identifiable {
     /// Yolo ran this call outside the shell sandbox (its `EgressWidened` said
     /// `sandbox_left`): the row carries a quiet tag instead of a second notice row.
     var sandboxEscaped = false
+    /// A Customize change this call made (`customize_applied`): drawn as its receipt with Undo.
+    var applied: CustomizeApplied?
     /// When the engine started and finished it, for "Thought for 2s" and the live line.
     var startedAt: Date?
     var endedAt: Date?
@@ -300,4 +302,13 @@ final class LivePulse {
         self.slow = slow
         if let cached { self.cached = cached }
     }
+}
+
+/// A Customize change made, on the call that made it (docs/customize-events.md): what was done
+/// (`card`), its Undo handle, and Undo's answer once it came.
+struct CustomizeApplied: Equatable, Sendable {
+    var undo: String
+    var card: Proposal
+    var undone: Undone?
+    struct Undone: Equatable, Sendable { var ok: Bool; var message: String? }
 }

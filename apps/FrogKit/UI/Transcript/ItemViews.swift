@@ -479,7 +479,11 @@ struct PermissionCard: View {
 
     var body: some View {
         #if os(macOS)
-        macCard
+        if let proposal = request.proposal {
+            ProposalCardView(request: request, proposal: proposal, conversation: conversation)
+        } else {
+            macCard
+        }
         #else
         iosCard
         #endif
@@ -726,3 +730,88 @@ enum ToolResultWords {
         return "Failed"
     }
 }
+
+#if os(macOS)
+/// A Customize card (docs/customize-events.md; canvas N7 Remember, N9 Change): the change, where
+/// it goes and what it costs a turn, then the primary answer, Not now, and the one alternative.
+/// The same card shell as the approval card above.
+struct ProposalCardView: View {
+    let request: PermissionRequest
+    let proposal: Proposal
+    let conversation: Conversation
+
+    /// "In pond, in AGENTS.md, so your team gets it too. Adds 12 tokens to each turn."
+    static func whereLine(_ where: String, tokens: Int?) -> String {
+        var parts = [`where`.hasSuffix(".") ? String(`where`.dropLast()) : `where`]
+        if let t = tokens, t != 0 { parts.append(t > 0 ? "Adds \(t) tokens to each turn" : "Saves \(-t) tokens a turn") }
+        return parts.joined(separator: ". ") + "."
+    }
+
+    var body: some View {
+        let p = proposal
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                // A change the person asked for that waits on them wears the "needs you" dot;
+                // one Frog offered doesn't.
+                if p.askedBy?.who != "frog" {
+                    Circle().fill(Tokens.notice).frame(width: 6, height: 6).accessibilityLabel("Needs you")
+                }
+                Text(p.title).font(.frog(size: Tokens.Size.body, weight: .semibold)).fixedLine(Tokens.Transcript.body)
+                    .metricsFirstWord()
+            }
+            change(p)
+            Text(Self.whereLine(p.where, tokens: p.tokensPerTurn))
+                .font(.frog(size: Tokens.Size.meta)).foregroundStyle(Tokens.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                Button(p.primary) { conversation.answer(.allow) }
+                    .buttonStyle(CardButtonStyle(primary: true))
+                    .keyboardShortcut(.return, modifiers: .command)
+                    .accessibilityIdentifier("customize.primary")
+                Button(p.dismiss.isEmpty ? "Not now" : p.dismiss) { conversation.answer(.deny) }
+                    .buttonStyle(CardButtonStyle())
+                    .keyboardShortcut(".", modifiers: .command)
+                    .accessibilityIdentifier("customize.dismiss")
+                Spacer(minLength: 12)
+                if let alt = p.alternative {
+                    Button(alt.label) { conversation.answer(.allow, choice: alt.id) }
+                        .buttonStyle(.plain).font(.frog(size: Tokens.Size.meta)).foregroundStyle(Tokens.textSecondary)
+                        .help(Self.whereLine(alt.where, tokens: alt.tokensPerTurn))
+                        .accessibilityIdentifier("customize.alternative")
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Tokens.raised, in: .rect(cornerRadius: Tokens.Radius.card))
+        .metricsRow(.card, p.title, key: "card-\(request.id)", fontSize: Tokens.Size.body)
+    }
+
+    /// A line to save or forget in a well; a setting or toggle as old to new.
+    @ViewBuilder
+    private func change(_ p: Proposal) -> some View {
+        if p.kind == "line" {
+            Text(p.change.new ?? p.change.old ?? "")
+                .font(.frog(size: Tokens.Size.secondary, design: .monospaced))
+                .foregroundStyle(p.change.new == nil ? Tokens.textSecondary : Tokens.text)
+                .strikethrough(p.change.new == nil)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 12).padding(.vertical, 9)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Tokens.well, in: .rect(cornerRadius: 8))
+        } else {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text(p.kind == "setting" ? p.title.replacingOccurrences(of: "Change ", with: "") : p.title.replacingOccurrences(of: #"^Turn (on|off) "#, with: "", options: .regularExpression))
+                    .foregroundStyle(Tokens.textSecondary).frame(minWidth: 200, alignment: .leading)
+                if let old = p.change.old {
+                    Text(old).foregroundStyle(Tokens.textTertiary).strikethrough()
+                    Text("to").foregroundStyle(Tokens.textTertiary)
+                }
+                Text(p.change.new ?? "").foregroundStyle(Tokens.text)
+            }
+            .font(.frog(size: 13))
+        }
+    }
+}
+#endif

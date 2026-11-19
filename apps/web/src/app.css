@@ -527,6 +527,23 @@ body { font-family: var(--font-sans); }
 .cardx.ask .diff-acts .f-btn { min-width: 72px; height: 28px; }
 .ask-more > summary { min-width: 0 !important; width: 28px; height: 28px; padding: 0; border-radius: 50%; display: grid; place-items: center; }
 
+/* A Customize card (canvas N7 Remember, N9 Change): the change in a well, or as old to new; where
+ * it goes and what it costs a turn; the primary, Not now, and the alternative as a quiet link. */
+.cardx.proposal .proposal-t { display: flex; align-items: center; gap: 8px; }
+.needs-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--notice); flex: none; }
+.cardx.proposal .proposal-q { font-family: var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.cardx.proposal .proposal-q.gone { color: var(--muted); text-decoration: line-through; }
+.proposal-chg { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 13px; line-height: 20px; }
+.proposal-chg .k { color: var(--muted); min-width: 200px; }
+.proposal-chg .o { color: var(--faint); text-decoration: line-through; }
+.proposal-chg .a { color: var(--faint); }
+.cardx.proposal .proposal-f { margin: 0; }
+.cardx.proposal .proposal-alt { font-size: 12.5px; }
+/* A Customize receipt: its words don't cut off, and a failed Undo says why in the result's place. */
+.line-row.applied .applied-what { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.line-row.applied .line-result { margin-left: auto; }
+.line-row.applied .applied-fail { color: var(--warn); }
+
 /* Visuals (Visualize): a card with the widget's own sandboxed frame. */
 .widget { background: var(--card); border-radius: 12px; overflow: hidden; margin: 6px 0; }
 .widget-h { display: flex; align-items: center; gap: 8px; padding: 9px 10px 9px 14px; border-bottom: 1px solid var(--line); min-height: 40px; }

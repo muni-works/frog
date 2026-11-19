@@ -138,7 +138,7 @@ final class CloudLink: ConversationLink {
         lastSeq = after
         if connect { open() }
         // As on the web: questions get a card; a preview pane would need the sandbox's network.
-        send(.setClientCaps(panes: false, ask: true))
+        send(.setClientCaps(panes: false, ask: true, customize: true))
     }
 
     func send(_ op: Op) {

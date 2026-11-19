@@ -223,7 +223,8 @@ enum StepRuns {
         for step in steps {
             guard case .tool = step.kind else { continue }
             guard step.done else { flush(); continue }
-            if step.result?.outcome == .error { flush(); out.append(.step(step)) } else { run.append(step) }
+            // A failed step, and a Customize receipt (it carries Undo), never fold.
+            if step.result?.outcome == .error || step.applied != nil { flush(); out.append(.step(step)) } else { run.append(step) }
         }
         flush()
         return out
@@ -364,7 +365,9 @@ struct StepLineView: View {
     }
 
     var body: some View {
-        if let line {
+        if let applied = item.applied {
+            AppliedLineView(applied: applied, conversation: conversation)
+        } else if let line {
             VStack(alignment: .leading, spacing: 0) {
                 row(line)
                 if open, opens(line) {
@@ -708,4 +711,53 @@ func monoLineHeight(_ size: CGFloat) -> CGFloat {
     let f = UIFont(name: "IBMPlexMono", size: size) ?? .monospacedSystemFont(ofSize: size, weight: .regular)
     return f.lineHeight
     #endif
+}
+
+/// A Customize change made (docs/customize-events.md, canvas N9): one line, the verb in `muted`,
+/// what changed in `fg`, Undo at the right; Undo's answer takes its place.
+struct AppliedLineView: View {
+    let applied: CustomizeApplied
+    let conversation: Conversation
+
+    static func verb(_ c: Proposal, undone: Bool) -> String {
+        if undone { return "Undid" }
+        switch c.kind {
+        case "setting": return "Changed"
+        case "line": return c.change.new != nil && c.change.old != nil ? "Changed" : c.change.new != nil ? "Remembered" : "Forgot"
+        default: return c.change.new == "Off" ? "Turned off" : "Turned on"
+        }
+    }
+
+    static func what(_ c: Proposal) -> String {
+        switch c.kind {
+        case "line": c.change.new ?? c.change.old ?? ""
+        case "setting": "\(c.title.replacingOccurrences(of: "Change ", with: "")) to \(c.change.new ?? "")"
+        default: c.title.replacingOccurrences(of: #"^Turn (on|off) "#, with: "", options: .regularExpression)
+        }
+    }
+
+    var body: some View {
+        let c = applied.card
+        LineFrame(hovered: false) {
+            Image(systemName: "slider.horizontal.3").font(.frog(size: 11))
+        } content: {
+            Text(Self.verb(c, undone: applied.undone?.ok == true)).font(.frog(size: Tokens.Transcript.status.size))
+                .foregroundStyle(Tokens.textSecondary).fixedSize()
+            Text(Self.what(c)).font(.frog(size: Tokens.Transcript.status.size)).foregroundStyle(Tokens.text)
+                .lineLimit(1).truncationMode(.tail).layoutPriority(-1)
+                .help(c.where)
+            Spacer(minLength: TurnSpace.Inset.row)
+            if let undone = applied.undone {
+                if !undone.ok {
+                    Text(undone.message ?? "Couldn't undo").font(.frog(size: Tokens.Transcript.meta.size))
+                        .foregroundStyle(Tokens.warn).lineLimit(1)
+                }
+            } else {
+                Button("Undo") { conversation.undo(applied.undo) }
+                    .buttonStyle(.plain).font(.frog(size: Tokens.Transcript.meta.size))
+                    .foregroundStyle(Tokens.textSecondary)
+                    .accessibilityIdentifier("customize.undo")
+            }
+        }
+    }
 }
