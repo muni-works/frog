@@ -2162,6 +2162,9 @@ impl Agent {
         }
         shared.bg.seed_ids(bg_ids.iter().map(String::as_str));
         shared.bg.lost_on_restart(&lost_bg);
+        if let Some(store) = &o.store {
+            crate::customize::Toggles::use_store(store);
+        }
         let skills = if o.subagent {
             Default::default()
         } else {
@@ -3032,6 +3035,7 @@ impl Agent {
             return;
         };
         let Some(store) = &self.memory else { return };
+        store.set_session(&self.conv.session_id, &self.title());
         let scope = if self.chat {
             crate::memory::Scope::Global
         } else {
@@ -3096,6 +3100,8 @@ impl Agent {
             // The only path that opens a browser for MCP, and only because a person asked
             // (Settings → MCP → Sign in, or the transcript's card).
             Op::McpSignIn { server, decline } => self.sign_in_mcp(server, decline),
+            Op::Customize => self.emit_customize(None),
+            Op::CustomizeChange { change } => self.customize_change(change),
             Op::SetMode { mode } => {
                 // The router already applied it (see `Shared::mode`), so the permit path has
                 // been running in it since the call; this reconciles the agent's copy. Kept

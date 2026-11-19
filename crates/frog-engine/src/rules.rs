@@ -171,19 +171,8 @@ pub fn inject_budget(tier: Tier) -> usize {
 
 /// The always-on rules for the system prompt, like instruction files, within `budget`.
 pub fn prompt_section(rules: &[Rule], budget: usize) -> String {
-    let mut s = String::new();
-    let mut omitted = 0;
-    for r in rules.iter().filter(|r| !r.scoped()) {
-        let head = format!("\n# Rules from {}\n", r.path.display());
-        let room = budget.saturating_sub(s.len() + head.len());
-        if room < 80 {
-            omitted += 1;
-            continue;
-        }
-        s.push_str(&head);
-        s.push_str(&fit(&r.body, room));
-        s.push('\n');
-    }
+    let (parts, omitted) = prompt_parts(rules, budget);
+    let mut s: String = parts.into_iter().map(|(_, p)| p).collect();
     if omitted > 0 {
         s.push_str(&format!(
             "\n({omitted} rule file{} omitted for this model's budget)\n",
@@ -191,6 +180,26 @@ pub fn prompt_section(rules: &[Rule], budget: usize) -> String {
         ));
     }
     s
+}
+
+/// Each always-on rule's piece of the system prompt, by path, and how many didn't fit: what
+/// [`prompt_section`] is made of, so Customize can say what each file adds to a turn.
+pub fn prompt_parts(rules: &[Rule], budget: usize) -> (Vec<(PathBuf, String)>, usize) {
+    let mut parts = Vec::new();
+    let mut used = 0;
+    let mut omitted = 0;
+    for r in rules.iter().filter(|r| !r.scoped()) {
+        let head = format!("\n# Rules from {}\n", r.path.display());
+        let room = budget.saturating_sub(used + head.len());
+        if room < 80 {
+            omitted += 1;
+            continue;
+        }
+        let piece = format!("{head}{}\n", fit(&r.body, room));
+        used += piece.len();
+        parts.push((r.path.clone(), piece));
+    }
+    (parts, omitted)
 }
 
 /// The scoped rules `rel` matches, skipping any in `seen` (and adding the rest to it).
