@@ -12,7 +12,7 @@ struct SkillsPage: View {
     var body: some View {
         CustomizeListPage(section: "skills") {
             if let skills = store.skills {
-                if let card = WeightCard(skills: skills) { card }
+                if let card = WeightCard(skills: skills, budget: store.report?.skills.budgetTokens) { card }
                 if skills.isEmpty {
                     SettingsRows {
                         SettingsRow("No skills yet", description: "Add one with Add a skill, or put a SKILL.md in a folder under .frog/skills in a project.") { EmptyView() }
@@ -21,7 +21,7 @@ struct SkillsPage: View {
                 ForEach(Self.groups(skills, project: store.projectName), id: \.label) { g in
                     SettingsGroupLabel(text: g.label)
                     SettingsRows {
-                        ForEach(g.skills) { s in SkillRow(skill: s) { open(s.name) } }
+                        ForEach(g.skills) { s in SkillRow(skill: s, change: store.change) { open(s.name) } }
                     }
                 }
             } else {
@@ -45,10 +45,12 @@ struct SkillsPage: View {
 private struct WeightCard: View {
     let parts: [WeightBar.Part]
     let total: Int
-    static let budget = 1_500
+    let budget: Int
 
-    init?(skills: [CustomizeSkill]) {
-        guard !skills.isEmpty, skills.allSatisfy({ $0.tokensPerTurn != nil && $0.uses != nil }) else { return nil }
+    /// Nil until the engine gives every skill's weight and use, and the budget they share.
+    init?(skills: [CustomizeSkill], budget: Int?) {
+        guard let budget, !skills.isEmpty, skills.allSatisfy({ $0.tokensPerTurn != nil && $0.uses != nil }) else { return nil }
+        self.budget = budget
         parts = skills.map { .init(name: $0.name, tokens: $0.tokensPerTurn!, idle: ($0.uses ?? []).reduce(0, +) == 0) }
         total = parts.map(\.tokens).reduce(0, +)
     }
@@ -58,9 +60,9 @@ private struct WeightCard: View {
             HStack(alignment: .firstTextBaseline) {
                 Text("Weight on every turn").font(.frog(size: 13, weight: .semibold))
                 Spacer()
-                Text("\(total.formatted()) of \(Self.budget.formatted()) tokens").font(.frog(size: 12.5)).foregroundStyle(Tokens.textSecondary).monospacedDigit()
+                Text("\(total.formatted()) of \(budget.formatted()) tokens").font(.frog(size: 12.5)).foregroundStyle(Tokens.textSecondary).monospacedDigit()
             }
-            WeightBar(parts: parts, budget: Self.budget)
+            WeightBar(parts: parts, budget: budget)
             Text("Each bar is one skill's summary. An outlined one hasn't been used in 30 days.")
                 .font(.frog(size: 12.5)).foregroundStyle(Tokens.textTertiary)
         }
@@ -71,6 +73,7 @@ private struct WeightCard: View {
 
 private struct SkillRow: View {
     let skill: CustomizeSkill
+    var change: (CustomizeChange) -> Void = { _ in }
     let open: () -> Void
     @State private var hovering = false
 
@@ -93,7 +96,9 @@ private struct SkillRow: View {
                         .foregroundStyle(n == 0 ? Tokens.textTertiary : Tokens.textSecondary)
                         .frame(width: 34, alignment: .trailing)
                 }
-                Image(systemName: "chevron.right").font(.frog(size: 10, weight: .semibold)).foregroundStyle(Tokens.textTertiary)
+                if skill.on == nil {
+                    Image(systemName: "chevron.right").font(.frog(size: 10, weight: .semibold)).foregroundStyle(Tokens.textTertiary)
+                }
             }
             .padding(.vertical, 11)
             .contentShape(.rect)
@@ -102,6 +107,13 @@ private struct SkillRow: View {
             }
         }
         .buttonStyle(.plain)
+        .overlay(alignment: .trailing) {
+            // The engine's switch, when it has one: beside the row's button, not inside it.
+            if let on = skill.on, let id = skill.engineID {
+                FrogToggle(label: skill.name, isOn: Binding(get: { on }, set: { change(.skill(id: id, on: $0)) }))
+            }
+        }
+        .padding(.trailing, skill.on == nil ? 0 : 52)
         .onHover { hovering = $0 }
         .help("Open /\(skill.name): its file, and how to try it")
         .accessibilityLabel("/\(skill.name)")
@@ -120,16 +132,19 @@ struct ConnectionsPage: View {
 
     var body: some View {
         CustomizeListPage(section: "connections") {
-            if let servers = store.servers {
-                if servers.isEmpty {
+            if let list = store.connections {
+                if list.isEmpty {
                     SettingsRows {
                         SettingsRow("No connections yet", description: "Add one with Add a connection. A project can bring its own in a .mcp.json file.") { EmptyView() }
                     }
                 } else {
                     SettingsRows {
-                        ForEach(servers) { s in ConnectionRow(server: s, store: store) }
+                        ForEach(list) { c in ConnectionRow(connection: c, store: store) }
                     }
-                    ConnectionsKey(squares: servers.flatMap(Self.squares))
+                    ConnectionsKey(squares: list.flatMap(\.squares))
+                }
+                if let problem = store.changeProblem {
+                    Text(problem).font(.frog(size: 12.5)).foregroundStyle(Tokens.warn).padding(.top, 8)
                 }
             } else {
                 SettingsRows { SettingsRow("Connecting…") { ProgressView().controlSize(.small) } }
@@ -145,7 +160,7 @@ struct ConnectionsPage: View {
         }
     }
 
-    /// A server's tools: the ones it offers, then the ones withheld from the model.
+    /// A server's tools from `frog --mcp`: the ones it offers, then the ones withheld.
     static func squares(_ s: MCPStatus) -> [ToolSquares.Square] {
         s.tools.map { .init(tool: shortName($0, server: s.name), state: .on) }
             + s.quarantined.map { .init(tool: shortName($0.tool, server: s.name), state: .withheld, reason: $0.reason) }
@@ -157,71 +172,92 @@ struct ConnectionsPage: View {
         return tool.hasPrefix(prefix) ? String(tool.dropFirst(prefix.count)) : tool
     }
 
-    /// The line under a server's squares.
-    static func say(_ s: MCPStatus, project: String?, fromProject: Bool) -> (lead: String?, rest: String) {
+    /// The line under a connection's squares.
+    static func say(_ c: CustomizeConnection, project: String?) -> (lead: String?, rest: String) {
         var rest: [String] = []
         var lead: String?
-        if s.connected {
-            let n = s.tools.count
-            lead = "\(n) tool\(n == 1 ? "" : "s")."
-            let held = s.quarantined.count
+        let held = c.squares.filter { $0.state == .withheld }.count
+        let usable = c.squares.count - held
+        let on = c.squares.filter { $0.state == .on }.count
+        switch c.state {
+        case .connected:
+            let anyOff = c.squares.contains { $0.state == .off }
+            lead = anyOff ? "\(on) of \(usable) tools on." : "\(usable) tool\(usable == 1 ? "" : "s")."
             if held > 0 {
                 rest.append("\(held) \(held == 1 ? "is" : "are") withheld: \(held == 1 ? "its description reads" : "their descriptions read") like instructions to the model.")
             }
-        } else if s.needsAuth == true {
+            if let n = c.calls { rest.append(n == 0 ? "Never called." : "\(n) call\(n == 1 ? "" : "s") in the last 30 days.") }
+        case .needsSignIn, .declined:
             rest.append("Wants you to sign in. Frog can't see its tools until you do.")
-            if s.declined == true { rest.append("You declined before.") }
-        } else {
-            rest.append(s.error ?? "Not connected.")
+            if c.state == .declined { rest.append("You declined before.") }
+        case .off:
+            rest.append("Off. Its tools aren't offered to Frog.")
+        case .connecting, .unknown:
+            rest.append("Connecting.")
+        case .failed:
+            rest.append(c.error ?? "Not connected.")
         }
-        if fromProject { rest.append("Came with \(project ?? "the project")'s .mcp.json.") }
+        if c.fromProject { rest.append("Came with \(project ?? "the project")'s .mcp.json.") }
         return (lead, rest.joined(separator: " "))
     }
 }
 
 private struct ConnectionRow: View {
-    let server: MCPStatus
+    let connection: CustomizeConnection
     let store: CustomizeStore
 
     var body: some View {
-        let squares = ConnectionsPage.squares(server)
-        let say = ConnectionsPage.say(server, project: store.projectName, fromProject: store.projectServers.contains(server.name))
+        let c = connection
+        let say = ConnectionsPage.say(c, project: store.projectName)
         HStack(alignment: .top, spacing: 22) {
             HStack(spacing: 8) {
-                if server.needsAuth == true { NeedsYouDot() }
-                Text(server.name).font(.frog(size: 14, weight: .semibold)).lineLimit(1)
+                if c.wantsSignIn { NeedsYouDot() }
+                Text(c.name).font(.frog(size: 14, weight: .semibold)).lineLimit(1)
             }
             .frame(width: 150, alignment: .leading)
             VStack(alignment: .leading, spacing: 6) {
-                if !squares.isEmpty { ToolSquares(squares: squares).padding(.top, 5) }
+                if !c.squares.isEmpty {
+                    ToolSquares(squares: c.squares) { sq, on in
+                        if let key = sq.exposed { store.change(.tool(exposed: key, on: on)) }
+                    }
+                    .padding(.top, 5)
+                }
                 (Text(say.lead.map { $0 + " " } ?? "").foregroundStyle(Tokens.textSecondary) + Text(say.rest).foregroundStyle(Tokens.textTertiary))
                     .font(.frog(size: 12.5))
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, squares.isEmpty ? 1 : 0)
+                    .padding(.top, c.squares.isEmpty ? 1 : 0)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             control
         }
         .padding(.vertical, 18)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(server.name)
+        .accessibilityLabel(c.name)
     }
 
     @ViewBuilder
     private var control: some View {
-        // Connected: the squares and the line under them say it all.
-        if server.connected {
-            EmptyView()
-        } else if server.needsAuth == true {
-            if store.signingIn.contains(server.name) {
-                ProgressView().controlSize(.small)
-            } else {
-                Button("Sign in") { store.signIn(server.name) }.buttonStyle(CustomizePillStyle()).fixedSize()
-                    .help(server.declined == true ? "Opens \(server.name)'s sign-in in your browser (you declined before)" : "Opens \(server.name)'s sign-in in your browser")
+        let c = connection
+        HStack(spacing: 12) {
+            if let t = c.tokens, c.state == .connected {
+                Text(CustomizeFormat.tokens(t)).font(.frog(size: 12.5)).foregroundStyle(Tokens.textSecondary).monospacedDigit()
+                    .help("About this much on every turn, for the tools that are on")
             }
-        } else {
-            SettingsValue("Not connected")
+            if c.wantsSignIn {
+                if store.signingIn.contains(c.name) {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button("Sign in") { store.signIn(c.name) }.buttonStyle(CustomizePillStyle()).fixedSize()
+                        .help(c.state == .declined ? "Opens \(c.name)'s sign-in in your browser (you declined before)" : "Opens \(c.name)'s sign-in in your browser")
+                }
+            } else if let on = c.on {
+                FrogToggle(label: c.name, isOn: Binding(get: { on }, set: { store.change(.connection(name: c.name, on: $0)) }))
+                    .help(on ? "Stop offering \(c.name)'s tools to Frog" : "Offer \(c.name)'s tools to Frog")
+            } else if c.state != .connected {
+                SettingsValue("Not connected")
+            }
         }
+        .fixedSize()
     }
 }
 
@@ -477,11 +513,16 @@ private struct MemoryEvent: View {
                 .frame(width: 9, height: 9)
                 .padding(.top, 7)
                 .accessibilityHidden(true)
-            Text(note.body)
-                .font(.frog(size: 14))
-                .foregroundStyle(Tokens.text)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(note.body)
+                    .font(.frog(size: 14))
+                    .foregroundStyle(Tokens.text)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let from = note.from {
+                    Text("from \u{201C}\(from)\u{201D}").font(.frog(size: 12.5)).foregroundStyle(Tokens.textTertiary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
             ZStack(alignment: .trailing) {
                 Text(note.scope == .project ? (project ?? "this project") : "everywhere")
                     .font(.frog(size: 12)).foregroundStyle(Tokens.textTertiary)

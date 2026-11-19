@@ -15,7 +15,11 @@ struct SkillPage: View {
             if let skill = store.skills?.first(where: { $0.name == name }) {
                 SettingsRows {
                     SettingsRow("Use this skill", description: "\(skill.description) \(where_(skill))") {
-                        SettingsValue("On", help: "Frog uses every skill it finds. Switching one off comes with the engine's skill switches.")
+                        if let on = skill.on, let id = skill.engineID {
+                            FrogToggle(label: "Use this skill", isOn: Binding(get: { on }, set: { store.change(.skill(id: id, on: $0)) }))
+                        } else {
+                            SettingsValue("On", help: "Frog uses every skill it finds. This Frog can't switch one off yet.")
+                        }
                     }
                     if let t = skill.tokensPerTurn {
                         SettingsRow("Weight", description: skill.fullTokens.map { "Its summary on every turn. The full text, \(CustomizeFormat.tokens($0)), only when it's used." } ?? "Its summary on every turn.") {
@@ -24,7 +28,7 @@ struct SkillPage: View {
                     }
                     if let uses = skill.uses {
                         let n = uses.reduce(0, +)
-                        SettingsRow("Used", description: "The marks are the last \(uses.count) days.") {
+                        SettingsRow("Used", description: (skill.lastUsed.map { "Last in \u{201C}\($0)\u{201D}. " } ?? "") + "The marks are the last \(uses.count) days.") {
                             HStack(spacing: 16) {
                                 ActivityMarks(days: uses)
                                 SettingsValue(n == 0 ? "never" : "\(n) time\(n == 1 ? "" : "s")")

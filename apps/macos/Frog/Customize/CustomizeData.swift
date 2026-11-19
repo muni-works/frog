@@ -25,6 +25,11 @@ struct CustomizeSkill: Decodable, Identifiable, Hashable {
     var fullTokens: Int? = nil
     /// Uses per day, oldest first, for the last 30 days.
     var uses: [Int]? = nil
+    /// The conversation it was last used in.
+    var lastUsed: String? = nil
+    /// The engine's key and switch, nil on an engine that can't switch skills.
+    var engineID: String? = nil
+    var on: Bool? = nil
 
     enum CodingKeys: String, CodingKey { case name, description, path, project }
 
@@ -152,6 +157,8 @@ struct MemoryNote: Identifiable, Hashable {
     let scope: Scope
     let body: String
     let url: URL
+    /// The conversation it was noted in, once the engine says.
+    var from: String? = nil
     var firstLine: String { body.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty } ?? "" }
 }
 
@@ -397,9 +404,12 @@ final class CustomizeStore {
     /// The project, or nil in a chat.
     private(set) var folder: URL?
     private(set) var skills: [CustomizeSkill]?
-    private(set) var servers: [MCPStatus]?
-    /// Servers that came with the project's .mcp.json.
-    private(set) var projectServers: Set<String> = []
+    private(set) var connections: [CustomizeConnection]?
+    /// The engine's report, when the engine has one (docs/customize-api.md): the figures and
+    /// the switches come from it. Nil on an older engine.
+    private(set) var report: CustomizeReport?
+    /// What went wrong with the last switch.
+    var changeProblem: String?
     private(set) var rules: [RuleFile]?
     private(set) var notes: [MemoryNote]?
     private(set) var signingIn: Set<String> = []
@@ -421,6 +431,10 @@ final class CustomizeStore {
     }
 
     func loadAll() async {
+        if let r = try? await Frog.json(CustomizeReport.self, args: ["--customize", "--json"], cwd: cwd) {
+            apply(r)
+            return
+        }
         async let s: Void = loadSkills()
         async let m: Void = loadServers()
         async let r: Void = loadRules()
@@ -428,14 +442,42 @@ final class CustomizeStore {
         loadNotes()
     }
 
+    /// Everything from one report.
+    func apply(_ r: CustomizeReport) {
+        report = r
+        skills = r.pageSkills
+        connections = r.pageConnections
+        notes = r.pageNotes()
+        rules = Self.ruleFiles(found: r.rules.files.map { URL(fileURLWithPath: $0.path) }, folder: folder, home: home)
+    }
+
+    /// A switch, made by the engine; the page redraws from its answer.
+    func change(_ c: CustomizeChange) {
+        changeProblem = nil
+        guard Self.loads else { return }
+        Task {
+            if let r = try? await Frog.json(CustomizeReport.self, args: ["--customize-change", c.json, "--json"], cwd: cwd) {
+                apply(r)
+            } else {
+                changeProblem = "Frog couldn't make that change. Nothing was changed."
+            }
+        }
+    }
+
     func loadSkills() async {
         skills = (try? await Frog.json([CustomizeSkill].self, args: ["--skills", "--json"], cwd: cwd)) ?? []
     }
 
+    /// Refresh: the whole report from an engine that has one, else `frog --mcp`.
     func loadServers() async {
-        servers = nil
-        projectServers = folder.map(Self.mcpJSONNames) ?? []
-        servers = (try? await Frog.json([MCPStatus].self, args: ["--mcp", "--json"], cwd: cwd)) ?? []
+        connections = nil
+        if report != nil, let r = try? await Frog.json(CustomizeReport.self, args: ["--customize", "--json"], cwd: cwd) {
+            apply(r)
+            return
+        }
+        let fromProject = folder.map(Self.mcpJSONNames) ?? []
+        let list = (try? await Frog.json([MCPStatus].self, args: ["--mcp", "--json"], cwd: cwd)) ?? []
+        connections = list.map { CustomizeConnection($0, fromProject: fromProject.contains($0.name)) }
     }
 
     func loadRules() async {
@@ -518,13 +560,19 @@ final class CustomizeStore {
     #if DEBUG
     /// Tests and snapshots: fixed data, nothing loaded.
     func stage(folder: URL?, skills: [CustomizeSkill], servers: [MCPStatus], projectServers: Set<String> = [],
-               rules: [RuleFile], notes: [MemoryNote]) {
+               rules: [RuleFile], notes: [MemoryNote], report: CustomizeReport? = nil) {
         self.folder = folder
         self.skills = skills
-        self.servers = servers
-        self.projectServers = projectServers
+        self.connections = servers.map { CustomizeConnection($0, fromProject: projectServers.contains($0.name)) }
         self.rules = rules
         self.notes = notes
+        self.report = report
+    }
+
+    func stage(report r: CustomizeReport, folder: URL?, rules: [RuleFile]) {
+        self.folder = folder
+        apply(r)
+        self.rules = rules
     }
     #endif
 }

@@ -158,15 +158,72 @@ final class CustomizeModeTests: XCTestCase {
         let squares = ConnectionsPage.squares(figma)
         XCTAssertEqual(squares.map(\.tool), ["get_file", "comment", "run"])
         XCTAssertEqual(squares.map(\.state), [.on, .on, .withheld])
-        let say = ConnectionsPage.say(figma, project: "pond", fromProject: false)
+        let say = ConnectionsPage.say(CustomizeConnection(figma, fromProject: false), project: "pond")
         XCTAssertEqual(say.lead, "2 tools.")
         XCTAssertEqual(say.rest, "1 is withheld: its description reads like instructions to the model.")
 
         let linear = MCPStatus(name: "linear", connected: false, error: "Signed out", tools: [], quarantined: [], needsAuth: true, declined: true)
-        XCTAssertEqual(ConnectionsPage.say(linear, project: nil, fromProject: false).rest,
+        XCTAssertEqual(ConnectionsPage.say(CustomizeConnection(linear, fromProject: false), project: nil).rest,
                        "Wants you to sign in. Frog can't see its tools until you do. You declined before.")
         let db = MCPStatus(name: "pond-db", connected: false, error: "spawn failed", tools: [], quarantined: [], needsAuth: nil, declined: nil)
-        XCTAssertEqual(ConnectionsPage.say(db, project: "pond", fromProject: true).rest, "spawn failed Came with pond's .mcp.json.")
+        XCTAssertEqual(ConnectionsPage.say(CustomizeConnection(db, fromProject: true), project: "pond").rest, "spawn failed Came with pond's .mcp.json.")
+        XCTAssertEqual(CustomizeConnection(linear, fromProject: false).state, .declined)
+        XCTAssertNil(CustomizeConnection(figma, fromProject: false).on, "today's engine can't switch a connection")
+    }
+
+    // MARK: The engine's report (docs/customize-api.md)
+
+    static let reportJSON = #"""
+        {"project":"/tmp/pond","estimate":{"chars_per_token":3.5,"calibrated":false},"tokens":3300,
+         "skills":{"tokens":180,"budget_tokens":1715,"names_only":false,"items":[
+           {"id":"/tmp/pond/.frog/skills/release-notes/SKILL.md","name":"release-notes","description":"Write release notes in pond's house style from merged pull requests.","scope":"project","source":"frog","path":"/tmp/pond/.frog/skills/release-notes/SKILL.md","on":true,"tokens":40,"tokens_if_on":40,"full_tokens":310,"shadowed_by":null,
+            "use":{"count":3,"days":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,2,0],"last":{"at":"2026-11-16T10:04:00-08:00","session":"c1f","title":"0.7.1 notes"}}},
+           {"id":"frog-builtin:gh","name":"gh","description":"GitHub CLI.","scope":"everywhere","source":"builtin","path":null,"on":false,"tokens":0,"tokens_if_on":30,"full_tokens":900,"shadowed_by":null,
+            "use":{"count":0,"days":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"last":null}},
+           {"id":"/Users/ada/.config/frog/skills/release-notes/SKILL.md","name":"release-notes","description":"Older.","scope":"everywhere","source":"frog","path":"/Users/ada/.config/frog/skills/release-notes/SKILL.md","on":true,"tokens":0,"tokens_if_on":20,"full_tokens":100,"shadowed_by":"/tmp/pond/.frog/skills/release-notes/SKILL.md","use":null}]},
+         "connections":{"tokens":2860,"deferred":false,"items":[
+           {"name":"figma","scope":"everywhere","source":"frog","on":true,"state":"connected","error":null,"waiting":null,"tokens":2160,"tokens_if_all_on":3900,"instructions_tokens":120,
+            "tools":[{"name":"get_file","exposed":"mcp__figma__get_file","description":"Reads a file.","state":"on","why":null,"read_only":true,"tokens":180,"tokens_if_on":180},
+                     {"name":"comment","exposed":"mcp__figma__comment","state":"off","why":null,"read_only":false,"tokens":0,"tokens_if_on":90},
+                     {"name":"setup","exposed":"mcp__figma__setup","state":"withheld","why":"asks the model to run a command","read_only":null,"tokens":0,"tokens_if_on":0}],
+            "use":{"count":0,"days":[],"last":null}},
+           {"name":"linear","scope":"everywhere","source":"frog","on":true,"state":"needs_sign_in","error":null,"waiting":"sign_in","tokens":0,"tokens_if_all_on":0,"tools":[],"use":null}]},
+         "rules":{"tokens":310,"files":[{"path":"/tmp/pond/AGENTS.md","scope":"project","source":"agents","kind":"instructions","applies":"always","paths":[],"tokens":210,"full_tokens":210,"lines":[{"n":1,"text":"Use pnpm."}]}]},
+         "memory":{"tokens":70,"omitted":0,"notes":[{"id":"staging","scope":"project","created":"2026-11-12T09:30:00-08:00","session":"c1f","title":"why did my seed data vanish","text":"The staging database is reset every Monday.","path":"/tmp/notes/staging.md","cites":[],"missing":[],"tokens":18,"omitted":false}]}}
+        """#
+
+    func testTheEngineReportBecomesThePages() throws {
+        let r = try JSONDecoder.frog.decode(CustomizeReport.self, from: Data(Self.reportJSON.utf8))
+        let skills = r.pageSkills
+        XCTAssertEqual(skills.map(\.name), ["release-notes", "gh"], "a shadowed skill isn't listed twice")
+        XCTAssertEqual(skills[0].tokensPerTurn, 40)
+        XCTAssertEqual(skills[0].uses?.reduce(0, +), 3)
+        XCTAssertEqual(skills[0].lastUsed, "0.7.1 notes")
+        XCTAssertTrue(skills[0].project)
+        XCTAssertTrue(skills[1].builtIn, "no path: Frog's own")
+        XCTAssertEqual(skills[1].on, false)
+        XCTAssertEqual(skills[1].engineID, "frog-builtin:gh")
+
+        let figma = r.pageConnections[0]
+        XCTAssertEqual(figma.squares.map(\.state), [.on, .off, .withheld])
+        XCTAssertEqual(figma.squares[0].exposed, "mcp__figma__get_file")
+        XCTAssertEqual(figma.tokens, 2160)
+        XCTAssertEqual(ToolSquares.label(figma.squares), "3 tools, 1 on, 1 withheld")
+        XCTAssertEqual(ConnectionsPage.say(figma, project: "pond").lead, "1 of 2 tools on.")
+        XCTAssertEqual(ConnectionsPage.say(figma, project: "pond").rest, "1 is withheld: its description reads like instructions to the model. Never called.")
+        XCTAssertTrue(r.pageConnections[1].wantsSignIn)
+
+        let notes = r.pageNotes()
+        XCTAssertEqual(notes[0].from, "why did my seed data vanish")
+        XCTAssertEqual(notes[0].scope, .project)
+        XCTAssertNotNil(notes[0].created)
+        XCTAssertEqual(CustomizeFormat.perTurn(r.skills.tokens), "about 180 tokens a turn", "estimates say so")
+    }
+
+    func testChangesAsTheEngineTakesThem() {
+        XCTAssertEqual(CustomizeChange.skill(id: "frog-builtin:gh", on: false).json, #"{"change":"skill","id":"frog-builtin:gh","on":false}"#)
+        XCTAssertEqual(CustomizeChange.connection(name: "figma", on: true).json, #"{"change":"connection","name":"figma","on":true}"#)
+        XCTAssertEqual(CustomizeChange.tool(exposed: "mcp__figma__comment", on: true).json, #"{"change":"tool","exposed":"mcp__figma__comment","on":true}"#)
     }
 
     // MARK: Rules files
@@ -345,18 +402,12 @@ final class CustomizeModeTests: XCTestCase {
     /// withheld tools, rules text and notes, and no weights or use counts.
     static func stageFixture(_ store: CustomizeStore, figures: Bool = false) {
         let pond = URL(fileURLWithPath: "/tmp/pond")
-        var skills = [
+        let skills = [
             CustomizeSkill(name: "release-notes", description: "Write release notes in pond's house style from merged pull requests.", path: "/tmp/pond/.frog/skills/release-notes/SKILL.md", project: true),
             CustomizeSkill(name: "db-migrations", description: "How to write and check a migration for pond's Postgres schema.", path: "/tmp/pond/.frog/skills/db-migrations/SKILL.md", project: true),
             CustomizeSkill(name: "commit", description: "Write a commit message from the staged changes.", path: "/Users/ada/.config/frog/skills/commit/SKILL.md", project: false),
             CustomizeSkill(name: "gh", description: "GitHub CLI: PRs, issues, CI checks; valid --json fields.", path: "frog-builtin:gh", project: false),
         ]
-        if figures {
-            let days = { (s: String) in s.map { Int(String($0)) ?? 0 } }
-            let t = [140, 120, 160, 200]
-            let u = ["000100010000100110001000120011", "000000000100000000000010000100", "121201221012210122101221012212", "000000000000000000000000000000"]
-            for i in skills.indices { skills[i].tokensPerTurn = t[i]; skills[i].fullTokens = t[i] * 3; skills[i].uses = days(u[i]) }
-        }
         let servers = [
             MCPStatus(name: "github", connected: true, error: nil, tools: (1...12).map { "mcp__github__tool_\($0)" }, quarantined: [], needsAuth: nil, declined: nil),
             MCPStatus(name: "figma", connected: true, error: nil, tools: (1...21).map { "mcp__figma__tool_\($0)" },
@@ -393,7 +444,11 @@ final class CustomizeModeTests: XCTestCase {
             note("mac", "2026-10-21T10:00:00Z", .everywhere, "Works on a 64 GB Mac and a paired GPU box called mew."),
         ]
         store.home = URL(fileURLWithPath: "/Users/ada")
-        store.stage(folder: pond, skills: skills, servers: servers, projectServers: ["pond-db"], rules: rules, notes: notes)
+        if figures, let r = try? JSONDecoder.frog.decode(CustomizeReport.self, from: Data(reportJSON.utf8)) {
+            store.stage(report: r, folder: pond, rules: rules)
+        } else {
+            store.stage(folder: pond, skills: skills, servers: servers, projectServers: ["pond-db"], rules: rules, notes: notes)
+        }
     }
 
     /// The window in Customize mode, one image per page, dark and light.
@@ -402,7 +457,9 @@ final class CustomizeModeTests: XCTestCase {
         defer { CustomizeStore.loads = true }
         let pages: [(String, String, CustomizePage?, Bool)] = [
             ("skills", "skills", nil, false),
-            ("skills", "skills-with-engine-figures", nil, true),
+            ("skills", "skills-with-engine-report", nil, true),
+            ("connections", "connections-with-engine-report", nil, true),
+            ("memory", "memory-with-engine-report", nil, true),
             ("connections", "connections", nil, false),
             ("rules", "rules", nil, false),
             ("memory", "memory", nil, false),

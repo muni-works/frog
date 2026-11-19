@@ -84,11 +84,15 @@ struct CustomizeHeaderTrailing: View {
         case .add, .review:
             return nil
         case nil:
+            let r = store.report
             switch panes.customizeSection {
-            case "skills": return CustomizeFormat.totalTokens(store.skills?.map(\.tokensPerTurn))
+            case "skills": return CustomizeFormat.perTurn(r?.skills.tokens)
+            case "connections": return CustomizeFormat.perTurn(r?.connections.tokens)
+            case "rules": return CustomizeFormat.perTurn(r?.rules.tokens)
             case "memory":
                 guard let n = store.notes?.count else { return nil }
-                return "\(n) note\(n == 1 ? "" : "s"), kept on this Mac"
+                let weight = CustomizeFormat.perTurn(r?.memory.tokens).map { ", \($0)" } ?? ""
+                return "\(n) note\(n == 1 ? "" : "s")\(weight), kept on this Mac"
             default: return nil
             }
         }
@@ -213,6 +217,11 @@ enum CustomizeFormat {
         "\(n.formatted(.number.grouping(.automatic))) token\(n == 1 ? "" : "s")"
     }
 
+    /// "about 820 tokens a turn": the engine's figures are estimates, and say so.
+    static func perTurn(_ n: Int?) -> String? {
+        n.map { "about \(tokens($0)) a turn" }
+    }
+
     /// "820 tokens a turn", only when every part is known: a sum with holes in it would be a
     /// number nobody measured.
     static func totalTokens(_ parts: [Int?]?) -> String? {
@@ -237,16 +246,19 @@ struct ToolSquares: View {
         let tool: String
         let state: State
         var reason: String? = nil
+        /// The engine's key for switching it, nil when it can't be switched.
+        var exposed: String? = nil
         var id: String { tool }
     }
 
     let squares: [Square]
-    var onSelect: ((Square) -> Void)? = nil
+    /// Switch a tool on or off, for a square the engine can switch.
+    var onSwitch: ((Square, Bool) -> Void)? = nil
 
     var body: some View {
         FlowRows(spacing: 4) {
             ForEach(squares) { s in
-                ToolSquare(square: s)
+                ToolSquare(square: s, onSwitch: onSwitch)
             }
         }
         .accessibilityElement(children: .ignore)
@@ -268,6 +280,7 @@ struct ToolSquares: View {
 
 private struct ToolSquare: View {
     let square: ToolSquares.Square
+    var onSwitch: ((ToolSquares.Square, Bool) -> Void)?
     @State private var showing = false
 
     var body: some View {
@@ -290,7 +303,13 @@ private struct ToolSquare: View {
         .help(Self.tip(square))
         .popover(isPresented: $showing, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(square.tool).font(.frog(size: 12.5, design: .monospaced))
+                HStack {
+                    Text(square.tool).font(.frog(size: 12.5, design: .monospaced))
+                    Spacer()
+                    if let onSwitch, square.exposed != nil, square.state != .withheld {
+                        FrogToggle(label: square.tool, isOn: Binding(get: { square.state == .on }, set: { onSwitch(square, $0); showing = false }))
+                    }
+                }
                 Text(Self.tip(square).components(separatedBy: ": ").dropFirst().joined(separator: ": "))
                     .font(.frog(size: 12)).foregroundStyle(Tokens.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
