@@ -57,6 +57,9 @@ struct UserFooter: View {
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .help("Sign in with GitHub or Google. Your conversations on this Mac don't need it.")
+                // VoiceOver hears what the green button is for; flow tests find it by id.
+                .accessibilityLabel("Sign in to Frog Cloud")
+                .accessibilityIdentifier("footer.signin")
             }
         }
         .buttonStyle(.plain)
