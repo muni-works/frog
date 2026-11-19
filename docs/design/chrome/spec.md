@@ -28,12 +28,12 @@ shortcut. Toggles say whether they're on (`aria-pressed` on the web; the Mac's t
 
 ## 1. The top-right controls
 
-One control, the **window controls**: a capsule at the window's top-right holding, left to right,
+One control, the **window controls**: a capsule at the conversation's top-right holding, left to right,
 **Split**, **Commands**, **Inspector**.
 
 | | |
 | --- | --- |
-| Place | Top 9, right 8 from the window's edge, in the title row (52 tall), always: over the conversation, or over a docked inspector's top row |
+| Place | Top 9, right 8 from the conversation area's right edge, in the title row (52 tall): the window's edge, or left of a docked inspector, whose tabs head its own column |
 | Surface | A capsule, fill `card` / `Tokens.raised`, no stroke, radius = height / 2 |
 | Size | Height 34, padding 3 on every side; buttons side by side with no gap |
 | Button | 34 × 28, a capsule (radius 14); the states above |
@@ -95,7 +95,7 @@ Marks, drawn inside a 12 pad top and bottom, centred on the rail:
 | A chapter you started | A solid dot, r 2.5 (3.5 the chapter you're in), `fg` at 40% (85%) |
 | An autonomous stretch | A hollow dot, r 2.25 (3), 1 stroke, `fg` at 35% (70%) |
 | Summarized here | The line steps out: two 8 × 1 bars, `muted` at 50% |
-| A turn that needs you | A 4 dot: `fail` failed, `notice` stopped (looping, step or token limit), `accent` running |
+| A turn that needs you | A 4 dot: `warn` failed, `notice` stopped (looping, step or token limit), `frog` / `Tokens.accent` running |
 | Hovered turn | A ring r 5, 1 stroke, `fg` at 60% |
 
 Chapters: a chapter starts at the first turn, at each prompt of yours, at a summary, and after six
@@ -163,8 +163,8 @@ web has no reason to copy.
 
 In order of how visible the difference is ([`audit.md`](audit.md)):
 
-1. Composer's control row: the web gets the model chip and the context ring in a running
-   session, in the Mac's order (+, ─, ring, mode, model, send).
+1. Composer's control row: the web gets the context ring, in the Mac's order (+, ─, ring,
+   mode, model, send).
 2. Sidebar's first rows: New session is `square.and.pencil` on both; Search shows ⌘K on both.
 3. Inspector's tab row: the web moves its tabs into the title row when the inspector is open,
    left of the window controls, as the Mac does.

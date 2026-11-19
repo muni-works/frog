@@ -25,7 +25,7 @@ different), **missing** (one app hasn't got it).
 | 3 | Header: session title and its menu | look, behaviour | [spec](spec.md#3-the-header) |
 | 4 | Sidebar width and brand row | look (250 vs 270 pt, icons), behaviour (shortcut) | [spec](spec.md#4-the-sidebars-brand-row) |
 | 5 | Sidebar's first rows (New session, Search) | look (icon) | [spec](spec.md#5-later-pieces) |
-| 6 | Composer's control row | missing on the web (model chip, context ring) | [spec](spec.md#5-later-pieces) |
+| 6 | Composer's control row | missing on the web (context ring) | [spec](spec.md#5-later-pieces) |
 | 7 | Inspector's tab row | behaviour (Mac moves it into the title row) | [spec](spec.md#5-later-pieces) |
 | 8 | Menus and popovers | look (Mac native menus, web cards) | [spec](spec.md#what-stays-native-on-the-mac) |
 | 9 | Toasts | missing on the Mac (as one piece) | [spec](spec.md#5-later-pieces) |
@@ -109,10 +109,10 @@ it, the Mac doesn't. **Look.** (`Views/Sidebar.swift`, `ui/SessionList.tsx`.)
 | | Mac | Web |
 | --- | --- | --- |
 | Drawn by | `Views/ComposerView.swift`, `ComposerExtras.swift` | `ui/Composer.tsx` |
-| Row, left to right | + (attach), ─, context ring, mode ("Ask"), model chip (place icon + name), send/stop | + (attach), ─, mode ("Ask"), send/stop |
+| Row, left to right | + (attach), ─, context ring, mode ("Ask"), model chip (place icon + name), send/stop | + (attach), ─, mode ("Ask"), model chip, send/stop |
 
-Verdict: **missing** on the web in a running session (model chip, context ring); the web shows the
-model picker only on a new session. Picture: Mac ![composer, Mac](audit/composer-mac.png)
+Verdict: **missing** on the web: the context ring. (The web's model chip shows once the gateway
+lists models; the first capture's gateway hadn't.) Picture: Mac ![composer, Mac](audit/composer-mac.png)
 web ![composer, web](audit/composer-web.png)
 
 ## 7. The inspector's tab row
