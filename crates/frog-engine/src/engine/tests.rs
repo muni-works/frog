@@ -4186,7 +4186,8 @@ async fn turns_write_a_summary_that_recall_and_remember_that_find() {
     // "Remember that …" saves a note and the turn still runs.
     h.ops
         .send(Op::Submit {
-            typed: false,
+            // The person typed it: only then does "remember that" save a note.
+            typed: true,
             text: "Remember that widgets paint lazily. Now say hi".into(),
             images: Vec::new(),
             more: Vec::new(),
