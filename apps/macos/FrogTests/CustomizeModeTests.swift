@@ -213,7 +213,7 @@ final class CustomizeModeTests: XCTestCase {
     }
 
     func testChangesAsTheEngineTakesThem() {
-        XCTAssertEqual(CustomizeChange.skill(id: "frog-builtin:gh", on: false).json, #"{"change":"skill","id":"frog-builtin:gh","on":false}"#)
+        XCTAssertEqual(CustomizeChange.skill(name: "gh", on: false).json, #"{"change":"skill","name":"gh","on":false}"#)
         XCTAssertEqual(CustomizeChange.connection(name: "figma", on: true).json, #"{"change":"connection","name":"figma","on":true}"#)
         XCTAssertEqual(CustomizeChange.tool(exposed: "mcp__figma__comment", on: true).json, #"{"change":"tool","exposed":"mcp__figma__comment","on":true}"#)
     }

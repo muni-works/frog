@@ -122,13 +122,13 @@ struct CustomizeReport: Decodable, Equatable {
 
 /// One change the engine makes, as JSON for `--customize-change`.
 enum CustomizeChange: Equatable {
-    case skill(id: String, on: Bool)
+    case skill(name: String, on: Bool)
     case connection(name: String, on: Bool)
     case tool(exposed: String, on: Bool)
 
     var json: String {
         let obj: [String: Any] = switch self {
-        case .skill(let id, let on): ["change": "skill", "id": id, "on": on]
+        case .skill(let name, let on): ["change": "skill", "name": name, "on": on]
         case .connection(let name, let on): ["change": "connection", "name": name, "on": on]
         case .tool(let exposed, let on): ["change": "tool", "exposed": exposed, "on": on]
         }
