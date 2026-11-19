@@ -149,12 +149,30 @@ impl Agent {
         cz::write_atomic(&path, &text, true)
     }
 
+    /// Record one issued handle: appended (two sessions noting at once both keep theirs),
+    /// trimmed to the newest [`MAX_ISSUED`] once the file holds twice that.
+    fn add_issued(&self, handle: &str) -> Result<()> {
+        use std::io::Write;
+        let path = self.issued_path().context("no session store")?;
+        if let Some(dir) = path.parent() {
+            crate::memory::create_private_dir(dir)?;
+        }
+        let mut o = std::fs::OpenOptions::new();
+        o.create(true).append(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
+        writeln!(o.open(&path)?, "{handle}")?;
+        let issued = self.issued();
+        if issued.len() > 2 * MAX_ISSUED {
+            self.set_issued(&issued)?;
+        }
+        Ok(())
+    }
+
     /// The receipt for a note just kept.
     pub(super) fn emit_noted(&self, item: &str, note: &Note, source: &str) {
         let undo = undo_handle(note);
-        let mut issued = self.issued();
-        issued.push(undo.clone());
-        if let Err(e) = self.set_issued(&issued) {
+        if let Err(e) = self.add_issued(&undo) {
             // The note stands; only its undo is lost. Say so rather than offer one that fails.
             self.notice(Level::Warn, format!("couldn't keep the note's undo: {e:#}"));
         }

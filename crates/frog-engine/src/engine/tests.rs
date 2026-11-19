@@ -360,7 +360,8 @@ async fn run(h: &mut Handle, prompt: &str) -> Vec<Envelope> {
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
     h.ops
         .send(Op::Submit {
-            typed: false,
+            // The person typed it at the composer.
+            typed: true,
             text: prompt.into(),
             images: Vec::new(),
             more: Vec::new(),
@@ -4044,7 +4045,7 @@ async fn memory_commands_answer_without_a_model_call() {
 
     h.ops
         .send(Op::Submit {
-            typed: false,
+            typed: true,
             text: "/memory".into(),
             images: Vec::new(),
             more: Vec::new(),

@@ -3141,8 +3141,9 @@ impl Agent {
                 more,
                 typed,
             } => {
-                // A memory command is answered alone; one sent with others is just words.
-                if !more.is_empty() || !self.memory_command(&text) {
+                // A memory command is answered alone; one sent with others is just words, and
+                // so is one the person didn't type (it writes and deletes notes).
+                if !more.is_empty() || !typed || !self.memory_command(&text) {
                     // Only what the person typed saves a note (never an app's own prompt or
                     // another session's), and never in a child.
                     if typed {

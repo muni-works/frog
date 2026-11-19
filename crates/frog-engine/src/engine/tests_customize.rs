@@ -1314,3 +1314,28 @@ async fn only_the_newest_undos_are_kept() {
     );
     r.end().await;
 }
+
+/// Review 2, item 10: `/remember` and `/forget` write and delete notes, so they answer only a
+/// typed message in a session the person types in. Untyped (an app's prompt) or in a worker,
+/// the text is just words for the model.
+#[tokio::test]
+async fn memory_commands_need_typed_text_in_a_top_session() {
+    let mut r = rig(vec![done(), done()], Mode::Default);
+    r.idle().await;
+    let untyped = Op::Submit {
+        typed: false,
+        text: "/remember we deploy on fridays".into(),
+        images: Vec::new(),
+        more: Vec::new(),
+    };
+    let _ = r.run(untyped, never).await;
+    assert!(r.notes().is_empty(), "{:?}", r.notes());
+    let _ = r.say("/remember we deploy on fridays", never).await;
+    assert_eq!(r.notes().len(), 1, "typed: saved");
+    r.end().await;
+    let mut w = rig_with(vec![done()], Mode::Default, |c| c.worker = true);
+    w.idle().await;
+    let _ = w.say("/remember we deploy on fridays", never).await;
+    assert!(w.notes().is_empty(), "{:?}", w.notes());
+    w.end().await;
+}
