@@ -53,17 +53,17 @@ pub fn discover(cwd: &Path) -> BTreeMap<String, Skill> {
 /// Skills visible from `cwd`: the project's, and the user's own unless `user` is false. Skills
 /// switched off in Customize are left out (and don't hide one of the same name further down).
 pub fn discover_in(cwd: &Path, user: bool) -> BTreeMap<String, Skill> {
-    discover_with(cwd, user, &crate::customize::toggles::Toggles::load())
+    discover_with(cwd, user, &crate::customize::Toggles::current())
 }
 
 pub fn discover_with(
     cwd: &Path,
     user: bool,
-    toggles: &crate::customize::toggles::Toggles,
+    toggles: &crate::customize::Toggles,
 ) -> BTreeMap<String, Skill> {
     let mut out = BTreeMap::new();
     for s in scan(cwd, user) {
-        if toggles.skill_on(&s.id()) {
+        if toggles.skill_on(&s.name) {
             // First found wins, and projects are scanned first.
             out.entry(s.name.clone()).or_insert(s);
         }

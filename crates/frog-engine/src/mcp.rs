@@ -63,7 +63,7 @@ struct McpJson {
 ///
 /// Connections switched off in Customize are left out too.
 pub fn configured(cfg: &crate::config::Config, cwd: &Path) -> BTreeMap<String, ServerConfig> {
-    let toggles = crate::customize::toggles::Toggles::load();
+    let toggles = crate::customize::Toggles::current();
     configured_from(cfg, cwd)
         .into_iter()
         .filter(|(name, (s, _))| {
@@ -753,7 +753,7 @@ impl Hub {
     pub fn catalog(&self) -> Vec<Entry> {
         let mut out = Vec::new();
         // Switched off in Customize: not offered, so it weighs nothing.
-        let toggles = crate::customize::toggles::current();
+        let toggles = crate::customize::Toggles::current();
         for (name, s) in self.inner.servers.read().unwrap().iter() {
             if !toggles.server_on(name) {
                 continue;
@@ -878,7 +878,7 @@ impl Hub {
     /// Servers' own instructions, and how to reach deferred tools, for the system prompt.
     pub fn prompt(&self) -> String {
         let mut out = String::new();
-        let toggles = crate::customize::toggles::current();
+        let toggles = crate::customize::Toggles::current();
         for (name, s) in self.inner.servers.read().unwrap().iter() {
             if self.compact() {
                 break;

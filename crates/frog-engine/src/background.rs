@@ -444,6 +444,7 @@ impl Registry {
             id: id.to_string(),
             decision,
             note,
+            choice: None,
         });
         true
     }
@@ -594,6 +595,7 @@ pub fn forward(
             reason,
             subagent: _,
             card,
+            proposal: None,
         } => {
             reg.relay_to(&id, ops);
             reg.emit(Event::PermissionRequest {
@@ -606,6 +608,7 @@ pub fn forward(
                 reason,
                 subagent: Some(item.clone()),
                 card,
+                proposal: None,
             });
         }
         Event::PermissionResolved {

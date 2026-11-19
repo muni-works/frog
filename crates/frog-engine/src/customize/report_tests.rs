@@ -50,7 +50,7 @@ fn ctx<'a>(cfg: &'a Config, cwd: &'a Path, memory: Option<&'a Store>) -> Ctx<'a>
 #[test]
 fn a_skill_weighs_its_catalog_line_and_nothing_when_off() {
     let root = project("skills");
-    let notes = skill(
+    let _ = skill(
         &root,
         "release-notes",
         "Write release notes in pond's house style.",
@@ -91,7 +91,7 @@ fn a_skill_weighs_its_catalog_line_and_nothing_when_off() {
 
     // Off: gone from the catalog the prompt carries, and weighs nothing.
     let mut off = Toggles::default();
-    Toggles::set(&mut off.skills_off, &notes.display().to_string(), false);
+    Toggles::set(&mut off.skills_off, "release-notes", false);
     let catalog = crate::skills::catalog(&crate::skills::discover_with(&root, false, &off));
     assert!(!catalog.contains("release-notes"));
     assert!(catalog.contains("db-migrations"));
@@ -204,15 +204,15 @@ fn rules_weigh_what_the_prompt_carries_and_path_rules_weigh_nothing() {
 
     // Edit and remove go through the listed files only, and check the line's text.
     let path = agents.path.clone();
-    let edit = Change::RuleEdit {
+    let edit = Edit::RuleEdit {
         path: path.clone(),
         n: 3,
         old: "Tests live in spec/.".into(),
         text: "Tests live in test/.".into(),
     };
-    apply(&cfg, &root, false, None, &edit).unwrap();
+    apply(&cfg, &root, false, None, &Toggles::path(), &edit).unwrap();
     assert!(
-        apply(&cfg, &root, false, None, &edit).is_err(),
+        apply(&cfg, &root, false, None, &Toggles::path(), &edit).is_err(),
         "the old text is gone now"
     );
     apply(
@@ -220,7 +220,8 @@ fn rules_weigh_what_the_prompt_carries_and_path_rules_weigh_nothing() {
         &root,
         false,
         None,
-        &Change::RuleRemove {
+        &Toggles::path(),
+        &Edit::RuleRemove {
             path: path.clone(),
             n: 1,
             old: "Use pnpm in this project, never npm.".into(),
@@ -232,7 +233,8 @@ fn rules_weigh_what_the_prompt_carries_and_path_rules_weigh_nothing() {
         &root,
         false,
         None,
-        &Change::RuleAdd {
+        &Toggles::path(),
+        &Edit::RuleAdd {
             path: None,
             scope: "project".into(),
             text: "Be brief.".into(),
@@ -243,12 +245,12 @@ fn rules_weigh_what_the_prompt_carries_and_path_rules_weigh_nothing() {
         std::fs::read_to_string(&path).unwrap(),
         "\nTests live in test/.\nBe brief.\n"
     );
-    let elsewhere = Change::RuleAdd {
+    let elsewhere = Edit::RuleAdd {
         path: Some("/etc/hosts".into()),
         scope: "project".into(),
         text: "x".into(),
     };
-    assert!(apply(&cfg, &root, false, None, &elsewhere).is_err());
+    assert!(apply(&cfg, &root, false, None, &Toggles::path(), &elsewhere).is_err());
 }
 
 #[test]
@@ -287,12 +289,12 @@ fn memory_notes_carry_their_session_and_can_be_edited_and_removed() {
     let (index, _) = crate::memory::index(&store.load(), Tier::Strong, 200_000);
     assert_eq!(r.memory.tokens, Estimator::default().tokens(index.len()));
 
-    let edit = Change::MemoryEdit {
+    let edit = Edit::MemoryEdit {
         id: n.id.clone(),
         scope: "project".into(),
         text: "Staging resets on Mondays. token=sk-abcdefghijklmnopqrstuvwxyz".into(),
     };
-    apply(&cfg, &root, false, Some(&store), &edit).unwrap();
+    apply(&cfg, &root, false, Some(&store), &Toggles::path(), &edit).unwrap();
     let edited = store.get(Scope::Project, &n.id).unwrap();
     assert!(edited.body.starts_with("Staging resets on Mondays."));
     assert!(
@@ -309,7 +311,8 @@ fn memory_notes_carry_their_session_and_can_be_edited_and_removed() {
         &root,
         false,
         Some(&store),
-        &Change::MemoryRemove {
+        &Toggles::path(),
+        &Edit::MemoryRemove {
             id: g.id.clone(),
             scope: "everywhere".into(),
         },
@@ -322,7 +325,8 @@ fn memory_notes_carry_their_session_and_can_be_edited_and_removed() {
             &root,
             false,
             Some(&store),
-            &Change::MemoryRemove {
+            &Toggles::path(),
+            &Edit::MemoryRemove {
                 id: "../x".into(),
                 scope: "project".into()
             }
@@ -386,13 +390,13 @@ fn a_tool_weighs_its_schema() {
 
 #[test]
 fn changes_parse_from_the_documented_json() {
-    let c: Change =
+    let c: Edit =
         serde_json::from_str(r#"{"change":"tool","exposed":"mcp__figma__get_file","on":false}"#)
             .unwrap();
-    assert!(matches!(c, Change::Tool { on: false, .. }));
-    let c: Change = serde_json::from_str(r#"{"change":"rule_add","text":"Be brief."}"#).unwrap();
-    assert!(matches!(c, Change::RuleAdd { path: None, ref scope, .. } if scope == "project"));
-    let c: Change =
+    assert!(matches!(c, Edit::Tool { on: false, .. }));
+    let c: Edit = serde_json::from_str(r#"{"change":"rule_add","text":"Be brief."}"#).unwrap();
+    assert!(matches!(c, Edit::RuleAdd { path: None, ref scope, .. } if scope == "project"));
+    let c: Edit =
         serde_json::from_str(r#"{"change":"memory_remove","id":"x","scope":"everywhere"}"#)
             .unwrap();
     assert_eq!(c.kind(), "memory");

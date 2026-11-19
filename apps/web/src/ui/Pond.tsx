@@ -38,10 +38,27 @@ export function Pond() {
     // The pond is a plane seen from above at a slant: things squash toward the horizon.
     const depth = (y: number) => Math.max(0.15, (y - horizon) / (h - horizon))
 
+    // What sits on the water (the hero, the card), in canvas coordinates: pads keep to rows
+    // that are open, and drops land where they can be seen.
+    const solids = () => {
+      const c = canvas.getBoundingClientRect()
+      return [...(canvas.parentElement?.querySelectorAll('.home-hero-c, .what') ?? [])].map((e) => {
+        const r = e.getBoundingClientRect()
+        return { l: r.left - c.left, r: r.right - c.left, t: r.top - c.top, b: r.bottom - c.top }
+      })
+    }
+    const clearRow = (y: number, m: number, s: ReturnType<typeof solids>) => s.every((o) => y < o.t - m || y > o.b + m)
+    const clearAt = (x: number, y: number, s: ReturnType<typeof solids>) => s.every((o) => x < o.l - 24 || x > o.r + 24 || y < o.t - 12 || y > o.b + 12)
+    const pick = (lo: number, hi: number, ok: (y: number) => boolean) => {
+      for (let i = 0; i < 40; i++) { const y = rand(lo, hi); if (ok(y)) return y }
+      return rand(lo, hi)
+    }
+
     const seed = () => {
       const area = w * h
+      const s = solids()
       pads = Array.from({ length: Math.round(Math.min(7, Math.max(3, area / 140000))) }, () => {
-        const y = rand(horizon + (h - horizon) * 0.25, h * 0.98)
+        const y = pick(horizon + (h - horizon) * 0.1, h * 0.98, (y) => clearRow(y, 16, s))
         return { x: rand(0, w), y, r: rand(18, 38), a: rand(0, Math.PI * 2), spin: rand(-0.02, 0.02), vx: rand(2, 6), phase: rand(0, 9), notch: rand(0.35, 0.6) }
       })
       flies = Array.from({ length: Math.round(Math.min(7, Math.max(3, w / 200))) }, () => ({
@@ -79,7 +96,12 @@ export function Pond() {
       // Ripples: three rings per drop, ellipses flattened by depth, fading as they spread.
       if (!still) {
         nextDrop -= dt
-        if (nextDrop <= 0) { drop(rand(w * 0.08, w * 0.92), rand(horizon + 20, h * 0.96)); nextDrop = rand(1.2, 3.4) }
+        if (nextDrop <= 0) {
+          const s = solids()
+          let x = rand(w * 0.08, w * 0.92), y = rand(horizon + 20, h * 0.96)
+          for (let i = 0; i < 20 && !clearAt(x, y, s); i++) { x = rand(w * 0.08, w * 0.92); y = rand(horizon + 20, h * 0.96) }
+          drop(x, y); nextDrop = rand(1.2, 3.4)
+        }
       }
       rings = rings.filter((r) => (r.t += dt / r.life) < 1)
       for (const r of rings) {
@@ -148,13 +170,14 @@ export function Pond() {
       raf = requestAnimationFrame(tick)
     }
     const vis = () => { cancelAnimationFrame(raf); if (!document.hidden && !still) { last = performance.now(); raf = requestAnimationFrame(tick) } }
-    // A ripple where you click on open water.
+    // A ripple where you click, anywhere but a control.
     const host = canvas.parentElement
     const click = (e: PointerEvent) => {
-      if ((e.target as HTMLElement).closest('button, a, input, textarea, li')) return
+      if ((e.target as HTMLElement).closest('button, a, input, textarea, li, .cz, .what')) return
       const r = canvas.getBoundingClientRect()
       const y = e.clientY - r.top
-      if (y > horizon) drop(e.clientX - r.left, y)
+      // Anywhere on the water, not just below the horizon: the hero sits in the middle of it now.
+      drop(e.clientX - r.left, y)
     }
     const ro = new ResizeObserver(resize)
     ro.observe(canvas)

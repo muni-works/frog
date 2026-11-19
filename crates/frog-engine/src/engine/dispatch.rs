@@ -243,6 +243,15 @@ root {}. Re-`cd` if you need the old location back.</system-note>",
                 self.root.display()
             ));
         }
+        if name == crate::customize::TOOL && !self.subagent {
+            if !self.shared.client_customize.load(Ordering::Relaxed) {
+                anyhow::bail!("Customize isn't available here: this app can't show its cards yet");
+            }
+            return self.customize(id, input).await;
+        }
+        if name.starts_with("mcp__") && self.toggles().tools_off.contains(name) {
+            anyhow::bail!("the user turned this tool off (Customize); don't use it");
+        }
         if name == crate::skills::TOOL {
             let before = self.conv.skills_loaded.len();
             let out = crate::skills::run(&self.skills, &mut self.conv.skills_loaded, input);

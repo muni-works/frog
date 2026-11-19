@@ -1370,13 +1370,13 @@ async fn customize(
     cfg: &frog_engine::config::Config,
     cwd: &std::path::Path,
 ) -> Result<()> {
-    use frog_engine::customize;
+    use frog_engine::customize::{self, report as cz};
     let memory = frog_engine::memory::Store::new(&frog_engine::memory::default_root(), Some(cwd));
     let mut error = None;
     if let Some(text) = change {
-        let change: customize::Change =
+        let change: cz::Edit =
             serde_json::from_str(text).context("--customize-change takes a change as JSON")?;
-        if let Err(e) = customize::apply(cfg, cwd, false, Some(&memory), &change) {
+        if let Err(e) = cz::apply(cfg, cwd, false, Some(&memory), &customize::Toggles::path(), &change) {
             error = Some(format!("{e:#}"));
         }
     }
@@ -1395,7 +1395,7 @@ async fn customize(
         let servers = frog_engine::mcp::configured(cfg, cwd);
         Some(frog_engine::mcp::Hub::connect(servers, frog_engine::mcp::Host::headless(cwd)).await)
     };
-    let report = customize::report(&customize::Ctx {
+    let report = cz::report(&cz::Ctx {
         cfg,
         cwd,
         chat: false,

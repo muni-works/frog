@@ -1,12 +1,11 @@
-//! Customize: what the agent knows and can do, as the apps' Customize pages show it. Skills,
+//! What the agent knows and can do, as the apps' Customize pages show it. Skills,
 //! connections, rules and memory, each with what it adds to every turn (in tokens, measured on
 //! the text the prompt builders actually produce), how often it's been used, and whether it's
 //! on; and the changes those pages make. The wire shape is in `docs/customize-api.md`.
 
-pub mod lines;
-pub mod toggles;
-pub mod usage;
-
+use super::Toggles;
+use super::lines;
+use super::usage::{self, Kind, Use};
 use crate::config::Config;
 use crate::context::Estimator;
 use crate::harness::Tier;
@@ -16,8 +15,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use toggles::Toggles;
-use usage::{Kind, Use};
 
 /// What the report is measured against: the session's model, or a large one for the CLI.
 pub struct Ctx<'a> {
@@ -212,7 +209,7 @@ fn scope_label(project: bool) -> String {
 
 /// The whole snapshot.
 pub fn report(ctx: &Ctx) -> Report {
-    report_with(ctx, &Toggles::load(), &usage::summary())
+    report_with(ctx, &Toggles::current(), &usage::summary())
 }
 
 pub(crate) fn report_with(ctx: &Ctx, toggles: &Toggles, uses: &Uses) -> Report {
@@ -262,7 +259,7 @@ fn skills(ctx: &Ctx, toggles: &Toggles, uses: &Uses) -> Skills {
         .iter()
         .map(|s| {
             let id = s.id();
-            let on = toggles.skill_on(&id);
+            let on = toggles.skill_on(&s.name);
             let winner = active.get(&s.name).map(|w| w.id());
             let shadowed_by = winner.filter(|w| *w != id);
             let tokens = if on && shadowed_by.is_none() && in_prompt {
@@ -564,9 +561,9 @@ fn memory(ctx: &Ctx) -> Memory {
 /// One change a Customize page makes. See `docs/customize-api.md`.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "change", rename_all = "snake_case")]
-pub enum Change {
+pub enum Edit {
     Skill {
-        id: String,
+        name: String,
         on: bool,
     },
     Connection {
@@ -610,7 +607,7 @@ fn project() -> String {
     "project".into()
 }
 
-impl Change {
+impl Edit {
     /// Whether it changes what the prompt holds (and so needs a session to rebuild it).
     pub fn kind(&self) -> &'static str {
         match self {
@@ -656,54 +653,54 @@ pub fn default_rules_file(cfg: &Config, cwd: &Path, scope: &str) -> PathBuf {
         .unwrap_or_else(|| root.join("FROG.md"))
 }
 
-/// Make a change. `memory` is the store notes live in (`None` for no memory).
+/// Make a change. `memory` is the store notes live in (`None` for no memory); `toggles` is the
+/// file switches are kept in ([`Toggles::path`] outside a session).
 pub fn apply(
     cfg: &Config,
     cwd: &Path,
     chat: bool,
     memory: Option<&Store>,
-    change: &Change,
+    toggles: &Path,
+    change: &Edit,
 ) -> Result<()> {
     match change {
-        Change::Skill { id, on } => {
+        Edit::Skill { name, on } => {
             let known = crate::skills::scan(cwd, !cfg.hermetic)
                 .iter()
-                .any(|s| s.id() == *id);
+                .any(|s| s.name == *name);
             if !known {
-                bail!("no skill `{id}` here");
+                bail!("no skill `{name}` here");
             }
-            Toggles::update(|t| Toggles::set(&mut t.skills_off, id, *on))
+            Toggles::update_in(toggles, |t| Toggles::set(&mut t.skills_off, name, *on))
         }
-        Change::Connection { name, on } => {
+        Edit::Connection { name, on } => {
             if !crate::mcp::configured_from(cfg, cwd).contains_key(name) {
                 bail!("no connection `{name}` here");
             }
-            Toggles::update(|t| Toggles::set(&mut t.servers_off, name, *on))
+            Toggles::update_in(toggles, |t| Toggles::set(&mut t.servers_off, name, *on))
         }
-        Change::Tool { exposed, on } => {
+        Edit::Tool { exposed, on } => {
             if !exposed.starts_with("mcp__") {
                 bail!("`{exposed}` isn't a connection's tool");
             }
-            Toggles::update(|t| Toggles::set(&mut t.tools_off, exposed, *on))
+            Toggles::update_in(toggles, |t| Toggles::set(&mut t.tools_off, exposed, *on))
         }
-        Change::RuleAdd { path, scope, text } => {
+        Edit::RuleAdd { path, scope, text } => {
             let file = match path {
                 Some(p) => listed(cfg, cwd, chat, p)?,
                 None => default_rules_file(cfg, cwd, scope),
             };
             lines::add(&file, text)
         }
-        Change::RuleEdit { path, n, old, text } => {
+        Edit::RuleEdit { path, n, old, text } => {
             lines::edit(&listed(cfg, cwd, chat, path)?, *n, old, text)
         }
-        Change::RuleRemove { path, n, old } => {
-            lines::remove(&listed(cfg, cwd, chat, path)?, *n, old)
-        }
-        Change::MemoryEdit { id, scope, text } => {
+        Edit::RuleRemove { path, n, old } => lines::remove(&listed(cfg, cwd, chat, path)?, *n, old),
+        Edit::MemoryEdit { id, scope, text } => {
             let store = memory.context("this session keeps no memory")?;
             store.edit(note_scope(scope)?, id, text).map(|_| ())
         }
-        Change::MemoryRemove { id, scope } => {
+        Edit::MemoryRemove { id, scope } => {
             let store = memory.context("this session keeps no memory")?;
             store.remove(note_scope(scope)?, id).map(|_| ())
         }
@@ -720,4 +717,5 @@ fn listed(cfg: &Config, cwd: &Path, chat: bool, path: &str) -> Result<PathBuf> {
 }
 
 #[cfg(test)]
+#[path = "report_tests.rs"]
 mod tests;
