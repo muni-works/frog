@@ -516,7 +516,7 @@ struct CustomizeLinkStyle: ButtonStyle {
 // MARK: - Memory (M1Memory)
 
 /// Memory: what Frog has learned. A card "What Frog knows" holds the "Notes on its own" switch
-/// and, once the engine places the notes, the map: a dot per note where similar wording lands
+/// and, once the engine places the notes, the map: a dot per note where notes sharing words land
 /// close together, faint group outlines, notes used in the last turn lit, unused ones dim, and
 /// an orange dot on a pair that disagrees. Then the pairs that need you, the notes your last
 /// turn used, and every note as a dated rail (what VoiceOver and scanning use; the map is a
@@ -631,9 +631,9 @@ struct MemoryMap: View {
             self.pairs = pairs.filter { $0.kind == "disagree" }.count
         }
 
-        /// "23 notes placed by similar wording, in 4 groups. 3 were used in your last turn."
+        /// "23 notes, placed by the words they share, in 4 groups. 3 were used in your last turn."
         var summary: String {
-            var s = "\(dots.count) notes placed by similar wording"
+            var s = "\(dots.count) notes, placed by the words they share"
             if !rings.isEmpty { s += ", in \(rings.count) group\(rings.count == 1 ? "" : "s")" }
             s += "."
             let lit = dots.filter(\.lit).count
@@ -698,7 +698,7 @@ private struct MapDot: View {
     }
 }
 
-/// What the dots mean, and what nearness means (word similarity, not meaning).
+/// What the dots mean, and what nearness means: shared words (the engine's "lexical-1"), not meaning.
 private struct MemoryKey: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -707,7 +707,7 @@ private struct MemoryKey: View {
                 key(Tokens.textTertiary, "a note")
                 key(Tokens.lineStrong, "not used in 60 days")
             }
-            Text("Near means similar wording. Distances are approximate.")
+            Text("Near means they share words. Distances are approximate.")
         }
         .font(.frog(size: 12))
         .foregroundStyle(Tokens.textTertiary)

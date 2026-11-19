@@ -86,6 +86,8 @@ struct CustomizeReport: Decodable, Equatable {
         var x: Double?
         var y: Double?
         var group: Int?
+        /// It rides every call (standing guidance, or every note in "whole" mode).
+        var inPrompt: Bool?
     }
 
     struct Group: Decodable, Equatable, Identifiable {
@@ -113,8 +115,11 @@ struct CustomizeReport: Decodable, Equatable {
     struct Memory: Decodable, Equatable {
         var tokens: Int?
         var omitted: Int?
-        /// "per_turn" (each turn brings back the notes that fit) or "index" (no map).
+        /// "whole" (every note rides every call), "per_turn" (standing guidance rides every
+        /// call, the rest come back when they fit) or "index" (no map).
         var mode: String?
+        /// How notes are compared: "lexical-1" is shared words and trigrams, not meaning.
+        var similarity: String?
         var notes: [Note]
         var groups: [Group]?
         var pairs: [Pair]?

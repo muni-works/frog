@@ -262,10 +262,12 @@ final class CustomizeModeTests: XCTestCase {
         XCTAssertEqual(map.rings.count, 4)
         XCTAssertEqual(map.dots.filter(\.lit).count, 3)
         XCTAssertEqual(map.dots.filter(\.flagged).map(\.id), ["use-pnpm"], "the orange dot is on the newer of a disagreeing pair")
-        XCTAssertEqual(map.summary, "8 notes placed by similar wording, in 4 groups. 3 were used in your last turn. 1 pair disagrees.")
+        XCTAssertEqual(map.summary, "8 notes, placed by the words they share, in 4 groups. 3 were used in your last turn. 1 pair disagrees.")
         // No map for one note, for the engine's index mode, or for notes it didn't place.
         XCTAssertNil(MemoryMap.Model(notes: [notes[0]], groups: [], pairs: [], mode: "per_turn"))
         XCTAssertNil(MemoryMap.Model(notes: notes, groups: [], pairs: [], mode: "index"))
+        XCTAssertNotNil(MemoryMap.Model(notes: notes, groups: [], pairs: [], mode: "whole"), "a small store still has its map")
+        XCTAssertFalse(map.summary.contains("meaning"), "the engine compares words, not meaning")
         var unplaced = notes
         unplaced[2].place = nil
         XCTAssertNil(MemoryMap.Model(notes: unplaced, groups: [], pairs: [], mode: "per_turn"))
