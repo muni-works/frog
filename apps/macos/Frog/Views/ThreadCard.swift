@@ -222,7 +222,8 @@ private struct ThreadCard: View {
                 }
                 if !session.model.isEmpty {
                     GridRow {
-                        label("Model")
+                        // No "Model" label: the name and its dot say what it is.
+                        Color.clear.frame(width: 1, height: 1)
                         // Where the model runs is its dot's color (green cloud, blue local),
                         // never words: "Frog Cloud" beside a cloud thread read as either.
                         let id = ModelIdentity.of(session.model, in: [])
