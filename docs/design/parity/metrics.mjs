@@ -79,7 +79,7 @@ function measure() {
         rows[rows.length - 1].text = [...el.querySelectorAll(".live-label, .line-obj, .live-thought > .tf:last-child")].map(words).filter(Boolean).join(" ");
       }
       const st = el.querySelector(".live-stats");
-      if (st) { add("stats", st); rows[rows.length - 1].text = words(st).replace(/(\d+m )?\d+s\b/g, "#s").replace(/\d[\d,.]*/g, "#"); graph(st); }
+      if (st) { add("stats", st); rows[rows.length - 1].text = words(st).replace(/(\d+[dhm] )?\d+[dhms]\b/g, "#s").replace(/\d[\d,.]*/g, "#"); graph(st); }
     }
     else if (el.matches("[data-row='box']")) add("card", el.querySelector("b, .ask-h, h3") ?? el, el);
     else if (el.matches("ul, ol")) el.querySelectorAll(":scope > li").forEach((li) => add("prose", li));

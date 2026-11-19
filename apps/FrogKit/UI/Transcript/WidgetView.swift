@@ -32,6 +32,7 @@ struct WidgetCard: View {
         }
         .background(.quaternary.opacity(0.25), in: .rect(cornerRadius: TurnSpace.Card.radius))
         .clipShape(.rect(cornerRadius: TurnSpace.Card.radius))
+        .metricsEdge("box", claims: ["box", "right"], kind: "visual", text: widget.title)
         .sheet(isPresented: $expanded) {
             VStack(spacing: 0) {
                 HStack {

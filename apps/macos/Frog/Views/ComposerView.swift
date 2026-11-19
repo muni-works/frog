@@ -209,8 +209,10 @@ struct ComposerView: View {
                 // After the card's content shape, so a menu above the card still takes clicks.
                 .composerMenuHost()
                 .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+                .metricsEdge("box", claims: ["box", "right"], kind: "composer", global: true)
             }
-            .padding(.horizontal, TurnSpace.gutter)
+            // Its gutter is the column's (`turnColumn`): the card's outer edge is on the
+            // transcript's two lines, its words inside its padding.
             .padding(.top, TurnSpace.top)
             .padding(.bottom, TurnSpace.Inset.snug)
             .turnColumn()

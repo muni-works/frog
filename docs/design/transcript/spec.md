@@ -86,6 +86,15 @@ These are `TurnSpace.Scale`'s values. `rowGroup` (8 / 5) goes away: lines in a r
   minimum pane width on the Mac and at 375 on the web, and write the numbers in the PR.
 - A line's hover plate is 24 tall with a 7 corner and bleeds 6 past the text on each side, so
   words don't move when it appears.
+- **Two lines.** Every row's text starts on the left line and everything that reaches the right
+  ends on the right line; marks hang in the gutter and never push text. Boxes (code, tables, cards,
+  the inline visual, the error banner on the web) put their outer edge on the lines and their words
+  inside their padding. **The composer is part of the column: its card's outer edge sits on the two
+  lines, like a card's, and its words sit inside its padding.** Inline code that starts a line keeps
+  its letters on the edge and its plate overhangs into the gutter by its own padding. A top-level
+  list's marker hangs in the gutter like a line's mark, so an item's words start on the edge; a
+  nested list steps in by the 22-point marker column. The turn line's drawing ends on the right
+  line: its time axis ends where its last segment does.
 
 ### Lines
 
@@ -138,6 +147,11 @@ the x of its first word, its top and height, and its font size. A script diffs t
 and fails on any text difference or any position off by more than 1 point. The fixture gains a
 fold, a failed step, a two-paragraph reply, a card that needs you and a finished footer. The
 side-by-side screenshots stay, for people.
+
+The two lines are measured too: `docs/design/parity/edges-fixture.mjs` has every kind of row,
+each app dumps every element's left and right edge (`edges.mjs`, the Mac's `-FrogEdges`), and an
+edge test on each app (`apps/web/test/transcript-edges.test.ts`,
+`FrogTests/TranscriptEdgesTests`) fails on anything more than 0.5 pt off its line.
 
 ## 2. The thinking row and the stats line
 

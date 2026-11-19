@@ -127,10 +127,7 @@ struct LiveStats: Equatable {
     var text: String { parts.joined(separator: ", ") }
 
     /// "19s", "2m 5s": whole seconds (the web's `secs`).
-    static func clock(_ secs: TimeInterval) -> String {
-        let s = max(0, Int(secs.rounded()))
-        return s < 60 ? "\(s)s" : "\(s / 60)m \(s % 60)s"
-    }
+    static func clock(_ secs: TimeInterval) -> String { StepLine.clock(secs) }
 
     static func grouped(_ n: UInt64) -> String {
         n.formatted(.number.grouping(.automatic).locale(Locale(identifier: "en_US")))
@@ -331,8 +328,9 @@ struct StatsLine: View {
             .help(stats.help)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(stats.text)
-            .padding(.leading, edge.indent)
+            // On the words, inside the indent: what the metrics report is where they start.
             .metricsFirstWord()
+            .padding(.leading, edge.indent)
             .metricsRow(.stats, stats.parts.joined(separator: " "), key: "stats", fontSize: Tokens.Transcript.meta.size)
     }
 }

@@ -1,0 +1,627 @@
+{
+  "app" : "mac",
+  "column" : 408,
+  "elements" : [
+    {
+      "claims" : [
+        "right"
+      ],
+      "kind" : "prompt",
+      "left" : 37.5,
+      "part" : "bubble",
+      "right" : 408,
+      "text" : "upload_retries_on_503 is flaky. Find out why and fix it."
+    },
+    {
+      "claims" : [
+        "text"
+      ],
+      "kind" : "thought",
+      "left" : 26,
+      "part" : "words",
+      "right" : 408,
+      "text" : "Thought for 1s"
+    },
+    {
+      "claims" : [
+        "hung"
+      ],
+      "kind" : "thought",
+      "left" : 0,
+      "part" : "mark",
+      "right" : 18,
+      "text" : ""
+    },
+    {
+      "claims" : [
+        "text"
+      ],
+      "kind" : "fold",
+      "left" : 26,
+      "part" : "words",
+      "right" : 408,
+      "text" : "4 steps 2.2s"
+    },
+    {
+      "claims" : [
+        "right"
+      ],
+      "kind" : "fold",
+      "left" : 385,
+      "part" : "result",
+      "right" : 408,
+      "text" : "2.2s"
+    },
+    {
+      "claims" : [
+        "hung"
+      ],
+      "kind" : "fold",
+      "left" : 0,
+      "part" : "mark",
+      "right" : 18,
+      "text" : ""
+    },
+    {
+      "claims" : [
+        "text"
+      ],
+      "kind" : "line:command",
+      "left" : 26,
+      "part" : "words",
+      "right" : 408,
+      "text" : "Failed cargo test -q upload 10 of 11 · 9.0s"
+    },
+    {
+      "claims" : [
+        "hung"
+      ],
+      "kind" : "line:command",
+      "left" : 0,
+      "part" : "mark",
+      "right" : 18,
+      "text" : ""
+    },
+    {
+      "claims" : [
+        "right"
+      ],
+      "kind" : "line:command",
+      "left" : 333,
+      "part" : "result",
+      "right" : 408,
+      "text" : "10 of 11 · 9.0s"
+    },
+    {
+      "claims" : [
+        "text"
+      ],
+      "kind" : "line:command",
+      "left" : 26,
+      "part" : "opened: failing tests",
+      "right" : 177.5,
+      "text" : "upload_retries_on_503"
+    },
+    {
+      "claims" : [
+        "text",
+        "right"
+      ],
+      "kind" : "line:command",
+      "left" : 26,
+      "part" : "opened: output box",
+      "right" : 408,
+      "text" : ""
+    },
+    {
+      "claims" : [
+        "text"
+      ],
+      "kind" : "line:command",
+      "left" : 26,
+      "part" : "opened: caption",
+      "right" : 107.5,
+      "text" : "Ran on this Mac"
+    },
+    {
+      "claims" : [
+        "box"
+      ],
+      "kind" : "table",
+      "left" : 0,
+      "part" : "box",
+      "right" : 390.5,
+      "text" : ""
+    },
+    {
+      "claims" : [
+        "text"
+      ],
+      "kind" : "prose (opens with code)",
+      "left" : 26,
+      "part" : "words",
+      "right" : 408,
+      "text" : "Backoff::delay took no Rng, so the jitter was whatever threa"
+    },
+    {
+      "claims" : [
+        "text"
+      ],
+      "kind" : "heading",
+      "left" : 26,
+      "part" : "words",
+      "right" : 408,
+      "text" : "What changed"
+    },
+    {
+      "claims" : [
+        "text"
+      ],
+      "kind" : "list item",
+      "left" : 26,
+      "part" : "words",
+      "right" : 408,
+      "text" : "The delay takes an Rng, so a test can seed it."
+    },
+    {
+      "claims" : [
+        "text"
+      ],
+      "kind" : "list item",
+      "left" : 26,
+      "part" : "words",
+      "right" : 408,
+      "text" : "cargo test -q upload passes eleven of eleven, every run."
+    },
+    {
+      "claims" : [
+        "text"
+      ],
+      "kind" : "list item",
+      "left" : 26,
+      "part" : "words",
+      "right" : 408,
+      "text" : "The jitter is half the base at most."
+    },
+    {
+      "claims" : [
+        "box",
+        "right"
+      ],
+      "kind" : "code",
+      "left" : 0,
+      "part" : "box",
+      "right" : 408,
+      "text" : ""
+    },
+    {
+      "claims" : [
+        "text"
+      ],
+      "kind" : "line:edit",
+      "left" : 26,
+      "part" : "words",
+      "right" : 408,
+      "text" : "Edited src\/retry.rs +1 −1"
+    },
+    {
+      "claims" : [
+        "hung"
+      ],
+      "kind" : "line:edit",
+      "left" : 0,
+      "part" : "mark",
+      "right" : 18,
+      "text" : ""
+    },
+    {
+      "claims" : [
+        "right"
+      ],
+      "kind" : "line:edit",
+      "left" : 377.5,
+      "part" : "result",
+      "right" : 408,
+      "text" : "+1 −1"
+    },
+    {
+      "claims" : [
+        "text"
+      ],
+      "kind" : "line:command",
+      "left" : 26,
+      "part" : "words",
+      "right" : 408,
+      "text" : "Ran cargo test -q upload 11 of 11 · 14s"
+    },
+    {
+      "claims" : [
+        "hung"
+      ],
+      "kind" : "line:command",
+      "left" : 0,
+      "part" : "mark",
+      "right" : 18,
+      "text" : ""
+    },
+    {
+      "claims" : [
+        "right"
+      ],
+      "kind" : "line:command",
+      "left" : 336,
+      "part" : "result",
+      "right" : 408,
+      "text" : "11 of 11 · 14s"
+    },
+    {
+      "claims" : [
+        "text"
+      ],
+      "kind" : "line:search",
+      "left" : 26,
+      "part" : "words",
+      "right" : 408,
+      "text" : "Searched thread_rng 3 matches in 2 files"
+    },
+    {
+      "claims" : [
+        "right"
+      ],
+      "kind" : "line:search",
+      "left" : 307.5,
+      "part" : "result",
+      "right" : 408,
+      "text" : "3 matches in 2 files"
+    },
+    {
+      "claims" : [
+        "hung"
+      ],
+      "kind" : "line:search",
+      "left" : 0,
+      "part" : "mark",
+      "right" : 18,
+      "text" : ""
+    },
+    {
+      "claims" : [
+        "text"
+      ],
+      "kind" : "prose",
+      "left" : 26,
+      "part" : "words",
+      "right" : 408,
+      "text" : "Then the docs, the web and one agent for the rest."
+    },
+    {
+      "claims" : [
+        "text"
+      ],
+      "kind" : "line:web",
+      "left" : 26,
+      "part" : "words",
+      "right" : 408,
+      "text" : "Fetched docs.rs 12 KB"
+    },
+    {
+      "claims" : [
+        "hung"
+      ],
+      "kind" : "line:web",
+      "left" : 0,
+      "part" : "mark",
+      "right" : 18,
+      "text" : ""
+    },
+    {
+      "claims" : [
+        "right"
+      ],
+      "kind" : "line:web",
+      "left" : 376.5,
+      "part" : "result",
+      "right" : 408,
+      "text" : "12 KB"
+    },
+    {
+      "claims" : [
+        "text"
+      ],
+      "kind" : "line:web",
+      "left" : 26,
+      "part" : "words",
+      "right" : 408,
+      "text" : "Searched the web for rust seeded rng test 8 results"
+    },
+    {
+      "claims" : [
+        "right"
+      ],
+      "kind" : "line:web",
+      "left" : 363,
+      "part" : "result",
+      "right" : 408,
+      "text" : "8 results"
+    },
+    {
+      "claims" : [
+        "hung"
+      ],
+      "kind" : "line:web",
+      "left" : 0,
+      "part" : "mark",
+      "right" : 18,
+      "text" : ""
+    },
+    {
+      "claims" : [
+        "text"
+      ],
+      "kind" : "line:other",
+      "left" : 26,
+      "part" : "words",
+      "right" : 408,
+      "text" : "Delegated Check every other retry call site Ran an agent · 6"
+    },
+    {
+      "claims" : [
+        "right"
+      ],
+      "kind" : "line:other",
+      "left" : 275.5,
+      "part" : "result",
+      "right" : 408,
+      "text" : "Ran an agent · 6 tool calls"
+    },
+    {
+      "claims" : [
+        "hung"
+      ],
+      "kind" : "line:other",
+      "left" : 0,
+      "part" : "mark",
+      "right" : 18,
+      "text" : ""
+    },
+    {
+      "claims" : [
+        "text"
+      ],
+      "kind" : "prose",
+      "left" : 26,
+      "part" : "words",
+      "right" : 408,
+      "text" : "It wanted to force-push; you said no."
+    },
+    {
+      "claims" : [
+        "text"
+      ],
+      "kind" : "line:command",
+      "left" : 26,
+      "part" : "words",
+      "right" : 408,
+      "text" : "Didn't run git push --force you said no"
+    },
+    {
+      "claims" : [
+        "right"
+      ],
+      "kind" : "line:command",
+      "left" : 349.5,
+      "part" : "result",
+      "right" : 408,
+      "text" : "you said no"
+    },
+    {
+      "claims" : [
+        "hung"
+      ],
+      "kind" : "line:command",
+      "left" : 0,
+      "part" : "mark",
+      "right" : 18,
+      "text" : ""
+    },
+    {
+      "claims" : [
+        "box",
+        "right"
+      ],
+      "kind" : "visual",
+      "left" : 0,
+      "part" : "box",
+      "right" : 408,
+      "text" : "retry timing"
+    },
+    {
+      "claims" : [
+        "text"
+      ],
+      "kind" : "prose",
+      "left" : 26,
+      "part" : "words",
+      "right" : 408,
+      "text" : "All eleven upload tests pass. I ran them once after the chan"
+    },
+    {
+      "claims" : [
+        "text"
+      ],
+      "kind" : "footer",
+      "left" : 26,
+      "part" : "words",
+      "right" : 408,
+      "text" : "Qwen3 Coder Next · 56s · 1,902 tokens · <$0.01"
+    },
+    {
+      "claims" : [
+        "right"
+      ],
+      "kind" : "footer",
+      "left" : 208,
+      "part" : "turn line (drawn)",
+      "right" : 408,
+      "text" : ""
+    },
+    {
+      "claims" : [
+        "right"
+      ],
+      "kind" : "footer",
+      "left" : 208,
+      "part" : "turn line (box)",
+      "right" : 408,
+      "text" : ""
+    },
+    {
+      "claims" : [
+        "right"
+      ],
+      "kind" : "prompt",
+      "left" : 333,
+      "part" : "bubble",
+      "right" : 408,
+      "text" : "Push it."
+    },
+    {
+      "claims" : [
+        "text"
+      ],
+      "kind" : "error",
+      "left" : 26,
+      "part" : "words",
+      "right" : 387,
+      "text" : "Couldn't reach the model. Check your connection and try agai"
+    },
+    {
+      "claims" : [
+        "hung"
+      ],
+      "kind" : "error",
+      "left" : 0,
+      "part" : "mark",
+      "right" : 18,
+      "text" : ""
+    },
+    {
+      "claims" : [
+        "right"
+      ],
+      "kind" : "prompt",
+      "left" : 283.5,
+      "part" : "bubble",
+      "right" : 408,
+      "text" : "nice. open a PR"
+    },
+    {
+      "claims" : [
+        "text"
+      ],
+      "kind" : "prose",
+      "left" : 26,
+      "part" : "words",
+      "right" : 408,
+      "text" : "Which base should the PR go to?"
+    },
+    {
+      "claims" : [
+        "box",
+        "right"
+      ],
+      "kind" : "question card",
+      "left" : 0,
+      "part" : "box",
+      "right" : 408,
+      "text" : "Which base should the PR go to?"
+    },
+    {
+      "claims" : [
+        "box",
+        "right"
+      ],
+      "kind" : "card",
+      "left" : 0,
+      "part" : "box",
+      "right" : 408,
+      "text" : "Allow this command?"
+    },
+    {
+      "claims" : [
+
+      ],
+      "kind" : "card",
+      "left" : 16,
+      "part" : "title (inside)",
+      "right" : 408,
+      "text" : "Allow this command?"
+    },
+    {
+      "claims" : [
+        "text"
+      ],
+      "kind" : "live",
+      "left" : 26,
+      "part" : "words",
+      "right" : 408,
+      "text" : "Waiting for you"
+    },
+    {
+      "claims" : [
+        "hung"
+      ],
+      "kind" : "live",
+      "left" : 0,
+      "part" : "mark",
+      "right" : 18,
+      "text" : ""
+    },
+    {
+      "claims" : [
+        "text"
+      ],
+      "kind" : "stats",
+      "left" : 26,
+      "part" : "words",
+      "right" : 166.5,
+      "text" : "#s · waited #s"
+    },
+    {
+      "claims" : [
+        "right"
+      ],
+      "kind" : "stats",
+      "left" : 208,
+      "part" : "turn line (drawn)",
+      "right" : 408,
+      "text" : ""
+    },
+    {
+      "claims" : [
+        "right"
+      ],
+      "kind" : "stats",
+      "left" : 208,
+      "part" : "turn line (box)",
+      "right" : 408,
+      "text" : ""
+    },
+    {
+      "claims" : [
+        "box",
+        "right"
+      ],
+      "kind" : "composer",
+      "left" : 0,
+      "part" : "box",
+      "right" : 408,
+      "text" : ""
+    }
+  ],
+  "format" : "frog-transcript-edges\/1",
+  "height" : 3400,
+  "indent" : 26,
+  "look" : "dark",
+  "width" : 440
+}
