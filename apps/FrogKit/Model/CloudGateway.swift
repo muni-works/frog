@@ -28,6 +28,15 @@ struct CloudGateway: Sendable {
         let archived: Bool?
         let pr: String?
         let error: String?
+        /// The session that started this one (StartSession in a cloud sandbox); nil for one the
+        /// person started. Older gateways leave it out.
+        var parent: String? = nil
+    }
+
+    /// Whether `id` is a session the person types in, by the list: listed with no parent. One
+    /// the list doesn't hold (yet) is unknown, so it counts as a child: no Customize caps.
+    static func isTop(_ id: String, in sessions: [Session]) -> Bool {
+        sessions.first { $0.id == id }.map { $0.parent == nil } ?? false
     }
 
     struct Repos: Decodable, Sendable {
@@ -130,12 +139,17 @@ final class CloudLink: ConversationLink {
     private var turnOffset: [String: Int] = [:]
     private var maxTurn = 0
     private let encoder = JSONEncoder()
+    /// What `init` was told: whether the caps it sent may offer Customize and notes.
+    let top: Bool
 
     /// `connect: false` (tests): no socket; frames are fed to `take` instead.
     /// `top`: a session the person types in, not one another session started (Customize caps).
-    init(gateway: CloudGateway, session: String, after: UInt64 = 0, connect: Bool = true, top: Bool = true) {
+    /// Unknown parentage is a child's: callers pass true only when the list (or their own
+    /// create) shows no parent.
+    init(gateway: CloudGateway, session: String, after: UInt64 = 0, connect: Bool = true, top: Bool = false) {
         self.gateway = gateway
         id = session
+        self.top = top
         lastSeq = after
         if connect { open() }
         // As on the web: questions get a card; a preview pane would need the sandbox's network.

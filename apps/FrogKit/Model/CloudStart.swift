@@ -33,13 +33,17 @@ final class CloudStart {
     private(set) var handedAt: Date?
     /// The session, once the POST answers.
     var session: String?
+    /// The person typed the message in the composer (`Op.submit`'s `typed`); a Try again that
+    /// sends it again as it was is the app's, so its fresh start is untyped.
+    let typed: Bool
     /// Try again (the workspace's: a fresh start, or the message again when it's stuck).
     @ObservationIgnored var onRetry: (() -> Void)?
 
-    init(text: String, repo: String?, since: Date = .now) {
+    init(text: String, repo: String?, since: Date = .now, typed: Bool = false) {
         self.text = text
         self.repo = repo
         self.since = since
+        self.typed = typed
         said = [StartWords.Said(at: since, words: words)]
     }
 
