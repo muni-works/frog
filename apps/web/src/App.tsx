@@ -8,11 +8,12 @@ import { changeSig, keepTitle, keptTitle } from './titles'
 import { defaultModel, idOf, spec, useModels } from './models'
 import { plainError } from './errors'
 import type { DecideOpts } from './ui/Transcript'
-import { clearThreads, outOfCredits, pickStarters, useCloud, useRepos, useSessions, useThreads } from './store'
+import { clearThreads, outOfCredits, useCloud, useRepos, useSessions, useThreads } from './store'
 import { once } from './live'
 import { useLayer, useMenu } from './ui/layers'
 import { Composer } from './ui/Composer'
-import { Pond, HowItWorks, Trust, Muni } from './ui/Pond'
+import { Muni } from './ui/Pond'
+import { HomeHero, REPO_SUGGESTIONS, SCRATCH_SUGGESTIONS, WhatIsFrog } from './ui/Home'
 import { Inspector } from './ui/Inspector'
 import { usePreviewHub } from './ui/PreviewPane'
 import type { PreviewHub } from './preview'
@@ -435,8 +436,6 @@ export default function App() {
 
 
   const [pending, setPending] = useState<string | null>(null)
-  // Without GitHub a new session is a scratch sandbox, so its ideas are things to build, not repo chores.
-  const starterChips = useMemo(() => pickStarters(3, !key || !account?.handle).map((text) => ({ text })), [key, account?.handle])
   const start = useCallback(async (text: string, repo?: string, images: Image[] = [], base?: string, slot?: string, before?: Promise<unknown>) => {
     if (!cloud) return
     // Open the session at once, as a placeholder, and adopt the real one when the gateway
@@ -553,7 +552,7 @@ export default function App() {
   const noteSignedOutDraft = useCallback((t: string) => { signedOutDraft.current = t }, [])
   const mac = useMacAppChip(machines)
   /** Signed out, New session is the landing's composer. */
-  const focusComposer = () => { go({ kind: 'new' }); setDrawer(false); requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>('.dock textarea')?.focus()) }
+  const focusComposer = () => { go({ kind: 'new' }); setDrawer(false); requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>('.home-composer textarea')?.focus()) }
   const leave = (after: string | null, provider: Provider = 'github', connect?: string, pick = !!connect) => { setLeavingFor(provider); signIn(after ?? undefined, provider, connect, pick).catch(() => setLeavingFor(null)) }
 
   // Keyboard: ⌘K palette, ⌘N new, ⌘, settings, ⌘↩ / ⌘. answer the current ask.
@@ -690,23 +689,14 @@ export default function App() {
       <main className="main home">
         {collapsed && <div className="side-float">{sideToggle(false)}</div>}<div className="phone-bar floating"><Burger /><b>Frog</b></div>
         {authError && <div role="status" className="banner warn">Sign-in didn't finish ({authError}). Try again.</div>}
-        <div className="home-hero">
-          <Pond />
-          <Mark size={56} />
-          <span className="beta-pill"><i />Now in beta</span>
-          <h1>What should we work on?</h1>
-          <div className="home-sub">
-            <p>Frog is a coding agent for your repos: open models, on your machines or in Frog Cloud.</p>
-            <p><b>25¢ of Frog Cloud credit free, $1 when you connect GitHub.</b></p>
+        <div className="home-page"><HomeHero>
+          <div className="home-composer">
+            <Composer onSend={() => {}} onSignIn={(provider, text) => leave(text || null, provider)} autoFocus suggestion={SCRATCH_SUGGESTIONS} onText={noteSignedOutDraft}
+              model={chosenModel} models={models} machines={machines} onModel={setNewModel} mode={newMode} onMode={setNewMode} />
+            {leaving && <div className="det" style={{ textAlign: 'center' }}>Opening {leaving === 'google' ? 'Google' : 'GitHub'}… your message is saved.</div>}
           </div>
-          <HowItWorks />
-          <Trust />
-        </div>
-        <div className="dock"><div>
-          <Composer onSend={() => {}} onSignIn={(provider, text) => leave(text || null, provider)} autoFocus chips={starterChips} onText={noteSignedOutDraft}
-            model={chosenModel} models={models} machines={machines} onModel={setNewModel} mode={newMode} onMode={setNewMode} />
-          {leaving && <div className="det" style={{ textAlign: 'center' }}>Opening {leaving === 'google' ? 'Google' : 'GitHub'}… your message is saved.</div>}
-        </div></div>
+          <WhatIsFrog />
+        </HomeHero></div>
         <footer className="muni-foot">
           <nav className="foot-links" aria-label="About Frog"><a href="/pricing">Pricing</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/mac">Get the Mac app</a></nav>
           <a href="https://muni.works" target="_blank" rel="noreferrer" aria-label="Municipal Robotics"><Muni /></a>
@@ -824,20 +814,16 @@ export default function App() {
 
         {view.kind === 'new' && (
           <div className="main home">
-            <div className="home-hero">
-              <Pond />
-              <Mark size={56} />
-              <h1>What should we work on?</h1>
-              <HowItWorks />
-            </div>
-            <div className="dock">
-              <Composer usage={account ? { sub: account.subscription ?? null, credit: creditLine(account).replace(/ credit$/, ''), onBilling: () => openSettings('billing'), onOpen: refreshAccount } : undefined} repo={view.repo} draft={draft} autoFocus pickRepo={view.pick} chips={starterChips}
+            <div className="home-page"><HomeHero>
+            <div className="home-composer">
+              <Composer usage={account ? { sub: account.subscription ?? null, credit: creditLine(account).replace(/ credit$/, ''), onBilling: () => openSettings('billing'), onOpen: refreshAccount } : undefined} repo={view.repo} draft={draft} autoFocus pickRepo={view.pick} suggestion={view.repo ? REPO_SUGGESTIONS : SCRATCH_SUGGESTIONS}
                 recent={[...new Set(sessions.map((s) => s.repo).filter(Boolean))]} repos={repoList.repos.map((r) => r.name)} install={repoList.install} onRepo={(repo) => setView({ kind: 'new', repo })} base={view.base} onBase={(base) => setView((v) => (v.kind === 'new' ? { ...v, base } : v))}
                 onConnectGithub={key && account && !account.handle && !DEV_KEY ? (text) => leave(text || null, 'github', key) : undefined}
                 model={chosenModel} models={models} machines={machines} onManage={() => openSettings('models')} onModel={setNewModel} mode={newMode} onMode={setNewMode}
                 onSend={(text, images) => { setDraft(undefined); start(text, view.repo, images, view.base) }} />
               <CreditWarning account={account} addedCents={lastAdded} avg={avgTurn} onAdd={() => openSettings('billing')} />
             </div>
+            </HomeHero></div>
           </div>
         )}
 

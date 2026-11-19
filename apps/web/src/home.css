@@ -1,0 +1,37 @@
+/* The new-session landing's centre (ui/Home.tsx). The hero sits at a fixed 150 px from the top
+   (the main's 52 + 98 here), not centred, so it stays put signed out and signed in. */
+.home-page { flex: 1; min-height: 0; overflow-y: auto; box-sizing: border-box; padding: 98px var(--tx-gutter) 32px; container: home / inline-size; }
+.home-col { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; align-items: center; }
+.home-mark { width: 64px; height: 64px; }
+.main.home .home-col h1 { margin: 22px 0 16px; font-family: var(--font-display); font-size: 28px; line-height: 34px; font-weight: 600; letter-spacing: -0.01em; text-align: center; }
+.home-composer { width: 100%; }
+/* Up here a menu has no room above the composer: it opens below. */
+.home-composer .cz-menu { top: calc(100% - 4px); bottom: auto; }
+
+/* Signed out: what Frog is. No stroke, the card's own fill. */
+.what { width: 100%; box-sizing: border-box; margin-top: 38px; display: grid; grid-template-columns: minmax(0, 1fr) 312px; overflow: hidden; border: 0; border-radius: 16px; background: var(--card); }
+.what-tx { padding: 22px 24px; display: flex; flex-direction: column; gap: 10px; }
+.what-lb { font-size: 12px; line-height: 17px; font-weight: 600; color: var(--muted); }
+.what h2 { margin: 0; font-family: var(--font-display); font-size: 22px; line-height: 27px; font-weight: 600; letter-spacing: -0.02em; }
+.what p { margin: 0; color: var(--muted); font-size: 13.5px; line-height: 20px; }
+.what-ft { margin-top: auto; color: var(--faint); font-size: 12px; line-height: 17px; }
+.what-art { --wa-bg: color-mix(in srgb, var(--fg) 3%, var(--card)); display: block; width: 312px; height: 100%; min-height: 200px; background: var(--wa-bg); }
+.wa-grid { stroke: color-mix(in srgb, var(--fg) 6%, transparent); stroke-width: 1; fill: none; }
+.wa-go { fill: var(--frog); }
+.wa-bg { fill: var(--wa-bg); }
+.wa-fg { fill: var(--fg); }
+.wa-lid { fill: color-mix(in srgb, var(--fg) 24%, var(--wa-bg)); }
+.wa-track { stroke: var(--line); stroke-width: 2; }
+.wa-run { stroke: var(--frog); stroke-width: 4; }
+
+/* Narrow: the card stacks, the picture under the words. */
+@container home (max-width: 620px) {
+  .what { grid-template-columns: minmax(0, 1fr); }
+  .what-art { width: 100%; height: auto; aspect-ratio: 312 / 200; }
+}
+@media (max-width: 760px) {
+  .home-page { padding: 40px 16px 24px; padding-bottom: max(24px, env(safe-area-inset-bottom)); }
+  .main.home .home-col h1 { font-size: 24px; line-height: 30px; margin: 16px 0 12px; }
+  .home-mark { width: 52px; height: 52px; }
+  .what { margin-top: 28px; }
+}

@@ -24,7 +24,7 @@ test("signed out, the sidebar shows New session, the quiet line, the chip, Docum
   assert.deepEqual(order, ["chip-slot", "docs-row", "signin-row"]);
   // The main column is still the landing.
   assert.ok(shownText(mainCol(p)).includes("What should we work on?"));
-  assert.ok(shownText(mainCol(p)).includes("Now in beta"));
+  assert.ok(shownText(mainCol(p)).includes("What is Frog?"));
   p.unmount();
 });
 
