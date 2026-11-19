@@ -374,12 +374,179 @@ fn norm(s: &str) -> String {
         .to_string()
 }
 
-/// Whether `words` are the user's own: found in one of the messages they typed this turn.
-/// A quote from a tool result, a page or a file isn't in them, so it never counts.
+/// Words, as whole tokens: lower case, letters and digits (an inner `'`, `-`, `_` or `.` keeps
+/// a token together: `don't`, `accept-edits`, `v1.2`). `$25` is `25`.
+pub fn tokens_of(s: &str) -> Vec<String> {
+    norm(s)
+        .split(|c: char| !(c.is_alphanumeric() || matches!(c, '\'' | '-' | '_' | '.')))
+        .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()))
+        .filter(|w| !w.is_empty())
+        .map(String::from)
+        .collect()
+}
+
+/// Whether `words` are the user's own: the same run of whole words in one of the messages
+/// they typed this turn. A quote from a tool result, a page or a file isn't in them, so it
+/// never counts; nor does a word found inside another word.
 pub fn said_by_user(words: &str, user: &[String]) -> bool {
-    let w = norm(words);
-    w.chars().filter(|c| c.is_alphanumeric()).count() >= 2
-        && user.iter().any(|u| norm(u).contains(&w))
+    let w = tokens_of(words);
+    w.iter().map(|t| t.chars().count()).sum::<usize>() >= 2
+        && user.iter().any(|u| {
+            let u = tokens_of(u);
+            u.windows(w.len()).any(|win| win == w.as_slice())
+        })
+}
+
+/// Words that carry no meaning of their own in a rule: left out when checking that the user
+/// named it. Polarity (never, always, not, no, don't) is never filler.
+const FILLER: &[&str] = &[
+    "a", "an", "the", "to", "of", "in", "at", "for", "and", "or", "is", "are", "be", "it", "its",
+    "this", "that", "we", "i", "you", "my", "our", "your", "please", "here", "there", "with", "by",
+    "as", "so", "just", "from", "into", "should", "will", "can",
+];
+
+fn content_tokens(s: &str) -> Vec<String> {
+    tokens_of(s)
+        .into_iter()
+        .filter(|t| !FILLER.contains(&t.as_str()))
+        .collect()
+}
+
+/// Every content word of `line` is a whole word of `typed` (polarity included).
+pub fn names_line(line: &str, typed: &str) -> bool {
+    let want = content_tokens(line);
+    let have = tokens_of(typed);
+    !want.is_empty() && want.iter().all(|w| have.contains(w))
+}
+
+/// Whether `typed` names `phrase` (one or more words, in order).
+fn names_phrase(phrase: &str, typed: &[String]) -> bool {
+    let p = tokens_of(phrase);
+    !p.is_empty() && typed.windows(p.len()).any(|w| w == p.as_slice())
+}
+
+/// Words of a setting's id or label too common to name it on their own.
+const GENERIC: &[&str] = &[
+    "default",
+    "show",
+    "share",
+    "new",
+    "use",
+    "each",
+    "end",
+    "turn",
+    "files",
+    "open",
+    "let",
+    "frog",
+    "run",
+    "keep",
+    "with",
+    "on",
+    "off",
+    "my",
+    "other",
+    "machines",
+    "start",
+    "sessions",
+    "conversations",
+    "commands",
+    "apps",
+    "see",
+    "and",
+    "the",
+    "of",
+    "at",
+    "in",
+    "to",
+];
+
+fn names_setting_row(row: &Setting, typed: &[String]) -> bool {
+    row.id
+        .split('-')
+        .chain(row.label.split(|c: char| !c.is_alphanumeric()))
+        .map(str::to_lowercase)
+        .filter(|w| w.len() >= 3 && !GENERIC.contains(&w.as_str()))
+        .any(|w| typed.contains(&w))
+        || names_phrase(&row.id.replace('-', " "), typed)
+        || names_phrase(&row.label, typed)
+}
+
+/// Whether `typed` names an option value `id` of `row`, by its id or its label.
+fn names_option(row: &Setting, id: &str, typed: &[String]) -> bool {
+    row.options
+        .iter()
+        .filter(|(o, _)| o == id)
+        .any(|(o, label)| names_phrase(o, typed) || names_phrase(label, typed))
+}
+
+/// Whether the user's own `typed` words name this change: the setting (and for a choice its
+/// value), the skill or tool by name, or every content word of the line. The engine's check,
+/// not the model's claim: anything short of it is a proposal.
+pub fn names_change(change: &Change, typed: &str) -> bool {
+    let t = tokens_of(typed);
+    match change {
+        Change::Line { op, line, to, .. } => match op {
+            LineOp::Edit => names_line(to.as_deref().unwrap_or_default(), typed),
+            _ => names_line(line, typed),
+        },
+        Change::Skill { name, .. } => {
+            names_phrase(name, &t) || names_phrase(&name.replace(['-', '_'], " "), &t)
+        }
+        Change::Tool { name, .. } => {
+            let mut parts = name.trim_start_matches("mcp__").splitn(2, "__");
+            let (server, tool) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
+            [tool.to_string(), tool.replace(['-', '_'], " ")]
+                .iter()
+                .any(|p| names_phrase(p, &t))
+                && (names_phrase(server, &t) || tool.contains('_') || tool.len() > 6)
+        }
+        Change::Set { id, value } => {
+            let Some(row) = setting(id) else {
+                return false;
+            };
+            let named = names_setting_row(row, &t);
+            match value {
+                Value::Bool(_) => named,
+                Value::String(v) if !row.options.is_empty() => {
+                    // A word only this setting has as a value names it ("compact"); a value
+                    // shared with another setting, or a bare number, needs the setting too.
+                    let unique = !v.chars().all(|c| c.is_ascii_digit())
+                        && TIERS
+                            .settings
+                            .iter()
+                            .filter(|s| s.options.iter().any(|(o, _)| o == v))
+                            .count()
+                            == 1;
+                    names_option(row, v, &t) && (named || unique)
+                }
+                v => {
+                    let shown = match v {
+                        Value::String(s) => s.clone(),
+                        v => v.to_string(),
+                    };
+                    named && names_phrase(&shown, &t)
+                }
+            }
+        }
+    }
+}
+
+/// The sentence of the user's typed messages that names `change`, for the card's quote; or
+/// the whole message when the naming words span sentences. `None`: the user didn't ask.
+pub fn asking_sentence(change: &Change, user: &[String]) -> Option<String> {
+    user.iter().rev().find_map(|u| {
+        let found = u
+            .split_inclusive(['.', '!', '?', '\n'])
+            .map(str::trim)
+            .find(|s| names_change(change, s))
+            .or_else(|| names_change(change, u).then_some(u.trim()))?;
+        let mut s: String = found.chars().take(240).collect();
+        if found.chars().count() > 240 {
+            s.push('…');
+        }
+        Some(s)
+    })
 }
 
 // ---- line edits: minimal, never a rewrite ----
@@ -393,13 +560,43 @@ fn bare(line: &str) -> &str {
         .trim()
 }
 
+/// Where a rules file's body starts: after its frontmatter, as the Rules page reads it.
+fn body_start(text: &str) -> usize {
+    let lines: Vec<&str> = text.lines().collect();
+    if lines.first().map(|l| l.trim_end()) != Some("---") {
+        return 0;
+    }
+    lines
+        .iter()
+        .enumerate()
+        .skip(1)
+        .find(|(_, l)| l.trim_end() == "---")
+        .map_or(0, |(i, _)| i + 1)
+}
+
+/// The lines that can be rules: the body's, not frontmatter or headings.
 fn matching(text: &str, line: &str) -> Vec<usize> {
     let want = norm(bare(line));
+    let start = body_start(text);
     text.lines()
         .enumerate()
+        .skip(start)
+        .filter(|(_, l)| !l.trim_start().starts_with('#'))
         .filter(|(_, l)| !bare(l).is_empty() && norm(bare(l)) == want)
         .map(|(i, _)| i)
         .collect()
+}
+
+/// A rule stays a rule: no heading, quote, table, rule line, fence or comment, which would
+/// change the file's structure rather than say one thing.
+fn rule_text(line: &str) -> Result<()> {
+    let b = bare(line);
+    let structural = b.starts_with(['#', '>', '|', '<'])
+        || (b.len() >= 3 && b.chars().all(|c| matches!(c, '-' | '=' | '*' | '_' | ' ')));
+    if structural || line.contains("```") || line.contains("<!--") || line.contains("-->") {
+        bail!("\"{line}\" isn't a plain rule (no headings, quotes, tables, fences or comments)");
+    }
+    Ok(())
 }
 
 fn one_match(text: &str, line: &str) -> Result<usize> {
@@ -412,6 +609,7 @@ fn one_match(text: &str, line: &str) -> Result<usize> {
 
 /// `text` with `line` appended as a list item. Nothing else in the file moves.
 pub fn add_line(text: &str, line: &str) -> Result<String> {
+    rule_text(line)?;
     if !matching(text, line).is_empty() {
         bail!("\"{line}\" is already there");
     }
@@ -446,6 +644,7 @@ pub fn remove_line(text: &str, line: &str) -> Result<String> {
 /// `text` with the line matching `line` replaced by `to`, keeping its indent and marker.
 pub fn edit_line(text: &str, line: &str, to: &str) -> Result<String> {
     let i = one_match(text, line)?;
+    rule_text(to)?;
     if !matching(text, to).is_empty() {
         bail!("\"{to}\" is already there");
     }
@@ -477,7 +676,9 @@ pub fn project_file(root: &Path) -> PathBuf {
     ["AGENTS.md", "FROG.md", "CLAUDE.md"]
         .iter()
         .map(|n| root.join(n))
-        .find(|p| p.is_file())
+        // A link counts, even one to nothing: it's refused when written, never skipped
+        // for a new file beside it.
+        .find(|p| std::fs::symlink_metadata(p).is_ok_and(|m| !m.is_dir()))
         .unwrap_or_else(|| root.join("AGENTS.md"))
 }
 
@@ -530,17 +731,12 @@ impl Toggles {
         }
     }
 
-    /// Read, change, write.
+    /// Read, change, write. A file that doesn't parse is an error, never "everything on"
+    /// written back over what the user turned off.
     pub fn update_in(file: &Path, f: impl FnOnce(&mut Self)) -> Result<()> {
-        let mut t = Self::load(file);
+        let mut t = Self::load_strict(file)?;
         f(&mut t);
-        if let Some(dir) = file.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        let tmp = file.with_extension("json.tmp");
-        std::fs::write(&tmp, t.render())?;
-        std::fs::rename(&tmp, file)?;
-        Ok(())
+        write_atomic(file, &t.render(), false)
     }
 
     pub fn skill_on(&self, name: &str) -> bool {
@@ -564,29 +760,47 @@ impl Toggles {
     }
 
     /// The saved choices at [`Self::path`], for `mcp::Hub::catalog` and `mcp::configured`,
-    /// which run on every tool call: re-read only when the file changes.
+    /// which run on every tool call: re-parsed only when the file's text changes.
     pub fn current() -> std::sync::Arc<Toggles> {
-        use std::sync::{Arc, Mutex};
-        use std::time::SystemTime;
-        static CACHE: Mutex<Option<(Option<SystemTime>, Arc<Toggles>)>> = Mutex::new(None);
-        let file = Self::path();
-        let stamp = std::fs::metadata(&file).and_then(|m| m.modified()).ok();
-        let mut cache = CACHE.lock().unwrap();
-        if let Some((s, t)) = cache.as_ref()
-            && *s == stamp
-        {
-            return t.clone();
-        }
-        let t = Arc::new(Self::load(&file));
-        *cache = Some((stamp, t.clone()));
-        t
+        Self::current_at(&Self::path())
     }
 
+    /// [`Self::current`] for `file`. Keyed on the text itself, not the timestamp: two writes
+    /// in one tick of the clock never leave stale switches.
+    pub fn current_at(file: &Path) -> std::sync::Arc<Toggles> {
+        use std::sync::{Arc, Mutex};
+        type Cached = (PathBuf, Option<String>, Arc<Toggles>);
+        static CACHE: Mutex<Option<Cached>> = Mutex::new(None);
+        let text = std::fs::read_to_string(file).ok();
+        let mut cache = CACHE.lock().unwrap();
+        if let Some((p, t, toggles)) = cache.as_ref()
+            && p == file
+            && *t == text
+        {
+            return toggles.clone();
+        }
+        let toggles: Arc<Toggles> = Arc::new(
+            text.as_deref()
+                .and_then(|t| serde_json::from_str::<Toggles>(t).ok())
+                .unwrap_or_default(),
+        );
+        *cache = Some((file.to_path_buf(), text, toggles.clone()));
+        toggles
+    }
+
+    /// For reading only (what to show, what to filter): a missing or broken file is all on.
     pub fn load(path: &Path) -> Self {
-        std::fs::read_to_string(path)
-            .ok()
-            .and_then(|t| serde_json::from_str(&t).ok())
-            .unwrap_or_default()
+        Self::load_strict(path).unwrap_or_default()
+    }
+
+    /// For a write: missing is all on; unreadable or broken is an error.
+    pub fn load_strict(path: &Path) -> Result<Self> {
+        match read_opt(path)? {
+            None => Ok(Self::default()),
+            Some(t) => serde_json::from_str(&t).with_context(|| {
+                format!("{} doesn't parse, so Frog left it as it is", path.display())
+            }),
+        }
     }
 
     pub fn render(&self) -> String {
@@ -620,13 +834,76 @@ pub struct FileUndo {
     pub private: bool,
 }
 
-pub fn read_opt(path: &Path) -> Option<String> {
-    std::fs::read_to_string(path).ok()
+/// A file's text: `None` when there's no file. A file that can't be read, or isn't UTF-8,
+/// is an error, never "empty": what's in it is the user's, and a write would destroy it.
+pub fn read_opt(path: &Path) -> Result<Option<String>> {
+    match std::fs::read(path) {
+        Ok(bytes) => String::from_utf8(bytes).map(Some).map_err(|_| {
+            anyhow::anyhow!(
+                "{} isn't UTF-8 text, so Frog left it as it is",
+                path.display()
+            )
+        }),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e)
+            .with_context(|| format!("can't read {}, so Frog left it as it is", path.display())),
+    }
+}
+
+/// `path` with links resolved: the nearest folder that exists, canonical, plus the rest
+/// (which doesn't exist yet, so holds no link).
+fn real_path(path: &Path) -> Result<PathBuf> {
+    let mut rest = Vec::new();
+    let mut at = path;
+    loop {
+        match at.canonicalize() {
+            Ok(real) => {
+                return Ok(rest.iter().rev().fold(real, |p, c| p.join(c)));
+            }
+            Err(_) => {
+                let (Some(parent), Some(name)) = (at.parent(), at.file_name()) else {
+                    bail!("{} has no folder that exists", path.display());
+                };
+                rest.push(name.to_os_string());
+                at = parent;
+            }
+        }
+    }
+}
+
+/// The file a rules write really lands in, checked: inside `root` (the project, or the home
+/// rules folder) after every link is followed, and never a link to nothing (whose target a
+/// write would create). The card shows this path, and this path is what's written.
+pub fn safe_target(path: &Path, root: &Path) -> Result<PathBuf> {
+    let root = real_path(root)?;
+    let real = match std::fs::symlink_metadata(path) {
+        Ok(m) if m.file_type().is_symlink() => path.canonicalize().map_err(|_| {
+            anyhow::anyhow!(
+                "{} is a link to a file that doesn't exist; Frog won't create it",
+                path.display()
+            )
+        })?,
+        Ok(_) => path.canonicalize()?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => real_path(path)?,
+        Err(e) => return Err(e).with_context(|| format!("can't read {}", path.display())),
+    };
+    if !real.starts_with(&root) {
+        bail!(
+            "{} leads to {}, outside {}; Frog won't write there",
+            path.display(),
+            real.display(),
+            root.display()
+        );
+    }
+    if real.exists() && !real.is_file() {
+        bail!("{} isn't a file", real.display());
+    }
+    Ok(real)
 }
 
 /// Write `after` (or remove the file for `None`) and return how to undo it.
 pub fn write_file(path: &Path, after: Option<String>, private: bool) -> Result<FileUndo> {
-    let before = read_opt(path);
+    let before = read_opt(path)?;
     put(path, after.as_deref(), private)?;
     Ok(FileUndo {
         path: path.to_path_buf(),
@@ -637,6 +914,9 @@ pub fn write_file(path: &Path, after: Option<String>, private: bool) -> Result<F
 }
 
 fn put(path: &Path, text: Option<&str>, private: bool) -> Result<()> {
+    if std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
+        bail!("{} is a link; Frog writes only real files", path.display());
+    }
     match text {
         None => match std::fs::remove_file(path) {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
@@ -644,40 +924,137 @@ fn put(path: &Path, text: Option<&str>, private: bool) -> Result<()> {
             }
             _ => Ok(()),
         },
-        Some(t) if private => {
-            if let Some(dir) = path.parent() {
-                crate::memory::create_private_dir(dir)?;
-            }
-            crate::memory::write_private(path, t)
-        }
-        Some(t) => {
-            if let Some(dir) = path.parent() {
-                std::fs::create_dir_all(dir)?;
-            }
-            std::fs::write(path, t).with_context(|| format!("writing {}", path.display()))
-        }
+        Some(t) => write_atomic(path, t, private),
     }
+}
+
+/// Write `text` to `path` whole: a new temp file beside it (a fresh name, created new, so no
+/// link or old file is followed), then renamed over it. The file keeps its permissions;
+/// private files (Frog's notes) are owner-only.
+pub fn write_atomic(path: &Path, text: &str, private: bool) -> Result<()> {
+    use std::io::Write;
+    let dir = path
+        .parent()
+        .filter(|d| !d.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    if private {
+        crate::memory::create_private_dir(dir)?;
+    } else {
+        std::fs::create_dir_all(dir)?;
+    }
+    let keep = std::fs::metadata(path).ok().map(|m| m.permissions());
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    let tmp = dir.join(format!(".{name}.{}.tmp", crate::session::new_id()));
+    let mut o = std::fs::OpenOptions::new();
+    o.write(true).create_new(true);
+    #[cfg(unix)]
+    if private {
+        std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
+    }
+    let written = (|| -> Result<()> {
+        let mut f = o
+            .open(&tmp)
+            .with_context(|| format!("writing {}", tmp.display()))?;
+        f.write_all(text.as_bytes())?;
+        f.sync_all()?;
+        if let (Some(p), false) = (keep, private) {
+            std::fs::set_permissions(&tmp, p)?;
+        }
+        std::fs::rename(&tmp, path).with_context(|| format!("writing {}", path.display()))
+    })();
+    if written.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    written
+}
+
+/// Move a file aside (atomically) so it can be checked without another write slipping in
+/// between the check and the change. `None`: there was no file.
+fn take_aside(path: &Path) -> Result<Option<(PathBuf, Vec<u8>)>> {
+    let dir = path.parent().unwrap_or(Path::new("."));
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    let tmp = dir.join(format!(".{name}.{}.undo", crate::session::new_id()));
+    match std::fs::rename(path, &tmp) {
+        Ok(()) => Ok(Some((tmp.clone(), std::fs::read(&tmp)?))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
+    }
+}
+
+/// Remove `path` only if its bytes pass `keep_going`, checked after it's moved aside (so no
+/// write slips in between). `false`: it didn't pass and is back as it was.
+pub fn remove_if(path: &Path, keep_going: impl FnOnce(&[u8]) -> bool) -> Result<bool> {
+    let Some((tmp, bytes)) = take_aside(path)? else {
+        bail!("{} is already gone", path.display());
+    };
+    if !keep_going(&bytes) {
+        put_back(path, &tmp)?;
+        return Ok(false);
+    }
+    std::fs::remove_file(&tmp)?;
+    Ok(true)
+}
+
+/// Put a file taken aside back, never over one written since.
+fn put_back(path: &Path, tmp: &Path) -> Result<()> {
+    std::fs::hard_link(tmp, path).with_context(|| {
+        format!(
+            "{} was written meanwhile; the earlier text is kept at {}",
+            path.display(),
+            tmp.display()
+        )
+    })?;
+    let _ = std::fs::remove_file(tmp);
+    Ok(())
 }
 
 impl FileUndo {
     pub fn undo(&self) -> Result<()> {
-        if read_opt(&self.path) != self.after {
-            bail!(
-                "{} changed since, so it was left as it is",
-                self.path.display()
-            );
-        }
-        put(&self.path, self.before.as_deref(), self.private)
+        undo_files(std::slice::from_ref(self), "it was left as it is")
     }
 }
 
 /// Undo several file changes together: all of them, or none if any file changed since.
 pub fn undo_all(files: &[FileUndo]) -> Result<()> {
-    if let Some(f) = files.iter().find(|f| read_opt(&f.path) != f.after) {
-        bail!("{} changed since, so nothing was undone", f.path.display());
+    undo_files(files, "nothing was undone")
+}
+
+/// Each file is moved aside first, then checked against what the change wrote, so nothing
+/// written between the check and the undo is lost: a file changed since is put back as it
+/// was found, and nothing is undone.
+fn undo_files(files: &[FileUndo], refused: &str) -> Result<()> {
+    let mut taken: Vec<(&FileUndo, Option<(PathBuf, Vec<u8>)>)> = Vec::new();
+    let mut changed = None;
+    for f in files {
+        let t = take_aside(&f.path);
+        let t = match t {
+            Ok(t) => t,
+            Err(e) => {
+                changed = Some(format!("{e:#}"));
+                break;
+            }
+        };
+        let now = t.as_ref().map(|(_, b)| b.as_slice());
+        let same = now == f.after.as_deref().map(str::as_bytes);
+        taken.push((f, t));
+        if !same {
+            changed = Some(format!("{} changed since", f.path.display()));
+            break;
+        }
     }
-    for f in files.iter().rev() {
+    if let Some(why) = changed {
+        for (f, t) in taken.iter().rev() {
+            if let Some((tmp, _)) = t {
+                put_back(&f.path, tmp)?;
+            }
+        }
+        bail!("{why}, so {refused}");
+    }
+    for (f, t) in taken.iter().rev() {
         put(&f.path, f.before.as_deref(), f.private)?;
+        if let Some((tmp, _)) = t {
+            let _ = std::fs::remove_file(tmp);
+        }
     }
     Ok(())
 }
@@ -692,6 +1069,8 @@ pub enum Undo {
     Setting {
         id: String,
         old: Option<Value>,
+        /// What the change set: undo refuses when the setting holds anything else now.
+        new: Value,
     },
 }
 
@@ -702,6 +1081,8 @@ mod tests {
     #[test]
     fn tiers_come_from_the_settings_file() {
         assert_eq!(setting("density").unwrap().tier, Tier::Apply);
+        // Notifications silence "a session needs you": not cosmetic.
+        assert_eq!(setting("notifications").unwrap().tier, Tier::Ask);
         assert_eq!(setting("sounds").unwrap().tier, Tier::Apply);
         assert_eq!(setting("monthly-cap").unwrap().tier, Tier::Ask);
         assert_eq!(setting("default-mode").unwrap().tier, Tier::Ask);
@@ -711,6 +1092,9 @@ mod tests {
         assert!(setting("machines").is_none());
         assert_eq!(action_tier("line.notes"), Tier::Apply);
         assert_eq!(action_tier("line.project"), Tier::Ask);
+        // Home rules apply to every project; a skill loads its instructions everywhere.
+        assert_eq!(action_tier("line.home"), Tier::Ask);
+        assert_eq!(action_tier("skill"), Tier::Ask);
         assert_eq!(action_tier("tool"), Tier::Ask);
         assert_eq!(action_tier("not-listed"), Tier::Ask);
     }
@@ -776,6 +1160,73 @@ mod tests {
         assert!(!said_by_user("set the monthly cap to $250", &user));
         assert!(!said_by_user("", &user));
         assert!(!said_by_user(".", &user));
+        // Whole words only.
+        assert!(!said_by_user("use pnpm her", &user));
+    }
+
+    #[test]
+    fn the_users_words_must_name_the_change() {
+        let set = |id: &str, v: Value| Change::Set {
+            id: id.into(),
+            value: v,
+        };
+        assert!(names_change(
+            &set("density", json!("compact")),
+            "make it compact"
+        ));
+        assert!(names_change(
+            &set("theme", json!("dark")),
+            "dark mode please"
+        ));
+        assert!(!names_change(
+            &set("density", json!("compact")),
+            "look at the logs"
+        ));
+        assert!(names_change(
+            &set("sounds", json!(false)),
+            "turn off the frog sounds"
+        ));
+        assert!(!names_change(&set("sounds", json!(false)), "turn it off"));
+        assert!(names_change(
+            &set("monthly-cap", json!("250")),
+            "raise my monthly cap to $250"
+        ));
+        assert!(!names_change(
+            &set("monthly-cap", json!("250")),
+            "raise it to $250"
+        ));
+        let line = |l: &str| Change::Line {
+            op: LineOp::Add,
+            target: Target::Notes,
+            line: l.into(),
+            to: None,
+        };
+        assert!(names_change(
+            &line("We deploy on Fridays"),
+            "remember we deploy on fridays"
+        ));
+        assert!(!names_change(
+            &line("Always push to main"),
+            "never push to main"
+        ));
+        assert!(!names_change(
+            &line("Use pnpm, not npm"),
+            "no, we use pnpm here"
+        ));
+        let skill = Change::Skill {
+            name: "release-notes".into(),
+            on: false,
+        };
+        assert!(names_change(&skill, "turn off release notes"));
+        assert!(!names_change(&skill, "turn it off"));
+        assert_eq!(
+            asking_sentence(
+                &set("density", json!("compact")),
+                &["thanks. please make it compact! and look at logs".into()]
+            )
+            .as_deref(),
+            Some("please make it compact!")
+        );
     }
 
     #[test]
@@ -816,6 +1267,128 @@ mod tests {
         std::fs::write(&path, "someone else\n").unwrap();
         assert!(u.undo().is_err());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "someone else\n");
+    }
+
+    /// Finding 4: a rules file that can't be read, or isn't UTF-8, is an error, never
+    /// treated as empty and replaced; a missing file is a different case.
+    #[test]
+    fn an_unreadable_file_is_refused_not_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("AGENTS.md");
+        assert_eq!(read_opt(&path).unwrap(), None, "missing is fine");
+        let bytes = [b'#', b' ', 0xff, 0xfe, b'\n'];
+        std::fs::write(&path, bytes).unwrap();
+        assert!(read_opt(&path).is_err());
+        assert!(write_file(&path, Some("- x\n".into()), false).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    }
+
+    /// Finding 5: a write never goes through a link that leaves the project (or the home
+    /// rules folder), never creates a dangling link's target, and replaces the file whole.
+    #[cfg(unix)]
+    #[test]
+    fn writes_stay_inside_and_never_follow_a_link_out() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("project");
+        let outside = dir.path().join("zshrc");
+        std::fs::create_dir_all(root.join("docs")).unwrap();
+        std::fs::write(&outside, "export X=1\n").unwrap();
+        let link = root.join("AGENTS.md");
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        assert_eq!(project_file(&root), link);
+        assert!(safe_target(&link, &root).is_err(), "outside the project");
+        // Inside the project: fine, and the real path is what's written (and shown).
+        std::fs::write(root.join("docs/RULES.md"), "- a\n").unwrap();
+        std::fs::remove_file(&link).unwrap();
+        std::os::unix::fs::symlink("docs/RULES.md", &link).unwrap();
+        let real = safe_target(&link, &root).unwrap();
+        assert_eq!(real, root.join("docs/RULES.md").canonicalize().unwrap());
+        // A dangling link is refused: its target is never created.
+        std::fs::remove_file(&link).unwrap();
+        std::os::unix::fs::symlink(dir.path().join("nowhere.md"), &link).unwrap();
+        assert_eq!(
+            project_file(&root),
+            link,
+            "a dangling AGENTS.md isn't skipped"
+        );
+        assert!(safe_target(&link, &root).is_err());
+        assert!(!dir.path().join("nowhere.md").exists());
+        // A new file inside is fine.
+        let fresh = root.join("FROG.md");
+        assert_eq!(
+            safe_target(&fresh, &root).unwrap(),
+            root.canonicalize().unwrap().join("FROG.md")
+        );
+        // Temp file and rename: a hard link to the old file keeps the old text, and the
+        // file keeps its permissions.
+        let file = root.join("docs/RULES.md");
+        let hard = dir.path().join("hard");
+        std::fs::hard_link(&file, &hard).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o640)).unwrap();
+        write_file(&file, Some("- a\n- b\n".into()), false).unwrap();
+        assert_eq!(std::fs::read_to_string(&hard).unwrap(), "- a\n");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "- a\n- b\n");
+        let mode = std::fs::metadata(&file).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o640);
+    }
+
+    /// Finding 5: an edit keeps the line's form: it can't turn a rule into a heading, a
+    /// fence or a comment, and forget/edit never reach frontmatter or headings.
+    #[test]
+    fn edits_keep_a_rule_a_rule() {
+        let text = "---\npaths: src\n---\n# Rules\n- use npm\nKeep it short.\n";
+        for to in ["# Owned", "```", "> quote", "<!-- hide", "---", "| a | b |"] {
+            assert!(edit_line(text, "use npm", to).is_err(), "{to}");
+            assert!(edit_line(text, "Keep it short.", to).is_err(), "{to}");
+        }
+        assert!(add_line(text, "```sh").is_err());
+        assert!(add_line(text, "x <!-- y").is_err());
+        assert!(remove_line(text, "# Rules").is_err());
+        assert!(remove_line(text, "paths: src").is_err());
+        assert!(edit_line(text, "Rules", "x y").is_err());
+        assert_eq!(
+            edit_line(text, "use npm", "use pnpm").unwrap(),
+            text.replace("- use npm", "- use pnpm")
+        );
+    }
+
+    /// Finding 9: two writes in the same timestamp tick never leave stale switches.
+    #[test]
+    fn current_switches_never_go_stale() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("customize.json");
+        std::fs::write(&file, r#"{"skills_off":["a"]}"#).unwrap();
+        let stamp = std::fs::metadata(&file).unwrap().modified().unwrap();
+        assert!(Toggles::current_at(&file).skills_off.contains("a"));
+        std::fs::write(&file, r#"{"skills_off":["b"]}"#).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&file)
+            .unwrap()
+            .set_modified(stamp)
+            .unwrap();
+        let now = Toggles::current_at(&file);
+        assert!(now.skills_off.contains("b"), "{now:?}");
+    }
+
+    /// Finding 4, for switches: a customize.json that doesn't parse is an error on write,
+    /// never read as "everything on" and written back over what the user turned off.
+    #[test]
+    fn a_broken_switch_file_is_never_overwritten() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("customize.json");
+        std::fs::write(&file, "{\"skills_off\": [\"a\"").unwrap();
+        assert!(Toggles::load_strict(&file).is_err());
+        assert!(Toggles::update_in(&file, |t| t.skills_off.clear()).is_err());
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "{\"skills_off\": [\"a\""
+        );
+        assert_eq!(
+            Toggles::load_strict(&dir.path().join("none.json")).unwrap(),
+            Toggles::default()
+        );
     }
 
     #[test]

@@ -159,11 +159,15 @@ impl Agent {
             let note = store
                 .get(scope, id)
                 .context("that note is already gone (undone or forgotten)")?;
-            let bytes = std::fs::read(&note.path)?;
-            if format!("{:016x}", fnv(&bytes)) != hash {
+            // Only a note Frog wrote on its own: never one the user wrote or kept by asking.
+            if note.source != "frog" || note.kind.is_none() {
+                anyhow::bail!("Frog didn't write that note on its own, so it was left as it is");
+            }
+            // Moved aside, then checked: an edit landing in between is put back, not lost.
+            // Undone once, the note is gone, so the handle can't be used again.
+            if !cz::remove_if(&note.path, |bytes| format!("{:016x}", fnv(bytes)) == hash)? {
                 anyhow::bail!("the note was edited since, so it was left as it is");
             }
-            std::fs::remove_file(&note.path)?;
             self.notes = store.load();
             Ok("Undone.".to_string())
         })())
@@ -208,7 +212,12 @@ impl Agent {
             line: line.clone(),
             to: None,
         };
-        let mut card = self.plan(&change, "Make it a rule", false)?.card;
+        // The user pressed "Make it a rule" on the note: that button, as labelled, is the ask.
+        let asked_by = crate::protocol::AskedBy {
+            who: "user".into(),
+            words: "Make it a rule".into(),
+        };
+        let mut card = self.plan(&change, asked_by)?.card;
         card.title = "Make this a rule?".into();
         card.primary = "Add rule".into();
         let item = format!("note:{id}");
@@ -248,7 +257,7 @@ fn undo_handle(note: &Note) -> String {
 }
 
 /// FNV-1a: stable across runs and builds, unlike `DefaultHasher`.
-fn fnv(bytes: &[u8]) -> u64 {
+pub(super) fn fnv(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf2_9ce4_8422_2325, |h, b| {
         (h ^ u64::from(*b)).wrapping_mul(0x0000_0100_0000_01b3)
     })

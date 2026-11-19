@@ -122,6 +122,12 @@ pub struct Proposal {
     pub tokens_per_turn: Option<i64>,
     /// The primary button: "Remember", "Change", "Turn off".
     pub primary: String,
+    /// The primary action's id, `primary`: an allow must send it (or the alternative's id) as
+    /// [`Op::Permission`]'s `choice`. An allow naming no choice, or one not on the card, is
+    /// refused: a delegated answer (`ResolveDelegated`) names none, so only the user's own
+    /// decision applies a proposal.
+    #[serde(default)]
+    pub choice: String,
     /// The decline button, always "Not now".
     pub dismiss: String,
     /// At most one other choice, e.g. "Just for me" (Frog's notes instead of a shared file).
