@@ -209,6 +209,9 @@ pub enum Op {
         label: String,
         #[serde(default, skip_serializing_if = "String::is_empty")]
         send: String,
+        /// Which attached app the button was pressed in, as on [`Op::Submit`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        client: Option<String>,
     },
     /// Pick the conversation back up after the app restarted mid-turn: runs a turn on the
     /// (repaired) history with `note`, or [`CONTINUE_NOTE`] when absent, as the message.

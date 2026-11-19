@@ -228,9 +228,10 @@ root, the real folder of a linked rules file, the home rules folder, Frog's note
 beside customize.json, never over a file written since, and only one from the last ten minutes
 (an undo cut short by a crash the app came straight back from). An older one is left as it is
 and nothing is said, since the person may have deleted the file or switched to a branch
-without it; one over a day old is removed. Toggles, their undo and `noted-undos` are changed
+without it; one over a day old is removed if its file is back in place (never the only copy). Toggles, their undo and `noted-undos` are changed
 under an exclusive lock on their folder (a `flock`; on a drive without one, a `.frog-lock` file
-created only if absent, taken over after a minute if its process died), and a note's id is
+created only if absent and removed after; a process that dies holding it leaves it in the
+folder, and the next Frog takes it over after a minute), and a note's id is
 claimed atomically, so two sessions at once lose nothing. Waiting for another Frog's lock gives
 up after ten seconds with an error saying so; the work never runs unlocked. Undo handles last for the engine process. `Op::Undo` is queued
 like other ops, so during a running turn it lands when the turn ends.
@@ -255,7 +256,7 @@ short-lived rename link) sends neither caps nor settings.
 
 **Several apps can share one engine** (a cloud session open on the Mac and the web), so each
 app names itself: `client`, an id it keeps while it runs (`mac-…`, `ios-…`, `web-…`), on
-`settings` and on typed `submit`s, and `{"op":"detach","client":…}` when it closes the
+`settings`, typed `submit`s and `act`, and `{"op":"detach","client":…}` when it closes the
 session. The engine keeps each app's set apart and drops it on `detach`. **A change is planned
 only for a setting the app the person typed in applies**: anything else is answered "can't be
 changed from here: change it in Settings › <section>", with no card and no receipt, so a
@@ -263,7 +264,10 @@ receipt always means the change took effect where they are. The `setting_change`
 app (`client`), and any other app leaves it alone. `auto-note` isn't one device's last word:
 off if any attached app says off, on if one says on and none off (until a synced account
 setting exists). An app that sends no `client` is the engine's one unnamed client, as before;
-an app that crashes without `detach` keeps counting, which can only hold `auto-note` off. A `null` value declares an id applied with its
+an app that crashes without `detach` keeps counting, which can only hold `auto-note` off.
+Two edges: the phone's text through the Mac's bridge goes as the Mac's (so a change it asks
+for lands on the Mac), and follow-ups delivered into a running turn count as the app that
+started the turn. `set_client_caps` is still one value for the engine, the last app's. A `null` value declares an id applied with its
 value unknown. The Mac sends its seven appearance and notification rows plus `auto-note`; the
 web sends `theme`, `density` and `auto-note`.
 
@@ -416,15 +420,15 @@ nothing):
   quote. A correction may end by naming what it
   replaces (", not npm"). So a real quote with text from a tool result, page, MCP response or
   another part of the message attached is refused. `read` needs a file inside the project that
-  a `Read` call succeeded on this session, that Frog's Edit or Write didn't change, whose time
-  is from before the session began, and whose content is still exactly what that first Read saw
-  (a hash, checked again after every tool call but a Read, so a change through Bash with its
-  time set back is caught too), and every content word, quantifier and number of the note
-  must be in that file. What that guarantees: nothing this session wrote to the file after
-  Frog first read it, by any tool, and nothing its Edit or Write wrote at all. What it
-  doesn't: text an earlier session wrote (Frog's Write or Bash in another session, committed
-  or not, is the repo's text now), and a file this session wrote through Bash before its first
-  Read with the time set back. `read` notes
+  a `Read` call succeeded on this session, that Frog's Edit or Write didn't change, whose
+  modification and change times are both from before the session began (the change time can't
+  be set back, so a write through Bash with `touch -t` shows, before or after the first Read),
+  and whose content is still exactly what that first Read saw (a hash; where a system has no
+  change time it's checked again after every tool call but a Read), and every content word,
+  quantifier and number of the note must be in that file. What that guarantees: nothing this
+  session wrote to the file, by any tool. What it doesn't: text an earlier session wrote
+  (Frog's Write or Bash in another session, committed or not, is the repo's text now), so
+  "never text the model wrote" holds for this session only. `read` notes
   are always project notes. A turn nobody typed (a wake, a session started by another) notes
   nothing.
 - Nothing that reads like an instruction (imperative, or addressed to an agent) is kept, of

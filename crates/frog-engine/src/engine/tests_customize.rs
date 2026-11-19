@@ -865,6 +865,7 @@ async fn only_typed_text_is_the_users() {
     let button = Op::Act {
         label: "Yes".into(),
         send: "make it compact".into(),
+        client: None,
     };
     for op in [from_session, continued, button] {
         let evs = r.run(op, never).await;
@@ -878,6 +879,7 @@ async fn only_typed_text_is_the_users() {
             Op::Act {
                 label: "Make the density compact".into(),
                 send: String::new(),
+                client: None,
             },
             |id, _| deny(id),
         )

@@ -79,8 +79,12 @@ impl Agent {
     }
 
     /// After a tool call that may write (anything but a Read): a read file whose content
-    /// moved from what its first read saw is the session's doing, not a fact Frog read.
+    /// moved from what its first read saw is the session's doing, not a fact Frog read. Only
+    /// where there's no change time to go by (on Unix `read_file_for_note` checks it).
     pub(super) fn note_changes_after_read(&mut self) {
+        if cfg!(unix) || !self.auto_note() {
+            return;
+        }
         for (path, first) in &self.read_hashes {
             if !self.changed_after_read.contains(path) && content_hash(path) != *first {
                 self.changed_after_read.insert(path.clone());
@@ -159,6 +163,17 @@ impl Agent {
         // Changed since this engine started (Frog's Bash, or anyone): not a fact Frog read.
         if meta.len() > MAX_FILE || meta.modified().ok()? >= self.started {
             return None;
+        }
+        // The change time too, which `touch` can't set back: a write through Bash with the
+        // modification time set back still shows here, before or after the first Read.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let changed = std::time::UNIX_EPOCH
+                + std::time::Duration::new(meta.ctime().max(0) as u64, meta.ctime_nsec().max(0) as u32);
+            if changed >= self.started {
+                return None;
+            }
         }
         // And by content, which a backdated time can't hide: it holds what its first read
         // saw, and never held anything else after a tool call since.

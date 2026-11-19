@@ -153,8 +153,8 @@ enum Op: Encodable, Sendable {
         case choice, customize, undo, notes, typed, client
     }
 
-    /// This app's id on the ops that say which app they're from (`submit`, `settings`,
-    /// `detach`): several apps can share a cloud session, and the engine keeps each one's
+    /// This app's id on the ops that say which app they're from (`submit`, `act`,
+    /// `settings`, `detach`): several apps can share a cloud session, and the engine keeps each one's
     /// settings apart (review 4, item 5). Set once at launch; nil sends none (tests, and the
     /// engine then treats the app as its one unnamed client).
     nonisolated(unsafe) static var clientID: String?
@@ -173,6 +173,7 @@ enum Op: Encodable, Sendable {
             try c.encode("act", forKey: .op)
             try c.encode(label, forKey: .label)
             if !send.isEmpty { try c.encode(send, forKey: .send) }
+            try c.encodeIfPresent(Op.clientID, forKey: .client)
         case .shell(let command):
             try c.encode("shell", forKey: .op)
             try c.encode(command, forKey: .command)

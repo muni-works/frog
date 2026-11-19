@@ -1489,15 +1489,17 @@ fn sweep_undo_locked(dir: &Path, now: chrono::NaiveDateTime) {
             continue;
         };
         let age = now - when;
-        if age > SWEEP_REMOVE {
-            let _ = std::fs::remove_file(e.path());
-            continue;
-        }
-        if age > SWEEP_RESTORE {
-            continue;
-        }
         let target = dir.join(&name);
-        if !target.exists() && std::fs::symlink_metadata(&target).is_err() {
+        let absent = !target.exists() && std::fs::symlink_metadata(&target).is_err();
+        if age > SWEEP_RESTORE {
+            // Old: never resurrected. Removed after a day once its file is back in its place
+            // (a stale copy); with the file gone it may be the only copy, so it stays.
+            if age > SWEEP_REMOVE && !absent {
+                let _ = std::fs::remove_file(e.path());
+            }
+            continue;
+        }
+        if absent {
             let _ = put_back(&target, &e.path());
         }
     }
@@ -2190,13 +2192,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let hours = dir.path().join(".AGENTS.md.20261119-090000-ab12.undo");
         let days = dir.path().join(".FROG.md.20261116-090000-cd34.undo");
+        let gone = dir.path().join(".CLAUDE.md.20261116-090000-ef56.undo");
         std::fs::write(&hours, "- a\n").unwrap();
         std::fs::write(&days, "- b\n").unwrap();
+        std::fs::write(&gone, "- c\n").unwrap();
+        std::fs::write(dir.path().join("FROG.md"), "- now\n").unwrap();
         sweep_undo_at(dir.path(), at("20261119-120000"));
         assert!(!dir.path().join("AGENTS.md").exists(), "not put back");
         assert!(hours.exists(), "left where it is");
-        assert!(!dir.path().join("FROG.md").exists());
-        assert!(!days.exists(), "a day old: removed");
+        assert!(!days.exists(), "a day old, its file in place: a stale copy, removed");
+        assert!(!dir.path().join("CLAUDE.md").exists(), "not put back");
+        assert!(gone.exists(), "a day old with its file gone: maybe the only copy, kept");
     }
 
     /// Review 2, item 7: ordinary links are fine. A stow-style link into a dotfiles folder in

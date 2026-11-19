@@ -3214,9 +3214,12 @@ impl Agent {
                         .await?
                 }
             }
-            Op::Act { label, send } => {
-                // A `Present` button names no app: only the unnamed client's settings.
-                self.turn_client.clear();
+            Op::Act {
+                label,
+                send,
+                client,
+            } => {
+                self.turn_client = client.unwrap_or_default();
                 let text = if send.trim().is_empty() {
                     label.clone()
                 } else {
