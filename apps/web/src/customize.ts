@@ -61,6 +61,14 @@ export function customizeAtOf(path: string): CustomizeAt | null {
 
 const safeDecode = (s: string) => { try { return decodeURIComponent(s) } catch { return s } }
 
+/** The page that can be shown: a skill's page needs that skill in a report, and a result's review
+ *  needs a search the web doesn't have, so with no data they open their list or Add page. */
+export function shownAt(at: CustomizeAt, report: Report | null | undefined): CustomizeAt {
+  if (at.page === 'skill' && !report?.skills.items.some((s) => s.name === at.name)) return { section: 'skills' }
+  if (at.page === 'review') return { section: 'connections', page: 'add' }
+  return at
+}
+
 /** Bare /customize and old names are replaced in the history, not pushed. */
 export const customizePathIsCanonical = (path: string) => {
   const at = customizeAtOf(path)

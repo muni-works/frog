@@ -72,7 +72,7 @@ test("a /customize link opens the mode on that page: Back to app and the five se
   assert.match(shownText(side(p)), /Back to app esc Skills Connections Rules Memory Automations/);
   assert.equal(page(p)?.props["aria-label"], "Rules");
   assert.equal(crumbs(p), "Customize › Rules");
-  await click(find(p, (n) => n.type === "a" && shownText(n) === "Memory" && n.props.className?.toString().includes("srow")));
+  await click(find(p, (n) => n.type === "a" && shownText(n) === "Memory" && String(n.props.className ?? "").includes("srow")));
   assert.equal(page(p)?.props["aria-label"], "Memory");
   assert.equal(p.path(), "/customize/memory");
   p.unmount();
@@ -137,7 +137,7 @@ test("with no repos and no install link, the repo row says so and promises no li
 
 test("Connections, Rules and Memory say what's true of a cloud session; Automations is an empty state", async () => {
   const c = await signedIn("/customize/connections");
-  assert.match(shownText(page(c)!), /starts the servers its repo lists in \.mcp\.json/);
+  assert.match(shownText(page(c)!), /reads its repo's \.mcp\.json and tries to start the servers it lists\. A sandbox can only read the open web/);
   assert.match(shownText(page(c)!), /On your Mac Connections on your own machine .* Sign in to a server/);
   c.unmount();
   const r = await signedIn("/customize/rules");
@@ -179,14 +179,18 @@ test("Add (F9Find) on the web says how to add to a repo, and invites to the Mac 
   assert.match(t, /Add a skill to a repo Commit a folder with a SKILL\.md under \.frog\/skills/);
   assert.match(t, /On your Mac Find a skill/);
   p.unmount();
+  // A result's review needs a search the web doesn't have: its URL opens Add, and says so.
   const r = await signedIn("/customize/connections/add/com.supabase%2Fmcp");
-  assert.equal(crumbs(r), "Customize › Connections › Add › com.supabase/mcp");
+  assert.equal(crumbs(r), "Customize › Connections › Add");
+  assert.equal(r.path(), "/customize/connections/add");
   r.unmount();
 });
 
-test("a skill's page with no report falls back to the Skills list", async () => {
+test("a skill's page with no report opens the Skills list, and the URL says so", async () => {
   const p = await signedIn("/customize/skills/release-notes");
   assert.match(shownText(page(p)!), /Skills in a repo/);
+  assert.equal(crumbs(p), "Customize › Skills");
+  assert.equal(p.path(), "/customize/skills");
   p.unmount();
 });
 

@@ -274,7 +274,7 @@ function SkillPage({ skill: s }: { skill: Skill }) {
 
 function ConnectionsList(p: CustomizeProps) {
   const r = p.report
-  if (!r) return <InRepos repos={p.repos} label="Servers in a repo's .mcp.json" description={<>A cloud session starts the servers its repo lists in <code>{CLOUD_READS.connections}</code>. Ones that run inside the sandbox work; ones on the internet can't be reached from it yet, and none can ask you to sign in.</>} />
+  if (!r) return <InRepos repos={p.repos} label="Servers in a repo's .mcp.json" description={<>A cloud session reads its repo's <code>{CLOUD_READS.connections}</code> and tries to start the servers it lists. A sandbox can only read the open web, so a server that signs in or writes to a service won't work there yet.</>} />
   return (<>
     <div className="cust-rows">{r.connections.items.map((c) => <ConnectionRow key={c.name} c={c} />)}</div>
     {r.connections.items.length > 0 && <SquaresKey />}
@@ -418,7 +418,7 @@ function FindPage(p: CustomizeProps) {
     <div className="set-h">In a repo</div>
     <div className="set-group">
       <div className="set-row" data-row="add-skill-repo"><div style={{ flex: 1, minWidth: 0 }}><b>Add a skill to a repo</b><div className="det wrap">Commit a folder with a <code>SKILL.md</code> under <code>.frog/skills</code>. Every cloud session on that repo picks it up.</div></div></div>
-      <div className="set-row" data-row="add-server-repo"><div style={{ flex: 1, minWidth: 0 }}><b>Add a connection to a repo</b><div className="det wrap">List the server in <code>.mcp.json</code> at the repo's root. A cloud session starts the ones that run inside its sandbox.</div></div></div>
+      <div className="set-row" data-row="add-server-repo"><div style={{ flex: 1, minWidth: 0 }}><b>Add a connection to a repo</b><div className="det wrap">List the server in <code>.mcp.json</code> at the repo's root. A cloud session tries to start it; one that signs in or writes to a service won't work from a sandbox yet.</div></div></div>
     </div>
     <div className="set-h">On your Mac</div>
     <div className="set-group set-invites">

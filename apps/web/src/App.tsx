@@ -23,7 +23,7 @@ import { creditLine, Palette, type Command } from './ui/Overlays'
 import { SettingsPage, SettingsRow, SettingsSidebar } from './ui/Settings'
 import { pinModel, pinnedModel, rememberPick, sectionOfQuery, setTheme, settingsMovedTo, settingsPath, settingsSectionOf, startingModel, toggledTheme, WEB_SECTIONS, type Section } from './settings'
 import { CustomizePage, CustomizeSidebar } from './ui/Customize'
-import { CUSTOMIZE_SECTIONS, customizeAtOf, customizePath, customizePathIsCanonical, FIRST_CUSTOMIZE, type Automation, type CustomizeAt, type Report } from './customize'
+import { CUSTOMIZE_SECTIONS, customizeAtOf, customizePath, customizePathIsCanonical, FIRST_CUSTOMIZE, shownAt, type Automation, type CustomizeAt, type Report } from './customize'
 import { Transcript } from './ui/Transcript'
 import { safeHref } from './ui/href'
 import { askLine } from './ui/ask'
@@ -118,10 +118,18 @@ export default function App() {
   const [docPage, setDocPage] = useState(() => docsSlugOf(location.pathname) || FIRST_DOC)
   const [section, setSection] = useState<Section>(first.section)
   const [cz, setCz] = useState<CustomizeAt>(first.customize)
+  // Customize's figures come from an engine report (docs/customize-api.md), which no cloud path
+  // answers yet: none, so nothing is guessed. Dev only, ?customize=sample draws the designs.
+  const [czSample, setCzSample] = useState<{ report: Report; automations: Automation[] } | null>(null)
+  useEffect(() => {
+    if (import.meta.env.DEV && new URLSearchParams(location.search).get('customize') === 'sample') import('./customize.sample').then((m) => setCzSample(m.SAMPLE))
+  }, [])
+  // A detail page with nothing to show opens its list (or Add), and the URL says so.
+  const czAt = shownAt(cz, czSample?.report)
   useEffect(() => {
     // A session still being created (a placeholder id) waits for its real id.
     const viewPath = pathOfView(view)
-    const path = mode === 'docs' ? docsPath(docPage) : mode === 'settings' ? settingsPath(section) : mode === 'customize' ? customizePath(cz) : viewPath
+    const path = mode === 'docs' ? docsPath(docPage) : mode === 'settings' ? settingsPath(section) : mode === 'customize' ? customizePath(czAt) : viewPath
     // api.frog.toys/account and /billing (and Stripe) land on ?settings=account|billing: the
     // section is open now, so the query goes, and anything else in it stays.
     const q = new URLSearchParams(location.search)
@@ -135,10 +143,12 @@ export default function App() {
     const stale = (mode !== 'settings' && settingsSectionOf(location.pathname) !== null && !keyNow.current)
       || (mode !== 'customize' && customizeAtOf(location.pathname) !== null && !keyNow.current)
     // Bare /customize, an old name and Settings' moved Connections are replaced the same way.
-    const renamed = (customizeAtOf(location.pathname) !== null && !customizePathIsCanonical(location.pathname)) || (mode === 'customize' && settingsMovedTo(location.pathname) !== null)
+    const czUrl = customizeAtOf(location.pathname)
+    const renamed = (czUrl !== null && !customizePathIsCanonical(location.pathname)) || (mode === 'customize' && settingsMovedTo(location.pathname) !== null)
+      || (mode === 'customize' && !!czUrl?.page && customizePath(czUrl) !== path)
     if (asked || stale || renamed || docsSlugOf(location.pathname) === '' || settingsSectionOf(location.pathname) === '') history.replaceState(state, '', path + (q.size ? `?${q}` : ''))
     else history.pushState(state, '', path)
-  }, [view, mode, docPage, section, cz])
+  }, [view, mode, docPage, section, czAt.section, czAt.page, customizePath(czAt)])
   useEffect(() => {
     const back = () => {
       const slug = docsSlugOf(location.pathname)
@@ -179,12 +189,6 @@ export default function App() {
     if (at) setCz(at)
     enter('customize')
   }
-  // Customize's figures come from an engine report (docs/customize-api.md), which no cloud path
-  // answers yet: none, so nothing is guessed. Dev only, ?customize=sample draws the designs.
-  const [czSample, setCzSample] = useState<{ report: Report; automations: Automation[] } | null>(null)
-  useEffect(() => {
-    if (import.meta.env.DEV && new URLSearchParams(location.search).get('customize') === 'sample') import('./customize.sample').then((m) => setCzSample(m.SAMPLE))
-  }, [])
   const backToApp = () => { setCouponAsk(0); setMode('threads') }
   /** Somewhere in Threads mode (a session, a new one): leaves the other modes on the way. */
   const go = (v: View) => { setMode('threads'); setView(v) }
@@ -704,9 +708,9 @@ export default function App() {
         <a className="version-chip" href={`https://github.com/muni-works/frog/commit/${__FROG_COMMIT__}`} target="_blank" rel="noreferrer" title="This build on GitHub">Frog {VERSION}, {__FROG_COMMIT__}</a>
       </>, docs: <DocsSidebar pages={DOCS} current={docPage} version={VERSION} onBack={backToApp} onOpen={openDocs} />,
       settings: key && <SettingsSidebar current={section} onBack={backToApp} onOpen={(x) => openSettings(x)} />,
-      customize: key && <CustomizeSidebar current={cz.section} onBack={backToApp} onOpen={(x) => openCustomize({ section: x })} /> }}
+      customize: key && <CustomizeSidebar current={czAt.section} onBack={backToApp} onOpen={(x) => openCustomize({ section: x })} /> }}
       main={{ docs: <DocsPage pages={DOCS} slug={docPage} onOpen={openDocs} bar={<><Burger />{collapsed && sideToggle(false)}</>} />,
-      customize: key && <CustomizePage at={cz} repos={repoList} report={czSample?.report ?? null} automations={czSample?.automations} machines={machines} docSlugs={DOCS.map((d) => d.slug)}
+      customize: key && <CustomizePage at={czAt} repos={repoList} report={czSample?.report ?? null} automations={czSample?.automations} machines={machines} docSlugs={DOCS.map((d) => d.slug)}
         onOpen={(at) => openCustomize(at)} onDocs={openDocs} bar={<><Burger />{collapsed && sideToggle(false)}</>} />,
       settings: key && <SettingsPage section={section} account={account} apiKey={!DEV_KEY ? key : undefined} models={models} machines={machines} focusCoupon={couponAsk}
         newMode={newMode} onNewMode={setNewMode} pinnedModel={pinned} onPinModel={setPinned}
