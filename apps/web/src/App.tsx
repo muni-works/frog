@@ -689,13 +689,12 @@ export default function App() {
       <main className="main home">
         {collapsed && <div className="side-float">{sideToggle(false)}</div>}<div className="phone-bar floating"><Burger /><b>Frog</b></div>
         {authError && <div role="status" className="banner warn">Sign-in didn't finish ({authError}). Try again.</div>}
-        <Pond /><div className="home-page"><HomeHero>
+        <Pond /><div className="home-page"><HomeHero below={<WhatIsFrog />}>
           <div className="home-composer">
             <Composer onSend={() => {}} onSignIn={(provider, text) => leave(text || null, provider)} autoFocus suggestion={SCRATCH_SUGGESTIONS} onText={noteSignedOutDraft}
               model={chosenModel} models={models} machines={machines} onModel={setNewModel} mode={newMode} onMode={setNewMode} />
             {leaving && <div className="det" style={{ textAlign: 'center' }}>Opening {leaving === 'google' ? 'Google' : 'GitHub'}… your message is saved.</div>}
           </div>
-          <WhatIsFrog />
         </HomeHero></div>
         <footer className="muni-foot">
           <nav className="foot-links" aria-label="About Frog"><a href="/pricing">Pricing</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/mac">Get the Mac app</a></nav>
