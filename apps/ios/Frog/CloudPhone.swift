@@ -52,7 +52,7 @@ final class CloudPhone: NSObject {
 
     func conversation(_ s: CloudGateway.Session) -> Conversation? {
         guard let gateway else { return nil }
-        let c = Conversation(folder: URL(fileURLWithPath: "/workspace/repo"), link: CloudLink(gateway: gateway, session: s.id), replay: false, session: s.id)
+        let c = Conversation(folder: URL(fileURLWithPath: "/workspace/repo"), link: CloudLink(gateway: gateway, session: s.id, top: s.parent == nil), replay: false, session: s.id)
         c.cloudSession = s.id
         return c
     }

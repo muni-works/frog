@@ -151,6 +151,18 @@ final class CustomizeCardTests: XCTestCase {
         XCTAssertNil(link.sent.last?["choice"], "a plain card has no choice")
     }
 
+    /// A Frog Cloud session is top-level for the capability gate only when the list says so: listed
+    /// with no `parent`. A child, or one the list doesn't have, gets no capability.
+    func testACloudSessionIsTopLevelOnlyWhenTheListSaysSo() throws {
+        let json = #"[{"id":"top","title":"a","repo":"r","branch":"main","state":"running","updated":1},{"id":"kid","title":"b","repo":"r","branch":"main","state":"running","updated":1,"parent":"top"}]"#
+        let list = try JSONDecoder().decode([CloudGateway.Session].self, from: Data(json.utf8))
+        XCTAssertEqual(list.map(\.parent), [nil, "top"])
+        XCTAssertTrue(CloudSessions.isTop("top", in: list))
+        XCTAssertFalse(CloudSessions.isTop("kid", in: list))
+        XCTAssertFalse(CloudSessions.isTop("unknown", in: list), "parentage unknown: a child")
+        XCTAssertFalse(ClientCaps.customize(top: CloudSessions.isTop("kid", in: list), enabled: true))
+    }
+
     /// Only the person's own click answers a Customize card: no chief or parent session may.
     func testACustomizeCardIsNeverDecidedForThePerson() throws {
         let c = conversation()

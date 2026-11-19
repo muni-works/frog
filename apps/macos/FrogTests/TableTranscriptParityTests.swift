@@ -262,6 +262,27 @@ final class TableTranscriptParityTests: XCTestCase {
         }
     }
 
+    /// The same send, made the moment a jump far up has started: the scroll to the end crosses
+    /// rows the lazy stack has only estimated, and must still land at the end, not stop short
+    /// as they measure (the far-up test's intermittent "the send went to the end", 2026-11-19).
+    func testASendMidJumpStillLandsAtTheEnd() throws {
+        for table in [false, true] {
+            for round in 0..<3 {
+                let c = open(table: table, turns: 120)
+                try TestRunner.skipUnlessTheDisplayDraws(host)
+                XCTAssertTrue(wait() { self.atEnd() }, "table \(table) round \(round): opens at the end")
+                jumpBox.id = c.turns[0].id
+                XCTAssertTrue(wait() { !self.atEnd() }, "table \(table) round \(round): the jump is under way")
+                c.submit("and again")
+                XCTAssertTrue(wait(timeout: 3) { self.atEnd() }, "table \(table) round \(round): the send went to the end")
+                // And stays there: nothing settles it back up.
+                pump(0.6)
+                XCTAssertTrue(atEnd(), "table \(table) round \(round): still at the end")
+                close()
+            }
+        }
+    }
+
     func testResizeRelaysOutVisibleRows() {
         for table in [false, true] {
             _ = open(table: table, turns: 60)

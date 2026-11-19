@@ -194,6 +194,17 @@ struct TranscriptView: View {
                     DispatchQueue.main.async {
                         guard following else { return }
                         withAnimation(reduceMotion ? nil : .snappy(duration: 0.3)) { proxy.scrollTo(Self.end, anchor: .bottom) }
+                        // From far up, the scroll crosses rows the lazy stack has only estimated,
+                        // and an animated one can stop short as they measure (or not move at all
+                        // with no display frames). Once it's had its time, land it.
+                        DispatchQueue.main.asyncAfter(deadline: .now() + (reduceMotion ? 0.05 : 0.35)) {
+                            guard following, !track.userScrolling, !track.isAtEnd else { return }
+                            proxy.scrollTo(Self.end, anchor: .bottom)
+                            DispatchQueue.main.async {
+                                guard following, !track.isAtEnd else { return }
+                                proxy.scrollTo(Self.end, anchor: .bottom)
+                            }
+                        }
                     }
                 }
                 // Follow the answer as it streams: while following, content that grows takes the
@@ -1275,6 +1286,9 @@ final class ScrollTrack {
         parked = false
         refresh()
     }
+
+    /// The view is at the end of the content (within the same 24 pt as `ScrollEnd.atBottom`).
+    var isAtEnd: Bool { below <= 24 }
 
     func measured(below: CGFloat, height: CGFloat) {
         self.below = below
