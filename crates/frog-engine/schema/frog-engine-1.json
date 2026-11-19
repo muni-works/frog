@@ -1107,6 +1107,27 @@
             "scope"
           ],
           "type": "object"
+        },
+        {
+          "description": "Settle a flagged pair (`pairs[].key`): `keep: \"newer\"` removes the older note;\n`keep: \"both\"` keeps both and stops flagging them.",
+          "properties": {
+            "change": {
+              "const": "memory_resolve",
+              "type": "string"
+            },
+            "keep": {
+              "type": "string"
+            },
+            "pair": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "change",
+            "pair",
+            "keep"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -6320,6 +6341,47 @@
       ],
       "type": "object"
     },
+    "GroupItem": {
+      "description": "A coarse group of notes on the map.",
+      "properties": {
+        "count": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "description": "Its index; a note's `group` names it.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "label": {
+          "description": "Two words from its notes (\"staging and database\").",
+          "type": "string"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "x": {
+          "description": "Its centre, 0 to 1 on both axes.",
+          "format": "float",
+          "type": "number"
+        },
+        "y": {
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "scope",
+        "x",
+        "y",
+        "count"
+      ],
+      "type": "object"
+    },
     "Hunk": {
       "properties": {
         "lines": {
@@ -6816,6 +6878,17 @@
     },
     "Memory": {
       "properties": {
+        "groups": {
+          "description": "The map's groups (empty in `index` mode).",
+          "items": {
+            "$ref": "#/$defs/GroupItem"
+          },
+          "type": "array"
+        },
+        "mode": {
+          "description": "`per_turn`: each turn brings back only the notes that fit; `index`: every call carries\nthe whole index (no vectors here).",
+          "type": "string"
+        },
         "notes": {
           "items": {
             "$ref": "#/$defs/NoteItem"
@@ -6827,7 +6900,15 @@
           "minimum": 0,
           "type": "integer"
         },
+        "pairs": {
+          "description": "Pairs that likely duplicate or disagree, for the user to settle (never resolved alone).",
+          "items": {
+            "$ref": "#/$defs/PairItem"
+          },
+          "type": "array"
+        },
         "tokens": {
+          "description": "What memory adds to every call: the one fixed line in `per_turn` mode, the whole\nindex in `index` mode.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -6836,7 +6917,10 @@
       "required": [
         "tokens",
         "omitted",
-        "notes"
+        "notes",
+        "mode",
+        "groups",
+        "pairs"
       ],
       "type": "object"
     },
@@ -6966,8 +7050,41 @@
         "created": {
           "type": "string"
         },
+        "from": {
+          "description": "For `read`: the file it came from.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "group": {
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "id": {
           "type": "string"
+        },
+        "kind": {
+          "description": "For Frog's own notes: `said`, `correction` or `read`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last_used": {
+          "description": "The last turn it was brought into (RFC 3339).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lit": {
+          "description": "Used in the most recent turn that used any note: lit on the map.",
+          "type": "boolean"
         },
         "missing": {
           "items": {
@@ -6990,6 +7107,14 @@
             "null"
           ]
         },
+        "source": {
+          "description": "`user` (asked for) or `frog` (noted on its own).",
+          "type": "string"
+        },
+        "stale": {
+          "description": "Not used (or written) in 60 days: faded on the map.",
+          "type": "boolean"
+        },
         "text": {
           "type": "string"
         },
@@ -7003,6 +7128,21 @@
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
+        },
+        "x": {
+          "description": "Its place on the map, 0 to 1 on both axes, and its group (`None` in `index` mode).",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "y": {
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
         }
       },
       "required": [
@@ -7014,7 +7154,25 @@
         "cites",
         "missing",
         "tokens",
-        "omitted"
+        "omitted",
+        "source",
+        "stale",
+        "lit"
+      ],
+      "type": "object"
+    },
+    "NoteRef": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "scope"
       ],
       "type": "object"
     },
@@ -8026,6 +8184,40 @@
       "required": [
         "bucket_ms",
         "tokens"
+      ],
+      "type": "object"
+    },
+    "PairItem": {
+      "description": "Two notes that likely say the same thing or disagree.",
+      "properties": {
+        "key": {
+          "description": "Stable key, sent back with `memory_resolve`.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "`duplicate` or `disagree`.",
+          "type": "string"
+        },
+        "newer": {
+          "$ref": "#/$defs/NoteRef"
+        },
+        "older": {
+          "$ref": "#/$defs/NoteRef"
+        },
+        "resolutions": {
+          "description": "Always `[\"keep_newer\", \"show_both\"]`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "key",
+        "kind",
+        "older",
+        "newer",
+        "resolutions"
       ],
       "type": "object"
     },

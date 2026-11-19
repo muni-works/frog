@@ -183,9 +183,51 @@ pub struct LineInfo {
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Memory {
+    /// What memory adds to every call: the one fixed line in `per_turn` mode, the whole
+    /// index in `index` mode.
     pub tokens: u64,
     pub omitted: usize,
     pub notes: Vec<NoteItem>,
+    /// `per_turn`: each turn brings back only the notes that fit; `index`: every call carries
+    /// the whole index (no vectors here).
+    pub mode: String,
+    /// The map's groups (empty in `index` mode).
+    pub groups: Vec<GroupItem>,
+    /// Pairs that likely duplicate or disagree, for the user to settle (never resolved alone).
+    pub pairs: Vec<PairItem>,
+}
+
+/// A coarse group of notes on the map.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct GroupItem {
+    /// Its index; a note's `group` names it.
+    pub id: usize,
+    /// Two words from its notes ("staging and database").
+    pub label: String,
+    pub scope: String,
+    /// Its centre, 0 to 1 on both axes.
+    pub x: f32,
+    pub y: f32,
+    pub count: usize,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct NoteRef {
+    pub id: String,
+    pub scope: String,
+}
+
+/// Two notes that likely say the same thing or disagree.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct PairItem {
+    /// Stable key, sent back with `memory_resolve`.
+    pub key: String,
+    /// `duplicate` or `disagree`.
+    pub kind: String,
+    pub older: NoteRef,
+    pub newer: NoteRef,
+    /// Always `["keep_newer", "show_both"]`.
+    pub resolutions: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -201,6 +243,22 @@ pub struct NoteItem {
     pub missing: Vec<String>,
     pub tokens: u64,
     pub omitted: bool,
+    /// `user` (asked for) or `frog` (noted on its own).
+    pub source: String,
+    /// For Frog's own notes: `said`, `correction` or `read`.
+    pub kind: Option<String>,
+    /// For `read`: the file it came from.
+    pub from: Option<String>,
+    /// The last turn it was brought into (RFC 3339).
+    pub last_used: Option<String>,
+    /// Not used (or written) in 60 days: faded on the map.
+    pub stale: bool,
+    /// Used in the most recent turn that used any note: lit on the map.
+    pub lit: bool,
+    /// Its place on the map, 0 to 1 on both axes, and its group (`None` in `index` mode).
+    pub x: Option<f32>,
+    pub y: Option<f32>,
+    pub group: Option<usize>,
 }
 
 fn scope_label(project: bool) -> String {
@@ -527,10 +585,25 @@ fn memory(ctx: &Ctx) -> Memory {
             tokens: 0,
             omitted: 0,
             notes: Vec::new(),
+            mode: "index".into(),
+            groups: Vec::new(),
+            pairs: Vec::new(),
         };
     };
     let notes = store.load();
+    let vectors = crate::memvec::Index::sync(store, &notes).ok();
     let (index, each, omitted) = crate::memory::index_parts(&notes, ctx.tier, ctx.window);
+    let map = vectors
+        .as_ref()
+        .map(|v| crate::memmap::map(&notes, v));
+    let last = |n: &crate::memory::Note| {
+        vectors
+            .as_ref()
+            .and_then(|v| v.get(n.scope, &n.id))
+            .and_then(|e| e.last_used.clone())
+    };
+    let latest = notes.iter().filter_map(last).max();
+    let now = chrono::Utc::now().timestamp();
     let items = notes
         .iter()
         .map(|n| {
@@ -538,6 +611,9 @@ fn memory(ctx: &Ctx) -> Memory {
                 .iter()
                 .find(|(id, scope, _)| *id == n.id && *scope == n.scope)
                 .and_then(|(_, _, l)| l.as_ref());
+            let placed = map
+                .as_ref()
+                .and_then(|m| m.notes.iter().find(|p| p.id == n.id && p.scope == n.scope));
             NoteItem {
                 id: n.id.clone(),
                 scope: scope_label(n.scope == Scope::Project),
@@ -549,14 +625,67 @@ fn memory(ctx: &Ctx) -> Memory {
                 cites: n.cites.clone(),
                 missing: n.missing.clone(),
                 tokens: line.map_or(0, |l| ctx.tokens(l.len() + 1)),
-                omitted: line.is_none(),
+                omitted: line.is_none() && vectors.is_none(),
+                source: n.source.clone(),
+                kind: n.kind.clone(),
+                from: n.from.clone(),
+                stale: crate::memmap::stale(n, last(n).as_deref(), now),
+                lit: latest.is_some() && last(n) == latest,
+                last_used: last(n),
+                x: placed.map(|p| p.x),
+                y: placed.map(|p| p.y),
+                group: placed.map(|p| p.group),
             }
         })
         .collect();
+    let groups = map
+        .as_ref()
+        .map(|m| {
+            m.groups
+                .iter()
+                .enumerate()
+                .map(|(i, g)| GroupItem {
+                    id: i,
+                    label: g.label.clone(),
+                    scope: scope_label(g.scope == Scope::Project),
+                    x: g.x,
+                    y: g.y,
+                    count: g.count,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let pairs = vectors
+        .as_ref()
+        .map(|v| {
+            let r = |(s, id): &(Scope, String)| NoteRef {
+                id: id.clone(),
+                scope: scope_label(*s == Scope::Project),
+            };
+            crate::memmap::pairs(&notes, v, &v.settled())
+                .iter()
+                .map(|p| PairItem {
+                    key: p.key.clone(),
+                    kind: p.kind.label().into(),
+                    older: r(&p.older),
+                    newer: r(&p.newer),
+                    resolutions: vec!["keep_newer".into(), "show_both".into()],
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let per_turn = vectors.is_some();
     Memory {
-        tokens: ctx.tokens(index.len()),
-        omitted,
+        tokens: if per_turn {
+            ctx.tokens(crate::memory::PER_TURN.len())
+        } else {
+            ctx.tokens(index.len())
+        },
+        omitted: if per_turn { 0 } else { omitted },
         notes: items,
+        mode: if per_turn { "per_turn" } else { "index" }.into(),
+        groups,
+        pairs,
     }
 }
 
@@ -605,6 +734,12 @@ pub enum Edit {
         id: String,
         scope: String,
     },
+    /// Settle a flagged pair (`pairs[].key`): `keep: "newer"` removes the older note;
+    /// `keep: "both"` keeps both and stops flagging them.
+    MemoryResolve {
+        pair: String,
+        keep: String,
+    },
 }
 
 fn project() -> String {
@@ -618,7 +753,9 @@ impl Edit {
             Self::Skill { .. } => "skills",
             Self::Connection { .. } | Self::Tool { .. } => "connections",
             Self::RuleAdd { .. } | Self::RuleEdit { .. } | Self::RuleRemove { .. } => "rules",
-            Self::MemoryEdit { .. } | Self::MemoryRemove { .. } => "memory",
+            Self::MemoryEdit { .. } | Self::MemoryRemove { .. } | Self::MemoryResolve { .. } => {
+                "memory"
+            }
         }
     }
 }
@@ -700,6 +837,20 @@ pub fn apply(
         Edit::MemoryRemove { id, scope } => {
             let store = memory.context("this session keeps no memory")?;
             store.remove(note_scope(scope)?, id).map(|_| ())
+        }
+        Edit::MemoryResolve { pair, keep } => {
+            let store = memory.context("this session keeps no memory")?;
+            let notes = store.load();
+            let mut index = crate::memvec::Index::sync(store, &notes)?;
+            let found = crate::memmap::pairs(&notes, &index, &[])
+                .into_iter()
+                .find(|p| &p.key == pair)
+                .context("those two notes aren't flagged (one was changed or removed)")?;
+            match keep.as_str() {
+                "newer" => store.remove(found.older.0, &found.older.1).map(|_| ()),
+                "both" => index.settle(pair),
+                other => bail!("keep is newer or both, not `{other}`"),
+            }
         }
     }
 }

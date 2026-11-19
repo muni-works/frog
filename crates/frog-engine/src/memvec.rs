@@ -100,6 +100,9 @@ struct Folder {
     model: String,
     dims: usize,
     notes: BTreeMap<String, Entry>,
+    /// Flagged pairs the user chose to keep both of (`memmap::pair_key`): not flagged again.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    settled: Vec<String>,
 }
 
 /// The vectors of every note one [`crate::memory::Store`] can see.
@@ -117,6 +120,7 @@ fn read_folder(path: &Path) -> Folder {
             model: MODEL.into(),
             dims: DIMS,
             notes: BTreeMap::new(),
+            settled: Vec::new(),
         })
 }
 
@@ -144,6 +148,16 @@ impl Index {
             let before = f.notes.len();
             f.notes.retain(|id, _| here.iter().any(|n| &n.id == id));
             changed |= f.notes.len() != before;
+            // A settled pair goes with either of its notes.
+            let alive = |k: &str| {
+                let (s, id) = k.split_once(':').unwrap_or(("", k));
+                notes
+                    .iter()
+                    .any(|n| n.id == id && (s == "g") == (n.scope == Scope::Global))
+            };
+            let before = f.settled.len();
+            f.settled.retain(|k| k.split('|').all(alive));
+            changed |= f.settled.len() != before;
             for n in here {
                 let src = source(n);
                 let hash = format!("{:016x}", fnv(&src));
@@ -174,6 +188,27 @@ impl Index {
         self.folders
             .iter()
             .flat_map(|(s, _, f)| f.notes.iter().map(move |(id, e)| (*s, id.as_str(), e)))
+    }
+
+    /// Pairs the user chose to keep both of.
+    pub fn settled(&self) -> Vec<String> {
+        self.folders
+            .iter()
+            .flat_map(|(_, _, f)| f.settled.iter().cloned())
+            .collect()
+    }
+
+    /// Record "show both" for a flagged pair: kept with the project's notes when there's a
+    /// project, else with the global ones.
+    pub fn settle(&mut self, key: &str) -> anyhow::Result<()> {
+        let Some((_, path, f)) = self.folders.first_mut() else {
+            anyhow::bail!("no notes here");
+        };
+        if !f.settled.iter().any(|k| k == key) {
+            f.settled.push(key.to_string());
+            write_folder(path, f)?;
+        }
+        Ok(())
     }
 
     /// Record that these notes were brought into a turn now.

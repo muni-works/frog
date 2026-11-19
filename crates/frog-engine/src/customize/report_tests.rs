@@ -286,8 +286,12 @@ fn memory_notes_carry_their_session_and_can_be_edited_and_removed() {
         (global.scope.as_str(), global.session.as_deref()),
         ("everywhere", None)
     );
-    let (index, _) = crate::memory::index(&store.load(), Tier::Strong, 200_000);
-    assert_eq!(r.memory.tokens, Estimator::default().tokens(index.len()));
+    // Each turn brings back what fits, so every call carries only the one fixed line.
+    assert_eq!(r.memory.mode, "per_turn");
+    assert_eq!(
+        r.memory.tokens,
+        Estimator::default().tokens(crate::memory::PER_TURN.len())
+    );
 
     let edit = Edit::MemoryEdit {
         id: n.id.clone(),
@@ -564,4 +568,119 @@ fn a_server_that_wants_a_sign_in_says_so() {
         ("needs_sign_in", Some("sign_in"))
     );
     assert_eq!(linear.error, None, "a sign-in isn't a failure");
+}
+
+/// The Memory map: positions and groups the same on every read (and from a fresh process's
+/// files), a new note moving the others little, staleness and the lit notes from last use, and
+/// flagged pairs settled only by the user.
+#[test]
+fn memory_map_is_stable_and_flags_pairs() {
+    let root = project("memory-map");
+    let mem = root.parent().unwrap().join("memory");
+    let store = Store::new(&mem, Some(&root));
+    for t in [
+        "This project uses npm.",
+        "Tests live in spec/, one file per module.",
+        "Each module's tests build their own rows.",
+        "The staging database is wiped every Monday.",
+        "Release notes lead with fixes people asked for.",
+        "Release notes are short, one line per fix.",
+        "Use pnpm, never npm.",
+    ] {
+        store.add(Scope::Project, t).unwrap();
+    }
+    let cfg = hermetic();
+    let read = || report_with(&ctx(&cfg, &root, Some(&store)), &Toggles::default(), &Uses::new()).memory;
+    let pos = |m: &Memory| -> Vec<(String, f32, f32, usize)> {
+        let mut v: Vec<_> = m
+            .notes
+            .iter()
+            .map(|n| (n.id.clone(), n.x.unwrap(), n.y.unwrap(), n.group.unwrap()))
+            .collect();
+        v.sort_by(|a, b| a.0.cmp(&b.0));
+        v
+    };
+    let a = read();
+    assert_eq!(a.mode, "per_turn");
+    // Stable across reloads: a second read, and one after the vectors file is rebuilt.
+    assert_eq!(pos(&a), pos(&read()));
+    let vectors = store.scope_dir(Scope::Project).unwrap().join(".vectors.json");
+    std::fs::remove_file(&vectors).unwrap();
+    assert_eq!(pos(&a), pos(&read()));
+    for (_, x, y, _) in pos(&a) {
+        assert!((0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y));
+    }
+    // Groups have two-word labels; the tests notes share one.
+    assert!(a.groups.iter().all(|g| !g.label.is_empty() && g.count > 0));
+    let group_of = |m: &Memory, text: &str| {
+        m.notes.iter().find(|n| n.text.starts_with(text)).unwrap().group
+    };
+    assert_eq!(group_of(&a, "Tests live"), group_of(&a, "Each module"));
+
+    // A new note: everything else moves little, and stays in its group.
+    store
+        .add(Scope::Project, "Icons are drawn at 16 points with a 1.5 point stroke.")
+        .unwrap();
+    let b = read();
+    let (pa, pb): (Vec<_>, Vec<_>) = (
+        pos(&a),
+        pos(&b).into_iter().filter(|p| !p.0.starts_with("icons")).collect(),
+    );
+    for (old, new) in pa.iter().zip(&pb) {
+        assert_eq!(old.0, new.0);
+        let moved = ((old.1 - new.1).powi(2) + (old.2 - new.2).powi(2)).sqrt();
+        assert!(moved < 0.05, "{} moved {moved}", old.0);
+    }
+    // The same notes share a group as before (group numbers may shift).
+    for i in 0..pa.len() {
+        for j in 0..pa.len() {
+            assert_eq!(pa[i].3 == pa[j].3, pb[i].3 == pb[j].3, "{} / {}", pa[i].0, pa[j].0);
+        }
+    }
+
+    // npm then "pnpm, never npm": flagged as disagreeing, older then newer.
+    let pair = b
+        .pairs
+        .iter()
+        .find(|p| p.kind == "disagree")
+        .expect("the package managers disagree")
+        .clone();
+    let older = b.notes.iter().find(|n| n.id == pair.older.id).unwrap();
+    assert!(older.text.contains("uses npm"), "{}", older.text);
+    assert_eq!(pair.resolutions, ["keep_newer", "show_both"]);
+
+    // Show both: kept, not flagged again.
+    let both = Edit::MemoryResolve { pair: pair.key.clone(), keep: "both".into() };
+    apply(&cfg, &root, false, Some(&store), &Toggles::path(), &both).unwrap();
+    assert!(read().pairs.iter().all(|p| p.key != pair.key));
+    assert_eq!(read().notes.len(), 8);
+
+    // Nothing is stale or lit yet; a use lights it, an old one fades.
+    assert!(b.notes.iter().all(|n| !n.stale && !n.lit));
+    let notes = store.load();
+    let mut idx = crate::memvec::Index::sync(&store, &notes).unwrap();
+    let staging = notes.iter().find(|n| n.body.contains("staging")).unwrap();
+    let release = notes.iter().find(|n| n.body.contains("lead with")).unwrap();
+    idx.mark_used(&[(Scope::Project, release.id.clone())], "2026-08-01T00:00:00+00:00")
+        .unwrap();
+    idx.mark_used(&[(Scope::Project, staging.id.clone())], &chrono::Local::now().to_rfc3339())
+        .unwrap();
+    let c = read();
+    let row = |id: &str| c.notes.iter().find(|n| n.id == id).unwrap();
+    assert!(row(&staging.id).lit && !row(&staging.id).stale);
+    assert!(row(&release.id).stale && !row(&release.id).lit);
+    assert!(row(&staging.id).last_used.is_some());
+
+    // Keep the newer: the older is removed, from the notes and the vectors.
+    store.add(Scope::Project, "This project uses npm.").unwrap();
+    let dup = read()
+        .pairs
+        .into_iter()
+        .find(|p| p.kind == "duplicate")
+        .expect("a duplicate");
+    let keep = Edit::MemoryResolve { pair: dup.key.clone(), keep: "newer".into() };
+    apply(&cfg, &root, false, Some(&store), &Toggles::path(), &keep).unwrap();
+    assert!(store.get(Scope::Project, &dup.older.id).is_none());
+    assert!(store.get(Scope::Project, &dup.newer.id).is_some());
+    assert!(!std::fs::read_to_string(&vectors).unwrap().contains(&format!("\"{}\"", dup.older.id)));
 }
