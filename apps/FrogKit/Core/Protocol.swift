@@ -77,7 +77,8 @@ enum Op: Encodable, Sendable {
     /// history with `note` (its own default when nil) as the message.
     case `continue`(note: String? = nil)
     /// `note`, with a deny: the user's words, sent back to the agent.
-    case permission(id: String, decision: Decision, note: String? = nil)
+    /// `choice`: a Customize card's alternative, by its id (docs/customize-events.md).
+    case permission(id: String, decision: Decision, note: String? = nil, choice: String? = nil)
     case setMode(Mode)
     case setModel(String)
     case compact(focus: String?)
@@ -109,7 +110,11 @@ enum Op: Encodable, Sendable {
     /// The user clicked an element in inspect mode and mentioned it in the composer.
     case paneMention(id: String, mention: String, context: String? = nil)
     /// What this client can do, sent once after the engine starts.
-    case setClientCaps(panes: Bool, ask: Bool = false, sessions: Bool = false)
+    /// `customize`: this app draws Customize cards, their receipts and `setting_change`
+    /// (docs/customize-events.md), so the engine may offer the tool.
+    case setClientCaps(panes: Bool, ask: Bool = false, sessions: Bool = false, customize: Bool = false)
+    /// Undo a Customize change by its handle; `customize_undone` answers.
+    case undo(String)
     /// The answer to a `sessionRequest`: JSON (or text) for the model, or an error.
     case sessionReply(id: String, result: JSONValue?, error: String?)
     /// A message from another session (`from` is its id, or "system"), queued like a submit.
@@ -140,6 +145,7 @@ enum Op: Encodable, Sendable {
         case deadline, pr, repo, number
         case decline, servers, tools
         case values, scope
+        case choice, customize, undo
     }
 
     func encode(to encoder: Encoder) throws {
@@ -166,11 +172,12 @@ enum Op: Encodable, Sendable {
         case .continue(let note):
             try c.encode("continue", forKey: .op)
             try c.encodeIfPresent(note, forKey: .note)
-        case .permission(let id, let decision, let note):
+        case .permission(let id, let decision, let note, let choice):
             try c.encode("permission", forKey: .op)
             try c.encode(id, forKey: .id)
             try c.encode(decision, forKey: .decision)
             try c.encodeIfPresent(note, forKey: .note)
+            try c.encodeIfPresent(choice, forKey: .choice)
         case .setMode(let mode):
             try c.encode("set_mode", forKey: .op)
             try c.encode(mode, forKey: .mode)
@@ -254,11 +261,15 @@ enum Op: Encodable, Sendable {
             try c.encode(id, forKey: .id)
             try c.encode(mention, forKey: .mention)
             try c.encodeIfPresent(context, forKey: .context)
-        case .setClientCaps(let panes, let ask, let sessions):
+        case .setClientCaps(let panes, let ask, let sessions, let customize):
             try c.encode("set_client_caps", forKey: .op)
             try c.encode(panes, forKey: .panes)
             if ask { try c.encode(ask, forKey: .ask) }
             if sessions { try c.encode(sessions, forKey: .sessions) }
+            if customize { try c.encode(customize, forKey: .customize) }
+        case .undo(let handle):
+            try c.encode("undo", forKey: .op)
+            try c.encode(handle, forKey: .undo)
         case .sessionReply(let id, let result, let error):
             try c.encode("session_reply", forKey: .op)
             try c.encode(id, forKey: .id)
@@ -1001,6 +1012,46 @@ struct PermissionRequest: Decodable, Sendable, Identifiable {
     var reason: String?
     /// For shell commands: the agent's reason, the trigger, what it touches, and advice.
     var card: ApprovalCard?
+    /// A Customize change waiting on this card (docs/customize-events.md).
+    var proposal: Proposal?
+}
+
+/// A Customize change, as its card asks it or its receipt reports it (docs/customize-events.md;
+/// canvas N7 Remember, N9 Change).
+/// Whether an app tells the engine it draws Customize cards (`set_client_caps` `customize`).
+enum ClientCaps {
+    /// Off until the engine's Customize path passes review: the cards draw, but the engine isn't
+    /// told so and never offers them.
+    static let customize = false
+    /// Only ever for a session the person is typing in: one another session started has no one
+    /// to click its card.
+    static func customize(top: Bool, enabled: Bool = customize) -> Bool { enabled && top }
+}
+
+struct Proposal: Codable, Sendable, Equatable {
+    /// The `choice` an allow sends: the primary's id, or the one alternative's exact id. Anything
+    /// else is nil (the engine applies no change without a choice on the card).
+    func choice(for picked: String?) -> String? {
+        let primary = choice ?? "primary"
+        guard let picked else { return primary }
+        return picked == primary || picked == alternative?.id ? picked : nil
+    }
+
+    struct Change: Codable, Sendable, Equatable { var old: String?; var new: String? }
+    struct Alternative: Codable, Sendable, Equatable { var id: String; var label: String; var `where`: String; var tokensPerTurn: Int? }
+    struct AskedBy: Codable, Sendable, Equatable { var who: String; var words: String }
+    var kind: String
+    var title: String
+    var change: Change
+    var `where`: String
+    var path: String?
+    var tokensPerTurn: Int?
+    /// The primary action's id, always "primary": an allow sends it back as `choice`.
+    var choice: String?
+    var primary: String
+    var dismiss: String
+    var alternative: Alternative?
+    var askedBy: AskedBy?
 }
 
 /// What a shell command's permission prompt shows (engine `ApprovalCard`).
@@ -1137,6 +1188,11 @@ enum Event: Decodable, Sendable {
     /// `slow`: the engine finds the stream slow (only on `soFar` counts; absent means not). `cached`:
     /// tokens read from cache, when a call ends (the stats' hover).
     case outputTokens(turn: UInt64, output: UInt64, soFar: Bool, slow: Bool = false, cached: UInt64? = nil)
+    /// A Customize change made (at once, or after its card): its receipt, with Undo. Durable.
+    case customizeApplied(item: String, undo: String, card: Proposal)
+    case customizeUndone(undo: String, ok: Bool, message: String?)
+    /// A setting the app owns, changed by Customize or its Undo. Live only.
+    case settingChange(id: String, value: JSONValue)
     case unknown(String)
 }
 
@@ -1175,6 +1231,7 @@ extension Event {
         /// The MCP server list and a sign-in's outcome.
         case servers, server, tools
         case output, soFar, slow, cached, asked
+        case undo, card, ok, value
     }
 
     init(from decoder: Decoder) throws {
@@ -1251,6 +1308,14 @@ extension Event {
             self = .modeChanged(try c.decode(Mode.self, forKey: .mode))
         case "permission_request":
             self = .permissionRequest(try PermissionRequest(from: decoder))
+        case "customize_applied":
+            self = .customizeApplied(item: try c.decode(String.self, forKey: .item), undo: try c.decode(String.self, forKey: .undo),
+                                     card: try c.decode(Proposal.self, forKey: .card))
+        case "customize_undone":
+            self = .customizeUndone(undo: try c.decode(String.self, forKey: .undo), ok: try c.decode(Bool.self, forKey: .ok),
+                                    message: try c.decodeIfPresent(String.self, forKey: .message))
+        case "setting_change":
+            self = .settingChange(id: try c.decode(String.self, forKey: .id), value: try c.decode(JSONValue.self, forKey: .value))
         case "progress":
             self = .progress(try EngineProgress(from: decoder))
         case "present_preview":

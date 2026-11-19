@@ -1,5 +1,5 @@
 import { Fragment, memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import type { FileDiff, Image } from '../cloud/protocol'
+import type { FileDiff, Image, Proposal } from '../cloud/protocol'
 import type { Ask, Entry, Question, Thread } from '../engine/thread'
 import { type Model } from '../models'
 import { ElicitationCard, QuestionCard } from './AskCards'
@@ -225,7 +225,15 @@ function foldedThought(entries: Entry[], n: number): boolean {
   return entries.slice(a, b + 1).every((x) => x.kind === 'reasoning' && x.done && x.text.trim().length <= 200 && !x.text.trim().includes('\n\n'))
 }
 
-export type DecideOpts = { always?: boolean; note?: string }
+/** The `choice` an allow on a Customize card sends: the proposal's own primary id, or its one
+ *  alternative's exact id. Anything else is nothing (the engine applies no change without it). */
+export function proposalChoice(p: Proposal, choice?: string): string | undefined {
+  const primary = p.choice ?? 'primary'
+  if (!choice) return primary
+  return choice === primary || choice === p.alternative?.id ? choice : undefined
+}
+
+export type DecideOpts = { always?: boolean; note?: string; /** A Customize card's alternative (its id). */ choice?: string }
 type Decide = (allow: boolean, opts?: DecideOpts) => void
 
 /** The ask card, one design with the Mac's: the title, the command in a well, where it runs,
@@ -262,13 +270,70 @@ function AskCard({ ask, onDecide }: { ask: Ask; onDecide: Decide }) {
   )
 }
 
+/** A Customize card (canvas N7 Remember, N9 Change; docs/customize-events.md): the change, where
+ *  it goes and what it costs a turn, then the primary answer, Not now, and the one alternative. */
+export function ProposalCard({ ask, proposal: p, onDecide }: { ask: Ask; proposal: Proposal; onDecide: Decide }) {
+  // An ask-tier change Frog didn't offer on its own (the user asked) wears the "needs you" dot.
+  const offer = p.asked_by?.who === 'frog'
+  return (
+    <div className="cardx ask proposal" data-item={ask.item}>
+      <div className="ask-h"><b className="proposal-t">{!offer && <span className="needs-dot" role="img" aria-label="Needs you" />}{p.title}</b></div>
+      <ChangeView p={p} />
+      <div className="det wrap proposal-f">{whereLine(p.where, p.tokens_per_turn)}</div>
+      <div className="diff-acts">
+        <button type="button" className="f-btn f-btn--prominent" title="⌘↩" onClick={() => onDecide(true, { choice: proposalChoice(p) })}>{p.primary}</button>
+        <button type="button" className="f-btn f-btn--bordered" title="⌘." onClick={() => onDecide(false)}>{p.dismiss || 'Not now'}</button>
+        <span style={{ flex: 1 }} />
+        {p.alternative && <button type="button" className="line-link proposal-alt" title={whereLine(p.alternative.where, p.alternative.tokens_per_turn)}
+          onClick={() => onDecide(true, { choice: p.alternative!.id })}>{p.alternative.label}</button>}
+      </div>
+    </div>
+  )
+}
+
+/** The change itself: a line to save or forget in a well; a setting or toggle as old to new. */
+function ChangeView({ p }: { p: Proposal }) {
+  if (p.kind === 'line') return <div className={`diff proposal-q${p.change.new ? '' : ' gone'}`}>{p.change.new ?? p.change.old}</div>
+  return (
+    <div className="proposal-chg">
+      <span className="k">{p.kind === 'setting' ? p.title.replace(/^Change /, '') : p.title.replace(/^Turn (on|off) /, '')}</span>
+      {p.change.old !== undefined && <><span className="o">{p.change.old}</span><span className="a">to</span></>}
+      <span>{p.change.new}</span>
+    </div>
+  )
+}
+
+const whereLine = (where: string, tokens?: number) =>
+  [where.replace(/\.$/, ''), tokens ? (tokens > 0 ? `Adds ${tokens} tokens to each turn` : `Saves ${-tokens} tokens a turn`) : ''].filter(Boolean).join('. ') + '.'
+
+/** A Customize change made: one line, the verb in `muted`, what changed, Undo (N9's receipt). */
+export function AppliedLine({ applied: a, onUndo }: { applied: NonNullable<Entry['applied']>; onUndo: (handle: string) => void }) {
+  const c = a.card
+  const verb = c.kind === 'setting' ? 'Changed' : c.kind === 'line' ? (c.change.new && c.change.old ? 'Changed' : c.change.new ? 'Remembered' : 'Forgot')
+    : c.change.new === 'Off' ? 'Turned off' : 'Turned on'
+  const what = c.kind === 'line' ? (c.change.new ?? c.change.old ?? '') : c.kind === 'setting' ? `${c.title.replace(/^Change /, '')} to ${c.change.new ?? ''}` : c.title.replace(/^Turn (on|off) /, '')
+  return (
+    <div className="line-row applied" data-row="line" data-kind="customize">
+      <div className="line-plate"><div className="line">
+        <span className="line-mark" aria-hidden="true"><Glyph d={ICON.sliders} /></span>
+        <span className="line-verb">{a.undone?.ok ? 'Undid' : verb}</span>
+        <span className="line-obj applied-what" title={c.where}>{what}</span>
+        <span className="line-result">
+          {a.undone ? <span className={a.undone.ok ? '' : 'applied-fail'}>{a.undone.ok ? '' : a.undone.message ?? "Couldn't undo"}</span>
+            : <button type="button" className="line-link" onClick={() => onUndo(a.undo)}>Undo</button>}
+        </span>
+      </div></div>
+    </div>
+  )
+}
+
 const NO_MODELS: Model[] = []
 
 /** Turns a conversation opens on, and adds at a time as you scroll up (enough to fill a tall
  *  window with room to spare). */
 export const TAIL_TURNS = 24
 
-export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, models = NO_MODELS, outbox = [], onResend, onEdit, waiting, onContinue, onPrompt, onShowChange, credit, start }: {
+export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, models = NO_MODELS, outbox = [], onResend, onEdit, waiting, onContinue, onPrompt, onShowChange, onUndo, credit, start }: {
   thread: Thread
   /** The account's credit left, for the turn-cost card. */
   credit?: string
@@ -291,6 +356,8 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
   onPrompt?: (text: string) => void
   /** An edit line's "Show in Changes": open the inspector on Changes. */
   onShowChange?: (path: string) => void
+  /** Undo a Customize change by its handle (Op::Undo). */
+  onUndo?: (handle: string) => void
   /** A new session still starting (ui/Opening.tsx): the live row says how far it's got. */
   start?: StartInfo
 }) {
@@ -321,8 +388,8 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
   }, [from, convo])
   // Handlers change identity every render; turns read them through one stable ref so a
   // streamed delta redraws only the turn it touched.
-  const latest = useRef({ onDecide, onAnswer, onRetry, onEdit, onContinue, onPrompt, onShowChange })
-  latest.current = { onDecide, onAnswer, onRetry, onEdit, onContinue, onPrompt, onShowChange }
+  const latest = useRef({ onDecide, onAnswer, onRetry, onEdit, onContinue, onPrompt, onShowChange, onUndo })
+  latest.current = { onDecide, onAnswer, onRetry, onEdit, onContinue, onPrompt, onShowChange, onUndo }
   const cb = useMemo<TurnCallbacks>(() => ({
     onDecide: (a, o) => latest.current.onDecide(a, o),
     onAnswer: (c, o) => latest.current.onAnswer(c, o),
@@ -331,6 +398,7 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
     onContinue: () => latest.current.onContinue?.(),
     onPrompt: (t) => latest.current.onPrompt?.(t),
     onShowChange: onShowChange ? (p) => latest.current.onShowChange?.(p) : undefined,
+    onUndo: (h) => latest.current.onUndo?.(h),
   }), [])
   const has = { retry: !!onRetry, edit: !!onEdit, cont: !!onContinue }
   // The live row's fast-changing inputs, through context so the memoized turns don't redraw.
@@ -381,13 +449,14 @@ interface TurnCallbacks {
   onContinue: () => void
   onPrompt: (text: string) => void
   onShowChange?: (path: string) => void
+  onUndo: (handle: string) => void
 }
 
 /** A turn's entries as foldable rows: a finished step that draws as a line is a step (a failed one
  * never folds); everything else (prose, thoughts, cards, a running step) breaks a run. */
 function rows(entries: Entry[], ask: Ask | null, question: Question | null) {
   return entries.map((e, n): Step & { e: Entry; n: number } => {
-    const line = e.kind === 'tool' && e.done && question?.item !== e.id && ask?.item !== e.id && !(e.widget && e.outcome === 'ok')
+    const line = e.kind === 'tool' && e.done && question?.item !== e.id && ask?.item !== e.id && !(e.widget && e.outcome === 'ok') && !e.applied
     return { kind: line ? 'step' : 'other', id: e.id, failed: line && e.outcome === 'error', e, n }
   })
 }
@@ -429,7 +498,9 @@ const TurnView = memo(function TurnView({ turn, index, live, ask, question, runn
       <div data-row="box"><DiffCard diff={diff} ask={asking} onDecide={cb.onDecide}
         note="Runs in your Frog Cloud sandbox. Nothing is pushed until you say so." /></div>
     )
+    if (asking?.proposal) return <div data-row="box"><ProposalCard ask={asking} proposal={asking.proposal} onDecide={cb.onDecide} /></div>
     if (asking) return <div data-row="box"><AskCard ask={asking} onDecide={cb.onDecide} /></div>
+    if (e.applied) return <AppliedLine applied={e.applied} onUndo={cb.onUndo} />
     if (e.widget && e.outcome === 'ok') return <div data-row="box"><WidgetCard widget={e.widget} onPrompt={cb.onPrompt} /></div>
     // A step still running is the live row ("Editing src/retry.rs"); it becomes a line when done.
     if (!e.done && live && running) return null

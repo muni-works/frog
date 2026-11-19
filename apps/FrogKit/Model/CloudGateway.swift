@@ -132,13 +132,14 @@ final class CloudLink: ConversationLink {
     private let encoder = JSONEncoder()
 
     /// `connect: false` (tests): no socket; frames are fed to `take` instead.
-    init(gateway: CloudGateway, session: String, after: UInt64 = 0, connect: Bool = true) {
+    /// `top`: a session the person types in, not one another session started (Customize caps).
+    init(gateway: CloudGateway, session: String, after: UInt64 = 0, connect: Bool = true, top: Bool = true) {
         self.gateway = gateway
         id = session
         lastSeq = after
         if connect { open() }
         // As on the web: questions get a card; a preview pane would need the sandbox's network.
-        send(.setClientCaps(panes: false, ask: true))
+        send(.setClientCaps(panes: false, ask: true, customize: ClientCaps.customize(top: top)))
     }
 
     func send(_ op: Op) {

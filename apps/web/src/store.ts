@@ -78,6 +78,7 @@ export function useSessions(cloud: CloudEngine | null) {
       const index = await cloud.gateway.index()
       // Whether this gateway serves previews: the Preview tab and the engine's preview tools follow it.
       cloud.setPreviews(index.preview)
+      cloud.setChildren(index.sessions.filter((s) => s.parent).map((s) => s.id))
       const list = index.sessions.sort((a, b) => b.updated - a.updated)
       setSessions(list)
       noteSessions(list)

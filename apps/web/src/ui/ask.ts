@@ -13,6 +13,8 @@ export function askLine(name: string, arg: string): string {
       try { host = new URL(first).host || first } catch { /* not a URL */ }
       return host ? `Open ${host}?` : 'Open a web page?'
     }
+    // A Customize card's arg is its title, already a question: "Remember this?", "Change these?".
+    case 'Customize': return first ? (first.endsWith('?') ? first : `${first}?`) : 'Change how Frog works?'
     default: return first ? `Allow ${name} ${first}?` : `Allow ${name}?`
   }
 }

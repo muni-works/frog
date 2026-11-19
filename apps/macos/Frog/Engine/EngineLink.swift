@@ -36,8 +36,8 @@ extension EngineProcess: ConversationLink {
 
 extension Conversation {
     /// A conversation with its own engine. `arguments` are extra CLI flags, e.g. `["-r", id]`
-    /// or `["--fork", "id@3"]`.
-    convenience init(folder: URL, arguments: [String], model: String?) {
+    /// or `["--fork", "id@3"]`. `child`: a session another session started (no Customize caps).
+    convenience init(folder: URL, arguments: [String], model: String?, child: Bool = false) {
         let replay = arguments.contains("-r") || arguments.contains("--fork")
         // A reopened session is known before the engine says so: the sidebar selects it now.
         var session: String?
@@ -58,7 +58,10 @@ extension Conversation {
             try engine.start()
             // The Mac shows the engine's panes (a shared terminal, a live preview) and puts
             // the model's questions to the user, and lets sessions reach each other.
-            engine.send(.setClientCaps(panes: true, ask: true, sessions: true))
+            // Customize cards only for a session the person types in, never a child (reopened
+            // ones are known by the library's parents).
+            let top = !child && !(session.map { Library.shared.parents[$0] != nil } ?? false)
+            engine.send(.setClientCaps(panes: true, ask: true, sessions: true, customize: ClientCaps.customize(top: top)))
             // The app's settings the engine reads (noting on its own, from Customize › Memory).
             engine.send(.settings(values: CustomizeStore.engineSettings()))
         } catch {

@@ -180,3 +180,17 @@ export function pinModel(m: string | null, s: Store | null = store()) {
 }
 
 export const pinnedModel = (s: Store | null = store()): string | null => { try { return s?.getItem(DEFAULT_MODEL_KEY) ?? null } catch { return null } }
+
+/** The settings this app keeps that Customize may change (docs/customize-events.md), as the
+ *  engine names them: their current values (`Op::Settings`), so a card can quote the old one. */
+export function customizableSettings(): Record<string, string> {
+  return { theme: savedTheme(), density: savedDensity() }
+}
+
+/** A `setting_change` from Customize, or its undo: applied to this app's own setting. False for
+ *  a setting this app doesn't have (it lives on the Mac, or nowhere here yet). */
+export function applySetting(id: string, value: unknown): boolean {
+  if (id === 'theme' && (value === 'system' || value === 'light' || value === 'dark')) { setTheme(value); return true }
+  if (id === 'density' && (value === 'comfortable' || value === 'compact')) { setDensity(value); applyDensity(value); return true }
+  return false
+}
