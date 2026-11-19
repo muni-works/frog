@@ -135,8 +135,8 @@ The session's title at the left of the conversation's title row, and its menu.
 | Menu | Rename…, Archive (Unarchive when archived), a divider, Delete… (destructive) |
 | Rename | In place: the title becomes a field of the same type, 320 wide; Return or leaving the field saves, Escape cancels; an empty name keeps the old one |
 | Delete | Asks first, then deletes |
-| Surface | The title row is opaque in every mode (threads, Customize, Settings, Documentation): the canvas, the title bar's full height; pages scroll beneath it, never through the crumbs or controls |
-| A mode's own items | Customize's figure and action stand left of the window controls, 12 apart, in the same row; the figure is one line, cut at its end, and gives way before the action |
+| Surface | The title row is opaque in every mode (threads, Settings, Documentation): the canvas, the title bar's full height; pages scroll beneath it, never through the crumbs or controls |
+| A mode's own items | A Settings page's figure and action (Skills, Connections and the rest of its middle run) stand left of the window controls, 12 apart, in the same row; the figure is one line, cut at its end, and gives way before the action |
 
 **Where the two apps differed, and what was picked:**
 

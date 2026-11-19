@@ -1,7 +1,8 @@
-// Customize is a mode of the shell beside Documentation and Settings (docs/design/app-shell.md):
-// its routes, its sidebar, an explainer on every list page, what a Frog Cloud session really
-// reads (said plainly), the Mac's half as invitations, and no figure without an engine report.
-// Settings' Connections moved here on the web. These mount the whole App (test/app-harness.ts).
+// Skills, Connections, Rules, Memory and Automations are Settings' middle run (docs/design/
+// app-shell.md), each with a page of its own: their routes (and the old /customize links), an
+// explainer on every list page, what a Frog Cloud session really reads (said plainly), the Mac's
+// half as invitations, and no figure without an engine report. There is no Customize mode or row
+// any more. These mount the whole App (test/app-harness.ts).
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -13,7 +14,7 @@ import {
 } from "../src/customize.ts";
 import { CustomizePage } from "../src/ui/Customize.tsx";
 import { SAMPLE } from "../src/customize.sample.ts";
-import { settingsMovedTo, WEB_SECTIONS } from "../src/settings.ts";
+import { WEB_SECTIONS } from "../src/settings.ts";
 
 after(closeHarness);
 
@@ -50,45 +51,59 @@ test("each page has its own URL, and the URL names the page back", () => {
     { section: "connections", page: "review", id: "com.supabase/mcp" },
   ];
   for (const at of pages) assert.deepEqual(customizeAtOf(customizePath(at)), at, customizePath(at));
-  assert.equal(customizePath({ section: "connections", page: "review", id: "com.supabase/mcp" }), "/customize/connections/add/com.supabase%2Fmcp");
+  assert.equal(customizePath({ section: "connections", page: "review", id: "com.supabase/mcp" }), "/settings/connections/add/com.supabase%2Fmcp");
 });
 
-test("bare /customize opens Skills, old names open what they became, and other paths aren't Customize", () => {
+test("old /customize links open their Settings page, old names open what they became, and Settings' other sections aren't these", () => {
   assert.deepEqual(customizeAtOf("/customize"), { section: "skills" });
   assert.deepEqual(customizeAtOf("/customize/"), { section: "skills" });
   assert.deepEqual(customizeAtOf("/customize/instructions"), { section: "rules" });
   assert.deepEqual(customizeAtOf("/customize/mcp"), { section: "connections" });
   assert.deepEqual(customizeAtOf("/customize/nonsense"), { section: "skills" });
   assert.deepEqual(customizeAtOf("/customize/rules/whatever"), { section: "rules" });
-  assert.equal(customizeAtOf("/settings/skills"), null);
+  assert.deepEqual(customizeAtOf("/settings/skills"), { section: "skills" });
+  assert.equal(customizeAtOf("/settings/general"), null);
   assert.equal(customizeAtOf("/s/abc"), null);
-  assert.ok(customizePathIsCanonical("/customize/rules"));
+  assert.ok(customizePathIsCanonical("/settings/rules"));
+  assert.ok(!customizePathIsCanonical("/customize/rules"));
   assert.ok(!customizePathIsCanonical("/customize"));
+  assert.ok(!customizePathIsCanonical("/settings/mcp"));
+  assert.deepEqual(customizeAtOf("/settings/mcp"), { section: "connections" });
+  assert.deepEqual(customizeAtOf("/settings/skills/release-notes"), { section: "skills", page: "skill", name: "release-notes" });
+  assert.equal(customizeAtOf("/settings/billing"), null);
+  assert.equal(customizeAtOf("/settings"), null);
   assert.ok(!customizePathIsCanonical("/customize/instructions"));
 });
 
-test("a /customize link opens the mode on that page: Back to app and the five sections; crumbs in the header", async () => {
-  const p = await signedIn("/customize/rules");
-  assert.match(shownText(side(p)), /Back to app esc Skills Connections Rules Memory Automations/);
+test("/settings/rules opens Settings on Rules' own page: Settings' sidebar with all thirteen sections; crumbs in the header", async () => {
+  const p = await signedIn("/settings/rules");
+  assert.match(shownText(side(p)), /Back to app esc General Appearance Models Permissions Shortcuts Skills Connections Rules Memory Automations Usage Account Billing/);
   assert.equal(page(p)?.props["aria-label"], "Rules");
-  assert.equal(crumbs(p), "Customize › Rules");
-  await click(find(p, (n) => n.type === "a" && shownText(n) === "Memory" && String(n.props.className ?? "").includes("srow")));
+  assert.equal(crumbs(p), "Settings › Rules");
+  await click(find(p, (n) => n.type === "button" && shownText(n) === "Memory" && String(n.props.className ?? "").includes("srow")));
   assert.equal(page(p)?.props["aria-label"], "Memory");
-  assert.equal(p.path(), "/customize/memory");
-  p.unmount();
-});
-
-test("signed out, a /customize link opens the app instead", async () => {
-  const p = await mount("/customize/skills", { respond: () => undefined });
+  assert.equal(p.path(), "/settings/memory");
+  // Another section is Settings' own rows again.
+  await click(find(p, (n) => n.type === "button" && shownText(n) === "Billing" && String(n.props.className ?? "").includes("srow")));
   assert.equal(page(p), undefined);
+  assert.equal(find(p, hasClass("settings-page"))?.props["aria-label"], "Billing");
   p.unmount();
 });
 
-test("the palette opens Customize and each section", async () => {
+test("signed out, a /settings/skills or old /customize link opens the app instead", async () => {
+  for (const path of ["/settings/skills", "/customize/skills"]) {
+    const p = await mount(path, { respond: () => undefined });
+    assert.equal(page(p), undefined, path);
+    p.unmount();
+  }
+});
+
+test("the palette opens each of the five as a Settings section, and has no Customize command", async () => {
   const p = await signedIn("/");
   await key("k");
-  const item = find(p, byText("button", /^Rules\s*Customize/)) ?? find(p, (n) => shownText(n).startsWith("Rules") && shownText(n).includes("Customize") && typeof n.props.onClick === "function");
-  assert.ok(item, "a Rules › Customize command");
+  assert.equal(find(p, (n) => typeof n.props.onClick === "function" && /Customize/.test(shownText(n))), undefined);
+  const item = find(p, byText("button", /^Rules\s*Settings/)) ?? find(p, (n) => shownText(n).startsWith("Rules") && shownText(n).includes("Settings") && typeof n.props.onClick === "function");
+  assert.ok(item, "a Rules › Settings command");
   await click(item);
   assert.equal(page(p)?.props["aria-label"], "Rules");
   p.unmount();
@@ -121,7 +136,7 @@ test("the docs link goes to /docs/<section> once that page exists, else the page
 // ---------- what's real, what's an invitation, what's hidden ----------
 
 test("Skills says where a cloud session reads skills, lists the repos it can open, and invites to the Mac for home skills", async () => {
-  const p = await signedIn("/customize/skills");
+  const p = await signedIn("/settings/skills");
   const t = shownText(page(p)!);
   assert.match(t, /In your repos Skills in a repo A cloud session uses the skills in the repo it opens, from \.frog\/skills ?, \.agents\/skills or \.claude\/skills/);
   assert.match(t, /Repos Frog Cloud can open ada\/pond, ada\/site 2 Choose repos/);
@@ -130,24 +145,24 @@ test("Skills says where a cloud session reads skills, lists the repos it can ope
 });
 
 test("with no repos and no install link, the repo row says so and promises no link", async () => {
-  const p = await signedIn("/customize/rules", { repos: [] });
+  const p = await signedIn("/settings/rules", { repos: [] });
   assert.match(shownText(page(p)!), /Repos Frog Cloud can open None yet\. (?!Choose)/);
   p.unmount();
 });
 
 test("Connections, Rules and Memory say what's true of a cloud session; Automations is an empty state", async () => {
-  const c = await signedIn("/customize/connections");
+  const c = await signedIn("/settings/connections");
   assert.match(shownText(page(c)!), /reads its repo's \.mcp\.json and tries to start the servers it lists\. A sandbox can only read the open web/);
   assert.match(shownText(page(c)!), /On your Mac Connections on your own machine .* Sign in to a server/);
   c.unmount();
-  const r = await signedIn("/customize/rules");
+  const r = await signedIn("/settings/rules");
   assert.match(shownText(page(r)!), /reads AGENTS\.md ?, FROG\.md or CLAUDE\.md from the root of the repo it opens/);
   r.unmount();
-  const m = await signedIn("/customize/memory");
+  const m = await signedIn("/settings/memory");
   assert.match(shownText(page(m)!), /No notes kept Each cloud session starts on a fresh machine/);
   assert.match(shownText(page(m)!), /On your Mac Notes Frog keeps/);
   m.unmount();
-  const a = await signedIn("/customize/automations");
+  const a = await signedIn("/settings/automations");
   assert.match(shownText(page(a)!), /Nothing repeats yet\. When automations arrive, you'll make one by doing the task once in a conversation and saying "keep doing this"/);
   assert.match(shownText(page(a)!), /Today/);
   a.unmount();
@@ -171,26 +186,26 @@ test("no control on the web pretends: every button routes or links, switches are
 });
 
 test("Add (F9Find) on the web says how to add to a repo, and invites to the Mac for search and review", async () => {
-  const p = await signedIn("/customize/skills");
+  const p = await signedIn("/settings/skills");
   await click(find(p, byText("button", "Add a skill")));
-  assert.equal(p.path(), "/customize/skills/add");
-  assert.equal(crumbs(p), "Customize › Skills › Add");
+  assert.equal(p.path(), "/settings/skills/add");
+  assert.equal(crumbs(p), "Settings › Skills › Add");
   const t = shownText(page(p)!);
   assert.match(t, /Add a skill to a repo Commit a folder with a SKILL\.md under \.frog\/skills/);
   assert.match(t, /On your Mac Find a skill/);
   p.unmount();
   // A result's review needs a search the web doesn't have: its URL opens Add, and says so.
-  const r = await signedIn("/customize/connections/add/com.supabase%2Fmcp");
-  assert.equal(crumbs(r), "Customize › Connections › Add");
-  assert.equal(r.path(), "/customize/connections/add");
+  const r = await signedIn("/settings/connections/add/com.supabase%2Fmcp");
+  assert.equal(crumbs(r), "Settings › Connections › Add");
+  assert.equal(r.path(), "/settings/connections/add");
   r.unmount();
 });
 
 test("a skill's page with no report opens the Skills list, and the URL says so", async () => {
-  const p = await signedIn("/customize/skills/release-notes");
+  const p = await signedIn("/settings/skills/release-notes");
   assert.match(shownText(page(p)!), /Skills in a repo/);
-  assert.equal(crumbs(p), "Customize › Skills");
-  assert.equal(p.path(), "/customize/skills");
+  assert.equal(crumbs(p), "Settings › Skills");
+  assert.equal(p.path(), "/settings/skills");
   p.unmount();
 });
 
@@ -234,18 +249,53 @@ test("figure helpers say plain words", () => {
   assert.deepEqual(days, ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Today"]);
 });
 
-// ---------- Connections moved out of Settings ----------
+// ---------- Customize is gone: every old way in lands on its Settings section ----------
 
-test("Settings on the web no longer lists Connections; its old links open Customize › Connections", async () => {
-  assert.ok(!WEB_SECTIONS.some((s) => s.id === "connections"));
-  assert.equal(settingsMovedTo("/settings/connections"), "connections");
-  assert.equal(settingsMovedTo("/settings/mcp"), "connections");
-  assert.equal(settingsMovedTo("/", "?settings=mcp"), "connections");
-  assert.equal(settingsMovedTo("/settings/billing"), null);
-  const p = await signedIn("/settings/mcp");
-  assert.equal(page(p)?.props["aria-label"], "Connections");
-  assert.equal(p.path(), "/customize/connections");
+test("the five sections here are design/settings.json's run 2, in its order, with its labels", () => {
+  assert.deepEqual(CUSTOMIZE_SECTIONS.map((s) => [s.id, s.label]), WEB_SECTIONS.filter((s) => s.run === 2).map((s) => [s.id, s.label]));
+});
+
+test("Settings lists all five; every old Customize entry point lands on its Settings section", async () => {
+  for (const id of ["skills", "connections", "rules", "memory", "automations"]) assert.ok(WEB_SECTIONS.some((s) => s.id === id), id);
+  const cases: [string, string, string][] = [
+    ["/customize", "Skills", "/settings/skills"],
+    ["/customize/rules", "Rules", "/settings/rules"],
+    ["/customize/instructions", "Rules", "/settings/rules"],
+    ["/customize/mcp", "Connections", "/settings/connections"],
+    ["/customize/memory", "Memory", "/settings/memory"],
+    ["/customize/automations", "Automations", "/settings/automations"],
+    ["/customize/skills/add", "Add", "/settings/skills/add"],
+    ["/settings/mcp", "Connections", "/settings/connections"],
+    ["/settings/connections", "Connections", "/settings/connections"],
+    ["/?settings=mcp", "Connections", "/settings/connections"],
+  ];
+  for (const [from, label, to] of cases) {
+    const p = await signedIn(from);
+    assert.equal(page(p)?.props["aria-label"], label, from);
+    assert.equal(p.path(), to, from);
+    assert.match(crumbs(p), /^Settings › /, from);
+    p.unmount();
+  }
+});
+
+test("the app sidebar has New session, Search and Settings, and no Customize row", async () => {
+  const p = await signedIn("/");
+  const nav = find(p, (n) => n.type === "nav" && n.props["aria-label"] === "Main")!;
+  assert.match(shownText(nav), /^New session ⌘N Search ⌘K Settings ⌘,$/);
+  assert.equal(find(p, (n) => n.type === "button" && /Customize/.test(shownText(n))), undefined);
   p.unmount();
+});
+
+test("no shown string says Customize on any of the five pages", async () => {
+  for (const s of CUSTOMIZE_SECTIONS) {
+    const p = await signedIn(customizePath({ section: s.id }));
+    const main = find(p, hasClass("customize-main"))!;
+    assert.doesNotMatch(shownText(main), /Customize/, s.id);
+    assert.doesNotMatch(shownText(side(p)), /Customize/, s.id);
+    p.unmount();
+  }
+  const html = renderToStaticMarkup(h(CustomizePage, { at: { section: "skills" }, report: SAMPLE.report, automations: SAMPLE.automations, docSlugs: [], onOpen() {}, onDocs() {} }));
+  assert.doesNotMatch(html.replace(/class="[^"]*"/g, ""), /Customize/);
 });
 
 // ---------- production and the sample ----------
@@ -255,14 +305,6 @@ test("the dev sample is only ever loaded behind import.meta.env.DEV", () => {
   const uses = app.split("\n").filter((l) => l.includes("customize.sample"));
   assert.equal(uses.length, 1);
   assert.match(uses[0], /import\.meta\.env\.DEV && .*import\('\.\/customize\.sample'\)/);
-});
-
-test("the app sidebar's Customize row opens Customize on Skills", async () => {
-  const p = await signedIn("/");
-  await click(find(p, (n) => n.type === "button" && shownText(n) === "Customize"));
-  assert.equal(page(p)?.props["aria-label"], "Skills");
-  assert.equal(p.path(), "/customize/skills");
-  p.unmount();
 });
 
 test("the empty list's \"Fix a bug in one of my repos\" opens Settings › Account to connect GitHub", async () => {

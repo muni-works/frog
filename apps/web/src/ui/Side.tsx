@@ -9,7 +9,6 @@ import { Muni } from './Pond'
 const IC = {
   new: 'M8 3.5v9M3.5 8h9',
   search: 'M7 3a4 4 0 1 0 0 8a4 4 0 1 0 0-8M10 10l3 3',
-  customize: 'M3 5h5M12 5h1M3 11h1M8 11h5M10 3.4a1.6 1.6 0 1 0 0 3.2a1.6 1.6 0 1 0 0-3.2M6 9.4a1.6 1.6 0 1 0 0 3.2a1.6 1.6 0 1 0 0-3.2',
   docs: 'M3 3.5h4a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 0 7 11.5H3zM13 3.5H9.5A1.5 1.5 0 0 0 8 5M13 3.5v8H9.5',
   settings: 'M8 6a2 2 0 1 0 0 4a2 2 0 1 0 0-4M8 2.5v1.5M8 12v1.5M2.5 8H4M12 8h1.5M4.1 4.1l1 1M10.9 10.9l1 1M4.1 11.9l1-1M10.9 5.1l1-1',
 }
@@ -34,11 +33,11 @@ function SideRow({ icon, label, kb, on, onClick, title }: { icon: string; label:
 /** The Documentation row, hidden for now. */
 const SHOW_DOCS = false
 
-/** New session and Search, then Customize and Settings (Documentation when it's back). */
-export function SideNav({ onNew, onSearch, onCustomize, onDocs, onSettings, newOn }: {
+/** New session and Search, then Settings (Documentation when it's back). Skills, connections,
+ *  rules, memory and automations are Settings sections. */
+export function SideNav({ onNew, onSearch, onDocs, onSettings, newOn }: {
   onNew: () => void
   onSearch: () => void
-  onCustomize: () => void
   onDocs: () => void
   onSettings: () => void
   newOn?: boolean
@@ -47,7 +46,6 @@ export function SideNav({ onNew, onSearch, onCustomize, onDocs, onSettings, newO
     <nav aria-label="Main" className="side-nav">
       <SideRow icon={IC.new} label="New session" kb="⌘N" on={newOn} onClick={onNew} />
       <SideRow icon={IC.search} label="Search" kb="⌘K" onClick={onSearch} />
-      <SideRow icon={IC.customize} label="Customize" onClick={onCustomize} title="Skills, connections, rules, memory and automations" />
       {/* Documentation is hidden for now (Cam, 2026-11-19); `onDocs` stays wired for its return. */}
       {SHOW_DOCS && <SideRow icon={IC.docs} label="Documentation" onClick={onDocs} />}
       <SideRow icon={IC.settings} label="Settings" kb="⌘," onClick={onSettings} />

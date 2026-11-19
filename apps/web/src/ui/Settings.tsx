@@ -15,7 +15,8 @@ import { creditLine, dollars } from './Overlays'
 // design/settings.json, the list the Mac draws too: each row the web can do is drawn by RENDER
 // below, and each of the Mac's rows (platform invite) is an invitation under "On your Mac".
 
-/** Back to app, then one row per section. */
+/** Back to app, then one row per section, in three runs with a small gap between (no labels):
+ *  the app, what Frog knows and can do, you. */
 export function SettingsSidebar({ current, onBack, onOpen }: { current: Section; onBack: () => void; onOpen: (s: Section) => void }) {
   return (
     <div className="docs-side settings-side">
@@ -23,8 +24,8 @@ export function SettingsSidebar({ current, onBack, onOpen }: { current: Section;
         <button type="button" className="row big" onClick={onBack}><Icon d={ICON.arrowLeft} size={17} /><span style={{ flex: 1 }}>Back to app</span><span className="kb">esc</span></button>
       </nav>
       <div className="docs-list">
-        {WEB_SECTIONS.map((s) => (
-          <button key={s.id} type="button" className={`srow${s.id === current ? ' on' : ''}`} aria-current={s.id === current ? 'page' : undefined} onClick={() => onOpen(s.id)}>
+        {WEB_SECTIONS.map((s, i) => (
+          <button key={s.id} type="button" className={`srow${s.id === current ? ' on' : ''}${i > 0 && WEB_SECTIONS[i - 1].run !== s.run ? ' run-start' : ''}`} aria-current={s.id === current ? 'page' : undefined} onClick={() => onOpen(s.id)}>
             <span className="stitle">{s.label}</span>
           </button>
         ))}

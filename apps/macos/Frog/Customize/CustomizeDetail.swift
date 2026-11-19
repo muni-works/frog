@@ -212,7 +212,7 @@ struct ReviewActions: View {
             Button("Cancel") { store.reviewProblem = nil; panes.customizePage = .add(panes.customizeSection) }
                 .buttonStyle(CustomizePillStyle())
             Button(addLabel) {
-                if store.add(draft) { panes.showCustomize("connections"); panes.customizePage = nil }
+                if store.add(draft) { panes.showSettings("connections"); panes.customizePage = nil }
             }
             .buttonStyle(CustomizePillStyle(primary: true))
             .help(store.folder == nil || store.reviewEverywhere ? "Adds it to ~/.config/frog/config.toml" : "Adds it to the project's .mcp.json")

@@ -5,14 +5,14 @@ import XCTest
 
 /// The title row is an opaque surface in every mode (docs/design/chrome/spec.md, 3): a page
 /// scrolled down runs beneath it, never through the crumbs and the window controls. Found in
-/// Cam's click-through (2026-11-19): Customize › Skills scrolled, its rows ran through
-/// "Customize › Skills", the figure and the capsule.
+/// Cam's click-through (2026-11-19): Skills scrolled, its rows ran through its crumbs ("Settings ›
+/// Skills" now), the figure and the capsule.
 ///
 /// The real `WorkspaceView` with its toolbar bridged into a titled, unified window, ordered in
 /// hidden (`orderInForTest`), as `FlushSnapshotTests` does; every scroll view is scrolled to its
 /// end, and the title row's empty middle (between the crumbs and the controls) must be canvas.
-/// Settings › Shortcuts is long in any test host (Customize's lists and the docs page aren't
-/// here: no skills, and the docs page didn't scroll), and every mode page gets the same surface.
+/// Settings › Shortcuts is long in any test host; Settings › Skills is made long with the
+/// agent pages' fixture (CustomizeModeTests) so a moved page is checked too.
 @MainActor
 final class HeaderSurfaceTests: XCTestCase {
     private let folder = URL(fileURLWithPath: "/tmp/demo")
@@ -78,5 +78,17 @@ final class HeaderSurfaceTests: XCTestCase {
     func testSettingsScrolledStaysUnderTheTitleRow() throws {
         let ink = try inkInTitleRow { $0.showSettings("shortcuts") }
         XCTAssertEqual(ink, 0, "Settings scrolled: the page shows through the title row")
+    }
+
+    /// An agent section (once its own mode) under the same band: Skills with the fixture's skills,
+    /// scrolled to its end.
+    func testSkillsScrolledStaysUnderTheTitleRow() throws {
+        CustomizeStore.loads = false
+        defer { CustomizeStore.loads = true }
+        let ink = try inkInTitleRow { panes in
+            panes.showSettings("skills")
+            CustomizeModeTests.stageFixture(panes.customize)
+        }
+        XCTAssertEqual(ink, 0, "Settings › Skills scrolled: the page shows through the title row")
     }
 }

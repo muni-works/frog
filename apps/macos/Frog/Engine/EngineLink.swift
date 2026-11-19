@@ -62,7 +62,7 @@ extension Conversation {
             // ones are known by the library's parents).
             let top = !child && !(session.map { Library.shared.parents[$0] != nil } ?? false)
             engine.send(.setClientCaps(panes: true, ask: true, sessions: true, customize: ClientCaps.customize(top: top), notes: ClientCaps.notes(top: top)))
-            // The app's settings the engine reads (noting on its own, from Customize › Memory).
+            // The app's settings the engine reads (noting on its own, from Settings › Memory).
             engine.send(.settings(values: CustomizeStore.engineSettings()))
         } catch {
             self.init(folder: folder, link: nil, replay: replay, session: session,

@@ -10,7 +10,7 @@ import { LegalRow, SideNav, SidePill, Starters } from './Side'
 // in, the legal row.
 
 /** The Sign in row: a green Sign in and what it adds; opens the same GitHub / Google choice the
- *  composer's Sign in pill does. `open` lets the sidebar's Settings and Customize ask for it too. */
+ *  composer's Sign in pill does. `open` lets the sidebar's Settings ask for it too. */
 export function SignInRow({ onSignIn, open: asked, onOpenChange }: { onSignIn: (provider: Provider) => void; open?: boolean; onOpenChange?: (open: boolean) => void }) {
   const [own, setOwn] = useState(false)
   const open = asked ?? own
@@ -52,7 +52,7 @@ interface Props {
 export function SignedOutSide({ onNew, chip, onDocs, onSignIn }: Props) {
   const [ask, setAsk] = useState(false)
   return (<>
-    <SideNav onNew={onNew} newOn onSearch={onNew} onCustomize={() => setAsk(true)} onDocs={onDocs} onSettings={() => setAsk(true)} />
+    <SideNav onNew={onNew} newOn onSearch={onNew} onDocs={onDocs} onSettings={() => setAsk(true)} />
     <Starters onStart={(s) => onSignIn('github', s.prompt || undefined)} />
     <div className="side-foot">
       {chip && <SidePill dot="go" lead="Frog for Mac" rest="$0 a token" action="Get" href={chip.href} />}

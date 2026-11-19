@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createElement as h, useState } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { byText, click, closeHarness, find, hasClass, key, mount, shownText, act, dispatch, type HostNode, type Page } from "./app-harness.ts";
+import { byText, click, closeHarness, find, hasClass, key, mount, shownText, visible, act, dispatch, type HostNode, type Page } from "./app-harness.ts";
 import { redeem } from "./mock/account.mjs";
 import TestRenderer from "react-test-renderer";
 import { Coupon, creditRowLabel, DRAWN_BY, RENDER, SettingsPage, SettingsSidebar, WEB_SHORTCUTS } from "../src/ui/Settings.tsx";
@@ -80,16 +80,18 @@ test("⌘, opens Settings mode on Account: the sidebar is Back to app and the se
   await key(",");
   assert.equal(p.path(), "/settings/account");
   assert.equal(sectionShown(p), "Account");
-  assert.match(shownText(side(p)), /Back to app esc General Appearance Models Permissions Shortcuts Usage Account Billing/, "Connections moved to Customize on the web");
+  assert.match(shownText(side(p)), /Back to app esc General Appearance Models Permissions Shortcuts Skills Connections Rules Memory Automations Usage Account Billing/, "thirteen sections");
+  // Three runs with a small gap between them, no labels: Skills and Usage start a run.
+  assert.deepEqual(visible(side(p)).filter(hasClass("run-start")).map((n) => shownText(n)), ["Skills", "Usage"]);
   assert.equal(find(p, (n) => n.props.role === "dialog"), undefined, "no settings overlay");
   p.unmount();
 });
 
-test("the Settings row (gear) under Customize opens Settings; the account row opens Account", async () => {
+test("the Settings row (gear) under Search opens Settings; the account row opens Account", async () => {
   const p = await signedIn("/");
   const s = shownText(side(p));
-  // Documentation is hidden for now (ui/Side.tsx SHOW_DOCS), so Settings follows Customize.
-  assert.match(s, /New session ⌘N Search ⌘K Customize Settings ⌘,/, "the top rows, Settings after Customize");
+  // Documentation is hidden for now (ui/Side.tsx SHOW_DOCS), and Customize is in Settings now.
+  assert.match(s, /New session ⌘N Search ⌘K Settings ⌘,/, "the top rows, Settings after Search");
   await click(find(p, (n) => n.type === "button" && hasClass("side-row")(n) && shownText(n).startsWith("Settings")));
   assert.ok(page(p), "Settings mode");
   await click(btn(p, "Billing"));
@@ -498,11 +500,10 @@ test("Appearance: Compact puts the transcript's compact gaps on the page and kee
   p.unmount();
 });
 
-test("Shortcuts lists the web's own keys; Usage is the Mac's rows as invitations (Connections is in Customize)", async () => {
+test("Shortcuts lists the web's own keys; Usage is the Mac's rows as invitations", async () => {
   const p = await signedIn("/settings/shortcuts");
   const t = shownText(page(p)!);
   for (const [, keys] of WEB_SHORTCUTS) for (const [what] of keys) assert.ok(t.includes(what), what);
-  assert.equal(btn(p, "Connections"), undefined);
   await click(btn(p, "Usage"));
   assert.match(shownText(page(p)!), /^On your Mac Measured energy for this Mac/);
   p.unmount();

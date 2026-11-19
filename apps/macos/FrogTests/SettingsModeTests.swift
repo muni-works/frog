@@ -23,10 +23,15 @@ final class SettingsModeTests: XCTestCase {
         return FileManager.default.temporaryDirectory.appending(path: "frog-snapshots")
     }
 
-    /// Connections moved to Customize (CustomizeModeTests).
-    func testTheListIsBundledWithEightSectionsInOrder() {
+    /// Thirteen sections in three runs: how the app behaves, what the agent knows and can do
+    /// (CustomizeModeTests), usage and the account.
+    func testTheListIsBundledWithThirteenSectionsInThreeRuns() {
         XCTAssertEqual(catalog.sections.map(\.label),
-                       ["General", "Appearance", "Models", "Permissions", "Shortcuts", "Usage", "Account", "Billing"])
+                       ["General", "Appearance", "Models", "Permissions", "Shortcuts",
+                        "Skills", "Connections", "Rules", "Memory", "Automations",
+                        "Usage", "Account", "Billing"])
+        XCTAssertEqual(catalog.sections.map(\.run), [1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3])
+        XCTAssertEqual(catalog.sections.filter { $0.explainer != nil }.map(\.run), [2, 2, 2, 2, 2], "only the agent sections have explainers")
         XCTAssertFalse(catalog.rows.isEmpty)
     }
 
@@ -98,6 +103,8 @@ final class SettingsModeTests: XCTestCase {
         XCTAssertEqual(catalog.section(for: URL(string: "frog://settings/lend")!), "models")
         XCTAssertEqual(catalog.section(for: URL(string: "frog://settings")!), "account")
         XCTAssertEqual(catalog.section(for: URL(string: "frog-dev://settings/usage")!), "usage", "a Debug build's links")
+        XCTAssertEqual(catalog.section(for: URL(string: "frog://settings/skills")!), "skills")
+        XCTAssertEqual(catalog.section(for: URL(string: "frog://settings/mcp")!), "connections")
         XCTAssertNil(catalog.section(for: URL(string: "frog://pair?code=1")!))
         XCTAssertNil(catalog.section(for: URL(string: "https://frog.toys/settings/billing")!))
     }

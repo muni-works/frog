@@ -664,6 +664,8 @@ body { font-family: var(--font-sans); }
 .docs-clear { width: 22px; height: 22px; }
 .docs-list { flex: 1; min-height: 0; overflow-y: auto; }
 .docs-list a.srow { text-decoration: none; }
+/* Settings' three runs (the app, what Frog knows and can do, you): a small gap, no labels. */
+.settings-side .srow.run-start { margin-top: 10px; }
 .docs-h { font-size: 12px; font-weight: 600; color: var(--muted); padding: 14px 10px 4px; }
 .docs-ver { padding: 10px 10px 2px; color: var(--faint); }
 .docs-page { gap: 0; padding-bottom: 40px; }

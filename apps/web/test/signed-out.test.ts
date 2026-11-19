@@ -16,7 +16,7 @@ const keyed = (p: Page) => p.calls.filter((c) => c.auth !== null);
 test("signed out, the sidebar is the signed-in layout: top rows, starters, then the pill, Sign in and the legal row", async () => {
   const p = await mount("/");
   const s = shownText(side(p));
-  for (const t of ["New session", "Search", "Customize", "Settings", "Start with one of these", "Make a tiny pomodoro timer",
+  for (const t of ["New session", "Search", "Settings", "Start with one of these", "Make a tiny pomodoro timer",
     "Frog for Mac", "Sign in", "25¢ free, $1 with GitHub", "Pricing", "Privacy", "Terms"])
     assert.ok(s.includes(t), `sidebar has "${t}": ${s}`);
   assert.ok(!s.includes("Documentation"), `Documentation is hidden for now: ${s}`);
