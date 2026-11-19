@@ -293,6 +293,13 @@ pub struct Config {
     /// `StartSession`; kept in the session log so a resume stays one). Not a config.toml key.
     #[serde(skip)]
     pub worker: bool,
+    /// The person (or their own script) drives this engine directly, over a client that never
+    /// marks text typed: `frog -p`, an editor over ACP. `/remember` and `/forget` then work
+    /// untyped; in a session an app hosts they need text the person typed in its composer
+    /// (docs/customize-events.md). Never set for `--serve`, `--serve-ws` or `--listen`. Not a
+    /// config.toml key.
+    #[serde(skip)]
+    pub direct: bool,
     /// Set on a subagent's config by its parent: the parent's egress state, so the subagent's
     /// commands obey the same list and grants and its hits surface in the parent's
     /// transcript. Not a config.toml key.

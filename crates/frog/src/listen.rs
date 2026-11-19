@@ -226,7 +226,8 @@ async fn handle(mut sock: TcpStream, token: &str, t: &Template) -> Result<()> {
         text: turn.text,
         images: Vec::new(),
         more: Vec::new(),
-        // Not typed: a message from a chat bridge, not the composer.
+        // Not typed: a message from a chat bridge, not the composer. And not `Config::direct`
+        // (the sender may not be the owner), so `/remember` and `/forget` are refused here.
         typed: false,
     })?;
     h.ops.send(Op::Shutdown)?;

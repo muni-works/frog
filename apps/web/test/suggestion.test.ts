@@ -150,3 +150,20 @@ test("one string (a follow-up) stays put; none, the usual placeholder", () => {
   assert.equal(none.field().props.placeholder, "What should we work on?");
   none.r.unmount();
 });
+
+// Review 3, LIVE 1: the model wrote the suggestion. Taken with Tab and sent unedited, it isn't
+// the person's words (`typed` stays off); edited, it's theirs.
+test("a suggestion taken with Tab goes untyped unless edited", () => {
+  const sent: [string, boolean | undefined][] = [];
+  const c = render({ suggestion: LIST, session: true, onSend: (t, _i, typed) => { sent.push([t, typed]); } });
+  c.key("Tab");
+  c.key("Enter", { nativeEvent: { isComposing: false } });
+  assert.deepEqual(sent, [[LIST[0], false]], "unedited: untyped");
+  c.r.unmount();
+  const d = render({ suggestion: LIST, session: true, onSend: (t, _i, typed) => { sent.push([t, typed]); } });
+  d.key("Tab");
+  d.type(`${LIST[0]} and the lint`);
+  d.key("Enter", { nativeEvent: { isComposing: false } });
+  assert.deepEqual(sent[1], [`${LIST[0]} and the lint`, true], "edited: typed");
+  d.r.unmount();
+});

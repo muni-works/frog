@@ -56,7 +56,7 @@ impl Status {
 }
 
 /// What `-p` sends. Not typed: it may be a script, and nobody is there to see a change. An
-/// explicit slash command (`/remember …`) still works, as from any top-level client.
+/// explicit slash command (`/remember …`) still works: `-p` runs with `Config::direct`.
 pub(crate) fn submit(prompt: String) -> Op {
     Op::Submit {
         text: prompt,
@@ -294,15 +294,16 @@ mod kids_tests {
     }
 }
 
-/// Review 2, item 10: an explicit slash command keeps working from clients that can't vouch
-/// the text was typed: `frog -p` and an editor over ACP send untyped submits, and
-/// `/remember …` from either still saves a note in a top-level session.
+/// Review 3, LIVE 5: an explicit slash command keeps working from clients the person drives
+/// directly (`Config::direct`): `frog -p` and an editor over ACP send untyped submits, and
+/// `/remember …` from either still saves a note. The same untyped submit to an engine an app
+/// hosts (`--serve`, `--listen`: not direct) is refused.
 #[cfg(test)]
 mod slash_tests {
     use frog_engine::config::{Config, Profile, ProviderKind};
     use frog_engine::{Event, Mode, Op, Options};
 
-    async fn remembered_via(op: Op) -> Vec<String> {
+    async fn remembered_via(op: Op, direct: bool) -> Vec<String> {
         let base = std::env::temp_dir().join(format!(
             "frog-slash-{}-{}",
             std::process::id(),
@@ -314,6 +315,7 @@ mod slash_tests {
         let opts = Options {
             cfg: Config {
                 hermetic: true,
+                direct,
                 ..Config::default()
             },
             profile_name: "test".into(),
@@ -354,10 +356,15 @@ mod slash_tests {
             crate::acp::submit("/remember we deploy on fridays".into(), Vec::new()),
         ] {
             assert!(matches!(op, Op::Submit { typed: false, .. }));
-            let notices = remembered_via(op).await;
+            let notices = remembered_via(op.clone(), true).await;
             assert!(
                 notices.iter().any(|n| n.starts_with("remembered")),
                 "{notices:?}"
+            );
+            let notices = remembered_via(op, false).await;
+            assert!(
+                !notices.iter().any(|n| n.starts_with("remembered")),
+                "an app-hosted engine refuses it untyped: {notices:?}"
             );
         }
     }

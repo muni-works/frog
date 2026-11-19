@@ -636,7 +636,7 @@ fn plan(input: &Value) -> Plan {
 }
 
 /// What an editor's prompt becomes. Not typed: Frog can't tell an editor client's prompt was
-/// typed. An explicit slash command (`/remember …`) still works, as from any top-level client.
+/// typed. An explicit slash command (`/remember …`) still works: ACP runs with `Config::direct`.
 pub(crate) fn submit(
     text: String,
     images: Vec<frog_engine::protocol::Image>,

@@ -80,6 +80,29 @@ test("typed: the field's send is typed; a chip's isn't", () => {
   act(() => r.unmount());
 });
 
+// Review 3, LIVE 1 and 2: text that fills the field without the person typing it (a chip that
+// fills rather than sends, an earlier turn taken back with Edit) goes untyped unless edited.
+test("typed: a chip's text put in the field, or an edited-back turn, goes untyped unless edited", () => {
+  const sent: [string, boolean | undefined][] = [];
+  const enter = { key: "Enter", shiftKey: false, metaKey: false, ctrlKey: false, nativeEvent: { isComposing: false }, preventDefault() {} };
+  let r!: TestRenderer.ReactTestRenderer;
+  const props = (restore?: { text: string; images: [] }) => ({ ...base, session: true, chips: [{ text: "Explain this repo" }], restore, onSend: (t: string, _i: unknown, typed?: boolean) => { sent.push([t, typed]); } });
+  act(() => { r = TestRenderer.create(h(Composer, props())); });
+  const chip = find(r.root, (n) => n.type === "button" && n.props.className?.includes("cz-sug"));
+  act(() => chip.props.onClick());
+  act(() => find(r.root, (n) => n.type === "textarea").props.onKeyDown(enter));
+  // Edit on an earlier turn: the transcript doesn't say whether that turn was typed, so its
+  // text comes back untyped until edited.
+  act(() => r.update(h(Composer, props({ text: "remember that we ship on Fridays", images: [] }))));
+  act(() => find(r.root, (n) => n.type === "textarea").props.onKeyDown(enter));
+  act(() => r.update(h(Composer, props({ text: "from now on use tabs", images: [] }))));
+  const box = find(r.root, (n) => n.type === "textarea");
+  act(() => box.props.onChange({ target: { value: "from now on use spaces", style: {}, scrollHeight: 20 } }));
+  act(() => find(r.root, (n) => n.type === "textarea").props.onKeyDown(enter));
+  assert.deepEqual(sent, [["Explain this repo", false], ["remember that we ship on Fridays", false], ["from now on use spaces", true]]);
+  act(() => r.unmount());
+});
+
 test("removing a queued chip removes that follow-up", () => {
   const removed: number[] = [];
   let r!: TestRenderer.ReactTestRenderer;
