@@ -68,7 +68,9 @@ struct PaneArea: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if !stripInTitleRow { strip }
+            // In the column, the strip's tabs share the sidebar's first row (FlushColumnsTests):
+            // the sidebar's rows are 32 tall since #468 (were 30), so the strip comes down to them.
+            if !stripInTitleRow { strip.padding(.top, Self.sidebarRowNudge) }
             ZStack {
                 switch current {
                 case .tab(.changes):
@@ -120,6 +122,10 @@ struct PaneArea: View {
 
     /// The tabs and the close button. In the column, or in the window's title row (a toolbar
     /// item: content under the toolbar can't take clicks on macOS 27).
+    /// What the in-column strip comes down to stay on the sidebar's first row, whose rows are
+    /// 32 tall (`SessionList.navRow`).
+    static let sidebarRowNudge: CGFloat = 1.5
+
     var strip: some View {
         HStack(spacing: 2) {
             ForEach(slots, id: \.self) { slot in

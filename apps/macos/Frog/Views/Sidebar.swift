@@ -1550,7 +1550,7 @@ struct CompactSessionRow<Menu: View>: View {
         switch glyph {
         case .running:
             if let speed, speed > 0 {
-                metaText("\(speed) tok/s").foregroundStyle(.secondary)
+                metaText(ModelStats.speedText(Double(speed))).foregroundStyle(.secondary)
             } else {
                 ProgressView().controlSize(.mini).scaleEffect(0.7).frame(width: 12, height: 12).help("working")
             }
