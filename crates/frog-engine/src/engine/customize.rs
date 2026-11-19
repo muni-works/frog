@@ -129,7 +129,49 @@ rules or tools. Don't retry; tell the session that started you if it matters."
                 "The user already said not now to this in this session. Don't offer it again."
             );
         }
-        let planned = self.plan(&change, asked_by)?;
+        // A shared rules file Frog won't write (a link out of the project, a hard-linked
+        // pair, a read-only file) still leaves a private way: the same line in the notes.
+        let mut refused = None;
+        let change = match change {
+            Change::Line {
+                op: LineOp::Add,
+                target: Target::Project,
+                line,
+                ..
+            } if !self.chat => match self.line_place(Target::Project).and_then(|(_, p)| {
+                // Only the file itself refused, not the line (already there, not a rule).
+                let p = p.context("no file")?;
+                cz::read_opt(&p)?;
+                cz::writable(&p)
+            }) {
+                Err(e) if self.note_after(LineOp::Add, &line, None).is_ok() => {
+                    refused = Some(format!("{e:#}"));
+                    Change::Line {
+                        op: LineOp::Add,
+                        target: Target::Notes,
+                        line,
+                        to: None,
+                    }
+                }
+                _ => Change::Line {
+                    op: LineOp::Add,
+                    target: Target::Project,
+                    line,
+                    to: None,
+                },
+            },
+            c => c,
+        };
+        let mut planned = self.plan(&change, asked_by)?;
+        if refused.is_some() {
+            planned.card.title = "Keep this just for you?".into();
+            planned.card.primary = "Just for me".into();
+        }
+        let refused_note = refused
+            .map(|why| {
+                format!(" The shared rules file was refused ({why}), so it went to the notes.")
+            })
+            .unwrap_or_default();
         // At once only a cosmetic setting the person named, with its value or direction, in
         // what they typed, and never one they said not now to: everything else is a card.
         let at_once = !offer && !declined && cz::applies(&change, &self.user_words);
@@ -140,9 +182,10 @@ rules or tools. Don't retry; tell the session that started you if it matters."
                 Answer::Took(p) => p,
                 Answer::NotNow => {
                     self.declined.insert(key);
-                    return Ok(tools::Output::text(
-                        "The user said not now. Leave it, and don't offer it again this session.",
-                    ));
+                    return Ok(tools::Output::text(format!(
+                        "The user said not now. Leave it, and don't offer it again this \
+session.{refused_note}"
+                    )));
                 }
                 Answer::NoAnswer => {
                     return Ok(tools::Output::text(
@@ -178,7 +221,7 @@ unless the user brings it up.",
             card: Box::new(card),
         });
         Ok(tools::Output::text(format!(
-            "{summary} The user can undo it from the transcript."
+            "{summary} The user can undo it from the transcript.{refused_note}"
         )))
     }
 

@@ -618,13 +618,24 @@ pub fn whole_message(words: &str, user: &[String]) -> bool {
 
 // ---- line edits: minimal, never a rewrite ----
 
+/// A line's list marker after its indent: `- `, `* `, or a number (`1. `, `2) `).
+fn marker(line: &str) -> &str {
+    let t = line.trim_start();
+    if t.starts_with("- ") || t.starts_with("* ") {
+        return &t[..2];
+    }
+    let digits = t.chars().take_while(char::is_ascii_digit).count();
+    let rest = &t[digits..];
+    if digits > 0 && (rest.starts_with(". ") || rest.starts_with(") ")) {
+        return &t[..digits + 2];
+    }
+    ""
+}
+
 /// A line's text without its indent and list marker, for matching.
 fn bare(line: &str) -> &str {
-    let t = line.trim();
-    t.strip_prefix("- ")
-        .or_else(|| t.strip_prefix("* "))
-        .unwrap_or(t)
-        .trim()
+    let t = line.trim_start();
+    t[marker(t).len()..].trim()
 }
 
 /// Where a rules file's body starts: after its frontmatter, as the Rules page reads it.
@@ -725,14 +736,7 @@ pub fn edit_line(text: &str, line: &str, to: &str) -> Result<String> {
             let body = p.trim_end_matches(['\n', '\r']);
             let end = &p[body.len()..];
             let lead = &body[..body.len() - body.trim_start().len()];
-            let marker = if body.trim_start().starts_with("- ") {
-                "- "
-            } else if body.trim_start().starts_with("* ") {
-                "* "
-            } else {
-                ""
-            };
-            format!("{lead}{marker}{}{end}", bare(to))
+            format!("{lead}{}{}{end}", marker(body), bare(to))
         })
         .collect())
 }
@@ -940,9 +944,17 @@ fn real_path(path: &Path) -> Result<PathBuf> {
 
 /// The file a rules write really lands in, checked: inside `root` (the project, or the home
 /// rules folder) after every link is followed, and never a link to nothing (whose target a
-/// write would create). The card shows this path, and this path is what's written.
+/// write would create). A link may also lead to a Markdown file elsewhere in the user's own
+/// home (a stow-style dotfiles folder, a monorepo's `AGENTS.md -> ../AGENTS.md`). The card
+/// shows this path, and this path is what's written.
 pub fn safe_target(path: &Path, root: &Path) -> Result<PathBuf> {
+    safe_target_in(path, root, dirs::home_dir().as_deref())
+}
+
+/// [`safe_target`] with the home given.
+pub fn safe_target_in(path: &Path, root: &Path, home: Option<&Path>) -> Result<PathBuf> {
     let root = real_path(root)?;
+    let home = home.and_then(|h| h.canonicalize().ok());
     let real = match std::fs::symlink_metadata(path) {
         Ok(m) if m.file_type().is_symlink() => path.canonicalize().map_err(|_| {
             anyhow::anyhow!(
@@ -954,7 +966,16 @@ pub fn safe_target(path: &Path, root: &Path) -> Result<PathBuf> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => real_path(path)?,
         Err(e) => return Err(e).with_context(|| format!("can't read {}", path.display())),
     };
-    if !real.starts_with(&root) {
+    // Outside the folder, only through a link, only to a Markdown file that exists, only in
+    // the user's own home: never a dotfile like ~/.ssh/authorized_keys, never another user's.
+    let via_link = std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink());
+    let linked_home_md = via_link
+        && home.as_ref().is_some_and(|h| real.starts_with(h))
+        && real.is_file()
+        && real
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("md"));
+    if !real.starts_with(&root) && !linked_home_md {
         bail!(
             "{} leads to {}, outside {}; Frog won't write there",
             path.display(),
@@ -966,6 +987,25 @@ pub fn safe_target(path: &Path, root: &Path) -> Result<PathBuf> {
         bail!("{} isn't a file", real.display());
     }
     Ok(real)
+}
+
+/// Whether [`write_atomic`] would write `path`: not read-only, not hard-linked to another
+/// file. Checked before a card, so a card never offers what can't happen.
+pub fn writable(path: &Path) -> Result<()> {
+    let Ok(m) = std::fs::metadata(path) else {
+        return Ok(());
+    };
+    if m.permissions().readonly() {
+        bail!("{} is read-only, so Frog left it as it is", path.display());
+    }
+    #[cfg(unix)]
+    if std::os::unix::fs::MetadataExt::nlink(&m) > 1 {
+        bail!(
+            "{} is hard-linked to another file; Frog won't split them, so it left it as it is",
+            path.display()
+        );
+    }
+    Ok(())
 }
 
 /// Write `after` (or remove the file for `None`) and return how to undo it.
@@ -1009,6 +1049,9 @@ pub fn write_atomic(path: &Path, text: &str, private: bool) -> Result<()> {
     } else {
         std::fs::create_dir_all(dir)?;
     }
+    // A rename would replace a file its owner made read-only, and split a hard-linked pair
+    // (AGENTS.md and CLAUDE.md as one file) into two that disagree.
+    writable(path)?;
     let keep = std::fs::metadata(path).ok().map(|m| m.permissions());
     let name = path.file_name().unwrap_or_default().to_string_lossy();
     let tmp = dir.join(format!(".{name}.{}.tmp", crate::session::new_id()));
@@ -1062,15 +1105,50 @@ pub fn remove_if(path: &Path, keep_going: impl FnOnce(&[u8]) -> bool) -> Result<
     Ok(true)
 }
 
-/// Put a file taken aside back, never over one written since.
+#[cfg(test)]
+thread_local! {
+    /// Tests: act as a drive without hard links (exFAT, SMB, NFS, some FUSE drives).
+    static NO_HARD_LINKS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn hard_link(from: &Path, to: &Path) -> std::io::Result<()> {
+    #[cfg(test)]
+    if NO_HARD_LINKS.with(|n| n.get()) {
+        return Err(std::io::Error::from(std::io::ErrorKind::Unsupported));
+    }
+    std::fs::hard_link(from, to)
+}
+
+/// Put a file taken aside back, never over one written since. Without hard links, a copy
+/// created new (so it still never replaces a file written since), then the aside removed.
 fn put_back(path: &Path, tmp: &Path) -> Result<()> {
-    std::fs::hard_link(tmp, path).with_context(|| {
+    let meanwhile = || {
         format!(
             "{} was written meanwhile; the earlier text is kept at {}",
             path.display(),
             tmp.display()
         )
-    })?;
+    };
+    match hard_link(tmp, path) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            return Err(e).with_context(meanwhile);
+        }
+        Err(_) => {
+            use std::io::Write;
+            let bytes = std::fs::read(tmp).with_context(meanwhile)?;
+            let mut f = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
+                .with_context(meanwhile)?;
+            f.write_all(&bytes)?;
+            f.sync_all()?;
+            if let Ok(m) = std::fs::metadata(tmp) {
+                let _ = std::fs::set_permissions(path, m.permissions());
+            }
+        }
+    }
     let _ = std::fs::remove_file(tmp);
     Ok(())
 }
@@ -1484,18 +1562,114 @@ mod tests {
             safe_target(&fresh, &root).unwrap(),
             root.canonicalize().unwrap().join("FROG.md")
         );
-        // Temp file and rename: a hard link to the old file keeps the old text, and the
-        // file keeps its permissions.
+        // Temp file and rename: the file keeps its permissions.
         let file = root.join("docs/RULES.md");
-        let hard = dir.path().join("hard");
-        std::fs::hard_link(&file, &hard).unwrap();
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o640)).unwrap();
         write_file(&file, Some("- a\n- b\n".into()), false).unwrap();
-        assert_eq!(std::fs::read_to_string(&hard).unwrap(), "- a\n");
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "- a\n- b\n");
         let mode = std::fs::metadata(&file).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o640);
+    }
+
+    /// Review 2, item 7: a hard-linked pair (AGENTS.md and CLAUDE.md as one file) is never
+    /// split by a rename, and a read-only file is never replaced through one.
+    #[cfg(unix)]
+    #[test]
+    fn hard_links_and_read_only_files_are_left_alone() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let agents = dir.path().join("AGENTS.md");
+        let claude = dir.path().join("CLAUDE.md");
+        std::fs::write(&agents, "- a\n").unwrap();
+        std::fs::hard_link(&agents, &claude).unwrap();
+        let e = write_file(&agents, Some("- a\n- b\n".into()), false).unwrap_err();
+        assert!(format!("{e:#}").contains("linked"), "{e:#}");
+        assert_eq!(std::fs::read_to_string(&claude).unwrap(), "- a\n");
+        assert_eq!(std::fs::read_to_string(&agents).unwrap(), "- a\n");
+        let ro = dir.path().join("FROG.md");
+        std::fs::write(&ro, "- a\n").unwrap();
+        std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o444)).unwrap();
+        let e = write_file(&ro, Some("- b\n".into()), false).unwrap_err();
+        assert!(format!("{e:#}").contains("read-only"), "{e:#}");
+        assert_eq!(std::fs::read_to_string(&ro).unwrap(), "- a\n");
+    }
+
+    /// Review 2, item 7: where hard links don't work (exFAT, SMB, NFS, some FUSE drives) a
+    /// refused undo still puts the file back, never leaves it renamed aside.
+    #[test]
+    fn put_back_works_without_hard_links() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("AGENTS.md");
+        std::fs::write(&path, "- a\n").unwrap();
+        let u = write_file(&path, Some("- a\n- b\n".into()), false).unwrap();
+        std::fs::write(&path, "someone else\n").unwrap();
+        NO_HARD_LINKS.with(|n| n.set(true));
+        let refused = u.undo();
+        NO_HARD_LINKS.with(|n| n.set(false));
+        assert!(refused.is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "someone else\n");
+        let left: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(left, ["AGENTS.md"], "nothing left aside");
+    }
+
+    /// Review 2, item 7: ordinary links are fine. A stow-style link into a dotfiles folder in
+    /// the home, or a monorepo `AGENTS.md -> ../AGENTS.md`, is written at its real path (and
+    /// shown there); a link out to anything but a Markdown file is still refused.
+    #[cfg(unix)]
+    #[test]
+    fn links_into_the_home_are_allowed() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        let mono = home.join("code/mono");
+        let pkg = mono.join("pkg");
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::create_dir_all(home.join("dotfiles")).unwrap();
+        std::fs::create_dir_all(home.join(".ssh")).unwrap();
+        std::fs::write(mono.join("AGENTS.md"), "- a\n").unwrap();
+        let link = pkg.join("AGENTS.md");
+        std::os::unix::fs::symlink("../AGENTS.md", &link).unwrap();
+        let real = safe_target_in(&link, &pkg, Some(&home)).unwrap();
+        assert_eq!(real, mono.join("AGENTS.md").canonicalize().unwrap());
+        let frog = home.join("dotfiles/FROG.md");
+        std::fs::write(&frog, "- x\n").unwrap();
+        let cfg = home.join(".config/frog");
+        std::fs::create_dir_all(&cfg).unwrap();
+        std::os::unix::fs::symlink(&frog, cfg.join("FROG.md")).unwrap();
+        assert!(safe_target_in(&cfg.join("FROG.md"), &cfg, Some(&home)).is_ok());
+        // Not a Markdown file: refused even inside the home.
+        std::fs::write(home.join(".ssh/authorized_keys"), "ssh-ed25519 x\n").unwrap();
+        std::fs::remove_file(&link).unwrap();
+        std::os::unix::fs::symlink(home.join(".ssh/authorized_keys"), &link).unwrap();
+        assert!(safe_target_in(&link, &pkg, Some(&home)).is_err());
+        // Outside the home: refused.
+        let out = dir.path().join("elsewhere.md");
+        std::fs::write(&out, "- a\n").unwrap();
+        std::fs::remove_file(&link).unwrap();
+        std::os::unix::fs::symlink(&out, &link).unwrap();
+        assert!(safe_target_in(&link, &pkg, Some(&home)).is_err());
+    }
+
+    /// Review 2, item 7: an edit keeps a numbered item's number.
+    #[test]
+    fn edits_keep_a_numbered_item_numbered() {
+        let text = "1. use npm\n2) tabs\n10. keep it short\n";
+        assert_eq!(
+            edit_line(text, "use npm", "use pnpm").unwrap(),
+            "1. use pnpm\n2) tabs\n10. keep it short\n"
+        );
+        assert_eq!(
+            edit_line(text, "tabs", "spaces").unwrap(),
+            "1. use npm\n2) spaces\n10. keep it short\n"
+        );
+        assert_eq!(
+            remove_line(text, "keep it short").unwrap(),
+            "1. use npm\n2) tabs\n"
+        );
     }
 
     /// Finding 5: an edit keeps the line's form: it can't turn a rule into a heading, a

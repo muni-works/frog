@@ -925,10 +925,6 @@ async fn an_approval_must_name_a_choice() {
     r.end().await;
 }
 
-fn errors(evs: &[Event]) -> String {
-    tool_output(evs)
-}
-
 /// Finding 4: a project rules file that isn't UTF-8 is an error shown to the user, never
 /// replaced by one line.
 #[tokio::test]
@@ -945,12 +941,11 @@ async fn a_non_utf8_rules_file_is_left_alone() {
     let bytes = [b'#', 0xff, b'\n'];
     std::fs::write(&agents, bytes).unwrap();
     r.idle().await;
-    let evs = r.say("remember to use pnpm", never).await;
-    assert!(
-        cards(&evs).is_empty() && applied(&evs).is_empty(),
-        "{evs:?}"
-    );
-    assert!(errors(&evs).contains("UTF-8"), "{}", errors(&evs));
+    // The shared file is refused; the card offers the line just for the person.
+    let evs = r.say("remember to use pnpm", |id, _| deny(id)).await;
+    assert!(applied(&evs).is_empty(), "{evs:?}");
+    assert_eq!(cards(&evs).len(), 1, "{evs:?}");
+    assert!(tool_output(&evs).contains("UTF-8"), "{}", tool_output(&evs));
     assert_eq!(std::fs::read(&agents).unwrap(), bytes);
     r.end().await;
 }
@@ -971,11 +966,19 @@ async fn a_rules_link_out_of_the_project_is_refused() {
     std::fs::write(&outside, "export X=1\n").unwrap();
     std::os::unix::fs::symlink(&outside, r.project.join("AGENTS.md")).unwrap();
     r.idle().await;
-    let evs = r.say("remember to use pnpm", |id, _| primary(id)).await;
+    // Review 2, item 7: refused for the shared file, the card still offers it just for the
+    // person, in Frog's notes, and the linked file is never touched.
+    let evs = r.say("remember to use pnpm", |id, _| deny(id)).await;
+    let c = cards(&evs);
+    assert_eq!(c.len(), 1, "{evs:?}");
+    assert!(c[0].place.contains("Frog's notes"), "{}", c[0].place);
+    assert!(c[0].path.is_none());
     assert!(
-        cards(&evs).is_empty() && applied(&evs).is_empty(),
-        "{evs:?}"
+        tool_output(&evs).contains("outside"),
+        "{}",
+        tool_output(&evs)
     );
+    assert!(applied(&evs).is_empty(), "{evs:?}");
     assert_eq!(std::fs::read_to_string(&outside).unwrap(), "export X=1\n");
     // Inside the project: the card names the real file.
     std::fs::remove_file(r.project.join("AGENTS.md")).unwrap();
