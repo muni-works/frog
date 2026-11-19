@@ -155,10 +155,17 @@ struct ExplainerCard: View {
     let section: String
     var catalog = CustomizeCatalog.bundled
 
+    /// Memory's second sentence promises notes taken on their own; until this build lets the
+    /// engine take them, it says what happens today.
+    static func rest(_ section: String, _ e: CustomizeCatalog.Explainer) -> String {
+        guard section == "memory", !CustomizeStore.notesCapability else { return e.rest }
+        return "It keeps the notes you ask for on this Mac, and brings back only the few that fit the turn."
+    }
+
     var body: some View {
         if let e = catalog.explainer(section) {
             HStack(alignment: .center, spacing: 20) {
-                (Text(e.bold).foregroundStyle(Tokens.text).fontWeight(.semibold) + Text(" " + e.rest).foregroundStyle(Tokens.textSecondary))
+                (Text(e.bold).foregroundStyle(Tokens.text).fontWeight(.semibold) + Text(" " + Self.rest(section, e)).foregroundStyle(Tokens.textSecondary))
                     .font(.frog(size: 13))
                     .lineSpacing(3)
                     .fixedSize(horizontal: false, vertical: true)

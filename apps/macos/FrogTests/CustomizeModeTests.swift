@@ -253,6 +253,28 @@ final class CustomizeModeTests: XCTestCase {
     }
 
     // MARK: The memory map (M1Memory)
+    /// What the engine on main printed for `frog --customize --no-connect --json` with six
+    /// global notes and a project AGENTS.md (2026-11-19), paths renamed: the decoder takes the
+    /// real thing, not only a fixture shaped from the doc.
+    static let realReport = #"""
+{"project":"/tmp/pond","estimate":{"chars_per_token":3.5,"calibrated":false},"tokens":363,"skills":{"tokens":130,"budget_tokens":1715,"names_only":false,"items":[{"id":"frog-builtin:visual-loop","name":"visual-loop","description":"Rebuild a page, component, icon or sprite from a visual reference with Screenshot and Compare; bounded iteration and durable assets.","scope":"everywhere","source":"builtin","path":null,"on":true,"tokens":43,"tokens_if_on":43,"full_tokens":632,"shadowed_by":null,"use":{"count":0,"days":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"last":null}},{"id":"frog-builtin:gh","name":"gh","description":"GitHub CLI: PRs, issues, CI checks; valid `--json` fields.","scope":"everywhere","source":"builtin","path":null,"on":true,"tokens":19,"tokens_if_on":19,"full_tokens":244,"shadowed_by":null,"use":{"count":0,"days":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"last":null}}]},"connections":{"tokens":0,"deferred":false,"items":[]},"rules":{"tokens":16,"files":[{"path":"/tmp/pond/AGENTS.md","scope":"project","source":"agents","kind":"instructions","applies":"always","paths":[],"tokens":16,"full_tokens":16,"lines":[{"n":1,"text":"- Use pnpm, never npm."}]}]},"memory":{"tokens":217,"omitted":0,"notes":[{"id":"n6","scope":"everywhere","created":"2026-11-16T10:00:00Z","session":null,"title":null,"text":"Prefers short answers without preamble.","path":"/Users/ada/.local/share/frog/memory/global/n6.md","cites":[],"missing":[],"tokens":18,"omitted":false,"source":"user","in_prompt":true,"kind":null,"from":null,"last_used":null,"stale":false,"lit":false,"x":0.6289,"y":0.7513,"group":3},{"id":"n5","scope":"everywhere","created":"2026-11-15T10:00:00Z","session":null,"title":null,"text":"The staging database is reset every Monday.","path":"/Users/ada/.local/share/frog/memory/global/n5.md","cites":[],"missing":[],"tokens":19,"omitted":false,"source":"user","in_prompt":true,"kind":null,"from":null,"last_used":null,"stale":false,"lit":false,"x":0.4854,"y":0.3626,"group":2},{"id":"n4","scope":"everywhere","created":"2026-11-14T10:00:00Z","session":null,"title":null,"text":"Run the tests with pnpm test before a commit.","path":"/Users/ada/.local/share/frog/memory/global/n4.md","cites":[],"missing":[],"tokens":19,"omitted":false,"source":"user","in_prompt":true,"kind":null,"from":null,"last_used":null,"stale":false,"lit":false,"x":0.7742,"y":0.4312,"group":1},{"id":"n3","scope":"everywhere","created":"2026-11-13T10:00:00Z","session":null,"title":null,"text":"Tests live in spec, one file per module.","path":"/Users/ada/.local/share/frog/memory/global/n3.md","cites":[],"missing":[],"tokens":18,"omitted":false,"source":"user","in_prompt":true,"kind":null,"from":null,"last_used":null,"stale":false,"lit":false,"x":0.7518,"y":0.4902,"group":1},{"id":"n2","scope":"everywhere","created":"2026-11-12T10:00:00Z","session":null,"title":null,"text":"Never use npm for installs, use pnpm.","path":"/Users/ada/.local/share/frog/memory/global/n2.md","cites":[],"missing":[],"tokens":17,"omitted":false,"source":"user","in_prompt":true,"kind":null,"from":null,"last_used":null,"stale":false,"lit":false,"x":0.4244,"y":0.3866,"group":0},{"id":"n1","scope":"everywhere","created":"2026-11-11T10:00:00Z","session":null,"title":null,"text":"This project uses npm for installs.","path":"/Users/ada/.local/share/frog/memory/global/n1.md","cites":[],"missing":[],"tokens":16,"omitted":false,"source":"user","in_prompt":true,"kind":null,"from":null,"last_used":null,"stale":false,"lit":false,"x":0.4088,"y":0.3514,"group":0}],"mode":"whole","similarity":"lexical-1","groups":[{"id":0,"label":"npm and installs","scope":"everywhere","x":0.4215,"y":0.3588,"count":2},{"id":1,"label":"tests and live","scope":"everywhere","x":0.7693,"y":0.4671,"count":2},{"id":2,"label":"staging and database","scope":"everywhere","x":0.4848,"y":0.3799,"count":1},{"id":3,"label":"prefers and short","scope":"everywhere","x":0.6456,"y":0.7457,"count":1}],"pairs":[{"key":"g:n1|g:n2","kind":"disagree","older":{"id":"n1","scope":"everywhere"},"newer":{"id":"n2","scope":"everywhere"},"resolutions":["keep_newer","show_both"]}]}}
+"""#
+
+    func testTheRealEngineReportDecodes() throws {
+        let r = try JSONDecoder.frog.decode(CustomizeReport.self, from: Data(Self.realReport.utf8))
+        XCTAssertEqual(r.memory.mode, "whole")
+        XCTAssertEqual(r.memory.similarity, "lexical-1")
+        XCTAssertEqual(r.memory.notes.count, 6)
+        XCTAssertTrue(r.memory.notes.allSatisfy { $0.inPrompt == true })
+        XCTAssertEqual(r.memory.pairs?.first?.kind, "disagree")
+        let map = try XCTUnwrap(MemoryMap.Model(notes: r.pageNotes(), groups: r.memory.groups ?? [], pairs: r.memory.pairs ?? [], mode: r.memory.mode))
+        XCTAssertEqual(map.dots.count, 6)
+        XCTAssertEqual(map.rings.count, 4)
+        XCTAssertEqual(map.dots.filter(\.flagged).map(\.id), ["n2"])
+        XCTAssertEqual(r.pageSkills.map(\.name).sorted(), ["gh", "visual-loop"])
+        XCTAssertEqual(r.rules.files.first?.applies, "always")
+    }
+
 
     func testTheMapDrawsOnlyWhatTheEnginePlaced() throws {
         let r = try JSONDecoder.frog.decode(CustomizeReport.self, from: Data(Self.reportJSON.utf8))
@@ -272,6 +294,19 @@ final class CustomizeModeTests: XCTestCase {
         unplaced[2].place = nil
         XCTAssertNil(MemoryMap.Model(notes: unplaced, groups: [], pairs: [], mode: "per_turn"))
         XCTAssertNil(MemoryMap.Model(notes: [], groups: [], pairs: [], mode: nil))
+    }
+
+    /// Until the transcript shows the receipt line (and the app sends `notes`), the page offers
+    /// the switch but never says Frog is taking notes on its own.
+    func testMemoryDoesNotPromiseNotesThisBuildCannotTake() throws {
+        let url = try XCTUnwrap(Bundle.main.url(forResource: "customize", withExtension: "json"))
+        let memory = try XCTUnwrap(try JSONDecoder().decode(CustomizeCatalog.self, from: Data(contentsOf: url)).explainer("memory"))
+        let rest = ExplainerCard.rest("memory", memory)
+        if CustomizeStore.notesCapability {
+            XCTAssertEqual(rest, memory.rest)
+        } else {
+            XCTAssertFalse(rest.localizedCaseInsensitiveContains("on its own"), rest)
+        }
     }
 
     func testTheNotingSwitchReachesTheEngine() throws {

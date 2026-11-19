@@ -581,6 +581,12 @@ final class CustomizeStore {
         }
     }
 
+    /// Whether this build shows the receipt line under a reply ("Noted for pond", Undo, Make it
+    /// a rule) and so sends the `notes` capability: the engine notes on its own only for a
+    /// client that does (docs/customize-events.md). Until the transcript has that line, the
+    /// Memory page offers the switch but doesn't say notes are being taken.
+    nonisolated static let notesCapability = false
+
     /// The app's settings the engine reads (`Op::Settings`).
     nonisolated static func engineSettings() -> [String: JSONValue] {
         ["auto-note": .bool(UserDefaults.standard.object(forKey: autoNoteKey) as? Bool ?? true)]

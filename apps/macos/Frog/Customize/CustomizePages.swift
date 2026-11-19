@@ -533,6 +533,11 @@ struct MemoryPage: View {
                 KnowsCard(store: store, notes: notes, selected: $selected)
                 if let pairs = store.report?.memory.pairs, !pairs.isEmpty {
                     SettingsGroupLabel(text: "Needs you")
+                    // Flagging compares words, so this list is a start, not a guarantee.
+                    Text("Frog flags notes that share most of their words. It can miss a disagreement worded differently, and flag two that only sound alike.")
+                        .font(.frog(size: 12)).foregroundStyle(Tokens.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.bottom, 2)
                     SettingsRows {
                         ForEach(pairs) { p in PairRow(pair: p, notes: notes) { store.change(.memoryResolve(pair: p.key, keepNewer: $0)) } }
                     }
@@ -548,7 +553,7 @@ struct MemoryPage: View {
                 }
                 if notes.isEmpty {
                     SettingsRows {
-                        SettingsRow("No notes yet", description: store.autoNote
+                        SettingsRow("No notes yet", description: store.autoNote && CustomizeStore.notesCapability
                                     ? "Frog notes things as you work: a correction, a preference, a fact about the project. Or say \"remember this\"."
                                     : "Say \"remember this\" in any conversation and Frog keeps a note here.") { EmptyView() }
                     }
@@ -587,6 +592,11 @@ private struct KnowsCard: View {
                 Text("Notes on its own").font(.frog(size: 12.5)).foregroundStyle(Tokens.textSecondary)
                 FrogToggle(label: "Frog notes things on its own", isOn: $store.autoNote)
                     .help(store.autoNote ? "Frog keeps short notes from what you say and what it reads, with Undo under the reply" : "Frog keeps a note only when you say \"remember this\"")
+            }
+            if !CustomizeStore.notesCapability {
+                Text("This version of Frog doesn't take notes on its own yet. Say \"remember this\" in a conversation to keep one.")
+                    .font(.frog(size: 12.5)).foregroundStyle(Tokens.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             if let map = MemoryMap.Model(notes: notes, groups: store.report?.memory.groups ?? [], pairs: store.report?.memory.pairs ?? [],
                                          mode: store.report?.memory.mode) {
