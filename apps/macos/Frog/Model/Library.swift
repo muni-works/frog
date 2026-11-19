@@ -13,6 +13,8 @@ final class Library {
     typealias Live = SessionLive
 
     private(set) var sessions: [SessionInfo] = []
+    /// The listing has been read once: an empty list now means none, not not yet.
+    private(set) var loaded = false
     /// This Mac's sessions and Frog Cloud's, which `sessions` lists together: one list, as
     /// on the web, each opening through its own link (`isCloud`).
     private var local: [SessionInfo] = []
@@ -158,6 +160,7 @@ final class Library {
             }
         }
         sessions = all
+        loaded = true
         self.listed = Dictionary(listed.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         GitIndex.shared.listingChanged(listed)
         archiveQuietChats()

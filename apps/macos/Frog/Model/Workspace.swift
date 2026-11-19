@@ -341,6 +341,11 @@ final class Workspace {
         start(arguments: [])
     }
 
+    /// A new session that starts on `prompt` at once: the sidebar's starters.
+    func newSession(prompt: String) {
+        start(arguments: []).submit(prompt)
+    }
+
     /// A Frog Cloud session on screen: the same transcript and composer, its engine in a
     /// sandbox through the gateway instead of `frog --serve` here.
     func openCloud(_ id: String) {
