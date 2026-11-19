@@ -161,13 +161,13 @@ struct ConnectionsPage: View {
     }
 
     /// A server's tools from `frog --mcp`: the ones it offers, then the ones withheld.
-    static func squares(_ s: MCPStatus) -> [ToolSquares.Square] {
+    nonisolated static func squares(_ s: MCPStatus) -> [ToolSquares.Square] {
         s.tools.map { .init(tool: shortName($0, server: s.name), state: .on) }
             + s.quarantined.map { .init(tool: shortName($0.tool, server: s.name), state: .withheld, reason: $0.reason) }
     }
 
     /// `mcp__github__list_issues` → `list_issues`.
-    static func shortName(_ tool: String, server: String) -> String {
+    nonisolated static func shortName(_ tool: String, server: String) -> String {
         let prefix = "mcp__\(server)__"
         return tool.hasPrefix(prefix) ? String(tool.dropFirst(prefix.count)) : tool
     }
