@@ -53,8 +53,11 @@ Rules above the tiers:
   typed sentence names the setting itself (a value alone isn't enough: "make it compact" is a
   card, "make the density compact" applies), for a choice its value too, for on/off the
   direction and only that one ("sounds are great" never turns sounds off; "sounds off and on"
-  says neither), and no negation ("don't turn off the sounds"). Never one the person said not
-  now to this session: asked again, it's a card.
+  says neither), and no negation ("don't turn off the sounds"). The sentence must be about the
+  setting and nothing else: every word is the setting's own, one of its values, a direction or
+  filler ("please switch the theme to light"), and a choice names only the target value. So
+  "switch from the dark theme to light" and "fix the sounds player on macOS" are cards. Never
+  one the person said not now to this session: asked again, it's a card.
 - **Only the user's words start a change.** The model quotes them (`words`); a quote that
   isn't, word for word, in what the person typed this turn is refused outright: no card, no
   change. A whole short reply ("y", "k", an emoji) counts when the quote is all of it. On a
@@ -142,11 +145,20 @@ fails). That keeps a proposal the user's own: a delegated answer (`ResolveDelega
 chief or a parent session answering through the session broker) sends a bare allow, so it
 can't apply one. Brokers should still leave cards with `proposal` out of `ListApprovals`.
 
+The apps hold the same line: a proposal is answered only with a choice the card offered, named
+by the control that showed it (its primary button and that button's ⌘↩, its alternative). A
+bare allow never becomes the primary, so the app sends nothing and the card stays open. Places
+that don't show the change offer no Allow for a proposal: the Mac's notification (it brings
+Frog forward instead), the sidebar's card (Open only), the phone's push (no buttons, no
+permission id) and the phone's list, watch and widgets (the Mac leaves the proposal out of the
+rows it sends). The Mac's bridge forwards the phone's `choice` exactly.
+
 `permission_resolved` follows once the answer is known for what it did: `allow` only when a
 choice on the card was taken. An allow naming no choice is recorded `deny` with
 `"outcome":"no_choice"`; a card nobody answered in time is `deny` with `"outcome":"timed_out"`
 and is not the person declining (it may be offered again; the model is told nothing changed).
-A declined offer is never made again in that session (the engine refuses it before any card),
+A declined offer is never made again in that session (the engine refuses it before any card;
+declines are kept beside the session log, `<id>.declined`, so a resume keeps them),
 and a declined change asked for again is a card, never applied at once. The file a line is written to must be the one the
 card showed (`path`): if another rules file appears or a link changes while the card is open,
 the approval is void and nothing is written.
@@ -180,7 +192,13 @@ engine answers `customize_undone`:
 clobbers; it restores exactly the bytes that were there, or nothing), a setting the user has
 changed since (the app's `Op::Settings` reported a value other than the one the change set),
 or a setting whose old value the app never reported. Each file is moved aside before it's
-checked, so a write landing between the check and the undo is put back, never lost. Undo handles last for the engine process. `Op::Undo` is queued
+checked, so a write landing between the check and the undo is put back, never lost. A restored
+file keeps the permission bits it had; if writing one file fails part-way, the files not reached
+go back from aside and the ones already undone get the change's text again (all or nothing). At
+start-up a top-level engine puts back any `.<name>.<id>.undo` file a crash left in the project
+root, the home rules folder, Frog's notes folders or beside customize.json, never over a file
+written since. Toggles, their undo and `noted-undos` are changed under an exclusive lock on
+their folder, and a note's id is claimed atomically, so two sessions at once lose nothing. Undo handles last for the engine process. `Op::Undo` is queued
 like other ops, so during a running turn it lands when the turn ends.
 
 ## Settings the app owns: `setting_change` and `Op::Settings`
@@ -195,8 +213,13 @@ Sent on apply and on undo. Live only (never replayed), so a reconnect can't re-a
 change. Values are the row's option ids (`"compact"`, `"25"`), a bool for toggles, or the raw
 string/number for menus without options and fields.
 
-So `get` can answer and a card can quote the old value, the app may send its current values,
-at session start and when one changes (lands at once, not queued):
+The app sends its values whenever a link opens (a local engine's start, a Frog Cloud link's
+open) and when one changes (lands at once, not queued). **The ids it sends are the settings it
+applies, and the engine plans a change only for those**: anything else is answered "can't be
+changed from here: change it in Settings › <section>", with no card and no receipt, so a
+receipt always means the change took effect. A `null` value declares an id applied with its
+value unknown. The Mac sends its seven appearance and notification rows plus `auto-note`; the
+web sends `theme`, `density` and `auto-note`.
 
 ```json
 { "op": "settings", "values": { "density": "comfortable", "sounds": true, "monthly-cap": "10" } }
@@ -290,9 +313,11 @@ Durable: it replays with the transcript, and its Undo still works after a restar
   and emits `customize_applied`, whose Undo puts both back. All or nothing: the file must be
   the one the card showed, the note is removed only if it's still what the card showed, and if
   it can't be, the rule is taken back. Frog never writes a rule on its own. Refused in a child.
-- Turning it off (with `notes: true` sent): the app setting `auto-note` (`design/settings.json`, tier `ask`, default
-  on), sent with `Op::Settings`. Off, the tool isn't offered and a call writes nothing. Without
-  an app, `[memory] auto_note = false` in config.toml. Never on in subagents, sessions another
+- Turning it off (with `notes: true` sent): the app setting `auto-note` (`design/settings.json`, tier `ask`, on in
+  the apps by default), sent with `Op::Settings` on every link (the Mac's local and Frog Cloud
+  links, the web's, which has the switch in Settings › Memory). Off, the tool isn't offered and
+  a call writes nothing. **Not told is off**: an engine whose app never sent `auto-note` doesn't
+  note on its own (config.toml's `[memory] auto_note` decides when it's set). Never on in subagents, sessions another
   session started, or small (Weak-tier) models, which can't do it reliably.
 - "remember that …" (or "from now on …", "note to self: …") saves a note as before (with its
   notice) and counts as the turn's one note: only when the phrase opens a typed message
@@ -336,7 +361,8 @@ nothing):
   quote. A correction may end by naming what it
   replaces (", not npm"). So a real quote with text from a tool result, page, MCP response or
   another part of the message attached is refused. `read` needs a file inside the project that
-  Frog's `Read` opened this session, and every content word, quantifier and number of the note
+  a `Read` call succeeded on this session, that Frog's Edit or Write didn't change and that
+  nothing changed since the engine started (so never text the model wrote itself), and every content word, quantifier and number of the note
   must be in that file. `read` notes
   are always project notes. A turn nobody typed (a wake, a session started by another) notes
   nothing.

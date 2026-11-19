@@ -20,7 +20,7 @@ import { usePreviewHub } from './ui/PreviewPane'
 import type { PreviewHub } from './preview'
 import { SessionList } from './ui/SessionList'
 import { Pin } from './ui/pin'
-import { firstTitle, stuck, provisional, undelivered, withOpening, type Opening } from './ui/Opening'
+import { firstTitle, stuck, provisional, submitOp, undelivered, withOpening, type Opening } from './ui/Opening'
 import { useMachines } from './machines'
 import { creditLine, Palette, type Command } from './ui/Overlays'
 import { TurnRail } from './ui/TurnRail'
@@ -490,13 +490,13 @@ export default function App() {
 
   // What you sent, shown at once: until the engine starts it as a turn it waits here, with a
   // clock (queued until the socket is up), one tick (on the wire), or Not sent.
-  type Out = { id: number; text: string; images: Image[]; state: 'sending' | 'sent' | 'failed'; at: number; seen: number }
+  type Out = { id: number; text: string; images: Image[]; typed?: boolean; state: 'sending' | 'sent' | 'failed'; at: number; seen: number }
   const [outbox, setOutbox] = useState<Record<string, Out[]>>({})
   const outSeq = useRef(0)
   // `typed`: from the composer's field (Op::Submit's `typed`); the app's own prompts leave it out.
   const send = useCallback((id: string, text: string, images: Image[] = [], typed = false) => {
-    setOutbox((o) => ({ ...o, [id]: [...(o[id] ?? []), { id: ++outSeq.current, text, images, state: 'sending', at: Date.now(), seen: thread(id).turns.filter((u) => u.input === text).length }] }))
-    cloud?.send(id, { op: 'submit', text, ...(images.length ? { images } : {}), ...(typed ? { typed: true } : {}) })
+    setOutbox((o) => ({ ...o, [id]: [...(o[id] ?? []), { id: ++outSeq.current, text, images, typed, state: 'sending', at: Date.now(), seen: thread(id).turns.filter((u) => u.input === text).length }] }))
+    cloud?.send(id, submitOp({ text, images, typed }))
   }, [cloud, thread])
 
 
@@ -703,7 +703,8 @@ export default function App() {
     const m = outbox[id]?.find((x) => x.id === n)
     if (!m) return
     setOutbox((o) => ({ ...o, [id]: (o[id] ?? []).filter((x) => x.id !== n) }))
-    send(id, m.text, m.images)
+    // Its own flag again: a typed message stays typed, an app's prompt untyped.
+    send(id, m.text, m.images, m.typed)
   }
 
   // ---------- signed in ----------

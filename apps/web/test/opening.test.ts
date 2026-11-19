@@ -7,7 +7,7 @@ import { after, before, mock, test } from "node:test";
 import assert from "node:assert/strict";
 import { createElement as h } from "react";
 import TestRenderer, { act } from "react-test-renderer";
-import { BOOT, STUCK_MS, firstTitle, provisional, startWords, stuck, undelivered, withOpening, type Opening, type StartInfo } from "../src/ui/Opening.tsx";
+import { BOOT, STUCK_MS, firstTitle, provisional, startWords, stuck, submitOp, undelivered, withOpening, type Opening, type StartInfo } from "../src/ui/Opening.tsx";
 import { LiveContext, LiveTail, type LiveInfo } from "../src/ui/LiveRow.tsx";
 import { emptyThread } from "../src/engine/thread.ts";
 import verbs from "../../../docs/design/transcript/verbs.json" with { type: "json" };
@@ -190,4 +190,11 @@ test("undelivered: a message whose turn has started is gone in the same render",
 test("firstTitle: 60 characters at most", () => {
   assert.equal(firstTitle("short"), "short");
   assert.equal(firstTitle("x".repeat(70)), "x".repeat(57) + "…");
+});
+
+// Review 3, item 15: a message sent again (its "Try again") goes with the flag it first had:
+// typed stays typed, an app's prompt stays untyped.
+test("a resend keeps the message's own typed flag", () => {
+  assert.deepEqual(submitOp({ text: "fix it", images: [], typed: true }), { op: "submit", text: "fix it", typed: true });
+  assert.deepEqual(submitOp({ text: "Fix the failing check", images: [] }), { op: "submit", text: "Fix the failing check" });
 });
