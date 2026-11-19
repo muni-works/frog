@@ -6,12 +6,15 @@ import AppKit
 ///
 /// `-FrogMetrics <path.json>` (with or without a snapshot, same delay) writes the transcript's
 /// rows as `frog-transcript-metrics/1` (docs/design/parity/README.md, "Metrics") and quits.
+///
+/// `-FrogChromeMetrics <path.json>` writes the window chrome's controls (`ChromeMetrics`).
 @MainActor
 enum Snapshot {
     static func scheduleIfAsked() {
         let path = UserDefaults.standard.string(forKey: "FrogSnapshot") ?? ""
         let metrics = UserDefaults.standard.string(forKey: "FrogMetrics") ?? ""
-        guard !path.isEmpty || !metrics.isEmpty else { return }
+        let chrome = UserDefaults.standard.string(forKey: "FrogChromeMetrics") ?? ""
+        guard !path.isEmpty || !metrics.isEmpty || !chrome.isEmpty else { return }
         // A capture shows text as it lands: the ink runs on the display, which an off-screen
         // window doesn't get, so a reply would stay unwritten (and short) in the picture.
         InkReveal.off = true
@@ -31,6 +34,11 @@ enum Snapshot {
                     let seen = NSApp.windows.map { "\(type(of: $0)) visible=\($0.isVisible) \($0.frame)" }.joined(separator: "; ")
                     FileHandle.standardError.write(Data("FrogMetrics: no window to measure (\(seen))\n".utf8))
                 }
+            }
+            if !chrome.isEmpty {
+                let measured = mainWindow.map { ChromeMetrics.write(to: URL(fileURLWithPath: chrome), window: $0) } ?? false
+                if !measured { FileHandle.standardError.write(Data("FrogChromeMetrics: no accessibility window to measure\n".utf8)) }
+                ok = ok && measured
             }
             if !path.isEmpty {
                 let drawn = write(to: URL(fileURLWithPath: path))
