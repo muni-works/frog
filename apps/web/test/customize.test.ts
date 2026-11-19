@@ -4,8 +4,15 @@
 // Settings' Connections moved here on the web. These mount the whole App (test/app-harness.ts).
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { createElement as h } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { byText, click, closeHarness, find, hasClass, key, mount, shownText, act, type Page } from "./app-harness.ts";
-import { CUSTOMIZE_SECTIONS, customizeAtOf, customizePath, customizePathIsCanonical, docsSlugFor, EXPLAINERS, weekDays, type CustomizeAt } from "../src/customize.ts";
+import {
+  activityLevels, CUSTOMIZE_SECTIONS, customizeAtOf, customizePath, customizePathIsCanonical, docsSlugFor, EXPLAINERS, toolsLabel, usedLabel, weekDays, weightBars, type CustomizeAt,
+} from "../src/customize.ts";
+import { CustomizePage } from "../src/ui/Customize.tsx";
+import { SAMPLE } from "../src/customize.sample.ts";
 import { settingsMovedTo, WEB_SECTIONS } from "../src/settings.ts";
 
 after(closeHarness);
@@ -157,6 +164,12 @@ test("with no engine report, no page shows a figure: no tokens, no use counts, n
   }
 });
 
+test("no control on the web pretends: every button routes or links, switches are read-only", () => {
+  const html = renderToStaticMarkup(h(CustomizePage, { at: { section: "skills" }, report: SAMPLE.report, automations: SAMPLE.automations, docSlugs: [], onOpen() {}, onDocs() {} }));
+  for (const m of html.matchAll(/role="switch"[^>]*/g)) assert.match(m[0], /aria-readonly="true"/);
+  assert.doesNotMatch(html, /<input|<button[^>]*disabled/);
+});
+
 test("Add (F9Find) on the web says how to add to a repo, and invites to the Mac for search and review", async () => {
   const p = await signedIn("/customize/skills");
   await click(find(p, byText("button", "Add a skill")));
@@ -181,8 +194,44 @@ test("a skill's page with no report opens the Skills list, and the URL says so",
   p.unmount();
 });
 
-test("the week grid's head runs the last six days, then Today", () => {
-  assert.deepEqual(weekDays(new Date("2026-11-18T12:00:00")), ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Today"]);
+// ---------- the designs, from a report ----------
+
+test("from a report: the weight card, a row per skill with 30 marks, scope groups and the header total", () => {
+  const html = renderToStaticMarkup(h(CustomizePage, { at: { section: "skills" }, report: SAMPLE.report, docSlugs: [], onOpen() {}, onDocs() {} }));
+  assert.match(html, /820 tokens a turn/);
+  assert.match(html, /Weight on every turn/);
+  assert.match(html, /aria-label="What each skill adds to a turn, out of a budget of 1,500 tokens"/);
+  assert.match(html, /aria-label="Used 12 times in the last 30 days"/);
+  assert.match(html, /aria-label="Never used"/);
+  assert.equal((html.match(/class="cust-skill/g) ?? []).length, 6);
+  assert.match(html, /In this repo.*Everywhere/s);
+});
+
+test("from a report: tool squares say how many are on and withheld; the needs-you dot is labelled", () => {
+  const html = renderToStaticMarkup(h(CustomizePage, { at: { section: "connections" }, report: SAMPLE.report, docSlugs: [], onOpen() {}, onDocs() {} }));
+  assert.match(html, /aria-label="12 tools, 4 on"/);
+  assert.match(html, /aria-label="23 tools, 12 on, 2 withheld"/);
+  assert.match(html, /aria-label="Tools unknown until you sign in"/);
+  assert.match(html, /role="img" aria-label="Needs you"/);
+});
+
+test("from a report: the week grid labels every day's cell for screen readers", () => {
+  const html = renderToStaticMarkup(h(CustomizePage, { at: { section: "automations" }, automations: SAMPLE.automations, docSlugs: [], onOpen() {}, onDocs() {} }));
+  assert.match(html, /role="table" aria-label="Automations, the last seven days"/);
+  assert.match(html, /aria-label="Today: waiting on you"/);
+  assert.match(html, /: ran and did something, failed"/);
+  assert.match(html, /: no runs"/);
+});
+
+test("figure helpers say plain words", () => {
+  assert.equal(usedLabel({ count: 0, days: [], last: null }), "Never used");
+  assert.equal(usedLabel({ count: 1, days: [], last: null }), "Used once in the last 30 days");
+  assert.equal(toolsLabel([{ state: "on" }, { state: "off" }, { state: "withheld" }]), "3 tools, 1 on, 1 withheld");
+  assert.equal(toolsLabel([{ state: "off" }]), "1 tool, none on");
+  assert.deepEqual(activityLevels([0, 1, 3, 6]), ["", "lo", "lo", "hi"]);
+  assert.deepEqual(weightBars(SAMPLE.report.skills.items, 1500).map((b) => b.name), ["release-notes", "db-migrations", "commit", "code-review", "pdf"]);
+  const days = weekDays(new Date("2026-11-18T12:00:00"));
+  assert.deepEqual(days, ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Today"]);
 });
 
 // ---------- Connections moved out of Settings ----------
@@ -197,6 +246,15 @@ test("Settings on the web no longer lists Connections; its old links open Custom
   assert.equal(page(p)?.props["aria-label"], "Connections");
   assert.equal(p.path(), "/customize/connections");
   p.unmount();
+});
+
+// ---------- production and the sample ----------
+
+test("the dev sample is only ever loaded behind import.meta.env.DEV", () => {
+  const app = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
+  const uses = app.split("\n").filter((l) => l.includes("customize.sample"));
+  assert.equal(uses.length, 1);
+  assert.match(uses[0], /import\.meta\.env\.DEV && .*import\('\.\/customize\.sample'\)/);
 });
 
 test("the app sidebar's Customize row opens Customize on Skills", async () => {

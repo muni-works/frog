@@ -24,7 +24,7 @@ import { creditLine, Palette, type Command } from './ui/Overlays'
 import { SettingsPage, SettingsSidebar } from './ui/Settings'
 import { pinModel, pinnedModel, rememberPick, sectionOfQuery, setTheme, settingsMovedTo, settingsPath, settingsSectionOf, startingModel, toggledTheme, WEB_SECTIONS, type Section } from './settings'
 import { CustomizePage, CustomizeSidebar } from './ui/Customize'
-import { CUSTOMIZE_SECTIONS, customizeAtOf, customizePath, customizePathIsCanonical, FIRST_CUSTOMIZE, shownAt, type CustomizeAt } from './customize'
+import { CUSTOMIZE_SECTIONS, customizeAtOf, customizePath, customizePathIsCanonical, FIRST_CUSTOMIZE, shownAt, type Automation, type CustomizeAt, type Report } from './customize'
 import { Transcript } from './ui/Transcript'
 import { safeHref } from './ui/href'
 import { askLine } from './ui/ask'
@@ -112,8 +112,14 @@ export default function App() {
   const [docPage, setDocPage] = useState(() => docsSlugOf(location.pathname) || FIRST_DOC)
   const [section, setSection] = useState<Section>(first.section)
   const [cz, setCz] = useState<CustomizeAt>(first.customize)
+  // Customize's figures come from an engine report (docs/customize-api.md), which no cloud path
+  // answers yet: none, so nothing is guessed. Dev only, ?customize=sample draws the designs.
+  const [czSample, setCzSample] = useState<{ report: Report; automations: Automation[] } | null>(null)
+  useEffect(() => {
+    if (import.meta.env.DEV && new URLSearchParams(location.search).get('customize') === 'sample') import('./customize.sample').then((m) => setCzSample(m.SAMPLE))
+  }, [])
   // A detail page with nothing to show opens its list (or Add), and the URL says so.
-  const czAt = shownAt(cz)
+  const czAt = shownAt(cz, czSample?.report)
   useEffect(() => {
     // A session still being created (a placeholder id) waits for its real id.
     const viewPath = pathOfView(view)
@@ -700,7 +706,7 @@ export default function App() {
       settings: key && <SettingsSidebar current={section} onBack={backToApp} onOpen={(x) => openSettings(x)} />,
       customize: key && <CustomizeSidebar current={czAt.section} onBack={backToApp} onOpen={(x) => openCustomize({ section: x })} /> }}
       main={{ docs: <DocsPage pages={DOCS} slug={docPage} onOpen={openDocs} bar={<><Burger />{collapsed && sideToggle(false)}</>} />,
-      customize: key && <CustomizePage at={czAt} repos={repoList} machines={machines} docSlugs={DOCS.map((d) => d.slug)}
+      customize: key && <CustomizePage at={czAt} repos={repoList} report={czSample?.report ?? null} automations={czSample?.automations} machines={machines} docSlugs={DOCS.map((d) => d.slug)}
         onOpen={(at) => openCustomize(at)} onDocs={openDocs} bar={<><Burger />{collapsed && sideToggle(false)}</>} />,
       settings: key && <SettingsPage section={section} account={account} apiKey={!DEV_KEY ? key : undefined} models={models} machines={machines} focusCoupon={couponAsk}
         newMode={newMode} onNewMode={setNewMode} pinnedModel={pinned} onPinModel={setPinned}
