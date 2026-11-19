@@ -782,7 +782,8 @@ struct EndView: View {
                 .foregroundStyle(Tokens.textTertiary)
                 .frame(height: Tokens.Transcript.meta.line)
                 .padding(.leading, edge.indent)
-                .metricsRow(.footer, Self.footer(usage, models: models).map(\.words).joined(separator: ", "),
+                // Its visible words: parts with a gap, as the web's dump reads them.
+                .metricsRow(.footer, Self.footer(usage, models: models).map(\.words).joined(separator: " "),
                             key: "footer-\(usage.model ?? "")-\(usage.outputTokens)-\(usage.timing?.wallMs ?? 0)", fontSize: Tokens.Transcript.meta.size)
             }
         case .cancelled:

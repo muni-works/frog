@@ -141,9 +141,12 @@ final class TableTranscriptParityTests: XCTestCase {
         }
     }
 
-    func testJumpShowsTheTurn() {
+    func testJumpShowsTheTurn() throws {
         for table in [false, true] {
             let c = open(table: table, turns: 200)
+            // The jump is an animated scroll: no display frames, no scroll (it failed only in
+            // full runs that outlasted the display, 2026-11-19).
+            try TestRunner.skipUnlessTheDisplayDraws(host)
             let target = c.turns[40].id
             jumpBox.id = target
             XCTAssertTrue(wait() { self.visible.contains(target) },
@@ -206,6 +209,8 @@ final class TableTranscriptParityTests: XCTestCase {
     func testASendFromFarUpGoesToTheReply() throws {
         for table in [false, true] {
             let c = open(table: table, turns: 60)
+            // The jump up and the glide back down are animated scrolls, on the display's frames.
+            try TestRunner.skipUnlessTheDisplayDraws(host)
             XCTAssertTrue(wait() { self.atEnd() }, "table \(table): opens at the end")
             jumpBox.id = c.turns[0].id
             XCTAssertTrue(wait() { self.visible.contains(c.turns[0].id) && !self.atEnd() }, "table \(table): reading turn 1")

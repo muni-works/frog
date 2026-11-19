@@ -124,8 +124,9 @@ Anything else is a plain command. Never guess a count; no per-test picture.
 
 ### The footer
 
-One line in `meta`, 20 below the last row: the model in `muted`, then time, tokens and cost
-separated by middle dots, each with a normal space either side. Phase 3 adds the turn line at
+One line in `meta`, 20 below the last row: the model in `muted`, then time, tokens and cost,
+each part 10 apart with no separator character (Cam, 5b76372f: metadata gets space; this was
+middle dots). Phase 3 adds the turn line at
 its right end. The web's `.turn-foot` and the Mac's footer become this; the web's `.turn-card`
 popover is replaced by the turn panel in phase 3 and stays until then.
 
@@ -182,7 +183,8 @@ and their tests' old expectations.
 
 ### The stats line
 
-Under the live row, 2 below it, in `meta`: time, tokens, tokens per second. Time shows after
+Under the live row, 2 below it, in `meta`: time, tokens, tokens per second, 10 apart with no
+separator character, as the footer. Time shows after
 the first second. The token figure while a call is streaming is counted from what has arrived
 and is replaced by the provider's number when the call ends; it must never be shown as exact
 while it is a count of chunks (no decimals, and the hover says "so far"). While the answer
