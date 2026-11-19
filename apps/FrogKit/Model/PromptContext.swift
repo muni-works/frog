@@ -13,7 +13,7 @@ struct PromptContext: Identifiable, Equatable {
     /// "GitHub · ecto/ipse#458".
     var title: String {
         let name = source == "github" ? "GitHub" : source.capitalized
-        return label.isEmpty ? name : "\(name) · \(label)"
+        return label.isEmpty ? name : "\(name), \(label)"
     }
 
     /// Your request, and the context blocks after it.

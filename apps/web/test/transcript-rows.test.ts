@@ -111,7 +111,7 @@ test("a recognised test run reads 10 of 11 and, opened, names what failed above 
   const e = step({ id: "tr", name: "Bash", arg: "cargo test -q upload", outcome: "error", output: "…\ntest result: FAILED. 10 passed; 1 failed",
     tests: { runner: "cargo", passed: 10, failed: 1, total: 11, failed_names: ["upload_retries_on_503"] }, started: 0, ended: 9000 });
   const html = draw(e);
-  assert.equal(part(html, "line-result"), "10 of 11 · 9.0s");
+  assert.equal(part(html, "line-result"), "10 of 11, 9.0s");
   assert.match(html, /class="line-failing"[^>]*>[\s\S]*upload_retries_on_503/);
   assert.ok(html.indexOf("line-failing") < html.indexOf("line-out"), "the names come above the output");
 });

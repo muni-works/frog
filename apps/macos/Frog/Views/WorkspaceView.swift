@@ -393,7 +393,7 @@ struct WorkspaceView: View {
         guard let docs else { return [] }
         var out = [PaletteCommand(id: "docs", title: "Documentation", subtitle: "Help", symbol: "book") { showDocs() }]
         for page in docs.pages {
-            out.append(PaletteCommand(id: "docs-\(page.slug)", title: page.title, subtitle: "Documentation · \(page.section)", symbol: "book") {
+            out.append(PaletteCommand(id: "docs-\(page.slug)", title: page.title, subtitle: "Documentation, \(page.section)", symbol: "book") {
                 showDocs(page.slug)
             })
         }
@@ -845,7 +845,7 @@ extension WorkspaceView {
     /// Where the focused conversation lives: the project and its branch; nothing for a chat.
     private var place: String {
         guard !workspace.isChat else { return "" }
-        return [workspace.name, workspace.git?.branch].compactMap { $0 }.joined(separator: " · ")
+        return [workspace.name, workspace.git?.branch].compactMap { $0 }.joined(separator: ", ")
     }
 
     /// The title and its ⌄ menu. The menu's content builds when it opens; the label reads the

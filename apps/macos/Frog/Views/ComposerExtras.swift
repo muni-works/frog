@@ -149,7 +149,7 @@ struct ModelDownloadStatus: View {
             HStack(spacing: 8) {
                 ProgressView(value: fraction)
                     .frame(maxWidth: 150)
-                Text("Downloading \(model.name) · \(Self.size(fraction, of: model.downloadGB))")
+                Text("Downloading \(model.name), \(Self.size(fraction, of: model.downloadGB))")
                     .lineLimit(1)
                 Spacer(minLength: 0)
                 Button { if let repo = model.repo { downloads.cancel(repo) } } label: {

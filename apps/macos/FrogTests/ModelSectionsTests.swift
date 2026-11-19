@@ -100,8 +100,8 @@ final class ModelSectionsTests: XCTestCase {
     }
 
     func testCardKeyLine() {
-        XCTAssertEqual(FrogCloudCard.keyLine("keychain"), "API key · Keychain")
-        XCTAssertEqual(FrogCloudCard.keyLine("env"), "API key · FROG_API_KEY (from your environment; a saved key is ignored here)")
+        XCTAssertEqual(FrogCloudCard.keyLine("keychain"), "API key, Keychain")
+        XCTAssertEqual(FrogCloudCard.keyLine("env"), "API key, FROG_API_KEY (from your environment; a saved key is ignored here)")
         XCTAssertNil(FrogCloudCard.keyLine(nil))
     }
 
@@ -121,7 +121,7 @@ final class ModelSectionsTests: XCTestCase {
             entry("cloud/glm-5.3-flash", source: "remote"),
         ].map(ModelIdentity.init)
         // Every one of those identities still resolves and names its provider...
-        XCTAssertEqual(ModelIdentity.of("anthropic/claude-sonnet-5", in: []).place.label, "Cloud · Anthropic")
+        XCTAssertEqual(ModelIdentity.of("anthropic/claude-sonnet-5", in: []).place.label, "Cloud, Anthropic")
         XCTAssertEqual(ModelIdentity.of("mew/qwen3:32b", in: []).place.label, "On mew")
         // ...while the picker's sections keep to Frog Cloud.
         XCTAssertEqual(ModelSections.make(usable: all, suggested: []).map(\.title), ["Frog Cloud"])

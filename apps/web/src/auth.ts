@@ -51,7 +51,7 @@ const random = (n: number) => b64url(crypto.getRandomValues(new Uint8Array(n)))
 
 function device(): string {
   let d = store.get(localStorage, DEVICE)
-  if (!d) { d = `frog.toys web · ${random(3).slice(0, 4)}`; store.set(localStorage, DEVICE, d) }
+  if (!d) { d = `frog.toys web, ${random(3).slice(0, 4)}`; store.set(localStorage, DEVICE, d) }
   return d
 }
 

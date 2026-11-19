@@ -1078,10 +1078,10 @@ enum NodeFit: Equatable {
     var line: String {
         switch self {
         case .loaded(let n): "on \(n)"
-        case .loading(let n, let s): s > 0 ? "loading on \(n) · \(s) s" : "loading on \(n)"
-        case .fits(let n, let r): "on \(n)'s disk · fits" + (r.map { " · replaces \($0)" } ?? "")
+        case .loading(let n, let s): s > 0 ? "loading on \(n), \(s) s" : "loading on \(n)"
+        case .fits(let n, let r): "on \(n)'s disk, fits" + (r.map { ", replaces \($0)" } ?? "")
         case .wontFit(let n, let need, let room):
-            "on \(n)'s disk · won't fit (needs \(Self.gb(need)), \(Self.gb(room)) free)"
+            "on \(n)'s disk, won't fit (needs \(Self.gb(need)), \(Self.gb(room)) free)"
         }
     }
 

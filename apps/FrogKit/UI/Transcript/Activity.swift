@@ -229,7 +229,7 @@ struct ActivityPanel: View {
         if UserDefaults.standard.bool(forKey: ModelStats.energyKey), let e = u.energy {
             parts.append(ModelStats.energy(e.totalWh, estimated: e.estimated))
         }
-        return Text(parts.joined(separator: " · "))
+        return Text(parts.joined(separator: ", "))
             .font(.caption.monospacedDigit())
             .foregroundStyle(.secondary)
     }

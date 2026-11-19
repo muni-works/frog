@@ -54,24 +54,42 @@ final class RemoteBridge {
         /// system's "Frog wants to use your confidential information" prompt on every run.
         nonisolated(unsafe) static var testCode: String?
 
+        #if DEBUG
+        /// A debug build keeps its own code in its own defaults (`toys.frog.dev`), never the
+        /// Keychain item. Debug builds are ad-hoc signed, each one differently, so every
+        /// build's read of the shared item asked for the login password at launch; and a
+        /// read that was refused made a new code and wrote it over the installed Frog's,
+        /// so the next launch of Frog asked too, and paired phones had to pair again.
+        static let debugKey = "remoteBridgeCodeDebug"
+        #endif
+
         static func read() -> String? {
             if SingleInstance.isTesting { return testCode }
+            #if DEBUG
+            return UserDefaults.standard.string(forKey: debugKey)
+            #else
             var q = query
             q[kSecReturnData as String] = true
             q[kSecMatchLimit as String] = kSecMatchLimitOne
             var out: AnyObject?
             guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let data = out as? Data else { return nil }
             return String(data: data, encoding: .utf8)
+            #endif
         }
 
         static func write(_ code: String) {
             if SingleInstance.isTesting { testCode = code.isEmpty ? nil : code; return }
+            #if DEBUG
+            if code.isEmpty { UserDefaults.standard.removeObject(forKey: debugKey) }
+            else { UserDefaults.standard.set(code, forKey: debugKey) }
+            #else
             SecItemDelete(query as CFDictionary)
             guard !code.isEmpty else { return }
             var q = query
             q[kSecValueData as String] = Data(code.utf8)
             q[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
             SecItemAdd(q as CFDictionary, nil)
+            #endif
         }
     }
 

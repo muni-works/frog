@@ -145,7 +145,7 @@ struct GitTreeBadges {
         for (parent, ids) in GitRollup.foldMembers(entries, children: children) where !ids.isEmpty {
             let title = parent == AttentionTree.chiefFold ? "Done by chief"
                 : parent == AttentionTree.yoursFold ? "Your finished sessions"
-                : "\(byId[parent]?.displayTitle ?? "Finished") · done"
+                : "\(byId[parent]?.displayTitle ?? "Finished"), done"
             out.folds[parent] = group(ids, title: title)
         }
         return out
@@ -163,7 +163,7 @@ struct GitTreeBadges {
         return GitRowBadge(
             display: d, help: b.summary,
             card: .init(id: "git:" + s.id, title: s.displayTitle, sessions: members, single: true,
-                        counts: counts.joined(separator: " · "), open: open,
+                        counts: counts.joined(separator: ", "), open: open,
                         refresh: { index.refreshFromRemote(members, askGitHub: true) }))
     }
 
@@ -180,9 +180,9 @@ struct GitTreeBadges {
         var help = counts
         if sum.dirty { help.append("uncommitted work left behind") }
         if sum.trouble { help.append("a rebase or merge is stuck") }
-        return GitRowBadge(display: d, help: help.joined(separator: " · "),
+        return GitRowBadge(display: d, help: help.joined(separator: ", "),
                            card: .init(id: id, title: title, sessions: sessions, single: false,
-                                       counts: counts.joined(separator: " · "), open: open,
+                                       counts: counts.joined(separator: ", "), open: open,
                                        refresh: { index.refreshFromRemote(sessions, askGitHub: false) }))
     }
 
@@ -463,7 +463,7 @@ struct GitCard: View {
                 if card.moreLanded > 0 { more("\(card.moreLanded) more") }
             }
             if let p = card.pending.first, request.single {
-                section("Not landed · " + (p.branch ?? "detached"))
+                section("Not landed, " + (p.branch ?? "detached"))
                 ownCommits(p)
             } else if !card.pending.isEmpty {
                 section("Not landed")
@@ -482,7 +482,7 @@ struct GitCard: View {
                     .buttonStyle(.plain).foregroundStyle(.tint)
                     .help("Fetch the base and ask GitHub about this branch")
                 Spacer()
-                Text(pinned ? "↩ open · ⌘C copy · esc" : "click to pin").foregroundStyle(.tertiary)
+                Text(pinned ? "↩ open, ⌘C copy, esc" : "click to pin").foregroundStyle(.tertiary)
             }
             .font(.frog(size: 11))
             .padding(.horizontal, 12).padding(.vertical, 6)
@@ -642,13 +642,13 @@ struct GitCard: View {
             if let key = p.statKey, let s = index.stats[key] {
                 Text("+\(s.added)").foregroundStyle(.green)
                 Text(" −\(s.removed)").foregroundStyle(.red)
-                Text(" · \(s.files) file\(s.files == 1 ? "" : "s") vs \(request.sessions.first.flatMap { GitIndex.shared.badge($0)?.base } ?? "base")")
+                Text("\(s.files) file\(s.files == 1 ? "" : "s") vs \(request.sessions.first.flatMap { GitIndex.shared.badge($0)?.base } ?? "base")").padding(.leading, 10)
                     .foregroundStyle(.secondary)
             } else {
                 Text("…").foregroundStyle(.tertiary)
             }
-            if let d = p.dirty, d > 0 { Text(" · ● \(d) uncommitted").foregroundStyle(.secondary) }
-            else if p.dirty == 0 { Text(" · clean").foregroundStyle(.secondary) }
+            if let d = p.dirty, d > 0 { Text("● \(d) uncommitted").foregroundStyle(.secondary).padding(.leading, 10) }
+            else if p.dirty == 0 { Text("clean").foregroundStyle(.secondary).padding(.leading, 10) }
         }
         .font(.frog(size: 10.5, design: .monospaced))
         .padding(.horizontal, 12).padding(.top, 3)

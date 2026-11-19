@@ -38,7 +38,7 @@ struct UserFooter: View {
                     Button("Continue with Google") { signIn("google") }
                 } label: {
                     row(avatar: nil, title: "Sign in to Frog Cloud",
-                        detail: failure ?? (account.signedIn ? "Access to more powerful models" : "Cloud sessions · $1 free to start"),
+                        detail: failure ?? (account.signedIn ? "Access to more powerful models" : "Cloud sessions, $1 free to start"),
                         warn: failure != nil)
                 }
                 .menuStyle(.borderlessButton)
@@ -99,7 +99,7 @@ struct UserFooter: View {
     static func creditLine(_ me: CloudAccount.Me) -> String {
         let d = me.credit_cents / 100
         let credit = d > 0 && d < 0.01 ? "<$0.01" : String(format: "$%.2f", d)
-        return [me.subscription?.name, "\(credit) credit"].compactMap { $0 }.joined(separator: " · ")
+        return [me.subscription?.name, "\(credit) credit"].compactMap { $0 }.joined(separator: ", ")
     }
 }
 

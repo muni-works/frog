@@ -191,8 +191,8 @@ extension Conversation {
         let mine = turn.agents.filter(\.finished)
         let failed = mine.filter { $0.state == .failed }.count
         var text = waiting
-        if mine.count > failed { text += " · \(mine.count - failed) done" }
-        if failed > 0 { text += " · \(failed) failed" }
+        if mine.count > failed { text += ", \(mine.count - failed) done" }
+        if failed > 0 { text += ", \(failed) failed" }
         return text + "…"
     }
 }

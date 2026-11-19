@@ -91,7 +91,7 @@ struct GitBadge: Equatable, Sendable {
         case .ancestor, .patchEquivalent: if (ahead ?? 0) == 0 { parts.append("landed") }
         case .pr(let n): if (ahead ?? 0) == 0 { parts.append("PR #\(n) merged") }
         }
-        return parts.joined(separator: " · ")
+        return parts.joined(separator: ", ")
     }
 }
 

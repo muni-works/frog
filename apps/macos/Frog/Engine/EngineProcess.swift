@@ -169,8 +169,10 @@ enum TestHome {
         let home = fm.temporaryDirectory.appending(path: "frog-test-home-\(getpid())")
         try? fm.removeItem(at: home)
         try? fm.createDirectory(at: home.appending(path: "Library"), withIntermediateDirectories: true)
-        // The login keychain stays reachable: the node-pairing tests store keys through
-        // `security`, under service names of their own, and remove them after.
+        // The login keychain stays linked, but nothing a test runs reads it: the app's own
+        // stores keep keys in memory under XCTest, and every `frog` it starts inherits
+        // FROG_KEYCHAIN=off below. (Without the link, a stray access under this HOME hangs
+        // rather than fails.)
         try? fm.createSymbolicLink(at: home.appending(path: "Library/Keychains"),
                                    withDestinationURL: real.appending(path: "Library/Keychains"))
         setenv("CFFIXED_USER_HOME", home.path, 1)
@@ -180,6 +182,9 @@ enum TestHome {
         // test engine put frog-apple on 8912 for the whole run. A test that needs a real one
         // passes `FROG_SIDECARS=ephemeral` in `Frog.overrides` (a port the OS picks).
         setenv("FROG_SIDECARS", "off", 1)
+        // Nor does any engine or `frog --set-key` reach the login Keychain: no prompt for an
+        // item the installed Frog made, and no test overwriting or deleting the real key.
+        setenv("FROG_KEYCHAIN", "off", 1)
         isolateDefaults()
     }
 

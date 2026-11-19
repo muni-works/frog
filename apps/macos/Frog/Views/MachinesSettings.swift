@@ -105,7 +105,7 @@ extension Device {
     /// "RTX 3090 · 24 GB VRAM".
     var hardwareLine: String {
         guard totalBytes > 0 else { return chip }
-        return [chip, "\(Self.gb(totalBytes)) \(unified ? "unified" : "VRAM")"].filter { !$0.isEmpty }.joined(separator: " · ")
+        return [chip, "\(Self.gb(totalBytes)) \(unified ? "unified" : "VRAM")"].filter { !$0.isEmpty }.joined(separator: ", ")
     }
 
     /// "Qwen3-8B · 58 tok/s", "idle", "offline".
@@ -115,7 +115,7 @@ extension Device {
         if let loading { return "loading \(LocalCatalog.displayName(loading))" }
         if let stuckLoad { return "stuck loading \(LocalCatalog.displayName(stuckLoad.id))" }
         guard let model else { return "idle" }
-        return [LocalCatalog.displayName(model), decode.map(ModelStats.speedText)].compactMap { $0 }.joined(separator: " · ")
+        return [LocalCatalog.displayName(model), decode.map(ModelStats.speedText)].compactMap { $0 }.joined(separator: ", ")
     }
 
     var statusLine: String {
