@@ -64,6 +64,10 @@ struct Rig {
 }
 
 fn rig_at(base: &Path, script: Vec<Response>) -> Rig {
+    rig_caps(base, script, true)
+}
+
+fn rig_caps(base: &Path, script: Vec<Response>, notes: bool) -> Rig {
     let (project, store) = (base.join("project"), base.join("store"));
     for d in [&project, &store] {
         std::fs::create_dir_all(d).unwrap();
@@ -99,6 +103,7 @@ fn rig_at(base: &Path, script: Vec<Response>) -> Rig {
             sessions: false,
             irc: false,
             customize: true,
+            notes,
         })
         .unwrap();
     Rig {
@@ -509,6 +514,22 @@ async fn noting_off_writes_nothing() {
     );
     assert!(r.notes().is_empty());
     assert!(!r.sent.lock().unwrap()[0].contains("<tool Note>"));
+    r.end().await;
+}
+
+/// A client that can't show the receipt (no `notes` capability: the CLI, today's apps) gets no
+/// `Note` tool, and a call writes nothing: Frog never keeps a note nobody can see or undo.
+#[tokio::test]
+async fn no_receipt_no_noting() {
+    let base = std::env::temp_dir().join(format!("frog-noting-{}", session::new_id()));
+    let mut r = rig_caps(&base, vec![answer_and_note("Ok.", staging_note()), done()], false);
+    r.idle().await;
+    let evs = r.say(STAGING).await;
+    assert!(receipts(&evs).is_empty());
+    assert!(!r.sent.lock().unwrap()[0].contains("<tool Note>"));
+    let out = &note_outputs(&evs)[0];
+    assert!(out.contains("no `Note` tool") || out.contains("off"), "{out}");
+    assert!(r.notes().is_empty());
     r.end().await;
 }
 

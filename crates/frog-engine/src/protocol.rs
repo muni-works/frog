@@ -380,6 +380,11 @@ pub enum Op {
         /// model gets the `Customize` tool. Without it nothing can raise a card no app shows.
         #[serde(default)]
         customize: bool,
+        /// The client draws the `noted` receipt under a reply, with Undo
+        /// (docs/customize-events.md, Noted), so Frog may note things on its own. Without it
+        /// the `Note` tool isn't offered and nothing is written: no note nobody can see.
+        #[serde(default)]
+        notes: bool,
     },
     /// Open a pane. The engine mints the id and answers with [`Event::PaneOpened`]. Terminal
     /// panes are engine-owned shells; preview panes are the client's webviews.
@@ -2185,11 +2190,12 @@ mod tests {
             sessions,
             irc,
             customize,
+            notes,
         } = old
         else {
             panic!("not SetClientCaps");
         };
-        assert!(panes && !ask && !sessions && !irc && !customize);
+        assert!(panes && !ask && !sessions && !irc && !customize && !notes);
         // Old clients never send `irc`, so the bus stays off until the client says otherwise.
         let wire: Op =
             serde_json::from_str(r#"{"op":"set_client_caps","panes":false,"irc":true}"#).unwrap();
@@ -2201,6 +2207,7 @@ mod tests {
                 sessions: false,
                 irc: true,
                 customize: false,
+                notes: false,
             }
         ));
     }
