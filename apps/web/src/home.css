@@ -1,0 +1,56 @@
+/* The new-session landing's centre (ui/Home.tsx). The mark, heading and composer sit centred in
+   the page, signed out and signed in alike; the signed-out card hangs below them and only pushes
+   them up when the window is too short for both. */
+/* The pond stays behind as the column scrolls: it hangs off the main, the page sits over it. */
+.main.home { position: relative; }
+.main.home > .home-page { position: relative; }
+/* The signed-out footer sits on the bottom edge, out of the flow, so the hero centres on the same
+   line signed out and signed in; the card's half leaves room for it. */
+.main.home > .muni-foot { position: absolute; left: 0; right: 0; bottom: 0; }
+.main.home:has(> .muni-foot) .home-below::after { height: 88px; }
+.home-page { flex: 1; min-height: 0; overflow-y: auto; box-sizing: border-box; display: flex; flex-direction: column; padding: 0 var(--tx-gutter); container: home / inline-size; }
+.home-col { flex: 1 0 auto; width: 100%; max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; align-items: center; }
+/* Equal shares above and below: centred. The card's half never shrinks under the card. */
+.home-above { flex: 1 1 0; min-height: 24px; }
+.home-below { flex: 1 1 0; width: 100%; }
+/* Room at the bottom as content, not padding, so it never unbalances the halves. */
+.home-below::after { content: ''; display: block; height: 32px; }
+.home-hero-c { width: 100%; display: flex; flex-direction: column; align-items: center; }
+.home-mark { width: 64px; height: 64px; }
+.main.home .home-col h1 { margin: 22px 0 16px; font-family: var(--font-display); font-size: 28px; line-height: 34px; font-weight: 600; letter-spacing: -0.01em; text-align: center; }
+.home-composer { width: 100%; }
+/* Up here a menu has no room above the composer: it opens below. */
+.home-composer .cz-menu { top: calc(100% - 4px); bottom: auto; }
+
+/* Signed out: what Frog is. No stroke, the card's own fill. */
+.what { width: 100%; box-sizing: border-box; margin-top: 32px; display: grid; grid-template-columns: minmax(0, 1fr) 240px; overflow: hidden; border: 0; border-radius: 16px; background: var(--card); }
+.what-tx { padding: 20px 24px; display: flex; flex-direction: column; gap: 8px; }
+.what-lb { font-size: 12px; line-height: 17px; font-weight: 600; color: var(--muted); }
+.what h2 { margin: 0; font-family: var(--font-display); font-size: 22px; line-height: 27px; font-weight: 600; letter-spacing: -0.02em; }
+.what p { margin: 0; color: var(--muted); font-size: 13.5px; line-height: 20px; }
+.what-ft { margin-top: auto; color: var(--faint); font-size: 12px; line-height: 17px; }
+.what-art { display: block; width: 240px; height: 100%; min-height: 172px; background: color-mix(in srgb, var(--fg) 3%, var(--card)); }
+.wa-dot { fill: color-mix(in srgb, var(--fg) 12%, transparent); }
+.wa-go { fill: var(--frog); }
+.wa-z { fill: var(--faint); font-family: var(--font-sans); font-weight: 600; }
+.wa-lid { fill: color-mix(in srgb, var(--fg) 55%, transparent); }
+.wa-base { fill: var(--fg); }
+.wa-track { stroke: var(--line); stroke-width: 2; stroke-linecap: round; fill: none; }
+.wa-run { stroke: var(--frog); stroke-width: 3; stroke-linecap: round; fill: none; }
+.wa-tick { stroke: var(--card); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; fill: none; }
+.wa-halo { fill: var(--frog); opacity: .18; transform-box: fill-box; transform-origin: center; animation: wa-beat 2.4s ease-out infinite; }
+@keyframes wa-beat { 0% { transform: scale(.6); opacity: .35; } 100% { transform: scale(1.4); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .wa-halo { animation: none; } }
+
+/* Narrow: the words only; the picture would take the screen. */
+@container home (max-width: 620px) {
+  .what { grid-template-columns: minmax(0, 1fr); }
+  .what-art { display: none; }
+}
+@media (max-width: 760px) {
+  .home-page { padding: 0 16px; }
+  .home-below::after { height: max(24px, env(safe-area-inset-bottom)); }
+  .main.home .home-col h1 { font-size: 24px; line-height: 30px; margin: 16px 0 12px; }
+  .home-mark { width: 52px; height: 52px; }
+  .what { margin-top: 24px; }
+}

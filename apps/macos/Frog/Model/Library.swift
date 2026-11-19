@@ -13,6 +13,8 @@ final class Library {
     typealias Live = SessionLive
 
     private(set) var sessions: [SessionInfo] = []
+    /// The listing has been read once: an empty list now means none, not not yet.
+    private(set) var loaded = false
     /// This Mac's sessions and Frog Cloud's, which `sessions` lists together: one list, as
     /// on the web, each opening through its own link (`isCloud`).
     private var local: [SessionInfo] = []
@@ -158,6 +160,7 @@ final class Library {
             }
         }
         sessions = all
+        loaded = true
         self.listed = Dictionary(listed.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         GitIndex.shared.listingChanged(listed)
         archiveQuietChats()
@@ -451,6 +454,12 @@ final class Library {
     /// The conversation open on this Mac for session `id`, if any.
     func conversation(_ id: String) -> Conversation? {
         conversations[id]?.value
+    }
+
+    /// A conversation went on screen: findable by id at once, before (or without) any live
+    /// event, so the sidebar's card can read a thread that's open but idle or detached.
+    func adopt(_ id: String, conversation c: Conversation) {
+        if conversations[id]?.value !== c { conversations[id] = WeakConversation(value: c) }
     }
 
     /// Every conversation open on this Mac right now.

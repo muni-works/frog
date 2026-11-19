@@ -1,0 +1,143 @@
+/* Customize mode (ui/Customize.tsx). The page is Settings' (.settings-page: a 720 column, group
+   labels, hairlines only between rows); these are its own pieces, from the canvas frames
+   F1–F6, F9, mapped onto tokens.css so light and dark both hold. Cards are flat: no stroke. */
+
+.customize-main .titlebar { gap: 8px; }
+.cust-hdr-rt { margin-left: auto; display: flex; align-items: center; gap: 14px; flex: none; font-size: 12.5px; color: var(--muted); }
+.customize-main .crumbs b.mono { font-family: var(--font-mono); font-weight: 400; font-size: 12.5px; }
+.cust-pill { all: unset; box-sizing: border-box; border: 1px solid var(--line-strong); border-radius: 999px; padding: 3px 13px; font: 12.5px/18px var(--font-sans); color: var(--fg); cursor: pointer; white-space: nowrap; flex: none; text-decoration: none; }
+.cust-pill:hover { background: var(--hover); }
+.cust-pill:focus-visible { outline: 2px solid var(--frog); outline-offset: 2px; }
+
+.customize-page code { font-family: var(--font-mono); font-size: 0.92em; }
+.customize-page .mono { font-family: var(--font-mono); }
+
+/* The explainer and the weight card: flat cards on the page. */
+.cust-card { background: var(--card); border-radius: 14px; padding: 14px 18px; }
+.cust-explain { display: flex; gap: 20px; align-items: center; margin-bottom: 12px; }
+.cust-explain p { margin: 0; flex: 1; min-width: 0; color: var(--muted); font-size: 13px; line-height: 19px; }
+.cust-explain p b { color: var(--fg); font-weight: 600; }
+.cust-explain a { color: var(--fg); font-size: 12.5px; line-height: 18px; text-decoration: none; border-bottom: 1px solid var(--line-strong); white-space: nowrap; flex: none; }
+.cust-explain a:hover { border-bottom-color: var(--fg); }
+
+.cust-weight { display: flex; flex-direction: column; gap: 10px; }
+.cust-weight-h { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 13px; }
+.cust-weight-h b { font-weight: 600; }
+.cust-weight-h span { color: var(--muted); font-size: 12.5px; }
+.cust-weight .det { margin: 0; font-size: 12.5px; }
+.cust-strip { display: flex; gap: 3px; height: 6px; }
+.cust-strip i { display: block; border-radius: 3px; background: var(--faint); }
+.cust-strip i.idle { background: transparent; box-shadow: inset 0 0 0 1px var(--line-strong); }
+.cust-strip i.room { background: var(--well); flex: 1; }
+
+/* Skills' rows: name and summary, 30 days of marks, a count, on or off. */
+.cust-rows { display: flex; flex-direction: column; }
+.cust-skill { display: grid; grid-template-columns: minmax(0, 1fr) 154px 34px 34px; gap: 18px; align-items: center; padding: 11px 0; color: inherit; text-decoration: none; }
+.cust-skill + .cust-skill, .cust-conn + .cust-conn { border-top: 1px solid var(--line); }
+.cust-skill:hover .cust-nm { text-decoration: underline; }
+.cust-nm { display: block; font-size: 13px; line-height: 20px; color: var(--fg); }
+.cust-skill.idle .cust-nm { color: var(--muted); }
+.cust-skill .det { display: block; font-size: 12.5px; }
+.cust-n { color: var(--muted); font-size: 12.5px; text-align: right; }
+.cust-skill.idle .cust-n { color: var(--faint); }
+.cust-act { display: flex; flex: none; width: 148px; overflow: hidden; gap: 2px; align-items: flex-end; height: 14px; }
+.cust-act i { display: block; flex: 0 0 3px; width: 3px; height: 3px; border-radius: 1px; background: var(--well); }
+.cust-act i.cust-hi { height: 14px; background: var(--muted); }
+.cust-act i.cust-lo { height: 8px; background: var(--muted); }
+
+/* A read-only switch: the state, not a control. */
+.cust-tog { display: inline-block; width: 34px; height: 20px; border-radius: 999px; background: var(--line-strong); position: relative; flex: none; }
+.cust-tog::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--bg); }
+.cust-tog.on { background: var(--frog); }
+.cust-tog.on::after { left: 16px; background: var(--on-frog); }
+
+/* The one "needs you" mark. */
+.cust-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--notice); flex: none; display: inline-block; }
+
+/* Connections: name, a square per tool, weight and switch, then a line of what's true. */
+.cust-conn { display: grid; grid-template-columns: 150px minmax(0, 1fr) auto; gap: 6px 22px; align-items: start; padding: 18px 0; }
+.cust-conn-nm { font-weight: 600; display: flex; align-items: center; gap: 8px; min-width: 0; overflow-wrap: anywhere; }
+.cust-conn-ctl { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 12.5px; white-space: nowrap; }
+.cust-conn-say { grid-column: 2 / -1; font-size: 12.5px; }
+.cust-conn-say b { color: var(--muted); font-weight: 400; }
+.cust-sq { display: flex; flex-wrap: wrap; gap: 4px; padding-top: 5px; min-width: 0; }
+.cust-sq i, .cust-key i.sq { display: block; width: 10px; height: 10px; border-radius: 2.5px; background: var(--muted); flex: none; }
+.cust-sq i.off, .cust-sq i.held, .cust-key i.sq.off, .cust-key i.sq.held { background: transparent; box-shadow: inset 0 0 0 1px var(--line-strong); }
+.cust-sq i.held, .cust-key i.sq.held { position: relative; }
+.cust-sq i.held::after, .cust-key i.sq.held::after { content: ""; position: absolute; left: 1px; right: 1px; top: 4.5px; height: 1px; background: var(--faint); transform: rotate(-45deg); }
+.cust-key { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 12px; margin-top: 14px; color: var(--faint); }
+.cust-key span { display: flex; align-items: center; gap: 6px; }
+
+/* Rules: a file as a sheet of lines with a gutter. */
+.cust-sheet { display: flex; flex-direction: column; padding: 14px 0 6px; }
+.cust-sheet + .cust-sheet { margin-top: 22px; }
+.cust-sheet-h { display: flex; align-items: baseline; gap: 10px; padding-left: 56px; margin-bottom: 8px; min-width: 0; }
+.cust-sheet-h b { font-size: 12px; font-weight: 600; color: var(--muted); }
+.cust-sheet-h .mono { font-size: 11.5px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cust-ln { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 16px; align-items: baseline; padding: 5px 0; }
+.cust-g { text-align: right; color: var(--faint); font-size: 11.5px; line-height: 22px; }
+.cust-foot { margin: 18px 0 0 56px; font-size: 12px; }
+
+/* Memory: a dated rail, newest first. */
+.cust-rail { list-style: none; margin: 0; padding: 0; position: relative; display: flex; flex-direction: column; }
+.cust-rail::before { content: ""; position: absolute; left: 83px; top: 10px; bottom: 10px; width: 1px; background: var(--line); }
+.cust-ev { display: grid; grid-template-columns: 64px 9px minmax(0, 1fr) auto; gap: 14px; align-items: start; padding: 12px 0; position: relative; }
+.cust-when { text-align: right; color: var(--faint); font-size: 12px; line-height: 22px; }
+.cust-node { width: 9px; height: 9px; border-radius: 50%; background: var(--bg); box-shadow: inset 0 0 0 1.5px var(--faint); margin-top: 7px; }
+.cust-ev.fresh .cust-node { box-shadow: none; background: var(--fg); }
+.cust-note { display: block; }
+.cust-ev .det { display: block; font-size: 12.5px; margin-top: 2px; }
+.cust-scope { font-size: 12px; line-height: 22px; white-space: nowrap; }
+
+/* Automations: the last seven days, one cell a day. */
+.cust-week { display: flex; flex-direction: column; }
+.cust-week-row { display: grid; grid-template-columns: minmax(0, 1fr) auto 34px; column-gap: 12px; align-items: center; }
+.cust-week-row + .cust-week-row:not(.cust-week-h) { border-top: 1px solid var(--line); }
+.cust-week > .cust-week-h + .cust-week-row { border-top: 0; }
+.cust-key i.mk { display: block; width: 8px; height: 8px; border-radius: 50%; background: var(--fg); }
+.cust-key i.mk.idle { background: transparent; box-shadow: inset 0 0 0 1.5px var(--faint); }
+.cust-key i.mk.ask { background: var(--notice); }
+.cust-key i.mk.fail { height: 1.5px; border-radius: 1px; background: var(--faint); }
+.cust-week-h .cust-au { visibility: hidden; height: 0; }
+.cust-week-h { padding-bottom: 8px; }
+.cust-au { padding: 14px 0; min-width: 0; }
+.cust-au-nm { display: flex; align-items: center; gap: 8px; }
+.cust-au .det { display: block; font-size: 12.5px; }
+.cust-wk { display: grid; grid-template-columns: repeat(7, 34px); column-gap: 6px; }
+.cust-dh { color: var(--faint); font-size: 11.5px; line-height: 16px; text-align: center; }
+.cust-dh.now { color: var(--fg); }
+.cust-c { display: flex; align-items: center; justify-content: center; gap: 3px; height: 34px; border-radius: 8px; }
+.cust-c.now { background: var(--card); }
+.cust-c i { display: block; width: 8px; height: 8px; border-radius: 50%; background: var(--fg); }
+.cust-c i.idle { background: transparent; box-shadow: inset 0 0 0 1.5px var(--faint); }
+.cust-c i.ask { background: var(--notice); }
+.cust-c i.fail { height: 1.5px; border-radius: 1px; background: var(--faint); }
+.cust-empty { margin-top: 18px; padding: 18px; background: var(--card); border-radius: 14px; }
+.cust-empty b { font-weight: 600; }
+.cust-empty p { margin: 4px 0 0; font-size: 12.5px; }
+
+@media (max-width: 760px) {
+  .customize-page { box-sizing: border-box; padding-inline: 16px; }
+  .customize-main .crumbs { flex: 1; }
+  .cust-hdr-rt .num { display: none; } /* the crumbs keep the room; the total is on the page */
+  .cust-explain { flex-direction: column; align-items: flex-start; gap: 10px; }
+  .cust-skill { grid-template-columns: minmax(0, 1fr) auto 34px; row-gap: 6px; }
+  .cust-skill .cust-act { grid-column: 1; grid-row: 2; }
+  .cust-skill .cust-n { grid-row: 2; grid-column: 2; }
+  .cust-skill .cust-tog { grid-row: 1; grid-column: 3; }
+  .cust-conn { grid-template-columns: minmax(0, 1fr) auto; }
+  .cust-conn .cust-sq { grid-column: 1 / -1; grid-row: 2; }
+  .cust-conn-say { grid-column: 1 / -1; }
+  .cust-sheet-h { padding-left: 0; }
+  .cust-ln { grid-template-columns: 28px minmax(0, 1fr); gap: 10px; }
+  .cust-foot { margin-left: 0; }
+  .cust-rail::before { left: 59px; }
+  .cust-ev { grid-template-columns: 44px 9px minmax(0, 1fr); gap: 10px; }
+  .cust-ev .cust-scope { grid-column: 3; }
+  /* The week keeps its seven cells; the name takes its own line above them. */
+  .cust-week-row { grid-template-columns: minmax(0, 1fr) 34px; }
+  .cust-week-row .cust-au { grid-column: 1 / -1; padding-bottom: 6px; }
+  .cust-week-row .cust-wk { grid-template-columns: repeat(7, minmax(0, 1fr)); column-gap: 4px; padding-bottom: 12px; }
+  .cust-week-h .cust-au { display: none; }
+  .cust-week-h .cust-wk { grid-column: 1; }
+}

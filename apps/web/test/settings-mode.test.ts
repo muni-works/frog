@@ -14,7 +14,7 @@ import TestRenderer from "react-test-renderer";
 import { Coupon, creditRowLabel, DRAWN_BY, RENDER, SettingsPage, SettingsSidebar, WEB_SHORTCUTS } from "../src/ui/Settings.tsx";
 import { Shell, type ShellMode } from "../src/ui/Docs.tsx";
 import { Inspector } from "../src/ui/Inspector.tsx";
-import { pinModel, rememberPick, ROWS, SECTIONS, sectionOfQuery, settingsSectionOf, startingModel, webRows } from "../src/settings.ts";
+import { pinModel, rememberPick, ROWS, SECTIONS, sectionOfQuery, settingsSectionOf, startingModel, webRows, WEB_SECTIONS } from "../src/settings.ts";
 
 after(closeHarness);
 
@@ -80,21 +80,22 @@ test("⌘, opens Settings mode on Account: the sidebar is Back to app and the se
   await key(",");
   assert.equal(p.path(), "/settings/account");
   assert.equal(sectionShown(p), "Account");
-  assert.match(shownText(side(p)), /Back to app esc General Appearance Models Permissions Connections Shortcuts Usage Account Billing/);
+  assert.match(shownText(side(p)), /Back to app esc General Appearance Models Permissions Shortcuts Usage Account Billing/, "Connections moved to Customize on the web");
   assert.equal(find(p, (n) => n.props.role === "dialog"), undefined, "no settings overlay");
   p.unmount();
 });
 
-test("the Settings row (gear) beside Documentation opens Settings; the account row opens Account", async () => {
+test("the Settings row (gear) under Customize opens Settings; the account row opens Account", async () => {
   const p = await signedIn("/");
   const s = shownText(side(p));
-  assert.match(s, /Documentation Settings ⌘, Ada/, "Settings sits beside Documentation, above the account");
-  await click(find(p, hasClass("settings-row")));
+  // Documentation is hidden for now (ui/Side.tsx SHOW_DOCS), so Settings follows Customize.
+  assert.match(s, /New session ⌘N Search ⌘K Customize Settings ⌘,/, "the top rows, Settings after Customize");
+  await click(find(p, (n) => n.type === "button" && hasClass("side-row")(n) && shownText(n).startsWith("Settings")));
   assert.ok(page(p), "Settings mode");
   await click(btn(p, "Billing"));
   assert.equal(p.path(), "/settings/billing");
   await click(btn(p, "Back to app"));
-  await click(find(p, (n) => n.type === "button" && n.props.title === "Account"));
+  await click(find(p, (n) => n.type === "button" && n.props.title === "Account and billing"));
   assert.equal(sectionShown(p), "Account");
   p.unmount();
 });
@@ -427,7 +428,7 @@ test("every row the web can do has a renderer, and nothing renders that the list
 test("no Mac-only row shows on the web, in any section", async () => {
   const p = await signedIn("/settings/general");
   const mac = ROWS.filter((r) => r.platform === "mac").map((r) => r.label);
-  for (const s of SECTIONS) {
+  for (const s of WEB_SECTIONS) {
     await click(btn(p, s.label));
     const t = shownText(page(p)!);
     for (const l of mac) assert.ok(!t.includes(l), `${l} showed in ${s.label}`);
@@ -497,12 +498,11 @@ test("Appearance: Compact puts the transcript's compact gaps on the page and kee
   p.unmount();
 });
 
-test("Shortcuts lists the web's own keys; Connections and Usage are the Mac's rows as invitations", async () => {
+test("Shortcuts lists the web's own keys; Usage is the Mac's rows as invitations (Connections is in Customize)", async () => {
   const p = await signedIn("/settings/shortcuts");
   const t = shownText(page(p)!);
   for (const [, keys] of WEB_SHORTCUTS) for (const [what] of keys) assert.ok(t.includes(what), what);
-  await click(btn(p, "Connections"));
-  assert.equal(shownText(page(p)!).replace(/ (Get the Mac app|On a Mac)$/, ""), "On your Mac Sign in to a server Servers like Linear and GitHub, with your own account.");
+  assert.equal(btn(p, "Connections"), undefined);
   await click(btn(p, "Usage"));
   assert.match(shownText(page(p)!), /^On your Mac Measured energy for this Mac/);
   p.unmount();

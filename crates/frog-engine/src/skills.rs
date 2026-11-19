@@ -20,7 +20,7 @@ pub const TOOL: &str = "Skill";
 
 /// The catalog's share of the system prompt, in characters (~1.5k tokens). Past it, skills are
 /// listed by name only, and the model searches descriptions with the tool.
-const CATALOG_BUDGET: usize = 6_000;
+pub const CATALOG_BUDGET: usize = 6_000;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Skill {
@@ -30,11 +30,18 @@ pub struct Skill {
     pub path: PathBuf,
     /// Found under the project, rather than the user's home.
     pub project: bool,
+    /// Whose folder it's in: `frog`, `agents`, `claude_code`, or `builtin`.
+    pub source: &'static str,
 }
 
 impl Skill {
     pub fn dir(&self) -> &Path {
         self.path.parent().unwrap_or(Path::new("."))
+    }
+
+    /// What Customize and the use log know it by: its file, or `frog-builtin:<name>`.
+    pub fn id(&self) -> String {
+        self.path.display().to_string()
     }
 }
 
@@ -43,21 +50,47 @@ pub fn discover(cwd: &Path) -> BTreeMap<String, Skill> {
     discover_in(cwd, true)
 }
 
-/// Skills visible from `cwd`: the project's, and the user's own unless `user` is false.
+/// Skills visible from `cwd`: the project's, and the user's own unless `user` is false. Skills
+/// switched off in Customize (by name) are left out.
 pub fn discover_in(cwd: &Path, user: bool) -> BTreeMap<String, Skill> {
+    discover_with(cwd, user, &crate::customize::Toggles::current())
+}
+
+pub fn discover_with(
+    cwd: &Path,
+    user: bool,
+    toggles: &crate::customize::Toggles,
+) -> BTreeMap<String, Skill> {
+    let mut out = BTreeMap::new();
+    for s in scan(cwd, user) {
+        if toggles.skill_on(&s.name) {
+            // First found wins, and projects are scanned first.
+            out.entry(s.name.clone()).or_insert(s);
+        }
+    }
+    out
+}
+
+/// Every skill found, in the order they're looked for (project, home, built in), including
+/// ones of the same name that a skill found earlier hides: what Customize lists.
+pub fn scan(cwd: &Path, user: bool) -> Vec<Skill> {
     let home = dirs::home_dir().unwrap_or_default();
-    let mut roots: Vec<(PathBuf, bool)> = [".frog", ".agents", ".claude"]
-        .iter()
-        .map(|d| (cwd.join(d).join("skills"), true))
-        .collect();
+    let mut roots: Vec<(PathBuf, bool, &'static str)> = [
+        (".frog", "frog"),
+        (".agents", "agents"),
+        (".claude", "claude_code"),
+    ]
+    .iter()
+    .map(|(d, src)| (cwd.join(d).join("skills"), true, *src))
+    .collect();
     if user {
-        roots.push((crate::config::config_dir().join("skills"), false));
-        roots.push((home.join(".agents/skills"), false));
-        roots.push((home.join(".claude/skills"), false));
+        roots.push((crate::config::config_dir().join("skills"), false, "frog"));
+        roots.push((home.join(".agents/skills"), false, "agents"));
+        roots.push((home.join(".claude/skills"), false, "claude_code"));
     }
 
-    let mut out = BTreeMap::new();
-    for (root, project) in roots {
+    let mut out = Vec::new();
+    for (root, project, source) in roots {
         let Ok(entries) = std::fs::read_dir(&root) else {
             continue;
         };
@@ -82,21 +115,22 @@ pub fn discover_in(cwd: &Path, user: bool) -> BTreeMap<String, Skill> {
             if meta.get("disable-model-invocation").map(String::as_str) == Some("true") {
                 continue;
             }
-            // First found wins, and projects are scanned first.
-            out.entry(name.clone()).or_insert(Skill {
+            out.push(Skill {
                 name,
                 description: description.trim().to_string(),
                 path,
                 project,
+                source,
             });
         }
     }
     for (name, description, _) in BUILTIN {
-        out.entry(name.to_string()).or_insert(Skill {
+        out.push(Skill {
             name: name.to_string(),
             description: description.to_string(),
             path: PathBuf::from(format!("frog-builtin:{name}")),
             project: false,
+            source: "builtin",
         });
     }
     out
@@ -170,31 +204,58 @@ pub fn catalog(skills: &BTreeMap<String, Skill>) -> String {
 /// The catalog in about `budget` characters: names only (and search) when descriptions
 /// wouldn't fit.
 pub fn catalog_within(skills: &BTreeMap<String, Skill>, budget: usize) -> String {
-    if skills.is_empty() {
+    let parts = catalog_parts(skills, budget);
+    if parts.lines.is_empty() {
         return String::new();
     }
+    let sep = if parts.names_only { ", " } else { "\n" };
+    let list: Vec<&str> = parts.lines.iter().map(|(_, l)| l.as_str()).collect();
+    format!("{}{}", parts.head, list.join(sep))
+}
+
+/// The catalog in pieces: the heading, and each skill's own line (just its name when they're
+/// listed by name only), so Customize can say what each one adds to a turn.
+pub struct CatalogParts {
+    pub head: String,
+    /// By skill name, in catalog order.
+    pub lines: Vec<(String, String)>,
+    pub names_only: bool,
+}
+
+pub fn catalog_parts(skills: &BTreeMap<String, Skill>, budget: usize) -> CatalogParts {
+    if skills.is_empty() {
+        return CatalogParts {
+            head: String::new(),
+            lines: Vec::new(),
+            names_only: false,
+        };
+    }
     let per = budget / skills.len();
-    let (list, search) = if per < 60 {
-        let names: Vec<&str> = skills.keys().map(String::as_str).collect();
+    let names_only = per < 60;
+    let (lines, search) = if names_only {
         (
-            names.join(", "),
+            skills.keys().map(|n| (n.clone(), n.clone())).collect(),
             format!(
                 " There are too many to describe here; call `{TOOL}` with `query` to search their descriptions."
             ),
         )
     } else {
-        let lines: Vec<String> = skills
+        let lines = skills
             .values()
             .map(|s| {
                 let room = per.min(300).saturating_sub(s.name.len() + 4).max(40);
-                format!("- {}: {}", s.name, clip(&s.description, room))
+                (s.name.clone(), format!("- {}: {}", s.name, clip(&s.description, room)))
             })
             .collect();
-        (lines.join("\n"), String::new())
+        (lines, String::new())
     };
-    format!(
-        "\n\n# Skills\nSkills are packaged instructions for specific tasks. When a task matches one, call `{TOOL}` with its name to load its instructions before you start, and follow them.{search} Users can also load one by starting a message with /skill-name.\n{list}"
-    )
+    CatalogParts {
+        head: format!(
+            "\n\n# Skills\nSkills are packaged instructions for specific tasks. When a task matches one, call `{TOOL}` with its name to load its instructions before you start, and follow them.{search} Users can also load one by starting a message with /skill-name.\n"
+        ),
+        lines,
+        names_only,
+    }
 }
 
 fn clip(s: &str, n: usize) -> String {

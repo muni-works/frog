@@ -399,6 +399,7 @@ impl Kids {
                         reason,
                         subagent: _,
                         card,
+                        proposal: None,
                     } => {
                         state.lock().unwrap().needs_you += 1;
                         cards.push(id.clone());
@@ -414,6 +415,7 @@ impl Kids {
                             reason,
                             subagent: Some(id2.clone()),
                             card,
+                            proposal: None,
                         });
                     }
                     Event::PermissionResolved {

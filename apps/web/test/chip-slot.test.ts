@@ -66,27 +66,25 @@ const signedIn = (machines: unknown[] = []) => ({
 });
 const sideOf = (p: Page) => find(p, (n) => n.type === "aside")!;
 
-test("signed in, the chip sits in the sidebar directly above Documentation", async () => {
+test("signed in, the Mac app pill sits in the sidebar's foot directly above the account", async () => {
   const p = await mount("/", signedIn());
-  const order = visible(sideOf(p)).map((n) => ["chip-slot", "docs-row"].find((c) => hasClass(c)(n))).filter(Boolean);
-  assert.deepEqual(order, ["chip-slot", "docs-row"]);
+  const order = visible(sideOf(p)).map((n) => ["side-pill", "side-acct-row", "side-legal"].find((c) => hasClass(c)(n))).filter(Boolean);
+  assert.deepEqual(order, ["side-pill", "side-acct-row", "side-legal"]);
   assert.ok(shownText(sideOf(p)).includes("$12.78 credit"), "the account row is still there");
   p.unmount();
 });
 
-test("signed in with this Mac paired, there's no chip", async () => {
+test("signed in with this Mac paired, there's no Mac app pill", async () => {
   const p = await mount("/", signedIn([{ id: "m", name: "studio", thisMac: true, hardware: "M4", online: true, model: null, totalBytes: 1, models: [] }]));
-  assert.equal(find(p, hasClass("chip-slot")), undefined);
+  assert.equal(find(p, hasClass("side-pill")), undefined);
   p.unmount();
 });
 
-test("dismissing the chip removes the slot and is remembered across a reload", async () => {
-  const p = await mount("/");
-  await click(find(p, (n) => n.type === "button" && n.props["aria-label"] === "Dismiss Get the Mac app"));
-  assert.equal(find(p, hasClass("chip-slot")), undefined, "gone at once");
-  assert.equal(p.storage.getItem("frog.chip.mac-app"), "dismissed");
-  p.unmount();
+test("a dismissed Mac app chip keeps the pill away, signed out too", async () => {
+  const shown = await mount("/");
+  assert.ok(find(shown, hasClass("side-pill")), "shown by default");
+  shown.unmount();
   const again = await mount("/", { storage: { "frog.chip.mac-app": "dismissed" } });
-  assert.equal(find(again, hasClass("chip-slot")), undefined, "still gone after a reload");
+  assert.equal(find(again, hasClass("side-pill")), undefined, "still gone after a reload");
   again.unmount();
 });
