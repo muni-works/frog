@@ -85,16 +85,17 @@ test("⌘, opens Settings mode on Account: the sidebar is Back to app and the se
   p.unmount();
 });
 
-test("the Settings row (gear) beside Documentation opens Settings; the account row opens Account", async () => {
+test("the Settings row (gear) under Customize opens Settings; the account row opens Account", async () => {
   const p = await signedIn("/");
   const s = shownText(side(p));
-  assert.match(s, /Documentation Settings ⌘, Ada/, "Settings sits beside Documentation, above the account");
-  await click(find(p, hasClass("settings-row")));
+  // Documentation is hidden for now (ui/Side.tsx SHOW_DOCS), so Settings follows Customize.
+  assert.match(s, /New session ⌘N Search ⌘K Customize Settings ⌘,/, "the top rows, Settings after Customize");
+  await click(find(p, (n) => n.type === "button" && hasClass("side-row")(n) && shownText(n).startsWith("Settings")));
   assert.ok(page(p), "Settings mode");
   await click(btn(p, "Billing"));
   assert.equal(p.path(), "/settings/billing");
   await click(btn(p, "Back to app"));
-  await click(find(p, (n) => n.type === "button" && n.props.title === "Account"));
+  await click(find(p, (n) => n.type === "button" && n.props.title === "Account and billing"));
   assert.equal(sectionShown(p), "Account");
   p.unmount();
 });
