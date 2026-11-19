@@ -69,7 +69,7 @@ struct FrogCommands: Commands {
     @ObservedObject private var staged = StagedWindow.shared
     #endif
     @Environment(\.openWindow) private var openWindow
-    @AppStorage("compactSidebar") private var compactSidebar = false
+    @AppStorage("compactSidebar") private var compactSidebar = true
 
     #if DEBUG
     private var window: FrogWindow? { focusedWindow ?? staged.window }

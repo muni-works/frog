@@ -21,16 +21,17 @@ import { SessionList } from './ui/SessionList'
 import { firstTitle, stuck, provisional, undelivered, withOpening, type Opening } from './ui/Opening'
 import { useMachines } from './machines'
 import { creditLine, Palette, type Command } from './ui/Overlays'
-import { SettingsPage, SettingsRow, SettingsSidebar } from './ui/Settings'
+import { SettingsPage, SettingsSidebar } from './ui/Settings'
 import { pinModel, pinnedModel, rememberPick, SECTIONS, sectionOfQuery, setTheme, settingsPath, settingsSectionOf, startingModel, toggledTheme, type Section } from './settings'
 import { Transcript } from './ui/Transcript'
 import { safeHref } from './ui/href'
 import { askLine } from './ui/ask'
 import { sessionMissing, viewAfterArchive } from './ui/guards'
-import { DocsPage, DocsRow, DocsSidebar, Shell, type ShellMode } from './ui/Docs'
+import { DocsPage, DocsSidebar, Shell, type ShellMode } from './ui/Docs'
 import { DOCS, VERSION } from './docs/bundle'
-import { ChipSlot, useMacAppChip } from './ui/ChipSlot'
+import { useMacAppChip } from './ui/ChipSlot'
 import { SignedOutSide } from './ui/SignedOut'
+import { LegalRow, repoStarters, SideNav, SidePill, Starters } from './ui/Side'
 import { docsPath, docsSlugOf } from './docs/docs'
 import { accountTag, connectCard, finishedTurn, loadMemo, saveMemo, type CardMemo } from './connectCard'
 import { ConnectCard } from './ui/ConnectCard'
@@ -47,14 +48,6 @@ type View = { kind: 'session'; id: string } | { kind: 'new'; repo?: string; pick
 
 /** Dev only: a key for the mock gateway (any non-empty key is an account there). Skips sign-in. */
 const DEV_KEY = import.meta.env.DEV ? (import.meta.env.VITE_DEV_KEY as string | undefined) : undefined
-
-const Icon = ({ d }: { d: string }) => (
-  <svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ flex: 'none' }}><path d={d} /></svg>
-)
-const icons = {
-  new: 'M12 5v14M5 12h14',
-  search: 'M11 4a7 7 0 1 0 0 14a7 7 0 1 0 0-14M20 20l-4-4',
-}
 
 /** The view a path names: /s/<id> is that session, anything else the new-session page. */
 function viewOf(path: string): View {
@@ -591,12 +584,6 @@ export default function App() {
     { id: 'c-theme', label: 'Toggle dark mode', run: () => setTheme(toggledTheme()) },
   ]
 
-  const Nav = () => (
-    <nav aria-label="Main" className="nav">
-      <button type="button" className="row big" onClick={() => setView({ kind: 'new' })}><Icon d={icons.new} /><span style={{ flex: 1 }}>New session</span><span className="kb">⌘N</span></button>
-      <button type="button" className="row big" onClick={() => setPalette(true)}><Icon d={icons.search} /><span style={{ flex: 1 }}>Search</span><span className="kb">⌘K</span></button>
-    </nav>
-  )
 
 
 
@@ -655,25 +642,35 @@ export default function App() {
       before={<div className="side-scrim" onClick={() => setDrawer(false)} />}
       brand={<div className="brand"><Mark /><b style={{ flex: 1 }}>Frog</b><span id="side-acts" className="side-acts" style={mode === 'threads' ? undefined : { display: 'none' }} />{sideToggle(true)}</div>}
       side={{ threads: !key ? (
-        <SignedOutSide onNew={focusComposer} chip={mac.chip} onDismissChip={mac.dismiss} onDocs={() => openDocs()}
-          onSignIn={(provider) => leave(signedOutDraft.current.trim() || null, provider)} />
+        <SignedOutSide onNew={focusComposer} chip={mac.chip} onDocs={() => openDocs()}
+          onSignIn={(provider, prompt) => leave(prompt ?? (signedOutDraft.current.trim() || null), provider)} />
       ) : <>
-        <Nav />
-        <SessionList sessions={sessions} thread={thread} title={title} current={current?.id ?? null} error={listError}
-          onOpen={(id) => { setView({ kind: 'session', id }); setDrawer(false) }} onClear={clear} onSearch={() => setPalette(true)}
-          onRename={(s) => setRenaming(s.id)} onArchive={archive} onDelete={remove} />
-        <ChipSlot chip={mac.chip} onDismiss={mac.dismiss} />
-        <DocsRow onOpen={() => openDocs()} />
-        <SettingsRow onOpen={() => openSettings()} />
-        <button type="button" className="row" onClick={() => openSettings('account')} title="Account">
-          {account?.handle ? <img className="avatar" src={`https://github.com/${encodeURIComponent(account.handle)}.png?size=56`} alt="" width={28} height={28} />
-              : account?.image ? <img className="avatar" src={account.image} alt="" width={28} height={28} referrerPolicy="no-referrer" /> : <Mark size={28} />}
-          <div style={{ flex: 1, textAlign: 'left', minWidth: 0 }}>
-            <b>{firstName(account) ?? (DEV_KEY ? 'Dev key' : 'Signed in')}</b>
-            <div className="det" style={{ color: account && account.credit_cents <= 0 ? 'var(--warn)' : undefined }}>{account ? creditLine(account) : DEV_KEY ? 'local gateway' : ''}</div>
+        <SideNav onNew={() => setView({ kind: 'new' })} newOn={view.kind === 'new'} onSearch={() => setPalette(true)}
+          onCustomize={() => openSettings('appearance')} onDocs={() => openDocs()} onSettings={() => openSettings()} />
+        {sessions.length === 0 && !listError
+          ? <Starters items={repoStarters(repoList.repos.map((r) => r.name))}
+              onStart={(st) => st.pick ? setView({ kind: 'new', pick: true }) : st.github ? openSettings('connections') : start(st.prompt, st.repo)} />
+          : <SessionList sessions={sessions} thread={thread} title={title} current={current?.id ?? null} error={listError}
+              onOpen={(id) => { setView({ kind: 'session', id }); setDrawer(false) }} onClear={clear} onSearch={() => setPalette(true)}
+              onRename={(s) => setRenaming(s.id)} onArchive={archive} onDelete={remove} />}
+        <div className="side-foot">
+          {account && account.credit_cents < 50 && !account.subscription
+            ? <SidePill dot="wait" lead={`${cents(account.credit_cents)} left`} action="Add" onAction={() => openSettings('billing')} />
+            : mac.chip && <SidePill dot="go" lead="Frog for Mac" rest="$0 a token" action="Get" href={mac.chip.href} />}
+          <div className="side-acct-row">
+          <button type="button" className="side-acct" onClick={() => openSettings('account')} title="Account and billing">
+            {account?.handle ? <img className="avatar" src={`https://github.com/${encodeURIComponent(account.handle)}.png?size=56`} alt="" width={28} height={28} />
+                : account?.image ? <img className="avatar" src={account.image} alt="" width={28} height={28} referrerPolicy="no-referrer" /> : <Mark size={28} />}
+            <span className="who">
+              <b>{firstName(account) ?? (DEV_KEY ? 'Dev key' : 'Signed in')}</b>
+              <span style={{ color: account && account.credit_cents <= 0 ? 'var(--warn)' : undefined }}>{account ? creditLine(account) : DEV_KEY ? 'local gateway' : ''}</span>
+            </span>
+          </button>
+          <a className="ver" href={`https://github.com/muni-works/frog/commit/${__FROG_COMMIT__}`} target="_blank" rel="noreferrer"
+            title={`This build on GitHub (${__FROG_COMMIT__})`}>{VERSION}</a>
           </div>
-        </button>
-        <a className="version-chip" href={`https://github.com/muni-works/frog/commit/${__FROG_COMMIT__}`} target="_blank" rel="noreferrer" title="This build on GitHub">Frog {VERSION}, {__FROG_COMMIT__}</a>
+          <LegalRow />
+        </div>
       </>, docs: <DocsSidebar pages={DOCS} current={docPage} version={VERSION} onBack={backToApp} onOpen={openDocs} />,
       settings: key && <SettingsSidebar current={section} onBack={backToApp} onOpen={(x) => openSettings(x)} /> }}
       main={{ docs: <DocsPage pages={DOCS} slug={docPage} onOpen={openDocs} bar={<><Burger />{collapsed && sideToggle(false)}</>} />,
@@ -836,4 +833,9 @@ export default function App() {
       {toast && <div className="toast" role="status">{toast}</div>}
       </>} />
   )
+}
+
+/** 20¢, or $1.20 from a dollar up: the credit pill's amount. */
+function cents(c: number): string {
+  return c < 100 ? `${Math.max(0, Math.floor(c))}¢` : `$${(c / 100).toFixed(2)}`
 }
