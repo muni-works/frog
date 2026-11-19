@@ -66,6 +66,19 @@ final class Library {
     private(set) var chief: String?
     /// Sessions started by another session (`StartSession`): child id → parent id.
     private(set) var parents: [String: String]
+    /// Sessions the app started that no person types in and that have no parent row (a Race
+    /// attempt), kept so a reopened one is still a child (review 4, item 7).
+    @ObservationIgnored private var appChildren: Set<String>
+
+    /// Whether `id` is a session another session or the app started: no Customize or notes
+    /// caps, reopened or not.
+    func isChild(_ id: String) -> Bool { parents[id] != nil || appChildren.contains(id) }
+
+    /// Remember that the app started `id` as a child.
+    func markChild(_ id: String) {
+        guard appChildren.insert(id).inserted else { return }
+        UserDefaults.standard.set(Array(appChildren), forKey: "appChildSessions")
+    }
     /// The session shown in the key window: finishing there doesn't count as unread.
     @ObservationIgnored var focused: String?
     @ObservationIgnored private var windows: [ObjectIdentifier: WeakWindow] = [:]
@@ -95,6 +108,7 @@ final class Library {
         archived = Set(UserDefaults.standard.stringArray(forKey: "archivedSessions") ?? [])
         chief = UserDefaults.standard.string(forKey: "chiefSession")
         parents = UserDefaults.standard.dictionary(forKey: "sessionParents") as? [String: String] ?? [:]
+        appChildren = Set(UserDefaults.standard.stringArray(forKey: "appChildSessions") ?? [])
         _ = SessionDirectoryWatcher.shared
         refresh()
     }
@@ -255,6 +269,7 @@ final class Library {
         #endif
         archived.remove(id)
         UserDefaults.standard.set(Array(archived), forKey: "archivedSessions")
+        if appChildren.remove(id) != nil { UserDefaults.standard.set(Array(appChildren), forKey: "appChildSessions") }
         onOrderInvalidated?()
     }
 

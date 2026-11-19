@@ -456,6 +456,23 @@ final class CustomizeStore {
     /// Off in tests: nothing starts `frog` or reads this Mac's files while a page renders.
     static var loads = true
 
+    /// A conversation's card (or its Undo) changed `auto-note`: every window's switch follows
+    /// (review 4, item 8).
+    nonisolated static let autoNoteChanged = Notification.Name("frog.autoNoteChanged")
+    @ObservationIgnored private var following: NSObjectProtocol?
+
+    init() {
+        following = NotificationCenter.default.addObserver(forName: Self.autoNoteChanged, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.followAutoNote() }
+        }
+    }
+
+    /// The switch shows what's stored now.
+    func followAutoNote() {
+        let now = UserDefaults.standard.object(forKey: Self.autoNoteKey) as? Bool ?? true
+        if now != autoNote { autoNote = now }
+    }
+
     var home = FileManager.default.homeDirectoryForCurrentUser
     /// The project, or nil in a chat.
     private(set) var folder: URL?

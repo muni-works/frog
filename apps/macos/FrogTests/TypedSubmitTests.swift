@@ -174,6 +174,20 @@ final class TypedSubmitTests: XCTestCase {
         XCTAssertFalse(seen?.args.contains("--worker") ?? true)
     }
 
+    /// Review 4, item 7: an attempt reopened later is still a child (the library keeps it, as
+    /// it keeps a parent row), so it gets no Customize or notes caps; deleting it forgets it.
+    func testARaceAttemptReopenedIsStillAChild() {
+        let trash = Library.trash
+        defer { Library.trash = trash }
+        Library.trash = { _ in }
+        let id = "race-test-\(UUID().uuidString)"
+        XCTAssertFalse(Library.shared.isChild(id))
+        Library.shared.markChild(id)
+        XCTAssertTrue(Library.shared.isChild(id))
+        Library.shared.delete(id)
+        XCTAssertFalse(Library.shared.isChild(id))
+    }
+
     // MARK: - Cloud links
 
     func testACloudLinkOffersNothingUnlessToldItIsTop() {

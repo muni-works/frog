@@ -103,6 +103,23 @@ final class CustomizeCardTests: XCTestCase {
         XCTAssertEqual(defaults.object(forKey: CustomizeStore.autoNoteKey) as? Bool, false)
     }
 
+    /// Review 4, item 8: a card that changes auto-note moves the Settings switch too.
+    func testTheNotesSwitchFollowsACard() {
+        let had = UserDefaults.standard.object(forKey: CustomizeStore.autoNoteKey), loads = CustomizeStore.loads
+        defer {
+            UserDefaults.standard.set(had, forKey: CustomizeStore.autoNoteKey)
+            CustomizeStore.loads = loads
+        }
+        CustomizeStore.loads = false
+        UserDefaults.standard.set(true, forKey: CustomizeStore.autoNoteKey)
+        let store = CustomizeStore()
+        XCTAssertTrue(store.autoNote)
+        XCTAssertTrue(CustomizeSettings.apply("auto-note", .bool(false)))
+        XCTAssertFalse(store.autoNote, "the switch shows the card's change")
+        XCTAssertTrue(CustomizeSettings.apply("auto-note", .bool(true)))
+        XCTAssertTrue(store.autoNote, "and its Undo")
+    }
+
     /// Review 3, item 9: a cloud link tells its engine the app's settings when it opens, as a
     /// local engine is told, so auto-note reaches Frog Cloud sessions.
     func testACloudLinkSendsTheSettingsWhenItOpens() throws {

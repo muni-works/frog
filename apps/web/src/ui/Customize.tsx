@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
-import { savedAutoNote, setAutoNote } from '../settings'
+import { onSettings, savedAutoNote, setAutoNote } from '../settings'
 import { NOTES_CAPS } from '../engine/cloud'
 import {
   activityLevels, CLOUD_READS, CUSTOMIZE_INVITES, customizeLabel, customizePath, docsSlugFor, EXPLAINERS, railDay, tokens, toolsLabel, usedLabel, weekDays, weightBars,
@@ -319,6 +319,8 @@ function Sheet({ file }: { file: RulesFile }) {
 /** Noting on its own (`auto-note`): sent to every open session's engine as it changes. */
 function AutoNoteRow() {
   const [on, setOn] = useState(savedAutoNote())
+  // A conversation's card (or its Undo) can change it too: the switch follows.
+  useEffect(() => onSettings(() => setOn(savedAutoNote())), [])
   return (
     <div className="set-group">
       <label className="set-row" data-row="auto-note">

@@ -54,7 +54,11 @@ final class Race: Identifiable {
         self.checkCommand = check.flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0 }
         for (i, (dir, model)) in zip(dirs, models).enumerated() {
             let c = Self.attempt(in: dir, model: model)
-            c.onSessionChange = { [weak self] in self?.update(i) }
+            c.onSessionChange = { [weak self, weak c] in
+                // Reopened later it's still a child: no Customize or notes caps.
+                if let id = c?.sessionID { Library.shared.markChild(id) }
+                self?.update(i)
+            }
             // Queued until the engine is ready.
             c.submit(prompt)
             attempts.append(Attempt(id: i, dir: dir, model: model, conversation: c))

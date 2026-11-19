@@ -1251,7 +1251,7 @@ final class SessionBroker {
         // A model or mode set while no engine ran (SetSessionModel/Mode) applies now, once.
         let stored = Library.shared.takeStored(id)
         let c = Conversation(folder: folder, arguments: Self.resumeArguments(id, chat: info.isChat),
-                             model: stored.model, child: Library.shared.parents[id] != nil)
+                             model: stored.model, child: Library.shared.isChild(id))
         Self.apply(stored, to: c)
         background[id] = c
         // A fresh engine isn't armed until it's seen working; nothing scheduled for the old

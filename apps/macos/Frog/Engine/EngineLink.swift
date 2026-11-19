@@ -59,8 +59,8 @@ extension Conversation {
             // The Mac shows the engine's panes (a shared terminal, a live preview) and puts
             // the model's questions to the user, and lets sessions reach each other.
             // Customize cards only for a session the person types in, never a child (reopened
-            // ones are known by the library's parents).
-            let top = !child && !(session.map { Library.shared.parents[$0] != nil } ?? false)
+            // ones are known by the library: a parent row, or one the app started).
+            let top = !child && !(session.map { Library.shared.isChild($0) } ?? false)
             engine.send(.setClientCaps(panes: true, ask: true, sessions: true, customize: ClientCaps.customize(top: top), notes: ClientCaps.notes(top: top)))
             // The app's settings the engine reads (noting on its own, from Settings › Memory).
             engine.send(.settings(values: CustomizeStore.engineSettings()))
