@@ -387,20 +387,20 @@ test("the client says it hosts preview panes only once the gateway serves previe
   const engine = new CloudEngine(fake as unknown as Gateway);
   const caps = (id: string) => sent[id].filter((o) => (o as Op).op === "set_client_caps");
   engine.subscribe("s1", 0, () => {});
-  assert.deepEqual(caps("s1"), [{ op: "set_client_caps", ask: true, panes: false }], "unknown: no preview tools yet");
+  assert.deepEqual(caps("s1"), [{ op: "set_client_caps", ask: true, panes: false, customize: true }], "unknown: no preview tools yet");
   const hub = engine.preview("s1");
   assert.equal(hub.available, undefined);
   engine.setPreviews(true);
-  assert.deepEqual(caps("s1").at(-1), { op: "set_client_caps", ask: true, panes: true }, "an open session hears the change");
+  assert.deepEqual(caps("s1").at(-1), { op: "set_client_caps", ask: true, panes: true, customize: true }, "an open session hears the change");
   assert.equal(hub.available, true);
   engine.setPreviews(true);
   assert.equal(caps("s1").length, 2, "the poll repeating itself sends nothing");
   engine.subscribe("s2", 0, () => {});
-  assert.deepEqual(caps("s2"), [{ op: "set_client_caps", ask: true, panes: true }]);
+  assert.deepEqual(caps("s2"), [{ op: "set_client_caps", ask: true, panes: true, customize: true }]);
   assert.equal(engine.preview("s2").available, true, "a new hub starts with what the list said");
   engine.setPreviews(false);
-  assert.deepEqual(caps("s1").at(-1), { op: "set_client_caps", ask: true, panes: false });
-  assert.deepEqual(caps("s2").at(-1), { op: "set_client_caps", ask: true, panes: false });
+  assert.deepEqual(caps("s1").at(-1), { op: "set_client_caps", ask: true, panes: false, customize: true });
+  assert.deepEqual(caps("s2").at(-1), { op: "set_client_caps", ask: true, panes: false, customize: true });
   assert.equal(hub.available, false);
 });
 
