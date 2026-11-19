@@ -53,5 +53,6 @@
   "format" : "frog-chrome-metrics\/1",
   "height" : 800,
   "look" : "dark",
+  "main" : 250,
   "width" : 1280
 }

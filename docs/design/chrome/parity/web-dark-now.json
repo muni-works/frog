@@ -4,6 +4,7 @@
   "width": 1280,
   "height": 800,
   "look": "dark",
+  "main": 270,
   "controls": [
     {
       "id": "group",
@@ -39,11 +40,11 @@
     },
     {
       "id": "title",
-      "x": 428.2,
-      "top": 14,
-      "width": 24,
-      "height": 24,
-      "right": 827.8
+      "x": 290,
+      "top": 17.5,
+      "width": 141.9,
+      "height": 17,
+      "right": 848.1
     }
   ]
 }

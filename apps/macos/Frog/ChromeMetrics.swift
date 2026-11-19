@@ -49,6 +49,8 @@ enum ChromeMetrics {
         let dump: [String: Any] = [
             "format": "frog-chrome-metrics/1", "app": "mac",
             "width": r1(width), "height": r1(window.frame.height), "look": dark ? "dark" : "light",
+            // Where the conversation area starts: the docked sidebar's width, its hairline included.
+            "main": r1(WorkspaceView.savedSidebarWidth),
             "controls": controls,
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: dump, options: [.prettyPrinted, .sortedKeys]) else { return false }

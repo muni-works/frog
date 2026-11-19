@@ -35,6 +35,8 @@ struct WorkspaceView: View {
     /// The session the title menu's Delete… is asking about.
     @State private var deletingSession: String?
     @State private var newTitle = ""
+    /// The title's field while renaming in place (docs/design/chrome/spec.md, 3).
+    @FocusState private var titleFieldFocused: Bool
     // The sidebar's view options, for the quick-switch shortcuts' reading of it.
     @AppStorage("sidebarGroup") private var sidebarGroup = SessionList.Grouping.date
     @AppStorage("sidebarSort") private var sidebarSort = SessionList.Sort.activity
@@ -677,15 +679,6 @@ struct WorkspaceView: View {
         } message: {
             Text("Its log moves to the Trash.")
         }
-        .alert("Rename Conversation", isPresented: $renamingTitle) {
-            TextField("Title", text: $newTitle)
-            Button("Rename") {
-                if let id = workspace.currentSession {
-                    Task { await Library.shared.rename(id, to: newTitle) }
-                }
-            }
-            Button("Cancel", role: .cancel) {}
-        }
         .toolbar {
             // Beside the traffic lights: the sidebar's header over the sidebar (docked or
             // peeking), else its toggle and New session. Then, as on the web, a plain title (no
@@ -863,7 +856,36 @@ extension WorkspaceView {
         }
     }
 
+    /// The title, or its field while renaming: in place, the same size (spec.md, 3). Return or
+    /// leaving the field saves; Escape cancels.
+    @ViewBuilder
     private var threadTitleBar: some View {
+        if renamingTitle {
+            TextField("Session name", text: $newTitle)
+                .textFieldStyle(.plain)
+                .font(.frog(size: 13, weight: .semibold))
+                .frame(width: 320)
+                .focused($titleFieldFocused)
+                .onSubmit { finishRename(save: true) }
+                .onExitCommand { finishRename(save: false) }
+                .onChange(of: titleFieldFocused) { _, focused in if !focused { finishRename(save: true) } }
+                .onAppear { titleFieldFocused = true }
+                .accessibilityLabel("Session name")
+                .accessibilityIdentifier("title.field")
+        } else {
+            titleMenuButton
+        }
+    }
+
+    private func finishRename(save: Bool) {
+        guard renamingTitle else { return }
+        renamingTitle = false
+        let name = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard save, !name.isEmpty, name != workspace.conversation?.title, let id = workspace.currentSession else { return }
+        Task { await Library.shared.rename(id, to: name) }
+    }
+
+    private var titleMenuButton: some View {
         Menu {
             if let c = workspace.conversation { titleMenu(c) }
         } label: {
@@ -878,7 +900,9 @@ extension WorkspaceView {
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help("Rename, archive or delete this conversation")
+        .help("Rename, archive or delete this session")
+        .accessibilityLabel("Session menu")
+        .accessibilityValue(windowTitle)
         .accessibilityIdentifier("title.menu")
     }
 

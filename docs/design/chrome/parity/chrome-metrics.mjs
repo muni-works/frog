@@ -40,7 +40,7 @@ function measure() {
     const b = el.getBoundingClientRect();
     controls.push({ id, x: r1(b.left), top: r1(b.top), width: r1(b.width), height: r1(b.height), right: r1(width - b.right) });
   }
-  return { controls };
+  return { controls, main: r1(document.querySelector(".main")?.getBoundingClientRect().left ?? 0) };
 }
 
 const chrome = process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
@@ -77,6 +77,6 @@ await new Promise((r) => proc.once("exit", r));
 try { rmSync(profile, { recursive: true, force: true, maxRetries: 5 }); } catch {}
 const v = res?.result?.value;
 if (!v) { console.error(`chrome-metrics.mjs: ${JSON.stringify(res)}`); process.exit(1); }
-const dump = { format: "frog-chrome-metrics/1", app: "web", width: +w, height: +h, look, controls: v.controls };
+const dump = { format: "frog-chrome-metrics/1", app: "web", width: +w, height: +h, look, main: v.main, controls: v.controls };
 writeFileSync(out, JSON.stringify(dump, null, 2) + "\n");
 console.log(`${out}: ${v.controls.map((c) => c.id).join(", ") || "nothing found"}`);

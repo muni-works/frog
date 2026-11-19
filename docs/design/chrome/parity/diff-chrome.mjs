@@ -2,7 +2,7 @@
 // Compares two chrome dumps (frog-chrome-metrics/1): every control the spec puts on both apps
 // must be on both, with its top, width, height and distance from the window's right edge within
 // 1 point. (Its x follows from the right edge at a given width; the title is measured from the
-// left, where the sidebar sets it.) Controls the spec keeps on one app only are listed in
+// conversation area's left edge, `main` in each dump, since the sidebar's width is its own piece.) Controls the spec keeps on one app only are listed in
 // ONE_APP with the reason, and pass when they are missing from the other.
 //
 //   node diff-chrome.mjs <web.json> <mac.json> [--json out.json]
@@ -31,8 +31,10 @@ for (const id of ids) {
     rows.push({ id, ok, note: `${w ? "web" : "mac"} only${ok ? " (spec: one app)" : ""}`, web: w ?? null, mac: m ?? null });
     continue;
   }
-  const keys = ["top", "width", "height", fromLeft.has(id) ? "x" : "right"];
+  // The title's width is its text's, which differs while the two apps' fonts differ by a hair: top, height and where it starts.
+  const keys = fromLeft.has(id) ? ["top", "height", "x0"] : ["top", "width", "height", "right"];
   // The web's group, short of the Mac-only buttons, is expected that much narrower.
+  if (fromLeft.has(id)) { w.x0 = Math.round((w.x - (web.main ?? 0)) * 10) / 10; m.x0 = Math.round((m.x - (mac.main ?? 0)) * 10) / 10; }
   const expect = (k) => (id === "group" && k === "width" ? m[k] - groupShift(web, mac) + groupShift(mac, web) : m[k]);
   const off = keys.filter((k) => Math.abs(w[k] - expect(k)) > TOL).map((k) => `${k} ${w[k]} vs ${m[k]}${expect(k) !== m[k] ? ` (expected ${expect(k)})` : ""}`);
   if (off.length) bad++;

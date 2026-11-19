@@ -94,3 +94,21 @@ test("the turn rail shows once the conversation has a turn", async () => {
   assert.equal(rail!.props.role, "slider");
   p.unmount();
 });
+
+// The header (spec.md, 3): the whole title is the session menu's button, as on the Mac, and
+// Rename… edits it in place. Before, the title was bold text with a separate chevron button.
+test("the title is the session menu's button, with the Mac's items", async () => {
+  const p = await open();
+  const b = button(p, "Session menu");
+  assert.ok(b, "one button");
+  assert.equal(b!.props.title, "Rename, archive or delete this session");
+  assert.ok(find(p, (n) => n.type === "b" && n.props.className === "title-text"), "the title is inside it");
+  await click(b);
+  const items = (p.root.root.findAll((n) => n.type === "button" && n.props.role === "menuitem") as unknown as HostNode[]).map((n) => (n.children as unknown[]).join(""));
+  assert.deepEqual(items, ["Rename…", "Archive", "Delete…"]);
+  await click(find(p, (n) => n.type === "button" && n.props.role === "menuitem" && (n.children as unknown[]).join("") === "Rename…"));
+  const field = find(p, (n) => n.type === "input" && labelled("Session name")(n));
+  assert.ok(field, "Rename… puts a field where the title was");
+  assert.ok(!button(p, "Session menu"), "in place of the title");
+  p.unmount();
+});

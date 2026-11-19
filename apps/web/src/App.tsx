@@ -750,26 +750,26 @@ export default function App() {
         {current ? (<div className="titlebar">
           <Burger />
           {collapsed && sideToggle(false)}
-          <div className="title-wrap">
+          {/* The header (docs/design/chrome/spec.md, 3): the whole title is the session menu's
+              button, as on the Mac; Rename… edits it in place. */}
+          <div className="title-wrap title-menu">
             {current && renaming === current.id ? (
               <input className="f-field title-edit" autoFocus defaultValue={title(current)} aria-label="Session name"
                 onBlur={(e) => rename(current, e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') rename(current, (e.target as HTMLInputElement).value); if (e.key === 'Escape') setRenaming(null) }} />
             ) : (
-              <b style={{ fontSize: 14 }} onDoubleClick={() => current && setRenaming(current.id)} title={current ? 'Double-click to rename' : undefined}>{current ? title(current) : 'New session'}</b>
+              <button type="button" className="title-btn" aria-label="Session menu" aria-haspopup="menu" aria-expanded={menuOpen}
+                title="Rename, archive or delete this session" onClick={() => setMenuOpen(!menuOpen)}>
+                <b className="title-text">{current ? title(current) : 'New session'}</b>
+                <svg aria-hidden="true" className="title-chev" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 9l7 7 7-7" /></svg>
+              </button>
             )}
-            {current && (
-              <div className="title-menu">
-                <button type="button" className="ic-btn title-chev" aria-label="Session menu" title="Session menu" aria-expanded={menuOpen} onClick={() => setMenuOpen(!menuOpen)}>
-                  <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6" /></svg>
-                </button>
-                {menuOpen && (
-                  <div className="f-card cz-menu" role="menu" aria-label="Session" style={{ top: 30, bottom: 'auto', left: 0, right: 'auto', width: 200 }} onMouseLeave={() => setMenuOpen(false)} {...titleNav}>
-                    <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); setRenaming(current.id) }}>Rename</button>
-                    <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); archive(current, !current.archived) }}>{current.archived ? 'Unarchive' : 'Archive'}</button>
-                    <button type="button" role="menuitem" style={{ color: 'var(--warn)' }} onClick={() => { setMenuOpen(false); remove(current) }}>Delete session</button>
-                  </div>
-                )}
+            {current && menuOpen && (
+              <div className="f-card cz-menu" role="menu" aria-label="Session" style={{ top: 26, bottom: 'auto', left: 0, right: 'auto', width: 200 }} onMouseLeave={() => setMenuOpen(false)} {...titleNav}>
+                <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); setRenaming(current.id) }}>Rename…</button>
+                <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); archive(current, !current.archived) }}>{current.archived ? 'Unarchive' : 'Archive'}</button>
+                <div className="cz-sep" role="separator" />
+                <button type="button" role="menuitem" style={{ color: 'var(--warn)' }} onClick={() => { setMenuOpen(false); remove(current) }}>Delete…</button>
               </div>
             )}
           </div>

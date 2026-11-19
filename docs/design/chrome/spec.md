@@ -126,14 +126,14 @@ The session's title at the left of the conversation's title row, and its menu.
 
 | | |
 | --- | --- |
-| Place | In the 52 title row, vertically centred; left 16 from the conversation area (right of the sidebar, or of the sidebar toggle when collapsed) |
+| Place | In the 52 title row, vertically centred (top 17.5); its left edge 20 from the conversation area's (the sidebar's edge); with the sidebar collapsed, after its toggle and New session |
 | Title | 13 pt semibold, `fg` / `Tokens.text`, one line, truncated at the tail |
 | Menu affordance | The whole title is the button; a 9 pt semibold chevron down, `muted`, 5 after the text |
-| Hit area | The text and chevron, padded 6 × 4, radius `control` (7); hover and pressed fills from the table above |
+| Hit area | The text and chevron, 17 tall, no fill; hover and pressed turn the chevron `fg` |
 | Tooltip | Rename, archive or delete this session |
 | Accessibility | **Session menu**, its value the title |
 | Menu | Rename…, Archive (Unarchive when archived), a divider, Delete… (destructive) |
-| Rename | In place: the title becomes a field of the same size; Return saves, Escape or leaving cancels. Double-click the title does the same |
+| Rename | In place: the title becomes a field of the same type, 320 wide; Return or leaving the field saves, Escape cancels; an empty name keeps the old one |
 | Delete | Asks first, then deletes |
 
 **Where the two apps differed, and what was picked:**
@@ -142,8 +142,9 @@ The session's title at the left of the conversation's title row, and its menu.
   (the brand, the breadcrumbs) are 13 semibold already.
 - *The chevron.* A separate button on the web. **The whole title is the button**, as on the Mac:
   a bigger target, and one thing to press.
-- *Rename.* A sheet on the Mac, in place on the web. **In place on both**: no window for one
-  word, and the title stays where you were looking.
+- *Rename.* An alert on the Mac, in place on the web. **In place on both**: no window for one
+  word, and the title stays where you were looking. The web's double-click on the title goes:
+  with the whole title a menu button, the first click opens the menu (Rename… is its first item).
 - *Wording.* "Rename…" and "Delete…" (they ask for more), "Archive"/"Unarchive".
 - *The web's connection words* ("Reconnecting…", "Disconnected", "Update Frog to continue") stay
   web-only, right-aligned in the row before the window controls: a web session is a socket to a
