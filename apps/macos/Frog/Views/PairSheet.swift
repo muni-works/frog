@@ -23,7 +23,7 @@ struct NodeOffer: View {
     static func line(_ d: Device) -> String {
         let mem = d.totalBytes > 0 ? "\(Int((Double(d.totalBytes) / 1_073_741_824).rounded())) GB" : nil
         let parts = ["\(d.name) is on your network", d.chip.isEmpty ? nil : d.chip, mem].compactMap { $0 }
-        return parts.joined(separator: " · ") + ". Use it?"
+        return parts.joined(separator: ", ") + ". Use it?"
     }
 }
 

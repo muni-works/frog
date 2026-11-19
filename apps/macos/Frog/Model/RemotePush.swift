@@ -160,7 +160,7 @@ final class RemotePush {
             "aps": [
                 "alert": ["title": title, "subtitle": "frog asks" + (folder.map { " in \($0)" } ?? ""),
                           "body": String((obj["question"] as? String ?? "").prefix(300))
-                              + (options.isEmpty ? "" : "\n" + options.prefix(4).joined(separator: " · "))],
+                              + (options.isEmpty ? "" : "\n" + options.prefix(4).joined(separator: ", "))],
                 "category": "ASK",
                 "thread-id": session,
                 "interruption-level": "time-sensitive",

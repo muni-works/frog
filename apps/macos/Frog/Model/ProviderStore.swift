@@ -71,11 +71,21 @@ final class ProviderStore {
 
     func name(of provider: String) -> String { self.provider(provider)?.name ?? provider }
 
+    #if DEBUG
+    /// Flow tests: where a key goes instead of `frog --set-key` (which writes the login
+    /// Keychain the test host shares with the developer's own Frog, even with FROG_KEYCHAIN=off,
+    /// and deletes it on sign-out).
+    nonisolated(unsafe) static var keySink: (@MainActor (String, String) -> Bool)?
+    #endif
+
     /// Save a key (empty removes it), then refresh what it unlocks.
     /// False when the engine couldn't save it (missing or failing `frog`): sign-in must say so
     /// rather than look done with no key behind it.
     @discardableResult
     func setKey(_ key: String, for id: String) async -> Bool {
+        #if DEBUG
+        if let sink = Self.keySink { return sink(key, id) }
+        #endif
         let ok = await run(["--set-key", id], input: key)
         await load()
         await loadCatalog(refresh: true)

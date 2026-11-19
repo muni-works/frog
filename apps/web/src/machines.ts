@@ -43,7 +43,7 @@ export const catalogModel = (id: string) => localCatalog.find((m) => m.source.re
 export function usesLine(m: LocalCatalogModel) {
   const caps = m.capabilities.join(', ')
   const line = caps.charAt(0).toUpperCase() + caps.slice(1)
-  return m.context ? `${line} · ${m.context / 1024}K context` : line
+  return m.context ? `${line}, ${m.context / 1024}K context` : line
 }
 
 /** The name every surface shows: the catalog's ("Qwen3 32B"), else read from the id
@@ -87,7 +87,7 @@ export const places = (m: MachineModel) =>
 export function runningLine(d: Machine) {
   if (!d.online) return d.thisMac ? 'not running' : 'offline'
   if (!d.model) return 'idle'
-  return [displayName(d.model), d.decode ? `${Math.round(d.decode)} tok/s` : null].filter(Boolean).join(' · ')
+  return [displayName(d.model), d.decode ? `${Math.round(d.decode)} tok/s` : null].filter(Boolean).join(', ')
 }
 
 export const gb = (b: number) => { const g = b / 1_073_741_824; return g >= 10 ? `${Math.round(g)} GB` : `${g.toFixed(1)} GB` }

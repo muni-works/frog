@@ -56,7 +56,7 @@ struct ProfileRows: View {
             } else if let me = account.me {
                 VStack(alignment: .leading, spacing: 0) {
                     SettingsRow(me.name ?? me.handle ?? "Signed in",
-                                description: [me.handle.map { "@\($0)" }, me.email].compactMap { $0 }.joined(separator: " · ")) {
+                                description: [me.handle.map { "@\($0)" }, me.email].compactMap { $0 }.joined(separator: ", ")) {
                         Button("Sign out") { Task { await signOut() } }.buttonStyle(SettingsButtonStyle())
                             .help("This Mac forgets its Frog Cloud key. Your sessions stay in your account.")
                     }
@@ -132,7 +132,7 @@ struct DevicesRows: View {
                 if keys == nil, error == nil { SettingsRow("Loading…") { ProgressView().controlSize(.small) } }
                 ForEach((keys ?? []).filter { $0.revoked != true }) { k in
                     SettingsRow(k.name ?? (k.kind == "device" ? "A device" : "API key"),
-                                description: "\(k.kind == "device" ? "Signed in" : "API key") \(SettingsDates.day(k.created))\(k.last_used.map { " · last used \(SettingsDates.day($0))" } ?? "")") {
+                                description: "\(k.kind == "device" ? "Signed in" : "API key") \(SettingsDates.day(k.created))\(k.last_used.map { ", last used \(SettingsDates.day($0))" } ?? "")") {
                         if k.current == true {
                             SettingsValue("This Mac", help: "The key this Mac uses. Sign out to forget it.")
                         } else {
@@ -221,7 +221,7 @@ struct PlanBlock: View {
                         ForEach(CloudAccount.plans, id: \.id) { p in
                             Button { Task { await account.subscribe(p.id) } } label: {
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text("\(p.name) · $\(p.price)/mo").font(.frog(size: 13, weight: .semibold)).foregroundStyle(Tokens.text)
+                                    Text("\(p.name), $\(p.price)/mo").font(.frog(size: 13, weight: .semibold)).foregroundStyle(Tokens.text)
                                     Text(p.blurb).font(.frog(size: 12)).foregroundStyle(Tokens.textSecondary)
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -314,7 +314,7 @@ struct CreditHistoryRows: View {
                 SettingsGroupLabel(text: "Credit added")
                 SettingsRows(divided: false) {
                     ForEach(Array(rows.enumerated()), id: \.offset) { _, r in
-                        SettingsRow([SettingsDates.day(r.at), r.label].filter { !$0.isEmpty }.joined(separator: " · "),
+                        SettingsRow([SettingsDates.day(r.at), r.label].filter { !$0.isEmpty }.joined(separator: ", "),
                                     description: r.status == nil || r.status == "succeeded" ? nil : r.status) {
                             SettingsValue(String(format: "$%.2f", r.dollars))
                         }
@@ -343,7 +343,7 @@ struct PricesRows: View {
                 SettingsGroupLabel(text: row.label)
                 SettingsRows(divided: false) {
                     ForEach(models) { m in
-                        SettingsRow(m.name, description: "Cached \(per(m.costCacheRead)) · output \(per(m.costOut))") {
+                        SettingsRow(m.name, description: "Cached \(per(m.costCacheRead)), output \(per(m.costOut))") {
                             SettingsValue("\(per(m.costIn)) in")
                         }
                     }

@@ -157,7 +157,7 @@ struct CarriedForwardBanner: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Image(systemName: "arrow.uturn.forward").imageScale(.small)
-                Text("carried forward · everything important was saved")
+                Text("carried forward, everything important was saved")
                     .fontWeight(.medium)
                 Spacer(minLength: 0)
                 Button {
@@ -578,6 +578,7 @@ struct PermissionCard: View {
                 .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
                 .foregroundStyle(Tokens.textSecondary)
                 .help("More choices")
+                .accessibilityIdentifier("permission.more")
                 Text(PermissionRequest.runsWhere(inCloud: conversation.cloudSession != nil, outsideSandbox: request.name == "Bash" && request.reason != nil))
                     .font(.frog(size: Tokens.Size.meta))
                     .foregroundStyle(Tokens.textTertiary)
@@ -587,10 +588,12 @@ struct PermissionCard: View {
                     .buttonStyle(CardButtonStyle())
                     .keyboardShortcut(".", modifiers: .command)
                     .help("Deny (⌘.)")
+                    .accessibilityIdentifier("permission.deny")
                 Button(request.card == nil ? "Allow" : "Allow once") { conversation.answer(.allow) }
                     .buttonStyle(CardButtonStyle(primary: true))
                     .keyboardShortcut(.return, modifiers: .command)
                     .help("Allow (⌘↩)")
+                    .accessibilityIdentifier("permission.allow")
             }
         }
         .padding(16)

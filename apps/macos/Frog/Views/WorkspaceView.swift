@@ -103,6 +103,26 @@ struct WorkspaceView: View {
 
     private var focused: Pane { panes.focused }
 
+    /// What this window offers the menu bar.
+    private var frogWindow: FrogWindow {
+        FrogWindow(
+            workspace: workspace, state: focused.ui,
+            toggleSessions: toggleSessions, toggleChanges: { toggleChanges(focused) },
+            showTerminal: showTerminal, showPreview: showPreview, toggleInspect: toggleInspect,
+            sessionsShown: sessionsVisible, changesShown: changesVisible(focused),
+            newChat: newSession,
+            split: panes.canSplit ? { split(nil, $0 == .vertical ? .bottom : .right) } : nil,
+            closePane: panes.isSplit ? { panes.close(focused) } : nil,
+            focusPane: panes.isSplit ? { panes.focus(step: $0) } : nil,
+            toggleMaximize: panes.isSplit ? { panes.toggleMaximized(focused) } : nil,
+            maximized: panes.maximizedPane != nil,
+            sidebarOrder: sidebarOrder,
+            openSidebarSession: { openInFocused($0) },
+            showDocs: { showDocs() },
+            showSettings: { showSettings($0) }
+        )
+    }
+
     /// The sidebar's conversations as its top-level rows, in the order its groups show them:
     /// pins, then one group per project folder (newest activity first), then chats — the
     /// started-by children are nested under their parents and don't count. What the
@@ -370,7 +390,7 @@ struct WorkspaceView: View {
         guard let docs else { return [] }
         var out = [PaletteCommand(id: "docs", title: "Documentation", subtitle: "Help", symbol: "book") { showDocs() }]
         for page in docs.pages {
-            out.append(PaletteCommand(id: "docs-\(page.slug)", title: page.title, subtitle: "Documentation · \(page.section)", symbol: "book") {
+            out.append(PaletteCommand(id: "docs-\(page.slug)", title: page.title, subtitle: "Documentation, \(page.section)", symbol: "book") {
                 showDocs(page.slug)
             })
         }
@@ -598,22 +618,14 @@ struct WorkspaceView: View {
                 panes.items.forEach { $0.peekChanges = false }
             }
         }
-        .focusedSceneValue(\.frogWindow, FrogWindow(
-            workspace: workspace, state: focused.ui,
-            toggleSessions: toggleSessions, toggleChanges: { toggleChanges(focused) },
-            showTerminal: showTerminal, showPreview: showPreview, toggleInspect: toggleInspect,
-            sessionsShown: sessionsVisible, changesShown: changesVisible(focused),
-            newChat: newSession,
-            split: panes.canSplit ? { split(nil, $0 == .vertical ? .bottom : .right) } : nil,
-            closePane: panes.isSplit ? { panes.close(focused) } : nil,
-            focusPane: panes.isSplit ? { panes.focus(step: $0) } : nil,
-            toggleMaximize: panes.isSplit ? { panes.toggleMaximized(focused) } : nil,
-            maximized: panes.maximizedPane != nil,
-            sidebarOrder: sidebarOrder,
-            openSidebarSession: { openInFocused($0) },
-            showDocs: { showDocs() },
-            showSettings: { showSettings($0) }
-        ))
+        .focusedSceneValue(\.frogWindow, frogWindow)
+        #if DEBUG
+        // Flow tests: a test host never has a key window, so the menu bar acts on this one
+        // when a test asks (`StagedWindow`). Off otherwise.
+        .onChange(of: StagedWindow.key(frogWindow), initial: true) {
+            if StagedWindow.shared.capturing == ObjectIdentifier(panes) { StagedWindow.shared.window = frogWindow }
+        }
+        #endif
         // ⌘L and friends ask for the composer: that's a way back to the thread.
         .onChange(of: focused.ui.focusComposerRequest) { if inMode { panes.backToApp() } }
         .animation(Motion.quick(reduced: reduceMotion), value: panes.mode)
@@ -833,7 +845,7 @@ extension WorkspaceView {
     /// Where the focused conversation lives: the project and its branch; nothing for a chat.
     private var place: String {
         guard !workspace.isChat else { return "" }
-        return [workspace.name, workspace.git?.branch].compactMap { $0 }.joined(separator: " · ")
+        return [workspace.name, workspace.git?.branch].compactMap { $0 }.joined(separator: ", ")
     }
 
     /// The title and its ⌄ menu. The menu's content builds when it opens; the label reads the
@@ -867,6 +879,7 @@ extension WorkspaceView {
         .menuIndicator(.hidden)
         .fixedSize()
         .help("Rename, archive or delete this conversation")
+        .accessibilityIdentifier("title.menu")
     }
 
     @ViewBuilder

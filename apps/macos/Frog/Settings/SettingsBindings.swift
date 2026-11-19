@@ -173,7 +173,9 @@ private struct IPhoneRow: View {
     let row: SettingsCatalog.Row
     @AppStorage("remoteEnabled") private var remote = false
     @AppStorage(RemotePush.secretKey) private var pushSecret = ""
-    @State private var code = RemoteBridge.token
+    /// Read only once the switch is on: reading it makes the Keychain item, and a build that
+    /// isn't the one that made it (a test host) gets the system's password prompt.
+    @State private var code: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -184,7 +186,7 @@ private struct IPhoneRow: View {
                 }))
             }
             if remote {
-                PairingCard(code: code) {
+                PairingCard(code: code ?? RemoteBridge.token) {
                     RemoteBridge.newToken()
                     RemoteBridge.shared.stop()
                     RemoteBridge.shared.start()
@@ -339,7 +341,7 @@ private struct MCPServersRows: View {
 
     private func detail(_ s: MCPStatus) -> String? {
         var parts: [String] = []
-        if let e = s.error, s.needsAuth != true { parts.append(e) } else if !s.tools.isEmpty { parts.append(s.tools.joined(separator: " · ")) }
+        if let e = s.error, s.needsAuth != true { parts.append(e) } else if !s.tools.isEmpty { parts.append(s.tools.joined(separator: ", ")) }
         parts += s.quarantined.map { "Withheld \($0.tool): its description \($0.reason)" }
         return parts.isEmpty ? nil : parts.joined(separator: "\n")
     }
@@ -386,7 +388,7 @@ private struct MCPServersRows: View {
 struct ShortcutRows: View {
     static let groups: [(String, [(String, String)])] = [
         ("Conversation", [
-            ("Send", "↩"), ("New line", "⇧↩"), ("Interrupt", "Esc  ·  ⌘."), ("Focus composer", "⌘L"),
+            ("Send", "↩"), ("New line", "⇧↩"), ("Interrupt", "Esc or ⌘."), ("Focus composer", "⌘L"),
             ("Dictate", "⌥⌘V"), ("Mention a file", "@"), ("Run a shell command", "!cmd"),
         ]),
         ("Navigate", [
@@ -395,7 +397,7 @@ struct ShortcutRows: View {
         ]),
         ("Session", [
             ("New session", "⇧⌘N"), ("Race", "⌥⌘R"), ("Compact", "⇧⌘K"), ("Fork after last turn", "⇧⌘D"),
-            ("Undo last turn", "⌥⌘Z"), ("Allow / deny a request", "⌘↩  ·  ⌘."),
+            ("Undo last turn", "⌥⌘Z"), ("Allow / deny a request", "⌘↩ or ⌘."),
         ]),
         ("Window", [
             ("Sessions", "⌃⌘S"), ("Changes", "⌥⌘0"), ("Terminal", "⇧⌘T"), ("Preview", "⇧⌘P"),

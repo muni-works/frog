@@ -1,0 +1,121 @@
+{
+  "test_targets": [
+    {
+      "name": "FrogTests",
+      "kind": "unit",
+      "how_run": "apps/macos/scripts/test.sh  (xcodegen generate; xcodebuild test -project Frog.xcodeproj -scheme Frog -configuration Debug -destination 'platform=macOS,arch=arm64' -test-timeouts-enabled YES -default-test-execution-time-allowance 300; add -only-testing:FrogTests/<Class> to narrow). CI job `macos-app` in .github/workflows/ci.yml runs the same with TEST_RUNNER_CI=true, which skips display-driven tests and multiplies wall-clock budgets by 4.",
+      "count": "734 test methods (grep count of `func test` across 109 files in apps/macos/FrogTests at v0.7.0). It is the only test target: a bundle.unit-test hosted in Frog.app (TEST_HOST), so it can reach every internal type via @testable import. Unit tests, store-level integration tests (MockNode, a stand-in model plus the real engine in SwitchAwayTests), hosted-view tests and PNG render tests all live in it. Some tests skip without an env var or network (testRenderLocalModels needs FROG_LOCAL_MODELS_OUT; ModelDownloadsTests needs huggingface.co)."
+    },
+    {
+      "name": "Render (\"snapshot\") tests inside FrogTests",
+      "kind": "snapshot",
+      "how_run": "Same target, e.g. -only-testing:FrogTests/SnapshotTests, ModelsParityTests, PairingSnapshotTests, LocalModelsTests/testRenderLocalModels, DocsModeTests/testRenderDocsMode. Output goes to $FROG_SNAPSHOT_DIR (pass TEST_RUNNER_FROG_SNAPSHOT_DIR), $FROG_PARITY_OUT, $FROG_LOCAL_MODELS_OUT or $TMPDIR/frog-snapshots.",
+      "count": "About 30 render methods. They host the real SwiftUI view in an offscreen NSWindow and write PNGs with cacheDisplay. No render test in this area compares its PNG with a stored reference image. They only prove the view builds and draws without crashing, plus whatever model asserts sit next to them (ModelsParityTests checks the rows' places and tags). A few non-settings tests read pixel rows of a render (ComposerSnapshotTests checks that a menu doesn't cover a card), but none of those cover Settings."
+    }
+  ],
+  "fakes": [
+    {
+      "name": "MockNode",
+      "what_it_replaces": "machine node",
+      "file": "apps/macos/FrogTests/MockNode.swift (standalone: apps/macos/scripts/mock-node.sh + scripts/mock-node/main.swift)",
+      "notes": "Runs in process on NWListener at 127.0.0.1:<random>. It implements docs/node-protocol.md §1–5: GET /health, POST /pair/open (the lent-Mac code window), pairing window (openWindow(code:seconds:)), /pair/start and /pair/finish (SPAKE2), DELETE /pair/<client> (unpair), key-gated schema-2 GET /node, and POST /models/load with loadSeconds, busy (409) and a disk list. It also offers swapIdentity() for pinning tests and an optional Bonjour advertisement. It doesn't implement /models/unload, /models/delete or /models/pull, and it isn't wired into Devices' Bonjour browse in tests (tests call PairClient directly, or seed the store)."
+    },
+    {
+      "name": "Devices() + Devices.seed / Devices.store / hideOffer",
+      "what_it_replaces": "machine node",
+      "file": "apps/macos/Frog/Model/Devices.swift",
+      "notes": "A non-shared Devices instance can be seeded with fixed Device values (seed) or pointed at a temp PairedStore (file plus a unique Keychain service). hideOffer (DEBUG) suppresses the NodeOffer line. Views take an injected `devices` (MachinesSettings(devices:path:fixtureAccount:), MachineModelsSections(fixedNow:fixedDownloads:)). PairMachineSheet, PairSheet and NodeOffer read Devices.shared directly, so they can't be injected."
+    },
+    {
+      "name": "LiveLink / DeadLink / RecordingLink (ConversationLink)",
+      "what_it_replaces": "engine",
+      "file": "apps/macos/FrogTests/ReconcileTests.swift (LiveLink, DeadLink); RecordingLink in SessionRegistryTests.swift",
+      "notes": "Conversation(folder:link:replay:session:) takes any ConversationLink. Tests push Envelope JSON through link.onEvent(...) and read the ops sent (RecordingLink.ops). This is the fake engine for the transcript and status side. There's no equivalent for the one-shot `frog --models/--providers/--mcp/--setup/--catalog --json` calls that Settings makes through Frog.json/Frog.run."
+    },
+    {
+      "name": "Conversation(preview:)",
+      "what_it_replaces": "engine",
+      "file": "apps/FrogKit/Model/Conversation.swift:355",
+      "notes": "A conversation with no engine, used to render empty pages and first-run (SnapshotTests.testRenderFirstRun)."
+    },
+    {
+      "name": "Frog.overrides + Frog.forcedBinaryForTesting + HeldModel",
+      "what_it_replaces": "engine",
+      "file": "apps/macos/Frog/Engine/EngineProcess.swift; apps/macos/FrogTests/SwitchAwayTests.swift (HeldModel)",
+      "notes": "Settings, model lists and MCP status all come from the real bundled `frog` binary. Frog.overrides injects env (HOME, FROG_BASE_URL, FROG_API_KEY, FROG_KEYCHAIN=off) into every frog the app runs. HeldModel is a tiny OpenAI-compatible stand-in model server, so the real engine can run turns offline. forcedBinaryForTesting points at a missing path to guarantee no engine starts."
+    },
+    {
+      "name": "CloudAccount.stage(_:) / unstage() / keyProvider",
+      "what_it_replaces": "gateway",
+      "file": "apps/FrogKit/Model/CloudAccount.swift",
+      "notes": "DEBUG-only. stage(me) sets a fake signed-in account (name, credit, subscription) or signed-out (nil) without network. keyProvider overrides the Keychain key read. refresh() still calls https://api.frog.toys/v1/me if a key is present, and CloudAccount.origin is a constant, so a staged account mustn't call refresh. MachinesSettings has its own fixtureAccount parameter."
+    },
+    {
+      "name": "CloudSignIn.openBrowser / CloudSignIn.timeout",
+      "what_it_replaces": "other",
+      "file": "apps/FrogKit/Core/CloudSignIn.swift",
+      "notes": "Replaces the browser for GitHub or Google sign-in, and shortens the 60 s wait. The loopback listener is real. A test could complete sign-in by sending GET http://127.0.0.1:<port>/frog-signin?code=…&state=… to the opened URL's `return` parameter, but the code exchange then POSTs to the hard-coded https://api.frog.toys/v1/auth/exchange, so success can't be faked today."
+    },
+    {
+      "name": "Library.shared.stage(sessions:live:)",
+      "what_it_replaces": "file system",
+      "file": "apps/macos/Frog/Model/Library.swift (used by FlushSnapshotTests)",
+      "notes": "Fixed sidebar sessions in place of the session folder. Library.cloudChanged(_:) is how Frog Cloud sessions enter the sidebar, but no test calls it."
+    },
+    {
+      "name": "TestHome.isolate (scratch HOME, own defaults suite, FROG_SIDECARS=off)",
+      "what_it_replaces": "file system",
+      "file": "apps/macos/Frog/Engine/EngineProcess.swift (TestHome, called first in FrogApp.init) and TestHomeTests in apps/macos/FrogTests/BackgroundHost.swift",
+      "notes": "The test host gets HOME=$TMPDIR/frog-test-home-<pid> and its UserDefaults suite (toys.frog.tests, emptied each run), so every @AppStorage setting starts at its default. Keychains stay symlinked to the real login keychain. Sidecars (frog-apple, tang-llm) are off unless a test sets FROG_SIDECARS=ephemeral."
+    },
+    {
+      "name": "LockHolder.pathForTesting / InstanceDecision / SingleInstance.launchURLs",
+      "what_it_replaces": "file system",
+      "file": "apps/macos/Frog/FrogApp.swift",
+      "notes": "The single-instance lock and the launch-argument URL hand-off, testable without processes (InstanceLockTests)."
+    },
+    {
+      "name": "Notifier.setFrontmostCheck / Conversation.effects (Recorder)",
+      "what_it_replaces": "other",
+      "file": "apps/macos/Frog/Model/Notifier.swift; apps/macos/FrogTests/NotifierTests.swift",
+      "notes": "Replace NSApp.isActive and the platform effects (notified/asked/turnEnded) to observe what would alert. Notifier.notAskedYet, needsPermission, turnFinishedAway and the model's note() all no-op under SingleInstance.isTesting."
+    },
+    {
+      "name": "ModelStats injection (EnergySettings(stats:))",
+      "what_it_replaces": "file system",
+      "file": "apps/FrogKit/UI/Settings/EnergySettings.swift",
+      "notes": "The energy page takes a ModelStats, so a test can give it fixed energy buckets (SnapshotTests.testRenderEnergySettings)."
+    },
+    {
+      "name": "HF_HUB_CACHE env",
+      "what_it_replaces": "file system",
+      "file": "apps/macos/Frog/Model/ModelDownloads.swift",
+      "notes": "Points downloads and isInstalled at a temp cache. The download itself always hits https://huggingface.co (no URL or session injection)."
+    },
+    {
+      "name": "Environment seams: FROG_GATEWAY, FROG_GATEWAY_KEY, FROG_API_KEY, FROG_BIN, TANG_LLM_BIN, FROG_PUSH_RELAY, FROG_PUSH_SECRET",
+      "what_it_replaces": "gateway",
+      "file": "apps/FrogKit/Model/CloudGateway.swift; apps/macos/Frog/Model/CloudSessions.swift; apps/FrogKit/Model/CloudAccount.swift; apps/macos/Frog/Engine/EngineProcess.swift; apps/macos/Frog/Model/MacLender.swift; apps/macos/Frog/Model/RemotePush.swift",
+      "notes": "Read from the test host's own environment (pass as TEST_RUNNER_<NAME> to xcodebuild). FROG_GATEWAY redirects CloudGateway (sessions, create, archive, repos, the session WebSocket) to a local gateway, such as zest's dev/run.sh or a mock. It's a static let, so it must be set before first use. FROG_GATEWAY_KEY gives CloudSessions a token without an account. FROG_API_KEY makes CloudAccount and frog see a key (signedIn = true), but /v1/me still goes to api.frog.toys. FROG_BIN and TANG_LLM_BIN choose the engine and node binaries, so a stub script could stand in for `frog --mcp/--providers/--setup` or for tang-llm. FROG_PUSH_RELAY points phone pushes at a local relay. None of these are used by any test today, except that SwitchAwayTests sets FROG_API_KEY and FROG_BASE_URL through Frog.overrides for the engine child."
+    },
+    {
+      "name": "Sparkle feed",
+      "what_it_replaces": "sparkle feed",
+      "file": "apps/macos/Frog/Model/Updates.swift",
+      "notes": "No fake. The updater is created only for bundle id toys.frog with an SUPublicEDKey and never in a test host. The DEBUG menu item 'Simulate Update…' and Updates.drainThenInstall(immediate:) exercise drain, then manifest, then install without Sparkle. No test calls drainThenInstall or UpdateDrain.drainAll."
+    }
+  ],
+  "how_views_are_driven_in_tests": "Tests host the real SwiftUI view in an NSHostingView inside a borderless or titled NSWindow ordered in with orderInForTest() (alpha 0, click-through, never key). They pump the main run loop (RunLoop.main.run(until:)) and either (a) write a PNG with bitmapImageRepForCachingDisplay/cacheDisplay, or (b) reach AppKit-backed pieces directly: find the composer's NSTextView in the hierarchy, call insertText and invoke the delegate's doCommandBy:insertNewline, then measure frames. Plain SwiftUI controls (Button, Toggle, Picker, Menu, Form rows) can't be found or clicked. ToolRowClicksTests and ComposerViewTests both note that a hosted SwiftUI view exposes no readable text or accessibility tree, so most behaviour is asserted on the model or store behind the view (Devices, Panes, Workspace, LocalModelList.build, ModelMenu.thisMacModels) rather than through the view. Views offer fixture parameters for this: MachinesSettings(devices:path:fixtureAccount:), MachineModelsSections(showMore:fixedNow:fixedDownloads:), PairSheet(device:code:problem:), EnergySettings(stats:), ModelMenu(preset:). There's no XCUITest target, so nothing presses a Settings button, opens the Settings scene (Settings { SettingsView() }) or follows a sheet.",
+  "background_rule": "Every test runs in the background. FrogApp.init makes the test host an accessory app (no Dock icon, no windows: defaultLaunchBehavior .suppressed, restoration disabled) when XCTestConfigurationFilePath is set. The test bundle's principal class FrogTestsBackgroundGuard (INFOPLIST_KEY_NSPrincipalClass in apps/macos/project.yml) is defined in apps/macos/FrogTests/BackgroundHost.swift. It fails the running test by name if the host becomes the active app, if any window is on screen where the user can see it (checked against CGWindowList), or if a window becomes key while the host is active. HideChildren swizzles addChildWindow and NSPopover.show so child panels and popovers of a hidden window stay hidden. SidecarGuard fails a test that leaves frog-apple or tang-llm running. TestHome isolates HOME and defaults, and scripts/test.sh also kills and fails on leaked sidecars after the run.",
+  "gaps": [
+    "No UI-automation layer. There's no XCUITest target, and hosted SwiftUI has no readable or clickable tree, so no test can open Settings, switch tabs, press Sign In, Pair, Get, Load, Stop or Delete, or read the resulting text. The cheapest fix is either an XCUITest target that launches a background-safe app build with a scratch HOME (it would need an exception to the BackgroundGuard rule, or a hidden-window mode), or accessibility identifiers on Settings controls plus a small in-process driver that finds NSHostingView descendants by identifier.",
+    "No fake Frog Cloud account service. CloudAccount.origin (https://api.frog.toys) is a constant, and it serves /v1/me, /v1/auth/link and /v1/billing/topup and /subscribe. The CloudSignIn exchange (/v1/auth/exchange) and NSWorkspace.open of the Stripe checkout URL are hard-coded too, all on URLSession.shared. So sign-in success, account and credit, plans, top-up and sign-out can't run without the real service. They need a FROG_ACCOUNT_ORIGIN-style override (like FROG_GATEWAY) or a URLProtocol stub, plus an injectable 'open URL' hook. The gateway half can already be redirected with FROG_GATEWAY, but no mock gateway ships with the Mac tests and none is started by them, so Run in Frog Cloud and cloud sessions in the sidebar are still untested. The web's vendored mock gateway would need starting from the test, and lacks /v1/me.",
+    "No fake for the one-shot engine CLI calls that Settings uses (`frog --models --json`, `--providers`, `--catalog`, `--mcp`, `--mcp-signin`, `--setup`, `--use-claude-mcp`, and setKey or addServer via ProviderStore.run). Tests either run the real bundled frog against the test HOME or don't test those flows. A FROG_BIN stub script, or a protocol in front of Frog.json/Frog.run, would let MCP status, sign-in, provider keys and the setup line be driven deterministically.",
+    "Singletons with no injection: ModelDownloads.shared (always huggingface.co), MacLender.shared (spawns the real tang-llm; openPairing calls 127.0.0.1:8920), RemoteBridge.shared (real listeners on 8913 and 8914; the token lives in the Keychain), Notifier.shared (inert under isTesting), Updates.shared (nil under isTesting) and Devices.shared (Bonjour) are read directly by PairMachineSheet, PairSheet, NodeOffer, LendSettings, ModelSuggestion and UserFooter. Each needs a seam (a protocol or a settable shared instance) before a flow test can run offline and in the background.",
+    "MockNode gaps: no /models/unload, /models/delete or /models/pull. It does serve /pair/open, but MacLender only talks to the fixed 127.0.0.1:8920. Devices' Bonjour discovery isn't exercised (the test never sees MockNode appear in 'Pair a machine…'), and Devices.found is private. A flow test of discover, pair, rename, unpair, stop and delete needs those endpoints, a way to inject a found endpoint into Devices, and an injectable lender base URL.",
+    "The app-level -FrogSnapshot launch mode (apps/macos/Frog/Snapshot.swift, used by docs/design/parity/capture.sh and scripts/hero-shot.sh) captures a real launched window but can't send input. hero-shot.sh needs Screen Recording and shows a window, so neither is a flow harness.",
+    "No time control. PairCodeSheet's countdown, MachineModelsSections' 5 s clock (fixedNow exists only for rendering), CloudSessions' 15 s poll, PingLine's 30 s delay and the update drain budget all use real time. A clock seam would make them testable without sleeps.",
+    "Render tests aren't compared with reference images, so a visual regression in Settings goes unnoticed. Adding a reference-diff step (for example a checked-in PNG plus a tolerance) would turn them into real snapshot tests.",
+    "No Sparkle test path. There's no local appcast or fake SPUUpdater, and Updates is disabled in test hosts and debug builds, so 'Check for Updates…' and the willInstallUpdateOnQuit drain hand-off can only be tested by calling drainThenInstall directly, which no test does."
+  ]
+}

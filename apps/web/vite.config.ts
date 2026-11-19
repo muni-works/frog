@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { execSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
@@ -11,9 +12,12 @@ const gateway = process.env.GATEWAY ?? 'http://127.0.0.1:8788'
 const cargo = readFileSync(fileURLToPath(new URL('../../Cargo.toml', import.meta.url)), 'utf8')
 const version = cargo.match(/\[workspace\.package\][^[]*?\nversion\s*=\s*"([^"]+)"/)?.[1] ?? cargo.match(/^version\s*=\s*"([^"]+)"/m)?.[1] ?? 'dev'
 
+// The commit this build came from: the sidebar's version chip links to it on GitHub.
+const commit = (() => { try { return execSync('git rev-parse --short HEAD').toString().trim() } catch { return 'dev' } })()
+
 export default defineConfig({
   plugins: [react()],
-  define: { __FROG_VERSION__: JSON.stringify(version) },
+  define: { __FROG_VERSION__: JSON.stringify(version), __FROG_COMMIT__: JSON.stringify(commit) },
   server: {
     proxy: { '/v1': { target: gateway, ws: true, changeOrigin: true } },
     // Documentation mode bundles the pages in docs/app, outside this folder.

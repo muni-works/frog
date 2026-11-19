@@ -61,7 +61,7 @@ test("no bare queued count: each follow-up is a chip with its words", () => {
   const s = html({ session: true, state: "working", queued: [{ text: "then update the changelog", images: [] }, { text: "bump the version", images: [] }] });
   assert.match(s, /then update the changelog/);
   assert.match(s, /bump the version/);
-  assert.ok(!s.includes("cz-qcount") && !/Queued · 2/.test(s), s);
+  assert.ok(!s.includes("cz-qcount") && !/Queued, 2/.test(s), s);
   assert.match(s, /placeholder="Add a follow-up"/);
 });
 

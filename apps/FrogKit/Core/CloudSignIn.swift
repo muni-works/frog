@@ -106,7 +106,7 @@ enum CloudSignIn {
     private static var device: String {
         let key = "cloudDevice"
         if let d = UserDefaults.standard.string(forKey: key) { return d }
-        let d = "Frog for Mac · \(random(3).prefix(4))"
+        let d = "Frog for Mac, \(random(3).prefix(4))"
         UserDefaults.standard.set(d, forKey: key)
         return d
     }

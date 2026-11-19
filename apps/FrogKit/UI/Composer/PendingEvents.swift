@@ -31,7 +31,7 @@ struct PendingEvents: Equatable {
             }
             let label = jobs[w.id]?.label ?? (w.kind == .timer ? w.body : "")
             let head = [w.id, w.outcome].filter { !$0.isEmpty }.joined(separator: " ")
-            let summary = [head, label].filter { !$0.isEmpty }.joined(separator: " · ")
+            let summary = [head, label].filter { !$0.isEmpty }.joined(separator: ", ")
             return Chip(id: "wake-\(i)", kind: what, summary: summary.isEmpty ? w.body : summary, payload: w.body)
         }
         chips += messages.enumerated().map { i, m -> Chip in
@@ -55,7 +55,7 @@ struct PendingEvents: Equatable {
         let head = "\(n) pending result\(n == 1 ? "" : "s")"
         // Busy: the engine hands parked wakes to the running turn at its next step (the tool
         // boundary), so they wait only on the step in flight, not the whole turn.
-        return busy ? "\(head) · they arrive at the next step" : "\(head) · they go with your next message"
+        return busy ? "\(head), they arrive at the next step" : "\(head), they go with your next message"
     }
 }
 

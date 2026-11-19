@@ -96,6 +96,14 @@ struct FrogApp: App {
         .defaultLaunchBehavior(.suppressed)
         .restorationBehavior(.disabled)
 
+        Window("About Frog", id: "about") {
+            AboutView()
+        }
+        .windowResizability(.contentSize)
+        .windowStyle(.hiddenTitleBar)
+        .defaultLaunchBehavior(.suppressed)
+        .restorationBehavior(.disabled)
+
         // No Settings scene: Settings is a mode of the window (⌘,, FrogCommands), not a window.
     }
 }
@@ -525,7 +533,7 @@ struct ModelSuggestion: View {
                         ProgressView(value: f)
                             .progressViewStyle(.circular)
                             .controlSize(.mini)
-                        Text("Downloading \(m.name) · \(m.stateLine ?? "")")
+                        Text("Downloading \(m.name), \(m.stateLine ?? "")")
                         Button("Stop") { downloads.cancel(recommended.repo) }
                             .buttonStyle(.link)
                             .foregroundStyle(.tint)
@@ -534,7 +542,7 @@ struct ModelSuggestion: View {
                         Button("Get \(m.name)") { downloads.download(recommended.repo) }
                             .buttonStyle(.link)
                             .foregroundStyle(.tint)
-                        Text("for bigger tasks · \(SuggestedModel.gbText(recommended.approxGB))")
+                        Text("for bigger tasks, \(SuggestedModel.gbText(recommended.approxGB))")
                     }
                     Button {
                         closed = true

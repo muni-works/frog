@@ -101,7 +101,7 @@ final class SidebarSnapshotTests: XCTestCase {
             "bf16": .waiting, "prefill": .running, "cloud": .running, "keys": .running, "batch": .waiting, "blaze": .running, "node": .unread,
         ]
         Library.shared.stage(sessions: sessions, live: live, parents: parents, chief: "chief",
-                             archived: [], asks: ["bf16": "pod past its 2h cap · $3.50/hr · extend?",
+                             archived: [], asks: ["bf16": "pod past its 2h cap, $3.50/hr, extend?",
                                                   "batch": "Bash git push origin gateway-batching"])
     }
 
@@ -161,7 +161,7 @@ final class SidebarSnapshotTests: XCTestCase {
             }
         }
         let group = GitCardController.Request(id: "g", title: "frog manager", sessions: [], single: false,
-                                              counts: "11 landed · 33 ahead", open: { _ in }, refresh: {})
+                                              counts: "11 landed, 33 ahead", open: { _ in }, refresh: {})
         let one = GitCardController.Request(id: "s", title: "subagent visibility v2", sessions: [], single: true,
                                             counts: "2 ahead", open: { _ in }, refresh: {})
         let ownCard = GitIndex.Card(
@@ -264,7 +264,7 @@ final class SidebarSnapshotTests: XCTestCase {
         /// The composer's own view of a session: the same bindings, through the one summary.
         func tray(_ s: SessionInfo) -> ComposerModel.State {
             var state = ComposerModel.State(
-                model: .init(id: "local/qwen3-4b", name: "Qwen3 4B · On this Mac", place: .local, node: nil),
+                model: .init(id: "local/qwen3-4b", name: "Qwen3 4B, On this Mac", place: .local, node: nil),
                 where: .session(.init(repo: "muni-works/frog", branch: "frog/pr-chip-hover",
                                       worktree: true, worktreePath: s.cwd,
                                       diff: .init(add: 12, del: 3, files: 2), dirty: false, ahead: 0,

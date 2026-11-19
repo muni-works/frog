@@ -45,8 +45,8 @@ final class NodeLoadTests: XCTestCase {
         XCTAssertNil(devices.fit(model: "node/ffffffffffff"))
 
         XCTAssertEqual(devices.placeLine(model: qwen4), "on mew")
-        XCTAssertEqual(devices.placeLine(model: qwen17), "on mew's disk · fits · replaces Qwen3-4B")
-        XCTAssertEqual(devices.placeLine(model: qwen32), "on mew's disk · won't fit (needs 70.0 GB, 22.5 GB free)")
+        XCTAssertEqual(devices.placeLine(model: qwen17), "on mew's disk, fits, replaces Qwen3-4B")
+        XCTAssertEqual(devices.placeLine(model: qwen32), "on mew's disk, won't fit (needs 70.0 GB, 22.5 GB free)")
     }
 
     func testLoadShowsLoadingThenLoaded() async throws {
@@ -87,7 +87,7 @@ final class NodeLoadTests: XCTestCase {
         node.loaded = nil
         await devices.poll()
         XCTAssertEqual(devices.fit(model: qwen17), .fits(node: "mew", replaces: nil))
-        XCTAssertEqual(devices.placeLine(model: qwen4), "on mew's disk · fits")
+        XCTAssertEqual(devices.placeLine(model: qwen4), "on mew's disk, fits")
     }
 
     func testWontFitIsNeverSent() async {
@@ -140,7 +140,7 @@ final class NodeLoadTests: XCTestCase {
             XCTAssertNil(line.range(of: #"tok/s|\btang\b"#, options: [.regularExpression, .caseInsensitive]), line)
         }
         XCTAssertEqual(NodeFit.wontFit(node: "mew", need: 9_100_000_000, room: 4_200_000_000).line,
-                       "on mew's disk · won't fit (needs 9.1 GB, 4.2 GB free)")
+                       "on mew's disk, won't fit (needs 9.1 GB, 4.2 GB free)")
     }
 }
 

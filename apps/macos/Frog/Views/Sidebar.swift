@@ -466,7 +466,7 @@ struct SessionList: View {
         .labelsHidden()
         .controlSize(.mini)
         .fixedSize()
-        .help("Live: settled work folds away · Today: and what finished today · All: everything")
+        .help("Live: settled work folds away, Today: and what finished today, All: everything")
     }
 
     /// A section's small caps label, with an accessory (the scope switch) on the right.
@@ -542,7 +542,7 @@ struct SessionList: View {
                         .frame(width: AttentionMetrics.disclosure)
                     Text("\(count) \(what)")
                     if failed > 0 {
-                        Text(" · \(failed) failed").foregroundStyle(.red.opacity(0.8))
+                        Text("\(failed) failed").foregroundStyle(.red.opacity(0.8)).padding(.leading, 10)
                     }
                     Spacer(minLength: 0)
                 }
@@ -669,7 +669,7 @@ struct SessionList: View {
                     .rotationEffect(.degrees(open ? 90 : 0))
                 Text("+\(count) done")
                 if failed > 0 {
-                    Text("· \(failed) failed").foregroundStyle(.red.opacity(0.8))
+                    Text("\(failed) failed").foregroundStyle(.red.opacity(0.8))
                 }
                 Spacer(minLength: 0)
             }
@@ -1195,7 +1195,7 @@ struct SessionList: View {
         if !older.isEmpty {
             Menu("Older on This Branch") {
                 ForEach(older) { o in
-                    Button("\(o.displayTitle) · \(SessionAgeShort.age(o.modifiedDate))") { open(o) }
+                    Button("\(o.displayTitle), \(SessionAgeShort.age(o.modifiedDate))") { open(o) }
                 }
             }
             Divider()

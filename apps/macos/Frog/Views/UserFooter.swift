@@ -38,7 +38,7 @@ struct UserFooter: View {
                     Button("Continue with Google") { signIn("google") }
                 } label: {
                     row(avatar: nil, title: "Sign in to Frog Cloud",
-                        detail: failure ?? (account.signedIn ? "Access to more powerful models" : "Cloud sessions · $1 free to start"),
+                        detail: failure ?? (account.signedIn ? "Access to more powerful models" : "Cloud sessions, $1 free to start"),
                         warn: failure != nil)
                 }
                 .menuStyle(.borderlessButton)
@@ -48,7 +48,8 @@ struct UserFooter: View {
         }
         .buttonStyle(.plain)
         .padding(.horizontal, 8)
-        .padding(.bottom, 8)
+        .padding(.bottom, 2)
+        .safeAreaInset(edge: .bottom, spacing: 0) { VersionChip() }
         .task { await account.refresh() }
     }
 
@@ -98,7 +99,7 @@ struct UserFooter: View {
     static func creditLine(_ me: CloudAccount.Me) -> String {
         let d = me.credit_cents / 100
         let credit = d > 0 && d < 0.01 ? "<$0.01" : String(format: "$%.2f", d)
-        return [me.subscription?.name, "\(credit) credit"].compactMap { $0 }.joined(separator: " · ")
+        return [me.subscription?.name, "\(credit) credit"].compactMap { $0 }.joined(separator: ", ")
     }
 }
 
@@ -125,5 +126,26 @@ extension CloudAccount {
         await shared.reloadKey()
         await shared.refresh()
         await CloudSessions.shared.refresh()
+    }
+}
+
+/// The app's version under the account row; a click opens About.
+struct VersionChip: View {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button { openWindow(id: "about") } label: {
+            Text("Frog \(FrogVersion.short)")
+                .font(.frog(size: 10.5))
+                .foregroundStyle(.tertiary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .hoverPlate(h: 0, v: 0, radius: 5)
+        }
+        .buttonStyle(.plain)
+        .help("About Frog")
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.leading, 18)
+        .padding(.bottom, 6)
     }
 }

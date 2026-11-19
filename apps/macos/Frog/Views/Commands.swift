@@ -37,13 +37,45 @@ extension FocusedValues {
     @Entry var frogWindow: FrogWindow?
 }
 
+#if DEBUG
+/// Flow tests: the window the menu bar acts on when no window is focused. A test host never has
+/// a key window (it stays in the background), so `@FocusedValue` is nil there; a flow test puts
+/// the hosted window's own `FrogWindow` here, and the menu bar's real items act on it.
+@MainActor
+final class StagedWindow: ObservableObject {
+    static let shared = StagedWindow()
+    /// The panes of the window a flow test hosts: that window stages itself here (any other
+    /// WorkspaceView alive in the test host doesn't).
+    var capturing: ObjectIdentifier?
+    @Published var window: FrogWindow?
+
+    /// What the menu bar reads from a window's offer, as one comparable value: the window
+    /// re-stages itself only when this changes.
+    static func key(_ w: FrogWindow) -> String {
+        [String(describing: ObjectIdentifier(w.workspace)), String(describing: ObjectIdentifier(w.state)),
+         "\(w.sessionsShown)", "\(w.changesShown)", "\(w.maximized)", "\(w.split != nil)", "\(w.closePane != nil)",
+         w.workspace.conversation.map { String(describing: ObjectIdentifier($0)) } ?? "-",
+         w.sidebarOrder.map(\.id).joined(separator: ",")].joined(separator: "|")
+    }
+}
+#endif
+
 /// The menu bar. Everything the app can do lives here with its shortcut, acting on the
 /// focused window, so the app is fully drivable from the keyboard and the menus are the
 /// reference for what exists.
 struct FrogCommands: Commands {
-    @FocusedValue(\.frogWindow) private var window
+    @FocusedValue(\.frogWindow) private var focusedWindow
+    #if DEBUG
+    @ObservedObject private var staged = StagedWindow.shared
+    #endif
     @Environment(\.openWindow) private var openWindow
     @AppStorage("compactSidebar") private var compactSidebar = true
+
+    #if DEBUG
+    private var window: FrogWindow? { focusedWindow ?? staged.window }
+    #else
+    private var window: FrogWindow? { focusedWindow }
+    #endif
 
     private var conversation: Conversation? { window?.workspace.conversation }
 
@@ -63,31 +95,37 @@ struct FrogCommands: Commands {
     }
 
     var body: some Commands {
-        if Updates.shared.enabled {
-            CommandGroup(after: .appInfo) {
-                Button("Check for Updates…") { Updates.shared.check() }
-                    .disabled(!Updates.shared.canCheck)
+        // The app menu's groups count as one block: see the note at the Settings group below.
+        Group {
+            CommandGroup(replacing: .appInfo) {
+                Button("About Frog") { openWindow(id: "about") }
             }
-        }
-        #if DEBUG
-        // Debug builds have no updater: the drain → manifest → (simulated) relaunch loop
-        // still has to be reachable, so an update can be tested end to end.
-        CommandGroup(after: .appInfo) {
-            Button("Simulate Update…") {
-                Updates.shared.drainThenInstall {
-                    // What Sparkle's relaunch does: quit; the manifest says .resume, so the
-                    // next launch picks every session back up (relaunch it by hand to see
-                    // the resume half).
-                    NSApp.terminate(nil)
+            if Updates.shared.enabled {
+                CommandGroup(after: .appInfo) {
+                    Button("Check for Updates…") { Updates.shared.check() }
+                        .disabled(!Updates.shared.canCheck)
                 }
             }
-            // Proves notifications actually deliver: one of every category, plus what the
-            // system says about authorization (a dev build's alerts fail silently otherwise).
-            Button("Test Notifications") {
-                Notifier.shared.testDeliver { note in EngineProcess.log(note) }
+        #if DEBUG
+            // Debug builds have no updater: the drain → manifest → (simulated) relaunch loop
+            // still has to be reachable, so an update can be tested end to end.
+            CommandGroup(after: .appInfo) {
+                Button("Simulate Update…") {
+                    Updates.shared.drainThenInstall {
+                        // What Sparkle's relaunch does: quit; the manifest says .resume, so the
+                        // next launch picks every session back up (relaunch it by hand to see
+                        // the resume half).
+                        NSApp.terminate(nil)
+                    }
+                }
+                // Proves notifications actually deliver: one of every category, plus what the
+                // system says about authorization (a dev build's alerts fail silently otherwise).
+                Button("Test Notifications") {
+                    Notifier.shared.testDeliver { note in EngineProcess.log(note) }
+                }
             }
-        }
         #endif
+        }
 
         // ⌘N starts a chat where you are; windows and tabs are ⌘T and ⌥⌘N.
         CommandGroup(replacing: .newItem) {
@@ -211,22 +249,26 @@ struct FrogCommands: Commands {
             Divider()
         }
 
-        // ⌘, is Settings mode in the front window (docs/design/app-shell.md); with no window
-        // open, a new one opens on it.
-        CommandGroup(replacing: .appSettings) {
-            Button("Settings…") {
-                if let window { window.showSettings(nil) } else {
-                    SettingsRequest.pending = "account"
-                    newWindow()
+        // One group for these two: the commands builder takes at most ten blocks, and an
+        // eleventh fails to type-check on CI's Xcode with errors that point elsewhere.
+        Group {
+            // ⌘, is Settings mode in the front window (docs/design/app-shell.md); with no window
+            // open, a new one opens on it.
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") {
+                    if let window { window.showSettings(nil) } else {
+                        SettingsRequest.pending = "account"
+                        newWindow()
+                    }
                 }
+                .keyboardShortcut(",")
             }
-            .keyboardShortcut(",")
-        }
 
-        // Help › Frog Documentation: the pages that ship with this build, in the window.
-        CommandGroup(replacing: .help) {
-            Button("Frog Documentation") { window?.showDocs() }
-                .disabled(window == nil)
+            // Help › Frog Documentation: the pages that ship with this build, in the window.
+            CommandGroup(replacing: .help) {
+                Button("Frog Documentation") { window?.showDocs() }
+                    .disabled(window == nil)
+            }
         }
 
         CommandMenu("Session") {

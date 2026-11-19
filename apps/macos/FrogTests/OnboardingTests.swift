@@ -50,9 +50,9 @@ final class BiggerModelTests: XCTestCase {
 final class ProjectGlanceTests: XCTestCase {
     func testSummary() {
         var g = ProjectGlance(languages: ["Rust", "Swift"], lines: 41_230, changed: 3)
-        XCTAssertEqual(g.summary, "Rust and Swift · 41k lines · 3 uncommitted changes")
+        XCTAssertEqual(g.summary, "Rust and Swift, 41k lines, 3 uncommitted changes")
         g = ProjectGlance(languages: ["Python"], lines: 420)
-        XCTAssertEqual(g.summary, "Python · 420 lines")
+        XCTAssertEqual(g.summary, "Python, 420 lines")
         XCTAssertNil(ProjectGlance().summary)
     }
 

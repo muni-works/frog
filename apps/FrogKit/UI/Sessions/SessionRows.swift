@@ -240,7 +240,7 @@ struct ConversationRowLabel: View {
         else if let f = session.folder?.lastPathComponent, !f.isEmpty { parts.append(f) }
         if let turns, turns > 0 { parts.append("\(turns) turn\(turns == 1 ? "" : "s")") }
         if !session.model.isEmpty { parts.append(ModelIdentity.rowName(session.model)) }
-        return parts.joined(separator: " · ")
+        return parts.joined(separator: ", ")
     }
 }
 
