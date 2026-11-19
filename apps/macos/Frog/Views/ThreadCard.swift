@@ -21,6 +21,8 @@ final class ThreadCardController {
     @ObservationIgnored private var anchor: AnchorBox?
     @ObservationIgnored private var overRow: String?
     @ObservationIgnored private var overCard = false
+    /// The row just clicked open; its card stays shut until the pointer leaves it.
+    @ObservationIgnored private var suppressed: String?
     @ObservationIgnored private var opening: Task<Void, Never>?
     @ObservationIgnored private var closing: Task<Void, Never>?
     @ObservationIgnored private var closedAt = Date.distantPast
@@ -36,6 +38,8 @@ final class ThreadCardController {
     func enterRow(_ r: Request, anchor: AnchorBox) {
         overRow = r.session.id
         closing?.cancel()
+        // Clicked open: no card again until the pointer has left that row.
+        if suppressed == r.session.id { return }
         if current?.session.id == r.session.id { return }
         opening?.cancel()
         if current != nil || Date().timeIntervalSince(closedAt) < Self.warm {
@@ -51,6 +55,7 @@ final class ThreadCardController {
 
     func leaveRow(_ id: String) {
         if overRow == id { overRow = nil }
+        if suppressed == id { suppressed = nil }
         opening?.cancel()
         scheduleClose()
     }
@@ -63,6 +68,12 @@ final class ThreadCardController {
     func leaveCard() {
         overCard = false
         scheduleClose()
+    }
+
+    /// The row was clicked: close the card and keep it shut while the pointer stays there.
+    func opened(_ id: String) {
+        suppressed = id
+        close()
     }
 
     func close() {
@@ -121,6 +132,9 @@ final class ThreadCardController {
         if x + size.width > visible.maxX - 4 { x = rect.minX - size.width - 12 }
         y = min(max(y, visible.minY + 4), visible.maxY - size.height - 4)
         panel.setFrame(NSRect(x: x, y: y, width: size.width, height: size.height), display: true)
+        // The shadow follows the card's shape; recompute it after every resize, or the old
+        // frame's rectangle lingers around the glass.
+        panel.invalidateShadow()
     }
 
     private func makePanel() -> CardPanel {

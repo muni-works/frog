@@ -721,7 +721,7 @@ struct SessionList: View {
                 ? library.conversation(session.id)?.pulse.rate(at: SidebarClock.shared.now) : nil,
             card: .init(session: session, library: library) { open(session) }
         ) {
-            ThreadCardController.shared.close()
+            ThreadCardController.shared.opened(session.id)
             open(session)
         } menu: { rowMenu(session) }
     }
