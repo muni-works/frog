@@ -208,7 +208,10 @@ final class CustomizeModeTests: XCTestCase {
                      {"name":"setup","exposed":"mcp__figma__setup","state":"withheld","why":"asks the model to run a command","read_only":null,"tokens":0,"tokens_if_on":0}],
             "use":{"count":0,"days":[],"last":null}},
            {"name":"linear","scope":"everywhere","source":"frog","on":true,"state":"needs_sign_in","error":null,"waiting":"sign_in","tokens":0,"tokens_if_all_on":0,"tools":[],"use":null}]},
-         "rules":{"tokens":310,"files":[{"path":"/tmp/pond/AGENTS.md","scope":"project","source":"agents","kind":"instructions","applies":"always","paths":[],"tokens":210,"full_tokens":210,"lines":[{"n":1,"text":"Use pnpm."}]}]},
+         "rules":{"tokens":310,"files":[{"path":"/tmp/pond/AGENTS.md","scope":"project","source":"agents","kind":"instructions","applies":"always","paths":[],"tokens":210,"full_tokens":210,"lines":[{"n":1,"text":"Use pnpm."}]},
+           {"path":"/tmp/pond/CLAUDE.md","scope":"project","source":"claude_code","kind":"instructions","applies":"always","paths":[],"tokens":60,"full_tokens":60,"lines":[]},
+           {"path":"/tmp/pond/.frog/rules/migrations.md","scope":"project","source":"frog","kind":"rule","applies":"paths","paths":["db/migrations/**"],"tokens":0,"full_tokens":90,"lines":[]},
+           {"path":"/Users/ada/.config/frog/FROG.md","scope":"everywhere","source":"frog","kind":"instructions","applies":"always","paths":[],"tokens":40,"full_tokens":40,"lines":[]}]},
          "memory":{"tokens":70,"omitted":0,"notes":[{"id":"staging","scope":"project","created":"2026-11-12T09:30:00-08:00","session":"c1f","title":"why did my seed data vanish","text":"The staging database is reset every Monday.","path":"/tmp/notes/staging.md","cites":[],"missing":[],"tokens":18,"omitted":false}]}}
         """#
 
@@ -247,6 +250,26 @@ final class CustomizeModeTests: XCTestCase {
     }
 
     // MARK: Rules files
+
+    func testRuleCardsGroupAndSayWhereTheyApply() throws {
+        let r = try JSONDecoder.frog.decode(CustomizeReport.self, from: Data(Self.reportJSON.utf8))
+        let files = CustomizeStore.ruleFiles(report: r.rules.files, folder: URL(fileURLWithPath: "/tmp/pond"), home: URL(fileURLWithPath: "/Users/ada"))
+        XCTAssertEqual(files.map(\.url.lastPathComponent), ["AGENTS.md", "CLAUDE.md", "migrations.md", "FROG.md"])
+        XCTAssertEqual(RulesPage.groups(files, project: "pond").map(\.label), ["In pond", "Everywhere"])
+        XCTAssertEqual(RulesPage.groups(files, project: "pond").map(\.files.count), [3, 1])
+        XCTAssertEqual(files[0].appliesText, "Always")
+        XCTAssertEqual(files[2].appliesText, "When working on db/migrations/**")
+        XCTAssertEqual(files[0].weightText, "about 210 tokens a turn")
+        XCTAssertEqual(files[2].weightText, "about 90 tokens when it applies", "a path-scoped rule weighs nothing until it applies")
+        XCTAssertEqual(files.map(\.fromClaudeCode), [false, true, false, false])
+        // Without the engine: Claude Code's file by its name or folder.
+        XCTAssertTrue(RuleFile(url: URL(fileURLWithPath: "/Users/ada/.claude/CLAUDE.md"), scope: .everywhere, text: "", exists: true).fromClaudeCode)
+        XCTAssertFalse(RuleFile(url: URL(fileURLWithPath: "/tmp/pond/AGENTS.md"), scope: .project, text: "", exists: true).fromClaudeCode)
+    }
+
+    func testActivityMarksKeepTheirColumnWhenLeftOut() {
+        XCTAssertEqual(ActivityMarks.width(30), 148, "thirty 3-wide marks, 2 apart")
+    }
 
     private let sample = """
         ---
@@ -445,7 +468,20 @@ final class CustomizeModeTests: XCTestCase {
                 - Never edit files under generated/. Change the schema and run pnpm codegen.
                 - Commit messages start with the area, then a colon: "timer: fix drift after sleep".
                 - Pull requests say what was tested and what was not.
+
+                ## Style
+                - Prefer small modules with one export each.
+                - Errors carry the file and line they came from.
+                - No default exports.
                 """, exists: true),
+            RuleFile(url: pond.appending(path: "CLAUDE.md"), scope: .project, text: """
+                - Read AGENTS.md first.
+                - The staging database is shared; never truncate it.
+                """, exists: true),
+            RuleFile(url: pond.appending(path: ".frog/rules/migrations.md"), scope: .project, text: """
+                - A migration is reversible: write the down step first.
+                - Never change a migration that has shipped; add a new one.
+                """, exists: true, applies: "paths", paths: ["db/migrations/**"]),
             RuleFile(url: URL(fileURLWithPath: "/Users/ada/.config/frog/FROG.md"), scope: .everywhere, text: """
                 - Be concise. Skip explanations I didn't ask for.
                 - Never force-push or reset --hard without asking.
@@ -482,6 +518,7 @@ final class CustomizeModeTests: XCTestCase {
             ("memory", "memory-with-engine-report", nil, true),
             ("connections", "connections", nil, false),
             ("rules", "rules", nil, false),
+            ("rules", "rules-with-engine-report", nil, true),
             ("memory", "memory", nil, false),
             ("automations", "automations", nil, false),
             ("skills", "skill", .skill("release-notes"), false),

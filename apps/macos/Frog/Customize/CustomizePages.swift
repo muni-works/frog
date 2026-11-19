@@ -90,8 +90,9 @@ private struct SkillRow: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 if let uses = skill.uses {
-                    ActivityMarks(days: uses)
                     let n = uses.reduce(0, +)
+                    // No recorded use: no row of empty ticks, just the word, in the same column.
+                    if n > 0 { ActivityMarks(days: uses) } else { Color.clear.frame(width: ActivityMarks.width(uses.count), height: 1) }
                     Text(n == 0 ? "never" : "\(n)").font(.frog(size: 12.5)).monospacedDigit()
                         .foregroundStyle(n == 0 ? Tokens.textTertiary : Tokens.textSecondary)
                         .frame(width: 34, alignment: .trailing)
@@ -107,13 +108,14 @@ private struct SkillRow: View {
             }
         }
         .buttonStyle(.plain)
+        // Room for the engine's switch, then the switch in it: beside the row's button, not
+        // inside it, and never over the count.
+        .padding(.trailing, skill.on == nil ? 0 : 52)
         .overlay(alignment: .trailing) {
-            // The engine's switch, when it has one: beside the row's button, not inside it.
             if let on = skill.on {
                 FrogToggle(label: skill.name, isOn: Binding(get: { on }, set: { change(.skill(name: skill.name, on: $0)) }))
             }
         }
-        .padding(.trailing, skill.on == nil ? 0 : 52)
         .onHover { hovering = $0 }
         .help("Open /\(skill.name): its file, and how to try it")
         .accessibilityLabel("/\(skill.name)")
@@ -287,87 +289,135 @@ private struct ConnectionsKey: View {
 
 // MARK: - Rules (F4Instructions, titled Rules)
 
-/// Rules: each instruction file as a sheet of its lines. Hover a line for Edit and Remove; the
-/// last row adds one. The file itself opens in its default app or shows in Finder.
+/// Rules: one flat card per rules file, under In <project> and Everywhere. A card shows its
+/// first lines and opens in place to the rest, where Edit and Remove wait on each line and a
+/// line can be added at the foot. A project with many files reads as a short stack to scan.
 struct RulesPage: View {
     let store: CustomizeStore
 
     var body: some View {
         CustomizeListPage(section: "rules") {
             if let files = store.rules {
-                ForEach(files) { f in RuleSheet(store: store, file: f) }
+                ForEach(Self.groups(files, project: store.projectName), id: \.label) { g in
+                    SettingsGroupLabel(text: g.label)
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(g.files) { f in RuleCard(store: store, file: f) }
+                    }
+                }
             } else {
                 CustomizeLoading()
             }
         }
     }
+
+    static func groups(_ files: [RuleFile], project: String?) -> [(label: String, files: [RuleFile])] {
+        let mine = files.filter { $0.scope == .project }
+        let all = files.filter { $0.scope == .everywhere }
+        var out: [(String, [RuleFile])] = []
+        if !mine.isEmpty { out.append(("In \(project ?? "this project")", mine)) }
+        if !all.isEmpty { out.append(("Everywhere", all)) }
+        return out
+    }
 }
 
-private struct RuleSheet: View {
+private struct RuleCard: View {
     let store: CustomizeStore
     let file: RuleFile
+    /// Lines a closed card shows.
+    static let preview = 6
+    @State private var expanded = false
     @State private var editing: Int?
     @State private var draft = ""
     @State private var adding = ""
     @State private var problem: String?
-    @FocusState private var addFocused: Bool
 
     private var lines: [RuleLine] { RuleText.lines(file.text) }
     private var scopeName: String { file.scope == .project ? (store.projectName ?? "this project") : "everywhere" }
+    /// Short enough to show whole, or opened.
+    private var open: Bool { expanded || lines.count <= Self.preview }
 
     var body: some View {
+        let lines = lines
         VStack(alignment: .leading, spacing: 0) {
-            header
-            ForEach(lines) { l in
+            head
+            if !file.exists || lines.isEmpty {
+                Text(file.exists ? "Nothing in it yet." : "Not made yet. Adding a line makes it.")
+                    .font(.frog(size: 12.5)).foregroundStyle(Tokens.textTertiary)
+                    .padding(.vertical, 5)
+            }
+            ForEach(open ? lines : Array(lines.prefix(Self.preview))) { l in
                 RuleLineRow(line: l, editing: editing == l.index, draft: $draft,
                             edit: { draft = l.text; editing = l.index },
                             commit: { change(expect: l) { RuleText.replacing($0, at: l.index, with: draft) }; editing = nil },
                             cancel: { editing = nil },
                             remove: { change(expect: l) { RuleText.removing($0, at: l.index) } })
             }
-            HStack(spacing: 0) {
+            if lines.count > Self.preview {
+                Button(expanded ? "Show fewer" : "Show all \(lines.count) lines") {
+                    withAnimation(.snappy(duration: 0.2)) { expanded.toggle() }
+                }
+                .buttonStyle(CustomizeLinkStyle())
+                .padding(.top, 6)
+                .padding(.bottom, open ? 4 : 0)
+            }
+            if open {
                 TextField("Add a line for \(scopeName)", text: $adding)
                     .textFieldStyle(.plain)
                     .font(.frog(size: 14))
-                    .focused($addFocused)
                     .onSubmit {
                         let words = adding
                         change(expect: nil) { RuleText.appending($0, words) }
                         adding = ""
                     }
-                    .accessibilityLabel("Add a line for \(scopeName)")
+                    .accessibilityLabel("Add a line to \(file.url.lastPathComponent)")
+                    .padding(.vertical, 6)
             }
-            .padding(.vertical, 6)
             if let problem {
                 Text(problem).font(.frog(size: 12)).foregroundStyle(Tokens.warn).padding(.top, 4)
             }
         }
-        .padding(.top, 14)
-        .padding(.bottom, 6)
-        .padding(.top, file.scope == .everywhere ? 12 : 0)
+        .padding(.vertical, 14)
+        .padding(.horizontal, 18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(CustomizeLook.card, in: .rect(cornerRadius: 12))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(file.url.lastPathComponent)
     }
 
-    private var header: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Text(file.scope == .project ? "In \(scopeName)" : "Everywhere")
-                .font(.frog(size: 12, weight: .semibold)).foregroundStyle(Tokens.textSecondary)
-                .accessibilityAddTraits(.isHeader)
-            Text(shownPath).font(.frog(size: 11.5, design: .monospaced)).foregroundStyle(Tokens.textTertiary)
-                .lineLimit(1).truncationMode(.middle)
-            if !file.exists {
-                Text("made when you add a line").font(.frog(size: 11.5)).foregroundStyle(Tokens.textTertiary)
+    /// The file's name, whose it is, where it applies and its weight, and the file itself.
+    private var head: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text(file.url.lastPathComponent).font(.frog(size: 13.5, weight: .semibold))
+                    .accessibilityAddTraits(.isHeader)
+                if file.fromClaudeCode {
+                    Text("Read in place from Claude Code").font(.frog(size: 12)).foregroundStyle(Tokens.textTertiary)
+                        .help("Frog reads this file where Claude Code keeps it and never copies it")
+                }
+                Spacer(minLength: 12)
+                if file.exists {
+                    Button("Open in editor") { CustomizeFiles.open(file.url) }
+                        .buttonStyle(CustomizeLinkStyle())
+                        .help("Open \(file.url.lastPathComponent) in the app your Mac opens it with")
+                    Button("Show in Finder") { CustomizeFiles.reveal(file.url) }
+                        .buttonStyle(CustomizeLinkStyle())
+                        .help("Show \(file.url.lastPathComponent) in Finder")
+                }
             }
-            Spacer(minLength: 12)
-            if file.exists {
-                Button("Open in editor") { CustomizeFiles.open(file.url) }
-                    .buttonStyle(CustomizeLinkStyle())
-                    .help("Open \(file.url.lastPathComponent) in the app your Mac opens it with")
-                Button("Show in Finder") { CustomizeFiles.reveal(file.url) }
-                    .buttonStyle(CustomizeLinkStyle())
-                    .help("Show \(file.url.lastPathComponent) in Finder")
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                // The path when it says more than the name: a subfolder, or the home folder.
+                if shownPath != file.url.lastPathComponent {
+                    Text(shownPath).font(.frog(size: 11.5, design: .monospaced)).foregroundStyle(Tokens.textTertiary)
+                        .lineLimit(1).truncationMode(.middle)
+                }
+                Text(file.appliesText).font(.frog(size: 12)).foregroundStyle(Tokens.textTertiary).lineLimit(1)
+                Spacer(minLength: 12)
+                if let weight = file.weightText {
+                    Text(weight).font(.frog(size: 12)).foregroundStyle(Tokens.textSecondary).monospacedDigit()
+                }
             }
         }
-        .padding(.bottom, 8)
+        .padding(.bottom, 10)
     }
 
     private var shownPath: String {

@@ -346,6 +346,9 @@ struct ActivityMarks: View {
         .accessibilityLabel(Self.label(days))
     }
 
+    /// The marks' width for `days` days, so a row without them keeps the column.
+    static func width(_ days: Int) -> CGFloat { CGFloat(max(0, days * 5 - 2)) }
+
     /// "Used 14 times in the last 30 days", or "Never used".
     static func label(_ days: [Int]) -> String {
         let n = days.reduce(0, +)
