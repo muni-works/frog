@@ -5946,6 +5946,7 @@ async fn ask_waits_for_the_users_answer() {
             ask: true,
             sessions: false,
             customize: false,
+            notes: false,
         })
         .unwrap();
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
@@ -5970,6 +5971,7 @@ async fn an_interrupt_dismisses_the_question() {
             ask: true,
             sessions: false,
             customize: false,
+            notes: false,
         })
         .unwrap();
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
@@ -6031,7 +6033,7 @@ async fn tree_step(h: &mut Handle, tree: &serde_json::Value) -> TreeStep {
 /// A session's id, read off its first `Idle` once it has its client caps.
 async fn caps_and_id(h: &mut Handle) -> String {
     h.ops
-        .send(Op::SetClientCaps { irc: false, panes: false, ask: true, sessions: true, customize: false })
+        .send(Op::SetClientCaps { irc: false, panes: false, ask: true, sessions: true, customize: false, notes: false })
         .unwrap();
     loop {
         let env = h.events.recv().await.unwrap();
@@ -6138,7 +6140,7 @@ async fn without_a_client_the_tree_comes_from_the_logs() {
     );
     manager
         .ops
-        .send(Op::SetClientCaps { irc: false, panes: false, ask: true, sessions: false, customize: false })
+        .send(Op::SetClientCaps { irc: false, panes: false, ask: true, sessions: false, customize: false, notes: false })
         .unwrap();
     let m = loop {
         let env = manager.events.recv().await.unwrap();
@@ -6174,7 +6176,7 @@ async fn without_a_client_the_tree_comes_from_the_logs() {
     let mut worker = start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap();
     worker
         .ops
-        .send(Op::SetClientCaps { irc: false, panes: false, ask: true, sessions: false, customize: false })
+        .send(Op::SetClientCaps { irc: false, panes: false, ask: true, sessions: false, customize: false, notes: false })
         .unwrap();
     while !matches!(worker.events.recv().await.unwrap().event, Event::Idle) {}
     submit(&worker, "fix it");
@@ -6224,6 +6226,7 @@ fn caps_irc(h: &Handle, sessions: bool, irc: bool) {
             ask: false,
             sessions,
             customize: false,
+            notes: false,
         })
         .unwrap();
 }
@@ -8427,6 +8430,7 @@ async fn preview_actions_ask_and_round_trip_through_the_client() {
             ask: false,
             sessions: false,
             customize: false,
+            notes: false,
         })
         .unwrap();
     until_idle(&mut h).await;
@@ -8564,6 +8568,7 @@ async fn a_small_window_still_gets_the_panes() {
             ask: false,
             sessions: false,
             customize: false,
+            notes: false,
         })
         .unwrap();
     until_idle(&mut h).await;
@@ -8616,6 +8621,7 @@ async fn a_preview_that_cannot_load_says_so() {
             ask: false,
             sessions: false,
             customize: false,
+            notes: false,
         })
         .unwrap();
     until_idle(&mut h).await;
@@ -15157,6 +15163,7 @@ async fn a_stopped_turn_closes_its_open_question_with_the_wait() {
             ask: true,
             sessions: false,
             customize: false,
+            notes: false,
         })
         .unwrap();
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}

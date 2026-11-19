@@ -224,6 +224,20 @@ pub enum Op {
     Undo {
         undo: String,
     },
+    /// "Make it a rule" on a [`Event::Noted`] receipt (or a Memory row): proposes adding the
+    /// note to a rules file on the usual `Customize` card (`permission_request` with
+    /// `proposal`); approving it adds the line, removes the note, and emits
+    /// `customize_applied` whose undo puts both back.
+    NoteToRule {
+        /// The note's id.
+        id: String,
+        /// `project` or `everywhere`, as the receipt said.
+        #[serde(default = "project_scope")]
+        scope: String,
+        /// `project`: the repo's rules file, shared (default); `home`: your rules everywhere.
+        #[serde(default, rename = "where", skip_serializing_if = "Option::is_none")]
+        place: Option<String>,
+    },
     /// The app's current values of its settings (`design/settings.json` ids), so `Customize`
     /// can read them and quote the old value on a card. Optional; send again on change.
     Settings {
@@ -366,6 +380,11 @@ pub enum Op {
         /// model gets the `Customize` tool. Without it nothing can raise a card no app shows.
         #[serde(default)]
         customize: bool,
+        /// The client draws the `noted` receipt under a reply, with Undo
+        /// (docs/customize-events.md, Noted), so Frog may note things on its own. Without it
+        /// the `Note` tool isn't offered and nothing is written: no note nobody can see.
+        #[serde(default)]
+        notes: bool,
     },
     /// Open a pane. The engine mints the id and answers with [`Event::PaneOpened`]. Terminal
     /// panes are engine-owned shells; preview panes are the client's webviews.
@@ -843,6 +862,37 @@ pub enum Event {
         undo: String,
         card: Box<Proposal>,
     },
+    /// Frog kept a note on its own (or the user's "remember that …"): the quiet receipt under
+    /// the reply (docs/customize-events.md, Noted). Undo with [`Op::Undo`] and `undo`, answered
+    /// by [`Event::CustomizeUndone`]; "Make it a rule" is [`Op::NoteToRule`].
+    Noted {
+        /// The `Note` tool call that kept it (empty for "remember that …").
+        item: String,
+        /// The turn it was noted in, so it sits under that turn's reply.
+        turn: Option<u64>,
+        /// The note's id within its scope.
+        id: String,
+        text: String,
+        /// `project` or `everywhere`.
+        scope: String,
+        /// The project's name ("pond"), or `everywhere`: "Noted for pond".
+        place: String,
+        /// `said`, `correction` or `read` (Frog on its own), or `asked` ("remember that …").
+        source: String,
+        /// For `read`: the file it came from, relative to the project.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        from: Option<String>,
+        undo: String,
+    },
+    /// The notes this turn brought back because they fit the user's message: "Used 2 notes"
+    /// under the reply (docs/customize-events.md, Used notes). Only when there were some.
+    UsedNotes {
+        turn: u64,
+        notes: Vec<UsedNote>,
+        /// What they added to the turn, in estimated tokens (0 when all were already in the
+        /// conversation and weren't sent again).
+        tokens: u64,
+    },
     /// The answer to [`Op::Undo`]: `ok` false when nothing was undone, with why.
     CustomizeUndone {
         undo: String,
@@ -1126,6 +1176,8 @@ impl Event {
                 | Self::ItemsDiscarded { .. }
                 | Self::PermissionResolved { .. }
                 | Self::CustomizeApplied { .. }
+                | Self::Noted { .. }
+                | Self::UsedNotes { .. }
                 | Self::CustomizeUndone { .. }
                 | Self::QuestionResolved { .. }
                 | Self::AutoApproved { .. }
@@ -1815,6 +1867,19 @@ pub struct Status {
     pub read_only: bool,
 }
 
+/// One note a turn used.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct UsedNote {
+    pub id: String,
+    /// `project` or `everywhere`.
+    pub scope: String,
+    pub text: String,
+}
+
+fn project_scope() -> String {
+    "project".into()
+}
+
 fn default_open_pr() -> String {
     "ask".into()
 }
@@ -2125,11 +2190,12 @@ mod tests {
             sessions,
             irc,
             customize,
+            notes,
         } = old
         else {
             panic!("not SetClientCaps");
         };
-        assert!(panes && !ask && !sessions && !irc && !customize);
+        assert!(panes && !ask && !sessions && !irc && !customize && !notes);
         // Old clients never send `irc`, so the bus stays off until the client says otherwise.
         let wire: Op =
             serde_json::from_str(r#"{"op":"set_client_caps","panes":false,"irc":true}"#).unwrap();
@@ -2141,6 +2207,7 @@ mod tests {
                 sessions: false,
                 irc: true,
                 customize: false,
+                notes: false,
             }
         ));
     }

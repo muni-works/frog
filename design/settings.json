@@ -35,6 +35,9 @@
     { "id": "update-wait", "section": "general", "group": "Updates", "platform": "mac", "control": "field", "when": "update-pause",
       "label": "Wait for agents to stop up to", "description": "Seconds, from 5 to 120." },
 
+    { "id": "auto-note", "agent": "ask", "section": "general", "group": "Memory", "platform": "both", "control": "toggle", "default": true,
+      "label": "Notes on its own", "description": "Frog keeps short notes from what you tell it and what it reads in your projects, on this machine, with Undo under the reply. On by default.",
+      "notYet": { "mac": "Drawn on Customize's Memory page (Notes on its own), not in Settings; the engine reads it from Op::Settings.", "web": "Drawn on Customize's Memory page (Notes on its own), not in Settings; the engine reads it from Op::Settings." } },
     { "id": "theme", "agent": "apply", "section": "appearance", "platform": "both", "control": "segmented",
       "label": "Theme", "description": "System follows your device's light or dark setting.",
       "options": [ { "id": "system", "label": "System" }, { "id": "light", "label": "Light" }, { "id": "dark", "label": "Dark" } ] },
