@@ -56,6 +56,7 @@ pub const DEFERRED: &[(&str, &str)] = &[
         "UseFolder",
         "UseFolder(path): move this conversation into another folder (the user approves)",
     ),
+    (crate::customize::TOOL, crate::customize::CATALOG_LINE),
     (
         "Models",
         "Models(): models runnable now, with cost and credential status; before StartSession on a model you haven't used",

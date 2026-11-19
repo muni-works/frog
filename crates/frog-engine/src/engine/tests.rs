@@ -2544,6 +2544,7 @@ async fn use_folder_moves_a_chat_into_a_project() {
                     id: id.clone(),
                     decision: Decision::Allow,
                     note: None,
+                    choice: None,
                 })
                 .unwrap();
         }
@@ -2643,6 +2644,7 @@ async fn a_bash_cd_logs_the_shell_cwd() {
                     id: id.clone(),
                     decision: Decision::Allow,
                     note: None,
+                    choice: None,
                 })
                 .unwrap();
         }
@@ -2791,6 +2793,7 @@ async fn clear_drops_queued_shell_output() {
                     id: id.clone(),
                     decision: Decision::Allow,
                     note: None,
+                    choice: None,
                 })
                 .unwrap();
         }
@@ -2953,6 +2956,7 @@ async fn the_worktree_lock_follows_a_folder_change() {
                         id: id.clone(),
                         decision: Decision::Allow,
                         note: None,
+                        choice: None,
                     })
                     .unwrap();
             }
@@ -4609,6 +4613,7 @@ async fn a_mode_set_mid_turn_governs_the_next_permission_decision() {
                         id: id.clone(),
                         decision: Decision::Allow,
                         note: None,
+                        choice: None,
                     })
                     .unwrap();
             }
@@ -6614,6 +6619,7 @@ async fn a_permission_card_posts_a_notice_with_a_link_never_an_approval() {
                         id,
                         decision: Decision::Allow,
                         note: None,
+                        choice: None,
                     })
                     .unwrap();
             }
@@ -6835,7 +6841,7 @@ async fn models_tool_lists_credentials_without_asking() {
             Event::PermissionRequest { id, name, .. } => {
                 saw_permission = Some(name);
                 h.ops
-                    .send(Op::Permission { id, decision: Decision::Deny, note: None })
+                    .send(Op::Permission { id, decision: Decision::Deny, note: None, choice: None })
                     .unwrap();
             }
             Event::ItemCompleted {
@@ -7318,6 +7324,7 @@ mod egress_tests {
                         id: id.clone(),
                         decision,
                         note: None,
+                        choice: None,
                     })
                     .unwrap();
             }
@@ -7375,6 +7382,7 @@ mod egress_tests {
                         id,
                         decision: Decision::Deny,
                         note: None,
+                        choice: None,
                     })
                     .unwrap();
                 break;
@@ -7580,6 +7588,7 @@ mod egress_tests {
                             id: id.clone(),
                             decision: Decision::Allow,
                             note: None,
+                            choice: None,
                         })
                         .unwrap();
                 }
@@ -7706,6 +7715,7 @@ mod egress_tests {
                             id: id.clone(),
                             decision: card,
                             note: None,
+                            choice: None,
                         })
                         .unwrap();
                 }
@@ -7890,6 +7900,7 @@ async fn turn_timing_keeps_permission_waits_out_of_tool_time() {
                     id,
                     decision: Decision::Allow,
                     note: None,
+                    choice: None,
                 })
                 .unwrap();
             break;
@@ -7991,6 +8002,7 @@ async fn permission_requests_preview_the_exact_edit() {
                     id,
                     decision: Decision::Allow,
                     note: None,
+                    choice: None,
                 })
                 .unwrap();
             break preview;
@@ -8097,6 +8109,7 @@ async fn file_tools_stay_rooted_in_the_session_worktree() {
                     id: id.clone(),
                     decision: Decision::Allow,
                     note: None,
+                    choice: None,
                 })
                 .unwrap();
         }
@@ -8213,6 +8226,7 @@ async fn an_absolute_write_into_the_main_checkout_asks_and_stays_out() {
                     id: id.clone(),
                     decision: Decision::Deny,
                     note: None,
+                    choice: None,
                 })
                 .unwrap();
         }
@@ -8246,6 +8260,7 @@ async fn an_absolute_write_into_the_main_checkout_asks_and_stays_out() {
                     id: id.clone(),
                     decision: Decision::Allow,
                     note: None,
+                    choice: None,
                 })
                 .unwrap();
         }
@@ -8429,6 +8444,7 @@ async fn preview_actions_ask_and_round_trip_through_the_client() {
                         id: id.clone(),
                         decision: Decision::Allow,
                         note: None,
+                        choice: None,
                     })
                     .unwrap();
             }
@@ -9392,6 +9408,7 @@ async fn interrupt_cancels_a_running_bash_tool() {
                     id: id.clone(),
                     decision: Decision::Allow,
                     note: None,
+                    choice: None,
                 })
                 .unwrap();
         }
@@ -9458,6 +9475,7 @@ async fn drive(h: &mut Handle, done: impl Fn(&Event) -> bool) -> Vec<Envelope> {
                     id: id.clone(),
                     decision: Decision::Allow,
                     note: None,
+                    choice: None,
                 })
                 .unwrap();
         }
@@ -9671,7 +9689,7 @@ async fn a_child_asks_its_parent_and_gets_the_answer_mid_turn() {
         }
         if answered && let Some(id) = held.take() {
             h.ops
-                .send(Op::Permission { id, decision: Decision::Allow, note: None })
+                .send(Op::Permission { id, decision: Decision::Allow, note: None, choice: None })
                 .unwrap();
         }
         let done = matches!(&env.event, Event::TurnStarted { input, .. } if input.contains("wrote child.txt"));
@@ -9839,6 +9857,7 @@ async fn a_denied_subagent_call_does_not_run() {
                     id,
                     decision: Decision::Deny,
                     note: None,
+                    choice: None,
                 })
                 .unwrap();
             break;
@@ -11281,6 +11300,7 @@ async fn writes_and_unknowns_still_ask_in_default_mode() {
                         id: id.clone(),
                         decision: Decision::Deny,
                         note: None,
+                        choice: None,
                     })
                     .unwrap();
             }
@@ -11763,6 +11783,7 @@ async fn a_non_public_webfetch_still_asks_in_default_mode() {
                     id: id.clone(),
                     decision: Decision::Deny,
                     note: None,
+                    choice: None,
                 })
                 .unwrap();
         }
@@ -11836,6 +11857,7 @@ async fn turn_answering(
                     id: id.clone(),
                     decision,
                     note,
+                    choice: None,
                 })
                 .unwrap();
         }
@@ -12090,6 +12112,7 @@ async fn next_turn(
                     id: id.clone(),
                     decision,
                     note,
+                    choice: None,
                 })
                 .unwrap();
         }
@@ -12695,7 +12718,7 @@ async fn loop_collect(
         // A card that reaches the user is denied (the tests count them).
         if let Event::PermissionRequest { id, .. } = &env.event {
             h.ops
-                .send(Op::Permission { id: id.clone(), decision: Decision::Deny, note: None })
+                .send(Op::Permission { id: id.clone(), decision: Decision::Deny, note: None, choice: None })
                 .unwrap();
         }
         if started && matches!(env.event, Event::Idle) {
@@ -13905,7 +13928,7 @@ async fn prs_bind_from_gh_pr_create_and_by_hand() {
         sid = env.session.clone();
         if let Event::PermissionRequest { id, .. } = &env.event {
             h.ops
-                .send(Op::Permission { id: id.clone(), decision: Decision::Allow, note: None })
+                .send(Op::Permission { id: id.clone(), decision: Decision::Allow, note: None, choice: None })
                 .unwrap();
         }
         let idle = matches!(env.event, Event::Idle);
@@ -15189,6 +15212,7 @@ async fn permission_waits_are_timed() {
                     id: id.clone(),
                     decision: Decision::Deny,
                     note: None,
+                    choice: None,
                 })
                 .unwrap();
         }

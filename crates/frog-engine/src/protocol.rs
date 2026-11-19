@@ -100,6 +100,64 @@ pub struct Touch {
     pub created_here: bool,
 }
 
+/// One `Customize` change as a card (docs/customize-events.md): a title, the exact change,
+/// where it goes and what it costs, and the buttons.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct Proposal {
+    /// `line`, `skill`, `tool` or `setting`.
+    pub kind: String,
+    /// "Remember this?", "Change Density", …
+    pub title: String,
+    /// The change, quoted exactly: `old` → `new`. A line to save has only `new`, a line to
+    /// forget only `old`.
+    pub change: QuotedChange,
+    /// Where it goes, in words: "AGENTS.md in frog, shared with everyone in this repo".
+    #[serde(rename = "where")]
+    pub place: String,
+    /// The file it writes, when it writes one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// Tokens it adds to every turn (negative: saves), estimated; absent when unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokens_per_turn: Option<i64>,
+    /// The primary button: "Remember", "Change", "Turn off".
+    pub primary: String,
+    /// The decline button, always "Not now".
+    pub dismiss: String,
+    /// At most one other choice, e.g. "Just for me" (Frog's notes instead of a shared file).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alternative: Option<Alternative>,
+    /// What asked for it: the user's own words, and whether they asked or Frog offered.
+    pub asked_by: AskedBy,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct QuotedChange {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub old: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct Alternative {
+    /// Sent back as [`Op::Permission`]'s `choice`.
+    pub id: String,
+    pub label: String,
+    #[serde(rename = "where")]
+    pub place: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokens_per_turn: Option<i64>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct AskedBy {
+    /// `user` (they asked for this change) or `frog` (Frog offered it after their message).
+    pub who: String,
+    /// Their words, quoted exactly as they wrote them.
+    pub words: String,
+}
+
 /// What [`Op::Continue`] tells the model when the client gives no note of its own.
 pub const CONTINUE_NOTE: &str =
     "<resumed after the app restarted; your previous turn was interrupted; continue>";
@@ -156,6 +214,20 @@ pub enum Op {
         /// With a deny: the user's words, sent back to the agent so it can adjust.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         note: Option<String>,
+        /// With an allow of a `Customize` proposal: the id of its alternative, when the user
+        /// picked that instead of the primary action.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        choice: Option<String>,
+    },
+    /// Undo a change from [`Event::CustomizeApplied`] by its handle; answered with
+    /// [`Event::CustomizeUndone`].
+    Undo {
+        undo: String,
+    },
+    /// The app's current values of its settings (`design/settings.json` ids), so `Customize`
+    /// can read them and quote the old value on a card. Optional; send again on change.
+    Settings {
+        values: serde_json::Map<String, serde_json::Value>,
     },
     /// Answer an [`Event::Question`]. No choices and no `other` dismisses it.
     Answer {
@@ -744,6 +816,31 @@ pub enum Event {
         /// frog's advice. A client that can forward it may escalate to a parent session.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         card: Option<ApprovalCard>,
+        /// For `Customize`: the change on one card (docs/customize-events.md). Approve with
+        /// `Allow`, "Not now" with `Deny`, and the alternative with `Allow` and `choice` set to
+        /// its id.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        proposal: Option<Box<Proposal>>,
+    },
+    /// A `Customize` change applied (at once, or after the user approved its card): the same
+    /// card, now with an undo handle for [`Op::Undo`].
+    CustomizeApplied {
+        /// The tool call that made it.
+        item: String,
+        undo: String,
+        card: Box<Proposal>,
+    },
+    /// The answer to [`Op::Undo`]: `ok` false when nothing was undone, with why.
+    CustomizeUndone {
+        undo: String,
+        ok: bool,
+        message: String,
+    },
+    /// The app should set one of its settings (`design/settings.json` row `id`) to `value`:
+    /// a `Customize` change or its undo. Live only; replay never re-applies it.
+    SettingChange {
+        id: String,
+        value: serde_json::Value,
     },
     /// The model asks the user to choose (`Ask`). Reply with [`Op::Answer`] using the same id.
     /// `item` is the tool call waiting on it.
@@ -1007,6 +1104,8 @@ impl Event {
                 | Self::ItemCompleted { .. }
                 | Self::ItemsDiscarded { .. }
                 | Self::PermissionResolved { .. }
+                | Self::CustomizeApplied { .. }
+                | Self::CustomizeUndone { .. }
                 | Self::QuestionResolved { .. }
                 | Self::AutoApproved { .. }
                 | Self::EgressBlocked { .. }

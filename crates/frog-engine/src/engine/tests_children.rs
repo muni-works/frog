@@ -358,6 +358,7 @@ async fn a_subagent_on_a_card_raises_no_question_and_its_card_is_reachable() {
             id: card.0,
             decision: Decision::Allow,
             note: None,
+            choice: None,
         })
         .unwrap();
     let evs = drive_long(&mut h, |e| matches!(e, Event::TurnEnded { .. })).await;
