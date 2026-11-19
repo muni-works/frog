@@ -208,8 +208,11 @@ final class CustomizeModeTests: XCTestCase {
                      {"name":"setup","exposed":"mcp__figma__setup","state":"withheld","why":"asks the model to run a command","read_only":null,"tokens":0,"tokens_if_on":0}],
             "use":{"count":0,"days":[],"last":null}},
            {"name":"linear","scope":"everywhere","source":"frog","on":true,"state":"needs_sign_in","error":null,"waiting":"sign_in","tokens":0,"tokens_if_all_on":0,"tools":[],"use":null}]},
-         "rules":{"tokens":310,"files":[{"path":"/tmp/pond/AGENTS.md","scope":"project","source":"agents","kind":"instructions","applies":"always","paths":[],"tokens":210,"full_tokens":210,"lines":[{"n":1,"text":"Use pnpm."}]}]},
-         "memory":{"tokens":70,"omitted":0,"notes":[{"id":"staging","scope":"project","created":"2026-11-12T09:30:00-08:00","session":"c1f","title":"why did my seed data vanish","text":"The staging database is reset every Monday.","path":"/tmp/notes/staging.md","cites":[],"missing":[],"tokens":18,"omitted":false}]}}
+         "rules":{"tokens":310,"files":[{"path":"/tmp/pond/AGENTS.md","scope":"project","source":"agents","kind":"instructions","applies":"always","paths":[],"tokens":210,"full_tokens":210,"lines":[{"n":1,"text":"Use pnpm."}]},
+           {"path":"/tmp/pond/CLAUDE.md","scope":"project","source":"claude_code","kind":"instructions","applies":"always","paths":[],"tokens":60,"full_tokens":60,"lines":[]},
+           {"path":"/tmp/pond/.frog/rules/migrations.md","scope":"project","source":"frog","kind":"rule","applies":"paths","paths":["db/migrations/**"],"tokens":0,"full_tokens":90,"lines":[]},
+           {"path":"/Users/ada/.config/frog/FROG.md","scope":"everywhere","source":"frog","kind":"instructions","applies":"always","paths":[],"tokens":40,"full_tokens":40,"lines":[]}]},
+         "memory":{"tokens":35,"omitted":0,"mode":"per_turn","notes":[{"id":"staging","scope":"project","created":"2026-11-12T09:30:00-08:00","session":"c1f","title":"why did my seed data vanish","text":"The staging database is reset every Monday.","path":"/tmp/notes/staging.md","cites":[],"missing":[],"tokens":18,"omitted":false,"source":"frog","kind":"said","from":null,"last_used":null,"stale":false,"lit":true,"x":0.18,"y":0.3,"group":0},{"id":"spec","scope":"project","created":"2026-11-10T09:30:00-08:00","session":"c1f","title":"audit codebase","text":"Tests live in spec/, one file per module.","path":"/tmp/notes/spec.md","cites":[],"missing":[],"tokens":18,"omitted":false,"source":"frog","kind":"read","from":"README.md","last_used":null,"stale":false,"lit":true,"x":0.28,"y":0.22,"group":0},{"id":"uses-npm","scope":"project","created":"2026-10-28T09:30:00-07:00","session":"c1f","title":"set up a new CLI","text":"This project uses npm.","path":"/tmp/notes/uses-npm.md","cites":[],"missing":[],"tokens":18,"omitted":false,"source":"frog","kind":"said","from":null,"last_used":null,"stale":false,"lit":false,"x":0.25,"y":0.48,"group":0},{"id":"use-pnpm","scope":"project","created":"2026-11-17T09:30:00-08:00","session":"c1f","title":"Fix the install step","text":"Use pnpm in this project, never npm.","path":"/tmp/notes/use-pnpm.md","cites":[],"missing":[],"tokens":18,"omitted":false,"source":"frog","kind":"correction","from":null,"last_used":null,"stale":false,"lit":false,"x":0.3,"y":0.52,"group":0},{"id":"release","scope":"project","created":"2026-11-17T10:30:00-08:00","session":"c1f","title":"Write the 0.7.1 notes","text":"Release notes lead with fixes people asked for.","path":"/tmp/notes/release.md","cites":[],"missing":[],"tokens":18,"omitted":false,"source":"frog","kind":"correction","from":null,"last_used":null,"stale":false,"lit":true,"x":0.48,"y":0.74,"group":1},{"id":"tags","scope":"project","created":"2026-11-01T10:30:00-07:00","session":"c1f","title":"cut 0.7.0","text":"Tags are cut from main, never a branch.","path":"/tmp/notes/tags.md","cites":[],"missing":[],"tokens":18,"omitted":false,"source":"frog","kind":"said","from":null,"last_used":null,"stale":false,"lit":false,"x":0.56,"y":0.68,"group":1},{"id":"concise","scope":"everywhere","created":"2026-09-02T10:30:00-07:00","session":"c1f","title":null,"text":"Prefers short answers without preamble.","path":"/tmp/notes/concise.md","cites":[],"missing":[],"tokens":18,"omitted":false,"source":"user","kind":null,"from":null,"last_used":null,"stale":true,"lit":false,"x":0.78,"y":0.24,"group":2},{"id":"mew","scope":"everywhere","created":"2026-10-21T10:30:00-07:00","session":"c1f","title":"which model should I run","text":"Works on a 64 GB Mac and a paired GPU box called mew.","path":"/tmp/notes/mew.md","cites":[],"missing":[],"tokens":18,"omitted":false,"source":"frog","kind":"said","from":null,"last_used":null,"stale":false,"lit":false,"x":0.84,"y":0.72,"group":3}],"groups":[{"id":0,"label":"tests and data","scope":"project","x":0.25,"y":0.38,"count":4},{"id":1,"label":"releases","scope":"project","x":0.52,"y":0.71,"count":2},{"id":2,"label":"how you like to work","scope":"everywhere","x":0.78,"y":0.24,"count":1},{"id":3,"label":"your machines","scope":"everywhere","x":0.84,"y":0.72,"count":1}],"pairs":[{"key":"p:uses-npm|p:use-pnpm","kind":"disagree","older":{"id":"uses-npm","scope":"project"},"newer":{"id":"use-pnpm","scope":"project"},"resolutions":["keep_newer","show_both"]}]}}
         """#
 
     func testTheEngineReportBecomesThePages() throws {
@@ -235,18 +238,117 @@ final class CustomizeModeTests: XCTestCase {
 
         let notes = r.pageNotes()
         XCTAssertEqual(notes[0].from, "why did my seed data vanish")
+        XCTAssertEqual(notes[0].provenance, "Frog noted this in \u{201C}why did my seed data vanish\u{201D}, from what you said.")
+        XCTAssertEqual(notes[1].provenance, "Frog noted this in \u{201C}audit codebase\u{201D}, from reading README.md.")
+        XCTAssertEqual(notes[3].provenance, "Frog noted this in \u{201C}Fix the install step\u{201D}, from a correction.")
+        XCTAssertEqual(notes[6].provenance, "You asked Frog to remember this.")
+        XCTAssertTrue(notes[0].lit)
+        XCTAssertTrue(notes[6].stale)
+        XCTAssertEqual(notes[0].place, CGPoint(x: 0.18, y: 0.30))
+        XCTAssertEqual(r.memory.pairs?.first?.kind, "disagree")
+        XCTAssertEqual(r.memory.groups?.count, 4)
         XCTAssertEqual(notes[0].scope, .project)
         XCTAssertNotNil(notes[0].created)
         XCTAssertEqual(CustomizeFormat.perTurn(r.skills.tokens), "about 180 tokens a turn", "estimates say so")
     }
 
+    // MARK: The memory map (M1Memory)
+    /// What the engine on main printed for `frog --customize --no-connect --json` with six
+    /// global notes and a project AGENTS.md (2026-11-19), paths renamed: the decoder takes the
+    /// real thing, not only a fixture shaped from the doc.
+    static let realReport = #"""
+{"project":"/tmp/pond","estimate":{"chars_per_token":3.5,"calibrated":false},"tokens":363,"skills":{"tokens":130,"budget_tokens":1715,"names_only":false,"items":[{"id":"frog-builtin:visual-loop","name":"visual-loop","description":"Rebuild a page, component, icon or sprite from a visual reference with Screenshot and Compare; bounded iteration and durable assets.","scope":"everywhere","source":"builtin","path":null,"on":true,"tokens":43,"tokens_if_on":43,"full_tokens":632,"shadowed_by":null,"use":{"count":0,"days":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"last":null}},{"id":"frog-builtin:gh","name":"gh","description":"GitHub CLI: PRs, issues, CI checks; valid `--json` fields.","scope":"everywhere","source":"builtin","path":null,"on":true,"tokens":19,"tokens_if_on":19,"full_tokens":244,"shadowed_by":null,"use":{"count":0,"days":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"last":null}}]},"connections":{"tokens":0,"deferred":false,"items":[]},"rules":{"tokens":16,"files":[{"path":"/tmp/pond/AGENTS.md","scope":"project","source":"agents","kind":"instructions","applies":"always","paths":[],"tokens":16,"full_tokens":16,"lines":[{"n":1,"text":"- Use pnpm, never npm."}]}]},"memory":{"tokens":217,"omitted":0,"notes":[{"id":"n6","scope":"everywhere","created":"2026-11-16T10:00:00Z","session":null,"title":null,"text":"Prefers short answers without preamble.","path":"/Users/ada/.local/share/frog/memory/global/n6.md","cites":[],"missing":[],"tokens":18,"omitted":false,"source":"user","in_prompt":true,"kind":null,"from":null,"last_used":null,"stale":false,"lit":false,"x":0.6289,"y":0.7513,"group":3},{"id":"n5","scope":"everywhere","created":"2026-11-15T10:00:00Z","session":null,"title":null,"text":"The staging database is reset every Monday.","path":"/Users/ada/.local/share/frog/memory/global/n5.md","cites":[],"missing":[],"tokens":19,"omitted":false,"source":"user","in_prompt":true,"kind":null,"from":null,"last_used":null,"stale":false,"lit":false,"x":0.4854,"y":0.3626,"group":2},{"id":"n4","scope":"everywhere","created":"2026-11-14T10:00:00Z","session":null,"title":null,"text":"Run the tests with pnpm test before a commit.","path":"/Users/ada/.local/share/frog/memory/global/n4.md","cites":[],"missing":[],"tokens":19,"omitted":false,"source":"user","in_prompt":true,"kind":null,"from":null,"last_used":null,"stale":false,"lit":false,"x":0.7742,"y":0.4312,"group":1},{"id":"n3","scope":"everywhere","created":"2026-11-13T10:00:00Z","session":null,"title":null,"text":"Tests live in spec, one file per module.","path":"/Users/ada/.local/share/frog/memory/global/n3.md","cites":[],"missing":[],"tokens":18,"omitted":false,"source":"user","in_prompt":true,"kind":null,"from":null,"last_used":null,"stale":false,"lit":false,"x":0.7518,"y":0.4902,"group":1},{"id":"n2","scope":"everywhere","created":"2026-11-12T10:00:00Z","session":null,"title":null,"text":"Never use npm for installs, use pnpm.","path":"/Users/ada/.local/share/frog/memory/global/n2.md","cites":[],"missing":[],"tokens":17,"omitted":false,"source":"user","in_prompt":true,"kind":null,"from":null,"last_used":null,"stale":false,"lit":false,"x":0.4244,"y":0.3866,"group":0},{"id":"n1","scope":"everywhere","created":"2026-11-11T10:00:00Z","session":null,"title":null,"text":"This project uses npm for installs.","path":"/Users/ada/.local/share/frog/memory/global/n1.md","cites":[],"missing":[],"tokens":16,"omitted":false,"source":"user","in_prompt":true,"kind":null,"from":null,"last_used":null,"stale":false,"lit":false,"x":0.4088,"y":0.3514,"group":0}],"mode":"whole","similarity":"lexical-1","groups":[{"id":0,"label":"npm and installs","scope":"everywhere","x":0.4215,"y":0.3588,"count":2},{"id":1,"label":"tests and live","scope":"everywhere","x":0.7693,"y":0.4671,"count":2},{"id":2,"label":"staging and database","scope":"everywhere","x":0.4848,"y":0.3799,"count":1},{"id":3,"label":"prefers and short","scope":"everywhere","x":0.6456,"y":0.7457,"count":1}],"pairs":[{"key":"g:n1|g:n2","kind":"disagree","older":{"id":"n1","scope":"everywhere"},"newer":{"id":"n2","scope":"everywhere"},"resolutions":["keep_newer","show_both"]}]}}
+"""#
+
+    func testTheRealEngineReportDecodes() throws {
+        let r = try JSONDecoder.frog.decode(CustomizeReport.self, from: Data(Self.realReport.utf8))
+        XCTAssertEqual(r.memory.mode, "whole")
+        XCTAssertEqual(r.memory.similarity, "lexical-1")
+        XCTAssertEqual(r.memory.notes.count, 6)
+        XCTAssertTrue(r.memory.notes.allSatisfy { $0.inPrompt == true })
+        XCTAssertEqual(r.memory.pairs?.first?.kind, "disagree")
+        let map = try XCTUnwrap(MemoryMap.Model(notes: r.pageNotes(), groups: r.memory.groups ?? [], pairs: r.memory.pairs ?? [], mode: r.memory.mode))
+        XCTAssertEqual(map.dots.count, 6)
+        XCTAssertEqual(map.rings.count, 4)
+        XCTAssertEqual(map.dots.filter(\.flagged).map(\.id), ["n2"])
+        XCTAssertEqual(r.pageSkills.map(\.name).sorted(), ["gh", "visual-loop"])
+        XCTAssertEqual(r.rules.files.first?.applies, "always")
+    }
+
+
+    func testTheMapDrawsOnlyWhatTheEnginePlaced() throws {
+        let r = try JSONDecoder.frog.decode(CustomizeReport.self, from: Data(Self.reportJSON.utf8))
+        let notes = r.pageNotes()
+        let map = try XCTUnwrap(MemoryMap.Model(notes: notes, groups: r.memory.groups ?? [], pairs: r.memory.pairs ?? [], mode: r.memory.mode))
+        XCTAssertEqual(map.dots.count, 8)
+        XCTAssertEqual(map.rings.count, 4)
+        XCTAssertEqual(map.dots.filter(\.lit).count, 3)
+        XCTAssertEqual(map.dots.filter(\.flagged).map(\.id), ["use-pnpm"], "the orange dot is on the newer of a disagreeing pair")
+        XCTAssertEqual(map.summary, "8 notes, placed by the words they share, in 4 groups. 3 were used in your last turn. 1 pair disagrees.")
+        // No map for one note, for the engine's index mode, or for notes it didn't place.
+        XCTAssertNil(MemoryMap.Model(notes: [notes[0]], groups: [], pairs: [], mode: "per_turn"))
+        XCTAssertNil(MemoryMap.Model(notes: notes, groups: [], pairs: [], mode: "index"))
+        XCTAssertNotNil(MemoryMap.Model(notes: notes, groups: [], pairs: [], mode: "whole"), "a small store still has its map")
+        XCTAssertFalse(map.summary.contains("meaning"), "the engine compares words, not meaning")
+        var unplaced = notes
+        unplaced[2].place = nil
+        XCTAssertNil(MemoryMap.Model(notes: unplaced, groups: [], pairs: [], mode: "per_turn"))
+        XCTAssertNil(MemoryMap.Model(notes: [], groups: [], pairs: [], mode: nil))
+    }
+
+    /// Until the transcript shows the receipt line (and the app sends `notes`), the page offers
+    /// the switch but never says Frog is taking notes on its own.
+    func testMemoryDoesNotPromiseNotesThisBuildCannotTake() throws {
+        let url = try XCTUnwrap(Bundle.main.url(forResource: "customize", withExtension: "json"))
+        let memory = try XCTUnwrap(try JSONDecoder().decode(CustomizeCatalog.self, from: Data(contentsOf: url)).explainer("memory"))
+        let rest = ExplainerCard.rest("memory", memory)
+        if CustomizeStore.notesCapability {
+            XCTAssertEqual(rest, memory.rest)
+        } else {
+            XCTAssertFalse(rest.localizedCaseInsensitiveContains("on its own"), rest)
+        }
+    }
+
+    func testTheNotingSwitchReachesTheEngine() throws {
+        let enc = JSONEncoder()
+        enc.outputFormatting = .sortedKeys
+        let settings = String(decoding: try enc.encode(Op.settings(values: ["auto-note": .bool(false)])), as: UTF8.self)
+        XCTAssertEqual(settings, #"{"op":"settings","values":{"auto-note":false}}"#)
+        let rule = String(decoding: try enc.encode(Op.noteToRule(id: "spec", scope: "project")), as: UTF8.self)
+        XCTAssertEqual(rule, #"{"id":"spec","op":"note_to_rule","scope":"project"}"#)
+        XCTAssertNotNil(CustomizeStore.engineSettings()["auto-note"], "every engine is told whether to note on its own")
+    }
+
     func testChangesAsTheEngineTakesThem() {
+        XCTAssertEqual(CustomizeChange.memoryResolve(pair: "p:a|p:b", keepNewer: true).json, #"{"change":"memory_resolve","keep":"newer","pair":"p:a|p:b"}"#)
+        XCTAssertEqual(CustomizeChange.memoryResolve(pair: "p:a|p:b", keepNewer: false).json, #"{"change":"memory_resolve","keep":"both","pair":"p:a|p:b"}"#)
+        XCTAssertEqual(CustomizeChange.memoryRemove(id: "spec", scope: "project").json, #"{"change":"memory_remove","id":"spec","scope":"project"}"#)
         XCTAssertEqual(CustomizeChange.skill(name: "gh", on: false).json, #"{"change":"skill","name":"gh","on":false}"#)
         XCTAssertEqual(CustomizeChange.connection(name: "figma", on: true).json, #"{"change":"connection","name":"figma","on":true}"#)
         XCTAssertEqual(CustomizeChange.tool(exposed: "mcp__figma__comment", on: true).json, #"{"change":"tool","exposed":"mcp__figma__comment","on":true}"#)
     }
 
     // MARK: Rules files
+
+    func testRuleCardsGroupAndSayWhereTheyApply() throws {
+        let r = try JSONDecoder.frog.decode(CustomizeReport.self, from: Data(Self.reportJSON.utf8))
+        let files = CustomizeStore.ruleFiles(report: r.rules.files, folder: URL(fileURLWithPath: "/tmp/pond"), home: URL(fileURLWithPath: "/Users/ada"))
+        XCTAssertEqual(files.map(\.url.lastPathComponent), ["AGENTS.md", "CLAUDE.md", "migrations.md", "FROG.md"])
+        XCTAssertEqual(RulesPage.groups(files, project: "pond").map(\.label), ["In pond", "Everywhere"])
+        XCTAssertEqual(RulesPage.groups(files, project: "pond").map(\.files.count), [3, 1])
+        XCTAssertEqual(files[0].appliesText, "Always")
+        XCTAssertEqual(files[2].appliesText, "When working on db/migrations/**")
+        XCTAssertEqual(files[0].weightText, "about 210 tokens a turn")
+        XCTAssertEqual(files[2].weightText, "about 90 tokens when it applies", "a path-scoped rule weighs nothing until it applies")
+        XCTAssertEqual(files.map(\.fromClaudeCode), [false, true, false, false])
+        // Without the engine: Claude Code's file by its name or folder.
+        XCTAssertTrue(RuleFile(url: URL(fileURLWithPath: "/Users/ada/.claude/CLAUDE.md"), scope: .everywhere, text: "", exists: true).fromClaudeCode)
+        XCTAssertFalse(RuleFile(url: URL(fileURLWithPath: "/tmp/pond/AGENTS.md"), scope: .project, text: "", exists: true).fromClaudeCode)
+    }
+
+    func testActivityMarksKeepTheirColumnWhenLeftOut() {
+        XCTAssertEqual(ActivityMarks.width(30), 148, "thirty 3-wide marks, 2 apart")
+    }
 
     private let sample = """
         ---
@@ -445,7 +547,20 @@ final class CustomizeModeTests: XCTestCase {
                 - Never edit files under generated/. Change the schema and run pnpm codegen.
                 - Commit messages start with the area, then a colon: "timer: fix drift after sleep".
                 - Pull requests say what was tested and what was not.
+
+                ## Style
+                - Prefer small modules with one export each.
+                - Errors carry the file and line they came from.
+                - No default exports.
                 """, exists: true),
+            RuleFile(url: pond.appending(path: "CLAUDE.md"), scope: .project, text: """
+                - Read AGENTS.md first.
+                - The staging database is shared; never truncate it.
+                """, exists: true),
+            RuleFile(url: pond.appending(path: ".frog/rules/migrations.md"), scope: .project, text: """
+                - A migration is reversible: write the down step first.
+                - Never change a migration that has shipped; add a new one.
+                """, exists: true, applies: "paths", paths: ["db/migrations/**"]),
             RuleFile(url: URL(fileURLWithPath: "/Users/ada/.config/frog/FROG.md"), scope: .everywhere, text: """
                 - Be concise. Skip explanations I didn't ask for.
                 - Never force-push or reset --hard without asking.
@@ -479,10 +594,11 @@ final class CustomizeModeTests: XCTestCase {
             ("skills", "skills", nil, false),
             ("skills", "skills-with-engine-report", nil, true),
             ("connections", "connections-with-engine-report", nil, true),
-            ("memory", "memory-with-engine-report", nil, true),
             ("connections", "connections", nil, false),
             ("rules", "rules", nil, false),
+            ("rules", "rules-with-engine-report", nil, true),
             ("memory", "memory", nil, false),
+            ("memory", "memory-map", nil, true),
             ("automations", "automations", nil, false),
             ("skills", "skill", .skill("release-notes"), false),
             ("connections", "add", .add("connections"), false),

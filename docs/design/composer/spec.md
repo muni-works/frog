@@ -63,13 +63,21 @@ branch in `muted`, a chevron.
 - It opens **one menu, upward**, with a filter field at the top that takes focus:
   - **This Mac** (Mac only): recent folders with their parent path right-aligned, then
     "Choose a folder…".
-  - **Frog Cloud**: the account's repos, "No repo", and on the web "Give Frog access to
-    more repos". Signed out, the group is one row: "Sign in to use Frog Cloud".
+  - **Frog Cloud**: the account's best six repos, "No repo", and on the web "Give Frog
+    access to more repos". Signed out, the group is one row: "Sign in to use Frog Cloud".
+    The six: the current repo, then the ones used in Frog (latest turn first), then by last
+    push on GitHub. The rest are behind the filter, which searches every repo in that order;
+    a search shows at most six too. One quiet line under them says how many more ("34 more
+    repos, type to search", "2 more matches, keep typing"). No pagination, no long scroll.
+    The rule and its vectors: `repoRank.ts` / `RepoRank.swift`, `repo-rank.json`.
   - "Just chat" (Mac only), under a hairline.
   - Under a hairline, for the current choice: **Branch** (opens a second level with its
     own filter) and **New worktree** (a switch; Mac only).
-  - Web filter placeholder: "Search repos, or paste a GitHub URL". Mac: "Search folders
-    and repos". Pasting a GitHub URL picks that repo on both.
+  - Web filter placeholder: "Search your repos". Mac: "Search folders and repos" (the
+    one filter also searches its folders). Pasting a GitHub URL picks that repo on both.
+  - "Choose a folder…" opens the system folder panel; the new session moves to the folder
+    picked as it does for a recent one (draft and all). Cancel leaves it where it was. The
+    web has no local folders, so no row for it (This Mac is Mac only).
 - Menu rows are 28 tall with the 7-radius hover plate; the current choice has a check at
   the right.
 - Picking keeps the draft, attachments and mode (already the reducer's behaviour).

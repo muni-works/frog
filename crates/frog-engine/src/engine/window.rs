@@ -51,9 +51,8 @@ impl Agent {
         if !self.small_window() {
             self.system.push_str(&crate::skills::catalog(&self.skills));
         }
-        let (index, omitted) = crate::memory::index(&self.notes, self.harness.tier, self.window);
-        self.system.push_str(&index);
-        self.notes_omitted = omitted;
+        self.sync_note_index();
+        self.place_notes();
         if self.has_recall() {
             self.system
                 .push_str("\nRecall searches your notes and past sessions in this project.\n");
@@ -710,6 +709,8 @@ Not saved: the next session starts on {from} again"
     /// The history was just rewritten, so the cached prefix is gone anyway: the one time to
     /// bring the repo map (and with it the system prompt) up to date for free.
     pub(super) fn rebased(&mut self) {
+        // The history was rewritten: notes it carried may be gone, so they can come back.
+        self.notes_sent.clear();
         self.repo_map = Default::default();
         self.map_logged = false;
         self.refresh_repo_map(&[]);
