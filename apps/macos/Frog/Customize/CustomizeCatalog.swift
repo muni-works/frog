@@ -41,11 +41,8 @@ struct CustomizeCatalog: Decodable {
               let c = try? JSONDecoder().decode(CustomizeCatalog.self, from: data) else {
             return CustomizeCatalog(version: 1, sections: [])
         }
-        return CustomizeCatalog(version: c.version, sections: c.sections.filter { shown.contains($0.id) })
+        return c
     }()
-
-    /// The sections this build draws. The rest of design/customize.json comes with their pages.
-    static let shown: Set<String> = ["connections"]
 
     /// A section by its id or an old name (mcp → connections, instructions → rules).
     func section(named name: String?) -> String? {

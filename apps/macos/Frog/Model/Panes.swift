@@ -271,8 +271,8 @@ final class Panes {
     /// Settings › Models › the machine whose page is open, until Back or another section.
     var settingsMachine: String?
 
-    /// The Customize section last shown, for the life of the window; the first one the first time.
-    private(set) var customizeSection = CustomizeCatalog.bundled.sections.first?.id ?? "connections"
+    /// The Customize section last shown, for the life of the window; Skills the first time.
+    private(set) var customizeSection = "skills"
     /// A page under the section (a skill, Add, a server's review), until Back or another section.
     var customizePage: CustomizePage?
     /// What Customize shows for this window's folder.
