@@ -126,13 +126,12 @@ final class CustomizeModeTests: XCTestCase {
             XCTAssertEqual(SettingsCatalog.bundled.section(for: try XCTUnwrap(URL(string: link))), section, link)
         }
         XCTAssertNil(SettingsCatalog.bundled.section(for: try XCTUnwrap(URL(string: "frog://pair?code=1"))))
-        // A link handed to the app goes through SettingsRequest, then showSettings.
-        SettingsRequest.pending = nil
+        // A link handed to the app waits in SettingsRequest for a window, then showSettings. (Not
+        // `post`: its notification would reach any window another test left open.)
         let url = try XCTUnwrap(URL(string: "frog://customize/memory"))
-        if let s = SettingsCatalog.bundled.section(for: url) { SettingsRequest.post(s) }
+        SettingsRequest.pending = SettingsCatalog.bundled.section(for: url)
         panes.showSettings(SettingsRequest.take())
         XCTAssertEqual(panes.settingsSection, "memory")
-        XCTAssertNil(SettingsRequest.take(), "posted once")
     }
 
     func testBreadcrumbs() {
