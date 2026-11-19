@@ -20,8 +20,7 @@ impl Agent {
     /// another one started (its "user" is an agent), nor on a small model, which can't do it
     /// reliably; otherwise the app's `auto-note` setting, else config, else on.
     pub(super) fn auto_note(&self) -> bool {
-        if self.subagent
-            || self.cfg.parent_session.is_some()
+        if !self.top_level()
             || self.memory.is_none()
             || self.harness.tier == Tier::Weak
             || !self.shared.client_notes.load(Ordering::Relaxed)
@@ -188,8 +187,8 @@ impl Agent {
         scope: &str,
         place: Option<&str>,
     ) -> Result<()> {
-        if self.subagent {
-            return Ok(());
+        if !self.top_level() {
+            anyhow::bail!("a session another session started can't change rules");
         }
         let scope = if scope == "everywhere" {
             Scope::Global

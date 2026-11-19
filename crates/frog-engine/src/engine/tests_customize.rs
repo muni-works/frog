@@ -848,6 +848,31 @@ async fn no_customize_in_a_child_session() {
     r.end().await;
 }
 
+/// Review 2, items 1 and 10: a `--worker` session (the Mac starts every child that way and
+/// submits the parent model's prompt as an ordinary Submit) is a child: no Customize, no
+/// "remember …" note, even when the text arrives typed.
+#[tokio::test]
+async fn no_customize_or_remember_in_a_worker() {
+    let script = vec![
+        call(
+            "a",
+            json!({"do": "set", "id": "density", "value": "compact", "words": "make it compact"}),
+        ),
+        done(),
+    ];
+    let mut r = rig_with(script, Mode::Default, |c| c.worker = true);
+    r.idle().await;
+    let evs = r
+        .say("make it compact. remember that we deploy on fridays", never)
+        .await;
+    assert!(
+        setting_changes(&evs).is_empty() && applied(&evs).is_empty(),
+        "{evs:?}"
+    );
+    assert!(r.notes().is_empty(), "{:?}", r.notes());
+    r.end().await;
+}
+
 /// Findings 8 and 9: an approval applies only when it names one of the card's choices. A
 /// bare allow (what a delegated `ResolveDelegated` answer sends) or an unknown choice is
 /// refused, never taken as the primary.

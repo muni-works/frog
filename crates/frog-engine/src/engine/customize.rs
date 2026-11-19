@@ -28,6 +28,14 @@ pub(super) struct Planned {
 }
 
 impl Agent {
+    /// A session a person types in. Never a subagent, nor a session another one started:
+    /// `parent_session` (the engine's own children) or `--worker` (how the Mac starts every
+    /// child, Race attempts aside, and kept across a resume). Their "user" is an agent, so
+    /// they get no Customize, no notes on their own, no "remember …" and no rule from a note.
+    pub(super) fn top_level(&self) -> bool {
+        !self.subagent && !self.cfg.worker && self.cfg.parent_session.is_none()
+    }
+
     /// Where skill and tool toggles live: beside Frog's notes (none without a session store).
     fn toggles_path(&self) -> Option<PathBuf> {
         self.store
@@ -50,7 +58,7 @@ impl Agent {
     pub(super) async fn customize(&mut self, item: &str, input: &Value) -> Result<tools::Output> {
         // Only a person can change their configuration: never a subagent, never a session
         // another session started (its "user" is an agent).
-        if self.subagent || self.cfg.parent_session.is_some() {
+        if !self.top_level() {
             self.decision(item, "customize", "deny", "a session started by another", 0);
             anyhow::bail!(
                 "Refused: a session started by another session can't change the user's settings, \

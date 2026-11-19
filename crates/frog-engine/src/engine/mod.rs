@@ -3081,7 +3081,7 @@ impl Agent {
 
     /// "Remember that …" in an ordinary message saves a note (and the turn still runs).
     fn remember_from(&mut self, text: &str) {
-        if self.subagent {
+        if !self.top_level() {
             return;
         }
         let Some(note) = crate::memory::detect_remember(text) else {

@@ -68,6 +68,15 @@ fn rig_at(base: &Path, script: Vec<Response>) -> Rig {
 }
 
 fn rig_caps(base: &Path, script: Vec<Response>, notes: bool) -> Rig {
+    rig_cfg(base, script, notes, |_| {})
+}
+
+fn rig_cfg(
+    base: &Path,
+    script: Vec<Response>,
+    notes: bool,
+    tweak: impl FnOnce(&mut Config),
+) -> Rig {
     let (project, store) = (base.join("project"), base.join("store"));
     for d in [&project, &store] {
         std::fs::create_dir_all(d).unwrap();
@@ -76,11 +85,13 @@ fn rig_caps(base: &Path, script: Vec<Response>, notes: bool) -> Rig {
     let project = project.canonicalize().unwrap();
     let mut profile = Profile::new(ProviderKind::Ollama, "test");
     profile.tool_mode = ToolMode::Native;
+    let mut cfg = Config {
+        hermetic: true,
+        ..Config::default()
+    };
+    tweak(&mut cfg);
     let opts = Options {
-        cfg: Config {
-            hermetic: true,
-            ..Config::default()
-        },
+        cfg,
         profile_name: "test".into(),
         profile,
         cwd: project.clone(),
@@ -572,6 +583,24 @@ async fn no_receipt_no_noting() {
         out.contains("no `Note` tool") || out.contains("off"),
         "{out}"
     );
+    assert!(r.notes().is_empty());
+    r.end().await;
+}
+
+/// Review 2, item 1: a `--worker` child notes nothing on its own and can't make a note a
+/// rule, whatever its submits say.
+#[tokio::test]
+async fn a_worker_notes_nothing() {
+    let base = std::env::temp_dir().join(format!("frog-noting-{}", session::new_id()));
+    let mut r = rig_cfg(
+        &base,
+        vec![answer_and_note("Ok.", staging_note())],
+        true,
+        |c| c.worker = true,
+    );
+    r.idle().await;
+    let evs = r.say(STAGING).await;
+    assert!(receipts(&evs).is_empty());
     assert!(r.notes().is_empty());
     r.end().await;
 }
