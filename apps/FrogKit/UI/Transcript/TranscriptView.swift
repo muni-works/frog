@@ -523,6 +523,11 @@ struct TranscriptView: View {
     private var transcript: some View {
         ScrollView {
             stackRows
+            .background {
+                if TranscriptMetrics.enabled {
+                    Color.clear.onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { TranscriptMetrics.shared.columnGlobal = $0 }
+                }
+            }
             .coordinateSpace(.named(Self.content))
             .environment(\.turnSpace, space)
             .environment(\.transcriptEdge, edge)
@@ -875,11 +880,24 @@ struct EndView: View {
     /// "9.0s", "56s", "2m 5s": the web's `seconds`.
     static func seconds(_ ms: UInt64) -> String { StepLine.duration(Double(ms) / 1000) }
 
+    /// How a turn ended, in words on the column's edge; its symbol hangs in the gutter like a
+    /// line's mark (spec, "Measure and the left edge").
     private func banner(_ text: String, symbol: String, color: Color) -> some View {
-        Label(text, systemImage: symbol)
+        Text(text)
             .font(.callout)
             .foregroundStyle(color)
             .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+            .metricsEdge("words", claims: ["text"], kind: "error", text: text)
+            .overlay(alignment: .leading) {
+                Image(systemName: symbol)
+                    .font(.callout)
+                    .foregroundStyle(color)
+                    .frame(width: Tokens.Transcript.Layout.mark)
+                    .metricsEdge("mark", claims: ["hung"], kind: "error")
+                    .alignmentGuide(.leading) { $0[.leading] + Tokens.Transcript.Layout.hang }
+            }
+            .padding(.leading, edge.indent)
     }
 }
 

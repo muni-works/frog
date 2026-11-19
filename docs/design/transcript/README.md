@@ -223,7 +223,8 @@ and font size match within 1 point, and every row's words match (`match: 12 rows
   protocol has none).
 - **Hover**: the plate on lines that open, and Copy command on commands. Show in Changes, Run in
   Terminal, opening a read or a search result: not yet.
-- **The composer** keeps the 32 gutter in a narrow pane; the web's follows the transcript's.
+- **The composer** follows the transcript's gutter (32, or 16 in a pane under 480), as the web's
+  does; its card's outer edge is on the column's two lines (2026-11-18, `docs/design/transcript/edges/`).
 
 ## Phase 2 (web): the thinking row and the stats line
 
@@ -346,8 +347,11 @@ line.
 - **The fixture's pace**: turn 1's `turn_ended.usage` carries the Mac's proposed record (#429,
   commit faa9d943): 31 one-second buckets summing to the 1,902 output tokens, streamed while it
   thought and wrote. Both apps measure the same fixture.
-- **The line's span** is the turn's events (`turn_started` to `turn_ended`), the same span the
-  segments and the pace use; the header's time is the footer's (wall time).
+- **The line's span** ends where its last segment does (live, that's now), so what it draws ends
+  on the column's right line; the bookkeeping between a finished turn's last step and `turn_ended`
+  isn't drawn. The pace curve holds its last bucket to that bucket's end. The header's time is the
+  footer's (wall time). (2026-11-18: it was `turn_started` to `turn_ended`, and the strip stopped
+  1 to 3 pt short of the edge.)
 - **A sidebar row and a fold carrying the strip alone** (spec: "may") are left out.
 - **The readout's step** is named like its line ("Ran cargo test -q upload"); the Mac adds the
   step's result after it. The readout isn't in the metrics dump.

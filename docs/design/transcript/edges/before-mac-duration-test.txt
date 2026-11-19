@@ -1,0 +1,3 @@
+apps/macos/FrogTests/OneLookTests.swift:137: error: -[FrogTests.OneLookTests testALongWaitReadsInDaysAndHours] : XCTAssertEqual failed: ("60m 0s") is not equal to ("1h 0m")
+apps/macos/FrogTests/OneLookTests.swift:138: error: -[FrogTests.OneLookTests testALongWaitReadsInDaysAndHours] : XCTAssertEqual failed: ("958m 40s") is not equal to ("15h 58m")
+apps/macos/FrogTests/OneLookTests.swift:139: error: -[FrogTests.OneLookTests testALongWaitReadsInDaysAndHours] : XCTAssertEqual failed: ("10980m 29s") is not equal to ("7d 15h")

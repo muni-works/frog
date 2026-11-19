@@ -36,3 +36,20 @@ test("compacting isn't offered at trivial context", () => {
   assert.equal(canCompact(1_000, 128_000), false);
   assert.equal(canCompact(64_000, 128_000), true);
 });
+
+// The parity fixture's waiting row read "11011m 29s · waited 11011m 29s" (2026-11-18): a week in
+// minutes. Past an hour it's hours and minutes, past a day days and hours, as the sidebar writes
+// ages; every live clock (the stats, the wait) and every turn time goes through the one formatter.
+import { secs } from "../src/ui/rows.ts";
+
+test("a long wait reads in days and hours, not minutes", () => {
+  const day = 86_400_000, hour = 3_600_000;
+  assert.equal(secs(42_000), "42s");
+  assert.equal(secs(125_000), "2m 5s");
+  assert.equal(secs(58 * 60_000 + 59_000), "58m 59s");
+  assert.equal(secs(hour), "1h 0m");
+  assert.equal(secs(15 * hour + 58 * 60_000 + 40_000), "15h 58m");
+  assert.equal(secs(7 * day + 15 * hour + 29_000), "7d 15h");
+  assert.equal(seconds(7 * day + 15 * hour), "7d 15h", "a turn's time too");
+  assert.equal(seconds(2 * hour + 5 * 60_000), "2h 5m");
+});

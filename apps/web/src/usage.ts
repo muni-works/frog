@@ -33,7 +33,17 @@ export function tokens(n: number) {
 /** "0.8s", "12s", "2m 5s". */
 export function seconds(ms: number) {
   const s = ms / 1000
-  return s < 10 ? `${s.toFixed(1)}s` : s < 60 ? `${Math.round(s)}s` : `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`
+  return s < 10 ? `${s.toFixed(1)}s` : s < 60 ? `${Math.round(s)}s` : clock(s)
+}
+
+/** A duration as the app writes times, two units at most: "42s", "12m 5s", "15h 58m", then days
+ *  and hours past the first day ("7d 15h"), never a week in minutes. The Mac's `StepLine.clock`. */
+export function clock(secs: number): string {
+  const s = Math.max(0, Math.round(secs))
+  if (s < 60) return `${s}s`
+  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`
+  if (s < 86_400) return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`
+  return `${Math.floor(s / 86_400)}d ${Math.floor((s % 86_400) / 3600)}h`
 }
 
 /** A usage bar's colour: green, the notice colour past 80%, red once it's full. */
