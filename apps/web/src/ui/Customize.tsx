@@ -1,47 +1,17 @@
 import { Fragment, useEffect, useRef, type ReactNode } from 'react'
 import {
-  activityLevels, CLOUD_READS, CUSTOMIZE_INVITES, CUSTOMIZE_SECTIONS, customizeLabel, customizePath, docsSlugFor, EXPLAINERS, railDay, tokens, toolsLabel, usedLabel, weekDays, weightBars,
+  activityLevels, CLOUD_READS, CUSTOMIZE_INVITES, customizeLabel, customizePath, docsSlugFor, EXPLAINERS, railDay, tokens, toolsLabel, usedLabel, weekDays, weightBars,
   type Automation, type Connection, type CustomizeAt, type CustomizeSection, type Report, type RulesFile, type RunMark, type Skill, type Tool, type Use,
 } from '../customize'
 import type { RepoList } from '../cloud/protocol'
 import { InvitePill } from './DownloadChip'
-import { ICON, Icon } from './icons'
 
-// Customize mode (docs/design/app-shell.md): the shell's sidebar becomes Back to app and the five
-// sections; the main area is one page with breadcrumbs in the header, built like Settings. Each
-// list page opens with an explainer card. On the web, what a Frog Cloud session really reads from
+// Settings' middle run (docs/design/app-shell.md): Skills, Connections, Rules, Memory and
+// Automations, each a Settings section with a page of its own and breadcrumbs in the header
+// ("Settings › Skills"). Each list page opens with an explainer card. On the web, what a Frog Cloud session really reads from
 // a repo is said plainly; what lives on a Mac is an invitation under "On your Mac". The designs for
 // each list (weight card, activity marks, tool squares, sheets, rail, week grid) draw only from an
 // engine report (docs/customize-api.md): with none, no figure is shown.
-
-/** Back to app, then one row per section. */
-export function CustomizeSidebar({ current, onBack, onOpen }: { current: CustomizeSection; onBack: () => void; onOpen: (s: CustomizeSection) => void }) {
-  return (
-    <div className="docs-side settings-side customize-side">
-      <nav aria-label="Customize" className="nav">
-        <button type="button" className="row big" onClick={onBack}><Icon d={ICON.arrowLeft} size={17} /><span style={{ flex: 1 }}>Back to app</span><span className="kb">esc</span></button>
-      </nav>
-      <div className="docs-list">
-        {CUSTOMIZE_SECTIONS.map((s) => (
-          <a key={s.id} href={customizePath({ section: s.id })} className={`srow${s.id === current ? ' on' : ''}`} aria-current={s.id === current ? 'page' : undefined}
-            onClick={(e) => { if (plain(e)) { e.preventDefault(); onOpen(s.id) } }}>
-            <span className="stitle">{s.label}</span>
-          </a>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-/** The Customize row for the app sidebar's foot (the sidebar's owner places it, beside Settings). */
-export function CustomizeRow({ onOpen }: { onOpen: () => void }) {
-  return (
-    <button type="button" className="row big customize-row" onClick={onOpen}>
-      <Icon d={ICON.wand} size={17} />
-      <span style={{ flex: 1 }}>Customize</span>
-    </button>
-  )
-}
 
 /** A plain left click, which routes in place; anything else is the browser's (a new tab). */
 const plain = (e: React.MouseEvent) => !(e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0)
@@ -84,7 +54,7 @@ export function CustomizePage(p: CustomizeProps) {
 
 const pageLabel = (at: CustomizeAt) => at.page === 'skill' ? at.name : at.page === 'add' ? 'Add' : at.page === 'review' ? at.id : customizeLabel(at.section)
 
-/** "Customize › Skills › /release-notes": parents are links, the page itself is bold. */
+/** "Settings › Skills › /release-notes": parents are links, the page itself is bold. */
 export function Crumbs({ at, skill, onOpen }: { at: CustomizeAt; skill?: Skill; onOpen: (at: CustomizeAt) => void }) {
   const trail: { label: string; to?: CustomizeAt; mono?: boolean }[] = [{ label: customizeLabel(at.section), to: { section: at.section } }]
   if (at.page === 'skill') trail.push({ label: `/${skill?.name ?? at.name}`, mono: true })
@@ -92,7 +62,7 @@ export function Crumbs({ at, skill, onOpen }: { at: CustomizeAt; skill?: Skill; 
   if (at.page === 'review') trail.push({ label: at.id })
   return (
     <nav className="crumbs" aria-label="Breadcrumb">
-      <span>Customize</span>
+      <span>Settings</span>
       {trail.map((c, i) => {
         const last = i === trail.length - 1
         return (
@@ -168,7 +138,7 @@ function Invites({ section, machines }: { section: CustomizeSection; machines?: 
       {rows.map((r) => (
         <div key={r.id} className="set-row" data-row={r.id}>
           <div style={{ flex: 1, minWidth: 0 }}><b>{r.label}</b><div className="det wrap">{r.description}</div></div>
-          <InvitePill section={section} open={`frog://customize/${section}`} machines={machines} />
+          <InvitePill section={section} open={`frog://settings/${section}`} machines={machines} />
         </div>
       ))}
     </div>
@@ -422,7 +392,7 @@ function FindPage(p: CustomizeProps) {
     </div>
     <div className="set-h">On your Mac</div>
     <div className="set-group set-invites">
-      <div className="set-row" data-row="find"><div style={{ flex: 1, minWidth: 0 }}><b>{skills ? 'Find a skill' : 'Find a connection'}</b><div className="det wrap">Search tested skills and servers, read every tool before it's added, and switch each one on or off.</div></div><InvitePill section={p.at.section} open={`frog://customize/${p.at.section}`} machines={p.machines} /></div>
+      <div className="set-row" data-row="find"><div style={{ flex: 1, minWidth: 0 }}><b>{skills ? 'Find a skill' : 'Find a connection'}</b><div className="det wrap">Search tested skills and servers, read every tool before it's added, and switch each one on or off.</div></div><InvitePill section={p.at.section} open={`frog://settings/${p.at.section}`} machines={p.machines} /></div>
     </div>
   </>)
 }

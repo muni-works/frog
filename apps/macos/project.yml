@@ -40,12 +40,9 @@ targets:
       - path: ../../catalog/local-models.json
         buildPhase: resources
         group: Catalog
-      # Every setting and its section (design/settings.json): the web reads it too.
+      # Every setting and its section, with the five agent sections' explainers
+      # (design/settings.json): the web reads it too.
       - path: ../../design/settings.json
-        buildPhase: resources
-        group: Catalog
-      # Customize's five sections and their explainers (design/customize.json): the web reads it too.
-      - path: ../../design/customize.json
         buildPhase: resources
         group: Catalog
       # Shared with the iOS app and its extensions (see FrogKit/README.md).

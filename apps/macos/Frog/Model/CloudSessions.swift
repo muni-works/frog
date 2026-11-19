@@ -10,6 +10,14 @@ final class CloudSessions {
     static let shared = CloudSessions()
 
     private(set) var sessions: [CloudGateway.Session] = []
+
+    /// A session the person types in rather than one another session started: listed, with no
+    /// `parent` (as the web reads it). One not in the list isn't known to be top-level, so it
+    /// counts as a child and gets no Customize capabilities.
+    static func isTop(_ id: String, in list: [CloudGateway.Session]? = nil) -> Bool {
+        guard let s = (list ?? shared.sessions).first(where: { $0.id == id }) else { return false }
+        return s.parent == nil
+    }
     private(set) var error: String?
     private var poll: Task<Void, Never>?
 

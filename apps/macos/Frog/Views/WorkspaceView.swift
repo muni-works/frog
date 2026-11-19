@@ -127,8 +127,7 @@ struct WorkspaceView: View {
             sidebarOrder: sidebarOrder,
             openSidebarSession: { openInFocused($0) },
             showDocs: { showDocs() },
-            showSettings: { showSettings($0) },
-            showCustomize: { showCustomize($0) }
+            showSettings: { showSettings($0) }
         )
     }
 
@@ -422,53 +421,32 @@ struct WorkspaceView: View {
         return out
     }
 
-    // MARK: Customize
-
-    /// Customize mode, on a section if given (an id or an old name), else the last one.
-    private func showCustomize(_ section: String? = nil) {
-        if !inMode { window?.makeFirstResponder(nil) }
-        panes.showCustomize(section)
-    }
-
-    private var customizeCommands: [PaletteCommand] {
-        var out = [PaletteCommand(id: "customize", title: "Customize", subtitle: "Skills, connections, rules, memory", symbol: "slider.horizontal.3") { showCustomize() }]
-        for s in CustomizeCatalog.bundled.sections {
-            out.append(PaletteCommand(id: "customize-\(s.id)", title: s.label, subtitle: "Customize", symbol: "slider.horizontal.3") { showCustomize(s.id) })
-        }
-        return out
-    }
-
-    /// The Customize page, opaque over the panes right of the sidebar.
+    /// The section, opaque over the panes right of the sidebar. An agent section (Skills,
+    /// Connections, Rules, Memory, Automations) draws its own page and the pages under it.
     @ViewBuilder
-    private var customizeLayer: some View {
-        if panes.mode == .customize {
-            CustomizeView(panes: panes, startConversation: { prompt in
-                let folder = panes.customize.folder
-                backToApp()
-                panes.start(prompt, in: folder, pane: focused)
-            }, makeRule: focused.conversation?.link == nil ? nil : { note in
-                // The engine asks first, on a card in the conversation: show it there.
-                let c = focused.conversation
-                backToApp()
-                c?.link?.send(.noteToRule(id: note.id, scope: note.scope == .project ? "project" : "everywhere"))
-            })
+    private var settingsLayer: some View {
+        if panes.mode == .settings {
+            Group {
+                if panes.inCustomizeSection {
+                    CustomizeView(panes: panes, startConversation: { prompt in
+                        let folder = panes.customize.folder
+                        backToApp()
+                        panes.start(prompt, in: folder, pane: focused)
+                    }, makeRule: focused.conversation?.link == nil ? nil : { note in
+                        // The engine asks first, on a card in the conversation: show it there.
+                        let c = focused.conversation
+                        backToApp()
+                        c?.link?.send(.noteToRule(id: note.id, scope: note.scope == .project ? "project" : "everywhere"))
+                    })
+                } else {
+                    SettingsSectionView(section: panes.settingsSection,
+                                        machine: Binding(get: { panes.settingsMachine }, set: { panes.settingsMachine = $0 }))
+                }
+            }
             .padding(.leading, extent(sessions: docked.sessions))
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(FrogCanvas.color)
             .transition(.opacity)
-        }
-    }
-
-    /// The section, opaque over the panes right of the sidebar.
-    @ViewBuilder
-    private var settingsLayer: some View {
-        if panes.mode == .settings {
-            SettingsSectionView(section: panes.settingsSection,
-                                machine: Binding(get: { panes.settingsMachine }, set: { panes.settingsMachine = $0 }))
-                .padding(.leading, extent(sessions: docked.sessions))
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .background(FrogCanvas.color)
-                .transition(.opacity)
         }
     }
 
@@ -543,7 +521,6 @@ struct WorkspaceView: View {
 
             docsLayer
             settingsLayer
-            customizeLayer
             // The title row is an opaque surface over a mode's page: it scrolls beneath the
             // crumbs and controls, never through them (docs/design/chrome/spec.md, 3).
             if inMode {
@@ -560,7 +537,6 @@ struct WorkspaceView: View {
             .environment(\.paneNumbers, numbers)
             .environment(\.showDocs) { showDocs() }
             .environment(\.showSettings) { showSettings($0) }
-            .environment(\.showCustomize) { showCustomize($0) }
 
             // Collapsed: the pointer at the left edge brings the list out over the page.
             if !sessionsVisible {
@@ -592,7 +568,7 @@ struct WorkspaceView: View {
                     CommandPalette(commands: workspace.commands(showChanges: Binding(
                         get: { focused.showChanges },
                         set: { _ in toggleChanges(focused) }
-                    )) + docsCommands + settingsCommands + customizeCommands) {
+                    )) + docsCommands + settingsCommands) {
                         focused.ui.paletteShown = false
                     }
                     .padding(.top, 80)
@@ -618,7 +594,6 @@ struct WorkspaceView: View {
         // Every "open Settings on…" in the window (the composer's Billing, the footer, the model
         // menu's Manage) lands on Settings mode here.
         .environment(\.showSettings) { showSettings($0) }
-        .environment(\.showCustomize) { showCustomize($0) }
         // A turn's energy popover: History is Settings › Usage.
         .environment(\.showEnergyHistory) { showSettings("usage") }
         // ⌘, with no window, or a frog://settings/<section> link: the front window takes it, or
@@ -762,11 +737,11 @@ struct WorkspaceView: View {
             ToolbarSpacer(.flexible)
             // The window controls (docs/design/chrome/spec.md, 1): Split, Commands and the
             // inspector toggle, rightmost, in one capsule Frog draws (the web draws the same).
-            // A mode's own header items (Customize's figure and action) share the item, left of
+            // A page's own header items (an agent section's figure and action) share the item, left of
             // the capsule with a gap, so they can never run under it (spec.md, 3).
             ToolbarItem(placement: .primaryAction) {
                 HStack(spacing: Self.headerGap) {
-                    if panes.mode == .customize { CustomizeHeaderTrailing(panes: panes) }
+                    if panes.mode == .settings && panes.inCustomizeSection { CustomizeHeaderTrailing(panes: panes) }
                     WindowControls(
                     canSplit: panes.canSplit && !inMode,
                     paletteOn: focused.ui.paletteShown,
@@ -817,11 +792,9 @@ struct WorkspaceView: View {
         if sessionsVisible {
             Group {
                 if panes.mode == .settings {
+                    // A click on a section, even the open one, lands on its top page.
                     SettingsSidebar(selected: panes.settingsSection, maxHeight: room,
-                                    open: { showSettings($0) }, back: backToApp)
-                } else if panes.mode == .customize {
-                    CustomizeSidebar(selected: panes.customizeSection, maxHeight: room,
-                                     open: { s in showCustomize(s); panes.customizePage = nil }, back: backToApp)
+                                    open: { showSettings($0); panes.customizePage = nil }, back: backToApp)
                 } else if inDocs {
                     DocsSidebar(docs: docs, selected: docsPage?.slug, maxHeight: room, titleRow: false,
                                 open: { showDocs($0) }, back: backToApp, collapse: toggleSessions)
@@ -881,7 +854,9 @@ struct TitleBarClip: Shape {
 extension WorkspaceView {
     private var windowTitle: String {
         if panes.mode == .docs { return "Documentation" }
-        if panes.mode == .customize { return CustomizeCrumbs.title(section: panes.customizeSection, page: panes.customizePage) }
+        if panes.mode == .settings && panes.inCustomizeSection {
+            return CustomizeCrumbs.title(section: panes.customizeSection, page: panes.customizePage)
+        }
         if panes.mode == .settings {
             let label = SettingsCatalog.bundled.sections.first { $0.id == panes.settingsSection }?.label
             return ["Settings", label].compactMap { $0 }.joined(separator: " › ")
@@ -903,12 +878,12 @@ extension WorkspaceView {
     /// mirror, not the streaming conversation.
     @ViewBuilder
     private var titleBar: some View {
-        if panes.mode == .settings {
+        if panes.mode == .settings && panes.inCustomizeSection {
+            CustomizeCrumbs(panes: panes)
+        } else if panes.mode == .settings {
             SettingsCrumbs(section: panes.settingsSection,
                            machine: panes.settingsSection == "models" ? panes.settingsMachine.flatMap { id in SettingsBindings.devices.list.first { $0.id == id }?.name } : nil,
                            backToSection: { panes.settingsMachine = nil })
-        } else if panes.mode == .customize {
-            CustomizeCrumbs(panes: panes)
         } else if panes.mode != .threads {
             Text(windowTitle).font(.frog(size: 13, weight: .semibold)).lineLimit(1).fixedSize()
         } else {

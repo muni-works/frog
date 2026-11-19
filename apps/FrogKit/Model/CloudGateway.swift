@@ -28,15 +28,9 @@ struct CloudGateway: Sendable {
         let archived: Bool?
         let pr: String?
         let error: String?
-        /// The session that started this one (StartSession in a cloud sandbox); nil for one the
-        /// person started. Older gateways leave it out.
+        /// The session that started this one (StartSession in a sandbox). Older gateways leave
+        /// it out: a session not in the list at all counts as a child (`CloudLink`'s `top`).
         var parent: String? = nil
-    }
-
-    /// Whether `id` is a session the person types in, by the list: listed with no parent. One
-    /// the list doesn't hold (yet) is unknown, so it counts as a child: no Customize caps.
-    static func isTop(_ id: String, in sessions: [Session]) -> Bool {
-        sessions.first { $0.id == id }.map { $0.parent == nil } ?? false
     }
 
     struct Repos: Decodable, Sendable {
@@ -144,8 +138,7 @@ final class CloudLink: ConversationLink {
 
     /// `connect: false` (tests): no socket; frames are fed to `take` instead.
     /// `top`: a session the person types in, not one another session started (Customize caps).
-    /// Unknown parentage is a child's: callers pass true only when the list (or their own
-    /// create) shows no parent.
+    /// Off unless the caller knows: parentage unknown is a child, sent no capability.
     init(gateway: CloudGateway, session: String, after: UInt64 = 0, connect: Bool = true, top: Bool = false) {
         self.gateway = gateway
         id = session

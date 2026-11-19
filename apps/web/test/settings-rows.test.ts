@@ -1,6 +1,6 @@
 // design/settings.json is the one list of settings both apps draw (docs/design/app-shell.md,
 // Settings). These hold it to the shape both apps read and to board 7 of the settings canvas
-// (2026-11-18): nine sections in order, the 42 rows that survived its cuts (23 both, 12 invite,
+// (2026-11-18): thirteen sections in three runs (Customize's five folded in, 2026-11-19), the 42 rows that survived its cuts (23 both, 12 invite,
 // 7 Mac), none of the five it cut, and every reason a row can't work yet written down.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -13,16 +13,23 @@ type Row = {
   web?: { label: string; description?: string }; notYet?: Record<string, string>
 };
 const file = JSON.parse(readFileSync(new URL("../../../design/settings.json", import.meta.url), "utf8")) as {
-  version: number; sections: { id: string; label: string; aliases?: string[] }[]; rows: Row[]
+  version: number; sections: { id: string; label: string; aliases?: string[]; run: number; explainer?: { bold: string; rest: string; link: string; href: string } }[]; rows: Row[]
 };
 const rows = file.rows;
 const byId = new Map(rows.map((r) => [r.id, r]));
 
-test("nine sections, in the shell's order, with the old tab names as aliases", () => {
+test("thirteen sections in three runs, in the shell's order, with the old tab names as aliases", () => {
   assert.equal(file.version, 1);
-  assert.deepEqual(file.sections.map((s) => s.label), ["General", "Appearance", "Models", "Permissions", "Connections", "Shortcuts", "Usage", "Account", "Billing"]);
+  const run = (n: number) => file.sections.filter((s) => s.run === n).map((s) => s.label);
+  assert.deepEqual(run(1), ["General", "Appearance", "Models", "Permissions", "Shortcuts"], "the app");
+  assert.deepEqual(run(2), ["Skills", "Connections", "Rules", "Memory", "Automations"], "what Frog knows and can do");
+  assert.deepEqual(run(3), ["Usage", "Account", "Billing"], "you");
+  assert.deepEqual(file.sections.map((s) => s.run), [...file.sections.map((s) => s.run)].sort(), "each run is one stretch");
+  // The middle run draws its own pages, each opening with an explainer card; the others don't.
+  for (const s of file.sections) assert.equal(!!s.explainer, s.run === 2, s.id);
   const alias = (a: string) => file.sections.find((s) => s.aliases?.includes(a))?.id;
   assert.equal(alias("mcp"), "connections");
+  assert.equal(alias("instructions"), "rules");
   assert.equal(alias("energy"), "usage");
   assert.equal(alias("lend"), "models");
 });
@@ -58,7 +65,7 @@ test("rows run in section order, so a section is one run of the list", () => {
 // board 7 left off its list without cutting it, so it stays: 24.
 test("board 7's verdicts: 23 both plus Frog Cloud, 12 invite, 7 Mac plus Share usage, and one web-only fact", () => {
   const ids = (p: string) => rows.filter((r) => r.platform === p).map((r) => r.id)
-  assert.deepEqual(ids("both"), ["notifications", "auto-note", "theme", "density", "detail", "playful", "sounds", "default-model", "machines", "frog-cloud", "default-mode", "mcp-servers", "shortcuts", "spent", "monthly-cap", "show-energy", "energy-chart", "profile", "sign-ins", "devices", "plan", "credit", "coupon", "credit-history", "prices"]);
+  assert.deepEqual(ids("both"), ["notifications", "auto-note", "theme", "density", "detail", "playful", "sounds", "default-model", "machines", "frog-cloud", "default-mode", "shortcuts", "mcp-servers", "spent", "monthly-cap", "show-energy", "energy-chart", "profile", "sign-ins", "devices", "plan", "credit", "coupon", "credit-history", "prices"]);
   assert.deepEqual(ids("invite"), ["editor", "iphone", "pair-machine", "local-models", "machine-name", "share-models", "other-clouds", "servers", "sandbox", "computer-use", "mcp-sign-in", "measured-energy"]);
   // Plus "Share usage with Frog" (b5edfe37, after the canvas): the Mac app's own opt-in.
   assert.deepEqual(ids("mac"), ["share-usage", "update-pause", "update-wait", "lend-battery", "pair-mac", "provider-models", "allowed-commands", "mcp-config"]);

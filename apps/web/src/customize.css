@@ -1,4 +1,4 @@
-/* Customize mode (ui/Customize.tsx). The page is Settings' (.settings-page: a 720 column, group
+/* Settings' Skills, Connections, Rules, Memory and Automations pages (ui/Customize.tsx). The page is Settings' (.settings-page: a 720 column, group
    labels, hairlines only between rows); these are its own pieces, from the canvas frames
    F1–F6, F9, mapped onto tokens.css so light and dark both hold. Cards are flat: no stroke. */
 

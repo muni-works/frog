@@ -310,11 +310,10 @@ final class QuitGuard: NSObject, NSApplicationDelegate {
 
     /// A folder opened from Finder or dropped on the Dock icon while Frog runs: its own window.
     func application(_ application: NSApplication, open urls: [URL]) {
-        // frog://settings/<section>: Settings mode on that section, in the front window.
+        // frog://settings/<section> (or the old frog://customize/<section>): Settings mode on
+        // that section, in the front window.
         for url in urls {
             if let section = SettingsCatalog.bundled.section(for: url) { SettingsRequest.post(section) }
-            // frog://customize/<section>: Customize, which showSettings sends a Customize name to.
-            if let section = CustomizeCatalog.bundled.section(for: url) { SettingsRequest.post(section) }
         }
         for url in urls where url.isFileURL && (url.hasDirectoryPath || (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true) {
             FolderOpener.open(url)

@@ -3,11 +3,12 @@ import SwiftUI
 import XCTest
 @testable import Frog
 
-/// Customize as a mode of the shell (docs/design/app-shell.md › Customize): five sections from
-/// design/customize.json, Connections moved in from Settings, rules files edited a line at a
-/// time without touching the rest, servers added without running them, and no figure the
-/// engine hasn't given. Also renders each page, dark and light (`$FROG_SNAPSHOT_DIR` or
-/// `$TMPDIR/frog-snapshots`, `mac-customize-<page>-<look>.png`).
+/// Settings' five agent sections (docs/design/app-shell.md › Settings): Skills, Connections,
+/// Rules, Memory and Automations, run 2 of design/settings.json, each drawing its own page;
+/// every old way into the Customize mode that was lands on its Settings section; rules files
+/// edited a line at a time without touching the rest, servers added without running them, and
+/// no figure the engine hasn't given. Also renders each page, dark and light
+/// (`$FROG_SNAPSHOT_DIR` or `$TMPDIR/frog-snapshots`, `mac-settings-<page>-<look>.png`).
 @MainActor
 final class CustomizeModeTests: XCTestCase {
     private let catalog = CustomizeCatalog.bundled
@@ -51,70 +52,93 @@ final class CustomizeModeTests: XCTestCase {
         XCTAssertEqual(e.url(has: { $0 == "skills-and-mcp" })?.absoluteString, "https://frog.toys/docs/skills-and-mcp")
         XCTAssertNil(e.url(has: { _ in false }))
         let docs = try XCTUnwrap(AppDocs.bundled)
-        let url = try XCTUnwrap(Bundle.main.url(forResource: "customize", withExtension: "json"))
-        let all = try JSONDecoder().decode(CustomizeCatalog.self, from: Data(contentsOf: url))
-        for s in all.sections where s.id != "automations" {
+        for s in catalog.sections where s.id != "automations" {
             XCTAssertNotNil(s.explainer.url(has: { docs.page($0)?.slug == $0 }), "\(s.id) links a page the docs have")
         }
     }
 
-    func testConnectionsLeftSettings() {
+    /// The five are Settings sections, in their own run, drawing their own pages: no generic
+    /// rows (Connections' rows in the list are the web's).
+    func testTheFiveAreSettingsSectionsWithTheirOwnPages() {
         let settings = SettingsCatalog.bundled
-        XCTAssertNil(settings.sections.first { $0.id == "connections" })
-        XCTAssertFalse(settings.rows.contains { $0.section == "connections" })
-        XCTAssertFalse(settings.rows.contains { $0.id.hasPrefix("mcp-") })
+        XCTAssertEqual(settings.sections.filter { $0.run == 2 }.map(\.id), catalog.sections.map(\.id))
+        for s in catalog.sections {
+            XCTAssertTrue(settings.drawsOwnPage(s.id), s.id)
+            XCTAssertTrue(settings.macRows(in: s.id).isEmpty, "\(s.id) draws its own page, not rows")
+        }
     }
 
-    func testModeRemembersItsSectionAndTakesOldNames() {
+    func testSectionsRememberTheirPageAndTakeOldNames() {
         let panes = Panes(Workspace(folder: URL(fileURLWithPath: "/tmp/demo"), fresh: true))
         defer { panes.stopAll() }
         CustomizeStore.loads = false
         defer { CustomizeStore.loads = true }
-        panes.showCustomize()
-        XCTAssertEqual(panes.mode, .customize)
-        XCTAssertEqual(panes.customizeSection, "skills", "Skills the first time")
-        panes.showCustomize("instructions")
-        XCTAssertEqual(panes.customizeSection, "rules")
+        panes.showSettings("skills")
+        XCTAssertEqual(panes.mode, .settings)
+        XCTAssertTrue(panes.inCustomizeSection)
+        panes.showSettings("instructions")
+        XCTAssertEqual(panes.settingsSection, "rules")
         panes.customizePage = .skill("commit")
         panes.backToApp()
         XCTAssertEqual(panes.mode, .threads)
-        panes.showCustomize()
-        XCTAssertEqual(panes.customizeSection, "rules", "the window keeps its last section")
+        panes.showSettings()
+        XCTAssertEqual(panes.settingsSection, "rules", "the window keeps its last section")
         XCTAssertEqual(panes.customizePage, .skill("commit"), "and the page under it")
-        panes.showCustomize("memory")
+        panes.showSettings("memory")
         XCTAssertNil(panes.customizePage, "another section starts at its list")
-        panes.showCustomize("nonsense")
-        XCTAssertEqual(panes.customizeSection, "memory")
+        panes.showSettings("nonsense")
+        XCTAssertEqual(panes.settingsSection, "memory")
+        panes.showSettings("billing")
+        XCTAssertFalse(panes.inCustomizeSection, "Billing draws rows")
     }
 
-    /// Everything that used to open Settings › Connections opens Customize › Connections.
-    func testOldConnectionsLinksOpenCustomize() throws {
+    /// No Customize mode left: no row in the app sidebar, no menu command, no palette entry. And
+    /// every way in that used to open it lands on the matching Settings section.
+    func testEveryOldWayInLandsOnItsSettingsSection() throws {
+        let app = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appending(path: "Frog")
+        for file in ["Views/Sidebar.swift", "Views/Commands.swift", "Views/WorkspaceView.swift"] {
+            let src = try String(contentsOf: app.appending(path: file), encoding: .utf8)
+            XCTAssertFalse(src.contains("\"Customize"), "\(file) still says Customize")
+            XCTAssertFalse(src.contains("showCustomize"), "\(file) still opens a Customize mode")
+        }
+
         let panes = Panes(Workspace(folder: URL(fileURLWithPath: "/tmp/demo"), fresh: true))
         defer { panes.stopAll() }
         CustomizeStore.loads = false
         defer { CustomizeStore.loads = true }
-        for name in ["mcp", "connections"] {
+        // showSettings with an old name: the footer, the model menu's Manage, old buttons.
+        for (name, section) in [("mcp", "connections"), ("connections", "connections"), ("instructions", "rules"), ("skills", "skills")] {
             panes.backToApp()
             panes.showSettings(name)
-            XCTAssertEqual(panes.mode, .customize, name)
-            XCTAssertEqual(panes.customizeSection, "connections", name)
+            XCTAssertEqual(panes.mode, .settings, name)
+            XCTAssertEqual(panes.settingsSection, section, name)
+            XCTAssertTrue(panes.inCustomizeSection, name)
         }
-        panes.showSettings("billing")
-        XCTAssertEqual(panes.mode, .settings, "Settings' own sections stay in Settings")
-        let link = try XCTUnwrap(URL(string: "frog://settings/mcp"))
-        XCTAssertEqual(SettingsCatalog.bundled.section(for: link), "connections")
-        // The web's "Open in Frog for Mac" pill.
-        XCTAssertEqual(CustomizeCatalog.bundled.section(for: try XCTUnwrap(URL(string: "frog://customize/connections"))), "connections")
-        XCTAssertEqual(CustomizeCatalog.bundled.section(for: try XCTUnwrap(URL(string: "frog-dev://customize/mcp"))), "connections")
-        XCTAssertNotNil(CustomizeCatalog.bundled.section(for: try XCTUnwrap(URL(string: "frog://customize"))), "no section: the first")
-        XCTAssertNil(CustomizeCatalog.bundled.section(for: try XCTUnwrap(URL(string: "frog://settings/general"))))
+        // Links, new and old (the web's invitations may still send frog://customize/...).
+        let links: [(String, String)] = [
+            ("frog://settings/skills", "skills"), ("frog://settings/connections", "connections"), ("frog://settings/mcp", "connections"),
+            ("frog://settings/rules", "rules"), ("frog://settings/instructions", "rules"), ("frog://settings/memory", "memory"),
+            ("frog://settings/automations", "automations"), ("frog-dev://settings/memory", "memory"),
+            ("frog://customize/connections", "connections"), ("frog-dev://customize/mcp", "connections"),
+            ("frog://customize/rules", "rules"), ("frog://customize", "skills"),
+        ]
+        for (link, section) in links {
+            XCTAssertEqual(SettingsCatalog.bundled.section(for: try XCTUnwrap(URL(string: link))), section, link)
+        }
+        XCTAssertNil(SettingsCatalog.bundled.section(for: try XCTUnwrap(URL(string: "frog://pair?code=1"))))
+        // A link handed to the app waits in SettingsRequest for a window, then showSettings. (Not
+        // `post`: its notification would reach any window another test left open.)
+        let url = try XCTUnwrap(URL(string: "frog://customize/memory"))
+        SettingsRequest.pending = SettingsCatalog.bundled.section(for: url)
+        panes.showSettings(SettingsRequest.take())
+        XCTAssertEqual(panes.settingsSection, "memory")
     }
 
     func testBreadcrumbs() {
-        XCTAssertEqual(CustomizeCrumbs.title(section: "skills", page: nil), "Customize › Skills")
-        XCTAssertEqual(CustomizeCrumbs.title(section: "skills", page: .skill("release-notes")), "Customize › Skills › /release-notes")
+        XCTAssertEqual(CustomizeCrumbs.title(section: "skills", page: nil), "Settings › Skills")
+        XCTAssertEqual(CustomizeCrumbs.title(section: "skills", page: .skill("release-notes")), "Settings › Skills › /release-notes")
         let d = ServerDraft(name: "postgres", command: "npx", args: ["-y", "pg"])
-        XCTAssertEqual(CustomizeCrumbs.title(section: "connections", page: .review(d)), "Customize › Connections › Add › postgres")
+        XCTAssertEqual(CustomizeCrumbs.title(section: "connections", page: .review(d)), "Settings › Connections › Add › postgres")
         var went: CustomizePage?? = .none
         let trail = CustomizeCrumbs.trail(section: "connections", page: .review(d)) { went = .some($0) }
         XCTAssertNotNil(trail[0].back)
@@ -299,8 +323,7 @@ final class CustomizeModeTests: XCTestCase {
     /// Until the transcript shows the receipt line (and the app sends `notes`), the page offers
     /// the switch but never says Frog is taking notes on its own.
     func testMemoryDoesNotPromiseNotesThisBuildCannotTake() throws {
-        let url = try XCTUnwrap(Bundle.main.url(forResource: "customize", withExtension: "json"))
-        let memory = try XCTUnwrap(try JSONDecoder().decode(CustomizeCatalog.self, from: Data(contentsOf: url)).explainer("memory"))
+        let memory = try XCTUnwrap(catalog.explainer("memory"))
         let rest = ExplainerCard.rest("memory", memory)
         if CustomizeStore.notesCapability {
             XCTAssertEqual(rest, memory.rest)
@@ -586,8 +609,8 @@ final class CustomizeModeTests: XCTestCase {
         }
     }
 
-    /// The window in Customize mode, one image per page, dark and light.
-    func testRenderCustomizeMode() throws {
+    /// The window on each agent section of Settings, one image per page, dark and light.
+    func testRenderAgentSections() throws {
         CustomizeStore.loads = false
         defer { CustomizeStore.loads = true }
         let pages: [(String, String, CustomizePage?, Bool)] = [
@@ -608,21 +631,21 @@ final class CustomizeModeTests: XCTestCase {
             for (section, file, page, figures) in pages {
                 let panes = Panes(Workspace(folder: URL(fileURLWithPath: "/tmp/pond"), fresh: true))
                 defer { panes.stopAll() }
-                panes.showCustomize(section)
+                panes.showSettings(section)
                 Self.stageFixture(panes.customize, figures: figures)
                 panes.customizePage = page
                 let (w, host) = window(panes, appearance: look)
                 pump(0.6)
-                try snapshot(host, "mac-customize-\(file)-\(name)")
+                try snapshot(host, "mac-settings-\(file)-\(name)")
                 w.close()
             }
         }
         print("snapshots: \(outDir.path)")
     }
 
-    /// The title bar's toolbar doesn't draw offscreen, so its two Customize pieces render here:
-    /// the breadcrumbs, and the right side's figure and action.
-    func testRenderCustomizeHeader() throws {
+    /// The title bar's toolbar doesn't draw offscreen, so an agent section's two header pieces
+    /// render here: the breadcrumbs, and the right side's figure and action.
+    func testRenderAgentSectionHeader() throws {
         CustomizeStore.loads = false
         defer { CustomizeStore.loads = true }
         let cases: [(String, String, CustomizePage?)] = [
@@ -633,7 +656,7 @@ final class CustomizeModeTests: XCTestCase {
             for (section, file, page) in cases {
                 let panes = Panes(Workspace(folder: URL(fileURLWithPath: "/tmp/pond"), fresh: true))
                 defer { panes.stopAll() }
-                panes.showCustomize(section)
+                panes.showSettings(section)
                 Self.stageFixture(panes.customize)
                 panes.customizePage = page
                 let bar = HStack { CustomizeCrumbs(panes: panes); Spacer(); CustomizeHeaderTrailing(panes: panes) }
@@ -643,7 +666,7 @@ final class CustomizeModeTests: XCTestCase {
                 host.appearance = NSAppearance(named: look)
                 host.layoutSubtreeIfNeeded()
                 pump(0.2)
-                try snapshot(host, "mac-customize-header-\(file)-\(name)")
+                try snapshot(host, "mac-settings-header-\(file)-\(name)")
             }
         }
     }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { catalogModel, displayName, localCatalog, machineModels, memoryLine, places, runningLine, tag, usesLine, type Machine } from '../src/machines'
+import { catalogModel, displayName, localCatalog, localRows, machineModels, menuLocalModels, memoryLine, places, runningLine, tag, usesLine, type Machine } from '../src/machines'
 import { modelName } from '../src/models'
 
 const mac: Machine = { id: 'this-mac', name: 'studio', thisMac: true, hardware: 'M4 Max, 64 GB unified', online: true, model: null, totalBytes: 64 * 2 ** 30, freeBytes: 40 * 2 ** 30,
@@ -40,4 +40,32 @@ test('names come from the shared catalog, as on the Mac', () => {
   assert.equal(usesLine(q32), 'Coding, uses tools, reasons, 32K context')
   // Frog Cloud's models carry Frog Cloud's names.
   assert.deepEqual(localCatalog.filter((m) => m.cloud).map((m) => modelName(m.cloud!)), localCatalog.filter((m) => m.cloud).map((m) => m.name))
+})
+
+test("the menu's local models are the shared catalog's, in the Mac's order", async () => {
+  // Read the file itself, not the bundled import, so the web can't drift from what the Mac
+  // bundles: ModelDownloads.swift's SuggestedModel.all is the same filter over the same file.
+  const { readFileSync } = await import('node:fs')
+  const file = JSON.parse(readFileSync(new URL('../../../catalog/local-models.json', import.meta.url), 'utf8')) as { models: { name: string; menu?: boolean; runs_on: string[] }[] }
+  const mac = file.models.filter((m) => m.menu === true && m.runs_on.includes('metal')).map((m) => m.name)
+  assert.ok(mac.length > 0)
+  assert.deepEqual(menuLocalModels().map((m) => m.name), mac)
+  assert.deepEqual(localRows([]).map((r) => r.name), mac)
+  // And the Mac really does read it that way.
+  const swift = readFileSync(new URL('../../macos/Frog/Model/ModelDownloads.swift', import.meta.url), 'utf8')
+  assert.match(swift, /LocalCatalog\.all\.filter \{ \$0\.menu == true && \$0\.runs_on\.contains\("metal"\) \}/)
+})
+
+test('local rows say where you have a model, and keep ones the catalog does not offer', () => {
+  const rows = localRows([mac, mew])
+  assert.equal(rows.find((r) => r.name === 'Qwen3 8B')?.on, 'This Mac, mew')
+  assert.equal(rows.find((r) => r.name === 'Qwen3 4B')?.on, 'mew')
+  assert.equal(rows.find((r) => r.name === 'Qwen3 32B')?.on, null)
+  const odd: Machine = { ...mew, models: [{ id: 'someone/Odd-7B', name: 'Odd-7B', hash: 'cccccccccccc33', loaded: false }] }
+  assert.deepEqual(localRows([odd]).at(-1), { key: 'node/cccccccccccc', name: 'Odd 7B', on: 'mew' })
+  // The same model as two builds (MLX on a Mac, bf16 on a node) is one row naming both.
+  const mlx: Machine = { ...mac, models: [{ id: 'mlx-community/Qwen3-4B-4bit', name: 'Qwen3-4B-4bit', hash: 'dddddddddddd44', loaded: false }] }
+  assert.equal(localRows([mlx, mew]).find((r) => r.name === 'Qwen3 4B')?.on, 'mew, This Mac')
+  // Offline machines say nothing.
+  assert.ok(localRows([{ ...mew, online: false }]).every((r) => r.on === null))
 })

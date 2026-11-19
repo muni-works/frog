@@ -352,7 +352,7 @@ final class Workspace {
     /// list says, and a session it doesn't hold yet counts as a child.
     func openCloud(_ id: String, top: Bool? = nil) {
         guard id != conversation?.cloudSession, let gateway = CloudSessions.shared.gateway else { return }
-        let top = top ?? CloudGateway.isTop(id, in: CloudSessions.shared.sessions)
+        let top = top ?? CloudSessions.isTop(id)
         let c = Conversation.cloud(folder: folder, link: CloudLink(gateway: gateway, session: id, top: top), session: id)
         incoming?.stop(reason: "open superseded")
         incoming = c

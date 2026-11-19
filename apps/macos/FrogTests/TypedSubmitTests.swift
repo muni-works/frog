@@ -193,8 +193,8 @@ final class TypedSubmitTests: XCTestCase {
         """.utf8))
         XCTAssertNil(list[0].parent)
         XCTAssertEqual(list[1].parent, "mine")
-        XCTAssertTrue(CloudGateway.isTop("mine", in: list))
-        XCTAssertFalse(CloudGateway.isTop("kid", in: list), "another session started it")
-        XCTAssertFalse(CloudGateway.isTop("unlisted", in: list), "not listed yet: unknown, so no caps")
+        XCTAssertTrue(CloudSessions.isTop("mine", in: list))
+        XCTAssertFalse(CloudSessions.isTop("kid", in: list), "another session started it")
+        XCTAssertFalse(CloudSessions.isTop("unlisted", in: list), "not listed yet: unknown, so no caps")
     }
 }
