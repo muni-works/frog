@@ -2017,8 +2017,13 @@ struct Agent {
     /// The store is past `memory::whole_budget`: notes beyond standing guidance come back
     /// per turn (`memvec`) instead of riding every call.
     notes_per_turn: bool,
-    /// Files the `Read` tool opened this session: the only files a `read` note can come from.
+    /// Files a `Read` call succeeded on this session: the only files a `read` note can come from.
     read_by_frog: HashSet<PathBuf>,
+    /// Files Frog's Edit or Write changed this session: the model's own text, never a `read`
+    /// note's grounds (nor is anything changed since `started`, by Bash or anyone).
+    written_by_frog: HashSet<PathBuf>,
+    /// When this engine started: a file changed after it isn't a fact Frog read.
+    started: std::time::SystemTime,
     /// Notes that didn't fit the current model's index.
     notes_omitted: usize,
     /// Rule files for this project, and the scoped ones already shown this session.
@@ -2363,6 +2368,8 @@ impl Agent {
             notes_in_prompt: HashSet::new(),
             notes_per_turn: false,
             read_by_frog: HashSet::new(),
+            written_by_frog: HashSet::new(),
+            started: std::time::SystemTime::now(),
             notes_omitted: 0,
             rules,
             repo_map: Default::default(),

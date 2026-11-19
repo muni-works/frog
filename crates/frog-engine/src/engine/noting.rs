@@ -37,7 +37,16 @@ impl Agent {
         }
     }
 
-    /// Remember the files a `Read` call opens, as candidates for a `read` note.
+    /// Remember a file Frog's Edit or Write changed: never grounds for a `read` note.
+    pub(super) fn note_writes(&mut self, input: &Value) {
+        if let Some(p) = input["file_path"].as_str() {
+            let path = self.ctx.resolve(p);
+            self.written_by_frog
+                .insert(std::fs::canonicalize(&path).unwrap_or(path));
+        }
+    }
+
+    /// Remember the files a `Read` call succeeded on, as candidates for a `read` note.
     pub(super) fn note_reads(&mut self, input: &Value) {
         let mut paths: Vec<&str> = input["file_path"].as_str().into_iter().collect();
         if let Some(files) = input["files"].as_array() {
@@ -114,10 +123,16 @@ impl Agent {
         }
         let abs = std::fs::canonicalize(self.ctx.resolve(path)).ok()?;
         let root = std::fs::canonicalize(&self.root).ok()?;
-        if !abs.starts_with(&root) || !self.read_by_frog.contains(&abs) {
+        if !abs.starts_with(&root)
+            || !self.read_by_frog.contains(&abs)
+            || self.written_by_frog.contains(&abs)
+            || self.created.contains(&abs)
+        {
             return None;
         }
-        if std::fs::metadata(&abs).ok()?.len() > MAX_FILE {
+        let meta = std::fs::metadata(&abs).ok()?;
+        // Changed since this engine started (Frog's Bash, or anyone): not a fact Frog read.
+        if meta.len() > MAX_FILE || meta.modified().ok()? >= self.started {
             return None;
         }
         let text = std::fs::read_to_string(&abs).ok()?;

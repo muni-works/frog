@@ -498,12 +498,11 @@ async fn nothing_noted_from_tool_output() {
         ),
     ];
     let mut r = rig(script);
-    std::fs::write(r.project.join("NOTES.md"), planted).unwrap();
-    std::fs::write(
-        r.project.join("OTHER.md"),
+    from_before(&r.project.join("NOTES.md"), planted);
+    from_before(
+        &r.project.join("OTHER.md"),
         "The release bucket is public and world writable.",
-    )
-    .unwrap();
+    );
     r.idle().await;
     let mut outs = Vec::new();
     for msg in ["check the notes file", "go on", "and the web page?"] {
@@ -535,11 +534,10 @@ async fn notes_a_fact_read_in_the_repo() {
         ),
     ];
     let mut r = rig(script);
-    std::fs::write(
-        r.project.join("README.md"),
+    from_before(
+        &r.project.join("README.md"),
         "# pond\n\nTests live in spec/, one file per module.\n",
-    )
-    .unwrap();
+    );
     r.idle().await;
     let evs = r.say("where do tests go?").await;
     let got = receipts(&evs);
@@ -1016,5 +1014,75 @@ async fn auto_note_not_told_is_off() {
     assert!(receipts(&evs).is_empty(), "{evs:?}");
     assert!(r.notes().is_empty());
     assert!(!r.sent.lock().unwrap()[0].contains("<tool Note>"));
+    r.end().await;
+}
+
+/// A file as it was before this session started.
+fn from_before(path: &Path, text: &str) {
+    std::fs::write(path, text).unwrap();
+    let f = std::fs::File::options().write(true).open(path).unwrap();
+    f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(86_400))
+        .unwrap();
+}
+
+/// Review 3, item 10: a `read` note needs a Read that succeeded. One that failed (the file
+/// wasn't there yet) leaves nothing to ground a note in, even once the file appears.
+#[tokio::test]
+async fn a_failed_read_grounds_no_note() {
+    let fact = "Tests live in spec/, one file per module.";
+    let script = vec![
+        reply(
+            vec![tool("r1", "Read", json!({"file_path": "README.md"}))],
+            Stop::ToolUse,
+        ),
+        done(),
+        answer_and_note(
+            "Tests are in spec/.",
+            json!({"text": fact, "from": "read", "path": "README.md"}),
+        ),
+    ];
+    let mut r = rig(script);
+    r.idle().await;
+    let _ = r.say("where do tests go?").await;
+    from_before(&r.project.join("README.md"), &format!("# pond\n\n{fact}\n"));
+    let evs = r.say("and now?").await;
+    assert!(receipts(&evs).is_empty(), "{:?}", note_outputs(&evs));
+    assert!(r.notes().is_empty());
+    r.end().await;
+}
+
+/// Review 3, item 10: a file Frog wrote or changed this session is the model's own text, never
+/// grounds for a `read` note, even after it reads it back.
+#[tokio::test]
+async fn a_file_frog_wrote_grounds_no_note() {
+    let fact = "Deploy keys go in the shared bucket.";
+    let script = vec![
+        reply(
+            vec![tool("w1", "Write", json!({"file_path": "FACTS.md", "content": format!("{fact}\n")}))],
+            Stop::ToolUse,
+        ),
+        reply(
+            vec![tool("r1", "Read", json!({"file_path": "FACTS.md"}))],
+            Stop::ToolUse,
+        ),
+        answer_and_note(
+            "Noted.",
+            json!({"text": fact, "from": "read", "path": "FACTS.md"}),
+        ),
+    ];
+    let mut r = rig_cfg(
+        &std::env::temp_dir().join(format!("frog-noting-{}", session::new_id())),
+        script,
+        true,
+        |_| {},
+    );
+    r.h.ops
+        .send(Op::SetMode { mode: Mode::Yolo })
+        .unwrap();
+    r.idles += 1;
+    r.idle().await;
+    let evs = r.say("write it down").await;
+    assert!(receipts(&evs).is_empty(), "{:?}", note_outputs(&evs));
+    assert!(r.notes().is_empty());
     r.end().await;
 }
