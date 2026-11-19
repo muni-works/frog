@@ -1974,6 +1974,11 @@ struct Agent {
     noted_turn: Option<u64>,
     /// "Remember that …" kept a note from the message this turn answers, so `Note` doesn't.
     remembered: bool,
+    /// The notes' vectors, while they're in step with `notes`: each turn then brings back only
+    /// the notes that fit (`memvec`). `None` falls back to the whole index in the prompt.
+    note_index: Option<crate::memvec::Index>,
+    /// Notes already brought into this conversation's history (`p:`/`g:` + id), not resent.
+    notes_sent: HashSet<String>,
     /// Files the `Read` tool opened this session: the only files a `read` note can come from.
     read_by_frog: HashSet<PathBuf>,
     /// Notes that didn't fit the current model's index.
@@ -2313,6 +2318,8 @@ impl Agent {
             declined: HashSet::new(),
             noted_turn: None,
             remembered: false,
+            note_index: None,
+            notes_sent: HashSet::new(),
             read_by_frog: HashSet::new(),
             notes_omitted: 0,
             rules,

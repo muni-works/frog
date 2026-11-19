@@ -250,6 +250,40 @@ uses it unprompted), about 176 tokens (705 characters), in the cached prefix. A 
 answers and then only notes (or notes and suggests a next step) ends there, so noting costs no
 extra model round, only the call's own output, about 40 tokens.
 
+## Used notes: only what fits comes back
+
+Notes no longer ride every call as one index in the system prompt. Each turn, Frog picks the
+few notes that bear on the user's message and the files in play (named or `@`-pointed, and
+files read this session), at most five and within a small budget (about 120 / 250 / 400
+tokens for small / mid / large models), and appends them to that turn's user message in a
+`<memory>` block framed exactly as before: background data, not instructions. A note already
+brought into this conversation isn't sent again (until compaction rewrites the history). The
+system prompt keeps one fixed line saying notes come with messages, so it stays cached.
+
+```json
+{ "type": "used_notes", "turn": 13, "tokens": 94,
+  "notes": [ { "id": "tests-live-in-spec-one-file-per-module", "scope": "project",
+               "text": "Tests live in spec/, one file per module." },
+             { "id": "the-staging-database-is-wiped-every-monday", "scope": "project",
+               "text": "The staging database is wiped every Monday." } ] }
+```
+
+Durable, once per turn, only when a note was used. Draw "Used 2 notes" under that turn's reply,
+with the lines (canvas frame M2). `tokens` is what the block added (0 when every note was
+already in the conversation).
+
+How it picks (`crates/frog-engine/src/memvec.rs`): a lexical vector per note, computed in the
+engine with no model and no download (five-letter word stems plus their character trigrams,
+hashed into 256 dimensions), so it works the same on a Mac and in a Frog Cloud sandbox. Notes
+scoring under 0.2 cosine against the message never come back; citing a file in play lifts a
+note. Vectors live beside the notes (`.vectors.json` in each notes folder, with each note's
+`last_used`), and a forgotten note is pruned from them at once. If the vectors can't be kept,
+the engine falls back to the whole index in the system prompt, as before. Subagents still get
+the whole index.
+
+Weight on a store of 50 notes: the whole index was about 996 tokens on every call (mid-size
+model; 1,464 on a large one); a turn about one subject now adds about 94 tokens, once.
+
 ## Not here yet
 
 Automations ("keep doing this", N8), catalog search, and the card's drawing.

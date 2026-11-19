@@ -33,6 +33,7 @@ pub mod kids;
 pub mod mcp;
 pub mod mcp_oauth;
 pub mod memory;
+pub mod memvec;
 pub mod message;
 pub mod model_policy;
 pub mod models;

@@ -196,9 +196,10 @@ async fn prompt_breakdown() {
 /// prompt diet (see the PR); raise it only on purpose, since every call pays it.
 /// Raised by about 1,000 for Grep's context output and Read's `files`: the text that lets one
 /// call do what took three. Raised by about 750 for the `Note` tool (noting on its own, about
-/// 176 tokens: it can't be deferred, since the model uses it unprompted).
-const HEADLESS_BUDGET: usize = 20_850;
-const APP_BUDGET: usize = 23_500;
+/// 176 tokens: it can't be deferred, since the model uses it unprompted), and 150 for the one
+/// fixed line saying notes come with each message (which replaced the whole notes index).
+const HEADLESS_BUDGET: usize = 21_000;
+const APP_BUDGET: usize = 23_650;
 
 #[tokio::test]
 async fn the_fixed_prompt_stays_under_budget() {
