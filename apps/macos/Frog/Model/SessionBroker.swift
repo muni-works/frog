@@ -667,6 +667,10 @@ final class SessionBroker {
         let sender = c.sessionID ?? ""
         let input = r.input
         let approval = input["approval_id"]?.string ?? r.id
+        // A Customize card is the person's alone to answer: never a chief's or a parent's.
+        guard !Self.personal(tool: input["tool"]?.string, pending: c.permission) else {
+            return c.replySession(r.id, error: Self.personalOnly)
+        }
         var names = (input["chiefs"]?.array ?? []).compactMap(\.string)
         if names.isEmpty, let one = input["chief"]?.string { names = [one] }
         var why = "no chief is configured"
@@ -730,6 +734,12 @@ final class SessionBroker {
     private func resolvePending(
         _ r: SessionRequest, approval: String, decision: String, sender: String, from c: Conversation
     ) {
+        // A Customize card isn't listed, and naming one says so rather than "nothing pending".
+        let held = list().lazy.compactMap { Library.shared.conversation($0.id) ?? self.background[$0.id] }
+            .first { $0.permission?.id == approval || $0.sessionID == approval }
+        if let p = held?.permission, Self.personal(tool: p.name, pending: p) {
+            return c.replySession(r.id, error: Self.personalOnly)
+        }
         guard let row = approvals().first(where: { $0.request == approval || $0.id == approval }),
               let target = Library.shared.conversation(row.id) ?? background[row.id]
         else {
@@ -754,6 +764,12 @@ final class SessionBroker {
             warning: decision != "approve")
         c.replySession(r.id, result: .string("Recorded: \(decision) for \(approval) in \(row.name)."))
     }
+
+    /// A card only the person's own click may answer: a Customize change (it has a `proposal`).
+    static func personal(tool: String?, pending: PermissionRequest?) -> Bool {
+        tool == "Customize" || pending?.proposal != nil
+    }
+    static let personalOnly = "A Customize card is the user's to answer; no session can decide it."
 
     /// The message a chief gets for a delegated approval.
     static func delegation(_ input: JSONValue, approval: String, session: String, name: String) -> String {
@@ -783,11 +799,13 @@ final class SessionBroker {
         var ageSeconds: Int
     }
 
-    /// Every session's pending permission card, oldest fact first. Read-only.
+    /// Every session's pending permission card, oldest fact first. Read-only. A Customize card
+    /// isn't one: only the person's click in its own session answers it, so no session is told
+    /// of it or offered it.
     func approvals() -> [Approval] {
         list().compactMap { entry in
             guard let conv = Library.shared.conversation(entry.id) ?? background[entry.id],
-                  let p = conv.permission else { return nil }
+                  let p = conv.permission, !Self.personal(tool: p.name, pending: p) else { return nil }
             let since = waitingSince[entry.id] ?? now()
             return Approval(
                 id: entry.id, request: p.id, name: entry.name, command: p.arg, tool: p.name,
@@ -1233,7 +1251,7 @@ final class SessionBroker {
         // A model or mode set while no engine ran (SetSessionModel/Mode) applies now, once.
         let stored = Library.shared.takeStored(id)
         let c = Conversation(folder: folder, arguments: Self.resumeArguments(id, chat: info.isChat),
-                             model: stored.model)
+                             model: stored.model, child: Library.shared.parents[id] != nil)
         Self.apply(stored, to: c)
         background[id] = c
         // A fresh engine isn't armed until it's seen working; nothing scheduled for the old
@@ -1800,7 +1818,7 @@ extension SessionBroker {
         // replayed rather than lost (see `births`).
         let pending = "pending-" + UUID().uuidString
         recordBirth(pending, prompt: req.prompt)
-        let c = Conversation(folder: folder, arguments: Self.engineFlags(req: req, parent: parent), model: model)
+        let c = Conversation(folder: folder, arguments: Self.engineFlags(req: req, parent: parent), model: model, child: true)
         guard c.failure == nil else {
             births[pending] = nil
             saveBirths()

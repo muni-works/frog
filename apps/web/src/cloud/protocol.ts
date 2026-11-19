@@ -10,11 +10,17 @@ export type Op =
    *  resumes a turn that stopped on credit with it (wall.ts resumeNote). */
   | { op: "continue"; note?: string }
   | { op: "compact"; focus?: string }
-  | { op: "permission"; id: string; decision: Decision; note?: string }
+  | { op: "permission"; id: string; decision: Decision; note?: string; choice?: string }
+  /** Undo a Customize change by its handle (docs/customize-events.md). */
+  | { op: "undo"; undo: string }
+  /** "Make it a rule" on a note Frog kept: the engine answers with its card. */
+  | { op: "note_to_rule"; id: string; scope: string; where?: "home" }
+  /** The app's current setting values, so the engine can quote them (docs/customize-events.md). */
+  | { op: "settings"; values: Record<string, string | number | boolean> }
   | { op: "answer"; id: string; choices?: string[]; other?: string }
   | { op: "elicit"; id: string; action: "accept" | "decline" | "cancel"; content?: unknown }
   | { op: "set_title"; title: string }
-  | { op: "set_client_caps"; panes?: boolean; ask?: boolean; sessions?: boolean; irc?: boolean }
+  | { op: "set_client_caps"; panes?: boolean; ask?: boolean; sessions?: boolean; irc?: boolean; customize?: boolean; notes?: boolean }
   | { op: "pane_open"; kind: "terminal" | "preview"; cwd?: string; url?: string; cols?: number; rows?: number }
   | { op: "pane_input"; id: string; data: string }
   | { op: "pane_resize"; id: string; cols: number; rows: number }
@@ -160,7 +166,16 @@ export type Event =
   | { event: "item_delta"; id: string; delta: Delta }
   /** A finished tool call's one-line gist, from the engine's side-model. Durable. */
   | { event: "item_gisted"; item: string; gist: string }
-  | { event: "permission_request"; id: string; item: string; name: string; arg: string; always: string; preview?: FileDiff; reason?: string }
+  | { event: "permission_request"; id: string; item: string; name: string; arg: string; always: string; preview?: FileDiff; reason?: string; proposal?: Proposal }
+  /** A Customize change made (at once, or after its card). Durable. */
+  | { event: "customize_applied"; item: string; undo: string; card: Proposal }
+  | { event: "customize_undone"; undo: string; ok: boolean; message?: string }
+  /** A setting the app owns, changed by Customize (or its undo). Live only. */
+  | { event: "setting_change"; id: string; value: string | number | boolean }
+  /** Frog kept a note on its own (docs/customize-events.md, "Noted"). Durable. */
+  | { event: "noted"; item: string; turn: number; id: string; text: string; scope: "project" | "everywhere"; place: string; source: "said" | "correction" | "read"; from?: string; undo: string }
+  /** Notes that came back for a turn ("Used notes"). Durable. */
+  | { event: "used_notes"; turn: number; tokens: number; notes: { id: string; scope: string; text: string }[] }
   /** `item` and `asked` (unix ms) place the wait on the turn's timeline; absent in older logs. */
   | { event: "permission_resolved"; id: string; decision: Decision; item?: string; asked?: number }
   | { event: "titled"; title: string }
@@ -247,4 +262,20 @@ export interface RepoList {
   repos: { name: string; private: boolean; pushed_at: string | null }[];
   /** The App's install page, to give Frog access to more repos. */
   install?: string;
+}
+
+/** A Customize change, as its card asks it or its receipt reports it (docs/customize-events.md). */
+export interface Proposal {
+  kind: "line" | "skill" | "tool" | "setting"
+  title: string
+  change: { old?: string; new?: string }
+  where: string
+  path?: string
+  tokens_per_turn?: number
+  /** The primary action's id, always "primary": an allow sends it back as `choice`. */
+  choice?: string
+  primary: string
+  dismiss: string
+  alternative?: { id: string; label: string; where: string; tokens_per_turn?: number }
+  asked_by?: { who: "user" | "frog"; words: string }
 }

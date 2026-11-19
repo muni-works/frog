@@ -15,6 +15,8 @@ enum AskPhrase {
         case "WebFetch":
             let host = URL(string: first)?.host ?? first
             return host.isEmpty ? "Open a web page?" : "Open \(host)?"
+        // A Customize card's arg is its title, already a question: "Remember this?".
+        case "Customize": return first.isEmpty ? "Change how Frog works?" : first.hasSuffix("?") ? first : "\(first)?"
         default: return first.isEmpty ? "Allow \(name)?" : "Allow \(name) \(first)?"
         }
     }

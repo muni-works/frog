@@ -8365,6 +8365,11 @@
           "$ref": "#/$defs/QuotedChange",
           "description": "The change, quoted exactly: `old` → `new`. A line to save has only `new`, a line to\nforget only `old`."
         },
+        "choice": {
+          "default": "",
+          "description": "The primary action's id, `primary`: an allow must send it (or the alternative's id) as\n[`Op::Permission`]'s `choice`. An allow naming no choice, or one not on the card, is\nrefused: a delegated answer (`ResolveDelegated`) names none, so only the user's own\ndecision applies a proposal.",
+          "type": "string"
+        },
         "dismiss": {
           "description": "The decline button, always \"Not now\".",
           "type": "string"

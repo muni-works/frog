@@ -710,3 +710,39 @@ fn memory_report_follows_per_turn_placement() {
         Estimator::default().tokens(kept.len() + crate::memory::PER_TURN.len())
     );
 }
+
+/// Finding 5, the Rules page: a project's rules file linked outside the project (a repo can
+/// ship `AGENTS.md -> ~/.zshrc`) is never written through, and a dangling link's target is
+/// never created. A link inside the project (`CLAUDE.md -> AGENTS.md`) still works.
+#[cfg(unix)]
+#[test]
+fn page_edits_never_follow_a_link_out_of_the_project() {
+    let root = project("links");
+    let cfg = Config {
+        hermetic: true,
+        ..Config::default()
+    };
+    let outside = root.parent().unwrap().join("zshrc");
+    std::fs::write(&outside, "export X=1\n").unwrap();
+    std::os::unix::fs::symlink(&outside, root.join("AGENTS.md")).unwrap();
+    let add = Edit::RuleAdd {
+        path: None,
+        scope: "project".into(),
+        text: "Be brief.".into(),
+    };
+    assert!(apply(&cfg, &root, false, None, &Toggles::path(), &add).is_err());
+    assert_eq!(std::fs::read_to_string(&outside).unwrap(), "export X=1\n");
+    std::fs::remove_file(root.join("AGENTS.md")).unwrap();
+    let nowhere = root.parent().unwrap().join("nowhere.md");
+    std::os::unix::fs::symlink(&nowhere, root.join("AGENTS.md")).unwrap();
+    assert!(apply(&cfg, &root, false, None, &Toggles::path(), &add).is_err());
+    assert!(!nowhere.exists());
+    std::fs::remove_file(root.join("AGENTS.md")).unwrap();
+    std::fs::write(root.join("FROG.md"), "Use pnpm.\n").unwrap();
+    std::os::unix::fs::symlink("FROG.md", root.join("AGENTS.md")).unwrap();
+    apply(&cfg, &root, false, None, &Toggles::path(), &add).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(root.join("FROG.md")).unwrap(),
+        "Use pnpm.\nBe brief.\n"
+    );
+}

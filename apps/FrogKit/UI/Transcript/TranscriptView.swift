@@ -610,6 +610,12 @@ struct TranscriptTrailer: View {
                 .id(q.id)
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
         }
+        if let p = conversation.permission, conversation.drawsProposalLoose(p) {
+            PermissionCard(request: p, conversation: conversation)
+                .padding(.top, space.turn)
+                .id(p.id)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+        }
         if let e = conversation.elicitation {
             ElicitationCard(request: e, conversation: conversation)
                 .padding(.top, space.turn)
@@ -1387,18 +1393,22 @@ final class FlowCache {
         var count: Int
         var thinking: Bool
         var signature: String?
+        /// The Note call drawn as the noted line instead of as a step.
+        var hidden: String?
         var segments: [TurnFlow.Segment]
     }
     private var flows: [TurnState.ID: Entry] = [:]
 
     func segments(of turn: TurnState, showThinking: Bool) -> [TurnFlow.Segment] {
-        if let hit = flows[turn.id], hit.count == turn.items.count, hit.thinking == showThinking {
+        let hidden = turn.noted?.note.item
+        if let hit = flows[turn.id], hit.count == turn.items.count, hit.thinking == showThinking, hit.hidden == hidden {
             if turn.finished, hit.signature == nil { return hit.segments }
             if !turn.finished, hit.signature == Self.signature(of: turn) { return hit.segments }
         }
-        let segments = TurnFlow(turn.items, showThinking: showThinking).segments
+        let items = hidden.map { h in turn.items.filter { $0.id != h } } ?? turn.items
+        let segments = TurnFlow(items, showThinking: showThinking).segments
         flows[turn.id] = Entry(count: turn.items.count, thinking: showThinking,
-                               signature: turn.finished ? nil : Self.signature(of: turn), segments: segments)
+                               signature: turn.finished ? nil : Self.signature(of: turn), hidden: hidden, segments: segments)
         return segments
     }
 

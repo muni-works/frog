@@ -1569,6 +1569,35 @@ final class SessionBrokerTests: XCTestCase {
         XCTAssertNotNil(chiefLink.sent.last?["error"])
     }
 
+    /// A Customize card is the person's alone: the broker doesn't list it, and neither the chief
+    /// nor the parent can answer it (docs/customize-events.md; the engine ignores such answers too).
+    @MainActor
+    func testACustomizeCardIsNeitherListedNorAnsweredForThePerson() throws {
+        let b = broker([chief, eng])
+        b.chiefOf = { [chief = self.chief] in chief.id }
+        b.parentOf = { [chief = self.chief, eng = self.eng] id in id == eng.id ? chief.id : nil }
+        let targetLink = QueueLink(), chiefLink = QueueLink()
+        let target = Conversation(folder: URL(fileURLWithPath: "/tmp/cz-target"), link: targetLink, replay: false, session: eng.id)
+        b.track(target, as: eng.id)
+        target.ingest(try JSONDecoder.frog.decode(Envelope.self, from: Data(
+            #"{"seq":0,"session":"eng-0002","created":0,"event":"turn_started","turn":1,"input":"never npm here"}"#.utf8)))
+        target.ingest(try JSONDecoder.frog.decode(Envelope.self, from: Data(
+            #"{"seq":1,"session":"eng-0002","created":1,"event":"permission_request","id":"p9","item":"t1","name":"Customize","arg":"Remember this?","always":"","proposal":{"kind":"line","title":"Remember this?","change":{"new":"Use pnpm."},"where":"In pond","choice":"primary","primary":"Remember","dismiss":"Not now"}}"#.utf8)))
+        b.observe(eng.id, running: true, waiting: true)
+        XCTAssertTrue(b.approvalsForTesting.isEmpty, "not offered to any session")
+        let chiefConv = Conversation(folder: URL(fileURLWithPath: "/tmp/cz-chief"), link: chiefLink, replay: true, session: chief.id)
+        for id in ["p9", eng.id] {
+            b.handle(SessionRequest(id: "r-\(id)", item: "t", tool: "ResolveDelegated",
+                                    input: .object(["approval_id": .string(id), "decision": .string("approve")])), from: chiefConv)
+            XCTAssertEqual(chiefLink.sent.last?["error"] as? String, SessionBroker.personalOnly)
+        }
+        XCTAssertTrue(targetLink.sent.isEmpty, "nothing reached the engine")
+        XCTAssertNotNil(target.permission, "still the person's to answer")
+        // The person's own click names the choice, as every Customize allow must.
+        target.answer(.allow)
+        XCTAssertEqual(targetLink.sent.last?["choice"] as? String, "primary")
+    }
+
     /// The parent of a session may also answer its pending card; the chief's own card is the
     /// user's (a session can't decide its own call).
     @MainActor

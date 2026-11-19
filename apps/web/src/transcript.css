@@ -36,6 +36,8 @@
 .tx .reply-block > [data-row="line"] + [data-row="prose"] { margin-top: var(--gap-activity); }
 .tx .reply-block > [data-row="footer"] { margin-top: var(--gap-footer); }
 .tx .reply-block > [data-row="footer"]:first-child { margin-top: 0; }
+.tx .reply-block > [data-row="noted"],
+.tx .reply-block > [data-row="used-notes"] { margin-top: var(--gap-activity); }
 
 /* The prompt: a bubble at most 540 wide, right-aligned; one line is 38 tall. */
 .tx .ask-block { display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-tight); }

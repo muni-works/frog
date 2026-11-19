@@ -1,5 +1,5 @@
 import type { TimedEvent } from './timeline'
-import type { ElicitSchema, EndReason, Envelope, Event, FileDiff, Image, Mode, Part, ShownThought, TestRun, Todo, ToolOutcome, TurnUsage, Widget } from '../cloud/protocol'
+import type { ElicitSchema, EndReason, Envelope, Event, FileDiff, Image, Mode, Part, ShownThought, TestRun, Todo, ToolOutcome, TurnUsage, Widget, Proposal } from '../cloud/protocol'
 
 // Folds a session's envelopes into what the transcript draws. Pure, so replay and
 // live streaming share one path: `reduce(thread, envelope)` for every envelope in order.
@@ -25,6 +25,9 @@ export interface Entry {
   ended?: number
   /** A recognised test run, from the engine. */
   tests?: TestRun
+  /** A Customize change this call made (`customize_applied`), drawn as its receipt with Undo;
+   *  `undone` once Undo answered. */
+  applied?: { undo: string; card: Proposal; undone?: { ok: boolean; message?: string } }
   /** Reasoning, live: the engine's latest thought line (kept until a delta brings another), and
    * every line it has shown so far, for the outline opened while thinking. */
   thought?: string
@@ -35,7 +38,7 @@ export interface Entry {
   thinkMs?: number
 }
 
-export interface Ask { id: string; item: string; name: string; arg: string; always?: string; preview?: FileDiff; reason?: string }
+export interface Ask { id: string; item: string; name: string; arg: string; always?: string; preview?: FileDiff; reason?: string; proposal?: Proposal }
 
 /** The Ask tool waiting on a choice (`question`), answered with Op::Answer. */
 export interface Question { id: string; item: string; question: string; options: { label: string; detail?: string }[]; multi: boolean; allowOther: boolean }
@@ -54,7 +57,12 @@ export interface Thread {
   /** Each turn's input and items; `usage` and `reason` once it ends. */
   turns: { turn: number; input: string; images?: Image[]; more?: Part[]; entries: Entry[]; at?: number; usage?: TurnUsage; reason?: EndReason; endAt?: number
     /** The turn's timed events, cut to what its timeline reads (engine/timeline.ts). */
-    tl?: TimedEvent[] }[]
+    tl?: TimedEvent[]
+    /** A note Frog kept this turn (`noted`), drawn under the reply with Undo and Make it a rule;
+     *  the call that kept it doesn't draw. `undone` once Undo answered. */
+    noted?: { item: string; id: string; text: string; scope: string; place: string; undo: string; undone?: { ok: boolean; message?: string } }
+    /** Notes that came back for this turn (`used_notes`). */
+    usedNotes?: { tokens: number; notes: { id: string; scope: string; text: string }[] } }[]
   running: boolean
   ask: Ask | null
   ended: EndReason | null
@@ -187,7 +195,37 @@ function apply(t: Thread, ev: Event, created: number): Thread {
       // `cached` comes only when a call ends: keep the last one through the next call's counts.
       return t.running ? { ...t, live: { output: ev.output, soFar: !!ev.so_far, slow: !!ev.slow, cached: ev.cached ?? t.live?.cached ?? null }, pulse: (t.pulse ?? 0) + 1 } : t
     case 'permission_request':
-      return { ...t, askedAt: created, ask: { id: ev.id, item: ev.item, name: ev.name, arg: ev.arg, always: ev.always, preview: ev.preview, reason: ev.reason } }
+      return { ...t, askedAt: created, ask: { id: ev.id, item: ev.item, name: ev.name, arg: ev.arg, always: ev.always, preview: ev.preview, reason: ev.reason, proposal: ev.proposal } }
+    case 'customize_applied': {
+      // On the Customize call that made it; a call this thread never saw gets a row of its own.
+      const turns = t.turns.length ? t.turns : [{ turn: 0, input: '', entries: [] as Entry[] }]
+      let found = false
+      const next = turns.map((u) => ({ ...u, entries: u.entries.map((e) => (e.id === ev.item ? (found = true, { ...e, done: true, applied: { undo: ev.undo, card: ev.card } }) : e)) }))
+      if (!found) {
+        const last = next[next.length - 1]
+        next[next.length - 1] = { ...last, entries: [...last.entries, { id: ev.item, kind: 'tool', text: '', name: 'Customize', arg: ev.card.title, output: '', done: true, outcome: 'ok', applied: { undo: ev.undo, card: ev.card } }] }
+      }
+      return { ...t, turns: next }
+    }
+    case 'noted': {
+      const at = t.turns.map((u) => u.turn).lastIndexOf(ev.turn)
+      const i = at >= 0 ? at : t.turns.length - 1
+      if (i < 0) return t
+      return { ...t, turns: t.turns.map((u, k) => (k === i ? { ...u, noted: { item: ev.item, id: ev.id, text: ev.text, scope: ev.scope, place: ev.place, undo: ev.undo } } : u)) }
+    }
+    case 'used_notes': {
+      const at = t.turns.map((u) => u.turn).lastIndexOf(ev.turn)
+      const i = at >= 0 ? at : t.turns.length - 1
+      if (i < 0 || !ev.notes.length) return t
+      return { ...t, turns: t.turns.map((u, k) => (k === i ? { ...u, usedNotes: { tokens: ev.tokens, notes: ev.notes } } : u)) }
+    }
+    case 'customize_undone':
+      if (t.turns.some((u) => u.noted?.undo === ev.undo)) {
+        return { ...t, turns: t.turns.map((u) => (u.noted?.undo === ev.undo ? { ...u, noted: { ...u.noted, undone: { ok: ev.ok, message: ev.message } } } : u)) }
+      }
+      return { ...t, turns: t.turns.map((u) => (u.entries.some((e) => e.applied?.undo === ev.undo)
+        ? { ...u, entries: u.entries.map((e) => (e.applied?.undo === ev.undo ? { ...e, applied: { ...e.applied, undone: { ok: ev.ok, message: ev.message } } } : e)) }
+        : u)) }
     case 'status':
       return { ...t, model: ev.model, mode: ev.mode, context: { used: ev.context_tokens, window: ev.context_window }, todos: ev.todos ?? t.todos, vision: ev.vision ?? t.vision, speed: ev.tokens_per_sec ?? t.speed ?? null }
     case 'pane_opened':

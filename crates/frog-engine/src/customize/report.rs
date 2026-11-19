@@ -860,12 +860,19 @@ pub fn apply(
                 Some(p) => listed(cfg, cwd, chat, p)?,
                 None => default_rules_file(cwd, scope),
             };
-            lines::add(&file, text)
+            lines::add(&page_target(&file, cwd)?, text)
         }
-        Edit::RuleEdit { path, n, old, text } => {
-            lines::edit(&listed(cfg, cwd, chat, path)?, *n, old, text)
-        }
-        Edit::RuleRemove { path, n, old } => lines::remove(&listed(cfg, cwd, chat, path)?, *n, old),
+        Edit::RuleEdit { path, n, old, text } => lines::edit(
+            &page_target(&listed(cfg, cwd, chat, path)?, cwd)?,
+            *n,
+            old,
+            text,
+        ),
+        Edit::RuleRemove { path, n, old } => lines::remove(
+            &page_target(&listed(cfg, cwd, chat, path)?, cwd)?,
+            *n,
+            old,
+        ),
         Edit::MemoryEdit { id, scope, text } => {
             let store = memory.context("this session keeps no memory")?;
             store.edit(note_scope(scope)?, id, text).map(|_| ())
@@ -889,6 +896,18 @@ pub fn apply(
             }
         }
     }
+}
+
+/// The file a page edit really writes. One in the project must stay in it after every link
+/// is followed (a repo can ship `AGENTS.md` as a link anywhere); one outside it (your home
+/// rules, which you may link into a dotfiles repo) may lead anywhere. Never a link to nothing.
+fn page_target(file: &Path, cwd: &Path) -> Result<PathBuf> {
+    let root = std::fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf());
+    if file.starts_with(cwd) || file.starts_with(&root) {
+        return super::safe_target(file, cwd);
+    }
+    let anywhere = file.ancestors().last().unwrap_or(file).to_path_buf();
+    super::safe_target(file, &anywhere)
 }
 
 fn listed(cfg: &Config, cwd: &Path, chat: bool, path: &str) -> Result<PathBuf> {

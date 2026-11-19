@@ -73,6 +73,8 @@ enum Verbs {
         "usefolder": Look(tool: "UseFolder", live: "Moving to", past: "Moved to", created: nil, object: .path),
         "sendmessage": Look(tool: "SendMessage", live: "Messaging", past: "Messaged", created: nil, object: .text),
         "recall": Look(tool: "Recall", live: "Recalling", past: "Recalled", created: nil, object: .text),
+        "customize": Look(tool: "Customize", live: "Proposing a change", past: "Proposed a change", created: nil, object: .none),
+        "note": Look(tool: "Note", live: "Noting", past: "Noted", created: nil, object: .text),
     ]
 
     /// The verbs for an engine tool name, any casing; an unknown tool is "Called" + its name.

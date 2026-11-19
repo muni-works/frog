@@ -637,14 +637,45 @@ final class Conversation {
     }
 
     /// `note`, with a deny: why, sent back to the agent so it can adjust.
-    func answer(_ decision: Decision, note: String? = nil) {
+    /// `choice`: a Customize card's alternative ("Keep it just for me"), by its id.
+    func answer(_ decision: Decision, note: String? = nil, choice: String? = nil) {
         guard let p = permission else { return }
         let note = note?.trimmingCharacters(in: .whitespacesAndNewlines)
-        link?.send(.permission(id: p.id, decision: decision, note: note?.isEmpty == false ? note : nil))
+        // A Customize card's allow always names its choice (⌘↩, the sidebar and a notification
+        // included), and is never "always"; a plain card's never names one.
+        var decision = decision
+        var choice = decision == .deny ? nil : choice
+        if let proposal = p.proposal, decision != .deny {
+            decision = .allow
+            choice = proposal.choice(for: choice)
+        } else if p.proposal == nil {
+            choice = nil
+        }
+        link?.send(.permission(id: p.id, decision: decision, note: note?.isEmpty == false ? note : nil, choice: choice))
         permission = nil
         Conversation.effects?.answered(self, permission: p.id)
         Conversation.decided?(p, decision)
     }
+
+    /// Undo a Customize change by its receipt's handle; `customize_undone` answers on the receipt.
+    func undo(_ handle: String) {
+        link?.send(.undo(handle))
+    }
+
+    /// A Customize card on no row of the conversation ("Make it a rule" asks as `note:<id>`): it
+    /// waits after the last turn, as a question with no item does.
+    func drawsProposalLoose(_ p: PermissionRequest) -> Bool {
+        p.proposal != nil && itemAt[p.item] == nil
+    }
+
+    /// "Make it a rule" on a note Frog kept: the engine answers with its Customize card.
+    func noteToRule(_ note: NotedNote) {
+        link?.send(.noteToRule(id: note.id, scope: note.scope))
+    }
+
+    /// The app's own settings, changed from a conversation (`setting_change`, live only): the app
+    /// applies it (`CustomizeSettings` on the Mac). Unset in tests and previews: nothing changes.
+    @MainActor static var applySetting: ((String, JSONValue) -> Void)?
 
     /// Answer the open `Ask`: the picked labels and/or the user's own words. Neither dismisses it.
     func answer(question choices: [String], other: String? = nil) {
@@ -981,6 +1012,33 @@ final class Conversation {
             changesVersion += 1
         case .outputTokens(let turn, let output, let soFar, let slow, let cached):
             pulse.tokens(turn: turn, output: output, soFar: soFar, slow: slow, cached: cached)
+        case .customizeApplied(let item, let undo, let card):
+            // On the Customize call that made it; one this conversation never saw gets a row.
+            upsert(item) { state in
+                if case .message = state.kind, state.text.isEmpty { state.kind = .tool(name: "Customize", arg: card.title) }
+                state.done = true
+                state.applied = CustomizeApplied(undo: undo, card: card)
+            }
+        case .noted(let note):
+            if let t = turns.lastIndex(where: { $0.number == note.turn }) ?? turns.indices.last {
+                turns[t].noted = NotedState(note: note)
+            }
+        case .usedNotes(let turn, _, let notes):
+            if !notes.isEmpty, let t = turns.lastIndex(where: { $0.number == turn }) ?? turns.indices.last {
+                turns[t].usedNotes = notes
+            }
+        case .customizeUndone(let undo, let ok, let message):
+            for t in turns.indices where turns[t].noted?.note.undo == undo {
+                turns[t].noted?.undone = .init(ok: ok, message: message)
+            }
+            for t in turns.indices {
+                if let i = turns[t].items.firstIndex(where: { $0.applied?.undo == undo }) {
+                    turns[t].items[i].applied?.undone = .init(ok: ok, message: message)
+                }
+            }
+        case .settingChange(let id, let value):
+            // Live only by the engine's word; a replay that carried one still changes nothing.
+            if !replaying { Conversation.applySetting?(id, value) }
         case .itemGisted(let item, let gist):
             // A finished call's one-line summary, from the engine's side-model. It lands on the
             // row itself, so it survives a replay and a reload: nothing is cached here.

@@ -17,15 +17,15 @@
     {"id": "billing", "label": "Billing", "run": 3}
   ],
   "agentActions": {
-    "_about": "What the agent may change from a conversation (Customize tool, docs/customize-events.md), and how: apply = at once, with Undo; ask = one card to approve. A setting's tier is the agent key on its row. Anything unlisted asks.",
+    "_about": "What the agent may change from a conversation (Customize tool, docs/customize-events.md), and how: apply = at once, with Undo; ask = one card to approve. Only cosmetic changes and Frog's own private notes apply; anything about money, permissions, connections, tools, skills, any rules file or anything shared asks. A setting's tier is the agent key on its row. Anything unlisted asks.",
     "line.notes": "apply",
-    "line.home": "apply",
+    "line.home": "ask",
     "line.project": "ask",
-    "skill": "apply",
+    "skill": "ask",
     "tool": "ask"
   },
   "rows": [
-    { "id": "notifications", "agent": "apply", "section": "general", "platform": "both", "control": "toggle",
+    { "id": "notifications", "agent": "ask", "section": "general", "platform": "both", "control": "toggle",
       "label": "Notifications", "description": "When a session needs you or finishes while Frog is in the background." },
     { "id": "editor", "section": "general", "platform": "invite", "control": "menu",
       "label": "Open files in",

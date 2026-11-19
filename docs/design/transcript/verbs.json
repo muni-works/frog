@@ -49,7 +49,9 @@
     { "tool": "SetTitle", "live": "Naming", "past": "Named", "object": "text" },
     { "tool": "UseFolder", "live": "Moving to", "past": "Moved to", "object": "path" },
     { "tool": "SendMessage", "live": "Messaging", "past": "Messaged", "object": "text" },
-    { "tool": "Recall", "live": "Recalling", "past": "Recalled", "object": "text" }
+    { "tool": "Recall", "live": "Recalling", "past": "Recalled", "object": "text" },
+    { "tool": "Customize", "live": "Proposing a change", "past": "Proposed a change", "object": "none" },
+    { "tool": "Note", "live": "Noting", "past": "Noted", "object": "text" }
   ],
   "start": {
     "about": "A new cloud session's start on the live row (spec.md, 'The row'), before its first turn: one stage at a time, each from what the gateway reports, replacing the last with the thought's cross-fade (nothing for 600 ms, at most one change per 1.2 s). The dot holds still and is never amber here. A stage that fails is 'Failed' (warn, the one red word) and the reason in muted, with the retry action. Nothing is left once the first turn's row takes over.",
