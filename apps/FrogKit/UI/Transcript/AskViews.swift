@@ -82,6 +82,7 @@ struct QuestionCard: View {
         }
         .padding(TurnSpace.Card.padding)
         .glassEffect(.regular.tint(.blue.opacity(0.10)), in: .rect(cornerRadius: TurnSpace.Card.radius))
+        .metricsEdge("box", claims: ["box", "right"], kind: "question card", text: question.question)
     }
 
     private func option(_ o: Question.Option, index: Int) -> some View {

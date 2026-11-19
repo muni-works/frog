@@ -6,7 +6,21 @@ import SwiftUI
 /// and the rules are the web's (`lineOf` in apps/web/src/ui/rows.ts), so both apps say the same.
 struct StepLine: Equatable {
     enum State: Equatable { case run, ok, failed, denied }
-    enum Kind: Equatable { case command, edit, read, search, web, other }
+    enum Kind: Equatable {
+        case command, edit, read, search, web, other
+
+        /// The web's `data-kind` for the same line: the edges dump names lines by it.
+        var metricsName: String {
+            switch self {
+            case .command: "command"
+            case .edit: "edit"
+            case .read: "read"
+            case .search: "search"
+            case .web: "web"
+            case .other: "other"
+            }
+        }
+    }
     struct Diff: Equatable { let added: UInt32; let removed: UInt32 }
 
     var name: String
@@ -297,10 +311,12 @@ struct LineFrame<Mark: View, Content: View>: View {
                     .opacity(hovered ? 1 : 0)
             }
             .overlay(alignment: .leading) {
+                // Hung by layout, not `offset` (a drawing shift), so its frame is where it draws.
                 mark
                     .frame(width: L.mark, height: L.mark)
                     .foregroundStyle(Tokens.textTertiary)
-                    .offset(x: -L.hang)
+                    .metricsEdge("mark", claims: ["hung"])
+                    .alignmentGuide(.leading) { $0[.leading] + L.hang }
             }
             .padding(.leading, edge.indent)
             .contentShape(.rect)
@@ -382,7 +398,7 @@ struct StepLineView: View {
         }
         .help(line.title.isEmpty ? (line.gist.isEmpty ? "" : item.arg) : line.title)
         .metricsRow(.line, line.text, key: item.id, fontSize: line.verb.isEmpty && line.gist.isEmpty && line.mono
-                    ? LineType.status.mono : LineType.status.size)
+                    ? LineType.status.mono : LineType.status.size, sub: line.kind.metricsName)
     }
 
     @ViewBuilder
@@ -408,12 +424,14 @@ struct StepLineView: View {
         if !line.result.isEmpty {
             Text(line.result).font(LineType.result).foregroundStyle(Tokens.textTertiary)
                 .lineLimit(1).truncationMode(.tail)
+                .metricsEdge("result", claims: ["right"], text: line.result)
         }
         if let d = line.diff {
             (Text(verbatim: "+\(d.added)").foregroundStyle(Tokens.accent)
                 + Text(verbatim: " −\(d.removed)").foregroundStyle(Tokens.warn))
                 .font(LineType.result)
                 .fixedSize()
+                .metricsEdge("result", claims: ["right"], text: "+\(d.added) −\(d.removed)")
         }
         if item.sandboxEscaped {
             Text(verbatim: "outside the sandbox").font(LineType.result).foregroundStyle(Tokens.textTertiary).fixedSize()
@@ -445,6 +463,7 @@ struct OpenedStep: View {
                         Text(n).frame(height: Tokens.Transcript.status.line)
                     }
                 }
+                .metricsEdge("opened: failing tests", claims: ["text"], kind: "line:\(line.kind.metricsName)", text: names.joined(separator: " "))
                 .font(.frog(size: Tokens.Transcript.status.mono, design: .monospaced))
                 .foregroundStyle(Tokens.text)
                 .accessibilityLabel("Failing tests")
@@ -504,9 +523,12 @@ struct OpenedStep: View {
                 .frame(maxHeight: 320)
                 .fixedSize(horizontal: false, vertical: true)
                 .background(Tokens.well, in: .rect(cornerRadius: TurnSpace.Card.nestedRadius))
+                .metricsEdge("opened: output box", claims: ["box", "right"], kind: "line:\(line.kind.metricsName)")
             }
             HStack(spacing: TurnSpace.Inset.row) {
                 Text(conversation.cloudSession != nil ? "Ran in your Frog Cloud sandbox" : "Ran on this Mac")
+                    .metricsEdge("opened: caption", claims: ["text"], kind: "line:\(line.kind.metricsName)",
+                                 text: conversation.cloudSession != nil ? "Ran in your Frog Cloud sandbox" : "Ran on this Mac")
                 if lines.count > Self.tail {
                     Button(all ? "Show less" : "Show all \(lines.count) lines") { all.toggle() }
                         .buttonStyle(.plain).foregroundStyle(Tokens.textSecondary)
@@ -552,7 +574,7 @@ struct FoldLineView: View {
                 } content: {
                     Text(words).font(LineType.sans).foregroundStyle(Tokens.textSecondary).metricsFirstWord()
                     Spacer(minLength: TurnSpace.Inset.row)
-                    if !time.isEmpty { Text(time).font(LineType.result).foregroundStyle(Tokens.textTertiary) }
+                    if !time.isEmpty { Text(time).font(LineType.result).foregroundStyle(Tokens.textTertiary).metricsEdge("result", claims: ["right"], text: time) }
                 }
             }
             .buttonStyle(.plain)

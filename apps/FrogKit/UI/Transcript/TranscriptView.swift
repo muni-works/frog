@@ -523,6 +523,11 @@ struct TranscriptView: View {
     private var transcript: some View {
         ScrollView {
             stackRows
+            .background {
+                if TranscriptMetrics.enabled {
+                    Color.clear.onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { TranscriptMetrics.shared.columnGlobal = $0 }
+                }
+            }
             .coordinateSpace(.named(Self.content))
             .environment(\.turnSpace, space)
             .environment(\.transcriptEdge, edge)
@@ -880,6 +885,7 @@ struct EndView: View {
             .font(.callout)
             .foregroundStyle(color)
             .textSelection(.enabled)
+            .metricsEdge("icon and words", claims: ["text"], kind: "error", text: text)
     }
 }
 

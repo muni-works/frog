@@ -224,10 +224,13 @@ final class MessageTextView: NSTextView, @MainActor NSLayoutManagerDelegate {
             var kind = TranscriptMetrics.Kind.prose
             var text = (storage.string as NSString).substring(with: range)
             var firstChar = range.location
+            var sub = "prose"
             switch block {
-            case .code(_, let code): kind = .code; text = code
-            case .table: kind = .code
+            case .code(_, let code): kind = .code; text = code; sub = "code"
+            case .table: kind = .code; sub = "table"
+            case .heading: sub = "heading"
             case .bullet:
+                sub = "list item"
                 // The marker isn't the item's words: they start after its tab.
                 let tab = (text as NSString).range(of: "\t")
                 if tab.location != NSNotFound {
@@ -240,7 +243,20 @@ final class MessageTextView: NSTextView, @MainActor NSLayoutManagerDelegate {
             let first = layout.lineFragmentRect(forGlyphAt: glyphs.location, effectiveRange: nil)
             let last = layout.lineFragmentRect(forGlyphAt: NSMaxRange(glyphs) - 1, effectiveRange: nil)
             let box: CGRect
-            if kind == .prose {
+            if case .table = block {
+                // The table's own box: its cells' blocks, not the glyphs inside their padding.
+                var cells = CGRect.null
+                var at = range.location
+                while at < NSMaxRange(range) {
+                    var run = NSRange()
+                    let style = storage.attribute(.paragraphStyle, at: at, effectiveRange: &run) as? NSParagraphStyle
+                    for b in style?.textBlocks ?? [] {
+                        cells = cells.union(layout.boundsRect(for: b, glyphRange: layout.glyphRange(forCharacterRange: run, actualCharacterRange: nil)))
+                    }
+                    at = max(at + 1, NSMaxRange(run))
+                }
+                box = cells.isNull ? layout.boundingRect(forGlyphRange: glyphs, in: container) : cells
+            } else if kind == .prose {
                 // Every prose line is one fixed line box: the block starts a line above its
                 // first line's bottom (the line fragment also holds the paragraph's gap above).
                 let line = MessageStyle.lineBox
@@ -253,8 +269,9 @@ final class MessageTextView: NSTextView, @MainActor NSLayoutManagerDelegate {
             let x = fragment.minX + layout.location(forGlyphAt: g).x
             let font = storage.attribute(.font, at: firstChar, effectiveRange: nil) as? NSFont
             let k = "\(key)-\(i)"
+            if sub == "prose", storage.attribute(.frogInlineCode, at: firstChar, effectiveRange: nil) != nil { sub = "prose (opens with code)" }
             TranscriptMetrics.shared.set(k, kind: kind, text: text,
-                                         box: box.offsetBy(dx: origin.x, dy: origin.y), fontSize: font?.pointSize ?? 0)
+                                         box: box.offsetBy(dx: origin.x, dy: origin.y), fontSize: font?.pointSize ?? 0, sub: sub)
             TranscriptMetrics.shared.setFirst(k, x: origin.x + (kind == .code ? box.minX : x))
         }
     }

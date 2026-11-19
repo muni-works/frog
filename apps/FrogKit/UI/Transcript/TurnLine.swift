@@ -64,6 +64,13 @@ struct TurnLineShape: Equatable {
         return TurnLineShape(pieces: pieces, curve: points, lengthMs: total)
     }
 
+    /// From the left of the first mark it draws to the right of the last (strip or curve).
+    var drawnSpan: ClosedRange<CGFloat>? {
+        let xs = pieces.flatMap { [$0.x, $0.x + max(1, $0.width - 0.5)] } + curve.map(\.x)
+        guard let lo = xs.min(), let hi = xs.max(), hi > lo else { return nil }
+        return lo...hi
+    }
+
     /// The segment under x: the narrowest one covering it (a write over a long tool).
     func piece(at x: CGFloat) -> Piece? {
         pieces.filter { x >= $0.x && x <= $0.x + $0.width }.min { $0.width < $1.width }
@@ -166,7 +173,14 @@ struct TurnLine: View {
                 }
             }
             .help(pointer == nil ? "This turn: click to open it" : "")
-            .metricsRow(.turnline, "", key: "turnline-\(turn.id)-\(live)", fontSize: 0)
+            .background(alignment: .leading) {
+                // What it draws, not its box: the strip's and the curve's extent (edges dump).
+                if TranscriptMetrics.enabled, let span = shape.drawnSpan {
+                    Color.clear.frame(width: span.upperBound - span.lowerBound).offset(x: span.lowerBound)
+                        .metricsEdge("turn line (drawn)", claims: ["right"], kind: live ? "stats" : "footer")
+                }
+            }
+            .metricsRow(.turnline, "", key: "turnline-\(turn.id)-\(live)", fontSize: 0, sub: live ? "stats" : "footer")
             .accessibilityLabel("Turn timeline")
             .accessibilityAddTraits(.isButton)
         }

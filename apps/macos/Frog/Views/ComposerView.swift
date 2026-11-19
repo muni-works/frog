@@ -209,6 +209,7 @@ struct ComposerView: View {
                 // After the card's content shape, so a menu above the card still takes clicks.
                 .composerMenuHost()
                 .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+                .metricsEdge("box", claims: ["box", "right"], kind: "composer", global: true)
             }
             .padding(.horizontal, TurnSpace.gutter)
             .padding(.top, TurnSpace.top)

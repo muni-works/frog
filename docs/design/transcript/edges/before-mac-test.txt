@@ -1,0 +1,27 @@
+/Users/cam/Developer/frog/.claude/worktrees/local-model-experience-cd00de/apps/macos/FrogTests/TranscriptEdgesTests.swift:126: error: -[FrogTests.TranscriptEdgesTests testAndInANarrowerPane] : XCTAssertEqual failed: ("["prose (opens with code) words \"Backoff::delay took no Rng, so the jitter was whatever threa\": text off by 4.0", "list item words \"The delay takes an Rng, so a test can seed it.\": text off by 22.0", "list item words \"cargo test -q upload passes eleven of eleven, every run.\": text off by 22.0", "list item words \"The jitter is half the base at most.\": text off by 22.0", "footer turn line (drawn) \"\": right off by -3.0", "composer box \"\": box off by 32.0", "composer box \"\": right off by -32.0"]") is not equal to ("[]") - 7 off:
+prose (opens with code) words "Backoff::delay took no Rng, so the jitter was whatever threa": text off by 4.0
+list item words "The delay takes an Rng, so a test can seed it.": text off by 22.0
+list item words "cargo test -q upload passes eleven of eleven, every run.": text off by 22.0
+list item words "The jitter is half the base at most.": text off by 22.0
+footer turn line (drawn) "": right off by -3.0
+composer box "": box off by 32.0
+composer box "": right off by -32.0
+Test Case '-[FrogTests.TranscriptEdgesTests testAndInANarrowerPane]' failed (3.197 seconds).
+Test Case '-[FrogTests.TranscriptEdgesTests testEveryElementSitsOnTheColumnsTwoLines]' started.
+/Users/cam/Developer/frog/.claude/worktrees/local-model-experience-cd00de/apps/macos/FrogTests/TranscriptEdgesTests.swift:81: warning: -[FrogTests.TranscriptEdgesTests testEveryElementSitsOnTheColumnsTwoLines] : Modifying state during view update, this will cause undefined behavior.
+--
+/Users/cam/Developer/frog/.claude/worktrees/local-model-experience-cd00de/apps/macos/FrogTests/TranscriptEdgesTests.swift:119: error: -[FrogTests.TranscriptEdgesTests testEveryElementSitsOnTheColumnsTwoLines] : XCTAssertEqual failed: ("["prose (opens with code) words \"Backoff::delay took no Rng, so the jitter was whatever threa\": text off by 4.0", "list item words \"The delay takes an Rng, so a test can seed it.\": text off by 22.0", "list item words \"cargo test -q upload passes eleven of eleven, every run.\": text off by 22.0", "list item words \"The jitter is half the base at most.\": text off by 22.0", "footer turn line (drawn) \"\": right off by -3.0", "composer box \"\": box off by 32.0", "composer box \"\": right off by -32.0"]") is not equal to ("[]") - 7 off:
+prose (opens with code) words "Backoff::delay took no Rng, so the jitter was whatever threa": text off by 4.0
+list item words "The delay takes an Rng, so a test can seed it.": text off by 22.0
+list item words "cargo test -q upload passes eleven of eleven, every run.": text off by 22.0
+list item words "The jitter is half the base at most.": text off by 22.0
+footer turn line (drawn) "": right off by -3.0
+composer box "": box off by 32.0
+composer box "": right off by -32.0
+Test Case '-[FrogTests.TranscriptEdgesTests testEveryElementSitsOnTheColumnsTwoLines]' failed (3.061 seconds).
+Test Suite 'TranscriptEdgesTests' failed at 2026-11-18 23:06:11.666.
+	 Executed 2 tests, with 2 failures (0 unexpected) in 6.258 (6.259) seconds
+Test Suite 'FrogTests.xctest' failed at 2026-11-18 23:06:11.666.
+	 Executed 2 tests, with 2 failures (0 unexpected) in 6.258 (6.260) seconds
+Test Suite 'Selected tests' failed at 2026-11-18 23:06:11.666.
+	 Executed 2 tests, with 2 failures (0 unexpected) in 6.258 (6.260) seconds
