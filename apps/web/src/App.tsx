@@ -19,6 +19,7 @@ import { Inspector } from './ui/Inspector'
 import { usePreviewHub } from './ui/PreviewPane'
 import type { PreviewHub } from './preview'
 import { SessionList } from './ui/SessionList'
+import { Pin } from './ui/pin'
 import { firstTitle, stuck, provisional, undelivered, withOpening, type Opening } from './ui/Opening'
 import { useMachines } from './machines'
 import { creditLine, Palette, type Command } from './ui/Overlays'
@@ -255,8 +256,9 @@ export default function App() {
   // Documentation mode. Stable per session and mode: an inline ref ran on every render and threw
   // the reader to the end whenever anything set state (opening a fold, Show in Changes).
   const currentId = current?.id
-  // How tall the transcript was at the last render: you were following if you were at its end.
-  const lastHeight = useRef(0)
+  // Pinned to the end while a reply grows; your own scrolling lets go, a send pins it again
+  // (ui/pin.ts).
+  const pin = useRef(new Pin()).current
   // Where the scroller was when it last unmounted: the shell remounts it when a column opens (the
   // inspector, from an edit's Show in Changes), and the same session should keep its place.
   const lastScroll = useRef<{ id?: string; top: number } | null>(null)
@@ -264,23 +266,22 @@ export default function App() {
     if (!el) {
       if (threadScroll.current) lastScroll.current = { id: currentId, top: threadScroll.current.scrollTop }
       threadScroll.current = null
+      pin.attach(null)
       return
     }
     threadScroll.current = el
+    pin.attach(el)
     if (mode !== 'threads') return
-    if (savedScroll.current !== null) { el.scrollTop = savedScroll.current; savedScroll.current = null; lastHeight.current = el.scrollHeight; return }
+    if (savedScroll.current !== null) { el.scrollTop = savedScroll.current; savedScroll.current = null; pin.placed(); return }
     const last = lastScroll.current
-    if (last && last.id === currentId) { el.scrollTop = last.top; lastHeight.current = el.scrollHeight; return }
+    if (last && last.id === currentId) { el.scrollTop = last.top; pin.placed(); return }
     el.scrollTop = el.scrollHeight
-    lastHeight.current = el.scrollHeight
+    pin.pinned = true
   }, [mode, currentId]) // eslint-disable-line react-hooks/exhaustive-deps
-  // Following: if you were at the end of what was there at the last render (within a line), new
-  // output keeps you at the end; scrolled up, nothing moves you. Checked after every render.
+  // Following: pinned, new output keeps you at the end; scrolled up yourself, nothing moves you.
+  // Checked after every render.
   useEffect(() => {
-    const el = threadScroll.current
-    if (!el || mode !== 'threads') return
-    if (el.scrollTop + el.clientHeight >= lastHeight.current - 40) el.scrollTop = el.scrollHeight
-    lastHeight.current = el.scrollHeight
+    if (mode === 'threads') pin.follow()
   })
   useEffect(() => setMenuOpen(false), [view])
   // Stream only the open session. Attaching to a session wakes its sandbox, and the sockets
@@ -838,9 +839,9 @@ export default function App() {
               queued={queue[current.id]} restore={restore} vision={ct.vision} insert={preview?.insert} onText={preview ? (t) => preview.noteDraft(t) : undefined}
               onUnqueue={(i) => setQueue((all) => ({ ...all, [current.id]: (all[current.id] ?? []).filter((_, j) => j !== i) }))}
               asking={mode === 'threads' && !!ct.ask}
-              onSend={(text, images) => failedStart ? retry(current.id, text, images) : (ct.running || opening[current.id]
+              onSend={(text, images) => { pin.send(); return failedStart ? retry(current.id, text, images) : (ct.running || opening[current.id]
                 ? setQueue((all) => ({ ...all, [current.id]: [...(all[current.id] ?? []), { text, images }] }))
-                : send(current.id, text, images))} onStop={() => cloud?.send(current.id, { op: 'interrupt' })} onGit={() => push(current)} />}
+                : send(current.id, text, images)) }} onStop={() => cloud?.send(current.id, { op: 'interrupt' })} onGit={() => push(current)} />}
             {!paused && <CreditWarning account={account} addedCents={lastAdded} avg={avgTurn} onAdd={() => openSettings('billing')} />}
           </div>
         </>)}

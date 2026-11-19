@@ -209,6 +209,9 @@ final class Conversation {
     @ObservationIgnored private(set) var pendingDeliveries = 0
     /// Those messages themselves, oldest first, for the composer's pending strip.
     private(set) var pendingMessages: [SessionMessage] = []
+    /// Counts what you've sent (a message, a queued one, a new session's first): the transcript
+    /// goes to its end and pins there on each, wherever you were reading.
+    private(set) var sends = 0
     /// Background wakes the engine parked for the next turn boundary, in order (its
     /// `queued_events`): they flush with the next turn, whatever starts it.
     private(set) var queuedEvents: [String] = []
@@ -395,6 +398,7 @@ final class Conversation {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !images.isEmpty else { return }
         Self.userActivity?(self)
+        sends += 1
         if busy || replaying {
             queue.append(Queued(text: text, images: images))
             return
@@ -424,6 +428,7 @@ final class Conversation {
     /// (as the web does), and the engine's `turn_started` for it hands the row over.
     func open(_ start: CloudStart) {
         self.start = start
+        sends += 1
         turns.append(TurnState(number: nil, input: start.text, sentAt: start.since))
         busy = true
         link?.send(.submit(start.text, images: []))
@@ -435,6 +440,7 @@ final class Conversation {
         guard let i = turns.indices.first, turns[i].number == nil, !turns[i].finished else { return }
         turns[i].input = start.text
         self.start = start
+        sends += 1
         busy = true
         link?.send(.submit(start.text, images: []))
     }

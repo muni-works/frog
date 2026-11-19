@@ -45,6 +45,11 @@ final class TranscriptMetrics {
     var columnGlobal: CGRect = .zero
 
     func setEdge(_ key: String, _ edge: Edge) { edges[key] = edge }
+
+    /// While set (a test measuring one hosted pane), only views under that scope report: other
+    /// transcripts still alive in the test host (an earlier test's) don't write into the dump.
+    var scope: String?
+    func accepts(_ scope: String?) -> Bool { self.scope == nil || scope == self.scope }
     func removeEdge(_ key: String) { edges[key] = nil }
 
     private(set) var rows: [String: Row] = [:]
@@ -79,6 +84,7 @@ final class TranscriptMetrics {
         rows = [:]
         edges = [:]
         pendingFirst = [:]
+        scope = nil
     }
 
     /// The stats' figures tick, so the dump writes every duration `#s` and every other run of
@@ -173,6 +179,8 @@ extension EnvironmentValues {
     @Entry var metricsHidden = false
     /// The row whose first word a `metricsFirstWord()` below reports.
     @Entry var metricsKey: String?
+    /// The measured pane's scope (`TranscriptMetrics.scope`).
+    @Entry var metricsScope: String?
 }
 
 /// The coordinate space rows report in: the transcript column (`TranscriptView.content`).
@@ -185,12 +193,13 @@ private struct MetricsRow: ViewModifier {
     let fontSize: CGFloat
     var sub: String?
     @Environment(\.metricsHidden) private var hidden
+    @Environment(\.metricsScope) private var scope
 
     func body(content: Content) -> some View {
         content
             .environment(\.metricsKey, key)
             .onGeometryChange(for: CGRect.self, of: { $0.frame(in: metricsSpace) }) { box in
-                guard !hidden else { return TranscriptMetrics.shared.remove(key) }
+                guard !hidden, TranscriptMetrics.shared.accepts(scope) else { return TranscriptMetrics.shared.remove(key) }
                 TranscriptMetrics.shared.set(key, kind: kind, text: text, box: box, fontSize: fontSize, sub: sub)
             }
             // A row that's gone (lines folding as the replay streams) isn't a row any more.
@@ -202,10 +211,11 @@ private struct MetricsFirstWord: ViewModifier {
     var offset: CGFloat = 0
     @Environment(\.metricsKey) private var key
     @Environment(\.metricsHidden) private var hidden
+    @Environment(\.metricsScope) private var scope
 
     func body(content: Content) -> some View {
         content.onGeometryChange(for: CGFloat.self, of: { $0.frame(in: metricsSpace).minX }) { x in
-            guard !hidden, let key else { return }
+            guard !hidden, let key, TranscriptMetrics.shared.accepts(scope) else { return }
             TranscriptMetrics.shared.setFirst(key, x: x + offset)
         }
     }
@@ -241,12 +251,13 @@ private struct MetricsEdge: ViewModifier {
     var global = false
     @Environment(\.metricsKey) private var row
     @Environment(\.metricsHidden) private var hidden
+    @Environment(\.metricsScope) private var scope
     @State private var id = UUID()
 
     func body(content: Content) -> some View {
         content
             .onGeometryChange(for: CGRect.self, of: { $0.frame(in: global ? .global : metricsSpace) }) { box in
-                guard !hidden, kind != nil || row != nil else { return TranscriptMetrics.shared.removeEdge(id.uuidString) }
+                guard !hidden, kind != nil || row != nil, TranscriptMetrics.shared.accepts(scope) else { return TranscriptMetrics.shared.removeEdge(id.uuidString) }
                 TranscriptMetrics.shared.setEdge(id.uuidString, .init(row: row, kind: kind, part: part, text: text, box: box, claims: claims, global: global))
             }
             .onDisappear { TranscriptMetrics.shared.removeEdge(id.uuidString) }

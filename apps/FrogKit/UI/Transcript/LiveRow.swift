@@ -317,15 +317,21 @@ struct StatsLine: View {
     @Environment(\.transcriptEdge) private var edge
 
     var body: some View {
-        Text(stats.text)
+        // Its parts with a 10 pt gap, no separator characters, as the footer and the web draw
+        // metadata (5b76372f; spec, "The stats line"). Read aloud with commas.
+        HStack(spacing: 10) {
+            ForEach(Array(stats.parts.enumerated()), id: \.offset) { _, part in Text(part) }
+        }
             .font(.frog(size: Tokens.Transcript.meta.size).monospacedDigit())
             .foregroundStyle(Tokens.textTertiary)
             .frame(height: Tokens.Transcript.meta.line, alignment: .leading)
             .help(stats.help)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(stats.text)
             // On the words, inside the indent: what the metrics report is where they start.
             .metricsFirstWord()
             .padding(.leading, edge.indent)
-            .metricsRow(.stats, stats.text, key: "stats", fontSize: Tokens.Transcript.meta.size)
+            .metricsRow(.stats, stats.parts.joined(separator: " "), key: "stats", fontSize: Tokens.Transcript.meta.size)
     }
 }
 

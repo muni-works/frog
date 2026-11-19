@@ -141,9 +141,12 @@ final class TableTranscriptParityTests: XCTestCase {
         }
     }
 
-    func testJumpShowsTheTurn() {
+    func testJumpShowsTheTurn() throws {
         for table in [false, true] {
             let c = open(table: table, turns: 200)
+            // The jump is an animated scroll: no display frames, no scroll (it failed only in
+            // full runs that outlasted the display, 2026-11-19).
+            try TestRunner.skipUnlessTheDisplayDraws(host)
             let target = c.turns[40].id
             jumpBox.id = target
             XCTAssertTrue(wait() { self.visible.contains(target) },
@@ -223,6 +226,39 @@ final class TableTranscriptParityTests: XCTestCase {
             }, "table \(table), tools \(tools): a long answer stops at its start")
             close()
           }
+        }
+    }
+
+    /// Sending from far up the history brings the incoming reply into view (Cam, 2026-11-19):
+    /// the view goes to the end on the send, follows the reply, and holds a long one at its start
+    /// as above. On main it stayed where you were reading. Read from turn 1 by the rail's jump,
+    /// which stops following as your own scrolling does.
+    func testASendFromFarUpBringsTheReplyIntoView() throws {
+        for table in [false, true] {
+            let c = open(table: table, turns: 60)
+            // The jump up and the scroll back down are animated, on the display's frames.
+            try TestRunner.skipUnlessTheDisplayDraws(host)
+            XCTAssertTrue(wait() { self.atEnd() }, "table \(table): opens at the end")
+            jumpBox.id = c.turns[0].id
+            XCTAssertTrue(wait() { self.visible.contains(c.turns[0].id) && !self.atEnd() }, "table \(table): reading turn 1")
+            c.submit("and again")
+            XCTAssertTrue(wait(timeout: 3) { self.atEnd() }, "table \(table): the send went to the end")
+            send(c, #""turn_started","turn":61,"input":"and again""#)
+            send(c, #""item_started","id":"r61","kind":{"type":"message"}"#)
+            for i in 0..<30 {
+                send(c, #""item_delta","id":"r61","delta":{"type":"text","text":\#(Self.json("reply\(i), a paragraph that wraps in the window, and then some more words.\n\n"))}"#)
+                wait(timeout: 5) { self.drawnText().contains("reply\(i),") }
+            }
+            // The reply's first words on screen: its start held in view, not left below.
+            XCTAssertTrue(wait() {
+                guard let s = self.scrollView,
+                      let start = self.views(self.host, MessageTextView.self).first(where: { $0.string.hasPrefix("reply0,") })
+                else { return false }
+                let clip = s.contentView.bounds
+                let top = start.convert(start.bounds, to: s.contentView).minY
+                return top >= clip.minY - 2 && top < clip.maxY - s.contentInsets.bottom
+            }, "table \(table): the reply's start is in view")
+            close()
         }
     }
 
