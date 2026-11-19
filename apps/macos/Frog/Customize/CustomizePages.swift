@@ -1,6 +1,128 @@
 import AppKit
 import SwiftUI
 
+// MARK: - Skills (F1Skills)
+
+/// Skills: the weight card (once the engine reports weights), then a row per skill under In
+/// <project> and Everywhere. A row opens the skill.
+struct SkillsPage: View {
+    let store: CustomizeStore
+    let open: (String) -> Void
+
+    var body: some View {
+        CustomizeListPage(section: "skills") {
+            if let skills = store.skills {
+                if let card = WeightCard(skills: skills, budget: store.report?.skills.budgetTokens) { card }
+                if skills.isEmpty {
+                    SettingsRows {
+                        SettingsRow("No skills yet", description: "Add one with Add a skill, or put a SKILL.md in a folder under .frog/skills in a project.") { EmptyView() }
+                    }
+                }
+                ForEach(Self.groups(skills, project: store.projectName), id: \.label) { g in
+                    SettingsGroupLabel(text: g.label)
+                    SettingsRows {
+                        ForEach(g.skills) { s in SkillRow(skill: s, change: store.change) { open(s.name) } }
+                    }
+                }
+            } else {
+                CustomizeLoading()
+            }
+        }
+    }
+
+    /// In <project> first, then everywhere (the home folder's and Frog's own).
+    static func groups(_ skills: [CustomizeSkill], project: String?) -> [(label: String, skills: [CustomizeSkill])] {
+        let mine = skills.filter(\.project)
+        let all = skills.filter { !$0.project }
+        var out: [(String, [CustomizeSkill])] = []
+        if !mine.isEmpty { out.append(("In \(project ?? "this project")", mine)) }
+        if !all.isEmpty { out.append(("Everywhere", all)) }
+        return out
+    }
+}
+
+/// "Weight on every turn": shown only when the engine has given every skill's weight.
+private struct WeightCard: View {
+    let parts: [WeightBar.Part]
+    let total: Int
+    let budget: Int
+
+    /// Nil until the engine gives every skill's weight and use, and the budget they share.
+    init?(skills: [CustomizeSkill], budget: Int?) {
+        guard let budget, !skills.isEmpty, skills.allSatisfy({ $0.tokensPerTurn != nil && $0.uses != nil }) else { return nil }
+        self.budget = budget
+        parts = skills.map { .init(name: $0.name, tokens: $0.tokensPerTurn!, idle: ($0.uses ?? []).reduce(0, +) == 0) }
+        total = parts.map(\.tokens).reduce(0, +)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Weight on every turn").font(.frog(size: 13, weight: .semibold))
+                Spacer()
+                Text("\(total.formatted()) of \(budget.formatted()) tokens").font(.frog(size: 12.5)).foregroundStyle(Tokens.textSecondary).monospacedDigit()
+            }
+            WeightBar(parts: parts, budget: budget)
+            Text("Each bar is one skill's summary. An outlined one hasn't been used in 30 days.")
+                .font(.frog(size: 12.5)).foregroundStyle(Tokens.textTertiary)
+        }
+        .padding(.vertical, 14).padding(.horizontal, 18)
+        .background(CustomizeLook.card, in: .rect(cornerRadius: 14))
+    }
+}
+
+private struct SkillRow: View {
+    let skill: CustomizeSkill
+    var change: (CustomizeChange) -> Void = { _ in }
+    let open: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: open) {
+            HStack(spacing: 18) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("/\(skill.name)").font(.frog(size: 13, design: .monospaced))
+                        .foregroundStyle(idle ? Tokens.textSecondary : Tokens.text)
+                    Text(skill.builtIn ? "\(skill.description) Built into Frog." : skill.description)
+                        .font(.frog(size: 12.5)).foregroundStyle(Tokens.textTertiary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                if let uses = skill.uses {
+                    ActivityMarks(days: uses)
+                    let n = uses.reduce(0, +)
+                    Text(n == 0 ? "never" : "\(n)").font(.frog(size: 12.5)).monospacedDigit()
+                        .foregroundStyle(n == 0 ? Tokens.textTertiary : Tokens.textSecondary)
+                        .frame(width: 34, alignment: .trailing)
+                }
+                if skill.on == nil {
+                    Image(systemName: "chevron.right").font(.frog(size: 10, weight: .semibold)).foregroundStyle(Tokens.textTertiary)
+                }
+            }
+            .padding(.vertical, 11)
+            .contentShape(.rect)
+            .background(alignment: .center) {
+                if hovering { RoundedRectangle(cornerRadius: 8).fill(CustomizeLook.hot).padding(.horizontal, -10) }
+            }
+        }
+        .buttonStyle(.plain)
+        .overlay(alignment: .trailing) {
+            // The engine's switch, when it has one: beside the row's button, not inside it.
+            if let on = skill.on {
+                FrogToggle(label: skill.name, isOn: Binding(get: { on }, set: { change(.skill(name: skill.name, on: $0)) }))
+            }
+        }
+        .padding(.trailing, skill.on == nil ? 0 : 52)
+        .onHover { hovering = $0 }
+        .help("Open /\(skill.name): its file, and how to try it")
+        .accessibilityLabel("/\(skill.name)")
+        .accessibilityHint(skill.description)
+    }
+
+    private var idle: Bool { skill.uses.map { $0.reduce(0, +) == 0 } ?? false }
+}
+
 // MARK: - Connections (F3Connections)
 
 /// Connections: each server with its tools as squares, the sign-in it wants, and the old
@@ -163,6 +285,172 @@ private struct ConnectionsKey: View {
     }
 }
 
+// MARK: - Rules (F4Instructions, titled Rules)
+
+/// Rules: each instruction file as a sheet of its lines. Hover a line for Edit and Remove; the
+/// last row adds one. The file itself opens in its default app or shows in Finder.
+struct RulesPage: View {
+    let store: CustomizeStore
+
+    var body: some View {
+        CustomizeListPage(section: "rules") {
+            if let files = store.rules {
+                ForEach(files) { f in RuleSheet(store: store, file: f) }
+            } else {
+                CustomizeLoading()
+            }
+        }
+    }
+}
+
+private struct RuleSheet: View {
+    let store: CustomizeStore
+    let file: RuleFile
+    @State private var editing: Int?
+    @State private var draft = ""
+    @State private var adding = ""
+    @State private var problem: String?
+    @FocusState private var addFocused: Bool
+
+    private var lines: [RuleLine] { RuleText.lines(file.text) }
+    private var scopeName: String { file.scope == .project ? (store.projectName ?? "this project") : "everywhere" }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            ForEach(lines) { l in
+                RuleLineRow(line: l, editing: editing == l.index, draft: $draft,
+                            edit: { draft = l.text; editing = l.index },
+                            commit: { change(expect: l) { RuleText.replacing($0, at: l.index, with: draft) }; editing = nil },
+                            cancel: { editing = nil },
+                            remove: { change(expect: l) { RuleText.removing($0, at: l.index) } })
+            }
+            HStack(spacing: 0) {
+                TextField("Add a line for \(scopeName)", text: $adding)
+                    .textFieldStyle(.plain)
+                    .font(.frog(size: 14))
+                    .focused($addFocused)
+                    .onSubmit {
+                        let words = adding
+                        change(expect: nil) { RuleText.appending($0, words) }
+                        adding = ""
+                    }
+                    .accessibilityLabel("Add a line for \(scopeName)")
+            }
+            .padding(.vertical, 6)
+            if let problem {
+                Text(problem).font(.frog(size: 12)).foregroundStyle(Tokens.warn).padding(.top, 4)
+            }
+        }
+        .padding(.top, 14)
+        .padding(.bottom, 6)
+        .padding(.top, file.scope == .everywhere ? 12 : 0)
+    }
+
+    private var header: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(file.scope == .project ? "In \(scopeName)" : "Everywhere")
+                .font(.frog(size: 12, weight: .semibold)).foregroundStyle(Tokens.textSecondary)
+                .accessibilityAddTraits(.isHeader)
+            Text(shownPath).font(.frog(size: 11.5, design: .monospaced)).foregroundStyle(Tokens.textTertiary)
+                .lineLimit(1).truncationMode(.middle)
+            if !file.exists {
+                Text("made when you add a line").font(.frog(size: 11.5)).foregroundStyle(Tokens.textTertiary)
+            }
+            Spacer(minLength: 12)
+            if file.exists {
+                Button("Open in editor") { CustomizeFiles.open(file.url) }
+                    .buttonStyle(CustomizeLinkStyle())
+                    .help("Open \(file.url.lastPathComponent) in the app your Mac opens it with")
+                Button("Show in Finder") { CustomizeFiles.reveal(file.url) }
+                    .buttonStyle(CustomizeLinkStyle())
+                    .help("Show \(file.url.lastPathComponent) in Finder")
+            }
+        }
+        .padding(.bottom, 8)
+    }
+
+    private var shownPath: String {
+        if file.scope == .project, let folder = store.folder, file.url.path.hasPrefix(folder.path + "/") {
+            return String(file.url.path.dropFirst(folder.path.count + 1))
+        }
+        let home = store.home.path
+        return file.url.path.hasPrefix(home + "/") ? "~" + file.url.path.dropFirst(home.count) : file.url.path
+    }
+
+    /// Reads the file as it is on disk now, checks the line is still the one on screen, applies
+    /// the change and writes it. If someone changed the file meanwhile, nothing is written.
+    private func change(expect line: RuleLine?, _ apply: (String) -> String) {
+        problem = nil
+        let disk = file.exists ? ((try? String(contentsOf: file.url, encoding: .utf8)) ?? file.text) : ""
+        if let line, !RuleText.lines(disk).contains(line) {
+            problem = "\(file.url.lastPathComponent) changed since it was read. Nothing was written; here it is again."
+            Task { await store.loadRules() }
+            return
+        }
+        let next = apply(disk)
+        guard next != disk else { return }
+        do { try store.write(file, next) } catch { problem = "Couldn't write \(file.url.lastPathComponent): \(error.localizedDescription)" }
+    }
+}
+
+private struct RuleLineRow: View {
+    let line: RuleLine
+    let editing: Bool
+    @Binding var draft: String
+    let edit: () -> Void
+    let commit: () -> Void
+    let cancel: () -> Void
+    let remove: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 16) {
+            if editing {
+                TextField("Rule", text: $draft)
+                    .textFieldStyle(.plain)
+                    .font(.frog(size: 14))
+                    .onSubmit(commit)
+                    .onExitCommand(perform: cancel)
+                    .accessibilityLabel("Edit this rule")
+                Button("Save", action: commit).buttonStyle(CustomizeLinkStyle())
+                Button("Cancel", action: cancel).buttonStyle(CustomizeLinkStyle())
+            } else {
+                text.frame(maxWidth: .infinity, alignment: .leading)
+                if line.editable {
+                    HStack(spacing: 12) {
+                        Button("Edit", action: edit).buttonStyle(CustomizeLinkStyle())
+                        Button("Remove", action: remove).buttonStyle(CustomizeLinkStyle())
+                            .help("Take this line out of the file")
+                    }
+                    .opacity(hovering ? 1 : 0)
+                    // Still reachable without a pointer.
+                    .accessibilityHidden(false)
+                }
+            }
+        }
+        .padding(.vertical, 5)
+        .padding(.horizontal, 10)
+        .background(hovering || editing ? CustomizeLook.hot : .clear, in: .rect(cornerRadius: 8))
+        .padding(.horizontal, -10)
+        .contentShape(.rect)
+        .onHover { hovering = $0 }
+        .accessibilityElement(children: .contain)
+    }
+
+    @ViewBuilder
+    private var text: some View {
+        switch line.kind {
+        case .heading:
+            Text(line.text).font(.frog(size: 12.5, weight: .semibold)).foregroundStyle(Tokens.textSecondary).padding(.top, 6)
+        case .code:
+            Text(line.text).font(.frog(size: 12.5, design: .monospaced)).foregroundStyle(Tokens.textSecondary)
+        case .item, .plain:
+            Text(line.text).font(.frog(size: 14)).foregroundStyle(Tokens.text).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
 /// A quiet underlined link-button (Open in editor, Edit, Remove).
 struct CustomizeLinkStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
@@ -172,5 +460,106 @@ struct CustomizeLinkStyle: ButtonStyle {
             .underline(color: Tokens.lineStrong)
             .opacity(configuration.isPressed ? 0.6 : 1)
             .contentShape(.rect)
+    }
+}
+
+// MARK: - Memory (F5Memory)
+
+/// Memory: a dated rail of the notes Frog kept, newest at the top, each with where it applies;
+/// hover one to Forget it.
+struct MemoryPage: View {
+    let store: CustomizeStore
+
+    var body: some View {
+        CustomizeListPage(section: "memory") {
+            if let notes = store.notes {
+                if notes.isEmpty {
+                    SettingsRows {
+                        SettingsRow("No notes yet", description: "Say \"remember this\" in any conversation and Frog keeps a note here.") { EmptyView() }
+                    }
+                } else {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(notes.enumerated()), id: \.element.url) { i, n in
+                            MemoryEvent(note: n, newest: i == 0, project: store.projectName) { store.forget(n) }
+                        }
+                    }
+                    .background(alignment: .topLeading) {
+                        Rectangle().fill(Tokens.line).frame(width: 1).padding(.leading, 83).padding(.vertical, 10)
+                    }
+                }
+            } else {
+                CustomizeLoading()
+            }
+        }
+    }
+}
+
+private struct MemoryEvent: View {
+    let note: MemoryNote
+    let newest: Bool
+    let project: String?
+    let forget: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            Text(note.created.map { CustomizeFormat.day.string(from: $0) } ?? "")
+                .font(.frog(size: 12)).foregroundStyle(Tokens.textTertiary).monospacedDigit()
+                .frame(width: 64, alignment: .trailing)
+                .padding(.top, 2)
+            Circle()
+                .fill(newest ? Tokens.text : (hovering ? CustomizeLook.card : FrogCanvas.color))
+                .overlay { if !newest { Circle().strokeBorder(Tokens.textTertiary, lineWidth: 1.5) } }
+                .frame(width: 9, height: 9)
+                .padding(.top, 7)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(note.body)
+                    .font(.frog(size: 14))
+                    .foregroundStyle(Tokens.text)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let from = note.from {
+                    Text("from \u{201C}\(from)\u{201D}").font(.frog(size: 12.5)).foregroundStyle(Tokens.textTertiary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            ZStack(alignment: .trailing) {
+                Text(note.scope == .project ? (project ?? "this project") : "everywhere")
+                    .font(.frog(size: 12)).foregroundStyle(Tokens.textTertiary)
+                    .opacity(hovering ? 0 : 1)
+                Button("Forget", action: forget).buttonStyle(CustomizePillStyle())
+                    .help("Move this note to the Trash. Sessions open now keep it until they start again.")
+                    .opacity(hovering ? 1 : 0)
+            }
+            .fixedSize()
+        }
+        .padding(.vertical, 12)
+        .padding(.horizontal, hovering ? 12 : 0)
+        .background(hovering ? CustomizeLook.card : .clear, in: .rect(cornerRadius: 10))
+        .padding(.horizontal, hovering ? -12 : 0)
+        .contentShape(.rect)
+        .onHover { hovering = $0 }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(note.created.map { "Noted \(CustomizeFormat.day.string(from: $0))" } ?? "Note")
+    }
+}
+
+// MARK: - Automations (F6Automations)
+
+/// Automations: there's no engine for them yet, so the page says how one will be made and
+/// shows no week grid and no made-up runs.
+struct AutomationsPage: View {
+    var body: some View {
+        CustomizeListPage(section: "automations") {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("No automations yet")
+                    .font(.frog(size: 14, weight: .semibold))
+                Text("Frog can't repeat a task on its own yet. When it can, you'll make an automation by doing the task once in a conversation and saying \"keep doing this\". Each one's week shows here: every run, what it cost in dollars, and any run that waits on you.")
+                    .font(.frog(size: 12.5))
+                    .foregroundStyle(Tokens.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.top, 22)
+        }
     }
 }

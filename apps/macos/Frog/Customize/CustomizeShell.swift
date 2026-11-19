@@ -128,12 +128,17 @@ struct CustomizeView: View {
         let store = panes.customize
         Group {
             switch panes.customizePage {
-            // Skills, Rules, Memory and Automations come in the next change; until then the mode
-            // has Connections only (CustomizeCatalog.shown).
-            case .skill: ConnectionsPage(store: store)
+            case .skill(let name): SkillPage(store: store, name: name, tryIt: { startConversation("/\(name)") })
             case .add(let section): AddPage(store: store, section: section) { panes.customizePage = .review($0) }
             case .review(let draft): ReviewPage(panes: panes, draft: draft)
-            case nil: ConnectionsPage(store: store)
+            case nil:
+                switch panes.customizeSection {
+                case "skills": SkillsPage(store: store) { panes.customizePage = .skill($0) }
+                case "connections": ConnectionsPage(store: store)
+                case "rules": RulesPage(store: store)
+                case "memory": MemoryPage(store: store)
+                default: AutomationsPage()
+                }
             }
         }
         .id("\(panes.customizeSection)-\(String(describing: panes.customizePage))")
