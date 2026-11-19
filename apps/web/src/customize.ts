@@ -63,8 +63,8 @@ const safeDecode = (s: string) => { try { return decodeURIComponent(s) } catch {
 
 /** The page that can be shown: a skill's page needs that skill in a report, and a result's review
  *  needs a search the web doesn't have, so with no data they open their list or Add page. */
-export function shownAt(at: CustomizeAt, report: Report | null | undefined): CustomizeAt {
-  if (at.page === 'skill' && !report?.skills.items.some((s) => s.name === at.name)) return { section: 'skills' }
+export function shownAt(at: CustomizeAt): CustomizeAt {
+  if (at.page === 'skill') return { section: 'skills' }
   if (at.page === 'review') return { section: 'connections', page: 'add' }
   return at
 }
@@ -148,114 +148,6 @@ export const CUSTOMIZE_INVITES: Record<CustomizeSection, { id: string; label: st
   automations: [],
 }
 
-// ---------- The engine's report (docs/customize-api.md) ----------
-// Read today by the Mac (`frog --customize --json`); a cloud session will answer the same report
-// over its socket (`{"op":"customize"}`). The web draws these only when a report arrives: until
-// then no figure on these pages is shown, never a guess.
-
-export type Scope = 'project' | 'everywhere'
-export type Source = 'frog' | 'claude_code' | 'agents' | 'builtin' | 'project'
-
-export interface Use {
-  count: number
-  /** 30 numbers, oldest first; the last is today. */
-  days: number[]
-  last: { at: string; session: string; title: string | null } | null
-}
-
-export interface Skill {
-  id: string
-  name: string
-  description: string
-  scope: Scope
-  source: Source
-  path: string | null
-  on: boolean
-  tokens: number
-  tokens_if_on: number
-  full_tokens: number
-  shadowed_by: string | null
-  use: Use
-}
-
-export interface Tool {
-  name: string
-  exposed: string
-  description: string
-  state: 'on' | 'off' | 'withheld'
-  why: string | null
-  read_only: boolean | null
-  tokens: number
-  tokens_if_on: number
-  use: Use
-}
-
-export interface Connection {
-  name: string
-  scope: Scope
-  source: Source
-  on: boolean
-  state: 'connected' | 'connecting' | 'needs_sign_in' | 'declined' | 'failed' | 'off' | 'unknown'
-  error: string | null
-  waiting: null | 'sign_in' | 'allow'
-  tokens: number
-  tokens_if_all_on: number
-  instructions_tokens: number
-  tools: Tool[]
-  use: Use
-}
-
-export interface RulesFile {
-  path: string
-  scope: Scope
-  source: Source
-  kind: 'instructions' | 'rule'
-  applies: 'always' | 'paths'
-  paths: string[]
-  tokens: number
-  full_tokens: number
-  lines: { n: number; text: string; follows?: number }[]
-}
-
-export interface Note {
-  id: string
-  scope: Scope
-  created: string
-  session: string | null
-  title: string | null
-  text: string
-  path: string
-  cites: string[]
-  missing: string[]
-  tokens: number
-  omitted: boolean
-}
-
-export interface Report {
-  project: string | null
-  estimate: { chars_per_token: number; calibrated: boolean }
-  tokens: number
-  skills: { tokens: number; budget_tokens: number; names_only: boolean; items: Skill[] }
-  connections: { tokens: number; deferred: boolean; items: Connection[] }
-  rules: { tokens: number; files: RulesFile[] }
-  memory: { tokens: number; omitted: number; notes: Note[] }
-}
-
-/** An automation's run on a day (F6Automations): did something, nothing to do, waiting, failed. */
-export type RunMark = 'did' | 'idle' | 'ask' | 'fail'
-export interface Automation {
-  id: string
-  name: string
-  when: string
-  where: string
-  on: boolean
-  waiting: boolean
-  /** Seven days, oldest first; today last. */
-  week: RunMark[][]
-  /** Dollars this month, when known. */
-  spent?: number
-}
-
 /** The last seven days' names for the week grid, oldest first; today is "Today". */
 export function weekDays(now = new Date()): string[] {
   return Array.from({ length: 7 }, (_, i) => {
@@ -265,36 +157,3 @@ export function weekDays(now = new Date()): string[] {
     return d.toLocaleDateString('en-US', { weekday: 'short' })
   })
 }
-
-// ---------- Plain words for figures ----------
-
-export const tokens = (n: number) => `${n.toLocaleString('en-US')} token${n === 1 ? '' : 's'}`
-
-/** "Used 14 times in the last 30 days", "Used once…", "Never used". */
-export function usedLabel(u: Use): string {
-  if (!u.count) return 'Never used'
-  return `Used ${u.count === 1 ? 'once' : `${u.count} times`} in the last 30 days`
-}
-
-/** A tool square row's label: "12 tools, 4 on, 2 withheld". */
-export function toolsLabel(tools: readonly Pick<Tool, 'state'>[]): string {
-  const on = tools.filter((t) => t.state === 'on').length
-  const held = tools.filter((t) => t.state === 'withheld').length
-  const n = tools.length
-  return [`${n} tool${n === 1 ? '' : 's'}`, on ? `${on} on` : 'none on', held ? `${held} withheld` : ''].filter(Boolean).join(', ')
-}
-
-/** A day's height in the activity marks: none, some, a lot (relative to the busiest day). */
-export function activityLevels(days: readonly number[]): ('' | 'lo' | 'hi')[] {
-  const top = Math.max(0, ...days)
-  return days.map((d) => (d <= 0 ? '' : d >= Math.max(2, top * 0.6) ? 'hi' : 'lo'))
-}
-
-/** The weight card's bars: each skill on, as a share of the budget; the unused ones outlined. */
-export function weightBars(skills: readonly Skill[], budget: number): { name: string; share: number; idle: boolean }[] {
-  if (budget <= 0) return []
-  return skills.filter((s) => s.on && !s.shadowed_by && s.tokens > 0).map((s) => ({ name: s.name, share: Math.min(1, s.tokens / budget), idle: s.use.count === 0 }))
-}
-
-/** A short day for the memory rail: "Nov 16". */
-export const railDay = (iso: string) => new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
