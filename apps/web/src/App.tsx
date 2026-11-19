@@ -12,7 +12,7 @@ import { clearThreads, outOfCredits, useCloud, useRepos, useSessions, useThreads
 import { once } from './live'
 import { useLayer, useMenu } from './ui/layers'
 import { Composer } from './ui/Composer'
-import { Muni } from './ui/Pond'
+import { Pond, Muni } from './ui/Pond'
 import { HomeHero, REPO_SUGGESTIONS, SCRATCH_SUGGESTIONS, WhatIsFrog } from './ui/Home'
 import { Inspector } from './ui/Inspector'
 import { usePreviewHub } from './ui/PreviewPane'
@@ -689,7 +689,7 @@ export default function App() {
       <main className="main home">
         {collapsed && <div className="side-float">{sideToggle(false)}</div>}<div className="phone-bar floating"><Burger /><b>Frog</b></div>
         {authError && <div role="status" className="banner warn">Sign-in didn't finish ({authError}). Try again.</div>}
-        <div className="home-page"><HomeHero>
+        <Pond /><div className="home-page"><HomeHero>
           <div className="home-composer">
             <Composer onSend={() => {}} onSignIn={(provider, text) => leave(text || null, provider)} autoFocus suggestion={SCRATCH_SUGGESTIONS} onText={noteSignedOutDraft}
               model={chosenModel} models={models} machines={machines} onModel={setNewModel} mode={newMode} onMode={setNewMode} />
@@ -814,7 +814,7 @@ export default function App() {
 
         {view.kind === 'new' && (
           <div className="main home">
-            <div className="home-page"><HomeHero>
+            <Pond /><div className="home-page"><HomeHero>
             <div className="home-composer">
               <Composer usage={account ? { sub: account.subscription ?? null, credit: creditLine(account).replace(/ credit$/, ''), onBilling: () => openSettings('billing'), onOpen: refreshAccount } : undefined} repo={view.repo} draft={draft} autoFocus pickRepo={view.pick} suggestion={view.repo ? REPO_SUGGESTIONS : SCRATCH_SUGGESTIONS}
                 recent={[...new Set(sessions.map((s) => s.repo).filter(Boolean))]} repos={repoList.repos.map((r) => r.name)} install={repoList.install} onRepo={(repo) => setView({ kind: 'new', repo })} base={view.base} onBase={(base) => setView((v) => (v.kind === 'new' ? { ...v, base } : v))}

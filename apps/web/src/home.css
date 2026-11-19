@@ -1,5 +1,8 @@
 /* The new-session landing's centre (ui/Home.tsx). The hero sits at a fixed 150 px from the top
    (the main's 52 + 98 here), not centred, so it stays put signed out and signed in. */
+/* The pond stays behind as the column scrolls: it hangs off the main, the page sits over it. */
+.main.home { position: relative; }
+.main.home > .home-page, .main.home > .muni-foot { position: relative; }
 .home-page { flex: 1; min-height: 0; overflow-y: auto; box-sizing: border-box; padding: 98px var(--tx-gutter) 32px; container: home / inline-size; }
 .home-col { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; align-items: center; }
 .home-mark { width: 64px; height: 64px; }
