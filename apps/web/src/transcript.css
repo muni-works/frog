@@ -22,6 +22,9 @@
 /* Gaps (spec table). Between turns the loudest; inside a turn each row's `data-row` (prose, line,
  * box, footer) decides the gap above it, so two gaps never stack. */
 .tx > * + * { margin-top: var(--gap-block); }
+/* Where earlier turns go in as you scroll up to them (Transcript's TAIL_TURNS): no room of its own. */
+.tx > .tx-earlier { height: 0; }
+.tx > .tx-earlier + * { margin-top: 0; }
 .tx > .turn + .turn { margin-top: var(--gap-turn); }
 .tx .turn { position: relative; display: flex; flex-direction: column; }
 .tx .reply-block { display: flex; flex-direction: column; }
