@@ -1,5 +1,32 @@
 {
   "$defs": {
+    "Alternative": {
+      "properties": {
+        "id": {
+          "description": "Sent back as [`Op::Permission`]'s `choice`.",
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "tokens_per_turn": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "where": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "where"
+      ],
+      "type": "object"
+    },
     "AppView": {
       "description": "An MCP App (`ui://` resource) to render for a tool result. The HTML and the raw\n`CallToolResult` can be large, so they live in files under the frog data dir.",
       "properties": {
@@ -97,6 +124,23 @@
       },
       "required": [
         "label"
+      ],
+      "type": "object"
+    },
+    "AskedBy": {
+      "properties": {
+        "who": {
+          "description": "`user` (they asked for this change) or `frog` (Frog offered it after their message).",
+          "type": "string"
+        },
+        "words": {
+          "description": "Their words, quoted exactly as they wrote them.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "who",
+        "words"
       ],
       "type": "object"
     },
@@ -2389,6 +2433,17 @@
               ],
               "description": "For Edit/Write: exactly what would change, computed without touching the file."
             },
+            "proposal": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Proposal"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "For `Customize`: the change on one card (docs/customize-events.md). Approve with\n`Allow`, \"Not now\" with `Deny`, and the alternative with `Allow` and `choice` set to\nits id."
+            },
             "reason": {
               "description": "Why this one asks when similar calls don't (e.g. a command leaving the sandbox).",
               "type": [
@@ -2419,6 +2474,121 @@
             "name",
             "arg",
             "always",
+            "seq",
+            "session",
+            "created"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A `Customize` change applied (at once, or after the user approved its card): the same\ncard, now with an undo handle for [`Op::Undo`].",
+          "properties": {
+            "card": {
+              "$ref": "#/$defs/Proposal"
+            },
+            "created": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "event": {
+              "const": "customize_applied",
+              "type": "string"
+            },
+            "item": {
+              "description": "The tool call that made it.",
+              "type": "string"
+            },
+            "seq": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session": {
+              "type": "string"
+            },
+            "undo": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "item",
+            "undo",
+            "card",
+            "seq",
+            "session",
+            "created"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The answer to [`Op::Undo`]: `ok` false when nothing was undone, with why.",
+          "properties": {
+            "created": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "event": {
+              "const": "customize_undone",
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "ok": {
+              "type": "boolean"
+            },
+            "seq": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session": {
+              "type": "string"
+            },
+            "undo": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "undo",
+            "ok",
+            "message",
+            "seq",
+            "session",
+            "created"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The app should set one of its settings (`design/settings.json` row `id`) to `value`:\na `Customize` change or its undo. Live only; replay never re-applies it.",
+          "properties": {
+            "created": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "event": {
+              "const": "setting_change",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "seq": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "session": {
+              "type": "string"
+            },
+            "value": true
+          },
+          "required": [
+            "event",
+            "id",
+            "value",
             "seq",
             "session",
             "created"
@@ -4571,6 +4741,17 @@
               ],
               "description": "For Edit/Write: exactly what would change, computed without touching the file."
             },
+            "proposal": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Proposal"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "For `Customize`: the change on one card (docs/customize-events.md). Approve with\n`Allow`, \"Not now\" with `Deny`, and the alternative with `Allow` and `choice` set to\nits id."
+            },
             "reason": {
               "description": "Why this one asks when similar calls don't (e.g. a command leaving the sandbox).",
               "type": [
@@ -4593,6 +4774,76 @@
             "name",
             "arg",
             "always"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A `Customize` change applied (at once, or after the user approved its card): the same\ncard, now with an undo handle for [`Op::Undo`].",
+          "properties": {
+            "card": {
+              "$ref": "#/$defs/Proposal"
+            },
+            "event": {
+              "const": "customize_applied",
+              "type": "string"
+            },
+            "item": {
+              "description": "The tool call that made it.",
+              "type": "string"
+            },
+            "undo": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "item",
+            "undo",
+            "card"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The answer to [`Op::Undo`]: `ok` false when nothing was undone, with why.",
+          "properties": {
+            "event": {
+              "const": "customize_undone",
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "ok": {
+              "type": "boolean"
+            },
+            "undo": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "undo",
+            "ok",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The app should set one of its settings (`design/settings.json` row `id`) to `value`:\na `Customize` change or its undo. Live only; replay never re-applies it.",
+          "properties": {
+            "event": {
+              "const": "setting_change",
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "value": true
+          },
+          "required": [
+            "event",
+            "id",
+            "value"
           ],
           "type": "object"
         },
@@ -6191,6 +6442,13 @@
         },
         {
           "properties": {
+            "choice": {
+              "description": "With an allow of a `Customize` proposal: the id of its alternative, when the user\npicked that instead of the primary action.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "decision": {
               "$ref": "#/$defs/Decision"
             },
@@ -6213,6 +6471,41 @@
             "op",
             "id",
             "decision"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Undo a change from [`Event::CustomizeApplied`] by its handle; answered with\n[`Event::CustomizeUndone`].",
+          "properties": {
+            "op": {
+              "const": "undo",
+              "type": "string"
+            },
+            "undo": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "undo"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The app's current values of its settings (`design/settings.json` ids), so `Customize`\ncan read them and quote the old value on a card. Optional; send again on change.",
+          "properties": {
+            "op": {
+              "const": "settings",
+              "type": "string"
+            },
+            "values": {
+              "additionalProperties": true,
+              "type": "object"
+            }
+          },
+          "required": [
+            "op",
+            "values"
           ],
           "type": "object"
         },
@@ -7062,6 +7355,92 @@
       "required": [
         "blocks"
       ],
+      "type": "object"
+    },
+    "Proposal": {
+      "description": "One `Customize` change as a card (docs/customize-events.md): a title, the exact change,\nwhere it goes and what it costs, and the buttons.",
+      "properties": {
+        "alternative": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Alternative"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "At most one other choice, e.g. \"Just for me\" (Frog's notes instead of a shared file)."
+        },
+        "asked_by": {
+          "$ref": "#/$defs/AskedBy",
+          "description": "What asked for it: the user's own words, and whether they asked or Frog offered."
+        },
+        "change": {
+          "$ref": "#/$defs/QuotedChange",
+          "description": "The change, quoted exactly: `old` → `new`. A line to save has only `new`, a line to\nforget only `old`."
+        },
+        "dismiss": {
+          "description": "The decline button, always \"Not now\".",
+          "type": "string"
+        },
+        "kind": {
+          "description": "`line`, `skill`, `tool` or `setting`.",
+          "type": "string"
+        },
+        "path": {
+          "description": "The file it writes, when it writes one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "primary": {
+          "description": "The primary button: \"Remember\", \"Change\", \"Turn off\".",
+          "type": "string"
+        },
+        "title": {
+          "description": "\"Remember this?\", \"Change Density\", …",
+          "type": "string"
+        },
+        "tokens_per_turn": {
+          "description": "Tokens it adds to every turn (negative: saves), estimated; absent when unknown.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "where": {
+          "description": "Where it goes, in words: \"AGENTS.md in frog, shared with everyone in this repo\".",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "title",
+        "change",
+        "where",
+        "primary",
+        "dismiss",
+        "asked_by"
+      ],
+      "type": "object"
+    },
+    "QuotedChange": {
+      "properties": {
+        "new": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "old": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
       "type": "object"
     },
     "RanOn": {

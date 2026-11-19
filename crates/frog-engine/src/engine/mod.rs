@@ -36,6 +36,8 @@ mod project;
 #[cfg(test)]
 mod tests_compact;
 #[cfg(test)]
+mod tests_customize;
+#[cfg(test)]
 mod tests_ingest;
 #[cfg(test)]
 mod tests_prompt;
