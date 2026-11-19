@@ -65,7 +65,8 @@ An item that is off weighs `0`. Its would-be weight is in `tokens_if_on`.
     "items": [Connection]
   },
   "rules": { "tokens": 310, "files": [RulesFile] },
-  "memory": { "tokens": 35, "omitted": 0, "mode": "per_turn",
+  "memory": { "tokens": 266, "omitted": 0, "mode": "whole" | "per_turn" | "index",
+              "similarity": "lexical-1" | null,
               "notes": [Note], "groups": [Group], "pairs": [Pair] }
 }
 ```
@@ -198,7 +199,8 @@ first (a new AGENTS.md if none): the same file the agent's `Customize` tool writ
   "path": "/Users/cam/.local/share/frog/memory/projects/…/staging-db-reset-mondays.md",
   "cites": ["db/seed.sql"],
   "missing": [],                         // cited files that are gone
-  "tokens": 18,                          // its line when it comes back with a message
+  "tokens": 18,                          // its line: every call when in_prompt, else on the turns it comes back
+  "in_prompt": true,                     // rides every call (the whole store, or standing guidance)
   "omitted": false,                      // only in "index" mode: left out for space
   "source": "frog",                      // "user" (asked for: /remember, "remember that") or "frog" (noted on its own)
   "kind": "said" | null,                 // frog's notes: "said", "correction" or "read"
@@ -213,12 +215,21 @@ first (a new AGENTS.md if none): the same file the agent's `Customize` tool writ
 
 ### Memory: mode, the map, and pairs
 
-`mode` is `per_turn` when each turn brings back only the notes that fit the message
-(docs/customize-events.md, Used notes); then `memory.tokens` is the one fixed line every call
-carries, and each note adds its own `tokens` only on the turns it comes back ("about 35 tokens a
-turn" plus whatever a turn brings back). `index` is the fallback when the vectors can't be kept:
-every call carries the whole index, `tokens` is its size, and `x`, `y`, `group`, `groups` and
-`pairs` are empty.
+`mode` says where notes go (docs/customize-events.md, Used notes):
+
+- `whole`: the store fits a modest budget, so every note rides every call (`in_prompt` on all);
+  `tokens` is that index.
+- `per_turn`: past it, standing guidance (corrections; always / never / don't / prefer / instead
+  notes) rides every call and the rest come back only on turns they fit the message; `tokens`
+  is the standing notes plus one fixed line, and the others' `tokens` count only on turns they
+  come back.
+- `index`: the fallback when the vectors can't be kept: the whole index within the model's
+  budget; `x`, `y`, `group`, `groups`, `pairs` and `similarity` are empty.
+
+**`similarity: "lexical-1"` is word and trigram similarity, not meaning.** Two notes are near
+when they share words or word pieces. Caption the map that way ("Near means they share words"),
+never as notes grouped "by meaning" or "by topic understanding". The tag will change if a
+neural embedder replaces it.
 
 The map (canvas frame M1) is drawn from the same vectors that choose a turn's notes
 (`crates/frog-engine/src/memvec.rs`, `memmap.rs`), computed on this machine with no model:
@@ -226,7 +237,7 @@ The map (canvas frame M1) is drawn from the same vectors that choose a turn's no
 - **Positions** run 0 to 1 on both axes. They're deterministic: the same notes give the same
   places on every read and every launch, rebuilt from the files alone. A new note moves the
   others very little (under 0.05) and never changes their groups: notes are grouped in the order
-  they were written, so a later note can't rearrange earlier ones. Near means related;
+  they were written, so a later note can't rearrange earlier ones. Near means they share words;
   distances are approximate.
 - **Groups** are coarse, and each scope has its own:
 
@@ -250,8 +261,9 @@ The map (canvas frame M1) is drawn from the same vectors that choose a turn's no
 
   "Two notes disagree about …": quote both, with dates from the notes. **Keep the newer**
   removes the older note. **Show both** keeps both and stops flagging that pair. Both send
-  `memory_resolve`. A pair is flagged when the notes are about the same thing (they share most
-  words) and one negates what the other says, or they name different numbers ("port 8912" and
+  `memory_resolve`. Flagging is lexical too, so it can miss a disagreement worded differently,
+  and it can flag notes that only share words. A pair is flagged when the notes share most
+  words and one negates what the other says, or they name different numbers ("port 8912" and
   "port 8913"); or when they say the same thing.
 
 Everything stays on this machine, beside the notes. A note the user forgets (`/forget`,

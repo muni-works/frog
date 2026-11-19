@@ -286,12 +286,12 @@ fn memory_notes_carry_their_session_and_can_be_edited_and_removed() {
         (global.scope.as_str(), global.session.as_deref()),
         ("everywhere", None)
     );
-    // Each turn brings back what fits, so every call carries only the one fixed line.
-    assert_eq!(r.memory.mode, "per_turn");
-    assert_eq!(
-        r.memory.tokens,
-        Estimator::default().tokens(crate::memory::PER_TURN.len())
-    );
+    // Two notes fit: the whole store rides every call, as the index.
+    assert_eq!(r.memory.mode, "whole");
+    assert_eq!(r.memory.similarity.as_deref(), Some("lexical-1"));
+    let (index, _) = crate::memory::index(&store.load(), Tier::Strong, 200_000);
+    assert_eq!(r.memory.tokens, Estimator::default().tokens(index.len()));
+    assert!(r.memory.notes.iter().all(|n| n.in_prompt));
 
     let edit = Edit::MemoryEdit {
         id: n.id.clone(),
@@ -601,7 +601,7 @@ fn memory_map_is_stable_and_flags_pairs() {
         v
     };
     let a = read();
-    assert_eq!(a.mode, "per_turn");
+    assert_eq!(a.mode, "whole", "seven notes fit");
     // Stable across reloads: a second read, and one after the vectors file is rebuilt.
     assert_eq!(pos(&a), pos(&read()));
     let vectors = store.scope_dir(Scope::Project).unwrap().join(".vectors.json");
@@ -683,4 +683,30 @@ fn memory_map_is_stable_and_flags_pairs() {
     assert!(store.get(Scope::Project, &dup.older.id).is_none());
     assert!(store.get(Scope::Project, &dup.newer.id).is_some());
     assert!(!std::fs::read_to_string(&vectors).unwrap().contains(&format!("\"{}\"", dup.older.id)));
+}
+
+/// Past the whole-store budget the report says so: standing guidance rides every call, the
+/// rest come back per turn, and `tokens` is what every call carries.
+#[test]
+fn memory_report_follows_per_turn_placement() {
+    let root = project("memory-big");
+    let store = Store::new(&root.parent().unwrap().join("memory"), Some(&root));
+    for i in 0..40 {
+        store
+            .add(Scope::Project, &format!("Fact {i} about the onboarding flow and its email templates."))
+            .unwrap();
+    }
+    store.add(Scope::Project, "Never force-push without asking.").unwrap();
+    let cfg = hermetic();
+    let m = report_with(&ctx(&cfg, &root, Some(&store)), &Toggles::default(), &Uses::new()).memory;
+    assert_eq!(m.mode, "per_turn");
+    let row = |t: &str| m.notes.iter().find(|n| n.text.starts_with(t)).unwrap();
+    assert!(row("Never force-push").in_prompt);
+    assert!(!row("Fact 3 ").in_prompt);
+    let standing: Vec<_> = store.load().into_iter().filter(crate::memory::standing).collect();
+    let (kept, _, _) = crate::memory::index_within(&standing, crate::memory::whole_budget(Tier::Strong));
+    assert_eq!(
+        m.tokens,
+        Estimator::default().tokens(kept.len() + crate::memory::PER_TURN.len())
+    );
 }

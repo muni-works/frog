@@ -188,9 +188,13 @@ pub struct Memory {
     pub tokens: u64,
     pub omitted: usize,
     pub notes: Vec<NoteItem>,
-    /// `per_turn`: each turn brings back only the notes that fit; `index`: every call carries
-    /// the whole index (no vectors here).
+    /// `whole`: the store fits, so every note rides every call; `per_turn`: past that,
+    /// standing guidance rides and the rest come back per turn when they fit the message;
+    /// `index`: no vectors here, the whole index within the model's budget.
     pub mode: String,
+    /// How notes are compared: `lexical-1` is word and trigram similarity, not meaning.
+    /// `None` in `index` mode.
+    pub similarity: Option<String>,
     /// The map's groups (empty in `index` mode).
     pub groups: Vec<GroupItem>,
     /// Pairs that likely duplicate or disagree, for the user to settle (never resolved alone).
@@ -245,6 +249,9 @@ pub struct NoteItem {
     pub omitted: bool,
     /// `user` (asked for) or `frog` (noted on its own).
     pub source: String,
+    /// It rides every call (the whole store, or standing guidance); otherwise it comes back
+    /// only on turns it fits.
+    pub in_prompt: bool,
     /// For Frog's own notes: `said`, `correction` or `read`.
     pub kind: Option<String>,
     /// For `read`: the file it came from.
@@ -586,6 +593,7 @@ fn memory(ctx: &Ctx) -> Memory {
             omitted: 0,
             notes: Vec::new(),
             mode: "index".into(),
+            similarity: None,
             groups: Vec::new(),
             pairs: Vec::new(),
         };
@@ -603,6 +611,20 @@ fn memory(ctx: &Ctx) -> Memory {
             .and_then(|e| e.last_used.clone())
     };
     let latest = notes.iter().filter_map(last).max();
+    // As the session places them (`engine::noting::place_notes`): whole while the store fits,
+    // else standing guidance in the prompt and the rest per turn.
+    let small = crate::memory::whole_budget(ctx.tier);
+    let per_turn = vectors.is_some() && crate::memory::index_within(&notes, small).2 > 0;
+    let standing: Vec<crate::memory::Note> = notes
+        .iter()
+        .filter(|n| crate::memory::standing(n))
+        .cloned()
+        .collect();
+    let (standing_index, standing_each, _) = if per_turn {
+        crate::memory::index_within(&standing, small)
+    } else {
+        (String::new(), Vec::new(), 0)
+    };
     let now = chrono::Utc::now().timestamp();
     let items = notes
         .iter()
@@ -626,6 +648,13 @@ fn memory(ctx: &Ctx) -> Memory {
                 missing: n.missing.clone(),
                 tokens: line.map_or(0, |l| ctx.tokens(l.len() + 1)),
                 omitted: line.is_none() && vectors.is_none(),
+                in_prompt: if per_turn {
+                    standing_each
+                        .iter()
+                        .any(|(id, sc, l)| *id == n.id && *sc == n.scope && l.is_some())
+                } else {
+                    line.is_some()
+                },
                 source: n.source.clone(),
                 kind: n.kind.clone(),
                 from: n.from.clone(),
@@ -674,16 +703,23 @@ fn memory(ctx: &Ctx) -> Memory {
                 .collect()
         })
         .unwrap_or_default();
-    let per_turn = vectors.is_some();
     Memory {
         tokens: if per_turn {
-            ctx.tokens(crate::memory::PER_TURN.len())
+            ctx.tokens(standing_index.len() + crate::memory::PER_TURN.len())
         } else {
             ctx.tokens(index.len())
         },
         omitted: if per_turn { 0 } else { omitted },
         notes: items,
-        mode: if per_turn { "per_turn" } else { "index" }.into(),
+        mode: if per_turn {
+            "per_turn"
+        } else if vectors.is_some() {
+            "whole"
+        } else {
+            "index"
+        }
+        .into(),
+        similarity: vectors.as_ref().map(|_| crate::memvec::MODEL.to_string()),
         groups,
         pairs,
     }

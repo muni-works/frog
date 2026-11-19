@@ -6886,7 +6886,7 @@
           "type": "array"
         },
         "mode": {
-          "description": "`per_turn`: each turn brings back only the notes that fit; `index`: every call carries\nthe whole index (no vectors here).",
+          "description": "`whole`: the store fits, so every note rides every call; `per_turn`: past that,\nstanding guidance rides and the rest come back per turn when they fit the message;\n`index`: no vectors here, the whole index within the model's budget.",
           "type": "string"
         },
         "notes": {
@@ -6906,6 +6906,13 @@
             "$ref": "#/$defs/PairItem"
           },
           "type": "array"
+        },
+        "similarity": {
+          "description": "How notes are compared: `lexical-1` is word and trigram similarity, not meaning.\n`None` in `index` mode.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "tokens": {
           "description": "What memory adds to every call: the one fixed line in `per_turn` mode, the whole\nindex in `index` mode.",
@@ -7068,6 +7075,10 @@
         "id": {
           "type": "string"
         },
+        "in_prompt": {
+          "description": "It rides every call (the whole store, or standing guidance); otherwise it comes back\nonly on turns it fits.",
+          "type": "boolean"
+        },
         "kind": {
           "description": "For Frog's own notes: `said`, `correction` or `read`.",
           "type": [
@@ -7156,6 +7167,7 @@
         "tokens",
         "omitted",
         "source",
+        "in_prompt",
         "stale",
         "lit"
       ],

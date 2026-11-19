@@ -10,7 +10,8 @@
 //!   groups get similar angles) and a radius fixed by its first note, so it doesn't drift.
 //! - A note sits near its group's centre, offset by its own difference from the centroid.
 //!
-//! Coordinates run 0 to 1 on both axes. Near means related; distances are approximate.
+//! Coordinates run 0 to 1 on both axes. Near means the notes share words (lexical, not
+//! meaning); distances are approximate.
 
 use crate::memory::{Note, Scope};
 use crate::memvec::{Index, cosine, normalize};
