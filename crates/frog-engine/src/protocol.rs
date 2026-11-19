@@ -656,6 +656,11 @@ pub enum Event {
         /// the wait, for the turn's timeline. Absent in older logs and on a withdrawal.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         asked: Option<i64>,
+        /// Why the record says `deny` when the person didn't press "Not now": `timed_out` (no
+        /// answer in time) or `no_choice` (an allow that named no choice on a Customize
+        /// card, so nothing was applied). Absent: the decision is the person's own.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        outcome: Option<String>,
     },
     /// The user answered (or dismissed) a [`Event::Question`].
     QuestionResolved {
@@ -2350,6 +2355,7 @@ mod tests {
     #[test]
     fn waits_round_trip() {
         let e = Event::PermissionResolved {
+            outcome: None,
             id: "p".into(),
             decision: Decision::Allow,
             item: Some("t1".into()),

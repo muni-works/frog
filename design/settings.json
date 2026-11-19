@@ -13,8 +13,8 @@
     { "id": "billing", "label": "Billing" }
   ],
   "agentActions": {
-    "_about": "What the agent may change from a conversation (Customize tool, docs/customize-events.md), and how: apply = at once, with Undo; ask = one card to approve. Only cosmetic changes and Frog's own private notes apply; anything about money, permissions, connections, tools, skills, any rules file or anything shared asks. A setting's tier is the agent key on its row. Anything unlisted asks.",
-    "line.notes": "apply",
+    "_about": "What the agent may change from a conversation (Customize tool, docs/customize-events.md), and how: apply = at once, with Undo; ask = one card to approve. Only cosmetic settings apply (theme, density, detail, playful, sounds, show-energy, and only when the person named the setting and, for on/off, the direction); anything that writes text (Frog's notes, any rules file) and anything about money, permissions, connections, tools or skills asks, so an edit always shows its old and new text on a card. A setting's tier is the agent key on its row. Anything unlisted asks.",
+    "line.notes": "ask",
     "line.home": "ask",
     "line.project": "ask",
     "skill": "ask",

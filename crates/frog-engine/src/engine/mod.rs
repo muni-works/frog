@@ -1361,6 +1361,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             for id in cards {
                 let wait = shared.waits.lock().unwrap().remove(&id);
                 agent.emit(Event::PermissionResolved {
+                    outcome: None,
                     id,
                     decision: Decision::Deny,
                     item: wait.as_ref().map(|w| w.0.clone()),
@@ -1992,8 +1993,14 @@ struct Agent {
     /// What the user typed this turn, verbatim (no expanded mentions, wakes or tool output):
     /// the only words that can ask `Customize` for a change.
     user_words: Vec<String>,
+    /// Words that may justify a `Customize` card but never apply one or say the person asked:
+    /// a Present button's label (the model wrote it), and on a Continue the typed words of
+    /// the turn it picks back up.
+    card_words: Vec<String>,
     /// Undo for each `Customize` change, by the handle its event carried.
     undos: HashMap<String, crate::customize::Undo>,
+    /// `undos`' handles, oldest first, so only the newest are kept.
+    undo_order: std::collections::VecDeque<String>,
     /// `Customize` offers the user declined this session: never offered again.
     declined: HashSet<String>,
     /// The turn Frog last kept a note in: one a turn at most (`noting`).
@@ -2345,7 +2352,9 @@ impl Agent {
             compiled: None,
             notes,
             user_words: Vec::new(),
+            card_words: Vec::new(),
             undos: HashMap::new(),
+            undo_order: Default::default(),
             declined: HashSet::new(),
             noted_turn: None,
             remembered: false,
@@ -3164,7 +3173,7 @@ impl Agent {
             }
             Op::Continue { note } => {
                 let note = note.unwrap_or_else(|| crate::protocol::CONTINUE_NOTE.to_string());
-                self.turn_with(&note, Vec::new(), Vec::new(), true, turn::Typed::None)
+                self.turn_with(&note, Vec::new(), Vec::new(), true, turn::Typed::Carried)
                     .await?
             }
             Op::Shell { command } => self.shell(&command).await,

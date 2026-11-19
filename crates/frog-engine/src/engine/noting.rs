@@ -220,7 +220,10 @@ impl Agent {
         card.title = "Make this a rule?".into();
         card.primary = "Add rule".into();
         let item = format!("note:{id}");
-        if self.propose(&item, &card).await?.is_none() {
+        if !matches!(
+            self.propose(&item, &card).await?,
+            super::customize::Answer::Took(_)
+        ) {
             return Ok(());
         }
         let rule = match self.apply_change(&change)? {

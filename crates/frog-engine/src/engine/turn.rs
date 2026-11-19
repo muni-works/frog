@@ -11,8 +11,12 @@ pub(super) enum Typed {
     Parts(bool),
     /// Nothing (a message from another session, a wake, the continue note).
     None,
-    /// Only this (a button press counts for what its visible label says).
+    /// A button press: its label may justify a card, never apply a change or count as the
+    /// person asking (the model wrote it).
     Label(String),
+    /// A Continue: nothing typed now; the typed words of the turn it picks back up may
+    /// justify a card (an interrupted request can still be put to the person), never more.
+    Carried,
 }
 
 impl Agent {
@@ -321,7 +325,8 @@ impl Agent {
             self.conv.inputs.push(input.to_string());
         }
         // The words that may ask `Customize` for a change: what the person typed this turn.
-        self.user_words.clear();
+        let before = std::mem::take(&mut self.user_words);
+        self.card_words.clear();
         match typed {
             Typed::Parts(head) => {
                 if head {
@@ -329,7 +334,8 @@ impl Agent {
                 }
                 self.user_words.extend(raw_more);
             }
-            Typed::Label(label) => self.user_words.push(label),
+            Typed::Label(label) => self.card_words.push(label),
+            Typed::Carried => self.card_words = before,
             Typed::None => {}
         }
         self.conv.inputs.extend(more.iter().map(|p| p.text.clone()));

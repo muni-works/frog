@@ -244,7 +244,7 @@ async fn cosmetic_setting_applies_with_undo() {
     let script = vec![
         call(
             "c",
-            json!({"do": "set", "id": "density", "value": "compact", "words": "make it compact"}),
+            json!({"do": "set", "id": "density", "value": "compact", "words": "make the density compact"}),
         ),
         done(),
     ];
@@ -253,7 +253,7 @@ async fn cosmetic_setting_applies_with_undo() {
     let mut values = serde_json::Map::new();
     values.insert("density".into(), json!("comfortable"));
     r.h.ops.send(Op::Settings { values }).unwrap();
-    let evs = r.say("please make it compact", never).await;
+    let evs = r.say("please make the density compact", never).await;
     assert_eq!(
         setting_changes(&evs),
         vec![("density".into(), json!("compact"))]
@@ -283,9 +283,10 @@ async fn cosmetic_setting_applies_with_undo() {
     r.end().await;
 }
 
-/// A line for Frog's own notes applies at once; undo removes exactly that note.
+/// A line for Frog's own notes is a card too (nothing that writes text applies without one);
+/// approved, undo removes exactly that note.
 #[tokio::test]
-async fn note_applies_and_undo_removes_it() {
+async fn note_is_proposed_and_undo_removes_it() {
     let script = vec![
         call(
             "c",
@@ -295,7 +296,11 @@ async fn note_applies_and_undo_removes_it() {
     ];
     let mut r = rig(script, Mode::Default);
     r.idle().await;
-    let evs = r.say("remember we deploy on Fridays", never).await;
+    let evs = r
+        .say("remember we deploy on Fridays", |id, _| primary(id))
+        .await;
+    assert_eq!(cards(&evs).len(), 1, "{evs:?}");
+    assert_eq!(cards(&evs)[0].asked_by.who, "user");
     let done = applied(&evs);
     assert_eq!(done.len(), 1, "{evs:?}");
     assert!(done[0].1.tokens_per_turn.unwrap() > 0);
@@ -770,12 +775,18 @@ async fn an_asked_change_quotes_the_users_sentence() {
     ];
     let mut r = rig(script, Mode::Default);
     r.idle().await;
-    let evs = r.say("thanks. please make it compact", never).await;
+    let evs = r
+        .say("thanks. please make the density compact", never)
+        .await;
     let done = applied(&evs);
     assert_eq!(done.len(), 1, "{evs:?}");
     assert_eq!(done[0].1.asked_by.who, "user");
     assert!(
-        done[0].1.asked_by.words.contains("make it compact"),
+        done[0]
+            .1
+            .asked_by
+            .words
+            .contains("make the density compact"),
         "{:?}",
         done[0].1.asked_by
     );
@@ -792,7 +803,11 @@ async fn only_typed_text_is_the_users() {
             json!({"do": "set", "id": "density", "value": "compact", "words": "make it compact"}),
         )
     };
-    let script = vec![ask(), done(), ask(), done(), ask(), done(), ask(), done()];
+    let label = call(
+        "b",
+        json!({"do": "set", "id": "density", "value": "compact", "words": "Make the density compact"}),
+    );
+    let script = vec![ask(), done(), ask(), done(), ask(), done(), label, done()];
     let mut r = rig(script, Mode::Default);
     r.idle().await;
     let from_session = Op::Deliver {
@@ -812,17 +827,20 @@ async fn only_typed_text_is_the_users() {
         assert!(setting_changes(&evs).is_empty(), "{evs:?}");
         assert!(refused(&evs), "{}", tool_output(&evs));
     }
-    // A button counts for what its visible label says.
+    // Review 2, item 5: a button's label is the model's words, so a press is at most a card,
+    // never the person asking for a change, even with the setting and value named.
     let evs = r
         .run(
             Op::Act {
-                label: "Make it compact".into(),
+                label: "Make the density compact".into(),
                 send: String::new(),
             },
-            never,
+            |id, _| deny(id),
         )
         .await;
-    assert_eq!(setting_changes(&evs).len(), 1, "{evs:?}");
+    assert!(setting_changes(&evs).is_empty(), "{evs:?}");
+    assert_eq!(cards(&evs).len(), 1, "{evs:?}");
+    assert_eq!(cards(&evs)[0].asked_by.who, "frog");
     r.end().await;
 }
 
@@ -993,7 +1011,7 @@ async fn setting_undo_refuses_after_a_newer_value() {
     let script = vec![
         call(
             "c",
-            json!({"do": "set", "id": "density", "value": "compact", "words": "make it compact"}),
+            json!({"do": "set", "id": "density", "value": "compact", "words": "set density to compact"}),
         ),
         done(),
     ];
@@ -1002,7 +1020,7 @@ async fn setting_undo_refuses_after_a_newer_value() {
     let mut values = serde_json::Map::new();
     values.insert("density".into(), json!("comfortable"));
     r.h.ops.send(Op::Settings { values }).unwrap();
-    let evs = r.say("make it compact", never).await;
+    let evs = r.say("set density to compact", never).await;
     let undo = applied(&evs)[0].0.clone();
     // The user picks another value in Settings; the app says so.
     let mut values = serde_json::Map::new();
@@ -1034,7 +1052,7 @@ async fn no_alternative_when_the_notes_have_it() {
     ];
     let mut r = rig(script, Mode::Default);
     r.idle().await;
-    let evs = r.say("remember to use pnpm", never).await;
+    let evs = r.say("remember to use pnpm", |id, _| primary(id)).await;
     assert_eq!(applied(&evs).len(), 1, "{evs:?}");
     let evs = r.say("remember to use pnpm", |id, _| deny(id)).await;
     let c = cards(&evs);
@@ -1088,7 +1106,11 @@ async fn an_untyped_submit_is_not_the_users() {
             json!({"do": "set", "id": "density", "value": "compact", "words": "make it compact"}),
         )
     };
-    let script = vec![ask(), done(), ask(), done(), ask(), done()];
+    let named = call(
+        "b",
+        json!({"do": "set", "id": "density", "value": "compact", "words": "make the density compact"}),
+    );
+    let script = vec![ask(), done(), ask(), done(), named, done()];
     let mut r = rig(script, Mode::Default);
     r.idle().await;
     let untyped = Op::Submit {
@@ -1120,12 +1142,172 @@ async fn an_untyped_submit_is_not_the_users() {
         text: "from the app".into(),
         images: Vec::new(),
         more: vec![crate::protocol::Part {
-            text: "make it compact".into(),
+            text: "make the density compact".into(),
             images: Vec::new(),
             typed: true,
         }],
     };
     let evs = r.run(typed_part, never).await;
     assert_eq!(setting_changes(&evs).len(), 1, "{evs:?}");
+    r.end().await;
+}
+
+/// Review 2, item 2: after "Not now", the same change asked for plainly later still gets a
+/// card: a declined change never applies silently in that session.
+#[tokio::test]
+async fn a_declined_change_stays_a_card() {
+    let script = vec![
+        call(
+            "a",
+            json!({"do": "set", "id": "sounds", "value": false, "words": "these sounds", "offer": true}),
+        ),
+        done(),
+        call(
+            "b",
+            json!({"do": "set", "id": "sounds", "value": false, "words": "turn the sounds off"}),
+        ),
+        done(),
+    ];
+    let mut r = rig(script, Mode::Default);
+    r.idle().await;
+    let evs = r.say("ugh these sounds", |id, _| deny(id)).await;
+    assert_eq!(cards(&evs).len(), 1, "{evs:?}");
+    let evs = r.say("turn the sounds off", |id, _| deny(id)).await;
+    assert!(setting_changes(&evs).is_empty(), "{evs:?}");
+    assert_eq!(
+        cards(&evs).len(),
+        1,
+        "asked again: a card, not a silent change"
+    );
+    r.end().await;
+}
+
+/// Review 2, item 9: a one-letter reply ("y") still lets an offer be a card, and a Continue
+/// after an interrupt carries the interrupted turn's typed words, for a card only.
+#[tokio::test]
+async fn short_replies_and_continues_can_still_card() {
+    let script = vec![
+        call(
+            "a",
+            json!({"do": "remember", "line": "We deploy on Fridays", "words": "y", "offer": true}),
+        ),
+        done(),
+        done(),
+        call(
+            "b",
+            json!({"do": "set", "id": "sounds", "value": false, "words": "turn the sounds off"}),
+        ),
+        done(),
+    ];
+    let mut r = rig(script, Mode::Default);
+    r.idle().await;
+    let evs = r.say("y", |id, _| deny(id)).await;
+    assert_eq!(cards(&evs).len(), 1, "{}", tool_output(&evs));
+    let _ = r.say("turn the sounds off", never).await;
+    let evs = r.run(Op::Continue { note: None }, |id, _| deny(id)).await;
+    assert_eq!(cards(&evs).len(), 1, "{}", tool_output(&evs));
+    assert!(
+        setting_changes(&evs).is_empty(),
+        "carried words never apply"
+    );
+    r.end().await;
+}
+
+/// Review 2, item 8: a card nobody answered isn't the person saying no (it can be offered
+/// again), and the transcript never records an approval that applied nothing.
+#[tokio::test]
+async fn the_record_says_what_happened() {
+    let offer = || {
+        call(
+            "a",
+            json!({"do": "remember", "line": "We deploy on Fridays", "words": "we deploy on fridays", "offer": true}),
+        )
+    };
+    let script = vec![offer(), done(), offer(), done()];
+    let mut r = rig_with(script, Mode::Default, |c| c.approval_timeout_secs = 1);
+    r.idle().await;
+    // Nobody answers.
+    let evs = r.say("we deploy on fridays", |_, _| Op::DismissWakes).await;
+    let out = tool_output(&evs);
+    assert!(out.contains("No answer"), "{out}");
+    assert!(
+        evs.iter().any(|e| matches!(e, Event::PermissionResolved { decision: Decision::Deny, outcome: Some(o), .. } if o == "timed_out")),
+        "{evs:?}"
+    );
+    // Offered again: a card, not "already said not now". A bare allow applies nothing, and
+    // the record says so.
+    let evs = r.say("we deploy on fridays", |id, _| allow(id, None)).await;
+    assert_eq!(cards(&evs).len(), 1, "{}", tool_output(&evs));
+    assert!(applied(&evs).is_empty());
+    assert!(
+        !evs.iter().any(|e| matches!(
+            e,
+            Event::PermissionResolved {
+                decision: Decision::Allow,
+                ..
+            }
+        )),
+        "{evs:?}"
+    );
+    assert!(
+        evs.iter().any(
+            |e| matches!(e, Event::PermissionResolved { outcome: Some(o), .. } if o == "no_choice")
+        ),
+        "{evs:?}"
+    );
+    r.end().await;
+}
+
+/// Review 2, item 9: undo handles are capped (the oldest goes), so a long session doesn't
+/// keep every change's before and after text forever. Three in tests.
+#[tokio::test]
+async fn only_the_newest_undos_are_kept() {
+    let set = |id: &str, v: &str| {
+        call(
+            id,
+            json!({"do": "set", "id": "density", "value": v, "words": "set density to compact, then comfortable"}),
+        )
+    };
+    let script = vec![
+        set("a", "compact"),
+        set("b", "comfortable"),
+        set("c", "compact"),
+        set("d", "comfortable"),
+        done(),
+    ];
+    let mut r = rig(script, Mode::Default);
+    r.idle().await;
+    let evs = r
+        .say("set density to compact, then comfortable", |id, _| {
+            primary(id)
+        })
+        .await;
+    let handles: Vec<String> = applied(&evs).into_iter().map(|(u, _)| u).collect();
+    assert_eq!(handles.len(), 4, "{evs:?}");
+    let evs = r
+        .run(
+            Op::Undo {
+                undo: handles[0].clone(),
+            },
+            never,
+        )
+        .await;
+    assert!(
+        evs.iter().any(|e| matches!(e, Event::CustomizeUndone { ok: false, message, .. } if message.contains("nothing to undo"))),
+        "{evs:?}"
+    );
+    let evs = r
+        .run(
+            Op::Undo {
+                undo: handles[3].clone(),
+            },
+            never,
+        )
+        .await;
+    assert!(
+        evs.iter()
+            .any(|e| matches!(e, Event::CustomizeUndone { ok: true, .. })),
+        "{evs:?}"
+    );
     r.end().await;
 }

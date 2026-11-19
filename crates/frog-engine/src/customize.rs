@@ -133,6 +133,18 @@ fn tiers(json: &str) -> Tiers {
     Tiers { settings, actions }
 }
 
+/// The only settings that may change without a card: how Frog looks and sounds. A row marked
+/// apply that isn't here still asks; `design/settings.json` and this list are kept equal by a
+/// test.
+pub const COSMETIC: &[&str] = &[
+    "theme",
+    "density",
+    "detail",
+    "playful",
+    "sounds",
+    "show-energy",
+];
+
 pub fn setting(id: &str) -> Option<&'static Setting> {
     TIERS.settings.iter().find(|s| s.id == id)
 }
@@ -195,12 +207,15 @@ pub enum Change {
 
 impl Change {
     /// The `agentActions` key (or the setting row) that sets this change's tier.
+    /// Only a cosmetic setting can apply at once: anything that writes text (a note, a rules
+    /// file) or changes reach (a skill, a tool) is always a card, whatever the data says.
     pub fn tier(&self) -> Tier {
         match self {
-            Self::Line { target, .. } => action_tier(&format!("line.{}", target.key())),
-            Self::Skill { .. } => action_tier("skill"),
-            Self::Tool { .. } => action_tier("tool"),
-            Self::Set { id, .. } => setting(id).map_or(Tier::Ask, |s| s.tier),
+            Self::Line { .. } | Self::Skill { .. } | Self::Tool { .. } => Tier::Ask,
+            Self::Set { id, .. } => match setting(id) {
+                Some(s) if s.tier == Tier::Apply && COSMETIC.contains(&id.as_str()) => Tier::Apply,
+                _ => Tier::Ask,
+            },
         }
     }
 }
@@ -547,6 +562,58 @@ pub fn asking_sentence(change: &Change, user: &[String]) -> Option<String> {
         }
         Some(s)
     })
+}
+
+/// Words that turn a setting on, and off. A sentence with both, or with a negation, says
+/// neither for sure.
+const ON_WORDS: &[&str] = &["on", "enable", "enabled", "unmute", "show"];
+const OFF_WORDS: &[&str] = &["off", "disable", "disabled", "mute", "hide", "silence"];
+const NOT_WORDS: &[&str] = &[
+    "not", "don't", "dont", "never", "no", "without", "isn't", "doesn't", "stop",
+];
+
+/// Whether one typed sentence asks for this cosmetic setting plainly enough to apply it at
+/// once: the setting named by its own words (not only a value), for a choice the value
+/// named too, for on/off the direction said and only that one, and no negation.
+fn applies_in(change: &Change, typed: &str) -> bool {
+    let Change::Set { id, value } = change else {
+        return false;
+    };
+    if change.tier() != Tier::Apply {
+        return false;
+    }
+    let Some(row) = setting(id) else {
+        return false;
+    };
+    let t = tokens_of(typed);
+    if !names_setting_row(row, &t) || t.iter().any(|w| NOT_WORDS.contains(&w.as_str())) {
+        return false;
+    }
+    let has = |ws: &[&str]| t.iter().any(|w| ws.contains(&w.as_str()));
+    match value {
+        Value::Bool(on) => {
+            let (on_said, off_said) = (has(ON_WORDS), has(OFF_WORDS));
+            on_said != off_said && on_said == *on
+        }
+        Value::String(v) if !row.options.is_empty() => names_option(row, v, &t),
+        _ => false,
+    }
+}
+
+/// Whether any sentence the person typed this turn asks for this change plainly enough to
+/// apply it without a card ([`applies_in`]). Only `Change::Set` on a cosmetic setting can.
+pub fn applies(change: &Change, user: &[String]) -> bool {
+    user.iter().any(|u| {
+        u.split_inclusive(['.', '!', '?', '\n'])
+            .any(|s| applies_in(change, s.trim()))
+    })
+}
+
+/// Whether `words` are one whole message the person typed, however short ("y", "k", 👍): a
+/// reply too short for [`said_by_user`] still lets an offer be a card.
+pub fn whole_message(words: &str, user: &[String]) -> bool {
+    let w = norm(words);
+    !w.is_empty() && user.iter().any(|u| norm(u) == w)
 }
 
 // ---- line edits: minimal, never a rewrite ----
@@ -1090,13 +1157,111 @@ mod tests {
         assert_eq!(setting("editor").unwrap().tier, Tier::Ask);
         // Lists and buttons aren't settings to change.
         assert!(setting("machines").is_none());
-        assert_eq!(action_tier("line.notes"), Tier::Apply);
+        // Nothing that writes text applies without a card: Frog's notes ask too.
+        assert_eq!(action_tier("line.notes"), Tier::Ask);
         assert_eq!(action_tier("line.project"), Tier::Ask);
         // Home rules apply to every project; a skill loads its instructions everywhere.
         assert_eq!(action_tier("line.home"), Tier::Ask);
         assert_eq!(action_tier("skill"), Tier::Ask);
         assert_eq!(action_tier("tool"), Tier::Ask);
         assert_eq!(action_tier("not-listed"), Tier::Ask);
+    }
+
+    /// Review 2: the only changes that apply without a card are the cosmetic settings, in the
+    /// data and in code: a row or action marked apply anywhere else still asks.
+    #[test]
+    fn only_cosmetic_settings_apply() {
+        let mut apply: Vec<&str> = TIERS
+            .settings
+            .iter()
+            .filter(|s| s.tier == Tier::Apply)
+            .map(|s| s.id.as_str())
+            .collect();
+        apply.sort();
+        let mut cosmetic = COSMETIC.to_vec();
+        cosmetic.sort();
+        assert_eq!(apply, cosmetic);
+        assert!(TIERS.actions.values().all(|t| *t == Tier::Ask));
+        for target in [Target::Notes, Target::Home, Target::Project] {
+            for op in [LineOp::Add, LineOp::Remove, LineOp::Edit] {
+                let c = Change::Line {
+                    op,
+                    target,
+                    line: "x y".into(),
+                    to: Some("y z".into()),
+                };
+                assert_eq!(c.tier(), Tier::Ask);
+            }
+        }
+        let skill = Change::Skill {
+            name: "a".into(),
+            on: true,
+        };
+        assert_eq!(skill.tier(), Tier::Ask);
+        assert_eq!(
+            Change::Set {
+                id: "editor".into(),
+                value: json!("zed")
+            }
+            .tier(),
+            Tier::Ask
+        );
+    }
+
+    /// Review 2: a cosmetic setting applies only when the person named the setting (and for a
+    /// choice its value), and for on/off the direction matches. Anything less is a card.
+    #[test]
+    fn applying_needs_the_setting_and_its_direction() {
+        let set = |id: &str, v: Value| Change::Set {
+            id: id.into(),
+            value: v,
+        };
+        let ap = |c: &Change, t: &str| applies(c, &[t.to_string()]);
+        let sounds_off = set("sounds", json!(false));
+        let sounds_on = set("sounds", json!(true));
+        assert!(ap(&sounds_off, "turn the sounds off"));
+        assert!(ap(&sounds_off, "please mute sounds"));
+        assert!(!ap(&sounds_off, "sounds are great"));
+        assert!(!ap(&sounds_off, "turn the sounds on"));
+        assert!(!ap(&sounds_off, "don't turn off the sounds"));
+        assert!(!ap(&sounds_off, "turn it off"));
+        assert!(ap(&sounds_on, "turn sounds back on"));
+        assert!(!ap(&sounds_on, "sounds off and on again"));
+        let compact = set("density", json!("compact"));
+        assert!(ap(&compact, "set density to compact"));
+        assert!(ap(
+            &compact,
+            "thanks. make the density compact! then look at logs"
+        ));
+        assert!(!ap(&compact, "make it compact"), "the setting isn't named");
+        assert!(!ap(&compact, "density is fine"), "the value isn't named");
+        assert!(!ap(&compact, "don't make the density compact"));
+        assert!(ap(&set("theme", json!("dark")), "switch the theme to dark"));
+        assert!(!ap(&set("theme", json!("dark")), "dark mode please"));
+        // Never anything but a cosmetic setting, however plainly asked.
+        assert!(!ap(
+            &set("monthly-cap", json!("250")),
+            "raise my monthly cap to $250"
+        ));
+        let note = Change::Line {
+            op: LineOp::Add,
+            target: Target::Notes,
+            line: "We deploy on Fridays".into(),
+            to: None,
+        };
+        assert!(!ap(&note, "remember we deploy on fridays"));
+    }
+
+    /// Review 2, item 9: a one-letter or emoji reply is the person's words when the quote is
+    /// their whole message, so an offer can still be a card.
+    #[test]
+    fn a_whole_short_reply_is_the_users() {
+        for reply in ["y", "k", "👍", "Y."] {
+            let user = vec![reply.to_string()];
+            assert!(whole_message(reply, &user), "{reply}");
+            assert!(!whole_message("yes", &user));
+        }
+        assert!(!whole_message("", &["".to_string()]));
     }
 
     #[test]
