@@ -1,4 +1,5 @@
 import AppKit
+import CoreGraphics
 import Foundation
 
 /// What Customize shows, from what the engine and the files on disk can answer today: skills
@@ -187,6 +188,33 @@ struct MemoryNote: Identifiable, Hashable {
     let url: URL
     /// The conversation it was noted in, once the engine says.
     var from: String? = nil
+    /// From the engine's report: who wrote it ("user" or "frog"), how Frog learned it ("said",
+    /// "correction", "read") and the file it read, when it was last brought into a turn,
+    /// whether it's gone unused for 60 days or was used in the latest turn, its place on the
+    /// map (0 to 1) and its group, and what it adds on a turn it comes back.
+    var source: String? = nil
+    var kind: String? = nil
+    var readFrom: String? = nil
+    var lastUsed: Date? = nil
+    var stale = false
+    var lit = false
+    var place: CGPoint? = nil
+    var group: Int? = nil
+    var tokens: Int? = nil
+
+    /// "Frog noted this in "audit codebase", from reading the repo."
+    var provenance: String? {
+        let place = from.map { " in \u{201C}\($0)\u{201D}" } ?? ""
+        if source == "user" { return "You asked Frog to remember this\(place)." }
+        guard source == "frog" else { return from.map { "From \u{201C}\($0)\u{201D}." } }
+        let how = switch kind {
+        case "correction": ", from a correction"
+        case "read": readFrom.map { ", from reading \($0)" } ?? ", from reading the project"
+        case "said": ", from what you said"
+        default: ""
+        }
+        return "Frog noted this\(place)\(how)."
+    }
     var firstLine: String { body.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty } ?? "" }
 }
 
@@ -542,7 +570,29 @@ final class CustomizeStore {
         return true
     }
 
+    /// The setting the engine reads for noting on its own (`auto-note`, design/settings.json),
+    /// sent to every live engine when it changes and when one starts.
+    nonisolated static let autoNoteKey = "autoNote"
+    var autoNote: Bool = UserDefaults.standard.object(forKey: CustomizeStore.autoNoteKey) as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(autoNote, forKey: Self.autoNoteKey)
+            guard Self.loads else { return }
+            Library.shared.everyConversation().forEach { $0.link?.send(.settings(values: Self.engineSettings())) }
+        }
+    }
+
+    /// The app's settings the engine reads (`Op::Settings`).
+    nonisolated static func engineSettings() -> [String: JSONValue] {
+        ["auto-note": .bool(UserDefaults.standard.object(forKey: autoNoteKey) as? Bool ?? true)]
+    }
+
     func forget(_ note: MemoryNote) {
+        // With the engine's report, the engine forgets it, so its map and pairs drop it too.
+        if report != nil {
+            notes?.removeAll { $0.id == note.id && $0.scope == note.scope }
+            change(.memoryRemove(id: note.id, scope: note.scope == .project ? "project" : "everywhere"))
+            return
+        }
         try? MemoryFiles.forget(note)
         notes?.removeAll { $0.id == note.id && $0.scope == note.scope }
     }

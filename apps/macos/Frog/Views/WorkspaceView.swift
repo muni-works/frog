@@ -434,11 +434,16 @@ struct WorkspaceView: View {
     @ViewBuilder
     private var customizeLayer: some View {
         if panes.mode == .customize {
-            CustomizeView(panes: panes) { prompt in
+            CustomizeView(panes: panes, startConversation: { prompt in
                 let folder = panes.customize.folder
                 backToApp()
                 panes.start(prompt, in: folder, pane: focused)
-            }
+            }, makeRule: focused.conversation?.link == nil ? nil : { note in
+                // The engine asks first, on a card in the conversation: show it there.
+                let c = focused.conversation
+                backToApp()
+                c?.link?.send(.noteToRule(id: note.id, scope: note.scope == .project ? "project" : "everywhere"))
+            })
             .padding(.leading, extent(sessions: docked.sessions))
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(FrogCanvas.color)

@@ -212,7 +212,7 @@ final class CustomizeModeTests: XCTestCase {
            {"path":"/tmp/pond/CLAUDE.md","scope":"project","source":"claude_code","kind":"instructions","applies":"always","paths":[],"tokens":60,"full_tokens":60,"lines":[]},
            {"path":"/tmp/pond/.frog/rules/migrations.md","scope":"project","source":"frog","kind":"rule","applies":"paths","paths":["db/migrations/**"],"tokens":0,"full_tokens":90,"lines":[]},
            {"path":"/Users/ada/.config/frog/FROG.md","scope":"everywhere","source":"frog","kind":"instructions","applies":"always","paths":[],"tokens":40,"full_tokens":40,"lines":[]}]},
-         "memory":{"tokens":70,"omitted":0,"notes":[{"id":"staging","scope":"project","created":"2026-11-12T09:30:00-08:00","session":"c1f","title":"why did my seed data vanish","text":"The staging database is reset every Monday.","path":"/tmp/notes/staging.md","cites":[],"missing":[],"tokens":18,"omitted":false}]}}
+         "memory":{"tokens":35,"omitted":0,"mode":"per_turn","notes":[{"id":"staging","scope":"project","created":"2026-11-12T09:30:00-08:00","session":"c1f","title":"why did my seed data vanish","text":"The staging database is reset every Monday.","path":"/tmp/notes/staging.md","cites":[],"missing":[],"tokens":18,"omitted":false,"source":"frog","kind":"said","from":null,"last_used":null,"stale":false,"lit":true,"x":0.18,"y":0.3,"group":0},{"id":"spec","scope":"project","created":"2026-11-10T09:30:00-08:00","session":"c1f","title":"audit codebase","text":"Tests live in spec/, one file per module.","path":"/tmp/notes/spec.md","cites":[],"missing":[],"tokens":18,"omitted":false,"source":"frog","kind":"read","from":"README.md","last_used":null,"stale":false,"lit":true,"x":0.28,"y":0.22,"group":0},{"id":"uses-npm","scope":"project","created":"2026-10-28T09:30:00-07:00","session":"c1f","title":"set up a new CLI","text":"This project uses npm.","path":"/tmp/notes/uses-npm.md","cites":[],"missing":[],"tokens":18,"omitted":false,"source":"frog","kind":"said","from":null,"last_used":null,"stale":false,"lit":false,"x":0.25,"y":0.48,"group":0},{"id":"use-pnpm","scope":"project","created":"2026-11-17T09:30:00-08:00","session":"c1f","title":"Fix the install step","text":"Use pnpm in this project, never npm.","path":"/tmp/notes/use-pnpm.md","cites":[],"missing":[],"tokens":18,"omitted":false,"source":"frog","kind":"correction","from":null,"last_used":null,"stale":false,"lit":false,"x":0.3,"y":0.52,"group":0},{"id":"release","scope":"project","created":"2026-11-17T10:30:00-08:00","session":"c1f","title":"Write the 0.7.1 notes","text":"Release notes lead with fixes people asked for.","path":"/tmp/notes/release.md","cites":[],"missing":[],"tokens":18,"omitted":false,"source":"frog","kind":"correction","from":null,"last_used":null,"stale":false,"lit":true,"x":0.48,"y":0.74,"group":1},{"id":"tags","scope":"project","created":"2026-11-01T10:30:00-07:00","session":"c1f","title":"cut 0.7.0","text":"Tags are cut from main, never a branch.","path":"/tmp/notes/tags.md","cites":[],"missing":[],"tokens":18,"omitted":false,"source":"frog","kind":"said","from":null,"last_used":null,"stale":false,"lit":false,"x":0.56,"y":0.68,"group":1},{"id":"concise","scope":"everywhere","created":"2026-09-02T10:30:00-07:00","session":"c1f","title":null,"text":"Prefers short answers without preamble.","path":"/tmp/notes/concise.md","cites":[],"missing":[],"tokens":18,"omitted":false,"source":"user","kind":null,"from":null,"last_used":null,"stale":true,"lit":false,"x":0.78,"y":0.24,"group":2},{"id":"mew","scope":"everywhere","created":"2026-10-21T10:30:00-07:00","session":"c1f","title":"which model should I run","text":"Works on a 64 GB Mac and a paired GPU box called mew.","path":"/tmp/notes/mew.md","cites":[],"missing":[],"tokens":18,"omitted":false,"source":"frog","kind":"said","from":null,"last_used":null,"stale":false,"lit":false,"x":0.84,"y":0.72,"group":3}],"groups":[{"id":0,"label":"tests and data","scope":"project","x":0.25,"y":0.38,"count":4},{"id":1,"label":"releases","scope":"project","x":0.52,"y":0.71,"count":2},{"id":2,"label":"how you like to work","scope":"everywhere","x":0.78,"y":0.24,"count":1},{"id":3,"label":"your machines","scope":"everywhere","x":0.84,"y":0.72,"count":1}],"pairs":[{"key":"p:uses-npm|p:use-pnpm","kind":"disagree","older":{"id":"uses-npm","scope":"project"},"newer":{"id":"use-pnpm","scope":"project"},"resolutions":["keep_newer","show_both"]}]}}
         """#
 
     func testTheEngineReportBecomesThePages() throws {
@@ -238,12 +238,54 @@ final class CustomizeModeTests: XCTestCase {
 
         let notes = r.pageNotes()
         XCTAssertEqual(notes[0].from, "why did my seed data vanish")
+        XCTAssertEqual(notes[0].provenance, "Frog noted this in \u{201C}why did my seed data vanish\u{201D}, from what you said.")
+        XCTAssertEqual(notes[1].provenance, "Frog noted this in \u{201C}audit codebase\u{201D}, from reading README.md.")
+        XCTAssertEqual(notes[3].provenance, "Frog noted this in \u{201C}Fix the install step\u{201D}, from a correction.")
+        XCTAssertEqual(notes[6].provenance, "You asked Frog to remember this.")
+        XCTAssertTrue(notes[0].lit)
+        XCTAssertTrue(notes[6].stale)
+        XCTAssertEqual(notes[0].place, CGPoint(x: 0.18, y: 0.30))
+        XCTAssertEqual(r.memory.pairs?.first?.kind, "disagree")
+        XCTAssertEqual(r.memory.groups?.count, 4)
         XCTAssertEqual(notes[0].scope, .project)
         XCTAssertNotNil(notes[0].created)
         XCTAssertEqual(CustomizeFormat.perTurn(r.skills.tokens), "about 180 tokens a turn", "estimates say so")
     }
 
+    // MARK: The memory map (M1Memory)
+
+    func testTheMapDrawsOnlyWhatTheEnginePlaced() throws {
+        let r = try JSONDecoder.frog.decode(CustomizeReport.self, from: Data(Self.reportJSON.utf8))
+        let notes = r.pageNotes()
+        let map = try XCTUnwrap(MemoryMap.Model(notes: notes, groups: r.memory.groups ?? [], pairs: r.memory.pairs ?? [], mode: r.memory.mode))
+        XCTAssertEqual(map.dots.count, 8)
+        XCTAssertEqual(map.rings.count, 4)
+        XCTAssertEqual(map.dots.filter(\.lit).count, 3)
+        XCTAssertEqual(map.dots.filter(\.flagged).map(\.id), ["use-pnpm"], "the orange dot is on the newer of a disagreeing pair")
+        XCTAssertEqual(map.summary, "8 notes placed by similar wording, in 4 groups. 3 were used in your last turn. 1 pair disagrees.")
+        // No map for one note, for the engine's index mode, or for notes it didn't place.
+        XCTAssertNil(MemoryMap.Model(notes: [notes[0]], groups: [], pairs: [], mode: "per_turn"))
+        XCTAssertNil(MemoryMap.Model(notes: notes, groups: [], pairs: [], mode: "index"))
+        var unplaced = notes
+        unplaced[2].place = nil
+        XCTAssertNil(MemoryMap.Model(notes: unplaced, groups: [], pairs: [], mode: "per_turn"))
+        XCTAssertNil(MemoryMap.Model(notes: [], groups: [], pairs: [], mode: nil))
+    }
+
+    func testTheNotingSwitchReachesTheEngine() throws {
+        let enc = JSONEncoder()
+        enc.outputFormatting = .sortedKeys
+        let settings = String(decoding: try enc.encode(Op.settings(values: ["auto-note": .bool(false)])), as: UTF8.self)
+        XCTAssertEqual(settings, #"{"op":"settings","values":{"auto-note":false}}"#)
+        let rule = String(decoding: try enc.encode(Op.noteToRule(id: "spec", scope: "project")), as: UTF8.self)
+        XCTAssertEqual(rule, #"{"id":"spec","op":"note_to_rule","scope":"project"}"#)
+        XCTAssertNotNil(CustomizeStore.engineSettings()["auto-note"], "every engine is told whether to note on its own")
+    }
+
     func testChangesAsTheEngineTakesThem() {
+        XCTAssertEqual(CustomizeChange.memoryResolve(pair: "p:a|p:b", keepNewer: true).json, #"{"change":"memory_resolve","keep":"newer","pair":"p:a|p:b"}"#)
+        XCTAssertEqual(CustomizeChange.memoryResolve(pair: "p:a|p:b", keepNewer: false).json, #"{"change":"memory_resolve","keep":"both","pair":"p:a|p:b"}"#)
+        XCTAssertEqual(CustomizeChange.memoryRemove(id: "spec", scope: "project").json, #"{"change":"memory_remove","id":"spec","scope":"project"}"#)
         XCTAssertEqual(CustomizeChange.skill(name: "gh", on: false).json, #"{"change":"skill","name":"gh","on":false}"#)
         XCTAssertEqual(CustomizeChange.connection(name: "figma", on: true).json, #"{"change":"connection","name":"figma","on":true}"#)
         XCTAssertEqual(CustomizeChange.tool(exposed: "mcp__figma__comment", on: true).json, #"{"change":"tool","exposed":"mcp__figma__comment","on":true}"#)
@@ -515,11 +557,11 @@ final class CustomizeModeTests: XCTestCase {
             ("skills", "skills", nil, false),
             ("skills", "skills-with-engine-report", nil, true),
             ("connections", "connections-with-engine-report", nil, true),
-            ("memory", "memory-with-engine-report", nil, true),
             ("connections", "connections", nil, false),
             ("rules", "rules", nil, false),
             ("rules", "rules-with-engine-report", nil, true),
             ("memory", "memory", nil, false),
+            ("memory", "memory-map", nil, true),
             ("automations", "automations", nil, false),
             ("skills", "skill", .skill("release-notes"), false),
             ("connections", "add", .add("connections"), false),
