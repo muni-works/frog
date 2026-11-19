@@ -919,6 +919,8 @@ async fn no_customize_or_remember_in_a_worker() {
             json!({"do": "set", "id": "density", "value": "compact", "words": "make it compact"}),
         ),
         done(),
+        done(),
+        done(),
     ];
     let mut r = rig_with(script, Mode::Default, |c| c.worker = true);
     r.idle().await;
@@ -930,6 +932,28 @@ async fn no_customize_or_remember_in_a_worker() {
         "{evs:?}"
     );
     assert!(r.notes().is_empty(), "{:?}", r.notes());
+    // Review 4, LIVE 4: typed "remember that …" opening a message in a child says why nothing
+    // was kept, with the notice `/remember` gets there; untyped (the parent's prompt) it's quiet.
+    let child_notice = |evs: &[Event]| {
+        evs.iter().any(|e| {
+            matches!(e, Event::Notice { message, .. } if message.contains("only in a session you started"))
+        })
+    };
+    let evs = r.say("remember that we deploy on fridays", never).await;
+    assert!(r.notes().is_empty());
+    assert!(child_notice(&evs), "{evs:?}");
+    let evs = r
+        .run(
+            Op::Submit {
+                typed: false,
+                text: "remember that we deploy on fridays".into(),
+                images: Vec::new(),
+                more: Vec::new(),
+            },
+            never,
+        )
+        .await;
+    assert!(!child_notice(&evs), "{evs:?}");
     r.end().await;
 }
 
