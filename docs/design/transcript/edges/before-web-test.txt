@@ -3,7 +3,7 @@ TAP version 13
 not ok 1 - every element of the edge fixture sits on the column's two lines (1280 wide)
   ---
   duration_ms: 2503.082875
-  location: '/Users/cam/Developer/frog/.claude/worktrees/local-model-experience-cd00de/apps/web/test/transcript-edges.test.ts:2:37'
+  location: 'apps/web/test/transcript-edges.test.ts:2:37'
   failureType: 'testCodeFailure'
   error: |-
     5 off at 1280 × 2600:
@@ -95,7 +95,7 @@ not ok 1 - every element of the edge fixture sits on the column's two lines (128
     4: 'footer turn line (drawn) "": right off by -1.1'
   operator: 'deepStrictEqual'
   stack: |-
-    edges (/Users/cam/Developer/frog/.claude/worktrees/local-model-experience-cd00de/apps/web/test/transcript-edges.test.ts:51:10)
+    edges (apps/web/test/transcript-edges.test.ts:51:10)
     process.processTicksAndRejections (node:internal/process/task_queues:95:5)
     async Test.run (node:internal/test_runner/test:797:9)
     async Test.processPendingSubtests (node:internal/test_runner/test:526:7)
@@ -104,7 +104,7 @@ not ok 1 - every element of the edge fixture sits on the column's two lines (128
 not ok 2 - and with the inspector open (the column centred in a narrower pane)
   ---
   duration_ms: 1733.159791
-  location: '/Users/cam/Developer/frog/.claude/worktrees/local-model-experience-cd00de/apps/web/test/transcript-edges.test.ts:2:162'
+  location: 'apps/web/test/transcript-edges.test.ts:2:162'
   failureType: 'testCodeFailure'
   error: |-
     5 off at 1600 × 2600:
@@ -196,7 +196,7 @@ not ok 2 - and with the inspector open (the column centred in a narrower pane)
     4: 'footer turn line (drawn) "": right off by -1.1'
   operator: 'deepStrictEqual'
   stack: |-
-    edges (/Users/cam/Developer/frog/.claude/worktrees/local-model-experience-cd00de/apps/web/test/transcript-edges.test.ts:51:10)
+    edges (apps/web/test/transcript-edges.test.ts:51:10)
     process.processTicksAndRejections (node:internal/process/task_queues:95:5)
     async Test.run (node:internal/test_runner/test:797:9)
     async Test.processPendingSubtests (node:internal/test_runner/test:526:7)

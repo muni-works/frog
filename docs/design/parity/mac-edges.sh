@@ -5,9 +5,9 @@
 #   docs/design/parity/mac-edges.sh [out.json] [WxH] [look] [png]
 #   defaults: docs/design/transcript/metrics/edges-mac.json 1280x2600 dark (no png)
 #
-# A replay re-asks only Ask tool calls, so the fixture's question card doesn't show here (the
-# check runs with --no-require for that one kind); FrogTests/TranscriptEdgesTests feeds the same
-# events to a hosted pane and requires every kind. Needs the parity build (capture.sh makes it).
+# The replay passes the fixture's quiet-call question through, so every kind of row shows;
+# FrogTests/TranscriptEdgesTests feeds the same events to a hosted pane. Needs the parity build
+# (capture.sh makes it).
 set -euo pipefail
 HERE=${0:A:h}
 ROOT=${HERE:h:h:h}
@@ -32,4 +32,4 @@ HOME="$home" "$APP/Contents/MacOS/Frog" -FrogFolder "$home/code/lilypad" -FrogRe
     -FrogSnapshotDelay ${PARITY_MAC_WAIT:-22} -ApplePersistenceIgnoreState YES -importedLegacyDefaults YES \
     -autoArchiveChats NO -archivedSessions "()" -NSAppSleepDisabled YES -remoteEnabled NO -density comfortable -verbosity normal -showEnergy NO -verbosityBySession "{}" $style >/dev/null 2>"$WORK/stderr.log" || true
 [[ -s $OUT ]] || { print -u2 "mac-edges.sh: the Mac app didn't write $OUT"; tail -20 "$WORK/stderr.log" >&2; exit 1; }
-node "$HERE/check-edges.mjs" --no-require "$OUT"
+node "$HERE/check-edges.mjs" "$OUT"

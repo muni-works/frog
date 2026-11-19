@@ -14,9 +14,9 @@
 // footer. Turn 2 ends on an error, with a notice. Turn 3 holds open on a question card and a
 // permission card, with the live "Waiting for you" row and its stats.
 //
-// The question is the engine's quiet-call question (anchored on the message): the apps' edge
-// tests feed these events to the app directly. `frog --replay` only re-asks Ask tool calls, so a
-// Mac replay of this log shows everything but that card.
+// The question is the engine's quiet-call question, anchored on the message before it; the web's
+// gateway and `frog --replay` pass it through as logged, and the Mac's edge test feeds it to a
+// hosted pane like every other event.
 const cwd = process.argv[2] ?? "/tmp/lilypad";
 const session = "20261118-120000-edges";
 const model = "ollama/qwen3-coder:30b";

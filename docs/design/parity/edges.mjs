@@ -139,12 +139,14 @@ export function measureEdges() {
 }
 
 /** The page at `url` in headless Chrome at w × h (2×), measured: the dump without its header. */
-export async function measureURL(url, w, h, look = "dark", { wait = 8000, storage } = {}) {
+export async function measureURL(url, w, h, look = "dark", { wait = 8000, storage, chrome: bin } = {}) {
   const require = createRequire(new URL("../../../apps/web/package.json", import.meta.url));
   const WebSocket = require("ws");
-  const chrome = process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+  const chrome = bin ?? process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
   const profile = mkdtempSync(join(tmpdir(), "frog-edges-"));
-  const proc = spawn(chrome, ["--headless=new", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "--hide-scrollbars", "about:blank"], { stdio: ["ignore", "ignore", "pipe"] });
+  // Ubuntu's AppArmor stops Chrome's own sandbox on CI runners; the pages here are ours.
+  const linux = process.platform === "linux" ? ["--no-sandbox"] : [];
+  const proc = spawn(chrome, ["--headless=new", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "--hide-scrollbars", ...linux, "about:blank"], { stdio: ["ignore", "ignore", "pipe"] });
   try {
     const wsUrl = await new Promise((resolve, reject) => {
       let buf = "";

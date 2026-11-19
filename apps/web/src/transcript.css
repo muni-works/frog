@@ -71,13 +71,14 @@
 .tx .md h1 { font-size: calc(var(--tx-body-size) + var(--space-tight)); }
 .tx .md h2 { font-size: calc(var(--tx-body-size) + var(--space-hair)); }
 .tx .md :where(li) { margin: 0; }
-/* A list's markers hang in the gutter, as a line's mark does: an item's words start on the edge
- * (spec, "Measure and the left edge"). A nested list steps in by the marker column. */
-.tx .md > :is(ul, ol) { padding-left: 0; }
-.tx .md :is(ul, ol) :is(ul, ol) { padding-left: var(--tx-marker); }
-.tx .md .md-nest { padding-left: 0; }
-.tx .md .md-nest li { padding-left: calc(var(--tx-marker) * var(--d)); }
-.tx .md .md-nest li > span { right: calc(100% - var(--tx-marker) * var(--d) + var(--space-row)); }
+/* A reply's list markers hang in the gutter, as a line's mark does: an item's words start on the
+ * edge (spec, "Two lines"). A nested list steps in by the marker column. Markdown inside a box
+ * (a card, a report) keeps its markers inside. */
+.tx .say > .md > :is(ul, ol) { padding-left: 0; }
+.tx .say > .md :is(ul, ol) :is(ul, ol) { padding-left: var(--tx-marker); }
+.tx .say > .md .md-nest { padding-left: 0; }
+.tx .say > .md .md-nest li { padding-left: calc(var(--tx-marker) * var(--d)); }
+.tx .say > .md .md-nest li > span { right: calc(100% - var(--tx-marker) * var(--d) + var(--space-row)); }
 .tx .md li + li { margin-top: var(--gap-list); }
 .tx .md code { font-family: var(--font-mono); font-size: var(--tx-body-mono); line-height: 1; padding: var(--space-hair) var(--space-tight); border-radius: var(--space-tight); }
 /* Code that opens a paragraph or item: its plate overhangs the edge by its own padding, so its

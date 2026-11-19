@@ -322,8 +322,9 @@ struct StatsLine: View {
             .foregroundStyle(Tokens.textTertiary)
             .frame(height: Tokens.Transcript.meta.line, alignment: .leading)
             .help(stats.help)
-            .padding(.leading, edge.indent)
+            // On the words, inside the indent: what the metrics report is where they start.
             .metricsFirstWord()
+            .padding(.leading, edge.indent)
             .metricsRow(.stats, stats.text, key: "stats", fontSize: Tokens.Transcript.meta.size)
     }
 }

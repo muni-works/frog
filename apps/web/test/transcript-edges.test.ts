@@ -32,7 +32,10 @@ before(async () => {
   writeFileSync(fixture, execFileSync("node", [join(parity, "edges-fixture.mjs")]).toString());
   const port = await freePort();
   gateway = spawn("node", [join(parity, "gateway.mjs"), "--port", String(port), "--fixture", fixture, "--title", "Line up the edges"], { stdio: "ignore" });
-  await new Promise((r) => setTimeout(r, 500));
+  for (let i = 0; i < 100; i++) {
+    if (await fetch(`http://127.0.0.1:${port}/v1/sessions`).then((r) => r.ok, () => false)) break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
   // The page's /v1 goes to vite, which proxies to the gateway (vite.config.ts reads GATEWAY).
   process.env.GATEWAY = `http://127.0.0.1:${port}`;
   process.env.VITE_DEV_KEY = "parity";
@@ -46,7 +49,7 @@ after(async () => {
 });
 
 async function edges(w: number, h: number, storage?: Record<string, string>) {
-  const d = await measureURL(`${site!.origin}/s/s_parity`, w, h, "dark", { wait: 30_000, storage });
+  const d = await measureURL(`${site!.origin}/s/s_parity`, w, h, "dark", { wait: 30_000, storage, chrome: chrome! });
   const problems = check(d);
   assert.deepEqual(problems, [], `${problems.length} off at ${w} × ${h}:\n${table(d)}`);
 }

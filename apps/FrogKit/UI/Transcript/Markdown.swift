@@ -209,6 +209,12 @@ final class MarkdownCache {
     }
 }
 
+extension EnvironmentValues {
+    /// Markdown here is a reply in the transcript's column: a top-level list's markers hang in
+    /// the gutter, so its words start on the column's edge (spec, "Two lines"). The Mac reads it; the phone's text has no gutter.
+    @Entry var hangsListMarkers = false
+}
+
 struct MarkdownView: View {
     let text: String
     /// Still arriving from the model: written in at a reading pace.

@@ -142,7 +142,7 @@ final class ThinkingRowTests: XCTestCase {
         XCTAssertEqual(LiveStats(elapsed: 39, tokens: 1212, soFar: false, perSecond: 40, slow: false, waited: 6.4).text, "39s · waited 6s",
                        "waiting on you: the clock and how long (board 8, C)")
         XCTAssertEqual(LiveStats(elapsed: 7 * 86_400, tokens: nil, soFar: false, perSecond: nil, slow: false, waited: 7 * 86_400).text,
-                       "10080m 0s · waited 10080m 0s", "the clock shows at any length, as on the web")
+                       "7d 0h · waited 7d 0h", "the clock shows at any length, in days and hours past a day, as on the web")
         XCTAssertEqual(LiveStats(elapsed: 40, tokens: 900, soFar: true, perSecond: nil, slow: false, quiet: 12).text, "40s · 900 tokens · no output for 12s",
                        "an answer writing with nothing arriving")
         let s = LiveStats(elapsed: 9, tokens: 388, soFar: true, perSecond: 58, slow: false, cached: 11_900, firstToken: 0.8, thinking: true)

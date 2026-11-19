@@ -44,7 +44,7 @@ struct MessageText: NSViewRepresentable {
         view.updating = true
         defer { view.updating = false }
         view.reveal.streaming = streaming
-        view.show(blocks, indent: context.environment.transcriptEdge.indent)
+        view.show(blocks, indent: context.environment.transcriptEdge.indent, hang: context.environment.hangsListMarkers)
         view.metricsOrigin = context.environment.metricsHidden ? nil : metricsOrigin
         if metricsOrigin != nil { DispatchQueue.main.async { view.reportMetrics() } }
     }
@@ -67,6 +67,8 @@ final class MessageTextView: NSTextView, @MainActor NSLayoutManagerDelegate {
     private var shown: [MarkdownBlock] = []
     /// Prose indents by this in a narrow pane (`TranscriptEdge`); code and tables don't.
     private var indent: CGFloat = 0
+    /// A top-level list's markers hang in the gutter (a reply in the column, `hangsListMarkers`).
+    private var hang = false
     var metricsOrigin: CGPoint?
     /// Where each shown block's text sits in the storage, separator included.
     private var ranges: [NSRange] = []
@@ -114,17 +116,18 @@ final class MessageTextView: NSTextView, @MainActor NSLayoutManagerDelegate {
 
     // MARK: Content
 
-    func show(_ blocks: [MarkdownBlock], indent: CGFloat = 0) {
-        let reindent = indent != self.indent
+    func show(_ blocks: [MarkdownBlock], indent: CGFloat = 0, hang: Bool = false) {
+        let reindent = indent != self.indent || hang != self.hang
         guard blocks != shown || reindent, let storage = textStorage else { return }
         self.indent = indent
+        self.hang = hang
         // Blocks before the first difference are untouched; everything after is rebuilt.
         let keep = reindent ? 0 : zip(blocks, shown).prefix(while: { $0 == $1 }).count
         let from = keep < ranges.count ? ranges[keep].location : storage.length
         let tail = NSMutableAttributedString()
         var newRanges = Array(ranges.prefix(keep))
         for (i, block) in blocks.enumerated().dropFirst(keep) {
-            let piece = MessageStyle.piece(block, after: i == 0 ? nil : blocks[i - 1], indent: indent)
+            let piece = MessageStyle.piece(block, after: i == 0 ? nil : blocks[i - 1], indent: indent, hang: hang)
             newRanges.append(NSRange(location: from + tail.length, length: piece.length))
             tail.append(piece)
         }
@@ -310,13 +313,24 @@ final class MessageTextView: NSTextView, @MainActor NSLayoutManagerDelegate {
             addSubview(gutter)
         }
         if gutter.frame != room { gutter.frame = room }
+        gutter.needsDisplay = true
+        // Measured (only with -FrogMetrics/-FrogEdges) after every layout: a table's cells measured
+        // before the last one can be a pass behind.
+        if metricsOrigin != nil { DispatchQueue.main.async { [weak self] in self?.reportMetrics() } }
     }
 
     /// Draws the hung markers and plate overhangs (`GutterMarks`).
     private let gutter = GutterMarks()
 
+    // Whatever repaints the text repaints the gutter: new blocks, the width, and the ink
+    // reveal's temporary colours (which the layout manager invalidates through the second).
     override func setNeedsDisplay(_ invalidRect: NSRect) {
         super.setNeedsDisplay(invalidRect)
+        gutter.needsDisplay = true
+    }
+
+    override func setNeedsDisplay(_ rect: NSRect, avoidAdditionalLayout flag: Bool) {
+        super.setNeedsDisplay(rect, avoidAdditionalLayout: flag)
         gutter.needsDisplay = true
     }
 
@@ -715,7 +729,9 @@ enum MessageStyle {
     /// One block, preceded by the newline that separates it from the one before (nil: it's
     /// first). Its gap depends on that block (see `TurnSpace.Scale.gap`); streaming rebuilds
     /// from the first block that changed, so a block is never left with a stale neighbor.
-    static func piece(_ block: MarkdownBlock, after previous: MarkdownBlock?, indent: CGFloat = 0) -> NSAttributedString {
+    /// `hang`: a top-level list's markers hang left of the words (a reply in the transcript's
+    /// column); otherwise every marker sits in a marker column before its words.
+    static func piece(_ block: MarkdownBlock, after previous: MarkdownBlock?, indent: CGFloat = 0, hang: Bool = false) -> NSAttributedString {
         let out = NSMutableAttributedString()
         if previous != nil { out.append(NSAttributedString(string: "\n", attributes: [.font: body])) }
         let gap = TurnSpace.current.gap(block, after: previous)
@@ -729,10 +745,12 @@ enum MessageStyle {
             // The item's words start on the column's edge (a nested list one marker column in
             // per level), wrapped lines under them; the marker ends a gap before the words. A
             // top-level marker hangs in the gutter, as a line's mark does (spec, the left line).
-            let head = CGFloat(level) * TurnType.markerColumn
             let mark = TurnType.marker(marker, indent: level)
             let markFont = NSFont.monospacedDigitSystemFont(ofSize: TurnType.body, weight: .regular)
             let markWidth = ceil((mark as NSString).size(withAttributes: [.font: markFont]).width)
+            // Outside a reply (a report in a box, Docs) the marker keeps a column of its own.
+            let lead = CGFloat(level) * TurnType.markerColumn
+            let head = hang ? lead : lead + max(TurnType.markerColumn, markWidth + TurnType.markerGap)
             let markStart = head + indent - TurnType.markerGap - markWidth
             // A bullet is a small glyph: in the text's own color it weighs what a number does in
             // secondary.
