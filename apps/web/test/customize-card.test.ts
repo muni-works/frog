@@ -9,7 +9,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import TestRenderer, { act } from "react-test-renderer";
 import { emptyThread, reduce, type Entry, type Thread } from "../src/engine/thread.ts";
 import { lineOf } from "../src/ui/rows.ts";
-import { AppliedLine, ProposalCard, Transcript, type DecideOpts } from "../src/ui/Transcript.tsx";
+import { AppliedLine, ProposalCard, proposalChoice, Transcript, type DecideOpts } from "../src/ui/Transcript.tsx";
 import { caps, CloudEngine, CUSTOMIZE_CAPS } from "../src/engine/cloud.ts";
 import type { Gateway } from "../src/cloud/client.ts";
 import type { Envelope, Proposal } from "../src/cloud/protocol.ts";
@@ -59,7 +59,7 @@ test("each answer sends its decision: the primary allows, Not now denies, the al
   act(() => button("Remember").props.onClick());
   act(() => button("Not now").props.onClick());
   act(() => button("Keep it just for me").props.onClick());
-  assert.deepEqual(got, [[true, undefined], [false, undefined], [true, { choice: "notes" }]]);
+  assert.deepEqual(got, [[true, { choice: "primary" }], [false, undefined], [true, { choice: "notes" }]]);
   act(() => r.unmount());
 });
 
@@ -147,4 +147,13 @@ test("a Customize call that isn't a card or a receipt never reads \"Customize\" 
   const no = lineOf(e as unknown as Entry);
   assert.equal(run.verb, "Proposing a change");
   for (const l of [run, no]) assert.doesNotMatch(`${l.verb} ${l.object}`, /Customize/);
+});
+
+test("every allow on a Customize card names its choice: primary or the alternative's exact id, nothing else", () => {
+  // What App's decide sends on an allow (⌘↩ included, which passes no choice).
+  assert.equal(proposalChoice(remember), "primary");
+  assert.equal(proposalChoice({ ...remember, choice: "primary" }, "primary"), "primary");
+  assert.equal(proposalChoice(remember, "notes"), "notes");
+  assert.equal(proposalChoice(remember, "bogus"), undefined, "not on the card: no choice, so the engine changes nothing");
+  assert.equal(proposalChoice(density, "notes"), undefined, "this card has no alternative");
 });

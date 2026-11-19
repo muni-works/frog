@@ -641,7 +641,17 @@ final class Conversation {
     func answer(_ decision: Decision, note: String? = nil, choice: String? = nil) {
         guard let p = permission else { return }
         let note = note?.trimmingCharacters(in: .whitespacesAndNewlines)
-        link?.send(.permission(id: p.id, decision: decision, note: note?.isEmpty == false ? note : nil, choice: decision == .deny ? nil : choice))
+        // A Customize card's allow always names its choice (⌘↩, the sidebar and a notification
+        // included), and is never "always"; a plain card's never names one.
+        var decision = decision
+        var choice = decision == .deny ? nil : choice
+        if let proposal = p.proposal, decision != .deny {
+            decision = .allow
+            choice = proposal.choice(for: choice)
+        } else if p.proposal == nil {
+            choice = nil
+        }
+        link?.send(.permission(id: p.id, decision: decision, note: note?.isEmpty == false ? note : nil, choice: choice))
         permission = nil
         Conversation.effects?.answered(self, permission: p.id)
         Conversation.decided?(p, decision)

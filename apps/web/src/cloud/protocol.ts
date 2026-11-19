@@ -266,6 +266,8 @@ export interface Proposal {
   where: string
   path?: string
   tokens_per_turn?: number
+  /** The primary action's id, always "primary": an allow sends it back as `choice`. */
+  choice?: string
   primary: string
   dismiss: string
   alternative?: { id: string; label: string; where: string; tokens_per_turn?: number }

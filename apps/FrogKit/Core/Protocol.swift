@@ -1029,6 +1029,14 @@ enum ClientCaps {
 }
 
 struct Proposal: Codable, Sendable, Equatable {
+    /// The `choice` an allow sends: the primary's id, or the one alternative's exact id. Anything
+    /// else is nil (the engine applies no change without a choice on the card).
+    func choice(for picked: String?) -> String? {
+        let primary = choice ?? "primary"
+        guard let picked else { return primary }
+        return picked == primary || picked == alternative?.id ? picked : nil
+    }
+
     struct Change: Codable, Sendable, Equatable { var old: String?; var new: String? }
     struct Alternative: Codable, Sendable, Equatable { var id: String; var label: String; var `where`: String; var tokensPerTurn: Int? }
     struct AskedBy: Codable, Sendable, Equatable { var who: String; var words: String }
@@ -1038,6 +1046,8 @@ struct Proposal: Codable, Sendable, Equatable {
     var `where`: String
     var path: String?
     var tokensPerTurn: Int?
+    /// The primary action's id, always "primary": an allow sends it back as `choice`.
+    var choice: String?
     var primary: String
     var dismiss: String
     var alternative: Alternative?

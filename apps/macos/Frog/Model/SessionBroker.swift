@@ -734,6 +734,12 @@ final class SessionBroker {
     private func resolvePending(
         _ r: SessionRequest, approval: String, decision: String, sender: String, from c: Conversation
     ) {
+        // A Customize card isn't listed, and naming one says so rather than "nothing pending".
+        let held = list().lazy.compactMap { Library.shared.conversation($0.id) ?? self.background[$0.id] }
+            .first { $0.permission?.id == approval || $0.sessionID == approval }
+        if let p = held?.permission, Self.personal(tool: p.name, pending: p) {
+            return c.replySession(r.id, error: Self.personalOnly)
+        }
         guard let row = approvals().first(where: { $0.request == approval || $0.id == approval }),
               let target = Library.shared.conversation(row.id) ?? background[row.id]
         else {
@@ -741,9 +747,6 @@ final class SessionBroker {
         }
         guard sender != row.id else {
             return c.replySession(r.id, error: "A session can't answer its own card.")
-        }
-        guard !Self.personal(tool: row.tool, pending: target.permission) else {
-            return c.replySession(r.id, error: Self.personalOnly)
         }
         let chief = chiefOf() ?? ""
         let parent = parentOf(row.id) ?? ""
@@ -796,11 +799,13 @@ final class SessionBroker {
         var ageSeconds: Int
     }
 
-    /// Every session's pending permission card, oldest fact first. Read-only.
+    /// Every session's pending permission card, oldest fact first. Read-only. A Customize card
+    /// isn't one: only the person's click in its own session answers it, so no session is told
+    /// of it or offered it.
     func approvals() -> [Approval] {
         list().compactMap { entry in
             guard let conv = Library.shared.conversation(entry.id) ?? background[entry.id],
-                  let p = conv.permission else { return nil }
+                  let p = conv.permission, !Self.personal(tool: p.name, pending: p) else { return nil }
             let since = waitingSince[entry.id] ?? now()
             return Approval(
                 id: entry.id, request: p.id, name: entry.name, command: p.arg, tool: p.name,

@@ -29,7 +29,7 @@ import { SettingsPage, SettingsSidebar } from './ui/Settings'
 import { pinModel, pinnedModel, rememberPick, sectionOfQuery, setTheme, settingsMovedTo, settingsPath, settingsSectionOf, startingModel, toggledTheme, WEB_SECTIONS, type Section } from './settings'
 import { CustomizePage, CustomizeSidebar } from './ui/Customize'
 import { CUSTOMIZE_SECTIONS, customizeAtOf, customizePath, customizePathIsCanonical, FIRST_CUSTOMIZE, shownAt, type Automation, type CustomizeAt, type Report } from './customize'
-import { Transcript } from './ui/Transcript'
+import { proposalChoice, Transcript } from './ui/Transcript'
 import { safeHref } from './ui/href'
 import { askLine } from './ui/ask'
 import { sessionMissing, viewAfterArchive } from './ui/guards'
@@ -556,7 +556,10 @@ export default function App() {
     const ask = thread(id).ask
     if (!ask) return
     const note = opts?.note?.trim()
-    cloud?.send(id, { op: 'permission', id: ask.id, decision: allow ? (opts?.always ? 'allow_always' : 'allow') : 'deny', ...(note && !allow ? { note } : {}), ...(allow && opts?.choice ? { choice: opts.choice } : {}) })
+    // A Customize card's allow always names its choice (⌘↩ included); a plain card's never does.
+    const choice = allow ? (ask.proposal ? proposalChoice(ask.proposal, opts?.choice) : undefined) : undefined
+    const always = opts?.always && !ask.proposal
+    cloud?.send(id, { op: 'permission', id: ask.id, decision: allow ? (always ? 'allow_always' : 'allow') : 'deny', ...(note && !allow ? { note } : {}), ...(choice ? { choice } : {}) })
   }, [thread, cloud])
 
   const rename = (s: SessionSummary, to: string) => {

@@ -225,6 +225,14 @@ function foldedThought(entries: Entry[], n: number): boolean {
   return entries.slice(a, b + 1).every((x) => x.kind === 'reasoning' && x.done && x.text.trim().length <= 200 && !x.text.trim().includes('\n\n'))
 }
 
+/** The `choice` an allow on a Customize card sends: the proposal's own primary id, or its one
+ *  alternative's exact id. Anything else is nothing (the engine applies no change without it). */
+export function proposalChoice(p: Proposal, choice?: string): string | undefined {
+  const primary = p.choice ?? 'primary'
+  if (!choice) return primary
+  return choice === primary || choice === p.alternative?.id ? choice : undefined
+}
+
 export type DecideOpts = { always?: boolean; note?: string; /** A Customize card's alternative (its id). */ choice?: string }
 type Decide = (allow: boolean, opts?: DecideOpts) => void
 
@@ -273,7 +281,7 @@ export function ProposalCard({ ask, proposal: p, onDecide }: { ask: Ask; proposa
       <ChangeView p={p} />
       <div className="det wrap proposal-f">{whereLine(p.where, p.tokens_per_turn)}</div>
       <div className="diff-acts">
-        <button type="button" className="f-btn f-btn--prominent" title="⌘↩" onClick={() => onDecide(true)}>{p.primary}</button>
+        <button type="button" className="f-btn f-btn--prominent" title="⌘↩" onClick={() => onDecide(true, { choice: proposalChoice(p) })}>{p.primary}</button>
         <button type="button" className="f-btn f-btn--bordered" title="⌘." onClick={() => onDecide(false)}>{p.dismiss || 'Not now'}</button>
         <span style={{ flex: 1 }} />
         {p.alternative && <button type="button" className="line-link proposal-alt" title={whereLine(p.alternative.where, p.alternative.tokens_per_turn)}

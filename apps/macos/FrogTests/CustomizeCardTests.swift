@@ -129,6 +129,28 @@ final class CustomizeCardTests: XCTestCase {
         XCTAssertFalse(ClientCaps.customize(top: false, enabled: true), "a child session has no one to click the card")
     }
 
+    /// Every allow on a Customize card names its choice: "primary" (the button, ⌘↩, the sidebar,
+    /// a notification) or the alternative's exact id; never "always", and a plain card never.
+    func testEveryAllowNamesItsChoice() throws {
+        let link = QueueLink()
+        let c = Conversation(folder: URL(fileURLWithPath: "/tmp/frog-customize"), link: link, replay: false, session: "s")
+        let ask = { [self] (id: String) in send(c, #""permission_request","id":"\#(id)","item":"call_3","name":"Customize","arg":"Remember this?","always":"","proposal":\#(Self.remember)"#) }
+        ask("p1"); c.answer(.allow)
+        XCTAssertEqual(link.sent.last?["choice"] as? String, "primary")
+        ask("p2"); c.answer(.allow, choice: "notes")
+        XCTAssertEqual(link.sent.last?["choice"] as? String, "notes")
+        ask("p3"); c.answer(.allowAlways)
+        XCTAssertEqual(link.sent.last?["decision"] as? String, "allow")
+        XCTAssertEqual(link.sent.last?["choice"] as? String, "primary")
+        ask("p4"); c.answer(.allow, choice: "bogus")
+        XCTAssertNil(link.sent.last?["choice"], "not on the card: no choice, so the engine changes nothing")
+        ask("p5"); c.answer(.deny)
+        XCTAssertNil(link.sent.last?["choice"])
+        send(c, #""permission_request","id":"p6","item":"b1","name":"Bash","arg":"ls","always":"""#)
+        c.answer(.allow, choice: "primary")
+        XCTAssertNil(link.sent.last?["choice"], "a plain card has no choice")
+    }
+
     /// Only the person's own click answers a Customize card: no chief or parent session may.
     func testACustomizeCardIsNeverDecidedForThePerson() throws {
         let c = conversation()
