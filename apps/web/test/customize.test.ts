@@ -314,3 +314,17 @@ test("the empty list's \"Fix a bug in one of my repos\" opens Settings › Accou
   assert.equal(p.path(), "/settings/account");
   p.unmount();
 });
+
+// Review 3, item 9: the web's Settings › Memory has the "Notes on its own" switch, and turning it
+// sends the engine the new value (Op::Settings).
+test("Settings › Memory has the Notes on its own switch", async () => {
+  const html = renderToStaticMarkup(h(CustomizePage, { at: { section: "memory" }, report: SAMPLE.report, docSlugs: [], onOpen() {}, onDocs() {} }));
+  assert.match(html, /role="switch"[^>]*aria-label="Notes on its own"|aria-label="Notes on its own"[^>]*role="switch"/);
+  const { onSettings, setAutoNote } = await import("../src/settings.ts");
+  let heard = 0;
+  const off = onSettings(() => { heard++; });
+  setAutoNote(false);
+  setAutoNote(true);
+  off();
+  assert.equal(heard, 2);
+});

@@ -86,6 +86,34 @@ final class CustomizeCardTests: XCTestCase {
         XCTAssertEqual(CustomizeSettings.current(defaults)["density"], .string("compact"))
     }
 
+    /// Review 3, items 8 and 9: the ids the Mac declares to the engine (`Op::Settings`, which
+    /// is all the engine will plan) are exactly the ids it applies, auto-note included.
+    func testEverySettingTheMacDeclaresItApplies() throws {
+        let suite = "frog-customize-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let declared = CustomizeSettings.current(defaults)
+        XCTAssertEqual(declared["auto-note"], .bool(true), "on unless turned off")
+        XCTAssertEqual(Set(CustomizeStore.engineSettings().keys), Set(declared.keys), "nothing declared that apply skips")
+        for (id, value) in declared {
+            XCTAssertTrue(CustomizeSettings.apply(id, value, defaults: defaults), id)
+        }
+        XCTAssertTrue(CustomizeSettings.apply("auto-note", .bool(false), defaults: defaults))
+        XCTAssertEqual(defaults.object(forKey: CustomizeStore.autoNoteKey) as? Bool, false)
+    }
+
+    /// Review 3, item 9: a cloud link tells its engine the app's settings when it opens, as a
+    /// local engine is told, so auto-note reaches Frog Cloud sessions.
+    func testACloudLinkSendsTheSettingsWhenItOpens() throws {
+        let had = Conversation.engineSettings
+        defer { Conversation.engineSettings = had }
+        Conversation.engineSettings = { ["auto-note": .bool(false)] }
+        let link = CloudLink(gateway: CloudGateway(token: "test"), session: "s", connect: false)
+        let ops = link.queued.compactMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        let settings = try XCTUnwrap(ops.first { $0["op"] as? String == "settings" })
+        XCTAssertEqual((settings["values"] as? [String: Any])?["auto-note"] as? Bool, false)
+    }
+
     /// The sidebar's waiting line is the card's own question, not "Allow Customize Remember this??".
     func testTheSidebarAsksTheCardsQuestion() {
         XCTAssertEqual(AskPhrase.line(name: "Customize", arg: "Remember this?"), "Remember this?")

@@ -27,6 +27,7 @@ struct FrogApp: App {
         Conversation.effects = MacEffects.shared
         Conversation.decided = { Funnel.decided(tool: $0.name, $1) }
         Conversation.applySetting = { CustomizeSettings.apply($0, $1) }
+        Conversation.engineSettings = { CustomizeStore.engineSettings() }
         Conversation.logReader = { id, after in
             // The durable half of the session log (what a dead engine left behind), read the
             // same way the phone bridge reads it.

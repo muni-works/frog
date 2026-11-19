@@ -1,4 +1,5 @@
-import { Fragment, useEffect, useRef, type ReactNode } from 'react'
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
+import { savedAutoNote, setAutoNote } from '../settings'
 import {
   activityLevels, CLOUD_READS, CUSTOMIZE_INVITES, customizeLabel, customizePath, docsSlugFor, EXPLAINERS, railDay, tokens, toolsLabel, usedLabel, weekDays, weightBars,
   type Automation, type Connection, type CustomizeAt, type CustomizeSection, type Report, type RulesFile, type RunMark, type Skill, type Tool, type Use,
@@ -311,7 +312,24 @@ function Sheet({ file }: { file: RulesFile }) {
 
 // ---------- Memory (F5Memory) ----------
 
+/** Noting on its own (`auto-note`): sent to every open session's engine as it changes. */
+function AutoNoteRow() {
+  const [on, setOn] = useState(savedAutoNote())
+  return (
+    <div className="set-group">
+      <label className="set-row" data-row="auto-note">
+        <div style={{ flex: 1, minWidth: 0 }}><b>Notes on its own</b><div className="det wrap">Frog keeps short notes from what you tell it and what it reads in your repo, with Undo under the reply.</div></div>
+        <input type="checkbox" role="switch" aria-label="Notes on its own" checked={on} onChange={(e) => { setAutoNote(e.target.checked); setOn(e.target.checked) }} />
+      </label>
+    </div>
+  )
+}
+
 function MemoryList(p: CustomizeProps) {
+  return (<><AutoNoteRow /><MemoryNotes {...p} /></>)
+}
+
+function MemoryNotes(p: CustomizeProps) {
   const notes = p.report?.memory.notes ?? []
   if (!notes.length) return (<>
     <div className="set-h">In Frog Cloud</div>

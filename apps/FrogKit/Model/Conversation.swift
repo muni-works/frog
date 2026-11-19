@@ -690,6 +690,9 @@ final class Conversation {
     /// The app's own settings, changed from a conversation (`setting_change`, live only): the app
     /// applies it (`CustomizeSettings` on the Mac). Unset in tests and previews: nothing changes.
     @MainActor static var applySetting: ((String, JSONValue) -> Void)?
+    /// The app's settings the engine reads (`Op::Settings`): exactly the ids `applySetting`
+    /// applies, plus their values. Every link sends them when it opens. Unset: none sent.
+    @MainActor static var engineSettings: (() -> [String: JSONValue])?
 
     /// Answer the open `Ask`: the picked labels and/or the user's own words. Neither dismisses it.
     func answer(question choices: [String], other: String? = nil) {

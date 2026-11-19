@@ -150,10 +150,12 @@ test("a session of unknown parentage gets no Customize caps until the list says 
 });
 
 test("setting_change changes this app's own setting; one it doesn't keep is left alone", async () => {
-  const g = globalThis as unknown as { document?: unknown };
-  const had = g.document;
+  const g = globalThis as unknown as { document?: unknown; localStorage?: unknown };
+  const had = g.document, hadStore = g.localStorage;
   const root = { dataset: {} as Record<string, string | undefined> };
   g.document = { documentElement: root };
+  const kept = new Map<string, string>();
+  g.localStorage = { getItem: (k: string) => kept.get(k) ?? null, setItem: (k: string, v: string) => { kept.set(k, v) }, removeItem: (k: string) => { kept.delete(k) } };
   try {
     const { applySetting, customizableSettings } = await import("../src/settings.ts");
     assert.equal(applySetting("density", "compact"), true);
@@ -162,9 +164,17 @@ test("setting_change changes this app's own setting; one it doesn't keep is left
     assert.equal(root.dataset.theme, "dark");
     assert.equal(applySetting("sounds", false), false, "the web has no sounds setting");
     assert.equal(applySetting("density", "huge"), false, "not one of the row's options");
-    assert.deepEqual(Object.keys(customizableSettings()).sort(), ["density", "theme"]);
+    // Review 3, items 8 and 9: what the web declares is exactly what it applies, auto-note
+    // included (the engine plans only declared ids, and noting is off unless told).
+    assert.deepEqual(Object.keys(customizableSettings()).sort(), ["auto-note", "density", "theme"]);
+    assert.equal(customizableSettings()["auto-note"], true, "on unless turned off");
+    assert.equal(applySetting("auto-note", false), true);
+    assert.equal(customizableSettings()["auto-note"], false);
+    assert.equal(applySetting("auto-note", "no"), false);
+    assert.equal(applySetting("auto-note", true), true);
   } finally {
     g.document = had;
+    g.localStorage = hadStore;
   }
 });
 
