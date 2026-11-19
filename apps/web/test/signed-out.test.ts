@@ -1,6 +1,6 @@
-// A signed-out visitor gets the real shell (docs/design/app-shell.md): the sidebar with New
-// session, one quiet line, the chip slot, Documentation and Sign in; the landing in the main
-// column; documentation by row and by URL; and nothing that needs a key is called or opened.
+// A signed-out visitor gets the real shell: the same sidebar as signed in (the web home canvas,
+// Final page), the landing in the main column, documentation by URL, and nothing that needs a
+// key is called or opened.
 // These mount the whole App (test/app-harness.ts), so they fail on a build with the old early
 // return: there the page had no sidebar and /docs/<slug> showed the landing.
 import { after, test } from "node:test";
@@ -13,15 +13,16 @@ const side = (p: Page) => find(p, (n) => n.type === "aside")!;
 const mainCol = (p: Page) => find(p, (n) => n.type === "main")!;
 const keyed = (p: Page) => p.calls.filter((c) => c.auth !== null);
 
-test("signed out, the sidebar shows New session, the quiet line, the chip, Documentation and Sign in, and no Search", async () => {
+test("signed out, the sidebar is the signed-in layout: top rows, starters, then the pill, Sign in and the legal row", async () => {
   const p = await mount("/");
   const s = shownText(side(p));
-  for (const t of ["New session", "Your sessions appear here once you sign in, on this and your other devices.", "Get the Mac app", "Documentation", "Sign in", "25¢ of Frog Cloud credit free, $1 when you connect GitHub"])
+  for (const t of ["New session", "Search", "Customize", "Settings", "Start with one of these", "Make a tiny pomodoro timer",
+    "Frog for Mac", "Sign in", "25¢ free, $1 with GitHub", "Pricing", "Privacy", "Terms"])
     assert.ok(s.includes(t), `sidebar has "${t}": ${s}`);
-  assert.ok(!/\bSearch\b/.test(s), `no Search row signed out: ${s}`);
-  // In order: the chip slot sits directly above Documentation, and Sign in is last.
-  const order = visible(side(p)).map((n) => ["chip-slot", "docs-row", "signin-row"].find((c) => hasClass(c)(n))).filter(Boolean);
-  assert.deepEqual(order, ["chip-slot", "docs-row", "signin-row"]);
+  assert.ok(!s.includes("Documentation"), `Documentation is hidden for now: ${s}`);
+  // In order: the pill, then Sign in, then the legal row last.
+  const order = visible(side(p)).map((n) => ["side-starters", "side-pill", "signin-row", "side-legal"].find((c) => hasClass(c)(n))).filter(Boolean);
+  assert.deepEqual(order, ["side-starters", "side-pill", "signin-row", "side-legal"]);
   // The main column is still the landing.
   assert.ok(shownText(mainCol(p)).includes("What should we work on?"));
   assert.ok(shownText(mainCol(p)).includes("What is Frog?"));
@@ -49,20 +50,6 @@ test("the sidebar's Sign in opens the GitHub / Google choice and takes the compo
   assert.match(assigned, /\/auth\/web\?.*provider=github/, assigned);
   const pending = JSON.parse(globalThis.sessionStorage.getItem("frog.signin") ?? "{}");
   assert.equal(pending.after, "fix the flaky test", "the draft goes along and is sent after the round trip");
-  p.unmount();
-});
-
-test("signed out, the Documentation row opens the docs page in the shell, and Back to app returns to the landing", async () => {
-  const p = await mount("/");
-  await click(find(p, hasClass("docs-row")));
-  assert.match(p.path(), /^\/docs\/[a-z0-9-]+$/);
-  const page = find(p, (n) => n.type === "article")!;
-  assert.ok(page, "a docs page shows");
-  assert.ok(!shownText(mainCol(p)).includes("What should we work on?"), "the landing is hidden");
-  await click(find(p, byText("button", "Back to app")));
-  assert.equal(p.path(), "/");
-  assert.ok(shownText(mainCol(p)).includes("What should we work on?"));
-  assert.deepEqual(keyed(p), []);
   p.unmount();
 });
 

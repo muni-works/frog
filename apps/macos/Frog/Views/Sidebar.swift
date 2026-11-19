@@ -226,6 +226,9 @@ struct SessionList: View {
                         attention
                     } else if filtering {
                         flat
+                    } else if active.isEmpty && library.loaded {
+                        // Nothing yet: a first session a click away, as on the web.
+                        SidebarStartersView { workspace.newSession(prompt: $0.prompt) }
                     } else {
                         chiefTile
                         // Compact is density, not grouping: by date stays by date (as on the web).
@@ -251,21 +254,15 @@ struct SessionList: View {
                 if abs(new - old) > 1 { GitCardController.shared.close() }
             }
             footer
-            if let showDocs {
-                Button(action: showDocs) { ShellRow(symbol: "book", title: "Documentation") }
-                    .buttonStyle(.plain)
-                    .help("Frog documentation")
-                    .padding(.horizontal, 8)
-                    .padding(.bottom, 2)
+            // The foot, as on the web: one status pill (when there's something to say), the
+            // account, then the legal row.
+            VStack(spacing: 8) {
+                if let pill = footPill { pill }
+                UserFooter()
+                SidebarLegalRow()
             }
-            if let showSettings {
-                Button { showSettings(nil) } label: { ShellRow(symbol: "gearshape", title: "Settings", key: "⌘,") }
-                    .buttonStyle(.plain)
-                    .help("Settings (⌘,)")
-                    .padding(.horizontal, 8)
-                    .padding(.bottom, 2)
-            }
-            UserFooter()
+            .padding(.horizontal, 8)
+            .padding(.bottom, 10)
         }
         .frame(maxHeight: maxHeight)
         .onAppear {
@@ -1140,25 +1137,48 @@ struct SessionList: View {
             }
             .font(.frog(size: 13))
             .padding(.horizontal, 8)
-            .frame(height: 30)
+            .frame(height: 32)
+            // Customize and Settings sit right under the two verbs, as on the web. Documentation
+            // is hidden for now (Cam, 2026-11-19); the palette and Help menu still open it.
+            if let showSettings {
+                Button { showSettings("appearance") } label: {
+                    navRow("slider.horizontal.3", "Customize")
+                }
+                .buttonStyle(.plain)
+                .help("Theme, density and detail")
+            }
+            if let showSettings {
+                Button { showSettings(nil) } label: { navRow("gearshape", "Settings", key: "⌘,") }
+                    .buttonStyle(.plain)
+                    .help("Settings (⌘,)")
+            }
         }
         .padding(.horizontal, 6)
         .padding(.top, titleRow ? 10 : 4)
         .padding(.bottom, 8)
     }
 
-    private func navRow(_ symbol: String, _ title: String, key: String) -> some View {
+    private func navRow(_ symbol: String, _ title: String, key: String = "") -> some View {
         HStack(spacing: 9) {
             Image(systemName: symbol).frame(width: 16).foregroundStyle(.secondary)
             Text(title)
             Spacer(minLength: 4)
-            Text(key).font(.frog(size: 11)).foregroundStyle(.tertiary)
+            if !key.isEmpty { Text(key).font(.frog(size: 11)).foregroundStyle(.tertiary) }
         }
         .font(.frog(size: 13))
         .padding(.horizontal, 8)
-        .frame(height: 30)
+        .frame(height: 32)
         .contentShape(.rect)
         .hoverPlate(h: 0, v: 0, radius: 8)
+    }
+
+    /// The foot's pill, when there's something to say: credit nearly spent (orange: it waits on
+    /// you). The Mac app needs no "Get the Mac app"; Sparkle owns its own update prompt.
+    private var footPill: SidebarPill? {
+        guard let me = CloudAccount.shared.me, me.subscription == nil, me.credit_cents < 50 else { return nil }
+        let c = max(0, me.credit_cents)
+        let left = c < 100 ? "\(Int(c))¢ left" : CloudFormat.dollars(c) + " left"
+        return SidebarPill(dot: .wait, lead: left, action: "Add") { showSettings?("billing") }
     }
 
     private var footer: some View {

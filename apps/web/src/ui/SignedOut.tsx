@@ -1,18 +1,20 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Provider } from '../auth'
-import { ChipSlot, type ChipSpec } from './ChipSlot'
+import type { ChipSpec } from './ChipSlot'
 import { gh, google } from './Composer'
-import { DocsRow } from './Docs'
 import { useLayer, useMenu } from './layers'
+import { LegalRow, SideNav, SidePill, Starters } from './Side'
 
-// The sidebar a signed-out visitor sees: the same shell as signed in, with what can work signed
-// out. New session (the composer), one line where the session list goes, the chip slot, the
-// Documentation row, and a Sign in row where the account button sits. No Search: there's nothing
-// to search yet.
+// The sidebar a signed-out visitor sees: the same layout as signed in (the web home canvas, Final
+// page). The top rows, starters where the session list goes, and the foot: the Mac app pill, Sign
+// in, the legal row.
 
-/** The Sign in row: opens the same GitHub / Google choice the composer's Sign in pill does. */
-export function SignInRow({ onSignIn }: { onSignIn: (provider: Provider) => void }) {
-  const [open, setOpen] = useState(false)
+/** The Sign in row: a green Sign in and what it adds; opens the same GitHub / Google choice the
+ *  composer's Sign in pill does. `open` lets the sidebar's Settings and Customize ask for it too. */
+export function SignInRow({ onSignIn, open: asked, onOpenChange }: { onSignIn: (provider: Provider) => void; open?: boolean; onOpenChange?: (open: boolean) => void }) {
+  const [own, setOwn] = useState(false)
+  const open = asked ?? own
+  const setOpen = (v: boolean) => { setOwn(v); onOpenChange?.(v) }
   const box = useRef<HTMLDivElement>(null)
   useLayer(open, () => setOpen(false))
   const nav = useMenu(open)
@@ -21,7 +23,7 @@ export function SignInRow({ onSignIn }: { onSignIn: (provider: Provider) => void
     const down = (e: MouseEvent) => { if (!box.current?.contains(e.target as Node)) setOpen(false) }
     addEventListener('mousedown', down)
     return () => removeEventListener('mousedown', down)
-  }, [open])
+  })
   return (
     <div className="signin-row" ref={box}>
       {open && (
@@ -30,39 +32,32 @@ export function SignInRow({ onSignIn }: { onSignIn: (provider: Provider) => void
           <button type="button" role="menuitem" onClick={() => { setOpen(false); onSignIn('google') }}>{google(14)}Continue with Google</button>
         </div>
       )}
-      <button type="button" className="row" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>
-        <span className="mark" style={{ width: 28, height: 28 }} aria-hidden="true" />
-        <div style={{ flex: 1, textAlign: 'left', minWidth: 0 }}>
-          <b>Sign in</b>
-          <div className="det wrap">25¢ of Frog Cloud credit free, $1 when you connect GitHub</div>
-        </div>
+      <button type="button" className="side-acct" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <span className="go">Sign in</span>
+        <span className="t">25¢ free, $1 with GitHub</span>
       </button>
     </div>
   )
 }
 
-const plus = 'M12 5v14M5 12h14'
-
 interface Props {
   /** New session: the landing's composer. */
   onNew: () => void
   chip: ChipSpec | null
-  onDismissChip: () => void
   onDocs: () => void
-  onSignIn: (provider: Provider) => void
+  /** Sign in, taking `prompt` along to start once back. */
+  onSignIn: (provider: Provider, prompt?: string) => void
 }
 
-export function SignedOutSide({ onNew, chip, onDismissChip, onDocs, onSignIn }: Props) {
+export function SignedOutSide({ onNew, chip, onDocs, onSignIn }: Props) {
+  const [ask, setAsk] = useState(false)
   return (<>
-    <nav aria-label="Main" className="nav">
-      <button type="button" className="row big" onClick={onNew}>
-        <svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ flex: 'none' }}><path d={plus} /></svg>
-        <span style={{ flex: 1 }}>New session</span>
-      </button>
-    </nav>
-    <div className="side-quiet det wrap">Your sessions appear here once you sign in, on this and your other devices.</div>
-    <ChipSlot chip={chip} onDismiss={onDismissChip} />
-    <DocsRow onOpen={onDocs} />
-    <SignInRow onSignIn={onSignIn} />
+    <SideNav onNew={onNew} newOn onSearch={onNew} onCustomize={() => setAsk(true)} onDocs={onDocs} onSettings={() => setAsk(true)} />
+    <Starters onStart={(s) => onSignIn('github', s.prompt || undefined)} />
+    <div className="side-foot">
+      {chip && <SidePill dot="go" lead="Frog for Mac" rest="$0 a token" action="Get" href={chip.href} />}
+      <SignInRow onSignIn={(p) => onSignIn(p)} open={ask} onOpenChange={setAsk} />
+      <LegalRow />
+    </div>
   </>)
 }
