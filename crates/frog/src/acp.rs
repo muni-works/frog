@@ -489,6 +489,7 @@ async fn pump(
                         id,
                         decision,
                         note: None,
+                        choice: None,
                     });
                 });
             }

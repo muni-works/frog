@@ -124,7 +124,7 @@ struct LiveStats: Equatable {
         return out
     }
 
-    var text: String { parts.joined(separator: " · ") }
+    var text: String { parts.joined(separator: ", ") }
 
     /// "19s", "2m 5s": whole seconds (the web's `secs`).
     static func clock(_ secs: TimeInterval) -> String { StepLine.clock(secs) }

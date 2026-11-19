@@ -422,7 +422,7 @@ struct McpServerReport: Decodable, Sendable, Identifiable, Equatable {
         if connected {
             return tools.count == 1 ? "1 tool" : "\(tools.count) tools"
         }
-        if needsAuth { return declined ? "signed out · you declined" : "signed out" }
+        if needsAuth { return declined ? "signed out, you declined" : "signed out" }
         if let error { return error }
         return "connecting…"
     }
@@ -596,7 +596,7 @@ struct EngineError: Decodable, Equatable, Sendable, CustomStringConvertible {
 
     /// Everything the engine sent, for a disclosure and the log: type, status, raw message.
     var detail: String {
-        [type, status.map { "HTTP \($0)" }, message].compactMap { $0 }.joined(separator: " · ")
+        [type, status.map { "HTTP \($0)" }, message].compactMap { $0 }.joined(separator: ", ")
     }
 }
 
@@ -641,9 +641,9 @@ struct BillingLimit: Decodable, Equatable, Sendable {
         case "credit": text = "Out of credit"
         default: text = "Allowance used"
         }
-        text += " · billing credit at usage prices"
+        text += ", billing credit at usage prices"
         if let c = balanceMicros, c > 0 {
-            text += " · $\(String(format: "%.2f", Double(c) / 1_000_000)) left"
+            text += ", $\(String(format: "%.2f", Double(c) / 1_000_000)) left"
         }
         return text
     }
@@ -1759,7 +1759,7 @@ extension CatalogModel {
     var price: String? {
         guard let i = costIn, let o = costOut else { return nil }
         if i == 0, o == 0 { return "Free" }
-        return "\(Dollars.format(i)) in · \(Dollars.format(o)) out per M"
+        return "\(Dollars.format(i)) in, \(Dollars.format(o)) out per M"
     }
 
     var contextLabel: String? {

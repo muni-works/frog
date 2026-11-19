@@ -67,7 +67,7 @@ struct ThinkingStepView: View {
     private var stepTitleMarkdown: String {
         let title = step.title
         let result = shortResult
-        return result.isEmpty ? "**✓ \(title)**" : "**✓ \(title)** · \(result)"
+        return result.isEmpty ? "**✓ \(title)**" : "**✓ \(title)**, \(result)"
     }
 
     /// A short result for the done line: the thought's first sentence, or a tool result summary.

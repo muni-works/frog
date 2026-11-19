@@ -2544,6 +2544,7 @@ async fn use_folder_moves_a_chat_into_a_project() {
                     id: id.clone(),
                     decision: Decision::Allow,
                     note: None,
+                    choice: None,
                 })
                 .unwrap();
         }
@@ -2643,6 +2644,7 @@ async fn a_bash_cd_logs_the_shell_cwd() {
                     id: id.clone(),
                     decision: Decision::Allow,
                     note: None,
+                    choice: None,
                 })
                 .unwrap();
         }
@@ -2791,6 +2793,7 @@ async fn clear_drops_queued_shell_output() {
                     id: id.clone(),
                     decision: Decision::Allow,
                     note: None,
+                    choice: None,
                 })
                 .unwrap();
         }
@@ -2953,6 +2956,7 @@ async fn the_worktree_lock_follows_a_folder_change() {
                         id: id.clone(),
                         decision: Decision::Allow,
                         note: None,
+                        choice: None,
                     })
                     .unwrap();
             }
@@ -4609,6 +4613,7 @@ async fn a_mode_set_mid_turn_governs_the_next_permission_decision() {
                         id: id.clone(),
                         decision: Decision::Allow,
                         note: None,
+                        choice: None,
                     })
                     .unwrap();
             }
@@ -5940,6 +5945,7 @@ async fn ask_waits_for_the_users_answer() {
             panes: false,
             ask: true,
             sessions: false,
+            customize: false,
         })
         .unwrap();
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
@@ -5963,6 +5969,7 @@ async fn an_interrupt_dismisses_the_question() {
             panes: false,
             ask: true,
             sessions: false,
+            customize: false,
         })
         .unwrap();
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
@@ -6024,7 +6031,7 @@ async fn tree_step(h: &mut Handle, tree: &serde_json::Value) -> TreeStep {
 /// A session's id, read off its first `Idle` once it has its client caps.
 async fn caps_and_id(h: &mut Handle) -> String {
     h.ops
-        .send(Op::SetClientCaps { irc: false, panes: false, ask: true, sessions: true })
+        .send(Op::SetClientCaps { irc: false, panes: false, ask: true, sessions: true, customize: false })
         .unwrap();
     loop {
         let env = h.events.recv().await.unwrap();
@@ -6131,7 +6138,7 @@ async fn without_a_client_the_tree_comes_from_the_logs() {
     );
     manager
         .ops
-        .send(Op::SetClientCaps { irc: false, panes: false, ask: true, sessions: false })
+        .send(Op::SetClientCaps { irc: false, panes: false, ask: true, sessions: false, customize: false })
         .unwrap();
     let m = loop {
         let env = manager.events.recv().await.unwrap();
@@ -6167,7 +6174,7 @@ async fn without_a_client_the_tree_comes_from_the_logs() {
     let mut worker = start(opts, Provider::Scripted(scripted::Client::new(script))).unwrap();
     worker
         .ops
-        .send(Op::SetClientCaps { irc: false, panes: false, ask: true, sessions: false })
+        .send(Op::SetClientCaps { irc: false, panes: false, ask: true, sessions: false, customize: false })
         .unwrap();
     while !matches!(worker.events.recv().await.unwrap().event, Event::Idle) {}
     submit(&worker, "fix it");
@@ -6216,6 +6223,7 @@ fn caps_irc(h: &Handle, sessions: bool, irc: bool) {
             panes: false,
             ask: false,
             sessions,
+            customize: false,
         })
         .unwrap();
 }
@@ -6614,6 +6622,7 @@ async fn a_permission_card_posts_a_notice_with_a_link_never_an_approval() {
                         id,
                         decision: Decision::Allow,
                         note: None,
+                        choice: None,
                     })
                     .unwrap();
             }
@@ -6835,7 +6844,7 @@ async fn models_tool_lists_credentials_without_asking() {
             Event::PermissionRequest { id, name, .. } => {
                 saw_permission = Some(name);
                 h.ops
-                    .send(Op::Permission { id, decision: Decision::Deny, note: None })
+                    .send(Op::Permission { id, decision: Decision::Deny, note: None, choice: None })
                     .unwrap();
             }
             Event::ItemCompleted {
@@ -7318,6 +7327,7 @@ mod egress_tests {
                         id: id.clone(),
                         decision,
                         note: None,
+                        choice: None,
                     })
                     .unwrap();
             }
@@ -7375,6 +7385,7 @@ mod egress_tests {
                         id,
                         decision: Decision::Deny,
                         note: None,
+                        choice: None,
                     })
                     .unwrap();
                 break;
@@ -7580,6 +7591,7 @@ mod egress_tests {
                             id: id.clone(),
                             decision: Decision::Allow,
                             note: None,
+                            choice: None,
                         })
                         .unwrap();
                 }
@@ -7706,6 +7718,7 @@ mod egress_tests {
                             id: id.clone(),
                             decision: card,
                             note: None,
+                            choice: None,
                         })
                         .unwrap();
                 }
@@ -7890,6 +7903,7 @@ async fn turn_timing_keeps_permission_waits_out_of_tool_time() {
                     id,
                     decision: Decision::Allow,
                     note: None,
+                    choice: None,
                 })
                 .unwrap();
             break;
@@ -7991,6 +8005,7 @@ async fn permission_requests_preview_the_exact_edit() {
                     id,
                     decision: Decision::Allow,
                     note: None,
+                    choice: None,
                 })
                 .unwrap();
             break preview;
@@ -8097,6 +8112,7 @@ async fn file_tools_stay_rooted_in_the_session_worktree() {
                     id: id.clone(),
                     decision: Decision::Allow,
                     note: None,
+                    choice: None,
                 })
                 .unwrap();
         }
@@ -8213,6 +8229,7 @@ async fn an_absolute_write_into_the_main_checkout_asks_and_stays_out() {
                     id: id.clone(),
                     decision: Decision::Deny,
                     note: None,
+                    choice: None,
                 })
                 .unwrap();
         }
@@ -8246,6 +8263,7 @@ async fn an_absolute_write_into_the_main_checkout_asks_and_stays_out() {
                     id: id.clone(),
                     decision: Decision::Allow,
                     note: None,
+                    choice: None,
                 })
                 .unwrap();
         }
@@ -8408,6 +8426,7 @@ async fn preview_actions_ask_and_round_trip_through_the_client() {
             panes: true,
             ask: false,
             sessions: false,
+            customize: false,
         })
         .unwrap();
     until_idle(&mut h).await;
@@ -8429,6 +8448,7 @@ async fn preview_actions_ask_and_round_trip_through_the_client() {
                         id: id.clone(),
                         decision: Decision::Allow,
                         note: None,
+                        choice: None,
                     })
                     .unwrap();
             }
@@ -8543,6 +8563,7 @@ async fn a_small_window_still_gets_the_panes() {
             panes: true,
             ask: false,
             sessions: false,
+            customize: false,
         })
         .unwrap();
     until_idle(&mut h).await;
@@ -8594,6 +8615,7 @@ async fn a_preview_that_cannot_load_says_so() {
             panes: true,
             ask: false,
             sessions: false,
+            customize: false,
         })
         .unwrap();
     until_idle(&mut h).await;
@@ -9392,6 +9414,7 @@ async fn interrupt_cancels_a_running_bash_tool() {
                     id: id.clone(),
                     decision: Decision::Allow,
                     note: None,
+                    choice: None,
                 })
                 .unwrap();
         }
@@ -9458,6 +9481,7 @@ async fn drive(h: &mut Handle, done: impl Fn(&Event) -> bool) -> Vec<Envelope> {
                     id: id.clone(),
                     decision: Decision::Allow,
                     note: None,
+                    choice: None,
                 })
                 .unwrap();
         }
@@ -9671,7 +9695,7 @@ async fn a_child_asks_its_parent_and_gets_the_answer_mid_turn() {
         }
         if answered && let Some(id) = held.take() {
             h.ops
-                .send(Op::Permission { id, decision: Decision::Allow, note: None })
+                .send(Op::Permission { id, decision: Decision::Allow, note: None, choice: None })
                 .unwrap();
         }
         let done = matches!(&env.event, Event::TurnStarted { input, .. } if input.contains("wrote child.txt"));
@@ -9839,6 +9863,7 @@ async fn a_denied_subagent_call_does_not_run() {
                     id,
                     decision: Decision::Deny,
                     note: None,
+                    choice: None,
                 })
                 .unwrap();
             break;
@@ -11281,6 +11306,7 @@ async fn writes_and_unknowns_still_ask_in_default_mode() {
                         id: id.clone(),
                         decision: Decision::Deny,
                         note: None,
+                        choice: None,
                     })
                     .unwrap();
             }
@@ -11763,6 +11789,7 @@ async fn a_non_public_webfetch_still_asks_in_default_mode() {
                     id: id.clone(),
                     decision: Decision::Deny,
                     note: None,
+                    choice: None,
                 })
                 .unwrap();
         }
@@ -11836,6 +11863,7 @@ async fn turn_answering(
                     id: id.clone(),
                     decision,
                     note,
+                    choice: None,
                 })
                 .unwrap();
         }
@@ -12090,6 +12118,7 @@ async fn next_turn(
                     id: id.clone(),
                     decision,
                     note,
+                    choice: None,
                 })
                 .unwrap();
         }
@@ -12695,7 +12724,7 @@ async fn loop_collect(
         // A card that reaches the user is denied (the tests count them).
         if let Event::PermissionRequest { id, .. } = &env.event {
             h.ops
-                .send(Op::Permission { id: id.clone(), decision: Decision::Deny, note: None })
+                .send(Op::Permission { id: id.clone(), decision: Decision::Deny, note: None, choice: None })
                 .unwrap();
         }
         if started && matches!(env.event, Event::Idle) {
@@ -13905,7 +13934,7 @@ async fn prs_bind_from_gh_pr_create_and_by_hand() {
         sid = env.session.clone();
         if let Event::PermissionRequest { id, .. } = &env.event {
             h.ops
-                .send(Op::Permission { id: id.clone(), decision: Decision::Allow, note: None })
+                .send(Op::Permission { id: id.clone(), decision: Decision::Allow, note: None, choice: None })
                 .unwrap();
         }
         let idle = matches!(env.event, Event::Idle);
@@ -15127,6 +15156,7 @@ async fn a_stopped_turn_closes_its_open_question_with_the_wait() {
             panes: false,
             ask: true,
             sessions: false,
+            customize: false,
         })
         .unwrap();
     while !matches!(h.events.recv().await.unwrap().event, Event::Idle) {}
@@ -15189,6 +15219,7 @@ async fn permission_waits_are_timed() {
                     id: id.clone(),
                     decision: Decision::Deny,
                     note: None,
+                    choice: None,
                 })
                 .unwrap();
         }

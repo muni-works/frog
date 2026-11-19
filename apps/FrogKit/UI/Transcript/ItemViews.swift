@@ -157,7 +157,7 @@ struct CarriedForwardBanner: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Image(systemName: "arrow.uturn.forward").imageScale(.small)
-                Text("carried forward · everything important was saved")
+                Text("carried forward, everything important was saved")
                     .fontWeight(.medium)
                 Spacer(minLength: 0)
                 Button {

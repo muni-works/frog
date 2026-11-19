@@ -201,7 +201,7 @@ struct TurnLine: View {
         if let piece = shape.piece(at: x) {
             parts.append(Self.step(piece, in: turn))
         }
-        return parts.joined(separator: " · ")
+        return parts.joined(separator: ", ")
     }
 
     /// A segment's step in words, for the readout ("Ran cargo test -q upload", "Thought", "Waited
@@ -268,7 +268,7 @@ struct TurnPanel: View {
                 Text("This turn").font(.frog(size: Tokens.Transcript.body.size, weight: .semibold))
                 if let usage = turn.usage {
                     // The model and where it ran (Frog Cloud when it served the turn).
-                    Text(EndView.footer(usage, models: models).compactMap { if case .model(let m) = $0 { m } else { nil } }.joined(separator: " · "))
+                    Text(EndView.footer(usage, models: models).compactMap { if case .model(let m) = $0 { m } else { nil } }.joined(separator: ", "))
                         .font(.frog(size: Tokens.Transcript.meta.size)).foregroundStyle(Tokens.textSecondary)
                 }
             }
@@ -288,7 +288,7 @@ struct TurnPanel: View {
             if usage.outputTokens > 0 { parts.append("\(usage.outputTokens.formatted()) tokens") }
             if let c = ModelStats.shared.cost(of: usage) { parts.append(ModelStats.money(c)) }
         }
-        return parts.joined(separator: " · ")
+        return parts.joined(separator: ", ")
     }
 
     /// Where the time went: thinking, tools, waiting on you, writing; then tokens read and from cache.

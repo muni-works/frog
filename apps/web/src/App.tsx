@@ -8,11 +8,12 @@ import { changeSig, keepTitle, keptTitle } from './titles'
 import { defaultModel, idOf, spec, useModels } from './models'
 import { plainError } from './errors'
 import type { DecideOpts } from './ui/Transcript'
-import { clearThreads, outOfCredits, pickStarters, useCloud, useRepos, useSessions, useThreads } from './store'
+import { clearThreads, outOfCredits, useCloud, useRepos, useSessions, useThreads } from './store'
 import { once } from './live'
 import { useLayer, useMenu } from './ui/layers'
 import { Composer } from './ui/Composer'
-import { Pond, HowItWorks, Trust, Muni } from './ui/Pond'
+import { Pond, Muni } from './ui/Pond'
+import { HomeHero, REPO_SUGGESTIONS, SCRATCH_SUGGESTIONS, WhatIsFrog } from './ui/Home'
 import { Inspector } from './ui/Inspector'
 import { usePreviewHub } from './ui/PreviewPane'
 import type { PreviewHub } from './preview'
@@ -20,16 +21,17 @@ import { SessionList } from './ui/SessionList'
 import { firstTitle, stuck, provisional, undelivered, withOpening, type Opening } from './ui/Opening'
 import { useMachines } from './machines'
 import { creditLine, Palette, type Command } from './ui/Overlays'
-import { SettingsPage, SettingsRow, SettingsSidebar } from './ui/Settings'
+import { SettingsPage, SettingsSidebar } from './ui/Settings'
 import { pinModel, pinnedModel, rememberPick, SECTIONS, sectionOfQuery, setTheme, settingsPath, settingsSectionOf, startingModel, toggledTheme, type Section } from './settings'
 import { Transcript } from './ui/Transcript'
 import { safeHref } from './ui/href'
 import { askLine } from './ui/ask'
 import { sessionMissing, viewAfterArchive } from './ui/guards'
-import { DocsPage, DocsRow, DocsSidebar, Shell, type ShellMode } from './ui/Docs'
+import { DocsPage, DocsSidebar, Shell, type ShellMode } from './ui/Docs'
 import { DOCS, VERSION } from './docs/bundle'
-import { ChipSlot, useMacAppChip } from './ui/ChipSlot'
+import { useMacAppChip } from './ui/ChipSlot'
 import { SignedOutSide } from './ui/SignedOut'
+import { LegalRow, repoStarters, SideNav, SidePill, Starters } from './ui/Side'
 import { docsPath, docsSlugOf } from './docs/docs'
 import { accountTag, connectCard, finishedTurn, loadMemo, saveMemo, type CardMemo } from './connectCard'
 import { ConnectCard } from './ui/ConnectCard'
@@ -46,14 +48,6 @@ type View = { kind: 'session'; id: string } | { kind: 'new'; repo?: string; pick
 
 /** Dev only: a key for the mock gateway (any non-empty key is an account there). Skips sign-in. */
 const DEV_KEY = import.meta.env.DEV ? (import.meta.env.VITE_DEV_KEY as string | undefined) : undefined
-
-const Icon = ({ d }: { d: string }) => (
-  <svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ flex: 'none' }}><path d={d} /></svg>
-)
-const icons = {
-  new: 'M12 5v14M5 12h14',
-  search: 'M11 4a7 7 0 1 0 0 14a7 7 0 1 0 0-14M20 20l-4-4',
-}
 
 /** The view a path names: /s/<id> is that session, anything else the new-session page. */
 function viewOf(path: string): View {
@@ -435,8 +429,6 @@ export default function App() {
 
 
   const [pending, setPending] = useState<string | null>(null)
-  // Without GitHub a new session is a scratch sandbox, so its ideas are things to build, not repo chores.
-  const starterChips = useMemo(() => pickStarters(3, !key || !account?.handle).map((text) => ({ text })), [key, account?.handle])
   const start = useCallback(async (text: string, repo?: string, images: Image[] = [], base?: string, slot?: string, before?: Promise<unknown>) => {
     if (!cloud) return
     // Open the session at once, as a placeholder, and adopt the real one when the gateway
@@ -553,7 +545,7 @@ export default function App() {
   const noteSignedOutDraft = useCallback((t: string) => { signedOutDraft.current = t }, [])
   const mac = useMacAppChip(machines)
   /** Signed out, New session is the landing's composer. */
-  const focusComposer = () => { go({ kind: 'new' }); setDrawer(false); requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>('.dock textarea')?.focus()) }
+  const focusComposer = () => { go({ kind: 'new' }); setDrawer(false); requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>('.home-composer textarea')?.focus()) }
   const leave = (after: string | null, provider: Provider = 'github', connect?: string, pick = !!connect) => { setLeavingFor(provider); signIn(after ?? undefined, provider, connect, pick).catch(() => setLeavingFor(null)) }
 
   // Keyboard: ⌘K palette, ⌘N new, ⌘, settings, ⌘↩ / ⌘. answer the current ask.
@@ -592,12 +584,6 @@ export default function App() {
     { id: 'c-theme', label: 'Toggle dark mode', run: () => setTheme(toggledTheme()) },
   ]
 
-  const Nav = () => (
-    <nav aria-label="Main" className="nav">
-      <button type="button" className="row big" onClick={() => setView({ kind: 'new' })}><Icon d={icons.new} /><span style={{ flex: 1 }}>New session</span><span className="kb">⌘N</span></button>
-      <button type="button" className="row big" onClick={() => setPalette(true)}><Icon d={icons.search} /><span style={{ flex: 1 }}>Search</span><span className="kb">⌘K</span></button>
-    </nav>
-  )
 
 
 
@@ -656,25 +642,35 @@ export default function App() {
       before={<div className="side-scrim" onClick={() => setDrawer(false)} />}
       brand={<div className="brand"><Mark /><b style={{ flex: 1 }}>Frog</b><span id="side-acts" className="side-acts" style={mode === 'threads' ? undefined : { display: 'none' }} />{sideToggle(true)}</div>}
       side={{ threads: !key ? (
-        <SignedOutSide onNew={focusComposer} chip={mac.chip} onDismissChip={mac.dismiss} onDocs={() => openDocs()}
-          onSignIn={(provider) => leave(signedOutDraft.current.trim() || null, provider)} />
+        <SignedOutSide onNew={focusComposer} chip={mac.chip} onDocs={() => openDocs()}
+          onSignIn={(provider, prompt) => leave(prompt ?? (signedOutDraft.current.trim() || null), provider)} />
       ) : <>
-        <Nav />
-        <SessionList sessions={sessions} thread={thread} title={title} current={current?.id ?? null} error={listError}
-          onOpen={(id) => { setView({ kind: 'session', id }); setDrawer(false) }} onClear={clear} onSearch={() => setPalette(true)}
-          onRename={(s) => setRenaming(s.id)} onArchive={archive} onDelete={remove} />
-        <ChipSlot chip={mac.chip} onDismiss={mac.dismiss} />
-        <DocsRow onOpen={() => openDocs()} />
-        <SettingsRow onOpen={() => openSettings()} />
-        <button type="button" className="row" onClick={() => openSettings('account')} title="Account">
-          {account?.handle ? <img className="avatar" src={`https://github.com/${encodeURIComponent(account.handle)}.png?size=56`} alt="" width={28} height={28} />
-              : account?.image ? <img className="avatar" src={account.image} alt="" width={28} height={28} referrerPolicy="no-referrer" /> : <Mark size={28} />}
-          <div style={{ flex: 1, textAlign: 'left', minWidth: 0 }}>
-            <b>{firstName(account) ?? (DEV_KEY ? 'Dev key' : 'Signed in')}</b>
-            <div className="det" style={{ color: account && account.credit_cents <= 0 ? 'var(--warn)' : undefined }}>{account ? creditLine(account) : DEV_KEY ? 'local gateway' : ''}</div>
+        <SideNav onNew={() => setView({ kind: 'new' })} newOn={view.kind === 'new'} onSearch={() => setPalette(true)}
+          onCustomize={() => openSettings('appearance')} onDocs={() => openDocs()} onSettings={() => openSettings()} />
+        {sessions.length === 0 && !listError
+          ? <Starters items={repoStarters(repoList.repos.map((r) => r.name))}
+              onStart={(st) => st.pick ? setView({ kind: 'new', pick: true }) : st.github ? openSettings('connections') : start(st.prompt, st.repo)} />
+          : <SessionList sessions={sessions} thread={thread} title={title} current={current?.id ?? null} error={listError}
+              onOpen={(id) => { setView({ kind: 'session', id }); setDrawer(false) }} onClear={clear} onSearch={() => setPalette(true)}
+              onRename={(s) => setRenaming(s.id)} onArchive={archive} onDelete={remove} />}
+        <div className="side-foot">
+          {account && account.credit_cents < 50 && !account.subscription
+            ? <SidePill dot="wait" lead={`${cents(account.credit_cents)} left`} action="Add" onAction={() => openSettings('billing')} />
+            : mac.chip && <SidePill dot="go" lead="Frog for Mac" rest="$0 a token" action="Get" href={mac.chip.href} />}
+          <div className="side-acct-row">
+          <button type="button" className="side-acct" onClick={() => openSettings('account')} title="Account and billing">
+            {account?.handle ? <img className="avatar" src={`https://github.com/${encodeURIComponent(account.handle)}.png?size=56`} alt="" width={28} height={28} />
+                : account?.image ? <img className="avatar" src={account.image} alt="" width={28} height={28} referrerPolicy="no-referrer" /> : <Mark size={28} />}
+            <span className="who">
+              <b>{firstName(account) ?? (DEV_KEY ? 'Dev key' : 'Signed in')}</b>
+              <span style={{ color: account && account.credit_cents <= 0 ? 'var(--warn)' : undefined }}>{account ? creditLine(account) : DEV_KEY ? 'local gateway' : ''}</span>
+            </span>
+          </button>
+          <a className="ver" href={`https://github.com/muni-works/frog/commit/${__FROG_COMMIT__}`} target="_blank" rel="noreferrer"
+            title={`This build on GitHub (${__FROG_COMMIT__})`}>{VERSION}</a>
           </div>
-        </button>
-        <a className="version-chip" href={`https://github.com/muni-works/frog/commit/${__FROG_COMMIT__}`} target="_blank" rel="noreferrer" title="This build on GitHub">Frog {VERSION} · {__FROG_COMMIT__}</a>
+          <LegalRow />
+        </div>
       </>, docs: <DocsSidebar pages={DOCS} current={docPage} version={VERSION} onBack={backToApp} onOpen={openDocs} />,
       settings: key && <SettingsSidebar current={section} onBack={backToApp} onOpen={(x) => openSettings(x)} /> }}
       main={{ docs: <DocsPage pages={DOCS} slug={docPage} onOpen={openDocs} bar={<><Burger />{collapsed && sideToggle(false)}</>} />,
@@ -690,23 +686,13 @@ export default function App() {
       <main className="main home">
         {collapsed && <div className="side-float">{sideToggle(false)}</div>}<div className="phone-bar floating"><Burger /><b>Frog</b></div>
         {authError && <div role="status" className="banner warn">Sign-in didn't finish ({authError}). Try again.</div>}
-        <div className="home-hero">
-          <Pond />
-          <Mark size={56} />
-          <span className="beta-pill"><i />Now in beta</span>
-          <h1>What should we work on?</h1>
-          <div className="home-sub">
-            <p>Frog is a coding agent for your repos: open models, on your machines or in Frog Cloud.</p>
-            <p><b>25¢ of Frog Cloud credit free, $1 when you connect GitHub.</b></p>
+        <Pond /><div className="home-page"><HomeHero below={<WhatIsFrog />}>
+          <div className="home-composer">
+            <Composer onSend={() => {}} onSignIn={(provider, text) => leave(text || null, provider)} autoFocus suggestion={SCRATCH_SUGGESTIONS} onText={noteSignedOutDraft}
+              model={chosenModel} models={models} machines={machines} onModel={setNewModel} mode={newMode} onMode={setNewMode} />
+            {leaving && <div className="det" style={{ textAlign: 'center' }}>Opening {leaving === 'google' ? 'Google' : 'GitHub'}… your message is saved.</div>}
           </div>
-          <HowItWorks />
-          <Trust />
-        </div>
-        <div className="dock"><div>
-          <Composer onSend={() => {}} onSignIn={(provider, text) => leave(text || null, provider)} autoFocus chips={starterChips} onText={noteSignedOutDraft}
-            model={chosenModel} models={models} machines={machines} onModel={setNewModel} mode={newMode} onMode={setNewMode} />
-          {leaving && <div className="det" style={{ textAlign: 'center' }}>Opening {leaving === 'google' ? 'Google' : 'GitHub'}… your message is saved.</div>}
-        </div></div>
+        </HomeHero></div>
         <footer className="muni-foot">
           <nav className="foot-links" aria-label="About Frog"><a href="/pricing">Pricing</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/mac">Get the Mac app</a></nav>
           <a href="https://muni.works" target="_blank" rel="noreferrer" aria-label="Municipal Robotics"><Muni /></a>
@@ -824,20 +810,16 @@ export default function App() {
 
         {view.kind === 'new' && (
           <div className="main home">
-            <div className="home-hero">
-              <Pond />
-              <Mark size={56} />
-              <h1>What should we work on?</h1>
-              <HowItWorks />
-            </div>
-            <div className="dock">
-              <Composer usage={account ? { sub: account.subscription ?? null, credit: creditLine(account).replace(/ credit$/, ''), onBilling: () => openSettings('billing'), onOpen: refreshAccount } : undefined} repo={view.repo} draft={draft} autoFocus pickRepo={view.pick} chips={starterChips}
+            <Pond /><div className="home-page"><HomeHero>
+            <div className="home-composer">
+              <Composer usage={account ? { sub: account.subscription ?? null, credit: creditLine(account).replace(/ credit$/, ''), onBilling: () => openSettings('billing'), onOpen: refreshAccount } : undefined} repo={view.repo} draft={draft} autoFocus pickRepo={view.pick} suggestion={view.repo ? REPO_SUGGESTIONS : SCRATCH_SUGGESTIONS}
                 recent={[...new Set(sessions.map((s) => s.repo).filter(Boolean))]} repos={repoList.repos.map((r) => r.name)} install={repoList.install} onRepo={(repo) => setView({ kind: 'new', repo })} base={view.base} onBase={(base) => setView((v) => (v.kind === 'new' ? { ...v, base } : v))}
                 onConnectGithub={key && account && !account.handle && !DEV_KEY ? (text) => leave(text || null, 'github', key) : undefined}
                 model={chosenModel} models={models} machines={machines} onManage={() => openSettings('models')} onModel={setNewModel} mode={newMode} onMode={setNewMode}
                 onSend={(text, images) => { setDraft(undefined); start(text, view.repo, images, view.base) }} />
               <CreditWarning account={account} addedCents={lastAdded} avg={avgTurn} onAdd={() => openSettings('billing')} />
             </div>
+            </HomeHero></div>
           </div>
         )}
 
@@ -851,4 +833,9 @@ export default function App() {
       {toast && <div className="toast" role="status">{toast}</div>}
       </>} />
   )
+}
+
+/** 20¢, or $1.20 from a dollar up: the credit pill's amount. */
+function cents(c: number): string {
+  return c < 100 ? `${Math.max(0, Math.floor(c))}¢` : `$${(c / 100).toFixed(2)}`
 }

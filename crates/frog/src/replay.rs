@@ -324,6 +324,7 @@ async fn play(p: &mut Player, events: &[Envelope], ask: bool) -> Result<(), Inte
                         reason: None,
                         subagent: None,
                         card: None,
+                        proposal: None,
                     });
                     p.answer().await?;
                 }

@@ -608,16 +608,33 @@ mod keychain {
     const SERVICE: &str = "frog";
     static CACHE: Mutex<BTreeMap<String, Option<String>>> = Mutex::new(BTreeMap::new());
 
+    /// Whether this process reaches the real login Keychain. Not under `cargo test`, and not
+    /// with `FROG_KEYCHAIN=off` (the Mac app's tests, sandboxes): there reads, saves and
+    /// removals all stay in `CACHE`, so a test can't prompt for, overwrite or delete the
+    /// developer's own keys.
+    pub(super) fn real() -> bool {
+        !cfg!(test) && !std::env::var("FROG_KEYCHAIN").is_ok_and(|v| v == "off")
+    }
+
+    /// `/usr/bin/security`, the one way in. Panics where [`real`] says no, so a path that
+    /// skips the gate fails its test instead of raising a Keychain prompt.
+    fn security() -> Command {
+        assert!(
+            real(),
+            "the Keychain was reached under test or FROG_KEYCHAIN=off"
+        );
+        Command::new("/usr/bin/security")
+    }
+
     pub fn get(id: &str) -> Option<String> {
         if let Some(hit) = CACHE.lock().unwrap().get(id) {
             return hit.clone();
         }
-        // FROG_KEYCHAIN=off: never read the Keychain (tests, sandboxes).
-        if !cfg!(target_os = "macos") || std::env::var("FROG_KEYCHAIN").is_ok_and(|v| v == "off") {
+        if !cfg!(target_os = "macos") || !real() {
             return None;
         }
         let find = |service: &str| {
-            Command::new("/usr/bin/security")
+            security()
                 .args(["find-generic-password", "-s", service, "-a", id, "-w"])
                 .stderr(Stdio::null())
                 .output()
@@ -646,7 +663,11 @@ mod keychain {
         {
             bail!("that doesn't look like an API key");
         }
-        let mut child = Command::new("/usr/bin/security")
+        if !real() {
+            seed(id, Some(key));
+            return Ok(());
+        }
+        let mut child = security()
             .arg("-i")
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
@@ -669,8 +690,8 @@ mod keychain {
         Ok(())
     }
 
-    /// Tests: pretend the Keychain holds `key` for `id` (None: holds nothing).
-    #[cfg(test)]
+    /// Tests: pretend the Keychain holds `key` for `id` (None: holds nothing). Also where
+    /// saves go when [`real`] says no.
     pub fn seed(id: &str, key: Option<&str>) {
         CACHE
             .lock()
@@ -679,8 +700,8 @@ mod keychain {
     }
 
     pub fn delete(id: &str) -> Result<()> {
-        if cfg!(target_os = "macos") {
-            let _ = Command::new("/usr/bin/security")
+        if cfg!(target_os = "macos") && real() {
+            let _ = security()
                 .args(["delete-generic-password", "-s", SERVICE, "-a", id])
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
@@ -835,6 +856,21 @@ mod tests {
             ("FROG_API_KEY", "e"),
         ]);
         assert_eq!(key_from(CLOUD, &with_env, &kc), Some(("env", "e".into())));
+    }
+
+    /// `cargo test` never reaches the login Keychain: a save, a read and a removal all stay in
+    /// memory, so no run prompts for, overwrites or deletes the developer's own keys.
+    #[test]
+    fn tests_never_reach_the_real_keychain() {
+        assert!(!keychain::real());
+        let id = "keychain-test-only";
+        assert_eq!(keychain::get(id), None);
+        if cfg!(target_os = "macos") {
+            keychain::set(id, "kc-test").unwrap();
+            assert_eq!(keychain::get(id).as_deref(), Some("kc-test"));
+        }
+        keychain::delete(id).unwrap();
+        assert_eq!(keychain::get(id), None);
     }
 
     #[test]

@@ -38,9 +38,9 @@ final class OutcomeCardTests: XCTestCase {
     }
 
     func testFooterCountsAndPointsToTheChangesTab() {
-        XCTAssertEqual(OutcomeCard.footer(1), "1 claim · diffs in the Changes tab")
-        XCTAssertEqual(OutcomeCard.footer(2), "2 claims · diffs in the Changes tab")
-        XCTAssertEqual(OutcomeCard.footer(12), "12 claims · diffs in the Changes tab")
+        XCTAssertEqual(OutcomeCard.footer(1), "1 claim, diffs in the Changes tab")
+        XCTAssertEqual(OutcomeCard.footer(2), "2 claims, diffs in the Changes tab")
+        XCTAssertEqual(OutcomeCard.footer(12), "12 claims, diffs in the Changes tab")
     }
 
     // MARK: the flag gates the card

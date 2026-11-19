@@ -16,6 +16,7 @@ impl Agent {
         }
         let texts: Vec<String> = parts.iter().map(|p| p.text.clone()).collect();
         for part in parts {
+            self.user_words.push(part.text.clone());
             let (text, named) = crate::image_paths::attach(&part.text);
             let mut text = self.expand_mentions(&text);
             let (extra, files) = self.attach_named(&part.text);
@@ -241,6 +242,8 @@ impl Agent {
         // A completed background map can be adopted at a turn boundary. Never wait for it;
         // if it is still running, this turn proceeds with the current prompt.
         self.poll_repo_map();
+        let raw_input = input.to_string();
+        let raw_more: Vec<String> = more.iter().map(|p| p.text.clone()).collect();
         let (input, named) = match user {
             true => crate::image_paths::attach(input),
             false => (input.to_string(), Vec::new()),
@@ -287,6 +290,12 @@ impl Agent {
         if user {
             self.conv.inputs.push(input.to_string());
         }
+        // The words that may ask `Customize` for a change: this turn's, as typed.
+        self.user_words.clear();
+        if user {
+            self.user_words.push(raw_input);
+        }
+        self.user_words.extend(raw_more);
         self.conv.inputs.extend(more.iter().map(|p| p.text.clone()));
         let texts: Vec<String> = more.iter().map(|p| p.text.clone()).collect();
         if let Some(closed) = self.conv.chapters.started(turn, input, &texts) {
@@ -328,6 +337,7 @@ impl Agent {
         // `/skill-name ...` loads that skill ahead of the request.
         let input = match crate::skills::expand_command(&self.skills, &typed) {
             Some((expanded, name)) => {
+                self.record_skill_use(&name);
                 self.conv.skills_loaded.insert(name);
                 expanded
             }
@@ -368,6 +378,7 @@ impl Agent {
         for part in more {
             let input = match crate::skills::expand_command(&self.skills, &part.text) {
                 Some((expanded, name)) => {
+                    self.record_skill_use(&name);
                     self.conv.skills_loaded.insert(name);
                     expanded
                 }

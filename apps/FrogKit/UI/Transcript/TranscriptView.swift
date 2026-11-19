@@ -772,7 +772,7 @@ struct EndView: View {
                 HStack(spacing: 0) {
                     let line = Self.footer(usage, models: models)
                     ForEach(Array(line.enumerated()), id: \.offset) { i, part in
-                        if i > 0 { Text(verbatim: " · ") }
+                        if i > 0 { Color.clear.frame(width: 10) }
                         switch part {
                         case .model(let name):
                             Text(name).foregroundStyle(Tokens.textSecondary).metricsFirstWord()
@@ -789,7 +789,7 @@ struct EndView: View {
                         }
                     }
                     if showEnergy, let e = usage.energy {
-                        Text(verbatim: " · ")
+                        Color.clear.frame(width: 10)
                         EnergyHint(energy: e, usage: usage)
                     }
                     if !answer.isEmpty {
@@ -809,7 +809,7 @@ struct EndView: View {
                 .foregroundStyle(Tokens.textTertiary)
                 .frame(height: Tokens.Transcript.meta.line)
                 .padding(.leading, edge.indent)
-                .metricsRow(.footer, Self.footer(usage, models: models).map(\.words).joined(separator: " · "),
+                .metricsRow(.footer, Self.footer(usage, models: models).map(\.words).joined(separator: ", "),
                             key: "footer-\(usage.model ?? "")-\(usage.outputTokens)-\(usage.timing?.wallMs ?? 0)", fontSize: Tokens.Transcript.meta.size)
             }
         case .cancelled:
@@ -983,7 +983,7 @@ private struct ProbeProgress: View {
                         .foregroundStyle(.tertiary)
                 }
                 ProbeProgressBar(completed: completed, total: total, elapsed: elapsed)
-                Text("\(Self.phase(for: progress.label, elapsed: elapsed)) · \(Self.elapsed(elapsed))")
+                Text("\(Self.phase(for: progress.label, elapsed: elapsed)), \(Self.elapsed(elapsed))")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
                     .contentTransition(.numericText())

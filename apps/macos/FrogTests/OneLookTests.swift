@@ -105,11 +105,11 @@ final class OneLookTests: XCTestCase {
         let out = "test result: FAILED. 10 passed; 1 failed; 0 ignored"
         let run = StepLine.of(step("t", "Bash", "cargo test -q upload", outcome: .error, output: out, tests: tests,
                                    started: t0, ended: t0.addingTimeInterval(9)))!
-        XCTAssertEqual(run.text, "Failed cargo test -q upload 10 of 11 · 9.0s")
+        XCTAssertEqual(run.text, "Failed cargo test -q upload 10 of 11, 9.0s")
         let plain = StepLine.of(step("t", "Bash", "cargo test -q upload", outcome: .error, output: out))!
         XCTAssertEqual(plain.result, "", "no `tests`: a plain command, whatever the output says")
         XCTAssertEqual(StepLine.of(step("t", "Bash", "cargo test", tests: Item.TestRun(runner: "cargo", passed: 11, failed: 0, total: 11),
-                                        started: t0, ended: t0.addingTimeInterval(14)))?.result, "11 of 11 · 14s")
+                                        started: t0, ended: t0.addingTimeInterval(14)))?.result, "11 of 11, 14s")
     }
 
     /// Results are the engine's display without the verb it repeats; an edit's counts are its own.
@@ -196,8 +196,8 @@ final class OneLookTests: XCTestCase {
 
     /// The permission card says where the step runs: a Frog Cloud session's card said "this Mac".
     func testPermissionCardSaysWhereItRuns() {
-        XCTAssertEqual(PermissionRequest.runsWhere(inCloud: false, outsideSandbox: false), "Runs on this Mac · sandboxed")
-        XCTAssertEqual(PermissionRequest.runsWhere(inCloud: false, outsideSandbox: true), "Runs on this Mac · outside the sandbox")
+        XCTAssertEqual(PermissionRequest.runsWhere(inCloud: false, outsideSandbox: false), "Runs on this Mac, sandboxed")
+        XCTAssertEqual(PermissionRequest.runsWhere(inCloud: false, outsideSandbox: true), "Runs on this Mac, outside the sandbox")
         XCTAssertEqual(PermissionRequest.runsWhere(inCloud: true, outsideSandbox: false), "Runs in your Frog Cloud sandbox")
     }
 

@@ -130,7 +130,7 @@ struct LocalModelRowView: View {
                         .popover(isPresented: $info, arrowEdge: .trailing) { LocalModelInfo(row: row) }
                     }
                     Text(row.uses ?? "Not in Frog's catalog").font(.frog(size: 11)).foregroundStyle(Tokens.textTertiary)
-                    Text([row.size, row.fit].compactMap { $0 }.joined(separator: " · "))
+                    Text([row.size, row.fit].compactMap { $0 }.joined(separator: ", "))
                         .font(.frog(size: 11))
                         .foregroundStyle(row.fits ? Tokens.textTertiary : Tokens.signal)
                 }
@@ -171,12 +171,12 @@ struct LocalModelRowView: View {
         case .loading(let s, let afterTurn):
             HStack(spacing: 6) {
                 ProgressView().controlSize(.small)
-                Text(afterTurn ? "Loads after this turn" : (s > 0 ? "Loading · \(s) s" : "Loading"))
+                Text(afterTurn ? "Loads after this turn" : (s > 0 ? "Loading, \(s) s" : "Loading"))
                     .font(.frog(size: 11)).foregroundStyle(Tokens.textTertiary)
             }
         case .loaded(let decode):
             HStack(spacing: 8) {
-                Text(["Loaded", decode.map(ModelStats.speedText)].compactMap { $0 }.joined(separator: " · "))
+                Text(["Loaded", decode.map(ModelStats.speedText)].compactMap { $0 }.joined(separator: ", "))
                     .font(.frog(size: 11)).foregroundStyle(Tokens.placeLocal)
                 Button("Stop") { stop() }
             }

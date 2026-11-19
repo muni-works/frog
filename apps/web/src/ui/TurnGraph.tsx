@@ -123,7 +123,7 @@ export function TurnLine({ segs, total, pace, entries, onOpen }: { segs: Segment
       </svg>
       {at != null && (
         <span className="turn-read" role="status">
-          {[secs(at), speed != null ? `${speed} tok/s` : '', under ? stepName(entries.find((e) => e.id === under.item), under.kind) : ''].filter(Boolean).join(' · ')}
+          {[secs(at), speed != null ? `${speed} tok/s` : '', under ? stepName(entries.find((e) => e.id === under.item), under.kind) : ''].filter(Boolean).join(', ')}
         </span>
       )}
     </span>
@@ -191,8 +191,8 @@ export function TurnPanel({ segs, total, entries, usage, models, credit, live, p
       <div className="turn-panel f-card" role="dialog" aria-label="This turn" tabIndex={-1} ref={card}>
         <div className="tp-head">
           <b>This turn</b>
-          <span className="tp-meta">{[id ? modelName(id) : '', usage?.served_by ? servedByName(usage.served_by) : ''].filter(Boolean).join(' · ')}</span>
-          <span className="tp-totals">{parts.join(' · ')}</span>
+          <span className="tp-meta">{[id ? modelName(id) : '', usage?.served_by ? servedByName(usage.served_by) : ''].filter(Boolean).join(', ')}</span>
+          <span className="tp-totals">{parts.join(', ')}</span>
           <button type="button" className="line-link" onClick={onClose} aria-label="Close">Close</button>
         </div>
         <div className="tp-where">

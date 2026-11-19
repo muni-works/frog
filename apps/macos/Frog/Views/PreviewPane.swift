@@ -200,7 +200,7 @@ struct PreviewPane: View {
                     EmptyView()
                 }
                 if hub.inspecting {
-                    Text("Click an element to mention it · Esc to stop")
+                    Text("Click an element to mention it, Esc to stop")
                         .font(.frog(size: 10))
                         .padding(.horizontal, 10).padding(.vertical, 5)
                         .background(Tokens.raised, in: .capsule)

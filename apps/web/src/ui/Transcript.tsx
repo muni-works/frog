@@ -333,11 +333,11 @@ export function Transcript({ thread, onDecide, onAnswer, onElicit, onRetry, mode
           </div>
           {m.state !== 'failed' && (
             <div className="hover-row mine waiting">
-              <span className="wait-why">{m.state === 'sent' ? `Sent · ${waiting ?? 'waiting for Frog to start'}` : waiting ? `Sending · ${waiting}` : 'Sending'} · <Elapsed since={m.at} /></span>
+              <span className="wait-why">{m.state === 'sent' ? `Sent, ${waiting ?? 'waiting for Frog to start'}` : waiting ? `Sending, ${waiting}` : 'Sending'}, <Elapsed since={m.at} /></span>
               <Ticks n={m.state === 'sent' ? 1 : 0} />
             </div>
           )}
-          {m.state === 'failed' && <div className="me-fail">Frog didn't pick this up · <button type="button" onClick={() => onResend?.(m.id)}>Try again</button></div>}
+          {m.state === 'failed' && <div className="me-fail">Frog didn't pick this up. <button type="button" onClick={() => onResend?.(m.id)}>Try again</button></div>}
         </div>
       ))}
     </LiveContext.Provider>
@@ -423,7 +423,6 @@ const TurnView = memo(function TurnView({ turn, live, ask, question, running, mo
               <div className="hover-row mine" dir="ltr">
                 <Ticks n={2} />
                 {turn.at ? <span className="when" title={new Date(turn.at).toLocaleString()}>{ago(turn.at)}</span> : null}
-                <span className="sep" aria-hidden="true">·</span>
                 <CopyButton text={[turn.input, ...(turn.more ?? []).map((m) => m.text)].join('\n\n')} />
                 {hasEdit && <IconButton label="Edit (back to the composer)" onClick={() => cb.onEdit([turn.input, ...(turn.more ?? []).map((m) => m.text)].join('\n\n'))} icon="edit" />}
               </div>

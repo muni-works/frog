@@ -235,7 +235,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
             }
             let categories = await center.notificationCategories()
             let names = categories.map(\.identifier).sorted().joined(separator: ",")
-            let note = "notifications: \(status) · \(alertSetting) · categories [\(names)]"
+            let note = "notifications: \(status), \(alertSetting), categories [\(names)]"
             EngineProcess.log(note)
             onResult(note)
             guard await allowed() else {
@@ -243,10 +243,10 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
                 return
             }
             let samples: [(String, String, String)] = [
-                (Category.permission, "Test · permission", "Allow / Deny should be on this banner."),
-                (Category.ask, "Test · question", "Tap should open frog."),
-                (Category.notify, "Test · notify", "The model's Notify arrives like this."),
-                (Category.done, "Test · done", "A finished turn (the phone's older path)."),
+                (Category.permission, "Test, permission", "Allow / Deny should be on this banner."),
+                (Category.ask, "Test, question", "Tap should open frog."),
+                (Category.notify, "Test, notify", "The model's Notify arrives like this."),
+                (Category.done, "Test, done", "A finished turn (the phone's older path)."),
             ]
             for (category, title, body) in samples {
                 let c = UNMutableNotificationContent()

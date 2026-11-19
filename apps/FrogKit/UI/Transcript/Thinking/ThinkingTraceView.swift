@@ -58,7 +58,7 @@ struct ThinkingTraceView: View {
                     Text("✓ Thought \(totalDuration.map(ThinkingTrace.duration) ?? "")")
                         .foregroundStyle(.secondary)
                     if let finalGist, !finalGist.isEmpty {
-                        Text("· \(finalGist)").italic().foregroundStyle(.tertiary)
+                        Text(finalGist).italic().foregroundStyle(.tertiary)
                     }
                 } else {
                     ShimmeringClock(since: trace.since, reduceMotion: reduceMotion)

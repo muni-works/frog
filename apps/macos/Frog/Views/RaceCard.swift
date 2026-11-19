@@ -36,7 +36,7 @@ struct RaceCard: View {
         .sheet(item: $inspecting) { attempt in
             VStack(spacing: 0) {
                 HStack {
-                    Text("Attempt \(attempt.id + 1) · \(attempt.model)").font(.frog(size: 13, weight: .semibold))
+                    Text("Attempt \(attempt.id + 1), \(attempt.model)").font(.frog(size: 13, weight: .semibold))
                     Spacer()
                     Button("Done") { inspecting = nil }.keyboardShortcut(.cancelAction)
                 }
@@ -56,7 +56,7 @@ struct RaceCard: View {
             status(attempt)
             if let check = attempt.check { checkLabel(check) }
             if !changes.isEmpty {
-                Text("\(changes.count) file\(changes.count == 1 ? "" : "s") · +\(changes.map(\.added).reduce(0, +)) −\(changes.map(\.removed).reduce(0, +))")
+                Text("\(changes.count) file\(changes.count == 1 ? "" : "s"), +\(changes.map(\.added).reduce(0, +)) −\(changes.map(\.removed).reduce(0, +))")
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
             }

@@ -109,7 +109,7 @@ final class SessionNestingTests: XCTestCase {
         XCTAssertEqual(ids(out), ["m [-]"], "no child rows, no done row")
         guard case .row(_, _, let counts, true)? = out.first else { return XCTFail("collapsed row") }
         XCTAssertEqual(counts, SessionNesting.Counts(waiting: 1, running: 4, done: 1))
-        XCTAssertEqual(counts.summary, "4 running · 1 waiting · 1 done")
+        XCTAssertEqual(counts.summary, "4 running, 1 waiting, 1 done")
     }
 
     func testExpandedParentsCountTheirDirectChildren() {

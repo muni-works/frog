@@ -147,7 +147,7 @@ final class AgentRowTests: XCTestCase {
 
     func testTranscriptLiveStatusCountsTheTurnsAgents() {
         let c = Conversation(folder: URL(fileURLWithPath: "/tmp/demo"), link: nil, replay: false)
-        XCTAssertEqual(c.agentStatus(waitingTurn()), "Waiting on 1 agent · 1 done · 1 failed…")
+        XCTAssertEqual(c.agentStatus(waitingTurn()), "Waiting on 1 agent, 1 done, 1 failed…")
         let first = TurnState(input: "go", items: [taskItem(id: "t1", arg: "audit")])
         XCTAssertEqual(c.agentStatus(first), "Waiting on 1 agent…")
     }
@@ -240,7 +240,7 @@ final class AgentRowTests: XCTestCase {
         var a = agent("a", .running)
         a.steps = 4
         a.startedAt = t0
-        XCTAssertEqual(AgentRow.progress(a, now: t0.addingTimeInterval(42)), "4 steps · 42s")
+        XCTAssertEqual(AgentRow.progress(a, now: t0.addingTimeInterval(42)), "4 steps, 42s")
         a.planDone = 3
         a.planTotal = 5
         XCTAssertEqual(AgentRow.progress(a, now: t0.addingTimeInterval(42)), "3/5")

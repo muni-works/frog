@@ -9,6 +9,7 @@ import type { Provider } from '../auth'
 import { safeHref } from './href'
 import { DownloadAppChip, useDownloadChip } from './DownloadChip'
 import { useFocusTrap, useLayer, useMenu } from './layers'
+import { useSuggestion, type Suggestion } from './suggestion'
 import { derive, error as reducerError, reduce, type ComposerError, type Effect, type Intent, type Pr, type State as Tray } from '../composer'
 
 export const gh = (n: number) => (
@@ -68,6 +69,9 @@ export interface ComposerProps {
   /** Suggestion chips over the card while it's empty. `send` chips send on click; others fill
    * the field. `act` marks one that acts outside the project (push, deploy). */
   chips?: { text: string; send?: boolean; act?: boolean }[]
+  /** One suggestion shown in the empty field, muted, with a "tab" hint: Tab (or the hint) puts it
+   * in. A list cycles slowly until you type (ui/suggestion.ts); one string stays put. */
+  suggestion?: Suggestion
   /** Messages sent while Frog works: they go together when the turn ends. × removes one. */
   queued?: { text: string; images: Image[] }[]
   onUnqueue?: (i: number) => void
@@ -197,6 +201,9 @@ export function Composer(p: ComposerProps) {
     el.style.height = el.value ? `${Math.min(el.scrollHeight, 226)}px` : ''
   }
   const working = p.state === 'working', paused = p.state === 'paused'
+  // Typing stops the cycle for good; autofocus alone doesn't.
+  const [typed, setTyped] = useState(false)
+  const sug = useSuggestion(p.suggestion, !typed && !text)
   const timer = useTimer(working ? p.startedAt : undefined)
   useEffect(() => { if (p.draft !== undefined) setText(p.draft) }, [p.draft])
   useEffect(() => { if (ref.current) grow(ref.current) }, [text])
@@ -315,7 +322,11 @@ export function Composer(p: ComposerProps) {
     ...p.tray,
   }
   const d = derive(tray)
-  const placeholder = working ? PLACEHOLDER.working : p.session ? PLACEHOLDER.session : PLACEHOLDER.new
+  // The suggestion, while the field is empty, takes the placeholder's place: the placeholder
+  // carries its words for screen readers, and the overlay draws them so they can fade.
+  const ghost = !text && !images.length && !working ? sug.text : null
+  const take = () => { if (!ghost) return; setText(ghost); setTyped(true); ref.current?.focus() }
+  const placeholder = ghost ?? (working ? PLACEHOLDER.working : p.session ? PLACEHOLDER.session : PLACEHOLDER.new)
   const dictate = () => {
     const Rec = speech()
     // Without the browser's recognition, the field takes focus for the OS keyboard's own mic.
@@ -496,7 +507,7 @@ export function Composer(p: ComposerProps) {
             {machineRows.filter((m) => match(m.name)).map((m) => (
               <button key={m.spec} type="button" role="menuitemradio" aria-checked={false} disabled title="Runs from the Mac app">
                 <I d={P.server} style={{ color: placeColor('local') }} />
-                <span className="cz-mname">{m.name}</span><span className="cz-r">{places(m)}{tag(m) ? ` · ${tag(m)}` : ''}</span>
+                <span className="cz-mname">{m.name}</span><span className="cz-r">{places(m)}{tag(m) ? `, ${tag(m)}` : ''}</span>
               </button>
             ))}
             {cloud.length > 0 && <div className="cz-menu-h">Frog Cloud</div>}
@@ -595,7 +606,7 @@ export function Composer(p: ComposerProps) {
             <button key={`${pr.repo}#${pr.number}`} type="button" role="menuitem" onClick={(e) => dispatch({ type: 'pr_click', index: i, alt: e.altKey })}>
               <span className="cz-prdot" style={{ background: prDot(pr.state) }} aria-hidden="true" />
               <span>#{pr.number}</span><span className="cz-mname">{pr.title}</span>
-              <span className="cz-r">{pr.access === false ? 'no access' : `${PR_WORD[pr.state]}${pr.state === 'checks' || pr.state === 'failing' ? ` · ${pr.checks.ok} of ${pr.checks.total}` : ''}`}</span>
+              <span className="cz-r">{pr.access === false ? 'no access' : `${PR_WORD[pr.state]}${pr.state === 'checks' || pr.state === 'failing' ? `, ${pr.checks.ok} of ${pr.checks.total}` : ''}`}</span>
             </button>
           ))}
           <input className="cz-bind" value={bindRef} placeholder="Bind a PR by URL or number…" aria-label="Bind a PR by URL or number"
@@ -629,12 +640,21 @@ export function Composer(p: ComposerProps) {
           </div>
         )}
         <label htmlFor="cz" className="sr">Message Frog</label>
+        <div className={`cz-field${ghost ? ' cz-field--sug' : ''}`}>
+        {ghost && (
+          <div className={`cz-sg${sug.out ? ' out' : ''}`}>
+            <span className="cz-sg-text" aria-hidden="true">{ghost}</span>
+            <button type="button" className="cz-tab" tabIndex={-1} aria-label={`Use suggestion: ${ghost}`} onClick={take}>tab</button>
+          </div>
+        )}
         <textarea
           id="cz" ref={ref} rows={1} placeholder={placeholder} value={text} aria-label="Message Frog"
-          onChange={(e) => { setText(e.target.value); grow(e.target) }}
+          onChange={(e) => { setText(e.target.value); if (e.target.value) setTyped(true); grow(e.target) }}
           onPaste={(e) => { const fs = [...e.clipboardData.files].filter((f) => f.type.startsWith('image/')); if (fs.length) { e.preventDefault(); attach(fs) } }}
           onKeyDown={(e) => {
             if (composing(e)) return
+            // Tab takes the suggestion only while it shows; otherwise it moves focus as ever.
+            if (e.key === 'Tab' && ghost && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) { e.preventDefault(); take(); return }
             if (e.key === 'Enter' && !e.shiftKey && !e.metaKey) { e.preventDefault(); send() }
             if (e.key === 'Escape') dispatch({ type: 'esc' })
             if (e.key === 'ArrowUp' && !text) dispatch({ type: 'recall' })
@@ -643,6 +663,7 @@ export function Composer(p: ComposerProps) {
             if (e.key === '.' && (e.ctrlKey || e.metaKey) && !p.asking) { e.preventDefault(); dispatch({ type: 'cycle_mode' }) }
           }}
         />
+        </div>
         <div className="cz-controls">
           <button type="button" className={`cz-chip cz-attach${menu === 'plus' ? ' open' : ''}`} onClick={() => toggle('plus')} aria-label="Attach" aria-expanded={menu === 'plus'}>
             <I d={P.plus} />
@@ -659,7 +680,7 @@ export function Composer(p: ComposerProps) {
             </button>
           )}
           <span className="cz-sp" />
-          {working && !p.waiting && <span className="cz-meta" aria-live="off">{timer}{p.speed && p.speed > 0 ? ` · ${Math.round(p.speed)} tok/s` : ''}</span>}
+          {working && !p.waiting && <span className="cz-meta" aria-live="off">{timer}{p.speed && p.speed > 0 ? `, ${Math.round(p.speed)} tok/s` : ''}</span>}
           {p.context?.window || p.usage?.sub ? <ContextRing used={p.context?.used ?? null} window={p.context?.window ?? 0} usage={p.usage} onCompact={p.onCompact && !working ? () => p.onCompact!() : undefined} compacting={p.compacting} /> : null}
           {p.onMode && (
             <button type="button" className={`cz-chip${menu === 'mode' ? ' open' : ''}`} aria-expanded={menu === 'mode'} aria-label={`When Frog asks: ${MODE_NAME[tray.mode]}`}
@@ -728,24 +749,24 @@ function ContextRing({ used, window, usage, onCompact, compacting }: { used: num
       {open && (
         <div className="f-card ctx-card" role="dialog" aria-label="Usage and context" {...trap}>
           {sub && (<>
-            <div className="ctx-h"><span className="det">Plan usage · {sub.name}</span>{usage && <button type="button" className="ctx-link" onClick={() => { setOpen(false); usage.onBilling() }}>See all →</button>}</div>
+            <div className="ctx-h"><span className="det">Plan usage, {sub.name}</span>{usage && <button type="button" className="ctx-link" onClick={() => { setOpen(false); usage.onBilling() }}>See all →</button>}</div>
             {sub.windows.filter((w) => w.limit > 0).map((w) => {
               const x = Math.min(1, w.used / w.limit)
               const when = new Date(w.resets_at).toLocaleString(undefined, w.kind === '5h' ? { hour: 'numeric', minute: '2-digit' } : { weekday: 'short', hour: 'numeric', minute: '2-digit' })
               return (
                 <div key={w.kind} className="ctx-row">
-                  <div className="ctx-h"><span>{w.kind === '5h' ? 'Session limit' : 'Weekly'}</span><span className="det">{w.resets_at ? `Resets ${when}` : 'Starts when a message is sent'} · {Math.round(x * 100)}%</span></div>
+                  <div className="ctx-h"><span>{w.kind === '5h' ? 'Session limit' : 'Weekly'}</span><span className="det">{w.resets_at ? `Resets ${when}` : 'Starts when a message is sent'}, {Math.round(x * 100)}%</span></div>
                   <div className="ctx-bar"><span style={{ width: `${x * 100}%`, background: barTone(x) }} /></div>
                 </div>
               )
             })}
           </>)}
           {usage && (
-            <div className="ctx-h"><span>Usage credits</span><span className="det">{sub?.over ? `paying now · ${usage.credit} left` : `${usage.credit} left`}</span></div>
+            <div className="ctx-h"><span>Usage credits</span><span className="det">{sub?.over ? `paying now, ${usage.credit} left` : `${usage.credit} left`}</span></div>
           )}
           {window > 0 && (<>
             {usage && <div className="ctx-sep" />}
-            <div className="ctx-h"><span>Context</span><span className="det">{(used ?? 0).toLocaleString()} of {window.toLocaleString()} tokens · {Math.round(ctx * 100)}%</span></div>
+            <div className="ctx-h"><span>Context</span><span className="det">{(used ?? 0).toLocaleString()} of {window.toLocaleString()} tokens, {Math.round(ctx * 100)}%</span></div>
             <div className="ctx-bar"><span style={{ width: `${ctx * 100}%`, background: barTone(ctx) }} /></div>
             {(compacting || (onCompact && canCompact(used, window))) && (
               <button type="button" className="f-btn f-btn--bordered ctx-compact" disabled={compacting || !onCompact} onClick={() => { onCompact?.(); setOpen(false) }}>

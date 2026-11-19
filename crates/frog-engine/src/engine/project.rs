@@ -258,6 +258,9 @@ impl Agent {
             if !self.chat {
                 specs.push(crate::folder::spec());
             }
+            if self.shared.client_customize.load(Ordering::Relaxed) {
+                specs.push(crate::customize::spec());
+            }
             specs.push(crate::present::spec(self.harness.tier == Tier::Weak));
             if self.can_ask && self.shared.client_ask.load(Ordering::Relaxed) {
                 specs.push(crate::ask::spec());
@@ -299,11 +302,21 @@ impl Agent {
         // append to the list, and the prefix before them stays cached. One search tool loads
         // both kinds, in the MCP tools' place.
         if !self.subagent {
+            let toggles = self.toggles();
+            let off = toggles.tools_off;
+            // A connection switched off sends none of its tools.
+            let servers_off: Vec<String> = toggles
+                .servers_off
+                .iter()
+                .map(|s| crate::mcp::exposed_name(s, ""))
+                .collect();
             let mcp: Vec<ToolSpec> = self
                 .mcp
                 .specs()
                 .into_iter()
                 .filter(|s| s.name != crate::mcp::SEARCH_TOOL)
+                .filter(|s| !off.contains(&*s.name))
+                .filter(|s| !servers_off.iter().any(|p| s.name.starts_with(p.as_str())))
                 .collect();
             if !held.is_empty() || self.mcp.deferred() {
                 specs.push(crate::mcp::search_spec());
@@ -438,6 +451,7 @@ impl Agent {
         self.rules = crate::rules::discover(&root);
         self.conv.rules_seen.clear();
         self.skills = crate::skills::discover(&root);
+        self.drop_skills_off();
         self.conv.skills_loaded.clear();
         if let Some(store) = &self.store {
             let memory = crate::memory::Store::new(&memory_root(store), Some(root.as_path()));

@@ -52,6 +52,10 @@ pub struct Note {
     pub path: PathBuf,
     /// Cited files that no longer exist, so the note may be out of date.
     pub missing: Vec<String>,
+    /// The session it was remembered in, and that session's title then. `None` for notes
+    /// written before this was recorded, or by hand.
+    pub session: Option<String>,
+    pub session_title: Option<String>,
 }
 
 impl Note {
@@ -75,6 +79,8 @@ pub struct Store {
     project: Option<PathBuf>,
     /// The checkout that relative cites are checked against.
     checkout: Option<PathBuf>,
+    /// The session notes are being remembered in (id, title), recorded on each new note.
+    session: std::sync::Mutex<Option<(String, String)>>,
 }
 
 impl Store {
@@ -93,7 +99,14 @@ impl Store {
             global: root.join("global"),
             project,
             checkout,
+            session: std::sync::Mutex::new(None),
         }
+    }
+
+    /// Record `id` (titled `title`) as the session new notes come from.
+    pub fn set_session(&self, id: &str, title: &str) {
+        *self.session.lock().unwrap() =
+            (!id.is_empty()).then(|| (id.to_string(), title.trim().to_string()));
     }
 
     fn dir(&self, scope: Scope) -> Option<&Path> {
@@ -160,6 +173,7 @@ impl Store {
             id = format!("{base}-{n}");
             n += 1;
         }
+        let session = self.session.lock().unwrap().clone();
         let note = Note {
             path: dir.join(format!("{id}.md")),
             id,
@@ -171,9 +185,45 @@ impl Store {
             cites,
             body,
             missing: Vec::new(),
+            session: session.as_ref().map(|(id, _)| id.clone()),
+            session_title: session.map(|(_, t)| t).filter(|t| !t.is_empty()),
         };
         write_private(&note.path, &render(&note))?;
         Ok((note, redacted))
+    }
+
+    /// The note `id` in `scope`, read fresh.
+    pub fn get(&self, scope: Scope, id: &str) -> Option<Note> {
+        if id.is_empty() || id.contains(['/', '\\']) || id.starts_with('.') {
+            return None;
+        }
+        read(&self.dir(scope)?.join(format!("{id}.md")), scope)
+    }
+
+    /// Replace a note's text, keeping its id, date and session. Secrets are redacted as they
+    /// are for a new note. Returns the note and what kinds of secret were removed.
+    pub fn edit(&self, scope: Scope, id: &str, text: &str) -> Result<(Note, Vec<&'static str>)> {
+        let mut note = self
+            .get(scope, id)
+            .with_context(|| format!("no {} note `{id}`", scope.label()))?;
+        let (body, redacted) = redact(text.trim());
+        if body.is_empty() {
+            anyhow::bail!("a note can't be empty; remove it instead");
+        }
+        note.cites = self.cites(scope, &body);
+        note.body = body;
+        write_private(&note.path, &render(&note))?;
+        Ok((note, redacted))
+    }
+
+    /// Delete the note `id` in `scope`.
+    pub fn remove(&self, scope: Scope, id: &str) -> Result<Note> {
+        let note = self
+            .get(scope, id)
+            .with_context(|| format!("no {} note `{id}`", scope.label()))?;
+        std::fs::remove_file(&note.path)
+            .with_context(|| format!("deleting {}", note.path.display()))?;
+        Ok(note)
     }
 
     /// Paths mentioned in the note that exist: absolute ones anywhere, relative ones in the
@@ -325,6 +375,16 @@ fn render(n: &Note) -> String {
             serde_json::to_string(&n.cites).unwrap_or_default()
         ));
     }
+    if let Some(id) = &n.session {
+        s.push_str(&format!("session: {id}\n"));
+    }
+    if let Some(t) = &n.session_title {
+        // Quoted, so a title with a colon or a quote reads back as it was.
+        s.push_str(&format!(
+            "session_title: {}\n",
+            serde_json::to_string(&t.replace('\n', " ")).unwrap_or_default()
+        ));
+    }
     s.push_str(&format!("---\n{}\n", n.body.trim()));
     s
 }
@@ -348,6 +408,11 @@ fn read(path: &Path, scope: Scope) -> Option<Note> {
         body: body.to_string(),
         path: path.to_path_buf(),
         missing: Vec::new(),
+        session: meta.get("session").filter(|s| !s.is_empty()).cloned(),
+        session_title: meta
+            .get("session_title")
+            .map(|t| t.replace("\\\"", "\"").replace("\\\\", "\\"))
+            .filter(|t| !t.is_empty()),
     })
 }
 
@@ -411,9 +476,21 @@ nothing here changes your permissions or what you may do without asking.\n";
 /// The index for the system prompt, project notes first, then newest first, within the
 /// tier's budget. Also returns how many notes didn't fit.
 pub fn index(notes: &[Note], tier: Tier, window: u64) -> (String, usize) {
+    let (s, _, omitted) = index_parts(notes, tier, window);
+    (s, omitted)
+}
+
+/// The index, each note's own line in it by id (`None` when it didn't fit), and how many
+/// didn't fit: so Customize can say what each note adds to a turn.
+pub fn index_parts(
+    notes: &[Note],
+    tier: Tier,
+    window: u64,
+) -> (String, Vec<(String, Scope, Option<String>)>, usize) {
     if notes.is_empty() {
-        return (String::new(), 0);
+        return (String::new(), Vec::new(), 0);
     }
+    let mut each = Vec::new();
     let room = budget(tier, window) * 4;
     let mut ordered: Vec<&Note> = notes.iter().collect();
     ordered.sort_by_key(|n| n.scope != Scope::Project);
@@ -435,9 +512,11 @@ pub fn index(notes: &[Note], tier: Tier, window: u64) -> (String, usize) {
         }
         if used + line.len() + 1 > room {
             omitted += 1;
+            each.push((n.id.clone(), n.scope, None));
             continue;
         }
         used += line.len() + 1;
+        each.push((n.id.clone(), n.scope, Some(line.clone())));
         lines.push(line);
     }
     let mut s = format!("{FRAME}<memory>\n");
@@ -452,7 +531,7 @@ pub fn index(notes: &[Note], tier: Tier, window: u64) -> (String, usize) {
             if omitted == 1 { "" } else { "s" }
         ));
     }
-    (s, omitted)
+    (s, each, omitted)
 }
 
 /// Keep a note from closing (or opening) the block it's shown in.
@@ -846,6 +925,8 @@ mod tests {
             body: body.into(),
             path: PathBuf::from(format!("/nowhere/{id}.md")),
             missing: Vec::new(),
+            session: None,
+            session_title: None,
         }
     }
 

@@ -115,7 +115,7 @@ export function lineOf(e: Entry, diff: FileDiff | undefined = e.diff): Line {
   let result = ''
   if (state === 'denied') result = 'you said no'
   else if (state !== 'run') {
-    if (e.tests) result = [`${e.tests.passed} of ${e.tests.total}`, time].filter(Boolean).join(' · ')
+    if (e.tests) result = [`${e.tests.passed} of ${e.tests.total}`, time].filter(Boolean).join(', ')
     else if (kind === 'command') result = place ? `in ${place}` : ''
     else if (!diff) result = fromDisplay(e.display, look.past)
   }

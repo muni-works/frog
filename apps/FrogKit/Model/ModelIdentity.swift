@@ -20,7 +20,7 @@ struct ModelIdentity: Hashable, Sendable {
             switch self {
             case .mac, .apple: ProviderID.localName
             case .server(let name): "On \(name)"
-            case .cloud(let name): name == ProviderID.cloudName ? name : "Cloud · \(name)"
+            case .cloud(let name): name == ProviderID.cloudName ? name : "Cloud, \(name)"
             }
         }
 

@@ -10,9 +10,9 @@ struct PondMock: View {
         Lead(id: "infra", name: "Infra", now: "tracing auth timeout", workers: [
             Worker(name: "reproduce timeout", state: .running),
             Worker(name: "add request tracing", state: .waiting)
-        ], pr: "#42 · CI 5/5 · Merge", spend: "$12.40 / $25 today", state: .running),
+        ], pr: "#42, CI 5/5, Merge", spend: "$12.40 / $25 today", state: .running),
         Lead(id: "macos", name: "macOS", now: "signing fix verified", workers: [],
-             pr: "#87 · CI running", spend: "$3.10 / $10 today", state: .running),
+             pr: "#87, CI running", spend: "$3.10 / $10 today", state: .running),
         Lead(id: "release", name: "Release", now: "waiting for direction", workers: [
             Worker(name: "draft release notes", state: .idle)
         ], pr: nil, spend: "$0.80 / $8 today", state: .waiting)
