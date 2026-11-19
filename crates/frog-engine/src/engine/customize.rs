@@ -45,6 +45,19 @@ impl Agent {
     /// `parent_session` (the engine's own children) or `--worker` (how the Mac starts every
     /// child, Race attempts aside, and kept across a resume). Their "user" is an agent, so
     /// they get no Customize, no notes on their own, no "remember …" and no rule from a note.
+    /// Keep the declined offers with the session, so a resume doesn't offer them again.
+    fn save_declined(&self) {
+        let Some(store) = &self.store else { return };
+        let path = super::declined_path(store, &self.conv.session_id);
+        let mut keys: Vec<&str> = self.declined.iter().map(String::as_str).collect();
+        keys.sort_unstable();
+        let tmp = path.with_extension(format!("declined.{}.tmp", crate::session::new_id()));
+        let ok = std::fs::write(&tmp, keys.join("\n") + "\n").and_then(|_| std::fs::rename(&tmp, &path));
+        if ok.is_err() {
+            let _ = std::fs::remove_file(&tmp);
+        }
+    }
+
     pub(super) fn top_level(&self) -> bool {
         !self.subagent && !self.cfg.worker && self.cfg.parent_session.is_none()
     }
@@ -182,6 +195,7 @@ rules or tools. Don't retry; tell the session that started you if it matters."
                 Answer::Took(p) => p,
                 Answer::NotNow => {
                     self.declined.insert(key);
+                    self.save_declined();
                     return Ok(tools::Output::text(format!(
                         "The user said not now. Leave it, and don't offer it again this \
 session.{refused_note}"

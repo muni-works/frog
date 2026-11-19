@@ -70,6 +70,17 @@ fn rig_with(script: Vec<Response>, mode: Mode, tweak: impl FnOnce(&mut Config)) 
 /// A rig whose app declared no settings.
 fn rig_bare(script: Vec<Response>, mode: Mode, tweak: impl FnOnce(&mut Config)) -> Rig {
     let base = std::env::temp_dir().join(format!("frog-customize-{}", session::new_id()));
+    rig_in(base, None, script, mode, tweak)
+}
+
+/// A rig in `base`, resuming session `resume` from its store when given.
+fn rig_in(
+    base: PathBuf,
+    resume: Option<String>,
+    script: Vec<Response>,
+    mode: Mode,
+    tweak: impl FnOnce(&mut Config),
+) -> Rig {
     let (project, store) = (base.join("project"), base.join("store"));
     for d in [&project, &store] {
         std::fs::create_dir_all(d).unwrap();
@@ -89,7 +100,7 @@ fn rig_bare(script: Vec<Response>, mode: Mode, tweak: impl FnOnce(&mut Config)) 
         cwd: project.clone(),
         mode,
         can_ask: true,
-        resume: None,
+        resume,
         store: Some(store),
         sandbox: false,
         rich: false,
@@ -171,6 +182,20 @@ impl Rig {
         let mut out = Vec::new();
         walk(&self.base.join("memory/projects"), &mut out);
         out
+    }
+
+    /// Shut the engine down and keep its folder (for a resume); returns the session's id.
+    async fn stop(self) -> (PathBuf, String) {
+        let mut h = self.h;
+        h.ops.send(Op::Shutdown).unwrap();
+        while h.events.recv().await.is_some() {}
+        let id = std::fs::read_dir(self.base.join("store"))
+            .unwrap()
+            .flatten()
+            .filter_map(|e| e.file_name().to_str()?.strip_suffix(".jsonl").map(String::from))
+            .next()
+            .expect("a session log");
+        (self.base, id)
     }
 
     async fn end(self) {
@@ -1452,4 +1477,42 @@ async fn only_settings_the_app_applies_are_planned() {
         assert!(out.contains("can't be changed from here") && out.contains(place), "{text}: {out}");
     }
     r.end().await;
+}
+
+/// Review 3, item 12: a declined offer stays declined after the engine restarts and the
+/// session is resumed (kept with the session, not in memory only).
+#[tokio::test]
+async fn a_declined_offer_stays_declined_across_a_resume() {
+    let offer = || {
+        call(
+            "o",
+            json!({"do": "remember", "line": "Use pnpm", "words": "we use pnpm", "offer": true}),
+        )
+    };
+    let mut r = rig(vec![offer(), done()], Mode::Default);
+    r.idle().await;
+    let evs = r.say("we use pnpm", |id, _| deny(id)).await;
+    assert_eq!(cards(&evs).len(), 1);
+    let (base, id) = r.stop().await;
+    let mut again = rig_in(base, Some(id), vec![offer(), done()], Mode::Default, |_| {});
+    again.idle().await;
+    let evs = again.say("we use pnpm", |id, _| deny(id)).await;
+    assert!(cards(&evs).is_empty(), "not offered again: {evs:?}");
+    assert!(tool_output(&evs).contains("already said not now"));
+    again.end().await;
+}
+
+/// Review 3, item 12: a child's parent link survives a resume, as its worker flag does, so a
+/// resumed child still gets nothing (no Customize, no remembering).
+#[tokio::test]
+async fn a_resumed_child_keeps_its_parent() {
+    let mut r = rig_with(vec![done()], Mode::Default, |c| c.parent_session = Some("mom".into()));
+    r.idle().await;
+    let _ = r.say("hi", never).await;
+    let (base, id) = r.stop().await;
+    let mut again = rig_in(base, Some(id), vec![done()], Mode::Default, |_| {});
+    again.idle().await;
+    let _ = again.say("remember that we deploy on fridays", never).await;
+    assert!(again.notes().is_empty(), "still a child: {:?}", again.notes());
+    again.end().await;
 }

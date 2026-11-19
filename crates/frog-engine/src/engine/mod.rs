@@ -2132,12 +2132,18 @@ impl Agent {
         let mut resumed_model: Option<String> = None;
         // An agent started it: the resume keeps its worker egress policy whatever the flags.
         let mut resumed_worker = false;
+        // The session that started it, kept too: a resumed child is still a child.
+        let mut resumed_parent: Option<String> = None;
+        // Offers the person declined in this session: never made again, after a resume too.
+        let mut resumed_declined: HashSet<String> = HashSet::new();
         let mut resumed_chapters = crate::chapter::Tracker::default();
         let (session_id, messages, seq, turn, log, inputs, unfinished) = match (&o.resume, &o.store)
         {
             (Some(id), Some(dir)) => {
                 let l = session::load(dir, id).map_err(|e| ConfigError(format!("{e:#}")))?;
                 resumed_worker = l.header.worker;
+                resumed_parent = l.header.parent.clone();
+                resumed_declined = declined_load(dir, id);
                 let log = Log::open(dir, id).map_err(|e| ConfigError(format!("{e:#}")))?;
                 let (seq, turn) = (l.last_seq(), l.last_turn());
                 resumed_map = l.repo_map.clone();
@@ -2211,6 +2217,9 @@ impl Agent {
         let intended_model = resumed_model.unwrap_or_else(|| o.profile_name.clone());
         *shared.journal.header.lock().unwrap() = (o.cwd.clone(), o.profile_name.clone());
         o.cfg.worker |= resumed_worker;
+        if o.cfg.parent_session.is_none() {
+            o.cfg.parent_session = resumed_parent;
+        }
         shared.journal.worker.store(o.cfg.worker, Ordering::Relaxed);
         *shared.journal.parent.lock().unwrap() = o.cfg.parent_session.clone();
         shared.journal.start_session(session_id.clone(), seq, log);
@@ -2360,7 +2369,7 @@ impl Agent {
             card_words: Vec::new(),
             undos: HashMap::new(),
             undo_order: Default::default(),
-            declined: HashSet::new(),
+            declined: resumed_declined,
             noted_turn: None,
             remembered: false,
             note_index: None,
@@ -3519,3 +3528,15 @@ mod tests;
 /// The transcript's sentence after a denied command ends the turn.
 pub(crate) const DENIED_ENDING: &str =
     "Stopped here because you denied that command. The work so far is kept; say how to go on.";
+
+/// Where a session's declined offers are kept: beside its log.
+pub(super) fn declined_path(store: &std::path::Path, id: &str) -> PathBuf {
+    store.join(format!("{id}.declined"))
+}
+
+/// A session's declined offers, one key a line (none when there's no file).
+fn declined_load(store: &std::path::Path, id: &str) -> HashSet<String> {
+    std::fs::read_to_string(declined_path(store, id))
+        .map(|t| t.lines().filter(|l| !l.is_empty()).map(String::from).collect())
+        .unwrap_or_default()
+}
