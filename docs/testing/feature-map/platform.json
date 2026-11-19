@@ -1,0 +1,3151 @@
+{
+  "area": "Settings, models and account",
+  "features": [
+    {
+      "id": "first-launch-empty-page",
+      "name": "First launch, no account",
+      "group": "First run",
+      "what": "A fresh Mac opens to an empty chat: the frog on its lily pad, 'What should we work on?', recent-project chips, and a sidebar footer offering Frog Cloud sign-in. Nothing needs an account.",
+      "entry_points": [
+        "Launch Frog.app for the first time",
+        "File > New Chat (⌘N) or a new window"
+      ],
+      "files": [
+        "apps/macos/Frog/FrogApp.swift",
+        "apps/FrogKit/UI/Transcript/TranscriptView.swift",
+        "apps/macos/Frog/Views/Onboarding.swift",
+        "apps/macos/Frog/Views/UserFooter.swift",
+        "apps/macos/Frog/Model/ProjectGlance.swift"
+      ],
+      "flows": [
+        {
+          "id": "launch-fresh-signed-out",
+          "name": "Open the app for the first time with no account",
+          "steps": [
+            "Launch Frog with an empty HOME and no Frog Cloud key",
+            "Look at the window that opens",
+            "Read the sidebar footer"
+          ],
+          "expected": "One window with an empty chat: frog mascot, 'What should we work on?', composer. The footer reads 'Sign in to Frog Cloud · Cloud sessions · $1 free to start'.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SnapshotTests.swift:testRenderFirstRun"
+          ],
+          "coverage_v070": "snapshot",
+          "automatable": "hard",
+          "why_hard": "The app-level launch (RootView, WindowGroup, UserFooter reading CloudAccount.shared) has no test entry point. Only EmptyTranscript is rendered, as a PNG with no reference compare. SwiftUI controls in a hosted view can't be found or clicked by tests (no XCUITest target, no accessibility tree)"
+        },
+        {
+          "id": "open-recent-project-chip",
+          "name": "Jump into a recent project from the empty chat",
+          "steps": [
+            "Have git repos under ~/Developer (or recent folders)",
+            "Open a new chat",
+            "Click one of up to three folder chips"
+          ],
+          "expected": "The window switches to a new conversation in that folder (hand-off to the shell's folder switch).",
+          "needs": [
+            "git-repo"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "RecentProjectChips reads Library.shared, Recents and the real home folder, and the click goes through the switchFolder environment closure. SwiftUI controls in a hosted view can't be found or clicked by tests (no XCUITest target, no accessibility tree)"
+        },
+        {
+          "id": "project-greeting-starts",
+          "name": "Start from a suggested prompt in a project",
+          "steps": [
+            "Open a project folder with no conversation yet",
+            "Read the one-line project summary",
+            "Click a start chip like 'Review my changes'"
+          ],
+          "expected": "Summary such as 'Rust and Swift · 41k lines · 3 uncommitted changes'. Clicking a chip submits its prompt as the first message (hand-off to the conversation).",
+          "needs": [
+            "git-repo",
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/OnboardingTests.swift:testSummary",
+            "FrogTests/OnboardingTests.swift:testStartsFollowTheState",
+            "FrogTests/OnboardingTests.swift:testReadsARealRepository",
+            "FrogTests/SnapshotTests.swift:testRenderProjectGreeting"
+          ],
+          "coverage_v070": "snapshot",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "apple-intelligence-default",
+      "name": "Apple Intelligence as the first model",
+      "group": "First run",
+      "what": "With nothing set up, new conversations start on Apple's on-device model (apple/on-device through the frog-apple sidecar), so the first message gets an answer with no download or account.",
+      "entry_points": [
+        "Send the first message in a new chat on a Mac with Apple Intelligence on"
+      ],
+      "files": [
+        "apps/macos/Frog/Model/AppleIntelligence.swift",
+        "apps/macos/Frog/Model/Workspace.swift",
+        "apps/FrogKit/Model/ModelStats.swift"
+      ],
+      "flows": [
+        {
+          "id": "first-answer-on-apple",
+          "name": "Get a first answer with no setup",
+          "steps": [
+            "Fresh HOME, Apple Intelligence enabled in System Settings",
+            "Type a question in a new chat",
+            "Press Return"
+          ],
+          "expected": "The turn shows 'Starting Apple Intelligence', then streams an answer. The model pill reads Apple Intelligence. Hand-off to the conversation for the transcript itself.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ModelStatsTests.swift:testNewConversationsStartOnAppleThenTheLastPick",
+            "FrogTests/ModelLoadTests.swift:testAppleIntelligenceIsStarted"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "It needs the real frog-apple sidecar and a Mac with Apple Intelligence available. Test hosts run with FROG_SIDECARS=off, and CI VMs have no Apple Intelligence. A stand-in model (HeldModel) can replace it for the flow but not for the Apple path."
+        },
+        {
+          "id": "apple-unavailable-fallback",
+          "name": "Open a first chat on a Mac without Apple Intelligence",
+          "steps": [
+            "Apple Intelligence off or unsupported",
+            "Open a new chat",
+            "Look at the model pill and the empty page"
+          ],
+          "expected": "No Apple model is offered. The model suggestion line offers the local model that suits this Mac, and the picker offers Frog Cloud.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "AppleIntelligence.available reads SystemLanguageModel.default directly, with no seam to force it on or off."
+        }
+      ]
+    },
+    {
+      "id": "first-download-offer",
+      "name": "First download offer (model suggestion)",
+      "group": "First run",
+      "what": "While there's no model on this Mac and no cloud key, the empty page offers one quiet line: 'Using Apple Intelligence. Get Qwen3 32B for bigger tasks · 18 GB', with the model picked by this Mac's memory.",
+      "entry_points": [
+        "Empty conversation page, under the question"
+      ],
+      "files": [
+        "apps/macos/Frog/FrogApp.swift",
+        "apps/macos/Frog/Model/ModelDownloads.swift",
+        "catalog/local-models.json",
+        "apps/macos/Frog/Model/LocalCatalog.swift"
+      ],
+      "flows": [
+        {
+          "id": "see-recommendation-for-this-mac",
+          "name": "See which model Frog recommends for this Mac",
+          "steps": [
+            "Fresh Mac with no local model and no cloud key",
+            "Open a new chat",
+            "Read the suggestion line"
+          ],
+          "expected": "It offers Qwen3 32B (18 GB) at 48 GB of RAM or more, Qwen3 8B at 16 GB or more, else Qwen3 4B, sized as Settings writes it.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/LocalModelsTests.swift:testNamesAgreeWithTheMenuAndFrogCloud",
+            "FrogTests/OneLookTests.swift:testDownloadSizesReadAsSettingsWritesThem"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "SuggestedModel.forThisMac reads ModelIdentity.memoryGB from the real machine, so the RAM tiers can't be injected. ModelSuggestion reads ModelDownloads.shared and ProviderStore.shared (which runs the real `frog --providers`)."
+        },
+        {
+          "id": "get-suggested-model",
+          "name": "Download the suggested model from the empty page",
+          "steps": [
+            "Open a new chat on a fresh Mac",
+            "Click 'Get Qwen3 …'",
+            "Watch the line change to 'Downloading … · progress' with a Stop link",
+            "Wait for the download to finish"
+          ],
+          "expected": "Progress shows in place. When done, the new chat switches to the model, flashes '<model> is ready on this Mac.', and lastModel is remembered. The line goes away.",
+          "needs": [
+            "network",
+            "local-model"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "ModelDownloads always fetches from https://huggingface.co (multi-GB). There's no URL or session seam, and the view isn't clickable in tests."
+        },
+        {
+          "id": "stop-suggested-download",
+          "name": "Stop the download started from the suggestion line",
+          "steps": [
+            "Open a new chat on a fresh Mac",
+            "Click 'Get …' on the suggestion line",
+            "While it downloads, click Stop"
+          ],
+          "expected": "The download is cancelled, partial state cleared, and the line goes back to offering Get.",
+          "needs": [
+            "network"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "It needs a real download in flight (no fake downloader). SwiftUI controls in a hosted view can't be found or clicked by tests (no XCUITest target, no accessibility tree)"
+        },
+        {
+          "id": "dismiss-suggestion",
+          "name": "Turn the model suggestion off for good",
+          "steps": [
+            "Open a new chat with the suggestion showing",
+            "Click the × at the end of the line",
+            "Open another new chat"
+          ],
+          "expected": "The line is gone and stays gone (modelSuggestionClosed = true).",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "SwiftUI controls in a hosted view can't be found or clicked by tests (no XCUITest target, no accessibility tree)"
+        },
+        {
+          "id": "suggestion-hidden-when-set-up",
+          "name": "No suggestion once a model or cloud key exists",
+          "steps": [
+            "Download a catalog model or connect a cloud key",
+            "Open a new chat",
+            "Look under the question"
+          ],
+          "expected": "The suggestion line doesn't appear.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "hasCloud comes from ProviderStore.shared.load(), which runs the real `frog --providers --json`. hasLocal reads the real HF cache (only HF_HUB_CACHE can redirect it)."
+        }
+      ]
+    },
+    {
+      "id": "claude-code-setup-line",
+      "name": "Found Claude Code setup line",
+      "group": "First run",
+      "what": "On an empty page, frog says what it found from Claude Code (CLAUDE.md, skills, keys) and offers to add Claude Code's MCP servers with one click.",
+      "entry_points": [
+        "Empty conversation page, while `frog --setup` reports MCP servers to add"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/Onboarding.swift"
+      ],
+      "flows": [
+        {
+          "id": "use-claude-mcp-servers",
+          "name": "Use the MCP servers found in Claude Code",
+          "steps": [
+            "Have ~/.claude.json with MCP servers",
+            "Open a new chat",
+            "Read 'Using your Claude Code setup: … Found N MCP servers.'",
+            "Click 'Use them'"
+          ],
+          "expected": "It runs `frog --use-claude-mcp on`. The line becomes 'Using N MCP servers from Claude Code.' with a check, and an empty conversation restarts so the servers connect.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/OnboardingTests.swift:testSetupReportLoadsFromFrog",
+            "FrogTests/OnboardingTests.swift:testSetupReportWords"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "It needs the real engine to report and enable servers (no stub for Frog.json/Frog.run). SwiftUI controls in a hosted view can't be found or clicked by tests (no XCUITest target, no accessibility tree)"
+        },
+        {
+          "id": "dismiss-setup-line",
+          "name": "Hide the setup line",
+          "steps": [
+            "Have Claude Code MCP servers frog could add",
+            "Open a new chat with the setup line showing",
+            "Click ×",
+            "Open another new chat"
+          ],
+          "expected": "The line is gone for good (setupLineClosed), and the model suggestion takes its place.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "SwiftUI controls in a hosted view can't be found or clicked by tests (no XCUITest target, no accessibility tree)"
+        }
+      ]
+    },
+    {
+      "id": "bigger-model-line",
+      "name": "Bigger model offer",
+      "group": "First run",
+      "what": "When a small model (Apple Intelligence's 8k window) outgrows the conversation, loops or works in a project, a line above the composer offers the next model up on your devices or in the cloud. Hand-off: it sits in the composer area.",
+      "entry_points": [
+        "Above the composer after a turn ends on a small-window model"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/Onboarding.swift",
+        "apps/macos/Frog/Views/ModelPicker.swift"
+      ],
+      "flows": [
+        {
+          "id": "switch-to-bigger-local",
+          "name": "Move a struggling conversation to a bigger local model",
+          "steps": [
+            "Chat on Apple Intelligence until a turn ends on context overflow or looping",
+            "Read 'This conversation outgrew Apple Intelligence.'",
+            "Click 'Use <model>' or 'Get <model> (size)'"
+          ],
+          "expected": "A ready model takes over the conversation now. A Get downloads and switches when ready (Workspace.useWhenReady).",
+          "needs": [
+            "fake-engine-ok",
+            "local-model"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/OnboardingTests.swift:testShowsWhenASmallModelIsOutOfItsDepth",
+            "FrogTests/OnboardingTests.swift:testQuietOtherwise"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "SwiftUI controls in a hosted view can't be found or clicked by tests (no XCUITest target, no accessibility tree). The Get path needs a real download."
+        },
+        {
+          "id": "switch-to-cloud-or-open-settings",
+          "name": "Move to a cloud model, or to Frog Cloud setup",
+          "steps": [
+            "Chat on a small model until the bigger-model line shows",
+            "Click 'use <cloud model>' (or 'use Frog Cloud' when none is ready)",
+            "Look at the model pill or the Settings window"
+          ],
+          "expected": "A ready cloud model takes over (or the folder's keep-on-device policy asks first). With none ready, Settings opens on the Models tab.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "SwiftUI controls in a hosted view can't be found or clicked by tests (no XCUITest target, no accessibility tree). openSettings can't be observed in a test host."
+        },
+        {
+          "id": "dismiss-bigger-model-line",
+          "name": "Keep the small model",
+          "steps": [
+            "Chat on a small model until the bigger-model line shows",
+            "Click ×",
+            "Send another message"
+          ],
+          "expected": "The line goes away for this conversation.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "SwiftUI controls in a hosted view can't be found or clicked by tests (no XCUITest target, no accessibility tree)"
+        }
+      ]
+    },
+    {
+      "id": "settings-window",
+      "name": "Settings window and tabs",
+      "group": "General",
+      "what": "⌘, opens a nine-tab Settings window (General, Models, Billing, Energy, Lend, Permissions, MCP, Appearance, Shortcuts). The last tab is remembered, and other surfaces deep-link to a tab through the settingsTab default.",
+      "entry_points": [
+        "Frog > Settings… (⌘,)",
+        "Sidebar footer when signed in (opens Billing)",
+        "Model picker 'Manage…' (opens Models)",
+        "Bigger-model line 'use Frog Cloud' (Models)",
+        "Picker or model row 'Raise Cap…' (Models or Billing)",
+        "Composer tray open_billing (Billing)",
+        "Machines > Credit 'Add credit…' (switches to Billing)"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/SettingsView.swift",
+        "apps/macos/Frog/FrogApp.swift",
+        "apps/macos/Frog/Views/UserFooter.swift",
+        "apps/macos/Frog/Views/ModelPicker.swift",
+        "apps/macos/Frog/Views/ModelStateAction.swift",
+        "apps/macos/Frog/Views/ComposerView+Tray.swift"
+      ],
+      "flows": [
+        {
+          "id": "open-settings",
+          "name": "Open Settings and switch tabs",
+          "steps": [
+            "Press ⌘,",
+            "Click each tab in turn",
+            "Close Settings and press ⌘, again"
+          ],
+          "expected": "Settings opens 620 pt wide on the last tab used, and each tab's content loads.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "The Settings scene can't be opened or its tabs clicked from a hosted test. Several tabs run the real engine on appear (MCP, Models through Devices)."
+        },
+        {
+          "id": "deep-link-to-tab",
+          "name": "Open Settings straight onto a tab from elsewhere",
+          "steps": [
+            "Click the signed-in sidebar footer",
+            "See Settings on Billing",
+            "In the model picker click 'Manage…'",
+            "See Settings on Models"
+          ],
+          "expected": "settingsTab is set first, so Settings opens (or switches) to the right tab.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "openSettings() can't be observed in a test host. The tab binding itself (UserDefaults 'settingsTab') could be asserted."
+        }
+      ]
+    },
+    {
+      "id": "general-editor",
+      "name": "Open files in (editor)",
+      "group": "General",
+      "what": "Settings › General picks the app that opens files: Automatic (first installed editor) or a specific installed editor.",
+      "entry_points": [
+        "Settings › General › Open files in"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/SettingsView.swift",
+        "apps/macos/Frog/Model/Editors.swift"
+      ],
+      "flows": [
+        {
+          "id": "choose-editor",
+          "name": "Choose which editor opens files",
+          "steps": [
+            "Open Settings › General",
+            "Pick an editor from 'Open files in'",
+            "Open a file from a conversation or 'Open config.toml…'"
+          ],
+          "expected": "The chosen editor opens the file. Automatic uses the first installed editor, or the default app.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Editor.installed depends on the apps installed on the Mac, and Editor.open launches real apps. SwiftUI controls in a hosted view can't be found or clicked by tests (no XCUITest target, no accessibility tree)"
+        }
+      ]
+    },
+    {
+      "id": "notifications",
+      "name": "Notifications and the Dock badge",
+      "group": "General",
+      "what": "frog notifies only when the model's Notify tool asks (attention, done, silent), posts permission requests with Allow and Deny actions while in the background, and badges the Dock for turns that finished while you were away. The first long turn asks once whether to ping you.",
+      "entry_points": [
+        "Settings › General 'Let frog notify me when I'm in another app'",
+        "Ping line above the composer after 30 s of work",
+        "Notification Center banners",
+        "Debug menu 'Test Notifications' / launch with --test-notification"
+      ],
+      "files": [
+        "apps/macos/Frog/Model/Notifier.swift",
+        "apps/macos/Frog/Views/Onboarding.swift",
+        "apps/macos/Frog/Views/SettingsView.swift",
+        "apps/macos/Frog/Model/SessionRegistry.swift"
+      ],
+      "flows": [
+        {
+          "id": "toggle-notify-when-away",
+          "name": "Turn notifications on or off",
+          "steps": [
+            "Open Settings › General",
+            "Turn off 'Let frog notify me when I'm in another app'",
+            "Run a turn where the model calls Notify while frog is in the background"
+          ],
+          "expected": "Off: the Notify shows only as a transcript row, with no banner and no Dock bounce. On: a banner.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Notifier.note is a no-op under SingleInstance.isTesting, so delivery can't be observed in the test host. The toggle isn't clickable."
+        },
+        {
+          "id": "model-notify-urgency",
+          "name": "Get notified by the model at the right loudness",
+          "steps": [
+            "Turn on notifications and switch to another app",
+            "Let a turn send notify with urgency attention",
+            "Then one with done, then one with silent"
+          ],
+          "expected": "attention: time-sensitive banner with sound and one Dock bounce. done: quiet banner. silent: nothing outside the transcript. A finished turn alone never alerts.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/NotifierTests.swift:testAttentionBouncesOnlyWhenFrogIsNotFrontmost",
+            "FrogTests/NotifierTests.swift:testALiveNotifyReachesTheEffects",
+            "FrogTests/NotifierTests.swift:testATurnEndingAlertsNothing",
+            "FrogTests/NotifierTests.swift:testAReplayedNotifyIsNotNews",
+            "FrogTests/NotifierTests.swift:testUrgenciesRoundTripOnTheWire"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "The tests stop at Conversation.effects. Actual UNUserNotificationCenter delivery needs a signed bundle with notification authorization, which a test host lacks."
+        },
+        {
+          "id": "answer-permission-from-banner",
+          "name": "Allow or deny a permission request from Notification Center",
+          "steps": [
+            "Start a turn that needs permission",
+            "Switch to another app",
+            "In the banner choose Allow (or Deny)"
+          ],
+          "expected": "The waiting turn continues (or the step is denied), the banner is removed, and the badge count drops.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/NotifierTests.swift:testTheCategoriesAreRegistered"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "no",
+          "why_hard": "Needs real Notification Center interaction with a signed, authorized app. needsPermission is skipped under isTesting. The delegate's handler could be called directly as a partial test."
+        },
+        {
+          "id": "away-badge-clears",
+          "name": "See what finished while you were away",
+          "steps": [
+            "Start a long turn",
+            "Switch to another app until it finishes",
+            "Look at the Dock icon",
+            "Click back into frog"
+          ],
+          "expected": "A badge appears on the Dock icon and clears when frog becomes active.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/NotifierTests.swift:testFocusClearsTheAwayBadge"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "turnFinishedAway is skipped under isTesting, and inBackground needs the app inactive."
+        },
+        {
+          "id": "ping-line-ask-once",
+          "name": "Answer 'Ping you when it's done?'",
+          "steps": [
+            "Start a turn that runs longer than 30 s, with notifications not yet decided",
+            "See 'This is taking a while. Ping you when it's done?'",
+            "Click Yes (or No thanks)"
+          ],
+          "expected": "Yes asks the system for permission and keeps notifyWhenDone on. No thanks turns it off. Either way it never asks again (pingAsked).",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Notifier.notAskedYet returns false in test hosts, so the line never shows. The system authorization prompt can't be automated. There's a real 30 s timer and no clock seam."
+        },
+        {
+          "id": "test-notifications",
+          "name": "Prove notifications deliver on this build",
+          "steps": [
+            "Build and sign a Debug app with notifications allowed",
+            "Choose Debug > Test Notifications (or launch with --test-notification)",
+            "Watch Notification Center and the log"
+          ],
+          "expected": "One notification of every category is posted, and the system's authorization answer is logged.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "no",
+          "why_hard": "Needs a real, signed app with notification permission and a visible screen."
+        }
+      ]
+    },
+    {
+      "id": "default-model-policy",
+      "name": "Default model for new chats and messages",
+      "group": "General",
+      "what": "'New messages use: last model in this chat / a fixed default' and 'New conversations use', in ModelSettings. Present in code but not reachable in v0.7.0.",
+      "entry_points": [
+        "None in v0.7.0 (ModelSettings isn't mounted)"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/SettingsView.swift",
+        "apps/FrogKit/Model/ModelStats.swift"
+      ],
+      "flows": [
+        {
+          "id": "set-fixed-default-model",
+          "name": "Make every new chat start on one model",
+          "steps": [
+            "Open the Models settings list",
+            "Set 'New messages use' to 'A fixed default model'",
+            "Pick a ready model in 'New conversations use'",
+            "Start a new chat"
+          ],
+          "expected": "New chats and messages use the chosen model.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "no",
+          "why_hard": "Not reachable in v0.7.0: ModelSettings (SettingsView.swift) isn't mounted in SettingsView's TabView (the Models tab shows MachinesSettings), and ModelSections.providersHidden = true also hides the entry point. Only a render test hosts it directly. The defaults logic behind it is unit-tested in ModelStatsTests.testNewConversationsStartOnAppleThenTheLastPick, but no user flow reaches it."
+        }
+      ]
+    },
+    {
+      "id": "shortcuts-reference",
+      "name": "Shortcuts tab",
+      "group": "General",
+      "what": "A read-only list of keyboard shortcuts by group (Conversation, Navigate, Session, Window).",
+      "entry_points": [
+        "Settings › Shortcuts"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/SettingsView.swift"
+      ],
+      "flows": [
+        {
+          "id": "read-shortcuts",
+          "name": "Look up a keyboard shortcut",
+          "steps": [
+            "Open Settings › Shortcuts",
+            "Find a group such as Session",
+            "Read the key next to an action"
+          ],
+          "expected": "Four groups list the actions with their keys (for example 'New session ⇧⌘N'). The shortcuts themselves belong to the shell agent's area.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "appearance-settings",
+      "name": "Appearance",
+      "group": "Appearance",
+      "what": "Density, Detail (verbosity), Playful frog, Frog sounds and Show energy use, all app-wide defaults.",
+      "entry_points": [
+        "Settings › Appearance",
+        "Session › Detail (per conversation, shell area)"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/SettingsView.swift",
+        "apps/FrogKit/Model/Verbosity.swift",
+        "apps/FrogKit/Model/FrogSounds.swift"
+      ],
+      "flows": [
+        {
+          "id": "change-density",
+          "name": "Make the window denser or roomier",
+          "steps": [
+            "Open Settings › Appearance",
+            "Pick a Density segment",
+            "Look at a conversation and the sidebar"
+          ],
+          "expected": "Rows and spacing change everywhere at once (density default).",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "SwiftUI controls in a hosted view can't be found or clicked by tests (no XCUITest target, no accessibility tree). The density key could be set and a render compared, if render tests compared images."
+        },
+        {
+          "id": "change-detail-level",
+          "name": "Choose how much of the model's work conversations show",
+          "steps": [
+            "Open Settings › Appearance",
+            "Pick a Detail segment",
+            "Read its one-line description",
+            "Open a conversation with tool calls"
+          ],
+          "expected": "The transcript shows more or fewer steps. Conversations with their own Session › Detail keep theirs.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/VerbosityTests.swift:testDefaultComesFromTheOldThinkingSwitch"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "SwiftUI controls in a hosted view can't be found or clicked by tests (no XCUITest target, no accessibility tree)"
+        },
+        {
+          "id": "toggle-playful-frog",
+          "name": "Turn the playful frog on or off",
+          "steps": [
+            "Open Settings › Appearance",
+            "Turn off Playful frog",
+            "Open a new chat"
+          ],
+          "expected": "The empty page shows the plain FrogMark instead of the mascot, and activity words aren't playful.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "SwiftUI controls in a hosted view can't be found or clicked by tests (no XCUITest target, no accessibility tree)"
+        },
+        {
+          "id": "toggle-frog-sounds",
+          "name": "Turn frog sounds on",
+          "steps": [
+            "Open Settings › Appearance",
+            "Turn on Frog sounds",
+            "Send a message and let the turn finish"
+          ],
+          "expected": "A plip on send, a ribbit on finish, a drip on permission.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Audio output can't be observed. SwiftUI controls in a hosted view can't be found or clicked by tests (no XCUITest target, no accessibility tree)"
+        },
+        {
+          "id": "toggle-energy-from-appearance",
+          "name": "Show energy use at the end of each turn",
+          "steps": [
+            "Open Settings › Appearance",
+            "Turn on 'Show energy use'",
+            "Finish a turn"
+          ],
+          "expected": "Each turn ends with its watt-hours. The Energy tab's toggle mirrors it (same key).",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "SwiftUI controls in a hosted view can't be found or clicked by tests (no XCUITest target, no accessibility tree)"
+        }
+      ]
+    },
+    {
+      "id": "permission-settings",
+      "name": "Permissions",
+      "group": "Permissions",
+      "what": "The default permission mode for new sessions (Ask, Accept Edits, Auto, Yolo), the shell sandbox, computer use, and the always-allowed command list in config.toml. Hand-off: the cards these settings produce belong to the conversation.",
+      "entry_points": [
+        "Settings › Permissions"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/SettingsView.swift",
+        "apps/macos/Frog/Model/Workspace.swift"
+      ],
+      "flows": [
+        {
+          "id": "set-default-mode",
+          "name": "Choose how new sessions ask for permission",
+          "steps": [
+            "Open Settings › Permissions",
+            "Pick Yolo (or Ask / Accept Edits / Auto)",
+            "Start a new session"
+          ],
+          "expected": "The new session starts with that mode's flag. Resumed sessions keep their own.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SessionBrokerTests.swift:testPaneResumeCarriesNoModelOrMode"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "SwiftUI controls in a hosted view can't be found or clicked by tests (no XCUITest target, no accessibility tree)"
+        },
+        {
+          "id": "toggle-sandbox",
+          "name": "Run shell commands outside the sandbox",
+          "steps": [
+            "Open Settings › Permissions",
+            "Turn off 'Run shell commands in a sandbox'",
+            "Start a new session and run a command"
+          ],
+          "expected": "The Ask description changes to 'Every edit and command asks first', and new sessions run unsandboxed.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "SwiftUI controls in a hosted view can't be found or clicked by tests (no XCUITest target, no accessibility tree). Checking the engine's sandbox state needs the real engine."
+        },
+        {
+          "id": "toggle-computer-use",
+          "name": "Let frog see and use other apps",
+          "steps": [
+            "Open Settings › Permissions",
+            "Turn on 'Let frog see and use other apps'",
+            "Start a new session and ask it to read another app's window"
+          ],
+          "expected": "New sessions can use computer-use tools through Accessibility, asking first.",
+          "needs": [
+            "engine",
+            "accessibility-permission"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "no",
+          "why_hard": "Needs the Accessibility permission granted to the app, a TCC system setting that tests mustn't change."
+        },
+        {
+          "id": "open-config-toml",
+          "name": "Edit always-allowed commands",
+          "steps": [
+            "Start with no ~/.config/frog/config.toml",
+            "Open Settings › Permissions",
+            "Click 'Open config.toml…'"
+          ],
+          "expected": "~/.config/frog/config.toml is created with a commented allow_bash example if missing, then opens in the chosen editor.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Editor.open launches a real app (no seam). SwiftUI controls in a hosted view can't be found or clicked by tests (no XCUITest target, no accessibility tree). File creation could be checked in the test HOME."
+        }
+      ]
+    },
+    {
+      "id": "mcp-settings",
+      "name": "MCP servers",
+      "group": "MCP",
+      "what": "Lists config.toml's MCP servers with their state (connected with N tools, error, signed out or declined, withheld tools), signs in to OAuth servers in the browser, and opens config.toml.",
+      "entry_points": [
+        "Settings › MCP"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/SettingsView.swift"
+      ],
+      "flows": [
+        {
+          "id": "see-mcp-status",
+          "name": "Check how each MCP server is doing",
+          "steps": [
+            "Add servers to ~/.config/frog/config.toml",
+            "Open Settings › MCP",
+            "Wait for 'Connecting…' to finish"
+          ],
+          "expected": "Each server shows a green check and its tool count and names, or a red octagon with its error, or a key icon with 'signed out'. Withheld tools are listed with the reason.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "The list comes from the real `frog --mcp --json` (no Frog.json stub), and the view rows aren't readable in tests. A FROG_BIN stub or a decode test of MCPStatus would cover most of it."
+        },
+        {
+          "id": "mcp-empty-state",
+          "name": "Open MCP settings with no servers",
+          "steps": [
+            "Fresh HOME with no config.toml",
+            "Open Settings › MCP",
+            "Wait for 'Connecting…' to finish"
+          ],
+          "expected": "'No servers yet.', plus the example TOML and 'Open config.toml…'.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Needs the real engine run, or a stub. SwiftUI controls in a hosted view can't be found or clicked by tests (no XCUITest target, no accessibility tree)"
+        },
+        {
+          "id": "mcp-sign-in",
+          "name": "Sign in to an MCP server that needs OAuth",
+          "steps": [
+            "Configure a URL server that answers 401",
+            "Open Settings › MCP",
+            "Click 'Sign in' on the signed-out row",
+            "Finish in the browser"
+          ],
+          "expected": "The row shows a spinner, then reloads by itself with the server connected and its tools listed. Declining leaves 'signed out · you declined'.",
+          "needs": [
+            "engine",
+            "network"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Runs `frog --mcp-signin`, which opens a real browser OAuth flow against the server. There's no seam for the browser or the server."
+        },
+        {
+          "id": "mcp-refresh-and-config",
+          "name": "Edit MCP config and refresh",
+          "steps": [
+            "Open Settings › MCP",
+            "Click 'Open config.toml…' and add a server",
+            "Click Refresh"
+          ],
+          "expected": "config.toml is created if missing and opens in the editor. Refresh re-reads the list.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Editor.open launches a real app, and the list needs the engine. SwiftUI controls in a hosted view can't be found or clicked by tests (no XCUITest target, no accessibility tree)"
+        }
+      ]
+    },
+    {
+      "id": "local-models-this-mac",
+      "name": "Models on this Mac",
+      "group": "Local models",
+      "what": "This Mac's page in Settings › Models lists Frog's picks for its memory, what's already on disk and 'More models'. Each row has one control for its state: Get · size, a progress line and Cancel, Load and Delete, Loading, or Loaded · tok/s and Stop.",
+      "entry_points": [
+        "Settings › Models › Machines › This Mac",
+        "Model picker 'Manage…'"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/LocalModelRows.swift",
+        "apps/macos/Frog/Model/LocalCatalog.swift",
+        "apps/macos/Frog/Model/ModelDownloads.swift",
+        "apps/macos/Frog/Model/Devices.swift",
+        "catalog/local-models.json"
+      ],
+      "flows": [
+        {
+          "id": "see-recommended-for-machine",
+          "name": "See the models recommended for this Mac's memory",
+          "steps": [
+            "Open Settings › Models",
+            "Click This Mac",
+            "Read 'Recommended for this Mac'",
+            "Expand 'More models'"
+          ],
+          "expected": "The best coding model that fits and up to two smaller ones (16 GB: Qwen3 8B, 4B, 1.7B; 64 GB: Qwen3 32B, 14B, 8B). What's on disk always shows. The rest sits behind More models with a count. A note says which models run only in Frog Cloud.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/LocalModelsTests.swift:testDefaultListPerMachineSize",
+            "FrogTests/LocalModelsTests.swift:testMewsDefaultListLeadsWithWhatFitsAndKeepsWhatsOnDisk",
+            "FrogTests/LocalModelsTests.swift:testRowWording",
+            "FrogTests/LocalModelsTests.swift:testRenderLocalModels",
+            "FrogTests/ModelsParityTests.swift:testParityShots"
+          ],
+          "coverage_v070": "snapshot",
+          "automatable": "yes"
+        },
+        {
+          "id": "get-local-model",
+          "name": "Download a model onto this Mac",
+          "steps": [
+            "Open This Mac's page",
+            "Click 'Get · 18 GB' on a row",
+            "Watch the progress line with bytes, rate and bar",
+            "Wait for it to finish"
+          ],
+          "expected": "The row shows download progress, then becomes on disk with Load and Delete. `frog --models` lists it, and the picker offers it.",
+          "needs": [
+            "network",
+            "local-model"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ModelDownloadsTests.swift:testDownloadsIntoHuggingFaceCacheLayout",
+            "FrogTests/LocalModelsTests.swift:testDownloadProgressLine"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "hard",
+          "why_hard": "ModelDownloadsTests drives the real store against huggingface.co with a tiny repo and skips offline. The row and button need a real (or stubbed) HF server and a UI driver."
+        },
+        {
+          "id": "cancel-local-download",
+          "name": "Cancel a download in progress",
+          "steps": [
+            "Open This Mac's page",
+            "Click Get on a row",
+            "Click Cancel on the progress line"
+          ],
+          "expected": "The download stops and the row returns to Get. Already-finished files stay in the cache for a later resume per file.",
+          "needs": [
+            "network"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Needs a download in flight (no fake HF server or URLSession seam). SwiftUI controls in a hosted view can't be found or clicked by tests (no XCUITest target, no accessibility tree)"
+        },
+        {
+          "id": "download-fails",
+          "name": "See why a download failed",
+          "steps": [
+            "Make Hugging Face unreachable (or pick a missing repo)",
+            "Open This Mac's page",
+            "Click Get on a row"
+          ],
+          "expected": "The row shows the failure reason ('Hugging Face didn't find …') and Get works again as a retry.",
+          "needs": [
+            "network"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/LocalModelsTests.swift:testAMacDownloadThatFailedSaysWhy"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "Forcing the failure needs network control. The row's wording is unit-tested through LocalModelList.build."
+        },
+        {
+          "id": "load-local-model",
+          "name": "Load a downloaded model into memory",
+          "steps": [
+            "Have a model on disk",
+            "Click Load on its row",
+            "Watch 'Loading · N s'"
+          ],
+          "expected": "The row becomes 'Loaded · N tok/s' with Stop, and This Mac's row says what it's running. Past the deadline a stuck load ends with a reason.",
+          "needs": [
+            "engine",
+            "local-model"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/LocalModelsTests.swift:testALoadThisMacAskedForEndsAtItsDeadline",
+            "FrogTests/LocalModelsTests.swift:testALoadReportedForDaysIsNotLoading"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "This Mac's loads go to the real tang sidecar at 127.0.0.1:8911, which is off in test hosts. MockNode could stand in if Devices' local base URL were injectable."
+        },
+        {
+          "id": "stop-local-model",
+          "name": "Unload the running model",
+          "steps": [
+            "Load a model on This Mac",
+            "Open This Mac's page",
+            "Click Stop on the loaded row"
+          ],
+          "expected": "The model unloads, memory frees, and the row returns to Load. If a turn is running: 'It's busy with a turn. Stop it when it's idle.'",
+          "needs": [
+            "engine",
+            "local-model"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Devices.stopModel calls /models/unload, which MockNode doesn't implement, and the local sidecar is off in tests."
+        },
+        {
+          "id": "delete-local-model",
+          "name": "Delete a model from this Mac",
+          "steps": [
+            "Have a model on disk and not loaded",
+            "Click Delete",
+            "Confirm 'Delete <model> from this Mac?'"
+          ],
+          "expected": "The cache folder is removed and the row goes back to Get · size. Delete is disabled while loaded ('Stop it first.').",
+          "needs": [
+            "local-model"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/LocalModelsTests.swift:testControlsSayWhatTheyDoOrWhyTheyCant"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "The confirmation dialog and buttons can't be clicked in tests. ModelDownloads.remove on a seeded HF_HUB_CACHE could be driven at the store level."
+        },
+        {
+          "id": "model-info-popover",
+          "name": "See where a model comes from",
+          "steps": [
+            "Open Settings › Models",
+            "Click a machine",
+            "Click ⓘ next to a model name"
+          ],
+          "expected": "A popover with From (a Hugging Face link), Format, Size, Memory and Good for.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/LocalModelsTests.swift:testRenderLocalModels"
+          ],
+          "coverage_v070": "snapshot",
+          "automatable": "hard",
+          "why_hard": "SwiftUI controls in a hosted view can't be found or clicked by tests (no XCUITest target, no accessibility tree). Popovers are only rendered directly."
+        },
+        {
+          "id": "engine-down-on-disk",
+          "name": "See models on disk while the engine isn't running",
+          "steps": [
+            "Put a catalog model in the HF cache",
+            "Stop the engine on this Mac",
+            "Open This Mac's page"
+          ],
+          "expected": "The row reads on disk, and Load is disabled with 'Loads once Frog's engine on this Mac lists it.'",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/LocalModelsTests.swift:testControlsSayWhatTheyDoOrWhyTheyCant"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "remote-node-models",
+      "name": "Models on a paired machine",
+      "group": "Local models",
+      "what": "On a paired node's page, and from the picker's 'Your machines' rows, load, stop or delete what's on its disk. It says when a model won't fit or the node is busy, and waits for the node's turn to finish before swapping.",
+      "entry_points": [
+        "Settings › Models › <machine>",
+        "Model picker › Your machines (hand-off to composer)"
+      ],
+      "files": [
+        "apps/macos/Frog/Model/Devices.swift",
+        "apps/macos/Frog/Views/LocalModelRows.swift",
+        "apps/macos/Frog/Views/ModelPicker.swift"
+      ],
+      "flows": [
+        {
+          "id": "load-on-node",
+          "name": "Load a model on another machine",
+          "steps": [
+            "Pair a node",
+            "Open its page",
+            "Click Load on a model that fits",
+            "Watch Loading · N s"
+          ],
+          "expected": "The node loads it and reports Loaded with tok/s. The replaced model goes back to on disk.",
+          "needs": [
+            "second-machine"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/NodeLoadTests.swift:testLoadShowsLoadingThenLoaded",
+            "FrogTests/NodeLoadTests.swift:testPickerStatesForEachModel",
+            "FrogTests/NodeLoadTests.swift:testNothingLoadedMeansNothingToReplace"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        },
+        {
+          "id": "load-wont-fit-or-refused",
+          "name": "Try to load a model that doesn't fit",
+          "steps": [
+            "Pair a node",
+            "Open its page",
+            "Click Load on a model bigger than its free memory"
+          ],
+          "expected": "Nothing is sent when it plainly won't fit. A refused load leaves the row on disk with 'Couldn't load: …' and nothing spinning.",
+          "needs": [
+            "second-machine"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/NodeLoadTests.swift:testWontFitIsNeverSent",
+            "FrogTests/NodeLoadTests.swift:testARefusedLoadFromTheMachinePageSaysWhyAndEnds"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        },
+        {
+          "id": "load-while-node-busy",
+          "name": "Switch a busy node's model",
+          "steps": [
+            "Pair a node and start a turn on it",
+            "Open the model picker",
+            "Pick a different model on that node"
+          ],
+          "expected": "One line says it's busy. The swap waits for the turn and happens after, with '<node> switched to …'.",
+          "needs": [
+            "second-machine"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/NodeLoadTests.swift:testBusyNodeSaysSoInOneLine",
+            "FrogTests/NodeLoadTests.swift:testBusyNodeSwapsAfterItsTurn"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        },
+        {
+          "id": "stop-on-node",
+          "name": "Stop the model running on a node",
+          "steps": [
+            "Pair a node with a model loaded",
+            "Open its page",
+            "Click Stop on the loaded row"
+          ],
+          "expected": "The node unloads it and the row shows Load again. A busy node says to stop it when idle.",
+          "needs": [
+            "second-machine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "MockNode has no /models/unload. SwiftUI controls in a hosted view can't be found or clicked by tests (no XCUITest target, no accessibility tree)"
+        },
+        {
+          "id": "delete-on-node",
+          "name": "Delete a model from a node's disk",
+          "steps": [
+            "Pair a node with a model on disk",
+            "Open its page",
+            "Click Delete",
+            "Confirm"
+          ],
+          "expected": "The model is removed (POST /models/delete). An older node shows the button disabled with 'can't delete models. Update it on <node>.'",
+          "needs": [
+            "second-machine"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/LocalModelsTests.swift:testControlsSayWhatTheyDoOrWhyTheyCant"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "MockNode has no /models/delete. SwiftUI controls in a hosted view can't be found or clicked by tests (no XCUITest target, no accessibility tree)"
+        },
+        {
+          "id": "node-download",
+          "name": "Download a model onto a node",
+          "steps": [
+            "Pair a node with a newer tang",
+            "Open its page",
+            "Click Get on a row"
+          ],
+          "expected": "Download progress shows on the row. It stalls and fails with reasons from the node. Older nodes say they can't download.",
+          "needs": [
+            "second-machine",
+            "network"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/LocalModelsTests.swift:testANodeDownloadMovesStallsAndFails"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "LocalModelRowView.get() only acts for This Mac (`guard device.role == .thisMac`), so Get on a node does nothing in v0.7.0 even when enabled. MockNode has no /models/pull."
+        }
+      ]
+    },
+    {
+      "id": "machines-list",
+      "name": "Machines in Settings › Models",
+      "group": "Machines",
+      "what": "Every machine (This Mac first, paired nodes) as one row with its hardware, what it's running with tok/s or idle/offline, and an online dot, plus the Frog Cloud account summary and 'Show cloud models in the picker'.",
+      "entry_points": [
+        "Settings › Models"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/MachinesSettings.swift",
+        "apps/macos/Frog/Model/Devices.swift"
+      ],
+      "flows": [
+        {
+          "id": "see-machines",
+          "name": "See my machines and what each is running",
+          "steps": [
+            "Pair a node (or not)",
+            "Open Settings › Models",
+            "Read the Machines section"
+          ],
+          "expected": "This Mac and each node, for example 'mew · RTX 3090 · 24 GB VRAM · Qwen3 4B · 58 tok/s'. Offline ones are dimmed, and a fresh Mac says 'not running'.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ModelsParityTests.swift:testParityShots",
+            "FrogTests/PairingTests.swift:testSnapshots"
+          ],
+          "coverage_v070": "snapshot",
+          "automatable": "yes"
+        },
+        {
+          "id": "local-network-blocked",
+          "name": "See why machines can't be found",
+          "steps": [
+            "Deny Local Network access to Frog in System Settings",
+            "Open Settings › Models",
+            "Read the Machines section"
+          ],
+          "expected": "A warning row (devices.browseProblem) explains the browse failure.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "no",
+          "why_hard": "Needs the Local Network privacy setting changed (TCC), and NWBrowser has no seam."
+        },
+        {
+          "id": "toggle-cloud-in-picker",
+          "name": "Hide Frog Cloud models from the picker",
+          "steps": [
+            "Open Settings › Models",
+            "Turn off 'Show cloud models in the picker'",
+            "Open the model picker"
+          ],
+          "expected": "The Frog Cloud section is gone from the picker (hand-off to the composer's picker).",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "SwiftUI controls in a hosted view can't be found or clicked by tests (no XCUITest target, no accessibility tree). The ModelMenu.showCloudKey default could be asserted at the model level."
+        }
+      ]
+    },
+    {
+      "id": "pair-machine",
+      "name": "Pair a machine with a code",
+      "group": "Machines",
+      "what": "'Pair a machine…' lists unpaired Frog nodes found on Bonjour. Pair… opens six digit boxes for the code the node shows (from `tang-llm pair`, or a lent Mac's code). Success says '<node> joined your machines.' and closes. The node's fingerprint is pinned.",
+      "entry_points": [
+        "Settings › Models › 'Pair a machine…'",
+        "Node offer line above the composer: 'mew is on your network … Use it?'"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/MachinesSettings.swift",
+        "apps/macos/Frog/Views/PairSheet.swift",
+        "apps/macos/Frog/Model/NodePairing.swift",
+        "apps/macos/Frog/Model/Spake2.swift",
+        "apps/macos/Frog/Model/Devices.swift"
+      ],
+      "flows": [
+        {
+          "id": "discover-nodes",
+          "name": "Find machines on my network",
+          "steps": [
+            "Run a Frog node (or MockNode with Bonjour) on the LAN",
+            "Open Settings › Models",
+            "Click 'Pair a machine…'"
+          ],
+          "expected": "Unpaired nodes are listed with hardware and a Pair… button. With none: 'No machines found on your network yet.' and the install hint.",
+          "needs": [
+            "second-machine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Devices discovers through NWBrowser (Bonjour), and MockNode isn't fed into Devices' discovery in tests. PairMachineSheet reads Devices.shared."
+        },
+        {
+          "id": "pair-with-code",
+          "name": "Pair a node by typing its code",
+          "steps": [
+            "On the node run `tang-llm pair`",
+            "In 'Pair a machine…' click Pair… next to it",
+            "Type or paste the six digits"
+          ],
+          "expected": "The last digit submits. 'Pairing…', then '<node> joined your machines.', and the sheet closes after 1.2 s. The node appears online in Machines, its key goes to the Keychain and nodes.json.",
+          "needs": [
+            "second-machine"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/PairingTests.swift:testPairsWithTheMockAndReadsNodeWithTheKey",
+            "FrogTests/PairingTests.swift:testStoreWritesTheEngineFileAndKeychain",
+            "FrogTests/PairingTests.swift:testSpake2MatchesTheRustCrate",
+            "FrogTests/PairingTests.swift:testSnapshots"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "hard",
+          "why_hard": "PairClient and PairedStore are driven against MockNode, but Devices.pair (which needs a node in Devices.found from Bonjour) and the sheet's digit boxes aren't. Needs a way to inject a found node and drive PairSheet's bindings."
+        },
+        {
+          "id": "pair-wrong-code",
+          "name": "Type a wrong code",
+          "steps": [
+            "Run `tang-llm pair` on the node",
+            "Open the pair sheet for it",
+            "Type the wrong six digits"
+          ],
+          "expected": "'That code didn't match. Check it on <node> and try again.' Boxes cleared, focus back on the first box. After five wrong tries the node closes its window and the next try reads '<node> isn't showing a code. Run tang-llm pair on it first.'",
+          "needs": [
+            "second-machine"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/PairingTests.swift:testWrongCodeReadsAsWrongCodeAndFiveCloseTheWindow",
+            "FrogTests/PairingTests.swift:testSnapshots"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "hard",
+          "why_hard": "Covered at PairClient level. The sheet's reset and focus behaviour needs the view driven."
+        },
+        {
+          "id": "pair-expired-window",
+          "name": "Use a code after it expired",
+          "steps": [
+            "Open the pair sheet",
+            "Wait out the node's pairing window",
+            "Type the code"
+          ],
+          "expected": "'<node> isn't showing a code. Run tang-llm pair on it first.' (PairError.noWindow).",
+          "needs": [
+            "second-machine"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/PairingTests.swift:testExpiredWindow"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        },
+        {
+          "id": "pair-spoofed-node",
+          "name": "Refuse a machine pretending to be the one found",
+          "steps": [
+            "Find a node in 'Pair a machine…'",
+            "Have a different machine answer at its address",
+            "Type the code and pair"
+          ],
+          "expected": "'This isn't the <node> Frog found on your network. Nothing was saved.' (PairError.notThatNode).",
+          "needs": [
+            "second-machine"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/PairingTests.swift:testSpoofedFingerprintIsRefusedBeforeAnythingIsSaved"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        },
+        {
+          "id": "node-offer-use-or-dismiss",
+          "name": "Act on 'mew is on your network. Use it?'",
+          "steps": [
+            "Run an unpaired node on the LAN",
+            "Open a conversation",
+            "Click 'Use it' (pair sheet opens) or 'Not now'"
+          ],
+          "expected": "Use it opens the pair sheet for that node. Not now hides the offer for that fingerprint.",
+          "needs": [
+            "second-machine"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/PairingTests.swift:testSnapshots"
+          ],
+          "coverage_v070": "snapshot",
+          "automatable": "hard",
+          "why_hard": "NodeOffer reads Devices.shared.offer, which needs Bonjour discovery. SwiftUI controls in a hosted view can't be found or clicked by tests (no XCUITest target, no accessibility tree)"
+        }
+      ]
+    },
+    {
+      "id": "machine-page",
+      "name": "A machine's page",
+      "group": "Machines",
+      "what": "Click a machine for its status, hardware, memory bar and models, and the node controls: share this Mac, rename, unpair.",
+      "entry_points": [
+        "Settings › Models › click a machine row"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/MachinesSettings.swift",
+        "apps/macos/Frog/Model/Devices.swift",
+        "apps/macos/Frog/Model/MacLender.swift"
+      ],
+      "flows": [
+        {
+          "id": "open-machine-page",
+          "name": "Open a machine's page",
+          "steps": [
+            "Open Settings › Models",
+            "Click a machine row",
+            "Read Status, Hardware and the memory bar"
+          ],
+          "expected": "The page is titled with the machine's name, with Status (Idle/Ready/Working, N waiting/Not answering/Stuck loading), hardware and '18 GB of 24 GB used', then its model sections.",
+          "needs": [
+            "second-machine"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ModelsParityTests.swift:testParityShots",
+            "FrogTests/LocalModelsTests.swift:testRenderLocalModels"
+          ],
+          "coverage_v070": "snapshot",
+          "automatable": "yes"
+        },
+        {
+          "id": "rename-machine",
+          "name": "Rename a machine",
+          "steps": [
+            "Open a machine's page",
+            "Click Rename…",
+            "Type a new name and press Rename"
+          ],
+          "expected": "The name changes in the page title and the Machines list, saved on this Mac only (thisMacName default, or nodes.json for nodes).",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Devices.rename isn't tested. The alert can't be driven, but the store call could be with a temp PairedStore."
+        },
+        {
+          "id": "unpair-machine",
+          "name": "Unpair a machine",
+          "steps": [
+            "Open a paired node's page",
+            "Click 'Unpair <name>…'",
+            "Confirm Unpair"
+          ],
+          "expected": "This Mac tells the node (best effort), drops the key and the nodes.json entry, and goes back. The page reads 'This machine isn't paired anymore.'",
+          "needs": [
+            "second-machine"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/PairingTests.swift:testPairsWithTheMockAndReadsNodeWithTheKey"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "Only PairClient.unpair is exercised against MockNode. Devices.unpair and the confirmation dialog aren't."
+        },
+        {
+          "id": "refuse-impostor-node",
+          "name": "See that a paired machine was replaced",
+          "steps": [
+            "Pair a node",
+            "Have another machine answer at its address with a different identity",
+            "Open Settings › Models"
+          ],
+          "expected": "The node shows offline with 'This isn't the mew you paired.', and its models aren't used.",
+          "needs": [
+            "second-machine"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/PairingTests.swift:testPinningMismatchStopsPolling"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        },
+        {
+          "id": "share-this-mac-from-page",
+          "name": "Share this Mac with my other machines",
+          "steps": [
+            "Open Settings › Models",
+            "Click This Mac",
+            "Turn on 'Share with my other machines'"
+          ],
+          "expected": "The same switch as Settings › Lend: this Mac starts lending (tang-llm serve on port 8920). A remote node's switch is on and disabled.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "MacLender.shared spawns the real tang-llm, with no seam. SwiftUI controls in a hosted view can't be found or clicked by tests (no XCUITest target, no accessibility tree)"
+        }
+      ]
+    },
+    {
+      "id": "lend-this-mac",
+      "name": "Lend this Mac",
+      "group": "Machines",
+      "what": "Settings › Lend runs tang-llm serve as a child of the app, so your other Macs can run models here. It pauses on battery (unless allowed) or when hot. 'Pair a Mac…' shows a six-digit code with a countdown and this Mac's fingerprint.",
+      "entry_points": [
+        "Settings › Lend",
+        "This Mac's page › Share with my other machines"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/LendSettings.swift",
+        "apps/macos/Frog/Model/MacLender.swift"
+      ],
+      "flows": [
+        {
+          "id": "turn-on-lending",
+          "name": "Start lending this Mac",
+          "steps": [
+            "Open Settings › Lend",
+            "Turn on 'Lend this Mac'",
+            "Watch Status"
+          ],
+          "expected": "Status goes Starting… then a green dot 'Lending on port 8920'. It resumes at next launch if left on.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "MacLender is a singleton that launches the bundled tang-llm and polls 127.0.0.1:8920/health, and it doesn't start in test hosts. Needs a process or binary seam (TANG_LLM_BIN exists)."
+        },
+        {
+          "id": "lending-pauses-on-battery",
+          "name": "Lending pauses on battery",
+          "steps": [
+            "Open Settings › Lend",
+            "Turn on Lend with 'Keep lending on battery' off",
+            "Unplug the Mac and wait 15 s"
+          ],
+          "expected": "Within 15 s Status reads 'Paused on battery. Plug in to lend.' and the server stops, resuming on power. With the toggle on, it keeps lending.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "no",
+          "why_hard": "Needs a real power-source change (IOPS) and thermal state, with no seam."
+        },
+        {
+          "id": "lending-fails",
+          "name": "See why lending failed",
+          "steps": [
+            "Remove tang-llm (or take port 8920)",
+            "Open Settings › Lend",
+            "Turn on 'Lend this Mac'"
+          ],
+          "expected": "Status shows the failure in red.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Needs the process launch faked. SwiftUI controls in a hosted view can't be found or clicked by tests (no XCUITest target, no accessibility tree)"
+        },
+        {
+          "id": "pair-a-mac-code",
+          "name": "Show a code so another Mac can pair with this one",
+          "steps": [
+            "Turn on Lend and wait for running",
+            "Click 'Pair a Mac…'",
+            "Read the code and fingerprint",
+            "Wait past the countdown and click 'New code'"
+          ],
+          "expected": "A big '123 456' code, 'Expires in N s' counting down to 'Expired', this Mac's fingerprint, and New code opens a fresh window. Without a new-enough tang: 'Couldn't open a pairing window…'.",
+          "needs": [
+            "engine",
+            "second-machine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "MockNode does serve POST /pair/open, but MacLender.openPairing is hard-wired to 127.0.0.1:8920 and the sheet only opens while MacLender.shared is running a real tang-llm. The countdown uses a real 1 s timer. SwiftUI controls in a hosted view can't be found or clicked by tests (no XCUITest target, no accessibility tree)"
+        }
+      ]
+    },
+    {
+      "id": "provider-keys",
+      "name": "Other clouds: connect with a key",
+      "group": "Other clouds",
+      "what": "Connect Anthropic, OpenAI and others by pasting an API key (saved to the Keychain through `frog`), change or remove it. Hidden in v0.7.0.",
+      "entry_points": [
+        "None in v0.7.0. Was Settings › Models › Cloud › 'Add a Provider…', a provider's ⋯ › Change Key… / Remove Key, or a model row's 'Add Key…'"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/SettingsView.swift",
+        "apps/macos/Frog/Model/ProviderStore.swift",
+        "apps/FrogKit/UI/Models/ModelList.swift"
+      ],
+      "flows": [
+        {
+          "id": "add-provider-key",
+          "name": "Connect a cloud provider with an API key",
+          "steps": [
+            "Open the Models settings list",
+            "Choose 'Add a Provider…' › a provider",
+            "Paste the key and press Save"
+          ],
+          "expected": "The key is saved (frog writes the Keychain), the sheet closes, and the provider shows with 'No models in the picker yet' and Choose Models….",
+          "needs": [
+            "engine",
+            "network"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "no",
+          "why_hard": "Not reachable in v0.7.0: ModelSettings (SettingsView.swift) isn't mounted in SettingsView's TabView (the Models tab shows MachinesSettings), and ModelSections.providersHidden = true also hides the entry point. Only a render test hosts it directly"
+        },
+        {
+          "id": "change-or-remove-key",
+          "name": "Change or remove a provider's key",
+          "steps": [
+            "Open the Models settings list",
+            "Open a provider's ⋯ menu",
+            "Choose Change Key… (paste, Save) or Remove Key"
+          ],
+          "expected": "The new key replaces the old one, or the provider moves back to unconnected.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "no",
+          "why_hard": "Not reachable in v0.7.0: ModelSettings (SettingsView.swift) isn't mounted in SettingsView's TabView (the Models tab shows MachinesSettings), and ModelSections.providersHidden = true also hides the entry point. Only a render test hosts it directly"
+        },
+        {
+          "id": "bad-key-error",
+          "name": "See an error for a key frog can't save",
+          "steps": [
+            "Open the Models settings list",
+            "Open KeySheet for a provider",
+            "Save a key frog rejects"
+          ],
+          "expected": "The sheet stays open with the store's error in red.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "no",
+          "why_hard": "Not reachable in v0.7.0: ModelSettings (SettingsView.swift) isn't mounted in SettingsView's TabView (the Models tab shows MachinesSettings), and ModelSections.providersHidden = true also hides the entry point. Only a render test hosts it directly"
+        }
+      ]
+    },
+    {
+      "id": "provider-model-toggles",
+      "name": "Other clouds: choose which models show",
+      "group": "Other clouds",
+      "what": "Search a connected provider's catalog and turn individual models on or off in the picker, refresh the catalog, or hide a ready cloud model. Hidden in v0.7.0.",
+      "entry_points": [
+        "None in v0.7.0. Was a provider's 'Choose Models…' (CatalogSheet), or Hide on a cloud model row"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/SettingsView.swift",
+        "apps/macos/Frog/Model/ProviderStore.swift"
+      ],
+      "flows": [
+        {
+          "id": "toggle-catalog-model",
+          "name": "Turn a provider's model on in the picker",
+          "steps": [
+            "Open Choose Models… for a provider",
+            "Search for a model",
+            "Turn its toggle on",
+            "Click Done"
+          ],
+          "expected": "`frog` enables the spec, and the picker lists it. A provider without a key has its toggles disabled, with 'Add a <provider> key to use this model'.",
+          "needs": [
+            "engine",
+            "network"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "no",
+          "why_hard": "Not reachable in v0.7.0: ModelSettings (SettingsView.swift) isn't mounted in SettingsView's TabView (the Models tab shows MachinesSettings), and ModelSections.providersHidden = true also hides the entry point. Only a render test hosts it directly"
+        },
+        {
+          "id": "refresh-catalog",
+          "name": "Fetch the latest model lists",
+          "steps": [
+            "Connect a provider",
+            "Open its Choose Models…",
+            "Click the refresh button"
+          ],
+          "expected": "A spinner, then the refreshed catalog (`frog --catalog --json --refresh`).",
+          "needs": [
+            "engine",
+            "network"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "no",
+          "why_hard": "Not reachable in v0.7.0: ModelSettings (SettingsView.swift) isn't mounted in SettingsView's TabView (the Models tab shows MachinesSettings), and ModelSections.providersHidden = true also hides the entry point. Only a render test hosts it directly"
+        },
+        {
+          "id": "hide-cloud-model",
+          "name": "Hide a cloud model from the picker",
+          "steps": [
+            "Connect a provider with a model on",
+            "Open the Models settings list",
+            "Click Hide on that model"
+          ],
+          "expected": "The model is disabled and leaves the picker.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "no",
+          "why_hard": "Not reachable in v0.7.0: ModelSettings (SettingsView.swift) isn't mounted in SettingsView's TabView (the Models tab shows MachinesSettings), and ModelSections.providersHidden = true also hides the entry point. Only a render test hosts it directly"
+        }
+      ]
+    },
+    {
+      "id": "custom-servers",
+      "name": "Other clouds: servers and apps",
+      "group": "Other clouds",
+      "what": "Add your own server (Ollama or OpenAI-compatible) by name and URL, see Ollama and LM Studio while they run, set a key, remove a server. Hidden in v0.7.0.",
+      "entry_points": [
+        "None in v0.7.0. Was Settings › Models › Servers and Apps › 'Add Server…'"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/SettingsView.swift",
+        "apps/macos/Frog/Model/ProviderStore.swift"
+      ],
+      "flows": [
+        {
+          "id": "add-server",
+          "name": "Add a GPU box as a server",
+          "steps": [
+            "Open the Models settings list",
+            "Click Add Server…",
+            "Enter a name, pick Ollama or OpenAI-compatible, enter the URL",
+            "Click Add"
+          ],
+          "expected": "The server appears with 'Running · N models' (or 'Not responding'), and its models appear as <slug>/<model>.",
+          "needs": [
+            "engine",
+            "second-machine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "no",
+          "why_hard": "Not reachable in v0.7.0: ModelSettings (SettingsView.swift) isn't mounted in SettingsView's TabView (the Models tab shows MachinesSettings), and ModelSections.providersHidden = true also hides the entry point. Only a render test hosts it directly"
+        },
+        {
+          "id": "local-app-detected",
+          "name": "See Ollama or LM Studio while it runs",
+          "steps": [
+            "Start Ollama on this Mac",
+            "Open the Models settings list",
+            "Quit Ollama and reopen the list"
+          ],
+          "expected": "Ollama shows under Servers and Apps with a green dot and model count, and disappears when it stops.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "no",
+          "why_hard": "Not reachable in v0.7.0: ModelSettings (SettingsView.swift) isn't mounted in SettingsView's TabView (the Models tab shows MachinesSettings), and ModelSections.providersHidden = true also hides the entry point. Only a render test hosts it directly"
+        },
+        {
+          "id": "remove-server",
+          "name": "Remove a server or set its key",
+          "steps": [
+            "Add a server",
+            "Open its ⋯ menu",
+            "Choose Set Key… or Remove Server"
+          ],
+          "expected": "The key is saved, or the server and its models are gone.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "no",
+          "why_hard": "Not reachable in v0.7.0: ModelSettings (SettingsView.swift) isn't mounted in SettingsView's TabView (the Models tab shows MachinesSettings), and ModelSections.providersHidden = true also hides the entry point. Only a render test hosts it directly"
+        }
+      ]
+    },
+    {
+      "id": "frog-cloud-card",
+      "name": "Frog Cloud card (legacy Models list)",
+      "group": "Other clouds",
+      "what": "A fixed Frog Cloud card with plan badge, key source (environment or Keychain), Sign In menu, Get a Key, Add a Key, Sign In Again, Remove Key. Rendered by tests but not mounted in v0.7.0.",
+      "entry_points": [
+        "None in v0.7.0 (ModelSettings not mounted)"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/SettingsView.swift"
+      ],
+      "flows": [
+        {
+          "id": "card-sign-in-or-key",
+          "name": "Sign in or add a Frog Cloud key from the card",
+          "steps": [
+            "Open the Models settings list signed out",
+            "Find the Frog Cloud card",
+            "Use Sign In › Continue with GitHub, or Add a Key, or Get a Key"
+          ],
+          "expected": "Sign-in runs in the browser with a Cancel option. Add a Key opens KeySheet. Get a Key opens api.frog.toys/beta. The card then reads 'API key · Keychain'.",
+          "needs": [
+            "cloud-account",
+            "network"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "no",
+          "why_hard": "Not reachable in v0.7.0: ModelSettings (SettingsView.swift) isn't mounted in SettingsView's TabView (the Models tab shows MachinesSettings), and ModelSections.providersHidden = true also hides the entry point. Only a render test hosts it directly. SnapshotTests.testRenderFrogCloudCard, testRenderModelSettings and ModelSectionsTests.testCardKeyLine render or unit-test the card, but no user can reach it."
+        }
+      ]
+    },
+    {
+      "id": "cloud-sign-in",
+      "name": "Sign in to Frog Cloud (GitHub or Google)",
+      "group": "Frog Cloud account",
+      "what": "Sign-in opens the browser at api.frog.toys/auth/web with PKCE and comes back to a one-shot listener on 127.0.0.1 (not a URL scheme). It exchanges the code for this Mac's own key, saves it through `frog` to the Keychain, then refreshes the account and cloud sessions. It times out after 60 s and can be cancelled.",
+      "entry_points": [
+        "Sidebar footer 'Sign in to Frog Cloud' › Continue with GitHub / Google",
+        "Settings › Billing › Sign In with GitHub / Google",
+        "Model picker: a Frog Cloud row while signed out (hand-off to composer)",
+        "Composer tray open_login (hand-off to composer)"
+      ],
+      "files": [
+        "apps/FrogKit/Core/CloudSignIn.swift",
+        "apps/macos/Frog/Views/UserFooter.swift",
+        "apps/macos/Frog/Views/BillingSettings.swift",
+        "apps/macos/Frog/Model/CloudFailure.swift",
+        "apps/macos/Frog/Model/ProviderStore.swift",
+        "apps/FrogKit/Model/CloudAccount.swift"
+      ],
+      "flows": [
+        {
+          "id": "sign-in-from-footer",
+          "name": "Sign in with GitHub from the sidebar",
+          "steps": [
+            "Open the app signed out",
+            "Click 'Sign in to Frog Cloud' in the sidebar footer",
+            "Choose Continue with GitHub",
+            "Approve in the browser"
+          ],
+          "expected": "The footer shows 'Signing in… Finish in your browser', then the user's first name and '$X.XX credit' with their avatar. The browser tab says 'Signed in. You can close this tab…'.",
+          "needs": [
+            "cloud-account",
+            "github",
+            "network"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/CloudFlowTests.swift:test_sign_in_from_footer"
+          ],
+          "automatable_v070": "hard"
+        },
+        {
+          "id": "sign-in-with-google",
+          "name": "Sign in with Google",
+          "steps": [
+            "Open Settings › Billing signed out",
+            "Click 'Sign In with Google'",
+            "Finish in the browser"
+          ],
+          "expected": "Billing shows the Account, Sign-in, Plan and Credit sections. Under Sign-in, Google is Connected and GitHub reads 'Not connected. Needed for your repos.'",
+          "needs": [
+            "cloud-account",
+            "network"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "CloudAccount.origin (/v1/me, /v1/auth/link, /v1/billing/*) and the sign-in code exchange are hard-coded to https://api.frog.toys with URLSession.shared, so there's no seam to fake the account. Only the gateway (CloudGateway) can be redirected, with FROG_GATEWAY"
+        },
+        {
+          "id": "cancel-sign-in",
+          "name": "Give up on a sign-in",
+          "steps": [
+            "Open the app signed out",
+            "Start a sign-in from the footer or Billing",
+            "Click the footer ('click to cancel') or Cancel in Billing"
+          ],
+          "expected": "The listener stops at once, no error shows, and the sign-in offer returns.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SilentFailureTests.swift:testCancelledSignInEndsWithoutError",
+            "FrogTests/SilentFailureTests.swift:testSignInCopy"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/CloudFlowTests.swift:test_cancel_sign_in"
+          ],
+          "automatable_v070": "hard"
+        },
+        {
+          "id": "sign-in-times-out",
+          "name": "Leave the browser without finishing",
+          "steps": [
+            "Start a sign-in",
+            "Close the browser tab",
+            "Wait 60 s"
+          ],
+          "expected": "'Sign-in timed out. Try again.' in orange, with Try Again (footer menu, Billing).",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SilentFailureTests.swift:testAbandonedSignInTimesOut"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "Store-level timeout is tested. The UI's failure text and Try Again aren't driven."
+        },
+        {
+          "id": "sign-in-offline-or-save-fails",
+          "name": "Sign in while offline, or when the key can't be saved",
+          "steps": [
+            "Disconnect the network (or remove the frog binary)",
+            "Start a sign-in",
+            "Finish it in the browser"
+          ],
+          "expected": "'Can't reach Frog Cloud. Check your connection and try again.' or 'Signed in, but Frog couldn't save your key. Try again.'",
+          "needs": [
+            "network",
+            "engine"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SilentFailureTests.swift:testSignInCopy"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "CloudAccount.origin (/v1/me, /v1/auth/link, /v1/billing/*) and the sign-in code exchange are hard-coded to https://api.frog.toys with URLSession.shared, so there's no seam to fake the account. Only the gateway (CloudGateway) can be redirected, with FROG_GATEWAY"
+        },
+        {
+          "id": "connect-second-login",
+          "name": "Connect GitHub to a Google-only account",
+          "steps": [
+            "Sign in with Google",
+            "Open Settings › Billing",
+            "Click Connect next to GitHub",
+            "Approve in the browser"
+          ],
+          "expected": "GitHub becomes Connected with @handle, on the same account (a link token from /v1/auth/link), and repos become available.",
+          "needs": [
+            "cloud-account",
+            "github",
+            "network"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "CloudAccount.origin (/v1/me, /v1/auth/link, /v1/billing/*) and the sign-in code exchange are hard-coded to https://api.frog.toys with URLSession.shared, so there's no seam to fake the account. Only the gateway (CloudGateway) can be redirected, with FROG_GATEWAY"
+        }
+      ]
+    },
+    {
+      "id": "cloud-account-view",
+      "name": "Account, credit summary and sign out",
+      "group": "Frog Cloud account",
+      "what": "Signed in, the footer shows the account and credit (orange when out of credit with no plan). Settings › Billing shows the account and sign-ins, with links to 'Devices and keys' and Sign Out. Settings › Models shows an Account line and Credit with 'Add credit…'.",
+      "entry_points": [
+        "Sidebar footer",
+        "Settings › Billing",
+        "Settings › Models › Frog Cloud section"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/UserFooter.swift",
+        "apps/macos/Frog/Views/BillingSettings.swift",
+        "apps/macos/Frog/Views/MachinesSettings.swift",
+        "apps/FrogKit/Model/CloudAccount.swift"
+      ],
+      "flows": [
+        {
+          "id": "see-account-and-credit",
+          "name": "See who I'm signed in as and my credit",
+          "steps": [
+            "Sign in",
+            "Look at the sidebar footer",
+            "Open Settings › Models and read Account and Credit"
+          ],
+          "expected": "The footer shows the first name and 'Pro · $12.40 credit' (or '<$0.01'). Models shows 'Name · email' and '$12.34' with 'Add credit…'.",
+          "needs": [
+            "cloud-account",
+            "network"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ModelsParityTests.swift:testParityShots",
+            "FrogTests/FlushSnapshotTests.swift:testThreads"
+          ],
+          "coverage_v070": "snapshot",
+          "automatable": "hard",
+          "why_hard": "The views read CloudAccount.shared, which calls /v1/me. CloudAccount.stage and MachinesSettings(fixtureAccount:) allow renders only. SwiftUI controls in a hosted view can't be found or clicked by tests (no XCUITest target, no accessibility tree)"
+        },
+        {
+          "id": "out-of-credit-warning",
+          "name": "Notice I'm out of credit",
+          "steps": [
+            "Sign in to an account with no plan",
+            "Use up its credit",
+            "Look at the sidebar footer and click it"
+          ],
+          "expected": "The credit line turns orange. Clicking the footer opens Settings › Billing.",
+          "needs": [
+            "cloud-account"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "SwiftUI controls in a hosted view can't be found or clicked by tests (no XCUITest target, no accessibility tree). It could be rendered with a staged Me(credit_cents: 0)."
+        },
+        {
+          "id": "add-credit-shortcut",
+          "name": "Jump from Models to adding credit",
+          "steps": [
+            "Sign in",
+            "Open Settings › Models",
+            "Click 'Add credit…' next to Credit"
+          ],
+          "expected": "Settings switches to the Billing tab.",
+          "needs": [
+            "cloud-account"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "SwiftUI controls in a hosted view can't be found or clicked by tests (no XCUITest target, no accessibility tree)"
+        },
+        {
+          "id": "sign-out",
+          "name": "Sign out of Frog Cloud on this Mac",
+          "steps": [
+            "Sign in",
+            "Open Settings › Billing",
+            "Click Sign Out",
+            "Look at the footer and the sidebar"
+          ],
+          "expected": "This Mac's Keychain key is removed through frog. Billing shows the sign-in offer, the footer reads 'Sign in to Frog Cloud', and cloud sessions leave the sidebar.",
+          "needs": [
+            "cloud-account",
+            "engine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "setKey runs the real frog, and refresh calls /v1/me and the gateway. With FROG_API_KEY set, sign-out can't remove the key."
+        },
+        {
+          "id": "devices-and-keys-link",
+          "name": "Manage devices and keys on the web",
+          "steps": [
+            "Sign in",
+            "Open Settings › Billing",
+            "Click 'Devices and keys'"
+          ],
+          "expected": "The browser opens frog.toys/?settings=account.",
+          "needs": [
+            "cloud-account"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Link opens through OpenURLAction, which a test could override in the environment, but the link can't be clicked."
+        },
+        {
+          "id": "account-load-error",
+          "name": "See why the account didn't load",
+          "steps": [
+            "Save an old Frog Cloud key that predates sign-in (or let /v1/me fail)",
+            "Open Settings › Billing",
+            "Read the section"
+          ],
+          "expected": "A red line such as 'This key can't read your account… Sign in with GitHub…' or 'Frog Cloud answered 503. Try again in a moment.'",
+          "needs": [
+            "cloud-account",
+            "network"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "CloudAccount.origin (/v1/me, /v1/auth/link, /v1/billing/*) and the sign-in code exchange are hard-coded to https://api.frog.toys with URLSession.shared, so there's no seam to fake the account. Only the gateway (CloudGateway) can be redirected, with FROG_GATEWAY"
+        }
+      ]
+    },
+    {
+      "id": "run-in-frog-cloud",
+      "name": "Run in Frog Cloud",
+      "group": "Frog Cloud account",
+      "what": "From the composer's location picker, start a new Frog Cloud sandbox session on this folder's GitHub repo (or none) and open it in the pane with the draft as its first message. Hand-off: the composer agent owns the picker. This inventory covers the account and gateway side.",
+      "entry_points": [
+        "Composer location chip › a Frog Cloud repo, then send (hand-off to composer)"
+      ],
+      "files": [
+        "apps/macos/Frog/Model/Workspace.swift",
+        "apps/macos/Frog/Model/CloudSessions.swift",
+        "apps/macos/Frog/Model/CloudFailure.swift",
+        "apps/FrogKit/Model/CloudGateway.swift",
+        "apps/macos/Frog/Views/ComposerView+Tray.swift"
+      ],
+      "flows": [
+        {
+          "id": "start-cloud-session-on-repo",
+          "name": "Run a task in Frog Cloud on this repo",
+          "steps": [
+            "Open a folder whose origin is on GitHub",
+            "Sign in to Frog Cloud",
+            "Pick Frog Cloud in the location chip",
+            "Type a task and send"
+          ],
+          "expected": "A sandbox session is created for owner/name, the pane switches to it (engine through the gateway), and the message is its first turn. It shows in the sidebar.",
+          "needs": [
+            "cloud-account",
+            "github",
+            "git-repo",
+            "network"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/CloudFlowTests.swift:test_start_cloud_session_on_repo"
+          ],
+          "automatable_v070": "hard"
+        },
+        {
+          "id": "cloud-session-errors",
+          "name": "See why a cloud session couldn't start",
+          "steps": [
+            "Open a GitHub-backed folder",
+            "Pick Frog Cloud in the location chip",
+            "Send while out of credit, signed out, rate-limited or offline"
+          ],
+          "expected": "Plain words: 'You're out of Frog Cloud credit. Add credit in Settings › Billing.', 'Your Frog Cloud sign-in has expired…', 'Frog Cloud is busy…' or 'Can't reach Frog Cloud…'. The gateway's own text never shows.",
+          "needs": [
+            "cloud-account",
+            "network"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SilentFailureTests.swift:testCloudCopyHidesServerText"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "CloudGateway.origin can be pointed at a local gateway with FROG_GATEWAY (and FROG_GATEWAY_KEY for the token), but it's a static let read from the test host's environment, and no mock gateway ships with the Mac tests (the web's vendored mock would need starting and lacks some routes). The copy is unit-tested."
+        }
+      ]
+    },
+    {
+      "id": "cloud-sessions-sidebar",
+      "name": "Frog Cloud sessions in the sidebar",
+      "group": "Frog Cloud account",
+      "what": "Once the sidebar appears, the account's Frog Cloud sessions are polled every 15 s and listed with local ones. Opening one streams it through the gateway, and it can be archived or removed.",
+      "entry_points": [
+        "Sidebar thread list (rows from Library.cloudChanged)"
+      ],
+      "files": [
+        "apps/macos/Frog/Model/CloudSessions.swift",
+        "apps/macos/Frog/Views/Sidebar.swift",
+        "apps/macos/Frog/Model/Library.swift",
+        "apps/macos/Frog/Model/Workspace.swift"
+      ],
+      "flows": [
+        {
+          "id": "cloud-sessions-appear",
+          "name": "See my Frog Cloud sessions on this Mac",
+          "steps": [
+            "Sign in to an account that has sessions (from the web)",
+            "Open the app",
+            "Wait up to 15 s"
+          ],
+          "expected": "The cloud sessions appear in the sidebar, newest turn first, archived ones hidden.",
+          "needs": [
+            "cloud-account",
+            "network"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "CloudGateway.origin can be pointed at a local gateway with FROG_GATEWAY (and FROG_GATEWAY_KEY for the token), but it's a static let read from the test host's environment, and no mock gateway ships with the Mac tests (the web's vendored mock would need starting and lacks some routes). CloudSessions.shared starts polling only from the Sidebar, and Library.cloudChanged is never called in tests."
+        },
+        {
+          "id": "open-cloud-session",
+          "name": "Open a Frog Cloud session",
+          "steps": [
+            "Sign in to an account with cloud sessions",
+            "Wait for them in the sidebar",
+            "Click one"
+          ],
+          "expected": "The pane shows its transcript and composer, connected through CloudLink to the sandbox (hand-off to the conversation).",
+          "needs": [
+            "cloud-account",
+            "network"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "CloudGateway.origin can be pointed at a local gateway with FROG_GATEWAY (and FROG_GATEWAY_KEY for the token), but it's a static let read from the test host's environment, and no mock gateway ships with the Mac tests (the web's vendored mock would need starting and lacks some routes). It also needs the gateway WebSocket (CloudLink)."
+        },
+        {
+          "id": "archive-cloud-session",
+          "name": "Archive or remove a cloud session",
+          "steps": [
+            "Sign in to an account with cloud sessions",
+            "Right-click a cloud session row",
+            "Choose Archive (or remove)"
+          ],
+          "expected": "The gateway archives it, and the row leaves the list on the next refresh (about 9 s later).",
+          "needs": [
+            "cloud-account",
+            "network"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "CloudGateway.origin can be pointed at a local gateway with FROG_GATEWAY (and FROG_GATEWAY_KEY for the token), but it's a static let read from the test host's environment, and no mock gateway ships with the Mac tests (the web's vendored mock would need starting and lacks some routes). Context menus aren't drivable."
+        },
+        {
+          "id": "cloud-sessions-after-sign-out",
+          "name": "Cloud sessions leave when I sign out",
+          "steps": [
+            "Sign in with cloud sessions in the sidebar",
+            "Open Settings › Billing",
+            "Click Sign Out",
+            "Look at the sidebar"
+          ],
+          "expected": "Cloud rows disappear from the sidebar (Library.cloudChanged([])).",
+          "needs": [
+            "cloud-account",
+            "engine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "CloudAccount.origin (/v1/me, /v1/auth/link, /v1/billing/*) and the sign-in code exchange are hard-coded to https://api.frog.toys with URLSession.shared, so there's no seam to fake the account. Only the gateway (CloudGateway) can be redirected, with FROG_GATEWAY"
+        }
+      ]
+    },
+    {
+      "id": "billing-plans",
+      "name": "Plans",
+      "group": "Billing",
+      "what": "Without a subscription, Billing offers Pro $20, Max $100 and Ultra $200 cards that leave for Stripe Checkout in the browser. With one, it shows the plan's 5-hour and weekly allowance bars and a 'Change or cancel your plan' link.",
+      "entry_points": [
+        "Settings › Billing (signed in)"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/BillingSettings.swift",
+        "apps/FrogKit/Model/CloudAccount.swift"
+      ],
+      "flows": [
+        {
+          "id": "subscribe-to-plan",
+          "name": "Subscribe to a plan",
+          "steps": [
+            "Open Settings › Billing signed in with no plan",
+            "Click the Pro card",
+            "Pay in the browser's Stripe Checkout",
+            "Come back to Frog"
+          ],
+          "expected": "The browser opens Stripe Checkout from /v1/billing/subscribe. After paying and refreshing, Billing shows the plan's section with its windows.",
+          "needs": [
+            "cloud-account",
+            "stripe",
+            "network"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "CloudAccount.origin (/v1/me, /v1/auth/link, /v1/billing/*) and the sign-in code exchange are hard-coded to https://api.frog.toys with URLSession.shared, so there's no seam to fake the account. Only the gateway (CloudGateway) can be redirected, with FROG_GATEWAY. Checkout opens with NSWorkspace.open, which has no seam, and Stripe test mode needs a staging edge."
+        },
+        {
+          "id": "see-allowance-windows",
+          "name": "See how much of my plan I've used",
+          "steps": [
+            "Sign in to a subscribed account",
+            "Open Settings › Billing",
+            "Read the plan section"
+          ],
+          "expected": "Bars for 'This 5 hours' and 'This week' with used/limit and reset times, plus 'Change or cancel your plan' (frog.toys/?settings=billing).",
+          "needs": [
+            "cloud-account"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "It could render from a staged Me(subscription:), but no test does, and the view isn't readable."
+        },
+        {
+          "id": "subscribe-error",
+          "name": "See a checkout error",
+          "steps": [
+            "Sign in with a key the edge will refuse",
+            "Open Settings › Billing",
+            "Click a plan card"
+          ],
+          "expected": "The account error line shows in red, and no browser opens.",
+          "needs": [
+            "cloud-account",
+            "network"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "CloudAccount.origin (/v1/me, /v1/auth/link, /v1/billing/*) and the sign-in code exchange are hard-coded to https://api.frog.toys with URLSession.shared, so there's no seam to fake the account. Only the gateway (CloudGateway) can be redirected, with FROG_GATEWAY"
+        }
+      ]
+    },
+    {
+      "id": "billing-credit",
+      "name": "Credit and top-up",
+      "group": "Billing",
+      "what": "Shows usage credit, picks $5, $10, $25, $50 or $100, and 'Add $N' leaves for Stripe Checkout. Credit pays per token past the plan or for every turn without one.",
+      "entry_points": [
+        "Settings › Billing (signed in)",
+        "Settings › Models › Credit › 'Add credit…'",
+        "Picker or model row over cap → Billing"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/BillingSettings.swift",
+        "apps/FrogKit/Model/CloudAccount.swift"
+      ],
+      "flows": [
+        {
+          "id": "top-up-credit",
+          "name": "Add credit",
+          "steps": [
+            "Open Settings › Billing",
+            "Pick $25 in 'Add credit'",
+            "Click 'Add $25'",
+            "Pay in Stripe Checkout"
+          ],
+          "expected": "The browser opens Checkout for $25 (/v1/billing/topup, amount in micro-dollars). After payment, 'Usage credit' and the footer go up on the next refresh.",
+          "needs": [
+            "cloud-account",
+            "stripe",
+            "network"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "CloudAccount.origin (/v1/me, /v1/auth/link, /v1/billing/*) and the sign-in code exchange are hard-coded to https://api.frog.toys with URLSession.shared, so there's no seam to fake the account. Only the gateway (CloudGateway) can be redirected, with FROG_GATEWAY. Stripe needs a real or test-mode checkout."
+        },
+        {
+          "id": "see-credit",
+          "name": "See my credit and how it's used",
+          "steps": [
+            "Sign in",
+            "Open Settings › Billing",
+            "Read the credit section"
+          ],
+          "expected": "'Usage credit $X', 'Each turn pays from credit at the model's prices.' (or 'Used only past your plan's allowance.'), and 'Frog Cloud bills per token, at each model's prices.'",
+          "needs": [
+            "cloud-account"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "It could render from a staged account, but no test does. SwiftUI controls in a hosted view can't be found or clicked by tests (no XCUITest target, no accessibility tree)"
+        },
+        {
+          "id": "coupon-not-on-mac",
+          "name": "Redeem a coupon code",
+          "steps": [
+            "Sign in",
+            "Open Settings › Billing",
+            "Look for a coupon field"
+          ],
+          "expected": "There isn't one on the Mac in v0.7.0. The release notes say to redeem on the web.",
+          "needs": [
+            "cloud-account"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "no",
+          "why_hard": "The feature doesn't exist on the Mac in v0.7.0 (docs/releases/v0.7.0.md, Known)."
+        }
+      ]
+    },
+    {
+      "id": "cloud-spend-cap",
+      "name": "Monthly spend cap",
+      "group": "Billing",
+      "what": "Spent this week and month, and a monthly cap that pauses cloud models. It lives in the unmounted ModelSettings, but the 'over cap' state still exists, and its 'Raise Cap…' button opens the Models tab, which no longer has the cap.",
+      "entry_points": [
+        "None for setting the cap in v0.7.0",
+        "Model row 'Raise Cap…' (ModelStateAction) → Settings › Models",
+        "Picker over-cap cloud row → Settings › Billing"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/SettingsView.swift",
+        "apps/macos/Frog/Views/ModelStateAction.swift",
+        "apps/FrogKit/Model/ModelStats.swift"
+      ],
+      "flows": [
+        {
+          "id": "set-monthly-cap",
+          "name": "Cap my monthly cloud spend",
+          "steps": [
+            "Open the Models settings list",
+            "Pick $25 in Monthly cap",
+            "Spend past it"
+          ],
+          "expected": "At the cap, cloud models show over cap and pause until next month.",
+          "needs": [
+            "cloud-account"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "no",
+          "why_hard": "Not reachable in v0.7.0: ModelSettings (SettingsView.swift) isn't mounted in SettingsView's TabView (the Models tab shows MachinesSettings), and ModelSections.providersHidden = true also hides the entry point. Only a render test hosts it directly. Spend totals are unit-tested in ModelStatsTests.testTurnsArePricedAndAddedToTheWeek."
+        },
+        {
+          "id": "raise-cap-dead-end",
+          "name": "Raise the cap from an over-cap model",
+          "steps": [
+            "Have a monthly cap set (left from an older build)",
+            "Spend past it",
+            "Click 'Raise Cap…' on a model row",
+            "Look for the cap in Settings › Models"
+          ],
+          "expected": "Settings opens on Models, but the Models tab (MachinesSettings) has no cap control, so the user can't raise it. The picker's over-cap row goes to Billing instead.",
+          "needs": [
+            "cloud-account"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Needs a cap in defaults plus spend history, and openSettings can't be observed. Likely a product bug."
+        }
+      ]
+    },
+    {
+      "id": "sparkle-updates",
+      "name": "App updates (Sparkle)",
+      "group": "Updates",
+      "what": "Release builds (bundle id toys.frog with an SUPublicEDKey) check https://frog.toys/appcast.xml and install through Sparkle. 'Check for Updates…' sits in the app menu. Debug builds, test hosts and keyless builds never check.",
+      "entry_points": [
+        "Frog > Check for Updates…",
+        "Sparkle's automatic background check"
+      ],
+      "files": [
+        "apps/macos/Frog/Model/Updates.swift",
+        "apps/macos/Frog/Views/Commands.swift",
+        "apps/macos/Frog/Info.plist",
+        "apps/macos/scripts/release.sh"
+      ],
+      "flows": [
+        {
+          "id": "check-for-updates",
+          "name": "Check for an update by hand",
+          "steps": [
+            "Run a release build",
+            "Choose Frog > Check for Updates…",
+            "Accept the offered update"
+          ],
+          "expected": "Sparkle's dialog shows the new version. Install downloads it, verifies the EdDSA signature, quits and relaunches the new bundle. The menu item is disabled while a check runs.",
+          "needs": [
+            "sparkle-feed",
+            "network"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "The updater exists only for bundle id toys.frog outside a test host, and there's no local appcast fixture or fake SPUUpdater. Sparkle's UI is system-modal."
+        },
+        {
+          "id": "no-updater-in-debug",
+          "name": "Debug builds never update themselves",
+          "steps": [
+            "Build and run the Debug scheme (toys.frog.dev)",
+            "Open the Frog menu",
+            "Look for update items"
+          ],
+          "expected": "No 'Check for Updates…' item. The Debug section shows 'Simulate Update…' and 'Test Notifications'.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "graceful-update-drain",
+      "name": "Pause agents for an update",
+      "group": "Updates",
+      "what": "An opt-in setting: before Sparkle installs, every engine (open windows and the background fleet) is asked to stop at a safe point within a shared budget (5–120 s, default 20). The resume manifest is written, Sparkle installs and relaunches, and sessions continue with an update note. Off, an update kills engines and they resume as after a crash.",
+      "entry_points": [
+        "Settings › General › 'Pause agents for app updates and resume them' and 'Wait up to Ns'",
+        "Debug menu 'Simulate Update…'"
+      ],
+      "files": [
+        "apps/macos/Frog/Model/UpdateDrain.swift",
+        "apps/macos/Frog/Model/Updates.swift",
+        "apps/macos/Frog/Model/SessionRegistry.swift",
+        "apps/macos/Frog/Views/SettingsView.swift",
+        "apps/macos/Frog/Views/Commands.swift"
+      ],
+      "flows": [
+        {
+          "id": "enable-graceful-updates",
+          "name": "Turn on pausing agents for updates and set the wait",
+          "steps": [
+            "Open Settings › General",
+            "Turn on 'Pause agents for app updates and resume them'",
+            "Use the stepper to set 'Wait up to 30s'"
+          ],
+          "expected": "The stepper appears only when on, moves in 5 s steps between 5 and 120, and is stored (gracefulUpdates, gracefulUpdateBudget). The footer explains both modes.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "SwiftUI controls in a hosted view can't be found or clicked by tests (no XCUITest target, no accessibility tree). UpdateDrain.budget clamping could be unit-tested, but isn't."
+        },
+        {
+          "id": "update-drains-and-resumes",
+          "name": "Update while agents are working, and have them carry on",
+          "steps": [
+            "Turn graceful updates on",
+            "Start turns in two windows and a background worker",
+            "Trigger the update (Sparkle install, or Debug > Simulate Update…)",
+            "Relaunch"
+          ],
+          "expected": "Each engine gets Drain with the deadline. Ones that miss it are killed. The manifest marks them suspendedByUpdate. After relaunch each continues its turn on the same model with the 'resumed after the app updated' note. Long jobs are listed as stopped.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SessionRegistryTests.swift:testUpdateManifestRoundTripAndActions",
+            "FrogTests/SessionRegistryTests.swift:testContinueAfterUpdateSendsTheUpdateNote",
+            "FrogTests/SessionRegistryTests.swift:testDrainOpEncodesDeadlineAndIsNeverAStop",
+            "FrogTests/DrainFleetTests.swift:testLiveBackgroundStartsEmpty"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "No test calls Updates.drainThenInstall or UpdateDrain.drainAll. It needs live engines (or LiveLinks that answer Drain), and a relaunch, which can't happen inside one test process. The pieces could be tested with stand-in links and a stubbed `immediate` closure."
+        },
+        {
+          "id": "update-without-drain",
+          "name": "Update with pausing off",
+          "steps": [
+            "Leave graceful updates off",
+            "Start a turn",
+            "Install an update"
+          ],
+          "expected": "Sparkle installs immediately. Engines stop where they are, and turns resume as after a crash on next launch.",
+          "needs": [
+            "engine",
+            "sparkle-feed"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Needs Sparkle's install path and a relaunch."
+        }
+      ]
+    },
+    {
+      "id": "iphone-pairing",
+      "name": "Let frog on iPhone connect",
+      "group": "iPhone",
+      "what": "Settings › General turns on the phone bridge: loopback WebSocket on 8913 and a TLS-PSK listener on 8914 advertised as _frog._tcp. It shows a QR code (a frog://pair?name&host&code link the iPhone camera opens in frog) and the 20-character code. New Code signs out every phone. A push relay secret lets the Mac wake the phone through frog.toys.",
+      "entry_points": [
+        "Settings › General › 'Let frog on iPhone connect'"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/SettingsView.swift",
+        "apps/macos/Frog/Model/RemoteBridge.swift",
+        "apps/macos/Frog/Model/RemotePush.swift",
+        "apps/FrogKit/Core/Pairing.swift",
+        "apps/FrogKit/Core/PushCrypto.swift"
+      ],
+      "flows": [
+        {
+          "id": "turn-on-phone-bridge",
+          "name": "Let my iPhone connect to this Mac",
+          "steps": [
+            "Open Settings › General",
+            "Turn on 'Let frog on iPhone connect'",
+            "Look at the QR code, the Mac's name and the code"
+          ],
+          "expected": "Listeners start (and restart at launch while on). A QR for frog://pair with this Mac's .local host and the code appears, with the code as selectable text.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "RemoteBridge.shared opens real listeners on fixed ports 8913/8914 and reads the Keychain token, and it's skipped in test hosts. SwiftUI controls in a hosted view can't be found or clicked by tests (no XCUITest target, no accessibility tree)"
+        },
+        {
+          "id": "pair-iphone-by-qr",
+          "name": "Pair my iPhone by scanning the code",
+          "steps": [
+            "Turn on the phone bridge",
+            "Scan the QR with the iPhone camera (or pick the Mac in frog and type the code)",
+            "Open the session list on the phone"
+          ],
+          "expected": "The phone connects over TLS keyed by the code and lists this Mac's sessions, with their parent sessions.",
+          "needs": [
+            "iphone"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/RemoteBridgeTests.swift:testSessionRowsCarryTheParent"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "no",
+          "why_hard": "Needs a physical iPhone or the iOS Simulator on loopback, and the camera. A loopback WebSocket client in the test could cover the Mac side."
+        },
+        {
+          "id": "new-phone-code",
+          "name": "Sign out every phone with a new code",
+          "steps": [
+            "Turn on the phone bridge and pair a phone",
+            "Open Settings › General",
+            "Click New Code",
+            "Try the phone again"
+          ],
+          "expected": "A new code and QR appear, listeners restart, and phones paired with the old code can't connect.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "It writes the login Keychain (toys.frog.remote) and restarts real listeners, with no seam. SwiftUI controls in a hosted view can't be found or clicked by tests (no XCUITest target, no accessibility tree)"
+        },
+        {
+          "id": "push-relay-secret",
+          "name": "Let this Mac wake my phone",
+          "steps": [
+            "Turn on the bridge",
+            "Paste the push relay secret",
+            "Start a turn that needs permission while the phone app is closed"
+          ],
+          "expected": "The Mac seals the event with the code and sends it through the frog.toys relay, so the phone gets a notification (time-sensitive for attention). Without a secret, the phone hears only while its app is open.",
+          "needs": [
+            "iphone",
+            "network"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/PushCryptoTests.swift:testRoundTripsWithTheCodeOnly",
+            "FrogTests/PushCryptoTests.swift:testSealedPushKeepsOnlyWhatIOSNeedsInTheClear",
+            "FrogTests/NotifierTests.swift:testThePhonePayloadMapsUrgency",
+            "FrogTests/NotifierTests.swift:testABadRelayOverrideFallsBack"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "no",
+          "why_hard": "Needs APNs delivery to a real device through the relay. The payload and crypto are unit-tested."
+        },
+        {
+          "id": "handoff-conversation",
+          "name": "Pick up a conversation between iPhone and Mac with Handoff",
+          "steps": [
+            "Read a conversation in frog on the iPhone",
+            "On the Mac, click the Handoff icon in the Dock",
+            "Look at the focused pane"
+          ],
+          "expected": "The Mac opens that session focused (NSUserActivity toys.frog.conversation, WorkspaceView.continueHandoff), and the Mac advertises the open session back to the phone.",
+          "needs": [
+            "iphone"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "no",
+          "why_hard": "Needs two signed-in Apple devices on the same iCloud account. continueHandoff could be called with a fake NSUserActivity, but it's private to WorkspaceView."
+        },
+        {
+          "id": "turn-off-phone-bridge",
+          "name": "Stop phones from connecting",
+          "steps": [
+            "Turn on the phone bridge with a phone connected",
+            "Open Settings › General",
+            "Turn off 'Let frog on iPhone connect'"
+          ],
+          "expected": "Listeners stop and the QR code is hidden. Connected phones drop.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Real listeners, and the bridge is disabled in test hosts."
+        }
+      ]
+    },
+    {
+      "id": "energy-settings",
+      "name": "Energy",
+      "group": "Energy",
+      "what": "Settings › Energy charts the energy frog's turns used per hour (24 h) or per day (10 days), split into this Mac (measured from its power sensor) and data center (estimated per model with a source). It has a per-model filter and breakdown, a CO₂e and phone-charge summary, and backfills from session logs.",
+      "entry_points": [
+        "Settings › Energy",
+        "Turn-end energy hint (hand-off to conversation)"
+      ],
+      "files": [
+        "apps/FrogKit/UI/Settings/EnergySettings.swift",
+        "apps/FrogKit/Model/ModelStats.swift"
+      ],
+      "flows": [
+        {
+          "id": "see-energy-chart",
+          "name": "See how much energy my turns used",
+          "steps": [
+            "Run some turns with energy measured",
+            "Open Settings › Energy",
+            "Switch between Last 24 Hours and Last 10 Days"
+          ],
+          "expected": "A stacked bar chart, the total in Wh (marked estimated when a data center part exists), 'In the last 24 hours · N g CO₂e · …phone charges', and the legend.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SnapshotTests.swift:testRenderEnergySettings"
+          ],
+          "coverage_v070": "snapshot",
+          "automatable": "yes"
+        },
+        {
+          "id": "filter-energy-by-model",
+          "name": "See one model's energy",
+          "steps": [
+            "Open Settings › Energy",
+            "Pick a model in the model menu",
+            "Read the By model rows and their source links"
+          ],
+          "expected": "The chart and total show only that model. Each row shows its Wh and basis (for example 'scaled by active parameters') with a source link, or 'Measured on this Mac'.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SnapshotTests.swift:testRenderEnergySettings"
+          ],
+          "coverage_v070": "snapshot",
+          "automatable": "hard",
+          "why_hard": "SwiftUI controls in a hosted view can't be found or clicked by tests (no XCUITest target, no accessibility tree). The picker can't be changed, though ModelStats.energyBuckets(spec:) is testable."
+        },
+        {
+          "id": "energy-empty-state",
+          "name": "Open Energy before any measured turn",
+          "steps": [
+            "Start with a fresh HOME",
+            "Open Settings › Energy",
+            "Read the summary and By model"
+          ],
+          "expected": "'Nothing recorded in the last 24 hours' and 'Turns you run with energy measured show up here.'",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "toggle-turn-energy",
+          "name": "Show energy at the end of each turn",
+          "steps": [
+            "Open Settings › Energy",
+            "Turn on 'Show energy use at the end of each turn'",
+            "Finish a turn"
+          ],
+          "expected": "The turn's footer shows its watt-hours (hand-off to the conversation). Same key as Appearance.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SnapshotTests.swift:testRenderTurnCostCards"
+          ],
+          "coverage_v070": "snapshot",
+          "automatable": "hard",
+          "why_hard": "SwiftUI controls in a hosted view can't be found or clicked by tests (no XCUITest target, no accessibility tree)"
+        },
+        {
+          "id": "energy-backfill",
+          "name": "See energy from turns run before opening the page",
+          "steps": [
+            "Have session logs with energy usage from earlier turns",
+            "Open Settings › Energy",
+            "Read the chart"
+          ],
+          "expected": "backfillEnergy reads the Mac's session logs, and the chart includes those turns.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "energy-method-link",
+          "name": "Read how energy is measured",
+          "steps": [
+            "Open Settings › Energy",
+            "Scroll to the method note",
+            "Click 'How it's measured, and every bench run'"
+          ],
+          "expected": "The browser opens frog.toys/energy.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "The link can't be clicked in tests."
+        }
+      ]
+    },
+    {
+      "id": "docs-mode",
+      "name": "Documentation in the app",
+      "group": "Links",
+      "what": "Documentation mode replaces the sidebar with the bundled docs (docs/app). It has search, pages by section, previous and next links, the build version, and an 'open on the web' link to frog.toys/docs/<slug>. Back to app keeps the thread, draft and inspector.",
+      "entry_points": [
+        "Help › Frog Documentation",
+        "Sidebar 'Documentation' row",
+        "Command palette (⌘K) 'Documentation' or a page title"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/DocsViews.swift",
+        "apps/macos/Frog/Model/AppDocs.swift",
+        "apps/macos/Frog/Model/Panes.swift",
+        "apps/macos/Frog/Views/WorkspaceView.swift",
+        "apps/macos/Frog/Views/Commands.swift",
+        "docs/app"
+      ],
+      "flows": [
+        {
+          "id": "open-docs",
+          "name": "Open the documentation",
+          "steps": [
+            "Open a window",
+            "Choose Help › Frog Documentation (or the sidebar row, or ⌘K Documentation)",
+            "Read the first page"
+          ],
+          "expected": "The window enters docs mode on the last page read (or the first), with the sidebar listing sections and pages.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/DocsModeTests.swift:testModeRemembersItsPage",
+            "FrogTests/DocsModeTests.swift:testRenderDocsMode",
+            "FrogTests/AppDocsTests.swift:testBundledDocsResolve",
+            "FrogTests/AppDocsTests.swift:testManifestReadsSectionsAndPagesInOrder"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        },
+        {
+          "id": "search-docs",
+          "name": "Search the docs",
+          "steps": [
+            "Open docs mode",
+            "Type in 'Search docs'",
+            "Click a result",
+            "Clear with ×"
+          ],
+          "expected": "Pages filter by title and headings, and clearing restores the full list.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/AppDocsTests.swift:testSearchMatchesTitlesAndHeadings",
+            "FrogTests/DocsModeTests.swift:testRenderDocsMode"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "The search field is SwiftUI and can't be typed into in tests. AppDocs.search is unit-tested."
+        },
+        {
+          "id": "page-to-page",
+          "name": "Read the next or previous page",
+          "steps": [
+            "Open docs mode",
+            "Open a page",
+            "Click the next link in the page footer"
+          ],
+          "expected": "The next page opens, crossing sections in manifest order.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/AppDocsTests.swift:testNeighborsCrossSections"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "SwiftUI controls in a hosted view can't be found or clicked by tests (no XCUITest target, no accessibility tree)"
+        },
+        {
+          "id": "open-docs-on-web",
+          "name": "Share a docs page from its web copy",
+          "steps": [
+            "Open docs mode",
+            "Open a page",
+            "Click the open-on-the-web button"
+          ],
+          "expected": "The browser opens https://frog.toys/docs/<slug>.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/AppDocsTests.swift:testWebLink"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "openURL can't be observed, and the button can't be clicked."
+        },
+        {
+          "id": "back-to-app-keeps-work",
+          "name": "Leave the docs and pick up where I was",
+          "steps": [
+            "Type a draft in a conversation with the inspector open",
+            "Open docs mode",
+            "Click Back to app"
+          ],
+          "expected": "The same conversation, the same composer with the draft, and the same inspector tab.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/DocsModeTests.swift:testEnteringAndLeavingKeepsThreadDraftAndTab"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        },
+        {
+          "id": "mac-only-doc-blocks",
+          "name": "Read docs written for the Mac",
+          "steps": [
+            "Open docs mode",
+            "Open a page with platform blocks",
+            "Read it"
+          ],
+          "expected": "Mac blocks show, and web or terminal blocks don't.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/AppDocsTests.swift:testMacBlockShownWebBlockNot",
+            "FrogTests/AppDocsTests.swift:testWebAndTerminalSeeTheirOwn"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "external-links",
+      "name": "Links out of Settings",
+      "group": "Links",
+      "what": "Settings links that open the browser: Devices and keys, Change or cancel your plan, the energy method page, a model's Hugging Face source in its info popover, and (unmounted) Get a Key and a provider's key page.",
+      "entry_points": [
+        "Settings › Billing",
+        "Settings › Energy",
+        "Machine page ⓘ popover"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/BillingSettings.swift",
+        "apps/FrogKit/UI/Settings/EnergySettings.swift",
+        "apps/macos/Frog/Views/LocalModelRows.swift",
+        "apps/macos/Frog/Views/SettingsView.swift"
+      ],
+      "flows": [
+        {
+          "id": "follow-settings-links",
+          "name": "Open a page from Settings",
+          "steps": [
+            "Open Settings",
+            "Go to a tab with a link (Billing, Energy, or a model's ⓘ)",
+            "Click the link"
+          ],
+          "expected": "The default browser opens the right URL (frog.toys/?settings=account, ?settings=billing, frog.toys/energy, huggingface.co/<repo>).",
+          "needs": [
+            "network"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "SwiftUI Link goes through the OpenURLAction environment, which a test could replace to record URLs, but the link can't be clicked without a UI driver."
+        }
+      ]
+    },
+    {
+      "id": "launch-and-url-handling",
+      "name": "Opening Frog from outside: folders, launch arguments, URLs",
+      "group": "Links",
+      "what": "One Frog per build. A second launch hands its -FrogFolder or URL arguments to the running copy and quits. Folders opened from Finder or dropped on the Dock get their own window. The Mac registers no URL scheme in v0.7.0 (no CFBundleURLTypes): frog://pair is only produced, as a QR for the iPhone. Sign-in returns to a 127.0.0.1 listener, and frog-auth:// appears only in docs/design/accounts-ux.md.",
+      "entry_points": [
+        "Finder: open a folder with Frog / drop on the Dock icon",
+        "open Frog.app --args -FrogFolder <path>",
+        "open -n Frog.app <url>"
+      ],
+      "files": [
+        "apps/macos/Frog/FrogApp.swift",
+        "apps/macos/Frog/Model/SessionRegistry.swift",
+        "apps/macos/Frog/Info.plist",
+        "apps/FrogKit/Core/Pairing.swift"
+      ],
+      "flows": [
+        {
+          "id": "open-folder-from-finder",
+          "name": "Open a folder in Frog from Finder or the Dock",
+          "steps": [
+            "Start Frog",
+            "In Finder, drop a folder on the Dock icon (or Open With Frog)",
+            "Look at the windows"
+          ],
+          "expected": "A new window opens on that folder.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "application(_:open:) needs a real Apple Event from Finder. FolderOpener.open could be called directly, but opening a window breaks the background rule unless it's ordered in hidden."
+        },
+        {
+          "id": "launch-with-folder-arg",
+          "name": "Launch Frog on a folder from the command line",
+          "steps": [
+            "Quit Frog",
+            "Run `open Frog.app --args -FrogFolder ~/code/repo`",
+            "Look at the first window"
+          ],
+          "expected": "The first window opens on that folder.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "It's an app launch, and there's no UI-test target to launch the app with arguments."
+        },
+        {
+          "id": "second-launch-hands-off",
+          "name": "Launch Frog again while it's running",
+          "steps": [
+            "Start Frog",
+            "Run `open -n Frog.app --args -FrogFolder <path>`",
+            "Look at the running copy and the process list"
+          ],
+          "expected": "The running copy opens the folder in a window and comes forward, and the second process exits. A different build (Debug vs installed) runs alongside. A hung holder gets an alert naming its pid.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/InstanceLockTests.swift:testTheSameBundleIdHandsOff",
+            "FrogTests/InstanceLockTests.swift:testADifferentBundleIdRunsAlongside",
+            "FrogTests/InstanceLockTests.swift:testLaunchURLsKeepsURLsAndPathsAndSkipsDefaults",
+            "FrogTests/InstanceLockTests.swift:testTheConflictAlertNamesTheHolder",
+            "FrogTests/InstanceLockTests.swift:testADeadHolderIsReclaimed"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "The decision logic is unit-tested. The real two-process hand-off over DistributedNotificationCenter needs two app launches."
+        },
+        {
+          "id": "frog-url-on-mac",
+          "name": "Open a frog:// link on the Mac",
+          "steps": [
+            "Start Frog",
+            "Click a frog://… link on the Mac (for example frog://pair?… from the QR)",
+            "See what opens"
+          ],
+          "expected": "Nothing in v0.7.0: no scheme is registered, so macOS doesn't route it to Frog. A URL passed as a launch argument reaches the running copy, but application(_:open:) opens only directories.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "no",
+          "why_hard": "The feature doesn't exist on the Mac at v0.7.0. Only iOS handles frog://pair (apps/ios/Frog/FrogApp.swift onOpenURL)."
+        }
+      ]
+    }
+  ]
+}

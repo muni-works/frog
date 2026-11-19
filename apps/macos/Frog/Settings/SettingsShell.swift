@@ -73,7 +73,49 @@ struct SettingsSidebar: View {
     }
 }
 
-/// One section: its title, then its rows under their group labels, from the list.
+/// Where you are in Settings, in the window's title bar: "Settings › Models › mew". The page
+/// itself has no title; a parent you can go back to is a link.
+struct SettingsCrumbs: View {
+    let section: String
+    /// The open machine's name, on its page.
+    var machine: String? = nil
+    var backToSection: () -> Void = {}
+    var catalog = SettingsCatalog.bundled
+    @State private var hovering = false
+
+    private var label: String { catalog.sections.first { $0.id == section }?.label ?? "Settings" }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text("Settings").foregroundStyle(Tokens.textSecondary)
+            chevron
+            if let machine {
+                Button(action: backToSection) {
+                    Text(label).underline(hovering).foregroundStyle(Tokens.textSecondary)
+                }
+                .buttonStyle(.plain)
+                .onHover { hovering = $0 }
+                .help("Back to \(label)")
+                chevron
+                Text(machine).foregroundStyle(Tokens.text)
+            } else {
+                Text(label).foregroundStyle(Tokens.text)
+            }
+        }
+        .font(.frog(size: 13, weight: .semibold))
+        .lineLimit(1)
+        .fixedSize()
+        // A container, so the link back stays its own button for VoiceOver.
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Breadcrumb")
+    }
+
+    private var chevron: some View {
+        Image(systemName: "chevron.right").font(.frog(size: 9, weight: .semibold)).foregroundStyle(Tokens.textTertiary)
+    }
+}
+
+/// One section: its rows under their group labels, from the list (the title bar names it).
 struct SettingsSectionView: View {
     let section: String
     /// Models › a machine's page, if one is open.

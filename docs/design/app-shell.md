@@ -117,11 +117,15 @@ and the web show the same nine sections, drawn the same way from one list of row
 - Sidebar: Back to app (esc does the same); then one row per section. No search in the first
   version.
 - Main area, capped at 720 (the transcript's measure) and centred like it, 40 above:
-  - **Title**: 17/22 semibold, one per page, no icon.
+  - **No page title.** The header (the Mac's title bar, the web's top bar) says where you
+    are as breadcrumbs: "Settings › Models", "Settings › Models › mew". A parent you can go
+    back to is a link; the current page is in `fg`, the rest muted.
   - **Group label**: 12/17 semibold, muted, 22 above and 4 below; only when a page has more
     than one group.
-  - **Row**: label left, control right, 11 above and below, a hairline between rows and none
-    after the last. No card behind a row.
+  - **Row**: label left, control right, 11 above and below, a hairline between rows of
+    controls and none after the last. A read-only list (keys, credit added, prices, a
+    machine's facts and models) has no hairlines: they're for telling controls apart. No card
+    behind a row, and no rule inside a card.
   - **Label**: 14/20 regular, sentence case, no colon; says what turning it on does.
     **Description**: 12/17 faint, one or two lines under the label; may link to its docs page.
   - Under 760 wide the control wraps below its label and takes the full width.
@@ -134,6 +138,9 @@ and the web show the same nine sections, drawn the same way from one list of row
     asks first.
   - **Value**: a read-only fact where a control would be, in muted text.
 - Only Billing uses cards, for the plan and credit blocks.
+- **Hover**: a control whose effect isn't plain from its label says so in a tooltip (what a
+  button opens or forgets, what a segment's choice does, where a value comes from). A row that
+  opens a page lifts on hover and its tooltip says what's there. No tooltip repeats the label.
 - No "new" badges anywhere.
 
 ### Sections

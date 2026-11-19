@@ -33,7 +33,9 @@ struct SignInRows: View {
             } else {
                 HStack(spacing: 8) {
                     Button("GitHub") { flow.start { try await CloudAccount.signInAndSave(provider: "github") } }
+                        .help("Sign in with GitHub, in your browser")
                     Button("Google") { flow.start { try await CloudAccount.signInAndSave(provider: "google") } }
+                        .help("Sign in with Google, in your browser")
                 }
                 .buttonStyle(SettingsButtonStyle())
             }
@@ -52,13 +54,15 @@ struct ProfileRows: View {
             if !account.signedIn {
                 SignInRows()
             } else if let me = account.me {
-                SettingsRow(me.name ?? me.handle ?? "Signed in",
-                            description: [me.handle.map { "@\($0)" }, me.email].compactMap { $0 }.joined(separator: " · ")) {
-                    Button("Sign out") { Task { await signOut() } }.buttonStyle(SettingsButtonStyle())
+                VStack(alignment: .leading, spacing: 0) {
+                    SettingsRow(me.name ?? me.handle ?? "Signed in",
+                                description: [me.handle.map { "@\($0)" }, me.email].compactMap { $0 }.joined(separator: " · ")) {
+                        Button("Sign out") { Task { await signOut() } }.buttonStyle(SettingsButtonStyle())
+                            .help("This Mac forgets its Frog Cloud key. Your sessions stay in your account.")
+                    }
+                    Text("Cloud sessions belong to your account, so they show up on every device you sign in on.")
+                        .font(.frog(size: SettingsLook.description)).foregroundStyle(Tokens.textTertiary)
                 }
-                Text("Cloud sessions belong to your account, so they show up on every device you sign in on.")
-                    .font(.frog(size: SettingsLook.description)).foregroundStyle(Tokens.textTertiary)
-                    .padding(.bottom, 8)
             } else if let error = account.error {
                 SettingsRow("Frog Cloud", description: error) { EmptyView() }
             } else {
@@ -97,6 +101,7 @@ struct SignInsRows: View {
                 Button("Cancel") { flow.cancel() }.buttonStyle(SettingsButtonStyle())
             } else {
                 Button("Connect") { flow.start { try await CloudAccount.connect(provider) } }.buttonStyle(SettingsButtonStyle())
+                    .help("Adds \(name) to this account, in your browser")
             }
         }
     }
@@ -129,9 +134,10 @@ struct DevicesRows: View {
                     SettingsRow(k.name ?? (k.kind == "device" ? "A device" : "API key"),
                                 description: "\(k.kind == "device" ? "Signed in" : "API key") \(SettingsDates.day(k.created))\(k.last_used.map { " · last used \(SettingsDates.day($0))" } ?? "")") {
                         if k.current == true {
-                            SettingsValue("This Mac")
+                            SettingsValue("This Mac", help: "The key this Mac uses. Sign out to forget it.")
                         } else {
                             Button("Revoke") { Task { await revoke(k.id) } }.buttonStyle(SettingsButtonStyle())
+                                .help(k.kind == "device" ? "Signs that device out" : "That key stops working")
                         }
                     }
                 }
@@ -148,6 +154,7 @@ struct DevicesRows: View {
                         HStack(spacing: 8) {
                             FrogField(label: "Name (optional)", text: $name, width: 160)
                             Button("Create key") { Task { await create() } }.buttonStyle(SettingsButtonStyle())
+                                .help("A key for the CLI or a tool. It's shown once.")
                         }
                     }
                 }
@@ -223,6 +230,7 @@ struct PlanBlock: View {
                                 .contentShape(.rect)
                             }
                             .buttonStyle(.plain)
+                            .help("Opens Stripe in your browser to subscribe to \(p.name)")
                         }
                     }
                 }
@@ -259,10 +267,10 @@ struct CreditBlock: View {
                         .foregroundStyle(Tokens.onAccent)
                         .padding(.horizontal, 16).padding(.vertical, 6)
                         .background(Tokens.accent, in: Capsule())
+                        .help("Opens Stripe Checkout in your browser")
                 }
                 Text("Paid through Stripe. Credit doesn't expire.").font(.frog(size: 12)).foregroundStyle(Tokens.textTertiary)
-                Rectangle().fill(Tokens.line).frame(height: 1)
-                Text("Have a code?").font(.frog(size: 13, weight: .semibold))
+                Text("Have a code?").font(.frog(size: 13, weight: .semibold)).padding(.top, 8)
                 HStack(spacing: 8) {
                     FrogField(label: "Code", text: $code, width: 220) {}
                     Button(redeeming ? "Redeeming…" : "Redeem") { Task { await redeem() } }
@@ -304,7 +312,7 @@ struct CreditHistoryRows: View {
         VStack(alignment: .leading, spacing: 0) {
             if !rows.isEmpty {
                 SettingsGroupLabel(text: "Credit added")
-                SettingsRows {
+                SettingsRows(divided: false) {
                     ForEach(Array(rows.enumerated()), id: \.offset) { _, r in
                         SettingsRow([SettingsDates.day(r.at), r.label].filter { !$0.isEmpty }.joined(separator: " · "),
                                     description: r.status == nil || r.status == "succeeded" ? nil : r.status) {
@@ -333,7 +341,7 @@ struct PricesRows: View {
         VStack(alignment: .leading, spacing: 0) {
             if !models.isEmpty {
                 SettingsGroupLabel(text: row.label)
-                SettingsRows {
+                SettingsRows(divided: false) {
                     ForEach(models) { m in
                         SettingsRow(m.name, description: "Cached \(per(m.costCacheRead)) · output \(per(m.costOut))") {
                             SettingsValue("\(per(m.costIn)) in")

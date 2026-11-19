@@ -84,15 +84,30 @@ export function SettingsPage(p: SettingsProps) {
   const open = p.section === 'models' ? (p.machines ?? []).find((m) => m.id === machine) : undefined
   return (
     <main className="main docs-main settings-main">
-      <div className="titlebar">{p.bar}</div>
+      <div className="titlebar">{p.bar}<Crumbs section={p.section} machine={open?.name} onSection={() => setMachine(null)} /></div>
       <div className="scroll" ref={scroller}>
         <div className="col settings-page" aria-label={SECTIONS.find((s) => s.id === p.section)?.label}>
           {open
-            ? <MachinePage machine={open} machines={p.machines ?? []} onBack={() => setMachine(null)} />
+            ? <MachinePage machine={open} machines={p.machines ?? []} />
             : <SectionView {...p} onMachine={setMachine} />}
         </div>
       </div>
     </main>
+  )
+}
+
+/** Where you are, in the header: "Settings › Models › mew". The page draws no title of its own;
+ *  a parent you can go back to is a link. */
+export function Crumbs({ section, machine, onSection }: { section: Section; machine?: string; onSection: () => void }) {
+  const label = SECTIONS.find((s) => s.id === section)?.label
+  return (
+    <nav className="crumbs" aria-label="Breadcrumb">
+      <span>Settings</span>
+      <span className="crumb-sep" aria-hidden="true">›</span>
+      {machine
+        ? <><button type="button" onClick={onSection} title={`Back to ${label}`}>{label}</button><span className="crumb-sep" aria-hidden="true">›</span><b aria-current="page">{machine}</b></>
+        : <b aria-current="page">{label}</b>}
+    </nav>
   )
 }
 
@@ -120,7 +135,7 @@ export const RENDER: Record<string, (row: SettingRow, p: Ctx) => ReactNode> = {
   machines: (_, p) => <Machines machines={p.machines ?? []} onOpen={p.onMachine} />,
   'frog-cloud': (_, p) => <FrogCloud account={p.account} onBilling={() => p.onOpen('billing')} />,
   'default-mode': (row, p) => <DefaultMode row={row} mode={p.newMode ?? 'auto'} onMode={p.onNewMode} />,
-  'cloud-sandbox': (row) => <Row row={row}><span className="det">Always on</span></Row>,
+  'cloud-sandbox': (row) => <Row row={row}><span className="det" title="Each cloud session gets a machine of its own; nothing it runs reaches yours">Always on</span></Row>,
   shortcuts: () => <Shortcuts />,
   profile: (_, p) => <Profile {...p} />,
   'sign-ins': (_, p) => <Logins account={p.account} onConnect={p.onConnect} />,
@@ -151,7 +166,6 @@ function SectionView(p: SettingsProps & { onMachine: (id: string) => void }) {
     else runs.push({ group: g, rows: [r] })
   }
   return (<>
-    <h2>{SECTIONS.find((s) => s.id === p.section)?.label}</h2>
     {runs.map((run, i) => (
       <Fragment key={run.rows[0].id}>
         {run.group && groups.size > 1 && runs[i - 1]?.group !== run.group && <div className="set-h">{run.group}</div>}
@@ -179,7 +193,7 @@ function Invites({ rows, section, machines }: { rows: SettingRow[]; section: Sec
 function Seg<T extends string>({ label, options, value, onPick }: { label: string; options: { id: string; label: string }[]; value: T; onPick: (v: T) => void }) {
   return (
     <div className="topup-amts set-seg" role="radiogroup" aria-label={label}>
-      {options.map((o) => <button key={o.id} type="button" role="radio" aria-checked={value === o.id} className={value === o.id ? 'on' : ''} onClick={() => onPick(o.id as T)}>{o.label}</button>)}
+      {options.map((o) => <button key={o.id} type="button" role="radio" aria-checked={value === o.id} className={value === o.id ? 'on' : ''} title={(o as { description?: string }).description} onClick={() => onPick(o.id as T)}>{o.label}</button>)}
     </div>
   )
 }
@@ -192,7 +206,7 @@ function Profile({ account, onSignOut }: SettingsProps) {
     <div className="f-account">
       <span className="mark" style={{ width: 28, height: 28 }} />
       <div className="grow"><div className="name"><b>{account?.name ?? firstName(account) ?? 'Signed in'}</b>{account?.handle && <span className="f-badge">GitHub</span>}</div><div className="detail">{[account?.handle && `@${account.handle}`, account?.email].filter(Boolean).join(' · ')}</div></div>
-      <div className="acts"><button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={onSignOut}>Sign out</button></div>
+      <div className="acts"><button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={onSignOut} title="This browser forgets its key. Your sessions stay in your account.">Sign out</button></div>
     </div>
     <p className="det wrap">Cloud sessions belong to your account, so they show up on every device you sign in on.</p>
   </>)
@@ -207,7 +221,7 @@ function Logins({ account, onConnect }: { account: Account | null; onConnect?: (
   return rows.map(([id, name, who, why]) => (
     <div key={id} className="set-row">
       <div style={{ flex: 1 }}><b>{name}</b><div className="det wrap">{who ?? `Not connected. ${why}`}</div></div>
-      {who ? <span className="det">Connected</span> : onConnect && <button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => onConnect(id)}>Connect</button>}
+      {who ? <span className="det">Connected</span> : onConnect && <button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => onConnect(id)} title={`Adds ${name} to this account`}>Connect</button>}
     </div>
   ))
 }
@@ -243,7 +257,7 @@ function Keys({ apiKey }: { apiKey: string }) {
             <b>{k.name ?? (k.kind === 'device' ? 'A device' : 'API key')}</b>{k.current && <span className="f-badge" style={{ marginLeft: 6 }}>This browser</span>}
             <div className="det">{k.kind === 'device' ? 'Signed in' : 'API key'} {day(k.created)}{k.last_used ? ` · last used ${day(k.last_used)}` : ''}</div>
           </div>
-          {!k.current && <button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => revokeKey(apiKey, k.id).then(load, () => setError("Couldn't revoke it. Try again."))}>Revoke</button>}
+          {!k.current && <button type="button" className="f-btn f-btn--bordered f-btn--small" title={k.kind === 'device' ? 'Signs that device out' : 'That key stops working'} onClick={() => revokeKey(apiKey, k.id).then(load, () => setError("Couldn't revoke it. Try again."))}>Revoke</button>}
         </div>
       ))}
       {made ? (
@@ -258,7 +272,7 @@ function Keys({ apiKey }: { apiKey: string }) {
       ) : (
         <form className="set-row" onSubmit={(e) => { e.preventDefault(); createKey(apiKey, name).then((r) => { setMade(r.key); setName(''); load() }, () => setError("Couldn't make a key. Try again.")) }}>
           <input className="f-field" style={{ flex: 1 }} value={name} onChange={(e) => setName(e.target.value)} placeholder="New API key name (optional)" aria-label="New API key name" />
-          <button type="submit" className="f-btn f-btn--bordered f-btn--small">Create key</button>
+          <button type="submit" className="f-btn f-btn--bordered f-btn--small" title="A key for the CLI or a tool. It's shown once.">Create key</button>
         </form>
       )}
       {error && <div className="det" style={{ color: 'var(--warn)' }}>{error}</div>}
@@ -287,7 +301,7 @@ function DefaultModel({ row, models = [], pinnedModel, onPinModel }: { row: Sett
   const value = pinnedModel && models.some((m) => m.id === pinnedModel) ? pinnedModel : ''
   return (
     <Row row={row}>
-      <select className="f-pill invite-pill set-menu" aria-label={row.label} value={value} onChange={(e) => onPinModel?.(e.target.value || null)} disabled={!onPinModel}>
+      <select className="f-pill invite-pill set-menu" aria-label={row.label} title="The model a new conversation starts on; the composer can still change it" value={value} onChange={(e) => onPinModel?.(e.target.value || null)} disabled={!onPinModel}>
         <option value="">The last model I used</option>
         {models.map((m) => <option key={m.id} value={m.id}>{modelName(m.id)}</option>)}
       </select>
@@ -330,7 +344,7 @@ function Shortcuts() {
   return WEB_SHORTCUTS.map(([group, keys]) => (
     <Fragment key={group}>
       <div className="set-h">{group}</div>
-      <div className="set-group">
+      <div className="set-group plain">
         {keys.map(([what, k]) => <div key={what} className="set-row"><div style={{ flex: 1 }}>{what}</div><span className="det mono">{k}</span></div>)}
       </div>
     </Fragment>
@@ -500,7 +514,7 @@ function perM(p: number | null) {
 function Machines({ machines, onOpen }: { machines: Machine[]; onOpen: (id: string) => void }) {
   if (!machines.length) return <div className="set-row det">No machines yet.</div>
   return machines.map((m) => (
-    <button key={m.id} type="button" className="set-row set-machine" onClick={() => onOpen(m.id)}>
+    <button key={m.id} type="button" className="set-row set-machine" onClick={() => onOpen(m.id)} title={`Open ${m.name}'s page: its memory and models`}>
       <div style={{ flex: 1, minWidth: 0 }}><b>{m.name}</b>{m.thisMac && <span className="det" style={{ marginLeft: 6 }}>This Mac</span>}<div className="det">{m.hardware}</div></div>
       <span className={m.model ? '' : 'det'}>{runningLine(m)}</span>
       <span className="cz-dot" style={{ background: placeColor('local'), opacity: m.online ? 1 : 0.25 }} aria-hidden="true" />
@@ -513,18 +527,17 @@ function Machines({ machines, onOpen }: { machines: Machine[]; onOpen: (id: stri
 function FrogCloud({ account, onBilling }: { account: Account | null; onBilling: () => void }) {
   return (<>
     <div className="set-row"><div style={{ flex: 1 }}>Account</div><span className="det">{[account?.name ?? firstName(account), account?.email].filter(Boolean).join(' · ') || 'Signed in'}</span></div>
-    <div className="set-row"><div style={{ flex: 1 }}>Credit</div><span className="num">{creditLine(account).replace(/ credit$/, '')}</span><button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={onBilling}>Add credit…</button></div>
+    <div className="set-row"><div style={{ flex: 1 }}>Credit</div><span className="num">{creditLine(account).replace(/ credit$/, '')}</span><button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={onBilling} title="Opens Billing">Add credit…</button></div>
   </>)
 }
 
 /** A machine's page: status and memory, its models, then what the Mac app does here (rename or
  *  unpair it, share it) as invitations. Read-only on the web. */
-function MachinePage({ machine: d, machines, onBack }: { machine: Machine; machines: readonly Machine[]; onBack: () => void }) {
+function MachinePage({ machine: d, machines }: { machine: Machine; machines: readonly Machine[] }) {
   const used = d.freeBytes == null || !d.totalBytes ? 0 : 1 - Math.min(d.freeBytes, d.totalBytes) / d.totalBytes
   return (<>
-    <button type="button" className="f-btn f-btn--plain f-btn--small" style={{ alignSelf: 'flex-start' }} onClick={onBack}>‹ Models</button>
-    <h2>{d.name}</h2>
-    <div className="set-group">
+    {/* Facts, not controls: no lines between them. Back is the header's "Models". */}
+    <div className="set-group plain">
       <div className="set-row"><div style={{ flex: 1 }}>Status</div><span className="det">{!d.online ? 'Not answering' : d.model ? 'Ready' : 'Idle'}</span></div>
       <div className="set-row"><div style={{ flex: 1 }}>Hardware</div><span className="det">{d.hardware}</span></div>
       <div className="set-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 4 }}>
@@ -533,7 +546,7 @@ function MachinePage({ machine: d, machines, onBack }: { machine: Machine; machi
       </div>
     </div>
     <div className="set-h">Models</div>
-    <div className="set-group">
+    <div className="set-group plain">
       {d.models.length === 0 && <div className="set-row det">{d.online ? 'No models on this machine.' : 'Not answering.'}</div>}
       {d.models.map((m) => (
         <div key={m.hash} className="set-row">

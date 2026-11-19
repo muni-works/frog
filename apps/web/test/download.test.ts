@@ -85,7 +85,7 @@ const MAC_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_1) AppleWebKit/605.1.1
 const PC_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
 /** The invitation rows' pills, by row id. */
 const invites = (html: string) => Object.fromEntries(html.split('data-row="').slice(1).flatMap((chunk) => {
-  const m = chunk.match(/^([\w-]+)"[^]*?(<a class="f-pill invite-pill"[^>]*>[^<]*<\/a>|<span class="det invite-elsewhere">[^<]*<\/span>)/);
+  const m = chunk.match(/^([\w-]+)"[^]*?(<a class="f-pill invite-pill"[^>]*>[^<]*<\/a>|<span class="det invite-elsewhere"[^>]*>[^<]*<\/span>)/);
   return m ? [[m[1], m[2]]] : [];
 }));
 
@@ -102,7 +102,7 @@ test("an invitation reads Open in Frog for Mac when the account has a Mac, and O
   const withApp = invites(asVisitor(MAC_UA, () => settings([mew, mac])));
   assert.match(withApp["pair-machine"], /href="frog:\/\/settings\/models"[^>]*>Open in Frog for Mac</);
   const pc = invites(asVisitor(PC_UA, () => settings([mew])));
-  assert.equal(pc["pair-machine"], '<span class="det invite-elsewhere">On a Mac</span>');
+  assert.match(pc["pair-machine"], /^<span class="det invite-elsewhere"[^>]*>On a Mac<\/span>$/);
   // An iPad says Macintosh too; a coarse pointer rules it out.
   const ipad = inviteFor({ mac: isMacVisitor((q) => q === "(pointer: coarse)", MAC_UA), thisMac: false });
   assert.equal(ipad, "elsewhere");

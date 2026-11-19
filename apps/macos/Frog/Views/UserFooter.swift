@@ -48,7 +48,8 @@ struct UserFooter: View {
         }
         .buttonStyle(.plain)
         .padding(.horizontal, 8)
-        .padding(.bottom, 8)
+        .padding(.bottom, 2)
+        .safeAreaInset(edge: .bottom, spacing: 0) { VersionChip() }
         .task { await account.refresh() }
     }
 
@@ -125,5 +126,26 @@ extension CloudAccount {
         await shared.reloadKey()
         await shared.refresh()
         await CloudSessions.shared.refresh()
+    }
+}
+
+/// The app's version under the account row; a click opens About.
+struct VersionChip: View {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button { openWindow(id: "about") } label: {
+            Text("Frog \(FrogVersion.short)")
+                .font(.frog(size: 10.5))
+                .foregroundStyle(.tertiary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .hoverPlate(h: 0, v: 0, radius: 5)
+        }
+        .buttonStyle(.plain)
+        .help("About Frog")
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.leading, 18)
+        .padding(.bottom, 6)
     }
 }

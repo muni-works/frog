@@ -1,0 +1,4009 @@
+{
+  "area": "Shell and composer",
+  "features": [
+    {
+      "id": "window-title-menu",
+      "name": "Title and its menu",
+      "group": "Window",
+      "what": "The title row shows the focused conversation's title (or New Chat / Documentation) with a chevron menu to rename, archive or delete it.",
+      "entry_points": [
+        "Click the title in the title row (chevron menu)"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/WorkspaceView.swift",
+        "apps/macos/Frog/Model/Library.swift",
+        "apps/macos/Frog/Model/ArchiveNav.swift"
+      ],
+      "flows": [
+        {
+          "id": "title-shows-focused-conversation",
+          "name": "See which conversation is in front",
+          "steps": [
+            "Open a session from the sidebar",
+            "Look at the title row",
+            "Start a new chat with Cmd-N",
+            "Open Documentation"
+          ],
+          "expected": "The title reads the session's title, then 'New Chat' for a plain chat ('New Conversation' in a folder), then 'Documentation'.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "The title is drawn as a toolbar item and the window title is removed; reading it needs the window's toolbar or XCUITest."
+        },
+        {
+          "id": "rename-from-title",
+          "name": "Rename the open conversation",
+          "steps": [
+            "Open a started session",
+            "Click the title chevron",
+            "Choose Rename...",
+            "Type a new title",
+            "Click Rename"
+          ],
+          "expected": "The title row and the sidebar row show the new title; Rename is disabled for a conversation that has no session yet.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/ConversationFlowTests.swift:test_rename_from_title"
+          ],
+          "automatable_v070": "hard"
+        },
+        {
+          "id": "archive-from-title",
+          "name": "Archive the open conversation",
+          "steps": [
+            "Open a started session",
+            "Click the title chevron",
+            "Choose Archive"
+          ],
+          "expected": "The row moves to Archived and the pane forwards to a fresh session; the archived session's engine stops.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ArchiveNavTests.swift:testArchivingTheOpenSessionForwardsTheView",
+            "FrogTests/ArchiveNavTests.swift:testTheDefaultForwardReallyReplacesTheConversationOnScreen",
+            "FrogTests/ArchiveNavTests.swift:testArchivingTheOpenSessionStopsItsEngine",
+            "FrogTests/ArchiveNavTests.swift:testEveryViewArchiveGoesThroughArchiveNav"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        },
+        {
+          "id": "delete-from-title",
+          "name": "Delete the open conversation",
+          "steps": [
+            "Open a started session",
+            "Click the title chevron",
+            "Choose Delete...",
+            "Click Move to Trash"
+          ],
+          "expected": "The session's log is in the Trash, its row leaves the sidebar, and the pane shows a fresh session.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/ConversationFlowTests.swift:test_delete_from_title"
+          ],
+          "automatable_v070": "hard"
+        },
+        {
+          "id": "delete-cancel",
+          "name": "Back out of deleting",
+          "steps": [
+            "Click the title chevron",
+            "Choose Delete...",
+            "Click Cancel"
+          ],
+          "expected": "Nothing changes: the session is still open and listed.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/FlowDriverTests.swift:test_delete_cancel"
+          ],
+          "automatable_v070": "hard"
+        }
+      ]
+    },
+    {
+      "id": "window-new-and-open",
+      "name": "New windows, tabs and folders",
+      "group": "Window",
+      "what": "Opening another window, a tab, or a folder (from the File menu, Finder, the Dock or a second launch) gives it its own window and empty conversation.",
+      "entry_points": [
+        "File > New Window (Opt-Cmd-N)",
+        "File > New Tab (Cmd-T)",
+        "File > Open Folder... (Cmd-O)",
+        "Drop a folder on the Dock icon / open it from Finder",
+        "Launch a second copy with a folder"
+      ],
+      "files": [
+        "apps/macos/Frog/FrogApp.swift",
+        "apps/macos/Frog/Views/Commands.swift",
+        "apps/macos/Frog/Model/SessionRegistry.swift"
+      ],
+      "flows": [
+        {
+          "id": "open-folder-panel",
+          "name": "Open a project folder in a new window",
+          "steps": [
+            "Press Cmd-O",
+            "Pick a folder in the panel",
+            "Click Open"
+          ],
+          "expected": "A new window opens on that folder with an empty conversation and the where chip naming the folder; the folder joins Recents.",
+          "needs": [
+            "git-repo"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/OpenFolderLayoutTests.swift:testOpenFolderWindow"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "NSOpenPanel.runModal blocks and shows a system panel; needs XCUITest or an injectable panel."
+        },
+        {
+          "id": "new-window",
+          "name": "Open a second window",
+          "steps": [
+            "Open Frog with one window on a conversation",
+            "Press Opt-Cmd-N",
+            "Look at the window list"
+          ],
+          "expected": "A separate window opens on an empty plain chat; the first window is unchanged.",
+          "needs": [],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Key equivalents and menu-bar items only fire through NSApp's main menu; the offscreen test host never makes the window key, so the step needs XCUITest or calling the FrogWindow closure directly."
+        },
+        {
+          "id": "new-tab",
+          "name": "Open a window as a tab",
+          "steps": [
+            "Open Frog with one window on a conversation",
+            "Press Cmd-T",
+            "Look at the tab bar"
+          ],
+          "expected": "The key window gains a tab with an empty chat (with no window open, a new window instead).",
+          "needs": [],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Key equivalents and menu-bar items only fire through NSApp's main menu; the offscreen test host never makes the window key, so the step needs XCUITest or calling the FrogWindow closure directly."
+        },
+        {
+          "id": "open-folder-from-finder-or-dock",
+          "name": "Open a folder from Finder or the Dock",
+          "steps": [
+            "Have Frog running with one window",
+            "Pick a project folder in Finder",
+            "With Frog running, drop a folder on the Dock icon (or open it with Frog)"
+          ],
+          "expected": "The folder opens in a window of its own; the windows already open are untouched.",
+          "needs": [],
+          "existing_tests_v070": [
+            "FrogTests/InstanceLockTests.swift:testLaunchURLsKeepsURLsAndPathsAndSkipsDefaults"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "Goes through NSApplicationDelegate.application(_:open:) from Launch Services; needs a real app launch."
+        },
+        {
+          "id": "second-copy-hands-off",
+          "name": "Launch Frog again with a folder",
+          "steps": [
+            "Have Frog running with one window",
+            "With Frog running, launch the same build with a folder argument",
+            "Check which copy is still running"
+          ],
+          "expected": "The running Frog comes forward and opens the folder; the second copy quits. A different build (debug vs installed) runs alongside.",
+          "needs": [],
+          "existing_tests_v070": [
+            "FrogTests/InstanceLockTests.swift:testTheSameBundleIdHandsOff",
+            "FrogTests/InstanceLockTests.swift:testADifferentBundleIdRunsAlongside",
+            "FrogTests/InstanceLockTests.swift:testADeadHolderIsReclaimed",
+            "FrogTests/InstanceLockTests.swift:testTheConflictAlertNamesTheHolder"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "Needs two app processes and the lock file; the XCTest host deliberately skips the lock."
+        }
+      ]
+    },
+    {
+      "id": "window-quit-and-restore",
+      "name": "Quit guard and relaunch",
+      "group": "Window",
+      "what": "Quitting while a conversation works asks whether to resume it next launch, and relaunching reopens windows and picks resumed turns back up.",
+      "entry_points": [
+        "Frog > Quit (Cmd-Q)",
+        "Relaunch the app"
+      ],
+      "files": [
+        "apps/macos/Frog/Model/SessionRegistry.swift",
+        "apps/macos/Frog/FrogApp.swift"
+      ],
+      "flows": [
+        {
+          "id": "shell-quit-and-resume",
+          "name": "Quit mid-turn and pick it back up",
+          "steps": [
+            "Send a message that takes a while",
+            "Press Cmd-Q while it works",
+            "Choose Quit and Resume Running Sessions",
+            "Relaunch Frog"
+          ],
+          "expected": "The alert names how many conversations are working; after relaunch the turn continues where it stopped, before anything queued.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SessionRegistryTests.swift:testRoundTrip",
+            "FrogTests/SessionRegistryTests.swift:testRestoreDecisions",
+            "FrogTests/SessionRegistryTests.swift:testContinueGoesBeforeQueuedMessages"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "NSAlert.runModal from applicationShouldTerminate and a real relaunch; needs XCUITest or a process-level harness."
+        },
+        {
+          "id": "shell-quit-and-stop",
+          "name": "Quit and stop working conversations",
+          "steps": [
+            "Send a long message",
+            "Press Cmd-Q",
+            "Choose Quit and Stop Them",
+            "Relaunch"
+          ],
+          "expected": "The turn is marked stopped by the user and does not resume.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SessionRegistryTests.swift:testStopMarksTheTurnUserStopped"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "NSAlert.runModal from applicationShouldTerminate and a real relaunch."
+        },
+        {
+          "id": "quit-cancel",
+          "name": "Cancel quitting",
+          "steps": [
+            "Send a long message",
+            "Press Cmd-Q",
+            "Choose Cancel"
+          ],
+          "expected": "Frog stays open and the turn keeps running.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "NSAlert.runModal from applicationShouldTerminate."
+        },
+        {
+          "id": "relaunch-restores-windows",
+          "name": "Relaunch to the same windows",
+          "steps": [
+            "Open two windows on two folders",
+            "Quit with nothing running",
+            "Relaunch"
+          ],
+          "expected": "Both windows come back on their folders (the first pane's folder is the window's restored value).",
+          "needs": [],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Window restoration is disabled in the test host (restorationBehavior .disabled when testing)."
+        }
+      ]
+    },
+    {
+      "id": "window-drag-and-focus",
+      "name": "Window drag and type-to-focus",
+      "group": "Window",
+      "what": "The window drags from any empty space, and printable keys typed while nothing editable has focus land in the composer.",
+      "entry_points": [
+        "Drag empty window space",
+        "Type anywhere in the window"
+      ],
+      "files": [
+        "apps/macos/Frog/FrogApp.swift",
+        "apps/macos/Frog/Model/TypeToFocus.swift"
+      ],
+      "flows": [
+        {
+          "id": "drag-window-from-empty-space",
+          "name": "Move the window by its background",
+          "steps": [
+            "Open a window on a conversation",
+            "Press on empty canvas (not a control, grip or text)",
+            "Drag"
+          ],
+          "expected": "The window moves; presses on the sidebar's or a pane's grip resize instead of moving it.",
+          "needs": [],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "A real mouse drag (DragGesture or system drag and drop) can't be synthesized offscreen; only the post-drop state can be set directly."
+        },
+        {
+          "id": "type-to-focus-composer",
+          "name": "Start typing without clicking the composer",
+          "steps": [
+            "Open a conversation with a few turns",
+            "Click a message in the transcript",
+            "Type a few letters"
+          ],
+          "expected": "The letters appear in the focused pane's composer; Cmd-shortcuts and arrow keys are not captured.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/TypeToFocusTests.swift:testPlainCharactersCompose",
+            "FrogTests/TypeToFocusTests.swift:testModifierKeysPass",
+            "FrogTests/TypeToFocusTests.swift:testWindowAndFocusGates",
+            "FrogTests/TypeToFocusTests.swift:testEditingViews"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "phone-open-request",
+      "name": "Phone and Handoff opens",
+      "group": "Window",
+      "what": "A paired iPhone (or Handoff) can ask the Mac to show a conversation: it opens in the focused pane if that pane is a blank chat, else in a new pane beside it.",
+      "entry_points": [
+        "iPhone: open on Mac",
+        "Handoff from the iPhone"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/WorkspaceView.swift",
+        "apps/macos/Frog/Model/RemoteBridge.swift"
+      ],
+      "flows": [
+        {
+          "id": "phone-opens-conversation",
+          "name": "Open a phone's conversation on the Mac",
+          "steps": [
+            "Pair an iPhone (settings agent)",
+            "Have a non-blank conversation focused",
+            "From the paired iPhone, open a session on the Mac"
+          ],
+          "expected": "The session opens in a new pane beside the focused one (or in place if the pane was a blank chat); nothing on screen is replaced. A test can post an OpenRequest notification in place of the phone; pairing is the settings agent's.",
+          "needs": [
+            "iphone"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "handoff-continue",
+          "name": "Continue a conversation via Handoff",
+          "steps": [
+            "Sign the Mac and iPhone into the same account",
+            "Read a conversation on the iPhone",
+            "Click the Handoff icon in the Dock"
+          ],
+          "expected": "The same conversation opens in the focused pane.",
+          "needs": [
+            "iphone"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "NSUserActivity Handoff needs two signed-in devices."
+        }
+      ]
+    },
+    {
+      "id": "sidebar-open-session",
+      "name": "Open a session from the list",
+      "group": "Sidebar",
+      "what": "Clicking a row shows that conversation in the focused pane, focusing it where it is already on screen.",
+      "entry_points": [
+        "Click a sidebar row",
+        "Cmd-click a row",
+        "Right-click > Open in New Pane"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/Sidebar.swift",
+        "apps/macos/Frog/Views/AttentionRows.swift",
+        "apps/macos/Frog/Model/Panes.swift",
+        "apps/macos/Frog/Model/Library.swift"
+      ],
+      "flows": [
+        {
+          "id": "open-a-session",
+          "name": "Open a past conversation",
+          "steps": [
+            "Have several past sessions listed",
+            "Open a different conversation first",
+            "Click a row in the sidebar",
+            "Look at the title row"
+          ],
+          "expected": "The pane cuts to that conversation's history, the row is selected, the title row shows its title.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ReopenTests.swift:testReplayedHistoryLandsInOneStep",
+            "FrogTests/ReopenTests.swift:testMessageSentWhileLoadingGoesAfterTheHistory"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "open-session-shown-in-another-pane",
+          "name": "Click a row already on screen in a split",
+          "steps": [
+            "Split the window",
+            "Open session A in pane 2",
+            "Focus pane 1",
+            "Click A's row"
+          ],
+          "expected": "Pane 2 takes focus; A is not opened a second time. The row shows 'In pane 2'.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ReopenTests.swift:testWindowLookupTracksRemovedSplitPanesAndFocusesTheMatchingPane"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "open-session-shown-in-another-window",
+          "name": "Click a row open in another window",
+          "steps": [
+            "Open a second window",
+            "Open session A in window 1",
+            "In window 2, click A's row"
+          ],
+          "expected": "Window 1 comes forward with A; window 2 is unchanged.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ReopenTests.swift:testWindowLookupFollowsTheCurrentPaneInsteadOfItsHistory",
+            "FrogTests/ReopenTests.swift:testStoppedWindowOwnerIsUnregistered"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "Bringing another NSWindow forward isn't observable in a host whose windows are never ordered in."
+        },
+        {
+          "id": "open-cloud-session-row",
+          "name": "Open a Frog Cloud session from the list",
+          "steps": [
+            "Create a Frog Cloud session from the web",
+            "Sign in to Frog Cloud",
+            "Click a cloud session's row"
+          ],
+          "expected": "The transcript streams from the gateway in the focused pane; the composer sends to the sandbox.",
+          "needs": [
+            "cloud-account",
+            "network"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Needs a live gateway or a mock gateway wired into CloudSessions."
+        },
+        {
+          "id": "cmd-click-opens-in-split",
+          "name": "Open a row beside the current one",
+          "steps": [
+            "Open a conversation",
+            "Find another row in the sidebar",
+            "Cmd-click a row (or right-click > Open in New Pane)",
+            "Look at the panes"
+          ],
+          "expected": "A new pane opens to the right with that session and takes focus.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "The code reads NSEvent.modifierFlags / NSApp.currentEvent at click time; a test can't set those without posting real events."
+        }
+      ]
+    },
+    {
+      "id": "sidebar-grouping",
+      "name": "Grouping, sorting and folds",
+      "group": "Sidebar",
+      "what": "The view options menu groups the list by Date (default), Project, Org (attention tree) or None, sorts it, makes it compact, and every group or parent can fold.",
+      "entry_points": [
+        "Sidebar title row > filter (Group and sort conversations) menu",
+        "View > Compact Sidebar"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/Sidebar.swift",
+        "apps/macos/Frog/Views/SidebarTitleRow.swift",
+        "apps/macos/Frog/Views/AttentionRows.swift",
+        "apps/FrogKit/Core/AttentionTree.swift",
+        "apps/FrogKit/Core/SessionNesting.swift",
+        "apps/FrogKit/Core/SessionFolds.swift"
+      ],
+      "flows": [
+        {
+          "id": "group-by-date",
+          "name": "See conversations by day",
+          "steps": [
+            "Open the view options",
+            "Group By > Date",
+            "Click a day heading"
+          ],
+          "expected": "Top-level sessions sit under Today / Yesterday / earlier days with their started sessions beneath; the heading folds its day shut and open.",
+          "needs": [],
+          "existing_tests_v070": [
+            "FrogTests/SidebarSnapshotTests.swift:testRenderChildSessionTree"
+          ],
+          "coverage_v070": "snapshot",
+          "automatable": "yes"
+        },
+        {
+          "id": "group-by-project",
+          "name": "See conversations by project",
+          "steps": [
+            "Group By > Project",
+            "Click a project header's chevron",
+            "Click 'Show N more'"
+          ],
+          "expected": "Pins as tiles, then one group per folder newest first, then chats; the chevron folds the group (remembered); Show more lists every row.",
+          "needs": [],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "group-by-org-tree",
+          "name": "See what needs me as a tree",
+          "steps": [
+            "Have sessions that started other sessions",
+            "Open the view options",
+            "Group By > Org",
+            "Switch the scope between Live, Today and All"
+          ],
+          "expected": "Needs-you rows first (oldest first), then the started-by tree; Live folds settled work, Today adds what finished today, All shows everything.",
+          "needs": [],
+          "existing_tests_v070": [
+            "FrogTests/AttentionTreeTests.swift:testLiveScopeFoldsSettledWorkAndQuietManagers",
+            "FrogTests/AttentionTreeTests.swift:testNeedsYouIsALensOldestFirst",
+            "FrogTests/AttentionTreeTests.swift:testTodayShowsTodaysSettledWorkAndFoldsTheRestAsEarlier",
+            "FrogTests/AttentionTreeTests.swift:testAllShowsEverything",
+            "FrogTests/ChiefFlagOffTests.swift:testOrgTreeWithoutAnyChief",
+            "FrogTests/SidebarSnapshotTests.swift:testRenderAttentionTree"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "group-none",
+          "name": "See one flat list",
+          "steps": [
+            "Have pinned and unpinned sessions",
+            "Open the view options",
+            "Group By > None",
+            "Look at the list order"
+          ],
+          "expected": "Pins as tiles, then every unpinned session in the chosen sort order.",
+          "needs": [],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "sort-list",
+          "name": "Change the sort order",
+          "steps": [
+            "Have sessions with different names and ages",
+            "Open the view options",
+            "Sort By > Name (then Date Created, Last Activity)",
+            "Press Cmd-1"
+          ],
+          "expected": "Rows reorder; Cmd-1...9 follow the new order.",
+          "needs": [],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "compact-sidebar",
+          "name": "Make the list compact",
+          "steps": [
+            "Group By > Date",
+            "Look at a two-line row",
+            "View > Compact Sidebar (or Compact in the view options)",
+            "Look at the rows"
+          ],
+          "expected": "Rows drop to one line; the option is disabled while grouped by Org.",
+          "needs": [],
+          "existing_tests_v070": [
+            "FrogTests/SidebarSnapshotTests.swift:testRenderChildSessionTree",
+            "FrogTests/SidebarSnapshotTests.swift:testRenderTreeRails"
+          ],
+          "coverage_v070": "snapshot",
+          "automatable": "yes"
+        },
+        {
+          "id": "fold-started-sessions",
+          "name": "Fold or show the sessions a session started",
+          "steps": [
+            "Have a session that started two others",
+            "Group By > Date",
+            "Click the caret on a parent row (or right-click > Collapse Started Sessions)",
+            "Click the caret again"
+          ],
+          "expected": "Children fold to counts ('4 running, 1 waiting'); clicking again shows them. The session on screen is never tucked away.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SessionNestingTests.swift:testACollapsedParentShowsOnlyItsCounts",
+            "FrogTests/SessionNestingTests.swift:testTheSessionOnScreenIsNeverTuckedAway",
+            "FrogTests/SessionNestingTests.swift:testCollapsingAChildlessRowDoesNothing",
+            "FrogTests/SidebarSnapshotTests.swift:testRenderChildSessionTree",
+            "FrogTests/SidebarSnapshotTests.swift:testRenderTreeRails"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "show-finished-fold",
+          "name": "Open the folded finished sessions",
+          "steps": [
+            "Have a parent whose children all finished",
+            "Group By > Org",
+            "Click a '+N done' fold row",
+            "Click it again"
+          ],
+          "expected": "The finished sessions list beneath; clicking again folds them.",
+          "needs": [],
+          "existing_tests_v070": [
+            "FrogTests/SessionNestingTests.swift:testAQuietParentFoldsToOneLineUnlessOpened",
+            "FrogTests/SessionNestingTests.swift:testFinishedChildrenAreRowsNotAFold"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "older-on-this-branch",
+          "name": "Reach older sessions on the same branch",
+          "steps": [
+            "Run two sessions in the same worktree",
+            "Right-click a row with older sessions",
+            "Older on This Branch > pick one"
+          ],
+          "expected": "That older session opens; the list keeps showing only the branch's newest.",
+          "needs": [],
+          "existing_tests_v070": [
+            "FrogTests/SessionFoldsTests.swift:testSessionsInTheSameWorktreeFoldOntoTheNewest",
+            "FrogTests/SessionFoldsTests.swift:testDifferentWorktreesStaySeparate"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "sidebar-search",
+      "name": "Search the list",
+      "group": "Sidebar",
+      "what": "The Search row filters conversations in place, including the archive.",
+      "entry_points": [
+        "Sidebar Search field"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/Sidebar.swift",
+        "apps/FrogKit/Core/AttentionTree.swift"
+      ],
+      "flows": [
+        {
+          "id": "filter-by-search",
+          "name": "Find a conversation by its words",
+          "steps": [
+            "Click Search",
+            "Type part of a title",
+            "Clear with the x (or Esc)"
+          ],
+          "expected": "Only matching rows show (by day; in Org their ancestors stay); clearing restores the list.",
+          "needs": [],
+          "existing_tests_v070": [
+            "FrogTests/AttentionTreeTests.swift:testSearchKeepsAncestors"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "search-return-opens-first",
+          "name": "Jump straight to the first match",
+          "steps": [
+            "Group By > Org",
+            "Type in Search",
+            "Press Return"
+          ],
+          "expected": "The first match (or an archived one) opens and the field clears. In the other groupings Return does nothing.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "search-finds-archived",
+          "name": "Find an archived conversation",
+          "steps": [
+            "Have an archived session titled with a unique word",
+            "Archive a session",
+            "Search for its title"
+          ],
+          "expected": "It appears in the results and opens on click.",
+          "needs": [],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "sidebar-archive",
+      "name": "Archive and unarchive",
+      "group": "Sidebar",
+      "what": "Rows archive from their menu, the archive is browsable from the footer, and quiet chats archive themselves.",
+      "entry_points": [
+        "Right-click a row > Archive / Unarchive",
+        "Sidebar footer 'Archived (N)'",
+        "View options > Show > Archived"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/Sidebar.swift",
+        "apps/macos/Frog/Views/SidebarTitleRow.swift",
+        "apps/macos/Frog/Model/ArchiveNav.swift",
+        "apps/macos/Frog/Model/Library.swift"
+      ],
+      "flows": [
+        {
+          "id": "archive-row",
+          "name": "Archive a conversation from the list",
+          "steps": [
+            "Have two sessions; open one",
+            "Right-click a row that isn't on screen",
+            "Choose Archive"
+          ],
+          "expected": "The row leaves the list and the footer counts it; what's on screen doesn't change. Archiving the row on screen forwards that pane to a fresh session.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ArchiveNavTests.swift:testArchivingTheSessionOnScreenForwards",
+            "FrogTests/ArchiveNavTests.swift:testArchivingAnotherSessionStaysPut",
+            "FrogTests/ArchiveNavTests.swift:testArchivingAnotherSessionLeavesTheViewAlone",
+            "FrogTests/ArchiveNavTests.swift:testTheDefaultForwardLeavesAnotherSessionsViewExactlyAlone"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        },
+        {
+          "id": "browse-archive",
+          "name": "Look through archived conversations",
+          "steps": [
+            "Click 'Archived (N)' in the footer",
+            "Scroll the by-day list",
+            "Click 'Back to conversations'"
+          ],
+          "expected": "The list switches to archived rows by day and back; the same switch is in the view options.",
+          "needs": [],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "unarchive-row",
+          "name": "Bring a conversation back",
+          "steps": [
+            "Open the archive",
+            "Right-click a row",
+            "Choose Unarchive"
+          ],
+          "expected": "The row returns to the active list; the view doesn't navigate.",
+          "needs": [],
+          "existing_tests_v070": [
+            "FrogTests/ArchiveNavTests.swift:testUnarchiveIsOneWayAndNeverForwards"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        },
+        {
+          "id": "quiet-chat-auto-archives",
+          "name": "Old plain chats archive themselves",
+          "steps": [
+            "Have two plain chats",
+            "Leave a plain chat idle past the quiet window",
+            "Keep another quiet chat on screen"
+          ],
+          "expected": "The off-screen quiet chat archives; the one on screen stays and the view never navigates.",
+          "needs": [],
+          "existing_tests_v070": [
+            "FrogTests/ArchiveNavTests.swift:testQuietChatsStillSkipsSessionsOnScreen",
+            "FrogTests/ArchiveNavTests.swift:testAutomaticArchiveCannotNavigate"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "sidebar-row-menu",
+      "name": "Row menu: pin, rename, move and more",
+      "group": "Sidebar",
+      "what": "Each row's context menu pins, renames, re-parents, reveals, refreshes git, shows the session tree, and (behind the chief flag) makes a chief.",
+      "entry_points": [
+        "Right-click a sidebar row"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/Sidebar.swift",
+        "apps/macos/Frog/Model/Library.swift",
+        "apps/macos/Frog/Views/WorkspaceView.swift"
+      ],
+      "flows": [
+        {
+          "id": "pin-row",
+          "name": "Pin a conversation to the top",
+          "steps": [
+            "Right-click a row",
+            "Choose Pin",
+            "Right-click it again",
+            "Choose Unpin"
+          ],
+          "expected": "Pinned, it shows as a tile at the top (Project/Date/None) or with a pin glyph; unpinned, it returns to its group.",
+          "needs": [],
+          "existing_tests_v070": [
+            "FrogTests/ChiefFlagOffTests.swift:testTheChiefUnpinsLikeAnyPin",
+            "FrogTests/ChiefTests.swift:testTheChiefKeepsItsPin"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "rename-row",
+          "name": "Rename a conversation from the list",
+          "steps": [
+            "Right-click a row",
+            "Choose Rename...",
+            "Type a title",
+            "Click Rename"
+          ],
+          "expected": "The row shows the new title (a closed session is renamed through `frog --rename`; a cloud one through the gateway after a short delay).",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "A SwiftUI .alert with a TextField (or a confirmationDialog) isn't reachable from an offscreen hosting view; needs XCUITest or a seam that sets the private @State."
+        },
+        {
+          "id": "move-under-parent",
+          "name": "File a session under another",
+          "steps": [
+            "Have a parent session with children and a loose session",
+            "Right-click a row",
+            "Move to... > pick a parent (or Top Level)"
+          ],
+          "expected": "The row nests under the chosen parent (or returns to the top level); a move that would nest it within itself is refused.",
+          "needs": [],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "reveal-folder",
+          "name": "Show a session's folder in Finder",
+          "steps": [
+            "Group By > Project",
+            "Right-click a project row",
+            "Choose Reveal Folder in Finder"
+          ],
+          "expected": "Finder opens with the folder selected.",
+          "needs": [],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Opens Finder via NSWorkspace; needs a stubbed workspace to observe."
+        },
+        {
+          "id": "refresh-git",
+          "name": "Refresh a row's git state",
+          "steps": [
+            "Open a project with a GitHub remote and a bound PR",
+            "Right-click a row with a git badge",
+            "Choose Refresh Git"
+          ],
+          "expected": "The badge re-reads the branch and GitHub PR state.",
+          "needs": [
+            "git-repo",
+            "github",
+            "network"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Needs a real remote and gh, or a stubbed GitIndex."
+        },
+        {
+          "id": "session-tree-popover",
+          "name": "See the open session's fork tree",
+          "steps": [
+            "Right-click the current session's row",
+            "Choose Session Tree...",
+            "Click a node"
+          ],
+          "expected": "A popover draws forks off their source; clicking a node opens that session.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Popover from a private @State; needs XCUITest or a seam."
+        },
+        {
+          "id": "make-chief",
+          "name": "Make a session the chief of staff (flag on)",
+          "steps": [
+            "Turn the chief feature flag on",
+            "Right-click a row",
+            "Choose Make Chief"
+          ],
+          "expected": "A wide chief tile shows first in every grouping; only one chief at a time; Remove Chief or archiving it resigns it.",
+          "needs": [],
+          "existing_tests_v070": [
+            "FrogTests/ChiefTests.swift:testOnlyOneChief",
+            "FrogTests/ChiefTests.swift:testChiefSessionResolvesAndClears",
+            "FrogTests/ChiefTests.swift:testArchivingResigns",
+            "FrogTests/ChiefFlagOffTests.swift:testNoChiefTileWhenFlagOff"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "sidebar-row-state",
+      "name": "Row state and hover badges",
+      "group": "Sidebar",
+      "what": "Rows show running, waiting, failed, finished-while-away and done, the pane number, bound PRs and a git badge whose hover card has the branch's state.",
+      "entry_points": [
+        "Look at the sidebar rows",
+        "Hover a row or its git badge"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/Sidebar.swift",
+        "apps/macos/Frog/Views/AttentionRows.swift",
+        "apps/macos/Frog/Views/GitBadges.swift",
+        "apps/macos/Frog/Views/SidebarProbe.swift",
+        "apps/FrogKit/Core/GitBadge.swift"
+      ],
+      "flows": [
+        {
+          "id": "see-live-state-on-rows",
+          "name": "Tell at a glance which sessions need me",
+          "steps": [
+            "Start a turn in one session",
+            "Trigger a permission card in another",
+            "Let a third finish while another app is in front"
+          ],
+          "expected": "Working spinner, amber waiting dot, red error dot, blue finished-while-away dot, then a green check that quiets once looked at.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/RowCheckTests.swift:testAFreshFinishFlashes",
+            "FrogTests/RowCheckTests.swift:testLookingAtTheRowEndsTheCheck",
+            "FrogTests/SessionStateTests.swift:testOpenTurnMeansRunning",
+            "FrogTests/SessionStateTests.swift:testFailedTurnMeansFailed",
+            "FrogTests/SessionStateTests.swift:testLiveTrackingWins"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "hover-row-badge",
+          "name": "Hover a row to see its full badge",
+          "steps": [
+            "Open a project session with commits ahead",
+            "Hover a row with a git badge",
+            "Rest on it past the expand delay"
+          ],
+          "expected": "The badge expands in place inside the row and stays there while hovered.",
+          "needs": [
+            "git-repo"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SidebarHoverBadgeTests.swift:testBadgeStaysInTheRowWhileHovered",
+            "FrogTests/SidebarHoverBadgeTests.swift:testRowAtRest",
+            "FrogTests/SidebarHoverBadgeTests.swift:testRowHoveredBeforeExpand",
+            "FrogTests/SidebarHoverBadgeTests.swift:testRowHoveredAfterExpand"
+          ],
+          "coverage_v070": "snapshot",
+          "automatable": "hard",
+          "why_hard": "Real pointer hover (onHover / onContinuousHover) can't be synthesized in an offscreen window that is never ordered in."
+        },
+        {
+          "id": "git-badge-card",
+          "name": "Open a row's git card",
+          "steps": [
+            "Rest the pointer on a row's git badge",
+            "Click it to pin the card",
+            "Press Esc or click away"
+          ],
+          "expected": "The card opens after a rest, a click pins it, Esc or a click closes it; scrolling the list closes it. Its git actions hand off to the inspector agent's Changes flows.",
+          "needs": [
+            "git-repo"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/GitCardTests.swift:testRestOpensGraceClosesWarmMoves",
+            "FrogTests/GitCardTests.swift:testClickPinsAndOnlyAClickOrEscCloses",
+            "FrogTests/GitCardTests.swift:testRowGoneClosesItsCardOnly",
+            "FrogTests/SidebarSnapshotTests.swift:testRenderGitBadges"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "Real pointer hover (onHover / onContinuousHover) can't be synthesized in an offscreen window that is never ordered in."
+        },
+        {
+          "id": "see-bound-prs-on-row",
+          "name": "See a session's pull requests on its row",
+          "steps": [
+            "Bind one or more PRs to a session",
+            "Close the conversation",
+            "Look at its row"
+          ],
+          "expected": "The row shows the PR count and worst state, matching the composer's status line.",
+          "needs": [
+            "github"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SidebarPrTests.swift:testARowWithNoOpenConversationStillShowsTheBoundPRs",
+            "FrogTests/SidebarPrTests.swift:testThreePRsAgreeOnCountAndWorstState",
+            "FrogTests/SidebarPrTests.swift:testTheComposerAndTheRowUseOneSummary",
+            "FrogTests/SidebarSnapshotTests.swift:testRenderPRsAgreeing"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "see-pane-number",
+          "name": "See which pane shows a row",
+          "steps": [
+            "Have two past sessions",
+            "Split the window",
+            "Open different sessions in each pane"
+          ],
+          "expected": "Each open row shows 'In pane N'; Open in New Pane is hidden for rows already on screen.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "sidebar-collapse-peek",
+      "name": "Collapse, reopen and edge peek",
+      "group": "Sidebar",
+      "what": "The sidebar collapses to nothing, with a toggle (dot when something needs you) and New session beside the traffic lights, and peeks over the page from the window's left edge.",
+      "entry_points": [
+        "Title-row sidebar button",
+        "View > Hide/Show Sessions (Ctrl-Cmd-S)",
+        "Pointer at the window's left edge",
+        "Esc"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/WorkspaceView.swift",
+        "apps/macos/Frog/Views/SidebarTitleRow.swift"
+      ],
+      "flows": [
+        {
+          "id": "collapse-sidebar",
+          "name": "Hide the sidebar",
+          "steps": [
+            "Open a window with the sidebar docked",
+            "Click the sidebar button in the title row (or Ctrl-Cmd-S)",
+            "Look at the title row"
+          ],
+          "expected": "The list is gone and the panes start at the window's edge; the toggle and a New session button wait beside the traffic lights.",
+          "needs": [],
+          "existing_tests_v070": [
+            "FrogTests/FlushColumnsTests.swift:testCollapsedSidebarLeavesNothing",
+            "FrogTests/FlushSnapshotTests.swift:testCollapsed"
+          ],
+          "coverage_v070": "snapshot",
+          "automatable": "hard",
+          "why_hard": "WorkspaceView.toggleSessions is private and its button is a window toolbar item; a test can only build the view already collapsed (sessionsOpen:)."
+        },
+        {
+          "id": "reopen-sidebar",
+          "name": "Bring the sidebar back",
+          "steps": [
+            "Collapse the sidebar",
+            "With it collapsed, click the toggle (or Ctrl-Cmd-S)",
+            "Look at the sidebar's width"
+          ],
+          "expected": "The list docks again at its last width.",
+          "needs": [],
+          "existing_tests_v070": [
+            "FrogTests/FlushColumnsTests.swift:testDockedSidebarIsFlushAndFullHeight",
+            "FrogTests/FlushSnapshotTests.swift:testThreads"
+          ],
+          "coverage_v070": "snapshot",
+          "automatable": "hard",
+          "why_hard": "WorkspaceView.toggleSessions is private and its button is a window toolbar item; a test can only build the view already open."
+        },
+        {
+          "id": "needs-you-dot-and-live-list",
+          "name": "See what's live with the sidebar hidden",
+          "steps": [
+            "Collapse the sidebar",
+            "Let a conversation wait on you",
+            "Rest the pointer on the toggle",
+            "Click a listed conversation"
+          ],
+          "expected": "The toggle carries an amber dot; the hover list shows waiting, then running, then unread; clicking one opens it.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/FlushColumnsTests.swift:testToggleShowsWhatNeedsYou"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "Real pointer hover (onHover / onContinuousHover) can't be synthesized in an offscreen window that is never ordered in."
+        },
+        {
+          "id": "edge-peek",
+          "name": "Peek the list from the left edge",
+          "steps": [
+            "Collapse the sidebar",
+            "Move the pointer to the window's left edge",
+            "Move it back over the page"
+          ],
+          "expected": "The list floats over the page with a shadow, then goes once the pointer leaves it; clicking its toggle while peeking keeps it open.",
+          "needs": [],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Real pointer hover (onHover / onContinuousHover) can't be synthesized in an offscreen window that is never ordered in."
+        },
+        {
+          "id": "narrow-window-floats-sidebar",
+          "name": "Toggle the sidebar in a narrow window",
+          "steps": [
+            "Make the window too narrow for the sidebar and a column",
+            "Press Ctrl-Cmd-S",
+            "Widen the window"
+          ],
+          "expected": "In the narrow window the list floats over the page instead of docking; widening docks it.",
+          "needs": [],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Needs WorkspaceView's private toggleSessions after a resize; reachable only through the toolbar or the FrogWindow focused value."
+        },
+        {
+          "id": "esc-closes-peek",
+          "name": "Dismiss a peek with Esc",
+          "steps": [
+            "Make the window narrow",
+            "Peek the sidebar in a narrow window",
+            "Press Esc"
+          ],
+          "expected": "The floating list (and any floating inspector) closes.",
+          "needs": [],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Needs a peek (private state) and onExitCommand, which only a key window delivers."
+        }
+      ]
+    },
+    {
+      "id": "sidebar-resize",
+      "name": "Resize the sidebar",
+      "group": "Sidebar",
+      "what": "The sidebar's hairline is a grip: drag between 220 and 400 points, double-click for the 250 default, remembered across launches.",
+      "entry_points": [
+        "Drag the sidebar's right hairline",
+        "Double-click it"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/WorkspaceView.swift"
+      ],
+      "flows": [
+        {
+          "id": "drag-sidebar-width",
+          "name": "Make the sidebar wider or narrower",
+          "steps": [
+            "Hover the sidebar's hairline",
+            "Drag it right",
+            "Relaunch"
+          ],
+          "expected": "The column, its hairline and the panes follow the pointer within 220-400; the width is kept for the next window.",
+          "needs": [],
+          "existing_tests_v070": [
+            "FrogTests/FlushColumnsTests.swift:testPanesFollowTheSidebarsWidth",
+            "FrogTests/FlushColumnsTests.swift:testSidebarWidthClampsAndPersists",
+            "FrogTests/FlushSnapshotTests.swift:testWideSidebar",
+            "FrogTests/WindowDragFallThroughTests.swift:testSidebarGripTakesDragOnHairline",
+            "FrogTests/WindowDragFallThroughTests.swift:testSidebarGripTakesDragJustOutsideHairline"
+          ],
+          "coverage_v070": "snapshot",
+          "automatable": "hard",
+          "why_hard": "A real mouse drag (DragGesture or system drag and drop) can't be synthesized offscreen; only the post-drop state can be set directly."
+        },
+        {
+          "id": "reset-sidebar-width",
+          "name": "Put the sidebar back to its default width",
+          "steps": [
+            "Drag the sidebar wider",
+            "Double-click the sidebar's hairline",
+            "Look at the sidebar's width"
+          ],
+          "expected": "The sidebar returns to 250 points.",
+          "needs": [],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Double-click on the grip needs real mouse events."
+        }
+      ]
+    },
+    {
+      "id": "sidebar-user-footer",
+      "name": "User footer",
+      "group": "Sidebar",
+      "what": "The bottom of the sidebar shows who is signed in to Frog Cloud with their credit (a click opens Settings > Billing), or offers sign-in with GitHub or Google.",
+      "entry_points": [
+        "Sidebar footer"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/UserFooter.swift",
+        "apps/FrogKit/Model/CloudAccount.swift",
+        "apps/FrogKit/Core/CloudSignIn.swift"
+      ],
+      "flows": [
+        {
+          "id": "open-account-and-billing",
+          "name": "Open my account and billing",
+          "steps": [
+            "Sign in to Frog Cloud",
+            "Click the footer's name and credit line",
+            "Look at the window that opens"
+          ],
+          "expected": "The Settings window opens on Billing (hand-off: the settings/account agent covers that window).",
+          "needs": [
+            "cloud-account",
+            "network"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "openSettings opens the separate Settings scene; not observable offscreen."
+        },
+        {
+          "id": "shell-sign-in-from-footer",
+          "name": "Sign in to Frog Cloud",
+          "steps": [
+            "Signed out, click 'Sign in to Frog Cloud'",
+            "Choose Continue with GitHub (or Google)",
+            "Finish in the browser"
+          ],
+          "expected": "The footer shows 'Signing in...', then your first name and 'Plan / $X credit'; cloud models and sessions appear. Hand-off to the account agent for the account itself.",
+          "needs": [
+            "cloud-account",
+            "network"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SilentFailureTests.swift:testSignInCopy",
+            "FrogTests/SilentFailureTests.swift:testAbandonedSignInTimesOut"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "Sign-in opens the system browser and waits on a callback; needs a stubbed CloudSignIn and a test account."
+        },
+        {
+          "id": "shell-cancel-sign-in",
+          "name": "Give up on a sign-in",
+          "steps": [
+            "Sign out of Frog Cloud",
+            "Start signing in",
+            "Click the 'Signing in...' row"
+          ],
+          "expected": "Signing in stops without an error and the sign-in row returns.",
+          "needs": [
+            "network"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SilentFailureTests.swift:testCancelledSignInEndsWithoutError"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "Sign-in opens the system browser and waits on a callback; needs a stubbed CloudSignIn and a test account."
+        },
+        {
+          "id": "sign-in-failure-retry",
+          "name": "Retry a failed sign-in",
+          "steps": [
+            "Start signing in and let it fail",
+            "Open the footer menu",
+            "Choose Try Again"
+          ],
+          "expected": "The footer says why in orange; Try Again reruns the same provider.",
+          "needs": [
+            "network"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SilentFailureTests.swift:testSignInCopy"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "Sign-in opens the system browser and waits on a callback; needs a stubbed CloudSignIn and a test account."
+        },
+        {
+          "id": "see-low-credit",
+          "name": "Notice I'm out of credit",
+          "steps": [
+            "Sign in with an account at $0 and no plan",
+            "Look at the footer's credit line",
+            "Add a little credit on the web and look again"
+          ],
+          "expected": "The credit line is orange; amounts under a cent read '<$0.01'.",
+          "needs": [
+            "cloud-account"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/CloudFlowTests.swift:test_see_low_credit"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "new-chat",
+      "name": "New chat",
+      "group": "New session",
+      "what": "Cmd-N, the sidebar's New session row or the collapsed title-row button start an empty plain chat in the focused pane with the composer focused.",
+      "entry_points": [
+        "File > New Chat (Cmd-N)",
+        "Sidebar 'New session' row",
+        "Title-row New session button (sidebar collapsed)"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/WorkspaceView.swift",
+        "apps/macos/Frog/Views/Sidebar.swift",
+        "apps/macos/Frog/Views/Commands.swift",
+        "apps/macos/Frog/Model/Panes.swift"
+      ],
+      "flows": [
+        {
+          "id": "new-chat-from-sidebar",
+          "name": "Start a fresh chat from the sidebar",
+          "steps": [
+            "Open a project conversation with a turn running",
+            "Click 'New session' at the top of the sidebar",
+            "Look at the title row and the where chip"
+          ],
+          "expected": "The focused pane shows an empty plain chat (title 'New Chat', where chip 'Just chat'); the previous conversation keeps running in the list.",
+          "needs": [],
+          "existing_tests_v070": [
+            "FrogTests/SnapshotTests.swift:testRenderNewChat"
+          ],
+          "coverage_v070": "snapshot",
+          "automatable": "yes"
+        },
+        {
+          "id": "new-chat-shortcut",
+          "name": "Start a fresh chat from the keyboard",
+          "steps": [
+            "Open a project conversation",
+            "Press Cmd-N",
+            "Type"
+          ],
+          "expected": "An empty chat with the composer taking the keys; from Documentation it also returns to the threads.",
+          "needs": [],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "new-chat-from-collapsed-title-row",
+          "name": "Start a chat with the sidebar hidden",
+          "steps": [
+            "Open a project conversation",
+            "Collapse the sidebar",
+            "Click the pencil button beside the toggle"
+          ],
+          "expected": "An empty chat in the focused pane.",
+          "needs": [],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "new-chat-with-no-window",
+          "name": "Cmd-N with every window closed",
+          "steps": [
+            "Launch Frog",
+            "Close all windows",
+            "Press Cmd-N"
+          ],
+          "expected": "A new window opens on an empty chat.",
+          "needs": [],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Key equivalents and menu-bar items only fire through NSApp's main menu; the offscreen test host never makes the window key, so the step needs XCUITest or calling the FrogWindow closure directly."
+        }
+      ]
+    },
+    {
+      "id": "new-session-same-folder",
+      "name": "New session in this folder",
+      "group": "New session",
+      "what": "Shift-Cmd-N (or the palette's New Session) starts a fresh conversation in the focused pane's folder; a project header's + starts one in that project.",
+      "entry_points": [
+        "File > New Session (Shift-Cmd-N)",
+        "Palette > New Session",
+        "Project header + / folder right-click > New Conversation Here"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/Commands.swift",
+        "apps/macos/Frog/Views/CommandPalette.swift",
+        "apps/macos/Frog/Views/Sidebar.swift",
+        "apps/macos/Frog/Model/Workspace.swift"
+      ],
+      "flows": [
+        {
+          "id": "new-session-shortcut",
+          "name": "Start over in the same project",
+          "steps": [
+            "Send a message that takes a while",
+            "Open a project conversation",
+            "Press Shift-Cmd-N"
+          ],
+          "expected": "A fresh conversation in the same folder; the old one keeps its engine if it was mid-turn and finishes off screen.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SwitchAwayTests.swift:testNewThreadInTheSameFolderTwoSecondsIn"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        },
+        {
+          "id": "new-conversation-here",
+          "name": "Start a conversation in a listed project",
+          "steps": [
+            "Have sessions in two projects",
+            "Group By > Project",
+            "Click a project header's +"
+          ],
+          "expected": "The focused pane switches to an empty conversation in that folder.",
+          "needs": [
+            "git-repo"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "empty-state-starts",
+      "name": "Empty conversation helpers",
+      "group": "New session",
+      "what": "An empty conversation offers recent project chips, suggested first prompts for the folder and a setup line; model suggestions hand off to the models agent.",
+      "entry_points": [
+        "An empty conversation's page"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/Onboarding.swift",
+        "apps/macos/Frog/Views/PaneView.swift"
+      ],
+      "flows": [
+        {
+          "id": "pick-recent-project-chip",
+          "name": "Point an empty chat at a recent project",
+          "steps": [
+            "Open a project once so it's in Recents",
+            "Start a new chat",
+            "Click a recent project chip"
+          ],
+          "expected": "The pane switches to an empty conversation in that folder; the draft goes with it.",
+          "needs": [
+            "git-repo"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/OpenFolderLayoutTests.swift:testEmptyChatSwitchesToFolder"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "use-suggested-start",
+          "name": "Start from a suggested prompt",
+          "steps": [
+            "Open a project folder",
+            "Open an empty project conversation",
+            "Click one of the suggested starts"
+          ],
+          "expected": "That prompt is sent as the first message.",
+          "needs": [
+            "fake-engine-ok",
+            "git-repo"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/OnboardingTests.swift:testStartsFollowTheState",
+            "FrogTests/OnboardingTests.swift:testReadsARealRepository",
+            "FrogTests/SnapshotTests.swift:testRenderProjectGreeting"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "setup-line",
+          "name": "Act on or dismiss the setup line",
+          "steps": [
+            "Open a project folder with skills or rules to add",
+            "Open an empty project conversation with something to add",
+            "Click 'Use them' (or the x)"
+          ],
+          "expected": "The listed items are used, or the line goes and stays gone.",
+          "needs": [
+            "engine",
+            "git-repo"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/OnboardingTests.swift:testSetupReportWords",
+            "FrogTests/OnboardingTests.swift:testQuietOtherwise"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "composer-send",
+      "name": "Type and send",
+      "group": "Composer",
+      "what": "The field takes text and sends on Return, with Shift/Option-Return for a new line, a round action button, and a draft kept per conversation.",
+      "entry_points": [
+        "Composer field",
+        "Return",
+        "Shift-Return / Option-Return",
+        "Action button",
+        "Cmd-L focuses it"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/ComposerView.swift",
+        "apps/macos/Frog/Views/ComposerView+Tray.swift",
+        "apps/macos/Frog/Views/ComposerTextView.swift",
+        "apps/FrogKit/Core/ComposerModel.swift",
+        "apps/FrogKit/UI/Composer/Card.swift",
+        "apps/FrogKit/Core/DraftStore.swift"
+      ],
+      "flows": [
+        {
+          "id": "type-and-send",
+          "name": "Send a message",
+          "steps": [
+            "Click the composer",
+            "Type a message",
+            "Press Return"
+          ],
+          "expected": "The message appears as a turn, the field clears and returns to one line, the action button turns to stop.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ComposerViewTests.swift:testReturnAfterALongDraftLeavesOneLine",
+            "FrogTests/ComposerHeightTests.swift:testHeightReturnsToOneLineAfterSending",
+            "FrogTests/ComposerReducerTests.swift:testEverySharedCase"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        },
+        {
+          "id": "send-with-button",
+          "name": "Send with the action button",
+          "steps": [
+            "Open a conversation",
+            "Type a message",
+            "Click the green send button"
+          ],
+          "expected": "Same as Return; with an empty field the button is dictate instead.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ComposerReducerTests.swift:testEverySharedCase"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "new-line",
+          "name": "Write several lines",
+          "steps": [
+            "Type a line",
+            "Press Shift-Return (or Option-Return)",
+            "Type another line"
+          ],
+          "expected": "The field grows a line (up to its cap, then scrolls) and nothing is sent.",
+          "needs": [],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "The shift/option check reads NSApp.currentEvent at the moment AppKit asks the delegate; a test can't set it without posting a real key event."
+        },
+        {
+          "id": "whitespace-sends-nothing",
+          "name": "Press Return on an empty or blank field",
+          "steps": [
+            "Open a conversation",
+            "Click the composer",
+            "Type only spaces",
+            "Press Return"
+          ],
+          "expected": "Nothing is sent and nothing changes.",
+          "needs": [],
+          "existing_tests_v070": [
+            "FrogTests/ComposerReducerTests.swift:testEverySharedCase"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "clear-shrinks-field",
+          "name": "Clear a long draft",
+          "steps": [
+            "Open a conversation",
+            "Type many lines",
+            "Select all and delete"
+          ],
+          "expected": "The field returns to one line.",
+          "needs": [],
+          "existing_tests_v070": [
+            "FrogTests/ComposerHeightTests.swift:testHeightReturnsToOneLineWhenTypedTextIsCleared",
+            "FrogTests/ComposerHeightTests.swift:testHeightReturnsToOneLineAfterSendingFromTheScrolledState"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        },
+        {
+          "id": "fast-typing-keeps-caret",
+          "name": "Type quickly, or with an input method",
+          "steps": [
+            "Open a conversation",
+            "Click the composer",
+            "Type fast while the view re-renders",
+            "Compose a character with marked text (e.g. Japanese IME)"
+          ],
+          "expected": "No characters are lost, the caret stays at the end, marked text isn't committed early.",
+          "needs": [],
+          "existing_tests_v070": [
+            "FrogTests/ComposerCaretTests.swift:testQuickTypingSurvivesBindingEchoesAndRerenders",
+            "FrogTests/ComposerCaretTests.swift:testBindingWriteWaitsForMarkedText",
+            "FrogTests/ComposerCaretTests.swift:testFieldRebuiltMidTypingKeepsCaretAtEnd"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        },
+        {
+          "id": "draft-survives-switching",
+          "name": "Leave a draft and come back",
+          "steps": [
+            "Type half a message",
+            "Open another session",
+            "Come back (or relaunch)"
+          ],
+          "expected": "The draft, its attachments and the caret are back; each session keeps its own draft.",
+          "needs": [],
+          "existing_tests_v070": [
+            "FrogTests/DraftStoreTests.swift:testSwitchAwayAndBackRestoresTheDraft",
+            "FrogTests/DraftStoreTests.swift:testDraftSurvivesARelaunch",
+            "FrogTests/DraftStoreTests.swift:testTwoSessionsHaveIndependentDrafts",
+            "FrogTests/DraftStoreTests.swift:testAttachmentsPersistWithTheDraft",
+            "FrogTests/ComposerCaretTests.swift:testExistingConversationComposerSwappedMidTypingKeepsEverything"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        },
+        {
+          "id": "accept-ghost-suggestion",
+          "name": "Take Frog's suggested next message",
+          "steps": [
+            "Finish a turn that offers a next step",
+            "See the ghost text in the empty field",
+            "Press Tab"
+          ],
+          "expected": "The suggestion fills the field without sending; typing first hides it.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "use-skill-slash",
+          "name": "Run a skill",
+          "steps": [
+            "In an empty field type '/'",
+            "Arrow to a skill",
+            "Press Return (or Tab)"
+          ],
+          "expected": "A list of up to 8 skills shows above the field; the pick fills '/name ' ready to send.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "composer-queue-and-stop",
+      "name": "Queue follow-ups and stop",
+      "group": "Composer",
+      "what": "While Frog works, Return queues follow-ups as chips above the field and the action button or Esc stops the turn.",
+      "entry_points": [
+        "Return while working",
+        "Queued chip x",
+        "Action button (stop)",
+        "Esc",
+        "Session > Interrupt (Cmd-.)"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/ComposerView.swift",
+        "apps/macos/Frog/Views/ComposerView+Tray.swift",
+        "apps/FrogKit/UI/Composer/ComposerParts.swift",
+        "apps/FrogKit/Model/Conversation.swift"
+      ],
+      "flows": [
+        {
+          "id": "queue-follow-up",
+          "name": "Add a follow-up while Frog works",
+          "steps": [
+            "Send a message",
+            "While it works type another",
+            "Press Return"
+          ],
+          "expected": "A chip shows above the field; when the turn ends all queued messages go as one turn, in order.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/QueueTests.swift:testEverythingQueuedGoesAsOneTurnInOrder",
+            "FrogTests/QueueTests.swift:testOneQueuedMessageGoesAsBefore",
+            "FrogTests/ComposerReducerTests.swift:testQueueingKeepsTheTextAndItsAttachments",
+            "FrogTests/ComposerReducerTests.swift:testTurnDoneEmptiesTheQueue"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "remove-queued-chip",
+          "name": "Take back a queued follow-up",
+          "steps": [
+            "Send a message that takes a while",
+            "Queue two follow-ups",
+            "Click x on the first chip"
+          ],
+          "expected": "That message returns to the field (kept with anything typed) and the other stays queued.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/QueueTests.swift:testDismissingRestoresIntoAnEmptyDraft",
+            "FrogTests/QueueTests.swift:testDismissingKeepsWhatIsTypedAfterABlankLine",
+            "FrogTests/QueueTests.swift:testDismissingOneLeavesTheRestQueued",
+            "FrogTests/QueueTests.swift:testDismissedBeforeTheFlushStaysOut",
+            "FrogTests/ComposerReducerTests.swift:testRemoveQueuedTakesThatOneAndSaysSo"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "stop-turn",
+          "name": "Stop Frog mid-turn",
+          "steps": [
+            "Open a conversation",
+            "Send a message",
+            "Click the stop button (or press Esc in the field)"
+          ],
+          "expected": "The turn stops and the draft is kept.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ComposerReducerTests.swift:testEverySharedCase"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "interrupt-shortcut",
+          "name": "Interrupt from the menu",
+          "steps": [
+            "Open a conversation",
+            "Send a message",
+            "Press Cmd-."
+          ],
+          "expected": "The turn stops; with a permission card up, Cmd-. is Deny instead and Interrupt is disabled.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/ConversationFlowTests.swift:test_interrupt_shortcut"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "composer-where-menu",
+      "name": "Where it runs",
+      "group": "Composer",
+      "what": "Before the first message, one chip and menu choose a folder on this Mac, a Frog Cloud repo, or Just chat, with Branch and New worktree below.",
+      "entry_points": [
+        "Composer where chip (new conversations only)"
+      ],
+      "files": [
+        "apps/FrogKit/UI/Composer/WhereMenu.swift",
+        "apps/macos/Frog/Views/ComposerView.swift",
+        "apps/macos/Frog/Views/ComposerView+Tray.swift",
+        "apps/macos/Frog/Model/Worktrees.swift",
+        "apps/macos/Frog/Model/SessionBroker.swift"
+      ],
+      "flows": [
+        {
+          "id": "pick-recent-folder",
+          "name": "Run a new conversation in another project",
+          "steps": [
+            "Open two projects once so both are in Recents",
+            "Start a new conversation and type a draft",
+            "Click the where chip",
+            "Click a folder under This Mac"
+          ],
+          "expected": "The pane moves to that folder; the draft, attachments and mode go along and the folder's remembered model and worktree switch apply.",
+          "needs": [
+            "git-repo"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SwitchAwayTests.swift:testSwitchingFoldersAtOnce",
+            "FrogTests/SwitchAwayTests.swift:testSwitchingFoldersTwoSecondsIn",
+            "FrogTests/ComposerReducerTests.swift:testEverySharedCase",
+            "FrogTests/ComposerSnapshotTests.swift:testWhereChipWords"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "filter-where-menu",
+          "name": "Filter the where menu or paste a repo URL",
+          "steps": [
+            "Open the where menu",
+            "Type part of a folder name",
+            "Paste a github.com URL"
+          ],
+          "expected": "Only matching rows show; the pasted repo appears first under Frog Cloud.",
+          "needs": [],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "choose-a-folder-row",
+          "name": "Use 'Choose a folder...'",
+          "steps": [
+            "Start a new project conversation",
+            "Open the where menu",
+            "Click Choose a folder..."
+          ],
+          "expected": "At v0.7.0 this switches the pane to a plain chat (it calls switchFolder(nil)); no folder panel opens.",
+          "needs": [],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "just-chat",
+          "name": "Turn a project draft into a plain chat",
+          "steps": [
+            "Start a new project conversation",
+            "Type a draft",
+            "Open the where menu",
+            "Click Just chat"
+          ],
+          "expected": "The pane becomes a plain chat and the draft goes with it.",
+          "needs": [],
+          "existing_tests_v070": [
+            "FrogTests/ComposerReducerTests.swift:testEverySharedCase"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "pick-cloud-repo",
+          "name": "Run a new conversation in Frog Cloud",
+          "steps": [
+            "Sign in",
+            "Open the where menu",
+            "Click a repo (or No repo)",
+            "Type and send"
+          ],
+          "expected": "The chip names the repo with a cloud icon; sending creates a sandbox session and opens it in the pane.",
+          "needs": [
+            "cloud-account",
+            "network",
+            "github"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ComposerViewTests.swift:testNewConversationOffersTheLocationPicker",
+            "FrogTests/ComposerReducerTests.swift:testEverySharedCase"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "Needs a live or mock Frog Cloud gateway behind CloudSessions."
+        },
+        {
+          "id": "sign-in-from-where-menu",
+          "name": "Sign in from the where menu",
+          "steps": [
+            "Sign out of Frog Cloud",
+            "Start a new conversation",
+            "Signed out, open the where menu",
+            "Click 'Sign in to use Frog Cloud'"
+          ],
+          "expected": "Browser sign-in, then the menu lists your repos (hand-off to the account agent).",
+          "needs": [
+            "cloud-account",
+            "network"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Sign-in opens the system browser and waits on a callback; needs a stubbed CloudSignIn and a test account."
+        },
+        {
+          "id": "pick-branch",
+          "name": "Start from another branch",
+          "steps": [
+            "Open the where menu",
+            "Click Branch",
+            "Pick a branch",
+            "Send"
+          ],
+          "expected": "With New worktree on, the worktree is based on that branch; off, the checkout switches to it before sending (a dirty tree disables Branch).",
+          "needs": [
+            "git-repo",
+            "engine"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ComposerReducerTests.swift:testEverySharedCase"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "toggle-new-worktree",
+          "name": "Send into a new worktree",
+          "steps": [
+            "Open a git project",
+            "Leave New worktree on",
+            "Type and send"
+          ],
+          "expected": "A worktree is made, the pane moves into it and the draft sends from there; a worktree another engine holds is refused with its owner named.",
+          "needs": [
+            "git-repo",
+            "engine"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SessionBrokerTests.swift:testWorktreeInATempRepo",
+            "FrogTests/WorktreeHoldTests.swift:testTheWorktreeMenuDisablesOwnedTrees",
+            "FrogTests/WorktreeHoldTests.swift:testStartSessionIntoAHeldWorktreeIsRefusedWithTheOwnerNamed",
+            "FrogTests/ComposerReducerTests.swift:testEverySharedCase"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "worktree-off-dirty-note",
+          "name": "Send in the checkout itself",
+          "steps": [
+            "Open a dirty git project",
+            "Turn New worktree off",
+            "Send"
+          ],
+          "expected": "A notice says it works in the checkout; the message sends there.",
+          "needs": [
+            "git-repo",
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ComposerReducerTests.swift:testEverySharedCase"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "worktree-failure-use-checkout",
+          "name": "Recover when a worktree can't be made",
+          "steps": [
+            "Open a git project whose worktree creation will fail",
+            "Send with New worktree on in a repo where it fails",
+            "Click 'Use checkout' in the status line"
+          ],
+          "expected": "The error keeps the draft; Use checkout turns the worktree off and sends.",
+          "needs": [
+            "git-repo",
+            "engine"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ComposerReducerTests.swift:testEverySharedCase"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "composer-mode",
+      "name": "Permission mode",
+      "group": "Composer",
+      "what": "The mode chip sets when Frog asks (Ask, Accept edits, Auto, Yolo); Yolo asks once in the status line. The menu bar and palette set it directly.",
+      "entry_points": [
+        "Composer mode chip",
+        "Model > Permissions (Ctrl-Cmd-1...4)",
+        "Palette 'Mode: ...'"
+      ],
+      "files": [
+        "apps/FrogKit/UI/Composer/Card.swift",
+        "apps/macos/Frog/Views/ComposerView.swift",
+        "apps/macos/Frog/Views/Commands.swift",
+        "apps/macos/Frog/Views/CommandPalette.swift"
+      ],
+      "flows": [
+        {
+          "id": "pick-mode-from-chip",
+          "name": "Change when Frog asks",
+          "steps": [
+            "Open a conversation",
+            "Click the mode chip",
+            "Choose Accept edits (or Ask, Auto)"
+          ],
+          "expected": "The chip shows the mode and the next permission decision follows it, mid-turn too.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ComposerReducerTests.swift:testEverySharedCase"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/ConversationFlowTests.swift:test_pick_mode_from_chip"
+          ]
+        },
+        {
+          "id": "confirm-yolo",
+          "name": "Turn on Yolo",
+          "steps": [
+            "Click the mode chip",
+            "Choose Yolo",
+            "Click 'Use Yolo' in the status line"
+          ],
+          "expected": "The status line asks once ('Yolo runs every step without asking'); confirmed, the mode is Yolo and later picks don't ask again. Cancel keeps the old mode.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ComposerReducerTests.swift:testEverySharedCase"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/ConversationFlowTests.swift:test_confirm_yolo"
+          ]
+        },
+        {
+          "id": "mode-from-menu-bar",
+          "name": "Change mode from the menu bar",
+          "steps": [
+            "Open a conversation",
+            "Note the composer's mode chip",
+            "Press Ctrl-Cmd-4 (Yolo) or pick under Model > Permissions",
+            "Look at the chip and the status line"
+          ],
+          "expected": "The mode changes at once; this path does not show the Yolo confirmation.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/ConversationFlowTests.swift:test_mode_from_menu_bar",
+            "Flows/ConversationFlowTests.swift:test_mode_from_menu_bar__yoloAsksFirst"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "composer-attachments",
+      "name": "Attachments and file drops",
+      "group": "Composer",
+      "what": "Images attach as chips above the field and other files become @ mentions, from the + menu, paste, or a drop anywhere on the conversation.",
+      "entry_points": [
+        "Composer + > Attach a file...",
+        "+ > Paste a screenshot",
+        "Cmd-V an image",
+        "Drag files onto the conversation"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/ComposerView.swift",
+        "apps/macos/Frog/Views/ComposerView+Tray.swift",
+        "apps/macos/Frog/Views/ComposerTextView.swift",
+        "apps/macos/Frog/Views/WorkspaceView.swift",
+        "apps/macos/Frog/Model/DropFiles.swift",
+        "apps/FrogKit/Core/Attachments.swift"
+      ],
+      "flows": [
+        {
+          "id": "attach-from-panel",
+          "name": "Attach files with the + menu",
+          "steps": [
+            "Click +",
+            "Choose Attach a file...",
+            "Pick an image and a source file"
+          ],
+          "expected": "The image shows as a chip above the field; the source file is inserted as '@path' relative to the project.",
+          "needs": [],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "NSOpenPanel.runModal blocks and shows a system panel; needs XCUITest or an injectable panel."
+        },
+        {
+          "id": "paste-image",
+          "name": "Paste a screenshot",
+          "steps": [
+            "Copy a screenshot (Ctrl-Shift-Cmd-4)",
+            "Click the composer",
+            "Press Cmd-V (or + > Paste a screenshot)"
+          ],
+          "expected": "An image chip appears; text pastes as usual.",
+          "needs": [],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Paste reads NSPasteboard.general; a test would clobber the user's clipboard unless the pasteboard is injected."
+        },
+        {
+          "id": "drop-files-on-conversation",
+          "name": "Drop files onto the conversation",
+          "steps": [
+            "Drag images and files from Finder over the transcript",
+            "See 'Drop to attach'",
+            "Drop"
+          ],
+          "expected": "Images attach and other files become @ mentions; a screenshot thumbnail's file promise works too.",
+          "needs": [],
+          "existing_tests_v070": [
+            "FrogTests/DropFilesTests.swift:testImageDataWithNoURLBecomesAPNGAttachment",
+            "FrogTests/DropFilesTests.swift:testFileURLsPassThrough",
+            "FrogTests/DropFilesTests.swift:testPromisesAreAccepted",
+            "FrogTests/DropFilesTests.swift:testTIFFIsWrittenAsPNG"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "A real mouse drag (DragGesture or system drag and drop) can't be synthesized offscreen; only the post-drop state can be set directly."
+        },
+        {
+          "id": "remove-attachment",
+          "name": "Remove an attached image",
+          "steps": [
+            "Open a conversation",
+            "Type some text",
+            "Attach an image",
+            "Click x on its chip"
+          ],
+          "expected": "The chip goes; the text stays.",
+          "needs": [],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "send-image-only",
+          "name": "Send just an image",
+          "steps": [
+            "Open a conversation",
+            "Attach an image with no text",
+            "Press Return"
+          ],
+          "expected": "The image goes as the message; a model that can't see images is named in the chip's help.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ComposerReducerTests.swift:testEverySharedCase"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "composer-mentions",
+      "name": "@ file mentions",
+      "group": "Composer",
+      "what": "Typing @ lists the project's files; arrows pick, Return or Tab inserts, Esc closes.",
+      "entry_points": [
+        "Type @ in the composer",
+        "+ > Mention a file"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/ComposerView.swift",
+        "apps/macos/Frog/Views/ComposerExtras.swift",
+        "apps/macos/Frog/Views/ComposerTextView.swift",
+        "apps/macos/Frog/Model/FileIndex.swift"
+      ],
+      "flows": [
+        {
+          "id": "mention-a-file",
+          "name": "Point Frog at a file",
+          "steps": [
+            "Type '@' then part of a file name",
+            "Arrow down to a match",
+            "Press Return"
+          ],
+          "expected": "A list of matching files shows above the field; the pick is inserted as '@path '.",
+          "needs": [
+            "git-repo"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/ConversationFlowTests.swift:test_mention_a_file"
+          ]
+        },
+        {
+          "id": "mention-from-plus-menu",
+          "name": "Start a mention from the + menu",
+          "steps": [
+            "Open a project conversation",
+            "Click +",
+            "Choose Mention a file"
+          ],
+          "expected": "An '@' is inserted at the caret and the file list opens.",
+          "needs": [
+            "git-repo"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "cancel-mention",
+          "name": "Close the file list",
+          "steps": [
+            "Open a project conversation",
+            "Type '@ma'",
+            "Press Esc"
+          ],
+          "expected": "The list closes and the typed text stays.",
+          "needs": [
+            "git-repo"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "composer-shell-command",
+      "name": "!cmd shell commands",
+      "group": "Composer",
+      "what": "A message starting with ! runs that shell command in the conversation's folder instead of asking the model.",
+      "entry_points": [
+        "Type !command and Return",
+        "+ > Run a command"
+      ],
+      "files": [
+        "apps/FrogKit/Model/Conversation.swift",
+        "apps/macos/Frog/Views/ComposerView.swift"
+      ],
+      "flows": [
+        {
+          "id": "run-shell-command",
+          "name": "Run a command without the model",
+          "steps": [
+            "Open a project conversation",
+            "Type '!ls'",
+            "Press Return"
+          ],
+          "expected": "A row runs the command and shows its output (rendering hands off to the transcript agent); no model turn is spent.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/QueueTests.swift:testCommandsCantJoinATurn"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "run-command-from-plus-menu",
+          "name": "Start a command from the + menu",
+          "steps": [
+            "Click +",
+            "Choose Run a command",
+            "Type 'git status'",
+            "Press Return"
+          ],
+          "expected": "A '!' is put first in the field, then the command runs as above.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "queued-command-goes-alone",
+          "name": "Queue a command while Frog works",
+          "steps": [
+            "Open a project conversation",
+            "Send a message",
+            "While it works send '!pwd' and another message"
+          ],
+          "expected": "The command runs on its own, then the messages after it go together.",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/QueueTests.swift:testCommandsCantJoinATurn"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "composer-dictation",
+      "name": "Dictation",
+      "group": "Composer",
+      "what": "The empty composer's action button (or Opt-Cmd-V) dictates into the field; a refused mic ends it with an error.",
+      "entry_points": [
+        "Action button with an empty field",
+        "Session > Start or Stop Dictation (Opt-Cmd-V)"
+      ],
+      "files": [
+        "apps/macos/Frog/Model/Dictation.swift",
+        "apps/macos/Frog/Model/DictationTranscript.swift",
+        "apps/macos/Frog/Views/ComposerView+Tray.swift"
+      ],
+      "flows": [
+        {
+          "id": "dictate-a-message",
+          "name": "Speak a message",
+          "steps": [
+            "Click the mic button (or Opt-Cmd-V)",
+            "Speak",
+            "Click again to stop"
+          ],
+          "expected": "The button shows listening; guesses are replaced as words settle; the text stays in the field with Send offered.",
+          "needs": [
+            "microphone"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/DictationTests.swift:testGuessesAreReplacedAndFinalsAccumulate",
+            "FrogTests/DictationTests.swift:testPaddingKeepsWordsApart",
+            "FrogTests/ComposerReducerTests.swift:testDictationShowsListeningOverEveryFace"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "no",
+          "why_hard": "Needs a microphone, speech-recognition permission and real audio; SFSpeechRecognizer can't be driven in CI."
+        },
+        {
+          "id": "type-while-dictating",
+          "name": "Edit while dictating",
+          "steps": [
+            "Allow microphone access",
+            "Start dictating",
+            "Type in the middle of the dictated text"
+          ],
+          "expected": "Dictation keeps going after the edit without overwriting it.",
+          "needs": [
+            "microphone"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/DictationTests.swift:testEditsMoveOrReleaseTheDictatedRange"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "no",
+          "why_hard": "Needs a microphone, speech-recognition permission and real audio; SFSpeechRecognizer can't be driven in CI."
+        },
+        {
+          "id": "mic-denied",
+          "name": "Dictate with the mic refused",
+          "steps": [
+            "Deny microphone access",
+            "Click the mic button",
+            "Click Open Settings in the status line"
+          ],
+          "expected": "Dictation ends with 'Needs mic access to take dictation'; Open Settings opens System Settings > Privacy > Microphone.",
+          "needs": [
+            "microphone"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ComposerReducerTests.swift:testMicDeniedEndsDictationWithTheNewWords"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "The denied state comes from the system's permission prompt; needs a dictation seam to inject the refusal."
+        },
+        {
+          "id": "dictation-stops-on-leave",
+          "name": "Switch apps while dictating",
+          "steps": [
+            "Allow microphone access",
+            "Start dictating",
+            "Switch to another app (or press Esc)"
+          ],
+          "expected": "Dictation stops and the draft is saved.",
+          "needs": [
+            "microphone"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "no",
+          "why_hard": "Needs a microphone, speech-recognition permission and real audio; SFSpeechRecognizer can't be driven in CI."
+        }
+      ]
+    },
+    {
+      "id": "composer-status-line",
+      "name": "Status line",
+      "group": "Composer",
+      "what": "One optional row at the top of the composer card shows the first of: an error with its fix, a question (Yolo, Merge, Archive), a notice, or the session's git state and next action.",
+      "entry_points": [
+        "Composer card's top row"
+      ],
+      "files": [
+        "apps/FrogKit/UI/Composer/StatusLine.swift",
+        "apps/FrogKit/UI/Composer/Tray.swift",
+        "apps/FrogKit/Core/ComposerModel.swift",
+        "apps/macos/Frog/Views/ComposerView+Tray.swift",
+        "apps/macos/Frog/Model/GitActions.swift"
+      ],
+      "flows": [
+        {
+          "id": "act-on-error",
+          "name": "Fix what stopped a send",
+          "steps": [
+            "Send while the engine is down (or signed out, or out of credit)",
+            "Read the status line",
+            "Click its button (Restart engine, Sign in, Add credit, Use local model, Retry)"
+          ],
+          "expected": "The draft is kept; the button does what it says and clears the error (Add credit opens Settings > Billing, a hand-off).",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ComposerReducerTests.swift:testEverySharedCase",
+            "FrogTests/ComposerReducerTests.swift:testStatusFollowsThePriority",
+            "FrogTests/EngineErrorTests.swift:testStatusesHaveTheirOwnWords",
+            "FrogTests/EngineErrorTests.swift:testFrogCloudNoCapacityIsAPlainLine"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "dismiss-error",
+          "name": "Dismiss an error",
+          "steps": [
+            "Open a conversation",
+            "Get an error in the status line",
+            "Click its x (or press Esc with nothing running)"
+          ],
+          "expected": "The line falls back to git state or disappears.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ComposerReducerTests.swift:testEverySharedCase"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "open-diff-from-git-line",
+          "name": "Jump to the changes",
+          "steps": [
+            "Open a git project session",
+            "Make changes in a session",
+            "Click '+N -M' in the status line"
+          ],
+          "expected": "The pane's inspector opens on Changes (hand-off to the inspector agent).",
+          "needs": [
+            "git-repo",
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ComposerReducerTests.swift:testGitStatusOnlyWithSomethingToReport"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "commit-from-git-line",
+          "name": "Commit from the composer",
+          "steps": [
+            "Open a git project session",
+            "Make uncommitted changes",
+            "Click Commit in the status line"
+          ],
+          "expected": "Frog gets a turn asking it to review and commit; a hook failure keeps the message and offers Show output.",
+          "needs": [
+            "git-repo",
+            "engine"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ComposerReducerTests.swift:testEverySharedCase"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "open-pr-from-git-line",
+          "name": "Open a pull request",
+          "steps": [
+            "Open a project with a GitHub remote and gh signed in",
+            "Commit in a worktree session",
+            "Click Open PR (urged when the work is done)"
+          ],
+          "expected": "Frog gets a turn to push and run gh pr create; without gh auth the line offers Connect GitHub.",
+          "needs": [
+            "git-repo",
+            "github",
+            "engine"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/OpenPRTests.swift:testAFinishedWorktreeSessionWithCommitsOpensAPR",
+            "FrogTests/OpenPRTests.swift:testTheSettingGatesTheOfferAndAutoIsAsk",
+            "FrogTests/ComposerReducerTests.swift:testEverySharedCase"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "Needs a GitHub remote and gh auth, or stubbed GitActions."
+        },
+        {
+          "id": "push-or-pull-and-retry",
+          "name": "Push commits ahead of the PR",
+          "steps": [
+            "Commit after opening a PR",
+            "Click Push",
+            "If rejected, click Pull and retry"
+          ],
+          "expected": "The branch is pushed; a rejection says the branch moved and Pull and retry never force-pushes.",
+          "needs": [
+            "git-repo",
+            "github",
+            "network"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ComposerReducerTests.swift:testEverySharedCase"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "Needs a real remote or a stubbed GitActions."
+        },
+        {
+          "id": "fix-failing-checks",
+          "name": "Ask Frog to fix failing checks",
+          "steps": [
+            "Open a session with a bound PR",
+            "Have a PR with failing checks",
+            "Click Fix"
+          ],
+          "expected": "A turn 'Fix the failing checks on #N' is sent (queued if busy) and the draft is left alone.",
+          "needs": [
+            "github",
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ComposerReducerTests.swift:testEverySharedCase"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "merge-pr-with-confirm",
+          "name": "Merge an approved PR",
+          "steps": [
+            "Have an approved PR",
+            "Click Merge",
+            "Click Merge in the question"
+          ],
+          "expected": "The status line asks first; confirmed, gh merges that PR and the line moves to Archive.",
+          "needs": [
+            "github",
+            "network"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ComposerReducerTests.swift:testEverySharedCase"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "Needs GitHub or a stubbed GitActions.merge."
+        },
+        {
+          "id": "archive-after-merge",
+          "name": "Archive a merged session",
+          "steps": [
+            "Have a merged PR",
+            "Click Archive",
+            "Confirm if the worktree is dirty"
+          ],
+          "expected": "The conversation archives and the pane forwards to a fresh session.",
+          "needs": [
+            "github",
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ComposerReducerTests.swift:testEverySharedCase",
+            "FrogTests/ArchiveNavTests.swift:testEveryViewArchiveGoesThroughArchiveNav"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "open-pr-pill",
+          "name": "Open or copy a PR link",
+          "steps": [
+            "Open a session with a bound PR",
+            "Click the '#N state' pill",
+            "Option-click it"
+          ],
+          "expected": "The PR opens in the browser; Option-click copies its URL.",
+          "needs": [
+            "github"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ComposerReducerTests.swift:testEverySharedCase"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "The code reads NSEvent.modifierFlags / NSApp.currentEvent at click time; a test can't set those without posting real events."
+        },
+        {
+          "id": "pr-stack-and-bind",
+          "name": "See several PRs and bind another",
+          "steps": [
+            "Bind two PRs",
+            "Click the stack pill",
+            "Type a PR URL or number in the field",
+            "Press Return"
+          ],
+          "expected": "The stack lists each PR with its state; the new one binds, or 'not found' shows inline.",
+          "needs": [
+            "github"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ComposerReducerTests.swift:testEverySharedCase",
+            "FrogTests/SidebarPrTests.swift:testTheComposerAndTheRowUseOneSummary"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "context-ring-compact",
+          "name": "Check context and compact",
+          "steps": [
+            "Open a conversation with a few turns",
+            "Click the context ring beside the mode chip",
+            "Click Compact Now"
+          ],
+          "expected": "A popover shows tokens used of the window; Compact Now summarizes the conversation (hand-off to the transcript agent for the compaction banner).",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Popover from a private @State; needs XCUITest or a seam."
+        }
+      ]
+    },
+    {
+      "id": "composer-notices",
+      "name": "Notices above the composer",
+      "group": "Composer",
+      "what": "Above the card the composer shows a cloud-unavailable notice, pending wake chips, a one-click next step, and a notice when another session swapped the machine's model.",
+      "entry_points": [
+        "Rows above the composer card"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/ComposerExtras.swift",
+        "apps/FrogKit/UI/Composer/PendingEvents.swift"
+      ],
+      "flows": [
+        {
+          "id": "dismiss-cloud-fallback",
+          "name": "Dismiss 'Frog cloud is unavailable'",
+          "steps": [
+            "Use a Frog Cloud model while the gateway is down",
+            "Read the orange notice above the composer",
+            "Click its x"
+          ],
+          "expected": "The notice goes; the reason text was selectable.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "pending-wake-chips",
+          "name": "See and drop pending wakes",
+          "steps": [
+            "Start a background job or monitor in a session",
+            "See the chips above the composer",
+            "Click a chip to read its payload",
+            "Click Dismiss all"
+          ],
+          "expected": "Each pending wake shows as a chip; Dismiss all drops them and stops the pending timers and monitors in one action.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/WakeEventTests.swift:testPendingChipsBadgeAndCopy",
+            "FrogTests/WakeEventTests.swift:testDismissAllDropsTheQueuedWakesInOneAction"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "act-on-next-step",
+          "name": "Take the suggested next action",
+          "steps": [
+            "Finish a turn whose next step is an action",
+            "See the button above the composer",
+            "Click it"
+          ],
+          "expected": "The action is sent as your next message and the button goes.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "dismiss-model-switch-notice",
+          "name": "Dismiss 'another session swapped the model'",
+          "steps": [
+            "Use a model on another machine",
+            "From another session, switch that machine to a different model",
+            "Click the notice"
+          ],
+          "expected": "The notice explains the swap and goes on click.",
+          "needs": [
+            "second-machine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Needs two sessions sharing a paired node, or a stubbed Devices."
+        }
+      ]
+    },
+    {
+      "id": "composer-race",
+      "name": "Race attempts",
+      "group": "Composer",
+      "what": "Race sends the draft to several models at once from a popover; the race card itself is the transcript agent's.",
+      "entry_points": [
+        "+ > Race attempts...",
+        "Session > Race... (Opt-Cmd-R)"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/ComposerView.swift",
+        "apps/macos/Frog/Model/Race.swift",
+        "apps/macos/Frog/Views/RaceCard.swift"
+      ],
+      "flows": [
+        {
+          "id": "start-a-race",
+          "name": "Race a prompt across models",
+          "steps": [
+            "Type a prompt in a project",
+            "Press Opt-Cmd-R (or + > Race attempts...)",
+            "Pick models and a check",
+            "Start"
+          ],
+          "expected": "The field clears and a race starts in the transcript (hand-off). Race is offered only with words typed, not in a plain chat, not while busy.",
+          "needs": [
+            "engine",
+            "local-model"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Popover with a private @State, then several real model runs."
+        }
+      ]
+    },
+    {
+      "id": "model-menu",
+      "name": "Model menu",
+      "group": "Model menu",
+      "what": "The model chip opens a filterable menu: This Mac (Apple Intelligence, downloaded, one to get), Your machines, then Frog Cloud with prices; Manage... opens Settings > Models.",
+      "entry_points": [
+        "Composer model chip",
+        "Model > Model (menu bar)",
+        "Palette 'Model: ...'"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/ModelPicker.swift",
+        "apps/macos/Frog/Model/Workspace.swift",
+        "apps/macos/Frog/Model/Devices.swift",
+        "apps/macos/Frog/Model/ModelDownloads.swift",
+        "apps/FrogKit/UI/Models/ModelList.swift",
+        "apps/macos/Frog/Views/ComposerExtras.swift"
+      ],
+      "flows": [
+        {
+          "id": "pick-this-mac-model",
+          "name": "Use a model on this Mac",
+          "steps": [
+            "Open a conversation",
+            "Click the model chip",
+            "Click a ready model under This Mac"
+          ],
+          "expected": "The chip shows the model and the conversation uses it; This Mac rows say '$0 a token' and their speed in tokens per second; Apple Intelligence is listed first.",
+          "needs": [
+            "local-model"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ModelMenuTests.swift:testThisMacComesFirstWithTheCurrentModelAndAModelToGet",
+            "FrogTests/ModelMenuTests.swift:testThisMacRowsSayTheyCostNothing",
+            "FrogTests/ModelLoadTests.swift:testDownloadedModelIsLoadedIntoMemoryByItsMenuName",
+            "FrogTests/ModelLoadTests.swift:testAppleIntelligenceIsStarted",
+            "FrogTests/SnapshotTests.swift:testRenderModelMenu",
+            "FrogTests/SnapshotTests.swift:testRenderModelMenuStates"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "shell-get-suggested-model",
+          "name": "Download the model that suits this Mac",
+          "steps": [
+            "Click the model chip",
+            "Click the 'Get' row",
+            "Type and send while it downloads"
+          ],
+          "expected": "The composer shows download progress and the action button shows loading; Return does nothing while it downloads (the draft stays in the field); when it's here the chat moves to the model and the draft can be sent.",
+          "needs": [
+            "network",
+            "local-model"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/LocalModelsTests.swift:testDownloadProgressLine"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "A multi-GB download; needs a stubbed ModelDownloads."
+        },
+        {
+          "id": "stop-or-retry-download",
+          "name": "Stop or retry a model download",
+          "steps": [
+            "Pick the 'Get' model in the model menu",
+            "While a model downloads, click stop in the composer notice",
+            "Click Resume (or Retry after a failure)"
+          ],
+          "expected": "The download stops and the draft is kept; Resume or Retry continues it; a failure says why.",
+          "needs": [
+            "network"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/LocalModelsTests.swift:testAMacDownloadThatFailedSaysWhy",
+            "FrogTests/LocalModelsTests.swift:testANodeDownloadMovesStallsAndFails"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "Needs a stubbed ModelDownloads."
+        },
+        {
+          "id": "pick-machine-model",
+          "name": "Use a model on another machine",
+          "steps": [
+            "Pair a machine (settings agent)",
+            "Click the model chip",
+            "Click a model under Your machines"
+          ],
+          "expected": "The chat uses it; a model not loaded is loaded there, after the machine's current turn if busy; problems show under the list.",
+          "needs": [
+            "second-machine"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/NodeLoadTests.swift:testPickerRowsSayWhatPickingDoes",
+            "FrogTests/NodeLoadTests.swift:testBusyNodeSwapsAfterItsTurn",
+            "FrogTests/NodeLoadTests.swift:testLoadShowsLoadingThenLoaded",
+            "FrogTests/NodeLoadTests.swift:testWontFitIsNeverSent"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "Needs a paired node; MockNode exists in the tests and could stand in."
+        },
+        {
+          "id": "pick-cloud-model",
+          "name": "Use a Frog Cloud model",
+          "steps": [
+            "Sign in",
+            "Click the model chip",
+            "Click a model under Frog Cloud"
+          ],
+          "expected": "The chat moves to it; rows show the price per million output tokens; small side-job helpers are left out.",
+          "needs": [
+            "cloud-account",
+            "network"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ModelPriceTests.swift:testFrogCloudPricesReadAsPerMillionDollars",
+            "FrogTests/OneLookTests.swift:testThePickerLeavesOutSideJobHelpers"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "Needs a signed-in Frog Cloud account or a stubbed model list."
+        },
+        {
+          "id": "pick-cloud-model-signed-out",
+          "name": "Pick a Frog Cloud model while signed out",
+          "steps": [
+            "Signed out, click the model chip",
+            "Click a Frog Cloud row marked Sign in",
+            "Finish signing in in the browser"
+          ],
+          "expected": "After sign-in the chat moves to that model and the draft is kept.",
+          "needs": [
+            "network"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/ModelMenuTests.swift:testSignedOutCloudRowsAskToSignIn",
+            "FrogTests/ModelSectionsTests.swift:testSignedOutFrogCloudStaysWithSignInAction"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "Sign-in opens the system browser and waits on a callback; needs a stubbed CloudSignIn and a test account."
+        },
+        {
+          "id": "cloud-model-not-allowed",
+          "name": "Allow cloud models for this project",
+          "steps": [
+            "Sign in to Frog Cloud",
+            "Open the model menu",
+            "In a folder set to keep work on your devices, click a Frog Cloud model",
+            "Choose Just this conversation (or Always allow, or Keep it on your devices)"
+          ],
+          "expected": "A sheet says where files and commands are sent; allowing picks the model, keeping declines.",
+          "needs": [
+            "cloud-account"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "A .sheet presented from the menu's private state."
+        },
+        {
+          "id": "cloud-over-cap",
+          "name": "Pick a cloud model over the spending cap",
+          "steps": [
+            "Sign in to Frog Cloud",
+            "Open the model menu",
+            "Reach the cap",
+            "Click a Frog Cloud model"
+          ],
+          "expected": "The menu closes and Settings opens on Billing (hand-off to the settings agent).",
+          "needs": [
+            "cloud-account"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "openSettings opens the separate Settings scene."
+        },
+        {
+          "id": "filter-models",
+          "name": "Find a model by name",
+          "steps": [
+            "Open the model menu",
+            "Type in Search models",
+            "Arrow down",
+            "Press Return (Esc closes)"
+          ],
+          "expected": "Rows filter across all groups; Return picks the highlighted one.",
+          "needs": [],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "manage-models",
+          "name": "Manage models",
+          "steps": [
+            "Open a conversation",
+            "Open the model menu",
+            "Click Manage..."
+          ],
+          "expected": "Settings opens on Models (hand-off to the settings agent).",
+          "needs": [],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "openSettings opens the separate Settings scene."
+        },
+        {
+          "id": "model-from-menu-bar",
+          "name": "Pick a model from the menu bar",
+          "steps": [
+            "Open the Model menu with no conversation",
+            "Open a conversation",
+            "Model > pick a model"
+          ],
+          "expected": "The conversation switches; with no conversation the menu reads 'Open a folder to choose a model'.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "command-palette",
+      "name": "Command palette",
+      "group": "Palette and menus",
+      "what": "Cmd-K (or the toolbar's Commands button) opens a palette of actions, other sessions and documentation pages, filtered as you type.",
+      "entry_points": [
+        "View > Command Palette (Cmd-K)",
+        "Toolbar Commands button"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/CommandPalette.swift",
+        "apps/macos/Frog/Views/WorkspaceView.swift"
+      ],
+      "flows": [
+        {
+          "id": "open-palette",
+          "name": "Open the palette",
+          "steps": [
+            "Open a conversation",
+            "Press Cmd-K (or click the Commands toolbar button)",
+            "Look at the list"
+          ],
+          "expected": "A palette opens with the field focused and the first 12 commands listed.",
+          "needs": [],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/FlowDriverTests.swift:test_open_palette",
+            "Flows/FlowDriverTests.swift:test_open_palette__fromMenuBar",
+            "Flows/FlowDriverTests.swift:test_open_palette__shortcut"
+          ]
+        },
+        {
+          "id": "filter-and-run",
+          "name": "Run a command by typing",
+          "steps": [
+            "Open the palette",
+            "Type part of a command",
+            "Arrow down",
+            "Press Return"
+          ],
+          "expected": "The list narrows by fuzzy match, the highlighted command runs and the palette closes.",
+          "needs": [],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "dismiss-palette",
+          "name": "Close the palette",
+          "steps": [
+            "Open a conversation",
+            "Open the palette",
+            "Press Esc (or click outside it)"
+          ],
+          "expected": "The palette closes and nothing runs.",
+          "needs": [],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "switch-session-from-palette",
+          "name": "Jump to another session",
+          "steps": [
+            "Open the palette",
+            "Type a session's title",
+            "Press Return"
+          ],
+          "expected": "That session opens in the focused pane.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "mode-or-model-from-palette",
+          "name": "Change mode or model from the palette",
+          "steps": [
+            "Open the palette",
+            "Type 'Mode: Yolo' (or 'Model: ...')",
+            "Press Return"
+          ],
+          "expected": "The mode or model changes at once; the palette's Yolo skips the composer's confirmation.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/ConversationFlowTests.swift:test_mode_or_model_from_palette",
+            "Flows/ConversationFlowTests.swift:test_mode_or_model_from_palette__yoloAsksFirst"
+          ]
+        },
+        {
+          "id": "session-actions-from-palette",
+          "name": "Compact, interrupt or fork from the palette",
+          "steps": [
+            "Open a conversation with a finished turn",
+            "Open the palette in a conversation",
+            "Pick Compact Conversation (or Interrupt while busy, or Fork After Last Turn)"
+          ],
+          "expected": "The action runs on the focused conversation (results hand off to the transcript agent).",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "toggle-changes-from-palette",
+          "name": "Show or hide Changes from the palette",
+          "steps": [
+            "Open a conversation with changes",
+            "Open the palette",
+            "Pick Show Changes"
+          ],
+          "expected": "The focused pane's inspector opens (hand-off to the inspector agent).",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes",
+          "flow_tests": [
+            "Flows/FlowDriverTests.swift:test_toggle_changes_from_palette"
+          ]
+        },
+        {
+          "id": "docs-from-palette",
+          "name": "Open a documentation page from the palette",
+          "steps": [
+            "Open the palette",
+            "Type a page title",
+            "Press Return"
+          ],
+          "expected": "Documentation mode opens on that page.",
+          "needs": [],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "quick-switch",
+      "name": "Quick switch shortcuts",
+      "group": "Palette and menus",
+      "what": "Cmd-1...8 open the Nth top-level sidebar row, Cmd-9 the last, Shift-Cmd-] and Shift-Cmd-[ step through them with wrap.",
+      "entry_points": [
+        "View > Conversation 1...8 (Cmd-1...8)",
+        "View > Last Conversation (Cmd-9)",
+        "View > Next/Previous Conversation (Shift-Cmd-] / Shift-Cmd-[)"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/Commands.swift",
+        "apps/FrogKit/Core/SidebarOrder.swift",
+        "apps/macos/Frog/Model/SessionOrder.swift"
+      ],
+      "flows": [
+        {
+          "id": "jump-to-nth",
+          "name": "Jump to a row by number",
+          "steps": [
+            "Have five top-level sessions in the sidebar",
+            "Press Cmd-3",
+            "Press Cmd-9"
+          ],
+          "expected": "The third top-level row opens (children don't count); past the end the item is disabled; Cmd-9 opens the last.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SidebarOrderTests.swift:testTheNthRowIsTheNthSession",
+            "FrogTests/SidebarOrderTests.swift:testNineIsTheLastRow",
+            "FrogTests/SidebarOrderTests.swift:testPastTheEndThereIsNothing",
+            "FrogTests/SidebarOrderTests.swift:testAChildRowDoesNotCount"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "step-conversations",
+          "name": "Step to the next or previous conversation",
+          "steps": [
+            "Have three top-level sessions",
+            "Open the first",
+            "Press Shift-Cmd-]",
+            "Press Shift-Cmd-["
+          ],
+          "expected": "The next row opens, wrapping at the ends; from a session not in the list it starts at the top.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SidebarOrderTests.swift:testNextAndPreviousWrap",
+            "FrogTests/SidebarOrderTests.swift:testSteppingInFromOffscreen",
+            "FrogTests/SidebarOrderTests.swift:testAnEmptyListHasNoNeighbor"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "session-menu",
+      "name": "Session menu",
+      "group": "Palette and menus",
+      "what": "The Session menu focuses the composer, dictates, interrupts, races, maps the project, compacts, sets detail, steps turns and forks.",
+      "entry_points": [
+        "Session menu in the menu bar"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/Commands.swift",
+        "apps/macos/Frog/Model/WindowState.swift"
+      ],
+      "flows": [
+        {
+          "id": "focus-composer",
+          "name": "Get back to the composer",
+          "steps": [
+            "Open a conversation",
+            "Click somewhere in the transcript",
+            "Press Cmd-L"
+          ],
+          "expected": "The focused pane's composer takes the keyboard; from Documentation it also returns to the threads.",
+          "needs": [],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "shell-map-project",
+          "name": "Map the project's structure",
+          "steps": [
+            "Open a project with source files",
+            "Press Shift-Cmd-M (Session > Map Project)",
+            "Look at the new window (or the composer's notice)"
+          ],
+          "expected": "A Diagram window opens with the code map; a folder without dependent files flashes 'Couldn't map this folder' in the composer.",
+          "needs": [
+            "git-repo"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/SnapshotTests.swift:testRenderDiagrams"
+          ],
+          "coverage_v070": "snapshot",
+          "automatable": "hard",
+          "why_hard": "The code map opens in a separate Diagram window through openWindow, which an offscreen host can't observe; the failure notice path is reachable."
+        },
+        {
+          "id": "compact-conversation",
+          "name": "Compact the conversation",
+          "steps": [
+            "Open a conversation",
+            "Finish a few turns",
+            "After a few turns, press Shift-Cmd-K",
+            "Look at the transcript"
+          ],
+          "expected": "Frog summarizes to free context (hand-off to the transcript agent); disabled while busy or empty.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "set-detail-level",
+          "name": "Change how much detail the transcript shows",
+          "steps": [
+            "Open a conversation with tool calls",
+            "Session > Detail > pick a level",
+            "Look at the transcript"
+          ],
+          "expected": "This conversation's detail changes (hand-off to the transcript agent); Default follows the app setting.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "step-turns",
+          "name": "Step through turns",
+          "steps": [
+            "Open a conversation with several turns",
+            "Press Opt-Cmd-Up",
+            "Press Opt-Cmd-Down"
+          ],
+          "expected": "The transcript scrolls to the previous or next turn (hand-off to the transcript agent).",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "fork-after-last-turn",
+          "name": "Fork after the last turn",
+          "steps": [
+            "Open a conversation",
+            "Finish a turn",
+            "Press Shift-Cmd-D"
+          ],
+          "expected": "A new session forked after that turn opens (hand-off to the transcript agent for its rows).",
+          "needs": [
+            "engine"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "edit-menu",
+      "name": "Edit menu: undo turn and find",
+      "group": "Palette and menus",
+      "what": "Edit gains Undo Last Turn (with a confirmation) and Find in Conversation with Find Next and Previous.",
+      "entry_points": [
+        "Edit > Undo Last Turn... (Opt-Cmd-Z)",
+        "Edit > Find in Conversation... (Cmd-F)",
+        "Find Next (Cmd-G) / Find Previous (Shift-Cmd-G)"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/Commands.swift",
+        "apps/macos/Frog/Views/PaneView.swift",
+        "apps/macos/Frog/Views/WorkspaceView.swift",
+        "apps/macos/Frog/Model/WindowState.swift"
+      ],
+      "flows": [
+        {
+          "id": "shell-undo-last-turn",
+          "name": "Undo the last turn's file changes",
+          "steps": [
+            "Open a git project conversation",
+            "After a turn that edited files, press Opt-Cmd-Z",
+            "Click Undo Changes"
+          ],
+          "expected": "A dialog names the turn; confirmed, its edits revert and the conversation continues from before it (hand-off to the transcript agent).",
+          "needs": [
+            "engine",
+            "git-repo"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "A SwiftUI .alert with a TextField (or a confirmationDialog) isn't reachable from an offscreen hosting view; needs XCUITest or a seam that sets the private @State."
+        },
+        {
+          "id": "find-in-conversation",
+          "name": "Find text in the conversation",
+          "steps": [
+            "Press Cmd-F",
+            "Type a word",
+            "Press Return or Cmd-G, then Shift-Cmd-G",
+            "Click Done (or Esc)"
+          ],
+          "expected": "A find bar shows 'N of M', steps through matching turns (marked on the timeline rail) and closes.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "view-menu",
+      "name": "View menu: panels",
+      "group": "Palette and menus",
+      "what": "View toggles the sidebar and the focused pane's inspector and opens Terminal, Preview and Inspect Element; the toolbar has the same Inspector button.",
+      "entry_points": [
+        "View > Show/Hide Sessions (Ctrl-Cmd-S)",
+        "View > Show/Hide Changes (Opt-Cmd-0)",
+        "View > Terminal (Shift-Cmd-T)",
+        "View > Preview (Shift-Cmd-P)",
+        "View > Inspect Element in Preview (Shift-Cmd-I)",
+        "Toolbar Inspector button"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/Commands.swift",
+        "apps/macos/Frog/Views/WorkspaceView.swift"
+      ],
+      "flows": [
+        {
+          "id": "toggle-sessions-shortcut",
+          "name": "Toggle the sidebar from the keyboard",
+          "steps": [
+            "Open a window with the sidebar docked",
+            "Press Ctrl-Cmd-S twice",
+            "Look at the View menu's item title"
+          ],
+          "expected": "The sidebar hides then shows; the menu item's title follows (Hide/Show Sessions).",
+          "needs": [],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "WorkspaceView.toggleSessions is private; only reachable through the FrogWindow focused value or XCUITest."
+        },
+        {
+          "id": "open-inspector-panels",
+          "name": "Open Changes, Terminal or Preview",
+          "steps": [
+            "Press Opt-Cmd-0",
+            "Press Shift-Cmd-T",
+            "Press Shift-Cmd-P",
+            "Press Shift-Cmd-I"
+          ],
+          "expected": "The focused pane's inspector opens on that tab, floating when the window is too narrow (the panels are the inspector agent's).",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/FlushSnapshotTests.swift:testInspector"
+          ],
+          "coverage_v070": "snapshot",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "escape-key",
+      "name": "Escape",
+      "group": "Palette and menus",
+      "what": "Esc backs out of the innermost thing: Documentation, then a maximized pane, then the find bar, then any peek.",
+      "entry_points": [
+        "Esc"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/WorkspaceView.swift",
+        "apps/macos/Frog/Views/DocsViews.swift"
+      ],
+      "flows": [
+        {
+          "id": "escape-precedence",
+          "name": "Back out with Esc",
+          "steps": [
+            "Maximize a pane and open Find",
+            "Press Esc",
+            "Press Esc again"
+          ],
+          "expected": "The first Esc restores the panes, the next closes the find bar; in Documentation Esc goes back to the app first.",
+          "needs": [],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "onExitCommand needs a key window and a real cancelOperation; reachable only through XCUITest."
+        }
+      ]
+    },
+    {
+      "id": "app-menu-handoffs",
+      "name": "App menu hand-offs",
+      "group": "Palette and menus",
+      "what": "Frog > Settings (Cmd-,) and Check for Updates live in the app menu and belong to the settings and updates agent.",
+      "entry_points": [
+        "Frog > Settings... (Cmd-,)",
+        "Frog > Check for Updates...",
+        "Debug: Simulate Update..., Test Notifications"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/Commands.swift",
+        "apps/macos/Frog/FrogApp.swift"
+      ],
+      "flows": [
+        {
+          "id": "open-settings-window",
+          "name": "Open Settings",
+          "steps": [
+            "Open a window",
+            "Press Cmd-,",
+            "Look at which tab it opens on"
+          ],
+          "expected": "The separate Settings window opens on the last tab (hand-off to the settings agent; there is no Settings row in the Mac sidebar at v0.7.0).",
+          "needs": [],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "hard",
+          "why_hard": "Settings is its own scene; needs XCUITest."
+        }
+      ]
+    },
+    {
+      "id": "split-panes",
+      "name": "Split panes",
+      "group": "Split",
+      "what": "A window holds up to four conversations side by side or stacked; the focused pane is the one menus act on, each has its own composer and inspector.",
+      "entry_points": [
+        "View > Split Right (Cmd-\\) / Split Down (Shift-Cmd-\\)",
+        "Toolbar Split button (right-click for Right/Down)",
+        "Row menu > Open in New Pane",
+        "Drag a row onto a pane"
+      ],
+      "files": [
+        "apps/macos/Frog/Model/Panes.swift",
+        "apps/macos/Frog/Views/PaneView.swift",
+        "apps/macos/Frog/Views/WorkspaceView.swift",
+        "apps/macos/Frog/Views/Commands.swift"
+      ],
+      "flows": [
+        {
+          "id": "split-right",
+          "name": "Work on two things side by side",
+          "steps": [
+            "Open a project conversation",
+            "Click the Split toolbar button (or Cmd-\\)",
+            "Look at which composer is at full strength"
+          ],
+          "expected": "A new pane opens to the right on a fresh conversation in the same folder and takes focus; no pane has a header.",
+          "needs": [],
+          "existing_tests_v070": [
+            "FrogTests/PaneLayoutTests.swift:testSplittingBesideMakesARowOrColumn",
+            "FrogTests/FlushColumnsTests.swift:testSplitPanesHaveNoHeaderPill",
+            "FrogTests/FlushSnapshotTests.swift:testSplit",
+            "FrogTests/SnapshotTests.swift:testRenderPanes"
+          ],
+          "coverage_v070": "snapshot",
+          "automatable": "yes"
+        },
+        {
+          "id": "split-down",
+          "name": "Stack two conversations",
+          "steps": [
+            "Open a project conversation",
+            "Press Shift-Cmd-\\ (or right-click Split > Split Down)",
+            "Look at the layout"
+          ],
+          "expected": "A new pane opens below the focused one.",
+          "needs": [],
+          "existing_tests_v070": [
+            "FrogTests/PaneLayoutTests.swift:testSplittingAcrossNests"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "three-or-four-panes",
+          "name": "Split further",
+          "steps": [
+            "Open a project conversation",
+            "Split right once",
+            "Split right twice more",
+            "Look at the Split button"
+          ],
+          "expected": "Panes share the width evenly; at four panes Split is disabled.",
+          "needs": [],
+          "existing_tests_v070": [
+            "FrogTests/PaneLayoutTests.swift:testSplittingTheSameWayJoinsTheRow",
+            "FrogTests/PaneLayoutTests.swift:testFramesShareSpaceEvenly"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "open-row-in-new-pane",
+          "name": "Open a sidebar row beside the current one",
+          "steps": [
+            "Open a conversation",
+            "Right-click a row",
+            "Choose Open in New Pane"
+          ],
+          "expected": "The session opens in a new pane to the right; if it's already on screen that pane is focused instead.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "drag-row-onto-pane",
+          "name": "Drag a conversation into place",
+          "steps": [
+            "Open a conversation",
+            "Drag a sidebar row over a pane's right edge",
+            "Drop on 'Split right' (or the middle for 'Open here')"
+          ],
+          "expected": "The drop zone and a title capsule follow the pointer; the session opens in a new pane there or replaces that pane's; one already on screen moves instead.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/PaneLayoutTests.swift:testMovingAPaneToAnotherEdge",
+            "FrogTests/PaneLayoutTests.swift:testSwapping"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "A real mouse drag (DragGesture or system drag and drop) can't be synthesized offscreen; only the post-drop state can be set directly."
+        },
+        {
+          "id": "focus-pane-by-click",
+          "name": "Choose which pane I'm working in",
+          "steps": [
+            "Open a conversation",
+            "Split the window",
+            "Click anywhere in the other pane"
+          ],
+          "expected": "That pane's composer comes to full strength and the other steps back; the title row, menus and palette act on it.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/FlushColumnsTests.swift:testFocusedPaneStillStandsOut"
+          ],
+          "coverage_v070": "snapshot",
+          "automatable": "yes"
+        },
+        {
+          "id": "cycle-pane-focus",
+          "name": "Move focus between panes",
+          "steps": [
+            "Split the window into three panes",
+            "Press Cmd-]",
+            "Press Cmd-["
+          ],
+          "expected": "Focus moves to the next or previous pane (wrapping) and its composer takes the keyboard.",
+          "needs": [],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "close-pane",
+          "name": "Close a pane",
+          "steps": [
+            "Split the window into two panes",
+            "Focus a pane in a split",
+            "Press Ctrl-Cmd-W"
+          ],
+          "expected": "The pane goes, its engine stops, the rest fill the space and focus moves; the item is disabled when unsplit.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/PaneExpandTests.swift:testClosingTheMaximizedPaneClearsIt",
+            "FrogTests/PaneLayoutTests.swift:testRemovingCollapsesAndFlattens"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        },
+        {
+          "id": "maximize-and-restore",
+          "name": "Give one pane the whole window",
+          "steps": [
+            "Split into three panes",
+            "Drag a divider off even",
+            "In a split, press Shift-Cmd-Return",
+            "Press it again (or Esc)"
+          ],
+          "expected": "The pane fills the canvas with no dividers; restoring brings back the exact layout.",
+          "needs": [],
+          "existing_tests_v070": [
+            "FrogTests/PaneExpandTests.swift:testMaximizedLeafTakesTheWholeCanvas",
+            "FrogTests/PaneExpandTests.swift:testNoDividersWhileMaximized",
+            "FrogTests/PaneExpandTests.swift:testMaximizeRoundTripsTheLayoutExactly",
+            "FrogTests/PaneExpandTests.swift:testMaximizingAnotherPaneSavesOnlyOnceAndSwaps"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        },
+        {
+          "id": "resize-panes",
+          "name": "Resize panes",
+          "steps": [
+            "Hover the line between two panes",
+            "Drag it",
+            "Double-click it"
+          ],
+          "expected": "The panes follow the pointer down to their floors (360, or 260 beside a terminal or preview); double-click evens them out.",
+          "needs": [],
+          "existing_tests_v070": [
+            "FrogTests/PaneLayoutTests.swift:testDraggingADividerMovesShareBetweenNeighbors",
+            "FrogTests/PaneExpandTests.swift:testToolPaneCanReach260OnANarrowCanvas",
+            "FrogTests/PaneExpandTests.swift:testConversationPaneKeepsItsFloorOnANarrowCanvas",
+            "FrogTests/PaneExpandTests.swift:testClampNeverExceedsEvenShareForEitherSide",
+            "FrogTests/WindowDragFallThroughTests.swift:testPaneDividerTakesDrag"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "hard",
+          "why_hard": "A real mouse drag (DragGesture or system drag and drop) can't be synthesized offscreen; only the post-drop state can be set directly."
+        },
+        {
+          "id": "per-pane-inspector",
+          "name": "Use an inspector per pane",
+          "steps": [
+            "Make the window wide",
+            "Split with a conversation that has changes in each pane",
+            "Press Opt-Cmd-0 in each"
+          ],
+          "expected": "Each pane docks its own inspector; the top-right one's tabs sit in the title row, the other's on the sidebar's first row (inspector contents are the inspector agent's).",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/FlushColumnsTests.swift:testInspectorStripsShareTheSidebarsFirstRow",
+            "FrogTests/FlushSnapshotTests.swift:testInspectorTabsInTitleRow"
+          ],
+          "coverage_v070": "snapshot",
+          "automatable": "yes"
+        }
+      ]
+    },
+    {
+      "id": "docs-mode",
+      "name": "Documentation mode",
+      "group": "Documentation",
+      "what": "The shell swaps the thread list for the docs' page list and the main area for one page; Back to app returns to exactly where you were.",
+      "entry_points": [
+        "Sidebar 'Documentation' row",
+        "Help > Frog Documentation",
+        "Palette 'Documentation' or a page title"
+      ],
+      "files": [
+        "apps/macos/Frog/Views/DocsViews.swift",
+        "apps/macos/Frog/Views/WorkspaceView.swift",
+        "apps/macos/Frog/Model/Panes.swift",
+        "apps/macos/Frog/Model/AppDocs.swift"
+      ],
+      "flows": [
+        {
+          "id": "open-docs-from-sidebar",
+          "name": "Open the documentation",
+          "steps": [
+            "Open a conversation",
+            "Click Documentation at the bottom of the sidebar",
+            "Look at the sidebar, title and toolbar"
+          ],
+          "expected": "The sidebar shows Back to app, Search docs and pages by section with the build's version; the page shows; the title reads Documentation; split and inspector are disabled.",
+          "needs": [],
+          "existing_tests_v070": [
+            "FrogTests/DocsModeTests.swift:testRenderDocsMode",
+            "FrogTests/AppDocsTests.swift:testBundledDocsResolve"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "open-docs-from-help-menu",
+          "name": "Open documentation from Help",
+          "steps": [
+            "Open a conversation",
+            "Help > Frog Documentation",
+            "Look at the sidebar and title"
+          ],
+          "expected": "Same as the sidebar row, on the page last shown.",
+          "needs": [],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "pick-page",
+          "name": "Read another page",
+          "steps": [
+            "Open Documentation",
+            "Click a page in the docs sidebar",
+            "Click Next at the bottom"
+          ],
+          "expected": "The page shows from the top with the selected row style; Previous/Next cross sections.",
+          "needs": [],
+          "existing_tests_v070": [
+            "FrogTests/AppDocsTests.swift:testNeighborsCrossSections",
+            "FrogTests/AppDocsTests.swift:testManifestReadsSectionsAndPagesInOrder"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "shell-search-docs",
+          "name": "Search the documentation",
+          "steps": [
+            "Type in Search docs",
+            "Press Return",
+            "Press Esc twice"
+          ],
+          "expected": "Pages filter by title and heading ('No pages match' when none); Return opens the first; Esc clears, then leaves docs.",
+          "needs": [],
+          "existing_tests_v070": [
+            "FrogTests/AppDocsTests.swift:testSearchMatchesTitlesAndHeadings"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "back-to-app",
+          "name": "Go back to my conversation",
+          "steps": [
+            "Type a draft and open an inspector tab",
+            "Open Documentation",
+            "Click Back to app (or Esc, Cmd-L, Cmd-N)"
+          ],
+          "expected": "The same thread, scroll position, draft and inspector tab are back, and a running turn never stopped; the composer takes the keyboard.",
+          "needs": [
+            "fake-engine-ok"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/DocsModeTests.swift:testEnteringAndLeavingKeepsThreadDraftAndTab"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        },
+        {
+          "id": "docs-remembers-page",
+          "name": "Come back to the page I was reading",
+          "steps": [
+            "Open a page",
+            "Go back to the app",
+            "Open Documentation again"
+          ],
+          "expected": "It opens on the page last shown, for the life of the window.",
+          "needs": [],
+          "existing_tests_v070": [
+            "FrogTests/DocsModeTests.swift:testModeRemembersItsPage"
+          ],
+          "coverage_v070": "integration",
+          "automatable": "yes"
+        },
+        {
+          "id": "open-on-the-web",
+          "name": "Share a docs page",
+          "steps": [
+            "Open Documentation",
+            "Pick a page",
+            "On a page, click Open on the web",
+            "Look at the browser's address"
+          ],
+          "expected": "The browser opens frog.toys/docs/<slug>.",
+          "needs": [
+            "network"
+          ],
+          "existing_tests_v070": [
+            "FrogTests/AppDocsTests.swift:testWebLink"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "mac-variant-blocks",
+          "name": "Read the Mac's version of a page",
+          "steps": [
+            "Open Documentation",
+            "Pick the install page",
+            "Open a page with platform blocks",
+            "Read the platform-specific sections"
+          ],
+          "expected": "Mac-only blocks show, web- and terminal-only ones don't.",
+          "needs": [],
+          "existing_tests_v070": [
+            "FrogTests/AppDocsTests.swift:testMacBlockShownWebBlockNot",
+            "FrogTests/AppDocsTests.swift:testWebAndTerminalSeeTheirOwn"
+          ],
+          "coverage_v070": "unit",
+          "automatable": "yes"
+        },
+        {
+          "id": "typing-in-docs-stays-out-of-draft",
+          "name": "Type while reading docs",
+          "steps": [
+            "Open a conversation with an empty composer",
+            "Open Documentation",
+            "Type some letters"
+          ],
+          "expected": "Nothing lands in the hidden composer's draft.",
+          "needs": [],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        },
+        {
+          "id": "collapse-docs-sidebar",
+          "name": "Hide the page list",
+          "steps": [
+            "Open Documentation",
+            "In Documentation, click the sidebar button (or Ctrl-Cmd-S)",
+            "Press Ctrl-Cmd-S again"
+          ],
+          "expected": "The page list collapses like the thread list and comes back the same way.",
+          "needs": [],
+          "existing_tests_v070": [],
+          "coverage_v070": "none",
+          "automatable": "yes"
+        }
+      ]
+    }
+  ]
+}

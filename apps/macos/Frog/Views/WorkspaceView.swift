@@ -103,6 +103,26 @@ struct WorkspaceView: View {
 
     private var focused: Pane { panes.focused }
 
+    /// What this window offers the menu bar.
+    private var frogWindow: FrogWindow {
+        FrogWindow(
+            workspace: workspace, state: focused.ui,
+            toggleSessions: toggleSessions, toggleChanges: { toggleChanges(focused) },
+            showTerminal: showTerminal, showPreview: showPreview, toggleInspect: toggleInspect,
+            sessionsShown: sessionsVisible, changesShown: changesVisible(focused),
+            newChat: newSession,
+            split: panes.canSplit ? { split(nil, $0 == .vertical ? .bottom : .right) } : nil,
+            closePane: panes.isSplit ? { panes.close(focused) } : nil,
+            focusPane: panes.isSplit ? { panes.focus(step: $0) } : nil,
+            toggleMaximize: panes.isSplit ? { panes.toggleMaximized(focused) } : nil,
+            maximized: panes.maximizedPane != nil,
+            sidebarOrder: sidebarOrder,
+            openSidebarSession: { openInFocused($0) },
+            showDocs: { showDocs() },
+            showSettings: { showSettings($0) }
+        )
+    }
+
     /// The sidebar's conversations as its top-level rows, in the order its groups show them:
     /// pins, then one group per project folder (newest activity first), then chats — the
     /// started-by children are nested under their parents and don't count. What the
@@ -598,22 +618,14 @@ struct WorkspaceView: View {
                 panes.items.forEach { $0.peekChanges = false }
             }
         }
-        .focusedSceneValue(\.frogWindow, FrogWindow(
-            workspace: workspace, state: focused.ui,
-            toggleSessions: toggleSessions, toggleChanges: { toggleChanges(focused) },
-            showTerminal: showTerminal, showPreview: showPreview, toggleInspect: toggleInspect,
-            sessionsShown: sessionsVisible, changesShown: changesVisible(focused),
-            newChat: newSession,
-            split: panes.canSplit ? { split(nil, $0 == .vertical ? .bottom : .right) } : nil,
-            closePane: panes.isSplit ? { panes.close(focused) } : nil,
-            focusPane: panes.isSplit ? { panes.focus(step: $0) } : nil,
-            toggleMaximize: panes.isSplit ? { panes.toggleMaximized(focused) } : nil,
-            maximized: panes.maximizedPane != nil,
-            sidebarOrder: sidebarOrder,
-            openSidebarSession: { openInFocused($0) },
-            showDocs: { showDocs() },
-            showSettings: { showSettings($0) }
-        ))
+        .focusedSceneValue(\.frogWindow, frogWindow)
+        #if DEBUG
+        // Flow tests: a test host never has a key window, so the menu bar acts on this one
+        // when a test asks (`StagedWindow`). Off otherwise.
+        .onChange(of: StagedWindow.key(frogWindow), initial: true) {
+            if StagedWindow.shared.capturing == ObjectIdentifier(panes) { StagedWindow.shared.window = frogWindow }
+        }
+        #endif
         // ⌘L and friends ask for the composer: that's a way back to the thread.
         .onChange(of: focused.ui.focusComposerRequest) { if inMode { panes.backToApp() } }
         .animation(Motion.quick(reduced: reduceMotion), value: panes.mode)
@@ -819,7 +831,10 @@ struct TitleBarClip: Shape {
 extension WorkspaceView {
     private var windowTitle: String {
         if panes.mode == .docs { return "Documentation" }
-        if panes.mode == .settings { return "Settings" }
+        if panes.mode == .settings {
+            let label = SettingsCatalog.bundled.sections.first { $0.id == panes.settingsSection }?.label
+            return ["Settings", label].compactMap { $0 }.joined(separator: " › ")
+        }
         // The mirror (see `Workspace.currentTitle`), not the conversation: the root body
         // reading the streaming conversation re-evaluated per delta to redraw a title that
         // only changes when the engine names the session.
@@ -837,7 +852,11 @@ extension WorkspaceView {
     /// mirror, not the streaming conversation.
     @ViewBuilder
     private var titleBar: some View {
-        if panes.mode != .threads {
+        if panes.mode == .settings {
+            SettingsCrumbs(section: panes.settingsSection,
+                           machine: panes.settingsSection == "models" ? panes.settingsMachine.flatMap { id in SettingsBindings.devices.list.first { $0.id == id }?.name } : nil,
+                           backToSection: { panes.settingsMachine = nil })
+        } else if panes.mode != .threads {
             Text(windowTitle).font(.frog(size: 13, weight: .semibold)).lineLimit(1).fixedSize()
         } else {
             threadTitleBar
@@ -860,6 +879,7 @@ extension WorkspaceView {
         .menuIndicator(.hidden)
         .fixedSize()
         .help("Rename, archive or delete this conversation")
+        .accessibilityIdentifier("title.menu")
     }
 
     @ViewBuilder
