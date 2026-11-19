@@ -718,8 +718,12 @@ struct SessionList: View {
             folded: folded, foldOpen: foldOpen, counts: counts, collapsed: collapsed, onFold: onFold,
             onCollapse: counts.total > 0 ? { toggleChildren(session.id) } : nil,
             speed: library.live[session.id] == .running
-                ? library.conversation(session.id)?.pulse.rate(at: SidebarClock.shared.now) : nil
-        ) { open(session) } menu: { rowMenu(session) }
+                ? library.conversation(session.id)?.pulse.rate(at: SidebarClock.shared.now) : nil,
+            card: .init(session: session, library: library) { open(session) }
+        ) {
+            ThreadCardController.shared.close()
+            open(session)
+        } menu: { rowMenu(session) }
     }
 
     @ViewBuilder
@@ -1354,6 +1358,9 @@ struct CompactSessionRow<Menu: View>: View {
     var onCollapse: (() -> Void)? = nil
     /// Live decode speed while running, when its conversation is loaded (tokens per second).
     var speed: Int? = nil
+    /// The thread card resting on the row opens; nil for none (tests, previews).
+    var card: ThreadCardController.Request? = nil
+    @State private var anchor = AnchorBox()
     let open: () -> Void
     @ViewBuilder let menu: () -> Menu
     /// Seeded by tests: a synthetic hover drives the row's own 450 ms title-expansion task.
@@ -1415,8 +1422,17 @@ struct CompactSessionRow<Menu: View>: View {
         .contentShape(.rect)
         .contextMenu { DeferredMenu(make: menu) }
         .paneDraggable(.session(session), title: session.displayTitle)
-        .help(helpText)
-        .onHover { hoveringLive = $0 }
+        .help(card == nil ? helpText : "")
+        .background(ThreadAnchorView(box: anchor))
+        .onHover { inside in
+            hoveringLive = inside
+            guard let card else { return }
+            if inside {
+                ThreadCardController.shared.enterRow(card, anchor: anchor)
+            } else {
+                ThreadCardController.shared.leaveRow(session.id)
+            }
+        }
         // A pass of the pointer doesn't reflow the list; resting on a row does.
         .task(id: hovered) {
             guard hovered else { expandTitle = false; return }
