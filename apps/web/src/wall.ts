@@ -141,7 +141,7 @@ export function stoppedTurn(t: Thread): number | null {
 
 /** A top-up left for Stripe from the wall: Checkout comes back to the bare origin, so this is
  *  how the page knows which session to open and resume. */
-export interface PendingTopUp { session: string; turn: number; cents: number; before: number; at: number }
+export interface PendingTopUp { session: string; turn: number; cents: number; before: number; at: number; /** A plan, not credit: reopen the session, no polling for credit. */ plan?: true }
 
 const PENDING_KEY = 'frog.wallTopUp'
 /** A Checkout older than this isn't the one this page is coming back from. */

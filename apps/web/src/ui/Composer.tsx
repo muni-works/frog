@@ -4,6 +4,8 @@ import type { Image, Mode } from '../cloud/protocol'
 import { inOutPrice, modelName, placeColor, placeOf, spec, type Model } from '../models'
 import { localRows, type Machine } from '../machines'
 import { barTone, canCompact, ringLabel, ringTone } from '../usage'
+import type { Meter } from '../plans'
+import { isNarrow } from './phone'
 import { parseRepo } from '../store'
 import { moreLine, pickRepos, rankRepos } from '../repoRank'
 import type { Provider } from '../auth'
@@ -31,6 +33,9 @@ export interface ComposerProps {
   context?: { used: number | null; window: number } | null
   /** The account's plan usage and credit, shown in the ring's popover. */
   usage?: { sub: { name: string; windows: { kind: '5h' | 'weekly'; used: number; limit: number; resets_at: string }[]; over: boolean } | null; credit: string; onBilling: () => void; onOpen?: () => void }
+  /** The meter in words ("21¢ left", "12% of week"), in place of the ring's look, and what opens
+   *  the plan sheet. On a phone a tap is the plan sheet; wider, the popover, with Plans in it. */
+  meter?: { m: Meter; onPlans: () => void }
   /** Summarize the conversation so far to free up context (the ring's button, or /compact). */
   onCompact?: (focus?: string) => void
   compacting?: boolean
@@ -716,7 +721,7 @@ export function Composer(p: ComposerProps) {
           )}
           <span className="cz-sp" />
           {working && !p.waiting && <span className="cz-meta" aria-live="off">{timer}{p.speed && p.speed > 0 ? `, ${Math.round(p.speed)} tok/s` : ''}</span>}
-          {p.context?.window || p.usage?.sub ? <ContextRing used={p.context?.used ?? null} window={p.context?.window ?? 0} usage={p.usage} onCompact={p.onCompact && !working ? () => p.onCompact!() : undefined} compacting={p.compacting} /> : null}
+          {p.meter || p.context?.window || p.usage?.sub ? <ContextRing used={p.context?.used ?? null} window={p.context?.window ?? 0} usage={p.usage} meter={p.meter} onCompact={p.onCompact && !working ? () => p.onCompact!() : undefined} compacting={p.compacting} /> : null}
           {p.onMode && (
             <button type="button" className={`cz-chip${menu === 'mode' ? ' open' : ''}`} aria-expanded={menu === 'mode'} aria-label={`When Frog asks: ${MODE_NAME[tray.mode]}`}
               title="When Frog asks before acting (⌘.)" onClick={(e) => { anchor(e, 280); toggle('mode') }}>
@@ -753,7 +758,7 @@ export function Composer(p: ComposerProps) {
 }
 
 /** How full the context is, as a ring (the Mac's ContextRing); click it for the numbers. */
-function ContextRing({ used, window, usage, onCompact, compacting }: { used: number | null; window: number; usage?: ComposerProps['usage']; onCompact?: () => void; compacting?: boolean }) {
+function ContextRing({ used, window, usage, meter, onCompact, compacting }: { used: number | null; window: number; usage?: ComposerProps['usage']; meter?: ComposerProps['meter']; onCompact?: () => void; compacting?: boolean }) {
   const [open, setOpen] = useState(false)
   const root = useRef<HTMLSpanElement>(null)
   const button = useRef<HTMLButtonElement>(null)
@@ -774,6 +779,15 @@ function ContextRing({ used, window, usage, onCompact, compacting }: { used: num
   const r = 6.5, c = 2 * Math.PI * r
   return (
     <span className="ctx" ref={root}>
+      {meter ? (
+        // The meter: a small bar and its words, a button with a real name. A phone (or nothing
+        // else to show) goes straight to the plan sheet.
+        <button type="button" ref={button} className={`cz-meter ${meter.m.tone}`} aria-haspopup="dialog" aria-expanded={open} aria-label={meter.m.aria} title={meter.m.aria}
+          onClick={() => { usage?.onOpen?.(); if (isNarrow() || (!usage && window === 0)) { setOpen(false); meter.onPlans() } else setOpen(!open) }}>
+          <span className="cz-meter-bar" aria-hidden="true"><b style={{ width: `${Math.round(meter.m.fill * 100)}%` }} /></span>
+          <span className="cz-meter-label">{meter.m.label}</span>
+        </button>
+      ) : (
       <button type="button" ref={button} className="ctx-ring" aria-haspopup="dialog" aria-expanded={open} onClick={() => { if (!open) usage?.onOpen?.(); setOpen(!open) }} aria-label={ringLabel(sub ? plan : null, window > 0 ? ctx : null)} title={ringLabel(sub ? plan : null, window > 0 ? ctx : null)}>
         <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
           <circle cx="9" cy="9" r={r} fill="none" stroke="var(--line-strong)" strokeWidth="2.5" />
@@ -781,8 +795,10 @@ function ContextRing({ used, window, usage, onCompact, compacting }: { used: num
             strokeDasharray={`${f * c} ${c}`} transform="rotate(-90 9 9)" style={{ transition: 'stroke-dasharray .4s' }} />
         </svg>
       </button>
+      )}
       {open && (
         <div className="f-card ctx-card" role="dialog" aria-label="Usage and context" {...trap}>
+          {meter && !sub && <div className="ctx-h"><span className="det">{meter.m.label}</span><button type="button" className="ctx-link" onClick={() => { setOpen(false); meter.onPlans() }}>Plans →</button></div>}
           {sub && (<>
             <div className="ctx-h"><span className="det">Plan usage, {sub.name}</span>{usage && <button type="button" className="ctx-link" onClick={() => { setOpen(false); usage.onBilling() }}>See all →</button>}</div>
             {sub.windows.filter((w) => w.limit > 0).map((w) => {

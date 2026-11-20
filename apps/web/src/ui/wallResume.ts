@@ -42,7 +42,8 @@ export function useWallResume({ session, thread, send, fetchMe, onAccount, openS
     if (!p) return
     if (storage) clearPending(storage)
     openSession(p.session)
-    if (!back.paid || !fetchMe) return
+    // A plan bought from the wall: back to the session, which resumes by hand once the plan shows.
+    if (p.plan || !back.paid || !fetchMe) return
     setWaiting('Payment received. Waiting for the credit to arrive…')
     let n = 0
     let stop = false
@@ -70,10 +71,10 @@ export function useWallResume({ session, thread, send, fetchMe, onAccount, openS
 
   return {
     /** The wall's top-up is leaving for Checkout: note what to come back to. */
-    leaving(dollars: number, before: number) {
+    leaving(dollars: number, before: number, plan = false) {
       const turn = thread ? stoppedTurn(thread) : null
       if (!session || turn == null || !storage) return
-      const p: PendingTopUp = { session, turn, cents: dollars * 100, before, at: Date.now() }
+      const p: PendingTopUp = { session, turn, cents: dollars * 100, before, at: Date.now(), ...(plan ? { plan: true } : {}) }
       savePending(storage, p)
     },
     /** Checkout didn't open: forget the note. */
@@ -85,9 +86,9 @@ export function useWallResume({ session, thread, send, fetchMe, onAccount, openS
     },
     /** What the wall says while the credit is on its way, and a way to resume by hand once it's in. */
     waiting,
-    resumeByHand: (credit: number) => {
+    resumeByHand: (credit: number, planOn = false) => {
       const turn = thread ? stoppedTurn(thread) : null
-      return session && turn != null && credit > 0 ? () => resume(session, turn) : undefined
+      return session && turn != null && (credit > 0 || planOn) ? () => resume(session, turn) : undefined
     },
   }
 }

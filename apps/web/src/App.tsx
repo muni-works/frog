@@ -42,9 +42,18 @@ import { docsPath, docsSlugOf } from './docs/docs'
 import { accountTag, connectCard, finishedTurn, loadMemo, saveMemo, type CardMemo } from './connectCard'
 import { ConnectCard } from './ui/ConnectCard'
 import { CreditWall } from './ui/CreditWall'
-import { CreditWarning, useLastAdded } from './ui/CreditWarning'
+import { CreditWarning, useCreditHistory } from './ui/CreditWarning'
 import { useWallResume } from './ui/wallResume'
-import { averageTurn } from './wall'
+import { averageTurn, sessionSpend } from './wall'
+import { firstResultWords, isPayPath, loadPlanCard, meter as meterOf, moreTasks, onFreeCredit, planCard, savePlanCard, FREE_CENTS, FREE_GITHUB_CENTS, type PlanCardMemo } from './plans'
+import { PlanSheet } from './ui/PlanSheet'
+import { FirstResultCard } from './ui/FirstResultCard'
+import { sheetOpen } from './ui/Sheet'
+import { isNarrow, useNarrow, useVisualViewport } from './ui/phone'
+import { SessionsSheet } from './ui/SessionsSheet'
+
+/** Signed out from the plan sheet (or /pay): the sheet opens again once signed in. */
+const PAY_AFTER_SIGN_IN = 'frog.payAfterSignIn'
 
 /** `pick`: open the composer's repo menu (back from sign-in, or ⌘K Connect a repo). */
 /** Placeholder session ids, shown while POST /v1/sessions is in flight. */
@@ -145,11 +154,14 @@ export default function App() {
     // Old /customize links, bare /customize and old names (/settings/mcp) are replaced the same way.
     const renamed = (czUrl !== null && !customizePathIsCanonical(location.pathname))
       || (mode === 'settings' && !!czUrl?.page && customizePath(czUrl) !== path)
-    if (asked || stale || renamed || docsSlugOf(location.pathname) === '' || settingsSectionOf(location.pathname) === '') history.replaceState(state, '', path + (q.size ? `?${q}` : ''))
+    // /pay is the plan sheet over the page: the sheet is open, so the URL is the page's.
+    if (asked || stale || renamed || isPayPath(location.pathname) || docsSlugOf(location.pathname) === '' || settingsSectionOf(location.pathname) === '') history.replaceState(state, '', path + (q.size ? `?${q}` : ''))
     else history.pushState(state, '', path)
   }, [view, mode, docPage, section, customizePath(czAt)])
   useEffect(() => {
     const back = () => {
+      // A sheet closing (its own history entry, ui/Sheet.tsx), not a page change.
+      if (sheetOpen()) return
       const slug = docsSlugOf(location.pathname)
       if (slug !== null) { setMode('docs'); setDocPage(slug || FIRST_DOC); return }
       const c = customizeAtOf(location.pathname)
@@ -195,8 +207,14 @@ export default function App() {
   // Escape is Back to app, after any menu or palette open over the page has closed.
   useLayer(mode !== 'threads', backToApp)
   const [palette, setPalette] = useState(false)
+  // The plan sheet (frame 5): the meter, See plans, Get a plan, and /pay open it.
+  const [plans, setPlans] = useState(() => typeof location !== 'undefined' && isPayPath(location.pathname))
+  // Phones: the sessions sheet instead of the sidebar drawer, Settings as a list (ui/phone.ts).
+  const narrow = useNarrow()
+  const [sessionsSheet, setSessionsSheet] = useState(false)
   // Open or closed, kept per browser like its tab and width.
-  const [inspector, setInspectorState] = useState(() => { try { return localStorage.getItem('frog.inspector') === '1' } catch { return false } })
+  // A phone opens it full screen, from the sessions sheet only: never by itself on load.
+  const [inspector, setInspectorState] = useState(() => { try { return !isNarrow() && localStorage.getItem('frog.inspector') === '1' } catch { return false } })
   const setInspector = (v: boolean) => { setInspectorState(v); try { localStorage.setItem('frog.inspector', v ? '1' : '0') } catch { /* private mode */ } }
   const [toast, setToast] = useState<string | null>(null)
   const [draft, setDraft] = useState<string | undefined>()
@@ -261,6 +279,8 @@ export default function App() {
   // Pinned to the end while a reply grows; your own scrolling lets go, a send pins it again
   // (ui/pin.ts).
   const pin = useRef(new Pin()).current
+  // Phones: the window follows the on-screen keyboard, and a pinned transcript stays at its end.
+  useVisualViewport(narrow, () => { const el = threadScroll.current; if (el && pin.pinned) el.scrollTop = el.scrollHeight })
   // Where the scroller was when it last unmounted: the shell remounts it when a column opens (the
   // inspector, from an edit's Show in Changes), and the same session should keep its place.
   const lastScroll = useRef<{ id?: string; top: number } | null>(null)
@@ -352,7 +372,7 @@ export default function App() {
     const last = seenAttention.current
     const n = preview?.attention ?? 0
     seenAttention.current = { hub: preview, n }
-    if (preview && last.hub === preview && n !== last.n && !inspector) { setInspectorTab('preview'); setInspector(true) }
+    if (preview && last.hub === preview && n !== last.n && !inspector && !isNarrow()) { setInspectorTab('preview'); setInspector(true) }
   }, [preview, preview?.attention]) // eslint-disable-line react-hooks/exhaustive-deps
   // Plan usage and credit, near-live: after each turn (billing lands a moment later, through
   // the usage queue), every 20s while the tab is visible, and when the ring is opened.
@@ -427,7 +447,8 @@ export default function App() {
       <svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="16" rx="3" /><path d="M9 4v16" /></svg>
     </button>
   )
-  const Burger = () => (
+  // On a phone the drawer is gone (the sessions sheet and Settings' list replace it); Documentation keeps it for its page list.
+  const Burger = () => narrow && mode !== 'docs' ? null : (
     <button type="button" className="burger" aria-label="Sessions" aria-expanded={drawer} onClick={() => setDrawer(!drawer)}>
       <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
     </button>
@@ -453,7 +474,26 @@ export default function App() {
   // When the account was last read, so the wall can tell a fresh balance from one before the stop.
   const [accountAt, setAccountAt] = useState(0)
   useEffect(() => { if (account) setAccountAt(Date.now()) }, [account])
-  const lastAdded = useLastAdded(DEV_KEY ? undefined : key ?? undefined, account)
+  const { history: creditHistory, lastAdded } = useCreditHistory(DEV_KEY ? undefined : key ?? undefined, account)
+  // The meter's words (plans.ts): signed out the free credit, else what's left or the week used.
+  const grant = account?.handle ? FREE_GITHUB_CENTS : FREE_CENTS
+  const meterNow = account ? meterOf({ kind: 'account', account, addedCents: lastAdded ?? grant }) : !key ? meterOf({ kind: 'signedOut' }) : null
+  const meterProp = meterNow ? { m: meterNow, onPlans: () => setPlans(true) } : undefined
+  const free = onFreeCredit(account, creditHistory)
+  // After the first result, once (frame 6; plans.ts planCard): on the free credit, what the task
+  // cost and what Pro covers. It goes first; "Try it on your own code" waits for it.
+  const spend = current && ct ? sessionSpend(ct, models) : null
+  const turnDone = !!current && !!ct && !current.id.startsWith(PENDING) && finishedTurn(ct)
+  const [planTick, setPlanTick] = useState(0)
+  const planMemo = useMemo(() => (tag ? loadPlanCard(globalThis.localStorage, tag) : null), [tag, planTick]) // eslint-disable-line react-hooks/exhaustive-deps
+  const firstCard = current && ct && tag && !DEV_KEY
+    ? planCard(planMemo, { free, session: current.id, finished: turnDone, running: ct.running, cost: spend?.dollars ?? null })
+    : { show: false, claim: false }
+  const firstWords = firstCard.show ? firstResultWords(spend?.dollars ?? null, lastAdded ?? grant) : null
+  const rememberPlan = useCallback((m: PlanCardMemo) => { if (!tag) return; savePlanCard(globalThis.localStorage, tag, m); setPlanTick((n) => n + 1) }, [tag])
+  useEffect(() => { if (firstCard.claim && current) rememberPlan({ session: current.id }) }, [firstCard.claim, current?.id, rememberPlan]) // eslint-disable-line react-hooks/exhaustive-deps
+  // About how many more tasks like this one what's left buys (the plan sheet's lead).
+  const more = account ? moreTasks(account.credit_cents, spend?.dollars ?? null, turnDone) : null
   // Pay and resume: a code resumes at once; Stripe comes back to the bare origin, and this reopens
   // the session and resumes once the credit is in (ui/wallResume.ts).
   const wall = useWallResume({
@@ -468,6 +508,8 @@ export default function App() {
     finishSignIn().then(async (done) => {
       if (done) {
         setKey(done.key); setAccount(done.account)
+        // Signed in from the plan sheet: back to it.
+        try { if (sessionStorage.getItem(PAY_AFTER_SIGN_IN)) { sessionStorage.removeItem(PAY_AFTER_SIGN_IN); setPlans(true) } } catch { /* private mode */ }
         // Back from connecting GitHub: the repo menu again, with what was typed.
         if (done.pick) { setDraft(done.after); setView({ kind: 'new', pick: true }); return }
         // The message typed before signing in starts its conversation as soon as we're in.
@@ -713,7 +755,33 @@ export default function App() {
   const clean = !!done && done.sig === sig
   const adds = clean ? 0 : ct?.changes.reduce((n, c) => n + c.added, 0) ?? 0
   const dels = clean ? 0 : ct?.changes.reduce((n, c) => n + c.removed, 0) ?? 0
+  /** The phone's header (frame 3): the title as a button that opens the sessions sheet, and New
+   *  session (signed out, Sign in). The desktop's capsule, rail and toggles aren't drawn. */
+  const phoneTop = (t: string) => (
+    <div className="titlebar phone-top">
+      {current && renaming === current.id ? (
+        <input className="f-field title-edit" autoFocus defaultValue={title(current)} aria-label="Session name"
+          onBlur={(e) => rename(current, e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') rename(current, (e.target as HTMLInputElement).value); if (e.key === 'Escape') setRenaming(null) }} />
+      ) : (
+        <button type="button" className="phone-title" aria-haspopup="dialog" aria-expanded={sessionsSheet} aria-label={`${t}: sessions and account`} onClick={() => setSessionsSheet(true)}>
+          <Mark size={22} /><b className="title-text">{t}</b>
+          <svg aria-hidden="true" className="title-chev" width="10" height="6" viewBox="3.7 7.7 16.6 9.6" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><path d="M5 9l7 7 7-7" /></svg>
+        </button>
+      )}
+      <span className="phone-sp" />
+      {key ? (
+        <button type="button" className="phone-ib" aria-label="New session" onClick={() => go({ kind: 'new' })}>
+          <svg aria-hidden="true" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M10 4H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-4M14.5 3.5l2 2L10 12H8v-2z" /></svg>
+        </button>
+      ) : (
+        <button type="button" className="f-btn f-btn--prominent phone-signin" onClick={() => leave(signedOutDraft.current.trim() || null, 'github')}>Sign in</button>
+      )}
+    </div>
+  )
   const paused = ct ? outOfCredits(ct) : false
+  // A plan inside its allowance pays for turns without credit (the wall's Resume).
+  const planOn = !!account?.subscription && !account.subscription.over
   const cs = current ? conn[current.id] : undefined
 
   return (
@@ -765,11 +833,11 @@ export default function App() {
       // Signed out: the landing, in the shell. The composer's Sign in keeps what was typed and
       // sends it after the round trip.
       <main className="main home">
-        {collapsed && <div className="side-float">{sideToggle(false)}</div>}<div className="phone-bar floating"><Burger /><b>Frog</b></div>
+        {narrow ? phoneTop('Frog') : <>{collapsed && <div className="side-float">{sideToggle(false)}</div>}<div className="phone-bar floating"><Burger /><b>Frog</b></div></>}
         {authError && <div role="status" className="banner warn">Sign-in didn't finish ({authError}). Try again.</div>}
         <Pond /><div className="home-page"><HomeHero below={<WhatIsFrog />}>
           <div className="home-composer">
-            <Composer onSend={() => {}} onSignIn={(provider, text) => leave(text || null, provider)} autoFocus suggestion={SCRATCH_SUGGESTIONS} onText={noteSignedOutDraft}
+            <Composer onSend={() => {}} meter={meterProp} onSignIn={(provider, text) => leave(text || null, provider)} autoFocus suggestion={SCRATCH_SUGGESTIONS} onText={noteSignedOutDraft}
               model={chosenModel} models={models} machines={machines} onModel={setNewModel} mode={newMode} onMode={setNewMode} />
             {leaving && <div className="det" style={{ textAlign: 'center' }}>Opening {leaving === 'google' ? 'Google' : 'GitHub'}… your message is saved.</div>}
           </div>
@@ -781,7 +849,7 @@ export default function App() {
       </main>
       ) :
       <main className={`main${railTurns ? ' has-rail' : ''}`}>
-        {current ? (<div className="titlebar">
+        {current && narrow ? phoneTop(title(current)) : current ? (<div className="titlebar">
           <Burger />
           {collapsed && sideToggle(false)}
           {/* The header (docs/design/chrome/spec.md, 3): the whole title is the session menu's
@@ -809,8 +877,8 @@ export default function App() {
           </div>
           <span style={{ flex: 1 }} />
           {current && !opening[current.id] && <span style={{ fontSize: 12, color: cs?.state === 'live' ? 'var(--frog)' : 'var(--muted)' }}>{cs?.state === 'live' ? '' : cs?.state === 'connecting' ? (cs.attempt ? 'Reconnecting…' : 'Connecting…') : cs?.state === 'refused' ? 'Update Frog to continue' : cs?.state === 'closed' ? (cs.code === 4004 ? 'Session deleted' : 'Disconnected') : ''}</span>}
-          {current && <WindowControls palette={() => setPalette((p) => !p)} paletteOpen={palette} inspector={() => setInspector(!inspector)} inspectorOpen={inspector} />}
-        </div>) : <>{collapsed && <div className="side-float">{sideToggle(false)}</div>}<div className="phone-bar floating"><Burger /><b>Frog</b></div></>}
+          {current && !narrow && <WindowControls palette={() => setPalette((p) => !p)} paletteOpen={palette} inspector={() => setInspector(!inspector)} inspectorOpen={inspector} />}
+        </div>) : narrow ? phoneTop('New session') : <>{collapsed && <div className="side-float">{sideToggle(false)}</div>}<div className="phone-bar floating"><Burger /><b>Frog</b></div></>}
 
         {railTurns && <TurnRail turns={railTurns} visible={visibleTurns} running={!!ct?.running} room={Math.max(46, winHeight - 220)} onJump={jumpToTurn} />}
         {/* A link to a session this account doesn't have (deleted, or never was) says so. */}
@@ -854,7 +922,10 @@ export default function App() {
             {/* A sandbox that couldn't start says so here, by the composer, not above the conversation
                 (a new one says so on its status row, under its first message). */}
             {current.state === 'error' && !op && <div role="status" className="banner warn"><span style={{ flex: 1 }}>{current.error ? plainError(current.error) : "The sandbox couldn't start."}</span><button type="button" className="f-btn f-btn--bordered f-btn--small" onClick={() => remove(current)}>Delete</button></div>}
-            {card.show && !paused && key && (
+            {firstCard.show && firstWords && !paused && (
+              <FirstResultCard took={firstWords.took} pro={firstWords.pro} onPlans={() => { rememberPlan({ done: true }); setPlans(true) }} onLater={() => rememberPlan({ done: true })} />
+            )}
+            {card.show && !firstCard.show && !paused && key && (
               <ConnectCard onConnect={() => leave(null, 'github', key, true)} onDismiss={() => remember({ done: true })} />
             )}
             {paused && (
@@ -862,7 +933,8 @@ export default function App() {
                 onTopUp={!DEV_KEY ? (d) => { wall.leaving(d, account?.credit_cents ?? 0); return topUp(key, d).catch((e) => { wall.stayed(); throw e }) } : undefined}
                 onRedeemed={(r) => { setAccount((a) => (a ? { ...a, credit_cents: r.credit_cents } : a)); refreshAccount(); wall.redeemed(r) }}
                 waiting={wall.waiting ? { text: wall.waiting, onResume: wall.resumeByHand(account?.credit_cents ?? 0) } : null}
-                credit={account?.credit_cents} creditAt={accountAt} onResume={wall.resumeByHand(account?.credit_cents ?? 0)} />
+                credit={account?.credit_cents} creditAt={accountAt} onResume={wall.resumeByHand(account?.credit_cents ?? 0, planOn)}
+                onPlans={() => setPlans(true)} planOn={planOn} />
             )}
           </div></div>
           <div className="dock">
@@ -875,7 +947,7 @@ export default function App() {
                 ))}
               </div>
             )}
-            {!paused && <Composer key={slots.current[current.id] ?? current.id} session autoFocus usage={account ? { sub: account.subscription ?? null, credit: creditLine(account).replace(/ credit$/, ''), onBilling: () => openSettings('billing'), onOpen: refreshAccount } : undefined} context={ct.context} compacting={!!compacting[current.id]}
+            {!paused && <Composer key={slots.current[current.id] ?? current.id} session autoFocus meter={meterProp} usage={account ? { sub: account.subscription ?? null, credit: creditLine(account).replace(/ credit$/, ''), onBilling: () => openSettings('billing'), onOpen: refreshAccount } : undefined} context={ct.context} compacting={!!compacting[current.id]}
               onCompact={(focus) => { setCompacting((c) => ({ ...c, [current.id]: (ct.marks ?? []).length + 1 })); cloud?.send(current.id, { op: 'compact', ...(focus ? { focus } : {}) }) }} chips={ct.next && !ct.running ? [{ text: ct.next.text, send: true, act: ct.next.act }] : undefined} state={ct.running || (opening[current.id] && !failedStart) ? 'working' : paused ? 'paused' : 'idle'} startedAt={ct.startedAt} speed={ct.speed} waiting={!!(ct.ask || ct.question || ct.elicitation)}
               repo={current.repo} branch={current.branch} pr={current.pr} adds={adds} dels={dels}
               model={idOf(ct.model)} models={models} machines={machines} onManage={() => openSettings('models')} onModel={(id) => cloud?.send(current.id, { op: 'set_model', spec: spec(id) })}
@@ -886,7 +958,7 @@ export default function App() {
               onSend={(text, images, typed) => { pin.send(); return failedStart ? retry(current.id, text, images, typed) : (ct.running || opening[current.id]
                 ? setQueue((all) => ({ ...all, [current.id]: [...(all[current.id] ?? []), { text, images, ...(typed ? { typed } : {}) }] }))
                 : send(current.id, text, images, typed)) }} onStop={() => cloud?.send(current.id, { op: 'interrupt' })} onGit={() => push(current)} />}
-            {!paused && <CreditWarning account={account} addedCents={lastAdded} avg={avgTurn} onAdd={() => openSettings('billing')} />}
+            {!paused && <CreditWarning account={account} addedCents={lastAdded} avg={avgTurn} onAdd={() => openSettings('billing')} onPlans={() => setPlans(true)} />}
           </div>
         </>)}
 
@@ -894,12 +966,12 @@ export default function App() {
           <div className="main home">
             <Pond /><div className="home-page"><HomeHero>
             <div className="home-composer">
-              <Composer usage={account ? { sub: account.subscription ?? null, credit: creditLine(account).replace(/ credit$/, ''), onBilling: () => openSettings('billing'), onOpen: refreshAccount } : undefined} repo={view.repo} draft={draft} autoFocus pickRepo={view.pick} suggestion={view.repo ? REPO_SUGGESTIONS : SCRATCH_SUGGESTIONS}
+              <Composer meter={meterProp} usage={account ? { sub: account.subscription ?? null, credit: creditLine(account).replace(/ credit$/, ''), onBilling: () => openSettings('billing'), onOpen: refreshAccount } : undefined} repo={view.repo} draft={draft} autoFocus pickRepo={view.pick} suggestion={view.repo ? REPO_SUGGESTIONS : SCRATCH_SUGGESTIONS}
                 recent={usedRepos(sessions)} repos={repoList.repos.map((r) => r.name)} pushed={Object.fromEntries(repoList.repos.map((r) => [r.name, r.pushed_at]))} install={repoList.install} onRepo={(repo) => setView({ kind: 'new', repo })} base={view.base} onBase={(base) => setView((v) => (v.kind === 'new' ? { ...v, base } : v))}
                 onConnectGithub={key && account && !account.handle && !DEV_KEY ? (text) => leave(text || null, 'github', key) : undefined}
                 model={chosenModel} models={models} machines={machines} onManage={() => openSettings('models')} onModel={setNewModel} mode={newMode} onMode={setNewMode}
                 onSend={(text, images, typed) => { setDraft(undefined); start(text, view.repo, images, view.base, undefined, undefined, typed) }} />
-              <CreditWarning account={account} addedCents={lastAdded} avg={avgTurn} onAdd={() => openSettings('billing')} />
+              <CreditWarning account={account} addedCents={lastAdded} avg={avgTurn} onAdd={() => openSettings('billing')} onPlans={() => setPlans(true)} />
             </div>
             </HomeHero></div>
           </div>
@@ -912,6 +984,27 @@ export default function App() {
       after={<>
       {key && palette && <Palette commands={commands} sessions={sessions} onOpen={(id) => go({ kind: 'session', id })} onClose={() => setPalette(false)}
         text={(id) => thread(id).turns.flatMap((u) => [u.input, ...u.entries.filter((e) => e.kind === 'message').map((e) => e.text)]).join('\n')} />}
+      {sessionsSheet && (
+        <SessionsSheet account={account} signedIn={!!key} free={free} sessions={sessions} thread={thread} title={title} current={current?.id ?? null}
+          onClose={() => setSessionsSheet(false)} onOpen={(id) => go({ kind: 'session', id })} onNew={() => (key ? go({ kind: 'new' }) : focusComposer())}
+          onSearch={() => setPalette(true)} onSettings={() => openSettings()} onDocs={() => openDocs()} onPlans={() => setPlans(true)}
+          onSignIn={(provider) => leave(signedOutDraft.current.trim() || null, provider)}
+          onRename={current ? () => setRenaming(current.id) : undefined} onArchive={current ? () => archive(current, !current.archived) : undefined}
+          onDelete={current ? () => remove(current) : undefined} onInspector={current && ct ? () => setInspector(true) : undefined} />
+      )}
+      {plans && (
+        <PlanSheet account={account} loading={!!key && !account && !DEV_KEY} more={more} onClose={() => setPlans(false)}
+          onSubscribe={key && !DEV_KEY ? (plan) => {
+            // From the wall: Checkout comes back to the bare origin, so note the session to return to.
+            if (paused) wall.leaving(0, account?.credit_cents ?? 0, true)
+            return subscribe(key, plan).catch((e) => { if (paused) wall.stayed(); throw e })
+          } : undefined}
+          onCredit={() => { if (paused && mode === 'threads') document.querySelector('.wall')?.scrollIntoView({ block: 'center' }); else openSettings('billing') }}
+          onBilling={() => openSettings('billing')}
+          onSignIn={(provider) => { try { sessionStorage.setItem(PAY_AFTER_SIGN_IN, '1') } catch { /* private mode */ } leave(signedOutDraft.current.trim() || null, provider) }}
+          context={narrow && mode === 'threads' && current && ct?.context?.window ? { used: ct.context.used ?? null, window: ct.context.window, compacting: !!compacting[current.id],
+            onCompact: !ct.running ? () => { setCompacting((c) => ({ ...c, [current.id]: (ct.marks ?? []).length + 1 })); cloud?.send(current.id, { op: 'compact' }) } : undefined } : undefined} />
+      )}
       {toast && <div className="toast" role="status">{toast}</div>}
       </>} />
   )
