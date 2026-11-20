@@ -339,7 +339,9 @@ Durable: it replays with the transcript, and its Undo still works after a restar
     session it hosts (`--serve`, `--serve-ws`): notification replies, Siri, bridged messages
     the phone didn't mark, an app's own prompts, another session's message.
 - Text in a composer's field that the person didn't type stays untyped until they edit it:
-  the model's next-step suggestion taken with Tab, a chip that fills the field, a queued
+  the model's next-step suggestion taken with Tab, a chip that fills the field, a
+  `frog://new` link's message on the Mac (the web's local-model rows hand the draft over; the
+  link never sends it, and it was typed in another app's composer, not this one), a queued
   message taken back with its "x" (keeping the flag it was queued with; the Mac and the
   phone), on the web an earlier turn taken back with Edit (the transcript doesn't record
   whether it was typed, so always untyped until edited), and on the web the last send recalled

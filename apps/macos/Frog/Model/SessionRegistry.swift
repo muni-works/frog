@@ -333,6 +333,9 @@ final class QuitGuard: NSObject, NSApplicationDelegate {
         // that section, in the front window.
         for url in urls {
             if let section = SettingsCatalog.bundled.section(for: url) { SettingsRequest.post(section) }
+            // frog://new?model=&prompt=&repo= (a cold launch, or a second copy's hand-off): a new
+            // session with the message in its composer, never sent (`NewSessionLink`).
+            NewSessionRequest.post(url)
         }
         for url in urls where url.isFileURL && (url.hasDirectoryPath || (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true) {
             FolderOpener.open(url)

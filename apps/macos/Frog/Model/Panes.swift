@@ -384,6 +384,26 @@ final class Panes {
         workspace.conversation?.submit(prompt)
     }
 
+    /// A `frog://new` link: a fresh conversation in the focused pane, in `folder` (nil: a plain
+    /// chat), on the link's model when this Mac has it (else the usual one, with a quiet note),
+    /// and its message in the composer, unsent and untyped until edited (`NewSessionLink`).
+    @discardableResult
+    func open(_ link: NewSessionLink, in folder: URL?,
+              choice: NewSessionLink.ModelChoice? = nil) -> Workspace {
+        backToApp()
+        let pane = focused
+        let workspace = Workspace(folder: folder ?? Frog.chatFolder, fresh: true)
+        setWorkspace(workspace, in: pane)
+        switch choice ?? NewSessionLink.choice(for: link.model) {
+        case .none: break
+        case .use(let spec): workspace.useHere(spec)
+        case .note(let text): workspace.conversation?.notice(text)
+        }
+        if let c = workspace.conversation { link.fill(c) }
+        pane.ui.focusComposer()
+        return workspace
+    }
+
     /// The agent moved this pane's conversation to another folder (`UseFolder`): reopen it there,
     /// so the pane, the sidebar and the git bar follow. The old engine lets go of the session
     /// file first; resuming a session another process holds would start a new one instead.
