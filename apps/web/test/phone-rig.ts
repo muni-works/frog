@@ -36,7 +36,11 @@ export async function rig({ fixture, fresh = false }: { fixture?: string; fresh?
   const vite = await createServer({ root: fileURLToPath(new URL("..", import.meta.url)), logLevel: "error", server: { port, host: "127.0.0.1", strictPort: true } });
   await vite.listen();
   const origin = `http://127.0.0.1:${port}`;
-  const call = (key: string, path: string, body?: unknown) => fetch(api + path, { method: body ? "POST" : "GET", headers: { authorization: `Bearer ${key}`, "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined }).then((r) => r.json());
+  const once = (key: string, path: string, body?: unknown) => fetch(api + path, { method: body ? "POST" : "GET", headers: { authorization: `Bearer ${key}`, "content-type": "application/json", connection: "close" }, body: body ? JSON.stringify(body) : undefined }).then((r) => r.json());
+  // On GitHub's runners a call now and then died in a few ms as "fetch failed": a kept-alive socket
+  // the mock had already closed. No keep-alive, and one more try on a connection error only (a
+  // TypeError from fetch); an answer the mock did give, right or wrong, is never retried.
+  const call = (key: string, path: string, body?: unknown) => once(key, path, body).catch((e) => { if (e instanceof TypeError) return once(key, path, body); throw e; });
   /** Plays these turns in a session (each a 6¢ mock turn, or a stop on credit). */
   const play = async (key: string, id: string, turns: string[], url = `ws://127.0.0.1:${mock.port}/v1/sessions/${id}/ws`) => {
     if (!turns.length) return;

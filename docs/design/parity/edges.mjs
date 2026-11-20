@@ -80,7 +80,12 @@ export function measureEdges() {
       const kind = el.dataset.kind === "fold" ? "fold" : el.dataset.kind === "thought" ? "thought" : `line:${el.dataset.kind ?? "?"}`;
       word(kind, "words", el.querySelector(".line-plate .line"), ["text"]);
       box(kind, "mark", el.querySelector(".line-plate .line-mark"), ["hung"], " ");
-      word(kind, "result", el.querySelector(".line-plate .line-result"), ["right"]);
+      // Without hover (touch) a row's actions are always drawn, in the row after its result
+      // (apps/web/src/phone.css), so they, not the result, are what reaches the right edge.
+      const acts = el.querySelector(".line-plate > .line-acts");
+      const drawn = !!acts && getComputedStyle(acts).position === "static" && acts.getBoundingClientRect().width > 0;
+      word(kind, "result", el.querySelector(".line-plate .line-result"), drawn ? [] : ["right"]);
+      if (drawn) box(kind, "actions (no hover)", acts, ["right"], " ");
       const open = el.querySelector(":scope > .line-open");
       if (open) {
         word(kind, "opened: failing tests", open.querySelector(".line-failing"), ["text"]);
