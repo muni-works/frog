@@ -7283,6 +7283,13 @@
         {
           "description": "The user pressed a button in a `Present` actions block. Runs a turn like [`Op::Submit`]\nwith `send` (or `label` when `send` is empty) as the message.",
           "properties": {
+            "client": {
+              "description": "Which attached app the button was pressed in, as on [`Op::Submit`].",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "label": {
               "type": "string"
             },

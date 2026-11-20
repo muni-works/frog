@@ -596,6 +596,11 @@ struct Shared {
     /// engine-owned child (parked the same way): `Op::ClearInbox` voids those, like the
     /// session messages in the work queue, and keeps the user's own follow-ups.
     submitted: Mutex<Vec<(crate::protocol::Part, bool)>>,
+    /// The app the latest typed message parked in `submitted` came from (`Op::Submit`'s
+    /// `client`), set and taken under `submitted`'s lock: a follow-up typed in another app
+    /// joins the running turn as that app's words, so a setting change it asks for is that
+    /// app's.
+    submitted_client: Mutex<Option<String>>,
     /// The mode the client asked for ([`Op::SetMode`]), as a [`Mode`] discriminant. The router
     /// stores it immediately (a safety setting, not conversation state), the permit path picks
     /// it up per decision, and the agent's `handle` reconciles its own copy and logs
@@ -844,6 +849,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
         inbox_void: Default::default(),
         inbox_waiting: Default::default(),
         submitted: Default::default(),
+        submitted_client: Default::default(),
         mode: AtomicU8::new(opts.mode as u8),
         wake_hold: Default::default(),
         journal,
@@ -1128,11 +1134,12 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                             typed,
                         }];
                         all.extend(more);
-                        router
-                            .submitted
-                            .lock()
-                            .unwrap()
-                            .extend(all.into_iter().map(|p| (p, false)));
+                        let typed = all.iter().any(|p| p.typed);
+                        let mut queue = router.submitted.lock().unwrap();
+                        if typed {
+                            *router.submitted_client.lock().unwrap() = client;
+                        }
+                        queue.extend(all.into_iter().map(|p| (p, false)));
                     } else if work_tx
                         .send(Op::Submit {
                             text,
@@ -1456,7 +1463,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
             // turn never delivered (it had no tool call to stop at) go now, as the next turn,
             // before the engine goes idle — the first is its input, the rest as `more`, in
             // order, each with its images. Never lost.
-            let parked = take_submitted_marked(&shared);
+            let (parked, parked_client) = take_submitted_with_client(&shared);
             let late = shared.late_warm.lock().unwrap().take();
             if !parked.is_empty() {
                 // Each keeps its own `typed`: a parent's message parked with them goes along,
@@ -1468,7 +1475,7 @@ fn start(opts: Options, provider: Provider) -> Result<Handle> {
                     text: first.text,
                     images: first.images,
                     more: parts.collect(),
-                    client: None,
+                    client: parked_client,
                 });
                 continue;
             }
@@ -1600,20 +1607,14 @@ fn draining(shared: &Shared) -> bool {
         .is_some_and(|s| !s.acked)
 }
 
-    /// Take everything the user submitted while the current turn has been running, in order.
-    /// The turn loop drains this at a tool-call boundary and delivers the entries as user
-    /// messages of the running turn, so the model reads them before its next step (they no
-    /// longer wait for the whole turn to end). Exactly once: drained is drained.
-    fn take_submitted(shared: &Shared) -> Vec<crate::protocol::Part> {
-        take_submitted_marked(shared)
-            .into_iter()
-            .map(|(part, _)| part)
-            .collect()
-    }
-
-    /// The composer's queue with each part's mark: `true` for a parent's message to its child.
-    fn take_submitted_marked(shared: &Shared) -> Vec<(crate::protocol::Part, bool)> {
-        std::mem::take(&mut *shared.submitted.lock().unwrap())
+    /// The composer's queue with each part's mark (`true` for a parent's message to its
+    /// child), and the app the latest typed one came from. Exactly once: drained is drained.
+    fn take_submitted_with_client(
+        shared: &Shared,
+    ) -> (Vec<(crate::protocol::Part, bool)>, Option<String>) {
+        let mut queue = shared.submitted.lock().unwrap();
+        let client = shared.submitted_client.lock().unwrap().take();
+        (std::mem::take(&mut *queue), client)
     }
 
 /// Like [`drain_pending`], but for the composer's queue: yields first so the router task

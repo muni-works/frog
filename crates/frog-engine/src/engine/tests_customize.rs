@@ -1618,3 +1618,45 @@ async fn a_setting_is_planned_only_for_the_app_typing() {
     assert!(applied(&evs).is_empty(), "{evs:?}");
     r.end().await;
 }
+
+/// A message typed in one app while a turn from another runs joins that turn (or the next):
+/// it keeps its app, so a setting change it asks for is planned for the app it was typed in,
+/// not refused or sent to the app that started the turn.
+#[tokio::test]
+async fn a_message_typed_mid_turn_keeps_its_app() {
+    let remember = call(
+        "r",
+        json!({"do": "remember", "line": "We deploy on Fridays", "words": "remember we deploy on Fridays"}),
+    );
+    let sounds = call(
+        "s",
+        json!({"do": "set", "id": "sounds", "value": true, "words": "turn the sounds on"}),
+    );
+    let mut r = rig_bare(vec![remember, sounds, done()], Mode::Default, |_| {});
+    r.idle().await;
+    declare(&r, "mac", json!({"sounds": false}));
+    declare(&r, "web", json!({"theme": "system"}));
+    r.h.ops
+        .send(from("web", "remember we deploy on Fridays"))
+        .unwrap();
+    let mut evs = Vec::new();
+    loop {
+        let e = r.h.events.recv().await.unwrap().event;
+        if let Event::PermissionRequest { id, proposal: Some(_), .. } = &e {
+            // Typed on the Mac while the web's turn waits on its card.
+            r.h.ops.send(from("mac", "turn the sounds on")).unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            r.h.ops.send(deny(id)).unwrap();
+        }
+        let idle = matches!(e, Event::Idle);
+        evs.push(e);
+        if idle {
+            break;
+        }
+    }
+    assert!(
+        evs.iter().any(|e| matches!(e, Event::SettingChange { client: Some(c), .. } if c == "mac")),
+        "{evs:?}"
+    );
+    r.end().await;
+}

@@ -27,9 +27,13 @@ impl Agent {
     /// [`Event::FollowUpsIngested`] so the transcript shows where each landed. Never
     /// reorders: the queue is FIFO and the drain is one take.
     fn ingest_submitted(&mut self) {
-        let parts = take_submitted_marked(&self.shared);
+        let (parts, client) = take_submitted_with_client(&self.shared);
         if parts.is_empty() {
             return;
+        }
+        // A typed follow-up speaks for the app it was typed in from here on.
+        if parts.iter().any(|(p, from_parent)| p.typed && !from_parent) {
+            self.turn_client = client.unwrap_or_default();
         }
         let texts: Vec<String> = parts.iter().map(|(p, _)| p.text.clone()).collect();
         for (part, from_parent) in parts {

@@ -269,8 +269,12 @@ off if any attached app says off, on if one says on and none off (until a synced
 setting exists). An app that sends no `client` is the engine's one unnamed client, as before;
 an app that crashes without `detach` keeps counting, which can only hold `auto-note` off.
 Two edges: the phone's text through the Mac's bridge goes as the Mac's (so a change it asks
-for lands on the Mac), and follow-ups delivered into a running turn count as the app that
-started the turn. `set_client_caps` is still one value for the engine, the last app's. A `null` value declares an id applied with its
+for lands on the Mac), and a typed follow-up delivered into a running turn (or run as the next
+turn) speaks for the app it was typed in from then on. `detach` is best-effort: the id is per
+launch or page load, not per link, so a `detach` from a link that closed can arrive after the
+same app's next link sent its `settings` and drop them; that app then can't plan a setting
+change and its `auto-note` stops counting until it sends `settings` again (any setting change or
+reconnect does). `set_client_caps` is still one value for the engine, the last app's. A `null` value declares an id applied with its
 value unknown. The Mac sends its seven appearance and notification rows plus `auto-note`; the
 web sends `theme`, `density` and `auto-note`.
 
