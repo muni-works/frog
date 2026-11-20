@@ -5,7 +5,7 @@ import { AuthError, billingPortal, portalErrorMessage } from "../src/auth.ts";
 test("maps each edge code to a sentence to act on", () => {
   assert.equal(
     portalErrorMessage(new AuthError(409, "stale_subscription")),
-    "your plan isn't linked to Stripe — subscribe again below to manage it",
+    "This plan can't be managed from here. Choose a plan below to set it up again.",
   );
   assert.equal(portalErrorMessage(new AuthError(400, "no_subscription")), "no plan to manage");
   assert.equal(portalErrorMessage(new AuthError(400, "no_customer")), "cancel and resubscribe to manage this plan");
@@ -42,7 +42,7 @@ test("billingPortal propagates the AuthError instead of navigating", async () =>
         assert.ok(e instanceof AuthError);
         assert.equal(e.status, 409);
         assert.equal(e.code, "stale_subscription");
-        assert.equal(portalErrorMessage(e), "your plan isn't linked to Stripe — subscribe again below to manage it");
+        assert.equal(portalErrorMessage(e), "This plan can't be managed from here. Choose a plan below to set it up again.");
         return true;
       },
     );

@@ -36,9 +36,11 @@ export interface WallProps {
   onPlans?: () => void
   /** A plan is on and inside its allowance: the turn can resume without credit. */
   planOn?: boolean
+  /** On a plan: the next one up, in words ("Max gives you 5 times the weekly work."). */
+  plansLine?: string
 }
 
-export function CreditWall({ thread, models, avg, apiKey, onTopUp, onRedeemed, waiting, credit, creditAt = 0, onResume, onPlans, planOn }: WallProps) {
+export function CreditWall({ thread, models, avg, apiKey, onTopUp, onRedeemed, waiting, credit, creditAt = 0, onResume, onPlans, planOn, plansLine }: WallProps) {
   const [since] = useState(() => Date.now())
   const [amount, setAmount] = useState(WALL_AMOUNTS[0])
   const [busy, setBusy] = useState(false)
@@ -77,7 +79,7 @@ export function CreditWall({ thread, models, avg, apiKey, onTopUp, onRedeemed, w
         {onPlans && (
           <div className="wall-row">
             <button type="button" className="f-btn f-btn--prominent" onClick={onPlans}>See plans</button>
-            <span className="det wrap">A plan gives you a weekly amount of work at the same prices. Or add credit:</span>
+            <span className="det wrap">{plansLine ?? 'A plan gives you a weekly amount of work at the same prices.'} Or add credit:</span>
           </div>
         )}
         <div className="wall-amts" role="radiogroup" aria-label="Amount">

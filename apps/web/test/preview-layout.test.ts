@@ -20,6 +20,8 @@ type Geom = {
 };
 
 const skip = chrome ? false : "no Chrome on this machine";
+// Each test ends as a named failure within a minute; the file as a whole runs longer (npm test's --test-timeout).
+
 let server: Awaited<ReturnType<typeof serve>> | undefined;
 before(async () => { if (chrome) server = await serve(); });
 after(async () => { await server?.close(); });
@@ -69,11 +71,11 @@ function oneRow(g: Geom) {
 
 for (const w of [360, 420, 560]) {
   for (const state of ["empty", "loaded", "loading", "failed", "phone", "tablet", "desktop", "mention"]) {
-    test(`Preview ${state} at ${w}: one toolbar row, nothing outside it`, { skip }, async () => oneRow(await geom(state, w)));
+    test(`Preview ${state} at ${w}: one toolbar row, nothing outside it`, { skip, timeout: 60_000 }, async () => oneRow(await geom(state, w)));
   }
 }
 
-test("Preview empty: centred in the body like the other tabs, the icon clear of the words", { skip }, async () => {
+test("Preview empty: centred in the body like the other tabs, the icon clear of the words", { skip, timeout: 60_000 }, async () => {
   for (const w of [360, 560]) {
     const g = await geom("empty", w);
     assert.ok(g.empty && g.stage, "an empty state in the stage");
@@ -91,7 +93,7 @@ test("Preview empty: centred in the body like the other tabs, the icon clear of 
   }
 });
 
-test("Preview unavailable: the web says plainly Preview isn't on the web yet, with no dead toolbar", { skip }, async () => {
+test("Preview unavailable: the web says plainly Preview isn't on the web yet, with no dead toolbar", { skip, timeout: 60_000 }, async () => {
   const g = await geom("unavailable", 360);
   assert.equal(g.bar, null, "no toolbar that can't do anything");
   assert.ok(g.empty, "an empty state");
@@ -100,7 +102,7 @@ test("Preview unavailable: the web says plainly Preview isn't on the web yet, wi
   assert.ok(g.empty!.icon && g.empty!.text.every((t) => !overlap(g.empty!.icon!, t.rect)));
 });
 
-test("Preview failed: what failed and a Retry, not a blank body", { skip }, async () => {
+test("Preview failed: what failed and a Retry, not a blank body", { skip, timeout: 60_000 }, async () => {
   const g = await geom("failed", 360);
   assert.ok(g.empty, "a failure state over the page");
   const words = g.empty!.text.map((t) => t.text).join(" | ");
@@ -109,7 +111,7 @@ test("Preview failed: what failed and a Retry, not a blank body", { skip }, asyn
   assert.deepEqual(g.empty!.buttons, ["Retry"]);
 });
 
-test("Preview loading: a thin progress line right under the row, and reload becomes stop", { skip }, async () => {
+test("Preview loading: a thin progress line right under the row, and reload becomes stop", { skip, timeout: 60_000 }, async () => {
   const g = await geom("loading", 360);
   assert.ok(g.progress && g.bar, "a progress line");
   assert.ok(g.progress!.h <= 2.5, "thin");
@@ -118,12 +120,12 @@ test("Preview loading: a thin progress line right under the row, and reload beco
   assert.ok(!g.controls.some((c) => c.label === "Reload"));
 });
 
-test("Preview address: host and path, port kept, no scheme", { skip }, async () => {
+test("Preview address: host and path, port kept, no scheme", { skip, timeout: 60_000 }, async () => {
   const g = await geom("loaded", 420);
   assert.equal(g.address, "localhost:5173");
 });
 
-test("Preview device menu: Fit, Phone, Tablet and Desktop with sizes, inside the inspector", { skip }, async () => {
+test("Preview device menu: Fit, Phone, Tablet and Desktop with sizes, inside the inspector", { skip, timeout: 60_000 }, async () => {
   const g = await geom("devices", 420);
   assert.ok(g.menu, "the menu is open");
   assert.deepEqual(g.menu!.items.map((i) => i.text), ["Fit", "Phone390 × 844", "Tablet820 × 1180", "Desktop1280 × 800"]);
@@ -131,7 +133,7 @@ test("Preview device menu: Fit, Phone, Tablet and Desktop with sizes, inside the
   menuHolds(g);
 });
 
-test("Preview devices: the page frame takes the device's shape inside the body, scaled to fit", { skip }, async () => {
+test("Preview devices: the page frame takes the device's shape inside the body, scaled to fit", { skip, timeout: 60_000 }, async () => {
   for (const [state, ratio] of [["phone", 844 / 390], ["tablet", 1180 / 820], ["desktop", 800 / 1280]] as const) {
     const g = await geom(state, 420);
     assert.ok(g.frame && g.stage && g.iframe, state);
@@ -143,7 +145,7 @@ test("Preview devices: the page frame takes the device's shape inside the body, 
   assert.ok(fit.frame && fit.stage && Math.abs(fit.frame.w - (fit.stage.w - 20)) <= 1, "Fit fills the body (inside its 10 px gutters)");
 });
 
-test("Preview at 360: the tools fold into one More menu that keeps every function", { skip }, async () => {
+test("Preview at 360: the tools fold into one More menu that keeps every function", { skip, timeout: 60_000 }, async () => {
   const g = await geom("more", 360);
   assert.ok(g.menu, "the More menu is open");
   const items = g.menu!.items.map((i) => i.text);
@@ -156,4 +158,4 @@ test("Preview at 360: the tools fold into one More menu that keeps every functio
   assert.ok(wide.controls.some((c) => c.label === "Device size") && wide.controls.some((c) => c.label === "Pick an element"));
 });
 
-test("Preview, light theme: the same one row", { skip }, async () => oneRow(await geom("loaded", 360, "light")));
+test("Preview, light theme: the same one row", { skip, timeout: 60_000 }, async () => oneRow(await geom("loaded", 360, "light")));

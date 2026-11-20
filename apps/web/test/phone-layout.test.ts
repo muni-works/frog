@@ -14,6 +14,8 @@ import { pause, until, type Page } from "./cdp.ts";
 import { AUDIT, rig, type Rig } from "./phone-rig.ts";
 
 const skip = chrome ? false : "no Chrome on this machine";
+// Each test ends as a named failure within a minute; the file as a whole runs longer (npm test's --test-timeout).
+
 let r: Rig;
 let task = "";
 const KEY = "frog_layout_ada";
@@ -42,7 +44,7 @@ const attr = (p: Page, sel: string, a: string) => p.eval<string | null>(`documen
 const tap = (p: Page, sel: string) => p.eval<boolean>(`(() => { const el = document.querySelector(${JSON.stringify(sel)}); if (!el) return false; el.click(); return true })()`);
 
 for (const [w, h] of [[390, 844], [360, 780]] as const) {
-  test(`phone ${w}: home signed out, the question, the starters, the meter's words`, { skip }, async () => {
+  test(`phone ${w}: home signed out, the question, the starters, the meter's words`, { skip, timeout: 60_000 }, async () => {
     const p = await r.phone("/", w, h, null);
     try {
       assert.ok(await has(p, ".ph-body"));
@@ -54,7 +56,7 @@ for (const [w, h] of [[390, 844], [360, 780]] as const) {
     } finally { await p.close(); }
   });
 
-  test(`phone ${w}: home signed in`, { skip }, async () => {
+  test(`phone ${w}: home signed in`, { skip, timeout: 60_000 }, async () => {
     const p = await r.phone("/", w, h, NEW);
     try {
       assert.ok(await has(p, ".cz-meter"));
@@ -64,7 +66,7 @@ for (const [w, h] of [[390, 844], [360, 780]] as const) {
     } finally { await p.close(); }
   });
 
-  test(`phone ${w}: a conversation, the title is the header, no desktop chrome`, { skip }, async () => {
+  test(`phone ${w}: a conversation, the title is the header, no desktop chrome`, { skip, timeout: 60_000 }, async () => {
     const p = await r.phone(`/s/${task}`, w, h, KEY);
     try {
       assert.ok(await has(p, ".tx"));
@@ -78,7 +80,7 @@ for (const [w, h] of [[390, 844], [360, 780]] as const) {
     } finally { await p.close(); }
   });
 
-  test(`phone ${w}: the sessions sheet opens from the title and closes with Back`, { skip }, async () => {
+  test(`phone ${w}: the sessions sheet opens from the title and closes with Back`, { skip, timeout: 60_000 }, async () => {
     const p = await r.phone(`/s/${task}`, w, h, KEY);
     try {
       assert.ok(await has(p, ".phone-title"));
@@ -95,7 +97,7 @@ for (const [w, h] of [[390, 844], [360, 780]] as const) {
     } finally { await p.close(); }
   });
 
-  test(`phone ${w}: the meter opens the plan sheet`, { skip }, async () => {
+  test(`phone ${w}: the meter opens the plan sheet`, { skip, timeout: 60_000 }, async () => {
     const p = await r.phone(`/s/${task}`, w, h, KEY);
     try {
       assert.ok(await has(p, ".cz-meter"));
@@ -122,7 +124,7 @@ for (const [w, h] of [[390, 844], [360, 780]] as const) {
     } finally { await p.close(); }
   });
 
-  test(`phone ${w}: /pay is the plan sheet, signed out too`, { skip }, async () => {
+  test(`phone ${w}: /pay is the plan sheet, signed out too`, { skip, timeout: 60_000 }, async () => {
     const p = await r.phone("/pay", w, h, null);
     try {
       assert.ok(await has(p, ".plan-sheet"));
@@ -135,7 +137,7 @@ for (const [w, h] of [[390, 844], [360, 780]] as const) {
     } finally { await p.close(); }
   });
 
-  test(`phone ${w}: Settings is a list; Billing opens as its own page`, { skip }, async () => {
+  test(`phone ${w}: Settings is a list; Billing opens as its own page`, { skip, timeout: 60_000 }, async () => {
     const p = await r.phone("/settings", w, h, KEY);
     try {
       assert.ok(await has(p, ".set-list"));
@@ -156,7 +158,7 @@ for (const [w, h] of [[390, 844], [360, 780]] as const) {
 // A plan bought from the credit wall (item 6): See plans, Get Pro through the existing subscribe
 // path (the mock's Checkout comes straight back with ?session_id), the session reopens, the wall
 // says the plan is on, and Resume picks the turn up; the plan pays for it.
-test("phone 390: a plan bought from the wall resumes the stopped turn", { skip }, async () => {
+test("phone 390: a plan bought from the wall resumes the stopped turn", { skip, timeout: 60_000 }, async () => {
   const key = "frog_layout_wall";
   await r.call(key, "/v1/mock/account", { credit_cents: 25, history: [], plan: null });
   const id = await r.session(key, ["Add a README"]);
@@ -208,7 +210,7 @@ for (const w of [360, 375]) {
     { name: "on a plan, a long repo", acct: { credit_cents: 500, plan: "pro", weekly: 0.12, history: [], repos: [LONG] }, meter: "12% of week", repo: LONG },
     { name: "out of credit, a long repo", acct: { credit_cents: 0, plan: null, history: [], repos: [LONG] }, meter: "Out of credit", repo: LONG },
   ]) {
-    test(`phone ${w}: the where-chip keeps its start beside the meter, ${s.name}`, { skip }, async () => {
+    test(`phone ${w}: the where-chip keeps its start beside the meter, ${s.name}`, { skip, timeout: 60_000 }, async () => {
       const key = `frog_chip_${w}_${s.name.replace(/\W+/g, "_")}`;
       await r.call(key, "/v1/mock/account", s.acct);
       const p = await r.phone("/", w, w === 360 ? 780 : 812, key);
@@ -233,3 +235,175 @@ for (const w of [360, 375]) {
     });
   }
 }
+
+// ---------- plan accounts: Billing fits, every plan's buttons, stale, 80%, the wall ----------
+// Prices as long as the live ones ("$0.0066"), which clipped Billing's table on a phone.
+const LONG_PRICES = [
+  { id: "deepseek-v4.1-flash", context_length: 131072, pricing: { prompt: "0.00000033", completion: "0.00000132", input_cache_read: "0.0000000066" } },
+  { id: "glm-5.3-flash", context_length: 131072, pricing: { prompt: "0.0000000439", completion: "0.0000000862", input_cache_read: "0.000000033" } },
+  { id: "qwen3-coder-next", context_length: 262144, pricing: { prompt: "0.0002", completion: "0.002" } },
+];
+const planAcct = (plan: string, weekly: number, extra: Record<string, unknown> = {}) => ({ credit_cents: 500, history: [{ kind: "topup", at: "2026-11-02T18:00:00Z", amount_micro_usd: 5_000_000, status: "succeeded" }], plan, weekly, stale: false, ...extra });
+const rows = (p: Page) => p.eval<string[]>("[...document.querySelectorAll('.ps-row-plan')].map((r) => r.querySelector('b').textContent + ': ' + (r.querySelector('button, .ps-yours')?.textContent ?? ''))");
+
+for (const w of [360, 390]) {
+  test(`phone ${w}: Billing on a plan fits, long prices and all, with the three plans and a quiet Cancel plan`, { skip, timeout: 60_000 }, async () => {
+    await r.call("frog_models", "/v1/mock/models", { data: LONG_PRICES });
+    const key = `frog_bill_plan_${w}`;
+    await r.call(key, "/v1/mock/account", planAcct("pro", 0.12));
+    const p = await r.phone("/settings/billing", w, w === 360 ? 780 : 844, key);
+    try {
+      assert.ok(await has(p, ".ps-row-plan"));
+      await until(() => p.eval<boolean>("!!document.querySelector('.price-row')"));
+      await pause(400);
+      assert.deepEqual(await rows(p), ["Pro: Your plan", "Max: Upgrade to Max", "Ultra: Upgrade to Ultra"]);
+      assert.ok(await p.eval<boolean>("[...document.querySelectorAll('.bill-cancel')].some((b) => b.textContent === 'Cancel plan')"));
+      assert.equal(await p.eval<boolean>("document.body.textContent.includes('at once')"), false, "no concurrency in Billing");
+      holds(await audit(p), "Billing on a plan");
+    } finally { await p.close(); await r.call("frog_models", "/v1/mock/models", { data: null }); }
+  });
+}
+
+test("phone 390: each plan's sheet marks its own and offers the others", { skip, timeout: 60_000 }, async () => {
+  const want: Record<string, string[]> = {
+    pro: ["Pro: Your plan", "Max: Upgrade to Max", "Ultra: Upgrade to Ultra"],
+    max5: ["Pro: Switch to Pro", "Max: Your plan", "Ultra: Upgrade to Ultra"],
+    max: ["Pro: Switch to Pro", "Max: Switch to Max", "Ultra: Your plan"],
+  };
+  for (const plan of Object.keys(want)) {
+    const key = `frog_sheet_${plan}`;
+    await r.call(key, "/v1/mock/account", planAcct(plan, 0.12));
+    const p = await r.phone("/", 390, 844, key);
+    try {
+      await until(async () => (await text(p, ".cz-meter-label")) === "12% of week");
+      await tap(p, ".cz-meter");
+      assert.ok(await has(p, ".plan-sheet .ps-row-plan"));
+      assert.deepEqual(await rows(p), want[plan], plan);
+      assert.equal(await p.eval<boolean>("!!document.querySelector('.ps-up')"), false, "at 12% nothing leads");
+      holds(await audit(p), `plan sheet, ${plan}`);
+    } finally { await p.close(); }
+  }
+});
+
+test("phone 390: a stale plan says so in plain muted words, with every plan below to set one up", { skip, timeout: 60_000 }, async () => {
+  const key = "frog_stale";
+  await r.call(key, "/v1/mock/account", planAcct("pro", 0.12, { stale: true }));
+  const p = await r.phone("/settings/billing", 390, 844, key);
+  try {
+    assert.ok(await has(p, ".bill-cancel"));
+    await pause(400);
+    await tap(p, ".bill-cancel");
+    assert.ok(await has(p, ".bill-note"));
+    assert.equal(await text(p, ".bill-note"), "This plan can't be managed from here. Choose a plan below to set it up again.");
+    assert.equal(await p.eval<string>("getComputedStyle(document.querySelector('.bill-note')).color"), await p.eval<string>("getComputedStyle(document.querySelector('.det')).color"), "muted, not orange");
+    assert.deepEqual(await rows(p), ["Pro: Set up Pro again", "Max: Upgrade to Max", "Ultra: Upgrade to Ultra"]);
+    holds(await audit(p), "stale plan");
+  } finally { await p.close(); }
+});
+
+test("phone 390: at 80% of the week, a quiet line and the sheet lead with the next plan up", { skip, timeout: 60_000 }, async () => {
+  const key = "frog_near";
+  await r.call(key, "/v1/mock/account", planAcct("pro", 0.1));
+  const id = await r.session(key, ["Add a README"]);
+  await r.call(key, "/v1/mock/account", { plan: "pro", weekly: 0.84 });
+  const p = await r.phone(`/s/${id}`, 390, 844, key);
+  try {
+    assert.ok(await has(p, ".credit-warn"));
+    assert.equal(await text(p, ".credit-warn-text"), "84% of this week used");
+    assert.equal(await text(p, ".credit-warn-add"), "Upgrade to Max");
+    await tap(p, ".credit-warn-add");
+    assert.ok(await has(p, ".ps-up"));
+    assert.match((await text(p, ".ps-up")) ?? "", /^Max gives you 5 times the weekly work\.Upgrade to Max$/);
+    holds(await audit(p), "80% of the week");
+  } finally { await p.close(); }
+});
+
+test("phone 390: Upgrade to Max in Billing changes the plan in place, no page leaves", { skip, timeout: 60_000 }, async () => {
+  const key = "frog_up_billing";
+  await r.call(key, "/v1/mock/account", planAcct("pro", 0.4));
+  const p = await r.phone("/settings/billing", 390, 844, key);
+  try {
+    assert.ok(await has(p, ".ps-row-plan"));
+    await pause(400);
+    await p.eval("[...document.querySelectorAll('.ps-row-plan button')].find((b) => b.textContent === 'Upgrade to Max').click()");
+    assert.ok(await until(async () => (await rows(p))[1] === "Max: Your plan", 10000), "Billing shows Max without a reload");
+    assert.deepEqual(await rows(p), ["Pro: Switch to Pro", "Max: Your plan", "Ultra: Upgrade to Ultra"]);
+    assert.equal(await p.eval<string>("location.pathname"), "/settings/billing", "nothing left the page");
+    assert.equal(((await r.call(key, "/v1/mock/state")) as { planChanges: number }).planChanges, 1);
+    assert.match((await p.eval<string>("document.querySelector('.ps-via')?.textContent ?? ''")), /charged now for the rest of this month/);
+    holds(await audit(p), "after an upgrade");
+  } finally { await p.close(); }
+});
+
+test("phone 390: past the plan at the wall, Upgrade to Max and the turn picks up by itself", { skip, timeout: 60_000 }, async () => {
+  const key = "frog_wall_plan";
+  await r.call(key, "/v1/mock/account", planAcct("pro", 0.3));
+  const id = await r.session(key, ["Add a README"]);
+  await r.call(key, "/v1/mock/account", { credit_cents: 2, over: true });
+  await r.play(key, id, ["Now add tests"]);
+  const p = await r.phone(`/s/${id}`, 390, 844, key);
+  try {
+    assert.ok(await has(p, ".wall"));
+    await pause(500);
+    assert.match((await p.eval<string>("document.querySelector('.wall').textContent")) ?? "", /Max gives you 5 times the weekly work\./);
+    await p.eval("[...document.querySelectorAll('.wall button')].find((b) => b.textContent === 'See plans').click()");
+    assert.ok(await has(p, ".ps-up"), "the sheet leads with the next plan");
+    await pause(300);
+    await tap(p, ".ps-up .ps-go");
+    assert.ok(await until(async () => !(await p.eval<boolean>("!!document.querySelector('.wall')")), 20000), "the turn resumed on Max");
+    assert.equal(await p.eval<string>("location.pathname"), `/s/${id}`);
+    const me = (await r.call(key, "/v1/me")) as { account: { subscription: { name: string } } };
+    assert.equal(me.account.subscription.name, "Max");
+  } finally { await p.close(); }
+});
+
+test("phone 390: an edge without the plan change (404) falls back to the portal, and the wall resumes after", { skip, timeout: 60_000 }, async () => {
+  const key = "frog_wall_portal";
+  await r.call(key, "/v1/mock/account", planAcct("pro", 0.3));
+  const id = await r.session(key, ["Add a README"]);
+  await r.call(key, "/v1/mock/account", { credit_cents: 2, over: true, no_plan_route: true, portal_plan: "max5" });
+  await r.play(key, id, ["Now add tests"]);
+  const p = await r.phone(`/s/${id}`, 390, 844, key);
+  try {
+    assert.ok(await has(p, ".wall"));
+    await pause(500);
+    await p.eval("[...document.querySelectorAll('.wall button')].find((b) => b.textContent === 'See plans').click()");
+    assert.ok(await has(p, ".ps-up"));
+    await pause(300);
+    await tap(p, ".ps-up .ps-go");
+    assert.ok(await until(() => p.eval<boolean>("[...document.querySelectorAll('.wall .det')].some((d) => d.textContent.includes('Your plan is on'))"), 20000), "back from the portal, the wall sees the new plan");
+    await p.eval("[...document.querySelectorAll('.wall button')].find((b) => b.textContent === 'Resume').click()");
+    assert.ok(await until(async () => !(await p.eval<boolean>("!!document.querySelector('.wall')")), 20000), "resumed");
+  } finally { await p.close(); }
+});
+
+test("phone 390: a declined card says so and leaves the plan as it was", { skip, timeout: 60_000 }, async () => {
+  const key = "frog_decline";
+  await r.call(key, "/v1/mock/account", planAcct("pro", 0.4, { decline: true }));
+  const p = await r.phone("/settings/billing", 390, 844, key);
+  try {
+    assert.ok(await has(p, ".ps-row-plan"));
+    await pause(400);
+    await p.eval("[...document.querySelectorAll('.ps-row-plan button')].find((b) => b.textContent === 'Upgrade to Max').click()");
+    assert.ok(await until(() => p.eval<boolean>("[...document.querySelectorAll('[role=alert]')].some((a) => a.textContent === \"Your card was declined, so your plan didn't change.\")"), 10000));
+    assert.deepEqual(await rows(p), ["Pro: Your plan", "Max: Upgrade to Max", "Ultra: Upgrade to Ultra"]);
+  } finally { await p.close(); }
+});
+
+test("phone 390: Get a plan on an account the edge says already has one changes it instead of a second subscription", { skip, timeout: 60_000 }, async () => {
+  const key = "frog_already";
+  await r.call(key, "/v1/mock/account", planAcct("pro", 0.1, { hidden_plan: true }));
+  const p = await r.phone("/", 390, 844, key);
+  try {
+    assert.ok(await has(p, ".cz-meter"));
+    await pause(600);
+    await tap(p, ".cz-meter");
+    assert.ok(await has(p, ".plan-sheet .ps-plan"));
+    await p.eval("[...document.querySelectorAll('.plan-sheet .ps-plan')].find((b) => b.textContent.startsWith('Max')).click()");
+    await pause(200);
+    await tap(p, ".ps-go");
+    assert.ok(await until(async () => ((await r.call(key, "/v1/mock/state")) as { planChanges: number }).planChanges === 1, 10000), "the plan changed in place");
+    assert.equal(await p.eval<string>("location.pathname"), "/", "no Checkout");
+    assert.equal(((await r.call(key, "/v1/mock/state")) as { account: { plan: string } }).account.plan, "max5");
+  } finally { await p.close(); }
+});

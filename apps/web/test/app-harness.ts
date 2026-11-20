@@ -4,6 +4,7 @@
 import { createServer, type ViteDevServer } from "vite";
 import { createElement as h, Profiler } from "react";
 import TestRenderer, { act, type ReactTestRenderer } from "react-test-renderer";
+import { afterEach } from "node:test";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -38,7 +39,14 @@ async function app() {
   return App;
 }
 
-export async function closeHarness() { await server?.close(); server = null; App = null; }
+/** Every App still mounted. A test that throws before its own `p.unmount()` would leave its App
+ *  alive, timers and all, and its file's process would never exit (`npm test` then waits forever):
+ *  whatever a test leaves mounted is unmounted after it, and again when the harness closes. */
+const live = new Set<Page>();
+function unmountAll() { for (const p of [...live]) { try { p.unmount(); } catch { /* already gone */ } } live.clear(); }
+afterEach(unmountAll);
+
+export async function closeHarness() { unmountAll(); await server?.close(); server = null; App = null; }
 
 const listeners = new Map<string, Set<(e: unknown) => void>>();
 export function dispatch(type: string, e: Record<string, unknown>) {
@@ -100,7 +108,10 @@ export async function mount(path: string, { storage = {}, respond, globals = {},
   const tree = onCommit ? h(Profiler, { id: "app", onRender: () => { if (root) onCommit(root) } }, h(A)) : h(A)
   await act(async () => { root = TestRenderer.create(tree, { createNodeMock: (e) => nodeMock(e as never), unstable_isConcurrent: concurrent } as Parameters<typeof TestRenderer.create>[1]); });
   await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
-  return { root, calls, storage: local, path: () => url.pathname + url.search, pushes: () => pushes, unmount: () => act(() => root.unmount()) };
+  let gone = false;
+  const page: Page = { root, calls, storage: local, path: () => url.pathname + url.search, pushes: () => pushes, unmount: () => { if (gone) return; gone = true; live.delete(page); act(() => root.unmount()); } };
+  live.add(page);
+  return page;
 }
 
 /** All the text under a node, squashed. */

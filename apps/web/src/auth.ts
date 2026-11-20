@@ -107,14 +107,23 @@ export async function finishSignIn(): Promise<{ key: string; account: Account; a
 /** Subscriptions: an allowance each, then usage pricing from credit past it. */
 export const PLANS = [
   { id: 'pro', name: 'Pro', price: 20, blurb: 'For steady daily use' },
-  { id: 'max5', name: 'Max', price: 100, blurb: '5× Pro, more at once' },
-  { id: 'max', name: 'Ultra', price: 200, blurb: '10× Pro, for heavy use' },
+  { id: 'max5', name: 'Max', price: 100, blurb: '5× Pro\'s weekly work' },
+  { id: 'max', name: 'Ultra', price: 200, blurb: '10× Pro\'s weekly work' },
 ] as const
 
 /** Leaves for Stripe Checkout to start a plan. */
 export async function subscribe(key: string, plan: string) {
   const r = await call<{ url: string }>('/v1/billing/subscribe', { method: 'POST', body: JSON.stringify({ plan, return: location.origin }) }, key)
   location.assign(r.url)
+}
+
+/** Moves an existing plan to another in place (zest#213): Stripe prorates, an upgrade is
+ * charged for the rest of the period now, a smaller plan is credited on the next invoice, and a
+ * declined card changes nothing. Throws an AuthError with the edge's code: 402 payment_failed,
+ * 400 same_plan / no_subscription / invalid_plan, 409 stale_subscription /
+ * subscription_not_active, and 404 (status) where an older edge has no such route. */
+export async function changePlan(key: string, plan: string): Promise<{ plan: string; status: string }> {
+  return call<{ plan: string; status: string }>('/v1/billing/plan', { method: 'POST', body: JSON.stringify({ plan }) }, key)
 }
 
 /** Credit top-ups, in dollars (the edge's CREDIT_TOP_UPS). */
@@ -170,7 +179,7 @@ export async function billingPortal(key: string) {
 export function portalErrorMessage(e: unknown): string | null {
   if (!(e instanceof AuthError)) return null
   switch (e.code) {
-    case 'stale_subscription': return "your plan isn't linked to Stripe — subscribe again below to manage it"
+    case 'stale_subscription': return "This plan can't be managed from here. Choose a plan below to set it up again."
     case 'no_subscription': return 'no plan to manage'
     case 'no_customer': return 'cancel and resubscribe to manage this plan'
     case 'invalid_key': return 'your session expired — sign in again'
