@@ -53,7 +53,7 @@ try {
     const page = await r.phone(s.path, W, H, s.key);
     try {
       if (s.wait) await until(() => page.eval<boolean>(`!!document.querySelector(${JSON.stringify(s.wait)})`), 15000);
-      await pause(1500);
+      await pause(3000);
       if (s.act) { const hit = await page.eval<string | null>(s.act); if (!hit) console.log(`${s.name}: nothing to click`); await pause(900); }
       const file = join(out, `${s.name}${narrow ? "-360" : ""}.png`);
       await shot(page, file);

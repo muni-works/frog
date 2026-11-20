@@ -5,7 +5,7 @@ import { COPY } from '../plans'
 
 export function FirstResultCard({ took, pro, onPlans, onLater }: { took: string; pro: string; onPlans: () => void; onLater: () => void }) {
   return (
-    <section className="cardx first-card" aria-label="What that cost">
+    <section className="cardx outs first-card" aria-label="What that cost">
       <b style={{ fontSize: 15 }}>{took}</b>
       <div className="det wrap" style={{ marginTop: -4 }}>{pro}</div>
       <div className="acts">

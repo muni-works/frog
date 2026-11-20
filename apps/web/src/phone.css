@@ -217,3 +217,8 @@ span.ss-who { cursor: default; }
   .icon-plate { position: relative; }
   .icon-plate::after { content: ''; position: absolute; inset: -10px -4px; }
 }
+@media (max-width: 760px) {
+  /* A turn's stats line keeps its words: the timeline graph goes under it when there's no room. */
+  .tx .turn-foot { flex-wrap: wrap; row-gap: 4px; }
+  .tx .turn-foot > .turn-line { flex-shrink: 0; max-width: 100%; }
+}
