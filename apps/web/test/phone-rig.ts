@@ -77,10 +77,12 @@ export const AUDIT = `(() => {
     for (let p = el.parentElement; p; p = p.parentElement) { const o = getComputedStyle(p).overflowX; if (o === 'auto' || o === 'scroll' || o === 'hidden') return false; }
     return r.right > W + 0.5 || r.left < -0.5;
   }).slice(0, 5).map((el) => el.tagName + '.' + String(el.className).split(' ')[0]);
-  const visible = (el) => { const r = el.getBoundingClientRect(); if (!r.width || !r.height) return false; const s = getComputedStyle(el); return s.visibility !== 'hidden' && s.display !== 'none' && r.bottom > 0 && r.top < innerHeight; };
+  const visible = (el) => { const r = el.getBoundingClientRect(); if (!r.width || !r.height) return false; const s = getComputedStyle(el); return s.visibility !== 'hidden' && s.display !== 'none' && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth; };
+  // The tap area: the box, or a larger ::after hit area (app.css's touch insets).
+  const tap = (el) => { const h = el.getBoundingClientRect().height; const a = getComputedStyle(el, '::after'); return a.content !== 'none' && a.position === 'absolute' ? Math.max(h, h - (parseFloat(a.top) || 0) - (parseFloat(a.bottom) || 0)) : h; };
   const small = [...document.querySelectorAll('button, a[href], [role=radio], input, select, textarea')]
     .filter(visible).filter((el) => !el.closest('.ps-credit, .det, p, .md, .tx, [aria-hidden=true]'))
-    .filter((el) => el.getBoundingClientRect().height < 43.5)
-    .slice(0, 8).map((el) => (el.getAttribute('aria-label') || el.textContent || el.tagName).trim().slice(0, 30) + ' ' + Math.round(el.getBoundingClientRect().height));
+    .filter((el) => tap(el) < 43.5)
+    .slice(0, 8).map((el) => (el.getAttribute('aria-label') || el.textContent || el.tagName).trim().slice(0, 30) + ' ' + Math.round(tap(el)));
   return { over, wide, small };
 })()`;

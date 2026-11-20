@@ -14,7 +14,7 @@ import { once } from './live'
 import { useLayer, useMenu } from './ui/layers'
 import { Composer } from './ui/Composer'
 import { Pond, Muni } from './ui/Pond'
-import { HomeHero, REPO_SUGGESTIONS, SCRATCH_SUGGESTIONS, WhatIsFrog } from './ui/Home'
+import { HomeHero, PhoneHome, REPO_SUGGESTIONS, SCRATCH_SUGGESTIONS, WhatIsFrog } from './ui/Home'
 import { Inspector } from './ui/Inspector'
 import { usePreviewHub } from './ui/PreviewPane'
 import type { PreviewHub } from './preview'
@@ -37,7 +37,7 @@ import { DocsPage, DocsSidebar, Shell, type ShellMode } from './ui/Docs'
 import { DOCS, VERSION } from './docs/bundle'
 import { useMacAppChip } from './ui/ChipSlot'
 import { SignedOutSide } from './ui/SignedOut'
-import { LegalRow, repoStarters, SideNav, SidePill, Starters } from './ui/Side'
+import { LegalRow, repoStarters, SideNav, SidePill, STARTERS, Starters, type Starter } from './ui/Side'
 import { docsPath, docsSlugOf } from './docs/docs'
 import { accountTag, connectCard, finishedTurn, loadMemo, saveMemo, type CardMemo } from './connectCard'
 import { ConnectCard } from './ui/ConnectCard'
@@ -793,6 +793,22 @@ export default function App() {
       <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M15 6l-6 6 6 6" /></svg>
     </button>
   )
+  // The landing's composer, signed out: its Sign in keeps what was typed and sends it after the round trip.
+  const signedOutComposer = (
+    <Composer onSend={() => {}} meter={meterProp} onSignIn={(provider, text) => leave(text || null, provider)} autoFocus suggestion={SCRATCH_SUGGESTIONS} onText={noteSignedOutDraft}
+                model={chosenModel} models={models} machines={machines} onModel={setNewModel} mode={newMode} onMode={setNewMode} />
+  )
+  // The new session's composer.
+  const newComposer = view.kind !== 'new' ? null : (
+    <Composer meter={meterProp} usage={account ? { sub: account.subscription ?? null, credit: creditLine(account).replace(/ credit$/, ''), onBilling: () => openSettings('billing'), onOpen: refreshAccount } : undefined} repo={view.repo} draft={draft} autoFocus pickRepo={view.pick} suggestion={view.repo ? REPO_SUGGESTIONS : SCRATCH_SUGGESTIONS}
+                  recent={usedRepos(sessions)} repos={repoList.repos.map((r) => r.name)} pushed={Object.fromEntries(repoList.repos.map((r) => [r.name, r.pushed_at]))} install={repoList.install} onRepo={(repo) => setView({ kind: 'new', repo })} base={view.base} onBase={(base) => setView((v) => (v.kind === 'new' ? { ...v, base } : v))}
+                  onConnectGithub={key && account && !account.handle && !DEV_KEY ? (text) => leave(text || null, 'github', key) : undefined}
+                  model={chosenModel} models={models} machines={machines} onManage={() => openSettings('models')} onModel={setNewModel} mode={newMode} onMode={setNewMode}
+                  onSend={(text, images, typed) => { setDraft(undefined); start(text, view.repo, images, view.base, undefined, undefined, typed) }} />
+  )
+  // A phone's home (frame 2): three starters, the account's repos first.
+  const homeStarters: Starter[] = repoStarters(repoList.repos.map((r) => r.name)).filter((st) => !st.pick).slice(0, 3)
+  const startStarter = (st: Starter) => st.pick ? setView({ kind: 'new', pick: true }) : st.github ? openSettings('account') : start(st.prompt, st.repo)
   const paused = ct ? outOfCredits(ct) : false
   // A plan inside its allowance pays for turns without credit (the wall's Resume).
   const planOn = !!account?.subscription && !account.subscription.over
@@ -847,13 +863,17 @@ export default function App() {
       threads: !key ? (
       // Signed out: the landing, in the shell. The composer's Sign in keeps what was typed and
       // sends it after the round trip.
-      <main className="main home">
+      <main className={`main home${narrow ? ' phone-home' : ''}`}>
         {narrow ? phoneTop('Frog') : <>{collapsed && <div className="side-float">{sideToggle(false)}</div>}<div className="phone-bar floating"><Burger /><b>Frog</b></div></>}
         {authError && <div role="status" className="banner warn">Sign-in didn't finish ({authError}). Try again.</div>}
+        {narrow ? (
+          <PhoneHome signedOut starters={STARTERS.slice(0, 3)} composer={signedOutComposer}
+            onStarter={(i) => { const st = STARTERS[i]; leave(st.prompt || null, 'github') }}
+            below={leaving && <div className="det" style={{ textAlign: 'center' }}>Opening {leaving === 'google' ? 'Google' : 'GitHub'}… your message is saved.</div>} />
+        ) : (<>
         <Pond /><div className="home-page"><HomeHero below={<WhatIsFrog />}>
           <div className="home-composer">
-            <Composer onSend={() => {}} meter={meterProp} onSignIn={(provider, text) => leave(text || null, provider)} autoFocus suggestion={SCRATCH_SUGGESTIONS} onText={noteSignedOutDraft}
-              model={chosenModel} models={models} machines={machines} onModel={setNewModel} mode={newMode} onMode={setNewMode} />
+            {signedOutComposer}
             {leaving && <div className="det" style={{ textAlign: 'center' }}>Opening {leaving === 'google' ? 'Google' : 'GitHub'}… your message is saved.</div>}
           </div>
         </HomeHero></div>
@@ -861,6 +881,7 @@ export default function App() {
           <nav className="foot-links" aria-label="About Frog"><a href="/pricing">Pricing</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/mac">Get the Mac app</a></nav>
           <a href="https://muni.works" target="_blank" rel="noreferrer" aria-label="Municipal Robotics"><Muni /></a>
         </footer>
+        </>)}
       </main>
       ) :
       <main className={`main${railTurns ? ' has-rail' : ''}`}>
@@ -977,15 +998,15 @@ export default function App() {
           </div>
         </>)}
 
-        {view.kind === 'new' && (
+        {view.kind === 'new' && narrow && (
+          <PhoneHome signedOut={false} starters={homeStarters} composer={newComposer} onStarter={(i) => startStarter(homeStarters[i])}
+            below={<CreditWarning account={account} addedCents={lastAdded} avg={avgTurn} onAdd={() => openSettings('billing')} onPlans={() => setPlans(true)} />} />
+        )}
+        {view.kind === 'new' && !narrow && (
           <div className="main home">
             <Pond /><div className="home-page"><HomeHero>
             <div className="home-composer">
-              <Composer meter={meterProp} usage={account ? { sub: account.subscription ?? null, credit: creditLine(account).replace(/ credit$/, ''), onBilling: () => openSettings('billing'), onOpen: refreshAccount } : undefined} repo={view.repo} draft={draft} autoFocus pickRepo={view.pick} suggestion={view.repo ? REPO_SUGGESTIONS : SCRATCH_SUGGESTIONS}
-                recent={usedRepos(sessions)} repos={repoList.repos.map((r) => r.name)} pushed={Object.fromEntries(repoList.repos.map((r) => [r.name, r.pushed_at]))} install={repoList.install} onRepo={(repo) => setView({ kind: 'new', repo })} base={view.base} onBase={(base) => setView((v) => (v.kind === 'new' ? { ...v, base } : v))}
-                onConnectGithub={key && account && !account.handle && !DEV_KEY ? (text) => leave(text || null, 'github', key) : undefined}
-                model={chosenModel} models={models} machines={machines} onManage={() => openSettings('models')} onModel={setNewModel} mode={newMode} onMode={setNewMode}
-                onSend={(text, images, typed) => { setDraft(undefined); start(text, view.repo, images, view.base, undefined, undefined, typed) }} />
+              {newComposer}
               <CreditWarning account={account} addedCents={lastAdded} avg={avgTurn} onAdd={() => openSettings('billing')} onPlans={() => setPlans(true)} />
             </div>
             </HomeHero></div>

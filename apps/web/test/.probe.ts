@@ -1,5 +1,5 @@
 // node --import tsx probe.ts <path|@session|@fresh-session> <width> <js...>  (each js evaluated in turn, results printed)
-import { rig, shot } from "./phone-rig.ts";
+import { rig, shot, AUDIT } from "./phone-rig.ts";
 import { until, pause } from "./cdp.ts";
 const [, , where, width, ...js] = process.argv;
 const r = await rig();
@@ -14,7 +14,7 @@ try {
   for (const j of js) {
     if (j.startsWith("shot:")) { await shot(p, j.slice(5)); console.log("shot", j.slice(5)); continue; }
     if (j.startsWith("wait:")) { await pause(Number(j.slice(5))); continue; }
-    console.log(JSON.stringify(await p.eval(j)));
+    console.log(JSON.stringify(await p.eval(j === "audit" ? AUDIT : j)));
   }
   await p.close();
 } finally { await r.close(); }

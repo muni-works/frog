@@ -82,6 +82,8 @@
   /* The window follows the on-screen keyboard (ui/phone.ts useVisualViewport): the composer stays
      above it and the transcript scrolls under the header. */
   .win { position: fixed; left: 0; right: 0; top: var(--vvtop, 0px); height: var(--vvh, 100dvh); }
+  /* The drawer is only Documentation's now; shut, it's out of reach of focus and taps too. */
+  .win:not(.drawer) > .side { visibility: hidden; }
 }
 
 /* ---- the sessions sheet (frame 4) ---- */
@@ -159,4 +161,27 @@ span.ss-who { cursor: default; }
   .settings-page .set-row .f-btn, .settings-page .coupon .f-btn { min-height: 44px; }
   .settings-page .f-field, .coupon .f-field { font-size: 16px; min-height: 44px; }
   .settings-page .set-seg button { min-height: 44px; }
+}
+
+/* ---- home on a phone (frames 1, 2) ---- */
+.ph-body, .ph-dock { display: none; }
+@media (max-width: 760px) {
+  .main.phone-home, .main > .ph-body { position: relative; }
+  .main.phone-home { display: flex; flex-direction: column; padding-top: 0; }
+  .ph-body { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; justify-content: flex-end; padding: 0 16px 6px; }
+  .ph-body > :first-child { margin-top: auto; }
+  .main .ph-h, .main.home .ph-h { margin: 0; font-size: 26px; line-height: 32px; font-weight: 600; letter-spacing: -0.01em; text-align: left; }
+  .ph-lead { margin: 8px 0 10px; font-size: 15px; line-height: 22px; }
+  .ph-body .ss-gl { margin-top: 18px; }
+  .ph-starters { display: flex; flex-direction: column; }
+  .set-li-l .ph-detail { white-space: pre; }
+  .ph-price { margin: 14px 4px 4px; font-size: 13px; line-height: 19px; }
+  .ph-price a { color: var(--muted); text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; display: inline-block; min-height: 24px; }
+  .ph-dock { display: block; flex: none; }
+  .ph-dock > .ph-composer { width: auto; }
+  .ph-composer .cz-menu { top: auto; bottom: calc(100% - 4px); }
+}
+@media (max-width: 760px) {
+  /* The field is a 44 px target too. */
+  .cz-card textarea { min-height: 44px; }
 }
