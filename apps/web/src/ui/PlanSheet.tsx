@@ -12,6 +12,9 @@ import { friendly } from '../cloud/client'
 import { barTone, canCompact } from '../usage'
 import { leftLine } from '../wall'
 import { COPY, FREE_CENTS, FREE_GITHUB_CENTS, nearLimit, nextPlan, PLAN_COPY, PLAN_FACTS, planAction, planOf, type PlanFact } from '../plans'
+
+/** A refusal's own words (plans.ts planChangeError), else the network's. */
+const said = (e: unknown) => (e instanceof Error && !(e instanceof TypeError) && !('status' in e) ? e.message : `Couldn't change the plan (${friendly(e)}). Try again.`)
 import { Sheet } from './Sheet'
 
 export interface PlanSheetProps {
@@ -126,8 +129,8 @@ export function PlanLead({ sub, onChangePlan }: { sub: NonNullable<Account['subs
     <div className="ps-up">
       <b>{PLAN_COPY.lead(current, next)}</b>
       {onChangePlan && <button type="button" className="f-btn f-btn--prominent ps-go" disabled={busy}
-        onClick={() => { setBusy(true); setError(null); onChangePlan(next.id).catch((e) => { setBusy(false); setError(friendly(e)) }) }}>{busy ? 'Opening Stripe…' : planAction(current, next)}</button>}
-      {error && <div role="alert" className="det wrap">Couldn't open Stripe ({error}). Try again.</div>}
+        onClick={() => { setBusy(true); setError(null); onChangePlan(next.id).then(() => setBusy(false), (e) => { setBusy(false); setError(said(e)) }) }}>{busy ? PLAN_COPY.busy : planAction(current, next)}</button>}
+      {error && <div role="alert" className="det wrap">{error}</div>}
     </div>
   )
 }
@@ -148,13 +151,13 @@ export function PlanList({ sub, stale = false, onChangePlan }: { sub: NonNullabl
             <span className="ps-l"><b>{p.name}</b><span>{COPY.planLine(p)}, {COPY.planPrice(p)} {COPY.planPer}</span></span>
             {act && onChangePlan
               ? <button type="button" className="f-btn f-btn--bordered ps-act" disabled={!!busy}
-                  onClick={() => { setBusy(p.id); setError(null); onChangePlan(p.id).catch((e) => { setBusy(null); setError(friendly(e)) }) }}>{busy === p.id ? 'Opening Stripe…' : act}</button>
+                  onClick={() => { setBusy(p.id); setError(null); onChangePlan(p.id).then(() => setBusy(null), (e) => { setBusy(null); setError(said(e)) }) }}>{busy === p.id ? PLAN_COPY.busy : act}</button>
               : mine ? <span className="det ps-yours">{PLAN_COPY.yours}</span> : null}
           </div>
         )
       })}
     </div>
     {onChangePlan && !stale && <p className="det wrap ps-via">{PLAN_COPY.via}</p>}
-    {error && <div role="alert" className="det wrap">Couldn't open Stripe ({error}). Try again.</div>}
+    {error && <div role="alert" className="det wrap">{error}</div>}
   </>)
 }

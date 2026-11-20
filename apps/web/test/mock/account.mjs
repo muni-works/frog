@@ -15,6 +15,9 @@
 //   POST /v1/billing/portal   {return} → {url: <return>/}: no Stripe; a plan picked in the portal is
 //                             /v1/mock/account's portal_plan, applied here; stale: 409 stale_subscription
 //   POST /v1/mock/models      {data}: models listed in place of MODELS (long prices, for layout tests)
+//   POST /v1/billing/plan     {plan} → {plan, status}: changes the plan in place, as zest#213 (the week's
+//                             use carried over); 400 same_plan/no_subscription/invalid_plan, 409
+//                             stale_subscription, 402 payment_failed (decline), 404 (an older edge: no_plan_route)
 //   POST /v1/mock/account     {credit_cents?, plan?, weekly?, fiveHour?, history?, repos?}: sets up a
 //                             state (a fresh 25¢ account: {credit_cents: 25, history: []}; a plan:
 //                             {plan: "pro", weekly: 0.12}) (mock only, for the phone screenshots)
@@ -57,7 +60,9 @@ export function accountRoutes() {
       if (path === "/v1/mock/models" && req.method === "POST") { const b = (await body(req)) ?? {}; models = Array.isArray(b.data) ? b.data : MODELS; return json(res, 200, { data: models }), true; }
       if (!key) return false;
       const a = of(key);
-      if (path === "/v1/me" && req.method === "GET") return json(res, 200, { account: a.account }), true;
+      // hidden_plan: /v1/me a moment behind a plan started elsewhere (no subscription shown yet).
+      if (path === "/v1/me" && req.method === "GET") return json(res, 200, { account: a.hiddenPlan ? { ...a.account, subscription: null } : a.account }), true;
+      if (path === "/v1/mock/state" && req.method === "GET") return json(res, 200, { planChanges: a.planChanges ?? 0, account: a.account }), true;
       if (path === "/v1/machines" && req.method === "GET") return json(res, 200, { data: MACHINES }), true;
       if (path === "/v1/keys" && req.method === "GET") return json(res, 200, { keys: a.keys }), true;
       if (path === "/v1/keys" && req.method === "POST") {
@@ -97,8 +102,27 @@ export function accountRoutes() {
         a.account.credit_cents = Number(((await body(req)) ?? {}).cents) || 0;
         return json(res, 200, { account: a.account }), true;
       }
+      if (path === "/v1/billing/plan" && req.method === "POST") {
+        if (a.noPlanRoute) return json(res, 404, { error: { code: "not_found", message: "not found" } }), true;
+        const b = (await body(req)) ?? {};
+        if (!PLANS[b.plan]) return json(res, 400, { error: { code: "invalid_plan", message: "plan must be pro, max5 or max" } }), true;
+        const sub = a.account.subscription;
+        if (!sub) return json(res, 400, { error: { code: "no_subscription", message: "no plan to change; subscribe first" } }), true;
+        if (a.stale) return json(res, 409, { error: { code: "stale_subscription", message: "this subscription isn't linked to Stripe" } }), true;
+        if (sub.plan === b.plan) return json(res, 400, { error: { code: "same_plan", message: `already on ${sub.name}` } }), true;
+        if (a.decline) return json(res, 402, { error: { code: "payment_failed", message: "Your card was declined." } }), true;
+        const used = sub.windows.find((w) => w.kind === "weekly")?.used ?? 0;
+        a.account.subscription = subscription(b.plan, 0, 0);
+        for (const w of a.account.subscription.windows) if (w.kind === "weekly") w.used = used;
+        a.account.subscription.over = a.account.subscription.windows.some((w) => w.used >= w.limit);
+        a.account.plan = b.plan;
+        a.planChanges = (a.planChanges ?? 0) + 1;
+        return json(res, 200, { plan: b.plan, status: "active" }), true;
+      }
       if (path === "/v1/billing/subscribe" && req.method === "POST") {
         const b = (await body(req)) ?? {};
+        // As zest#213: no second subscription while Stripe still has the first (a stale one doesn't count).
+        if ((a.account.subscription || a.hiddenPlan) && !a.stale) return json(res, 409, { error: { code: "already_subscribed", message: "this account already has a plan; change it with POST /v1/billing/plan" } }), true;
         if (!PLANS[b.plan]) return json(res, 400, { error: { code: "invalid_plan", message: "plan must be pro, max5 or max" } }), true;
         if (typeof b.return !== "string") return json(res, 400, { error: { code: "invalid_return", message: "return must be an allowed web app origin" } }), true;
         setTimeout(() => { a.account.subscription = subscription(b.plan, 0, 0); a.account.plan = b.plan; }, 1500);
@@ -115,6 +139,9 @@ export function accountRoutes() {
         if (b.stale !== undefined) a.stale = !!b.stale;
         if (b.portal_plan !== undefined) a.portalPlan = b.portal_plan;
         if (b.over !== undefined && a.account.subscription) a.account.subscription.over = !!b.over;
+        if (b.no_plan_route !== undefined) a.noPlanRoute = !!b.no_plan_route;
+        if (b.decline !== undefined) a.decline = !!b.decline;
+        if (b.hidden_plan !== undefined) a.hiddenPlan = !!b.hidden_plan;
         return json(res, 200, { account: a.account }), true;
       }
       if (path === "/v1/coupons/redeem" && req.method === "POST") {

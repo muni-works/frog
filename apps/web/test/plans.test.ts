@@ -151,3 +151,14 @@ test("a stale plan reads as a plain sentence with somewhere to go", () => {
   assert.equal(PLAN_COPY.stale, "This plan can't be managed from here. Choose a plan below to set it up again.");
   assert.doesNotMatch(PLAN_COPY.stale, /—/);
 });
+
+import { planChangeError } from "../src/plans.ts";
+
+test("a refused plan change in plain words; the ones the app handles itself have none", () => {
+  assert.equal(planChangeError("payment_failed"), "Your card was declined, so your plan didn't change.");
+  assert.match(planChangeError("subscription_not_active") ?? "", /^Your plan's last payment didn't go through/);
+  assert.equal(planChangeError("same_plan"), "You're already on that plan.");
+  assert.equal(planChangeError("stale_subscription"), null);
+  assert.equal(planChangeError("no_subscription"), null);
+  assert.equal(PLAN_COPY.via, "An upgrade is charged now for the rest of this month. A smaller plan is credited on your next bill.");
+});

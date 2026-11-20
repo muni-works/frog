@@ -316,11 +316,28 @@ test("phone 390: at 80% of the week, a quiet line and the sheet lead with the ne
   } finally { await p.close(); }
 });
 
-test("phone 390: past the plan at the wall, Upgrade to Max through the portal, and the turn resumes", { skip }, async () => {
+test("phone 390: Upgrade to Max in Billing changes the plan in place, no page leaves", { skip }, async () => {
+  const key = "frog_up_billing";
+  await r.call(key, "/v1/mock/account", planAcct("pro", 0.4));
+  const p = await r.phone("/settings/billing", 390, 844, key);
+  try {
+    assert.ok(await has(p, ".ps-row-plan"));
+    await pause(400);
+    await p.eval("[...document.querySelectorAll('.ps-row-plan button')].find((b) => b.textContent === 'Upgrade to Max').click()");
+    assert.ok(await until(async () => (await rows(p))[1] === "Max: Your plan", 10000), "Billing shows Max without a reload");
+    assert.deepEqual(await rows(p), ["Pro: Switch to Pro", "Max: Your plan", "Ultra: Upgrade to Ultra"]);
+    assert.equal(await p.eval<string>("location.pathname"), "/settings/billing", "nothing left the page");
+    assert.equal(((await r.call(key, "/v1/mock/state")) as { planChanges: number }).planChanges, 1);
+    assert.match((await p.eval<string>("document.querySelector('.ps-via')?.textContent ?? ''")), /charged now for the rest of this month/);
+    holds(await audit(p), "after an upgrade");
+  } finally { await p.close(); }
+});
+
+test("phone 390: past the plan at the wall, Upgrade to Max and the turn picks up by itself", { skip }, async () => {
   const key = "frog_wall_plan";
   await r.call(key, "/v1/mock/account", planAcct("pro", 0.3));
   const id = await r.session(key, ["Add a README"]);
-  await r.call(key, "/v1/mock/account", { credit_cents: 2, over: true, portal_plan: "max5" });
+  await r.call(key, "/v1/mock/account", { credit_cents: 2, over: true });
   await r.play(key, id, ["Now add tests"]);
   const p = await r.phone(`/s/${id}`, 390, 844, key);
   try {
@@ -331,12 +348,60 @@ test("phone 390: past the plan at the wall, Upgrade to Max through the portal, a
     assert.ok(await has(p, ".ps-up"), "the sheet leads with the next plan");
     await pause(300);
     await tap(p, ".ps-up .ps-go");
-    assert.ok(await until(async () => (await p.eval<string>("location.pathname")) === `/s/${id}`, 20000), "back from the portal on the session");
-    assert.ok(await until(() => p.eval<boolean>("[...document.querySelectorAll('.wall .det')].some((d) => d.textContent.includes('Your plan is on'))"), 20000), "the wall sees the new plan");
-    await p.eval("[...document.querySelectorAll('.wall button')].find((b) => b.textContent === 'Resume').click()");
-    assert.ok(await until(async () => !(await p.eval<boolean>("!!document.querySelector('.wall')")), 20000), "resumed");
-    await until(async () => (await text(p, ".cz-meter-label")) !== null);
+    assert.ok(await until(async () => !(await p.eval<boolean>("!!document.querySelector('.wall')")), 20000), "the turn resumed on Max");
+    assert.equal(await p.eval<string>("location.pathname"), `/s/${id}`);
     const me = (await r.call(key, "/v1/me")) as { account: { subscription: { name: string } } };
     assert.equal(me.account.subscription.name, "Max");
+  } finally { await p.close(); }
+});
+
+test("phone 390: an edge without the plan change (404) falls back to the portal, and the wall resumes after", { skip }, async () => {
+  const key = "frog_wall_portal";
+  await r.call(key, "/v1/mock/account", planAcct("pro", 0.3));
+  const id = await r.session(key, ["Add a README"]);
+  await r.call(key, "/v1/mock/account", { credit_cents: 2, over: true, no_plan_route: true, portal_plan: "max5" });
+  await r.play(key, id, ["Now add tests"]);
+  const p = await r.phone(`/s/${id}`, 390, 844, key);
+  try {
+    assert.ok(await has(p, ".wall"));
+    await pause(500);
+    await p.eval("[...document.querySelectorAll('.wall button')].find((b) => b.textContent === 'See plans').click()");
+    assert.ok(await has(p, ".ps-up"));
+    await pause(300);
+    await tap(p, ".ps-up .ps-go");
+    assert.ok(await until(() => p.eval<boolean>("[...document.querySelectorAll('.wall .det')].some((d) => d.textContent.includes('Your plan is on'))"), 20000), "back from the portal, the wall sees the new plan");
+    await p.eval("[...document.querySelectorAll('.wall button')].find((b) => b.textContent === 'Resume').click()");
+    assert.ok(await until(async () => !(await p.eval<boolean>("!!document.querySelector('.wall')")), 20000), "resumed");
+  } finally { await p.close(); }
+});
+
+test("phone 390: a declined card says so and leaves the plan as it was", { skip }, async () => {
+  const key = "frog_decline";
+  await r.call(key, "/v1/mock/account", planAcct("pro", 0.4, { decline: true }));
+  const p = await r.phone("/settings/billing", 390, 844, key);
+  try {
+    assert.ok(await has(p, ".ps-row-plan"));
+    await pause(400);
+    await p.eval("[...document.querySelectorAll('.ps-row-plan button')].find((b) => b.textContent === 'Upgrade to Max').click()");
+    assert.ok(await until(() => p.eval<boolean>("[...document.querySelectorAll('[role=alert]')].some((a) => a.textContent === \"Your card was declined, so your plan didn't change.\")"), 10000));
+    assert.deepEqual(await rows(p), ["Pro: Your plan", "Max: Upgrade to Max", "Ultra: Upgrade to Ultra"]);
+  } finally { await p.close(); }
+});
+
+test("phone 390: Get a plan on an account the edge says already has one changes it instead of a second subscription", { skip }, async () => {
+  const key = "frog_already";
+  await r.call(key, "/v1/mock/account", planAcct("pro", 0.1, { hidden_plan: true }));
+  const p = await r.phone("/", 390, 844, key);
+  try {
+    assert.ok(await has(p, ".cz-meter"));
+    await pause(600);
+    await tap(p, ".cz-meter");
+    assert.ok(await has(p, ".plan-sheet .ps-plan"));
+    await p.eval("[...document.querySelectorAll('.plan-sheet .ps-plan')].find((b) => b.textContent.startsWith('Max')).click()");
+    await pause(200);
+    await tap(p, ".ps-go");
+    assert.ok(await until(async () => ((await r.call(key, "/v1/mock/state")) as { planChanges: number }).planChanges === 1, 10000), "the plan changed in place");
+    assert.equal(await p.eval<string>("location.pathname"), "/", "no Checkout");
+    assert.equal(((await r.call(key, "/v1/mock/state")) as { account: { plan: string } }).account.plan, "max5");
   } finally { await p.close(); }
 });

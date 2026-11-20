@@ -117,6 +117,15 @@ export async function subscribe(key: string, plan: string) {
   location.assign(r.url)
 }
 
+/** Moves an existing plan to another in place (zest#213): Stripe prorates, an upgrade is
+ * charged for the rest of the period now, a smaller plan is credited on the next invoice, and a
+ * declined card changes nothing. Throws an AuthError with the edge's code: 402 payment_failed,
+ * 400 same_plan / no_subscription / invalid_plan, 409 stale_subscription /
+ * subscription_not_active, and 404 (status) where an older edge has no such route. */
+export async function changePlan(key: string, plan: string): Promise<{ plan: string; status: string }> {
+  return call<{ plan: string; status: string }>('/v1/billing/plan', { method: 'POST', body: JSON.stringify({ plan }) }, key)
+}
+
 /** Credit top-ups, in dollars (the edge's CREDIT_TOP_UPS). */
 export const TOP_UPS = [5, 10, 25, 50, 100]
 

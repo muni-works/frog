@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAlerts } from './alerts'
-import { billingPortal, finishSignIn, firstName, me, savedKey, signIn, signOut, subscribe, topUp, AuthError, type Account, type Provider } from './auth'
+import { billingPortal, changePlan as changePlanOn, finishSignIn, firstName, me, savedKey, signIn, signOut, subscribe, topUp, AuthError, type Account, type Provider } from './auth'
 import { friendly, type ConnectionState } from './cloud/client'
 import type { SessionSummary } from './cloud/protocol'
 import type { Image, Mode } from './cloud/protocol'
@@ -45,7 +45,7 @@ import { CreditWall } from './ui/CreditWall'
 import { CreditWarning, PlanNear, useCreditHistory } from './ui/CreditWarning'
 import { useWallResume } from './ui/wallResume'
 import { averageTurn, sessionSpend } from './wall'
-import { firstResultWords, isPayPath, loadPlanCard, meter as meterOf, moreTasks, nextPlan, onFreeCredit, PLAN_COPY, planCard, planOf, savePlanCard, FREE_CENTS, FREE_GITHUB_CENTS, type PlanCardMemo } from './plans'
+import { firstResultWords, isPayPath, loadPlanCard, meter as meterOf, moreTasks, nextPlan, onFreeCredit, PLAN_COPY, planCard, planChangeError, planOf, savePlanCard, FREE_CENTS, FREE_GITHUB_CENTS, type PlanCardMemo } from './plans'
 import { PlanSheet } from './ui/PlanSheet'
 import { FirstResultCard } from './ui/FirstResultCard'
 import { sheetOpen } from './ui/Sheet'
@@ -818,17 +818,38 @@ export default function App() {
   // On a plan, the next one up and what it gives (the wall and the 80% line lead with it).
   const myPlan = planOf(account?.subscription)
   const upPlan = nextPlan(myPlan)
-  /** Change an existing plan: the edge's only route is Stripe's portal. A plan the edge calls
-   *  stale (made in another Stripe mode) is set up again through subscribe, as it asks; never on
-   *  top of a live plan, which would keep billing too. From the wall, the session is noted first. */
+  /** Change an existing plan in place (POST /v1/billing/plan, zest#213): no page leaves, the
+   *  account is read again, and a turn paused at the wall picks up on the new plan. A plan the edge
+   *  calls stale, or none, is set up through subscribe; an edge without the route (404) falls back
+   *  to Stripe's portal. Refusals (a declined card, a past-due plan) come back as plain words. */
   const changePlan = key && !DEV_KEY ? async (plan: string) => {
-    if (paused) wall.leaving(0, account?.credit_cents ?? 0, true)
-    try { await billingPortal(key) } catch (e) {
-      if (e instanceof AuthError && e.code === 'stale_subscription') return subscribe(key, plan).catch((err) => { if (paused) wall.stayed(); throw err })
-      if (paused) wall.stayed()
-      throw e
+    try {
+      await changePlanOn(key, plan)
+    } catch (e) {
+      if (!(e instanceof AuthError)) throw e
+      if (e.code === 'stale_subscription' || e.code === 'no_subscription') {
+        if (paused) wall.leaving(0, account?.credit_cents ?? 0, true)
+        return subscribe(key, plan).catch((err) => { if (paused) wall.stayed(); throw err })
+      }
+      if (e.status === 404) {
+        // An older edge: the portal, and from the wall the session to come back to.
+        if (paused) wall.leaving(0, account?.credit_cents ?? 0, true)
+        return billingPortal(key).catch((err) => { if (paused) wall.stayed(); throw err })
+      }
+      throw new Error(planChangeError(e.code) ?? `Couldn't change the plan (${e.code}). Try again.`)
     }
+    const a = await me(key)
+    setAccount(a)
+    say(PLAN_COPY.done(planOf(a.subscription)?.name ?? a.subscription?.name ?? 'the new plan'))
+    // Upgraded from the wall: the turn that stopped picks up now, on the plan.
+    if (paused && a.subscription && !a.subscription.over) wall.resumeByHand(a.credit_cents, true)?.()
   } : undefined
+  /** Start a plan. An account the edge says already has one (409 already_subscribed, zest#213)
+   *  changes it in place instead: never a second subscription. */
+  const startPlan = key && !DEV_KEY ? (plan: string) => subscribe(key, plan).catch((e) => {
+    if (e instanceof AuthError && e.code === 'already_subscribed' && changePlan) return changePlan(plan)
+    throw e
+  }) : undefined
   const cs = current ? conn[current.id] : undefined
 
   return (
@@ -874,7 +895,7 @@ export default function App() {
       : <SettingsPage section={section} account={account} apiKey={!DEV_KEY ? key : undefined} models={models} machines={machines} focusCoupon={couponAsk}
         newMode={newMode} onNewMode={setNewMode} pinnedModel={pinned} onPinModel={setPinned}
         bar={narrow ? settingsBack : <><Burger />{collapsed && sideToggle(false)}</>} onOpen={(x) => openSettings(x)} free={free} addedCents={lastAdded ?? grant}
-        onTopUp={!DEV_KEY ? (d) => topUp(key, d) : undefined} onSubscribe={!DEV_KEY ? (p) => subscribe(key, p) : undefined} onConnect={!DEV_KEY ? (p) => leave(null, p, key, false) : undefined}
+        onTopUp={!DEV_KEY ? (d) => topUp(key, d) : undefined} onSubscribe={startPlan} onConnect={!DEV_KEY ? (p) => leave(null, p, key, false) : undefined}
         onSignOut={() => { if (!DEV_KEY) signOut(key); signedOut() }}
         onRedeemed={(r) => { setAccount((a) => (a ? { ...a, credit_cents: r.credit_cents } : a)); refreshAccount() }} onChangePlan={changePlan} />),
       threads: !key ? (
@@ -1052,7 +1073,7 @@ export default function App() {
           onSubscribe={key && !DEV_KEY ? (plan) => {
             // From the wall: Checkout comes back to the bare origin, so note the session to return to.
             if (paused) wall.leaving(0, account?.credit_cents ?? 0, true)
-            return subscribe(key, plan).catch((e) => { if (paused) wall.stayed(); throw e })
+            return startPlan!(plan).catch((e) => { if (paused) wall.stayed(); throw e })
           } : undefined}
           onCredit={() => { if (paused && mode === 'threads') document.querySelector('.wall')?.scrollIntoView({ block: 'center' }); else openSettings('billing') }}
           onBilling={() => openSettings('billing')}

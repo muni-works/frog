@@ -194,9 +194,26 @@ export const PLAN_COPY = {
   /** Leads the sheet and Billing at 80% of the week or past the plan. */
   lead: (from: PlanFact, to: PlanFact) => `${to.name} gives you ${timesMore(from, to)} the weekly work.`,
   /** Under the plans: where a change goes (the edge's only route today). */
-  via: 'Changing plan opens Stripe, where you confirm it.',
+  /** What happens to the bill, as the edge's plan change does it (zest#213: always_invoice). */
+  via: 'An upgrade is charged now for the rest of this month. A smaller plan is credited on your next bill.',
+  /** An older edge without the plan change: the portal it falls back to. */
+  viaPortal: 'Changing plan opens Stripe, where you confirm it.',
+  busy: 'Changing plan…',
+  done: (name: string) => `You're on ${name} now.`,
   stale: "This plan can't be managed from here. Choose a plan below to set it up again.",
   cancel: 'Cancel plan',
   /** The quiet line under the composer at 80% of the week. */
   near: (pct: number) => `${pct}% of this week used`,
+}
+
+/** A plan change the edge refused, in words to act on (zest#213's codes); null for the ones the
+ *  app handles by itself (a stale plan or none: subscribe; an older edge: the portal). */
+export function planChangeError(code: string): string | null {
+  switch (code) {
+    case 'payment_failed': return "Your card was declined, so your plan didn't change."
+    case 'subscription_not_active': return "Your plan's last payment didn't go through. Update your card in Stripe, then try again."
+    case 'same_plan': return "You're already on that plan."
+    case 'invalid_plan': return "That plan isn't available."
+    default: return null
+  }
 }
