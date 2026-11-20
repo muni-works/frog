@@ -199,3 +199,11 @@ span.ss-who { cursor: default; }
   .tx .line-acts { position: static; transform: none; opacity: 1; pointer-events: auto; margin-left: 4px; }
   .tx .line-plate:has(.line-acts) .line-result { visibility: visible; }
 }
+@media (max-width: 760px) {
+  /* Every button a 44 px target on a phone (the transcript's cards, the wall, Settings). */
+  .f-btn { min-height: 44px; }
+  .settings-main .set-menu, .settings-main select { min-height: 44px; font-size: 16px; }
+  .cust-explain > a { display: inline-flex; align-items: center; min-height: 44px; }
+  .cust-pill { min-height: 44px; }
+  .docs-main .burger { width: 44px; height: 44px; }
+}

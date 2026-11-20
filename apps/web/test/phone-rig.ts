@@ -82,6 +82,8 @@ export const AUDIT = `(() => {
   const tap = (el) => { const h = el.getBoundingClientRect().height; const a = getComputedStyle(el, '::after'); return a.content !== 'none' && a.position === 'absolute' ? Math.max(h, h - (parseFloat(a.top) || 0) - (parseFloat(a.bottom) || 0)) : h; };
   const small = [...document.querySelectorAll('button, a[href], [role=radio], input, select, textarea')]
     .filter(visible).filter((el) => !el.closest('.ps-credit, .det, p, .md, .tx, [aria-hidden=true]'))
+    // A switch inside its row's label: the row is what takes the tap.
+    .filter((el) => !(el.tagName === 'INPUT' && el.closest('label') && el.closest('label').getBoundingClientRect().height >= 43.5))
     .filter((el) => tap(el) < 43.5)
     .slice(0, 8).map((el) => (el.getAttribute('aria-label') || el.textContent || el.tagName).trim().slice(0, 30) + ' ' + Math.round(tap(el)));
   return { over, wide, small };
