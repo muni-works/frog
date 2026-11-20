@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import worker, { toGateway } from "../worker.js";
 
 test("/v1 goes to the gateway with its path, query, method and upgrade", async () => {
@@ -133,4 +134,16 @@ test("old /customize/<section> links and their detail pages still serve the app 
   assert.equal(seen.length, 6);
   assert.ok(seen.every((p) => p === "/"));
   assert.equal((await worker.fetch(new Request("https://frog.toys/customize/a/b/c/d"), { ASSETS })).status, 404);
+});
+
+test("every Settings explainer link (design/settings.json) serves the app, which opens that docs page", async () => {
+  const settings = JSON.parse(readFileSync(new URL("../../design/settings.json", import.meta.url), "utf8"));
+  const hrefs = settings.sections.filter((s) => s.explainer).map((s) => s.explainer.href);
+  assert.equal(hrefs.length, 5);
+  const ASSETS = { fetch: async (u) => new Response(new URL(u).pathname === "/" ? "<!doctype html>app" : "", { status: new URL(u).pathname === "/" ? 200 : 404 }) };
+  for (const href of hrefs) {
+    const r = await worker.fetch(new Request(href), { ASSETS });
+    assert.equal(r.status, 200, href);
+    assert.equal(await r.text(), "<!doctype html>app", href);
+  }
 });

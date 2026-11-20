@@ -159,7 +159,7 @@ span.ss-who { cursor: default; }
   .settings-main .titlebar { height: 52px; padding: 0 12px 0 4px; gap: 4px; }
   .settings-main .crumbs { font-size: 16px; }
   .settings-main .crumbs b { font-weight: 600; }
-  .settings-main .col { padding: 0 16px; box-sizing: border-box; }
+  .settings-main .col, .docs-main .col { padding: 0 16px; box-sizing: border-box; }
   .settings-page .set-row .f-btn, .settings-page .coupon .f-btn { min-height: 44px; }
   .settings-page .f-field, .coupon .f-field { font-size: 16px; min-height: 44px; }
   .settings-page .set-seg button { min-height: 44px; }

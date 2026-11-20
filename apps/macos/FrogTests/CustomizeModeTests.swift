@@ -52,8 +52,8 @@ final class CustomizeModeTests: XCTestCase {
         XCTAssertEqual(e.url(has: { $0 == "skills-and-mcp" })?.absoluteString, "https://frog.toys/docs/skills-and-mcp")
         XCTAssertNil(e.url(has: { _ in false }))
         let docs = try XCTUnwrap(AppDocs.bundled)
-        for s in catalog.sections where s.id != "automations" {
-            XCTAssertNotNil(s.explainer.url(has: { docs.page($0)?.slug == $0 }), "\(s.id) links a page the docs have")
+        for s in catalog.sections {
+            XCTAssertEqual(s.explainer.url(has: { docs.page($0)?.slug == $0 })?.absoluteString, s.explainer.href, "\(s.id) links its own page, which the docs have")
         }
     }
 
