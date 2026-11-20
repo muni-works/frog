@@ -41,6 +41,9 @@ the gateway (in its own repository) does all of this. None of it can be checked 
    one gets the caps.
 6. **Starts a child session's engine as a worker** (`--worker`, or with its parent recorded),
    so the engine itself refuses Customize, noting and "remember that" there whatever the caps.
+7. **Deletes `<id>.declined` with a session's log** when it deletes a cloud session (the Mac
+   does this for its own; a fork made by the engine copies it already). Left behind it's only
+   litter, but a reused id would inherit the old declines.
 
 ## Tiers
 
