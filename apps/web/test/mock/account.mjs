@@ -9,6 +9,11 @@
 //   POST /v1/billing/topup    {amount, return} → {url: <return>/?session_id=cs_mock_…}: no Stripe;
 //                             the credit lands 1.5 s later, as the webhook's would
 //   POST /v1/mock/credit      {cents}: sets the balance (mock only, for the credit wall)
+//   POST /v1/billing/subscribe {plan, return} → {url: <return>/?session_id=cs_mock_…}: no Stripe;
+//                             the plan starts 1.5 s later, as the webhook's would
+//   POST /v1/mock/account     {credit_cents?, plan?, weekly?, fiveHour?, history?}: sets up a
+//                             state (a fresh 25¢ account: {credit_cents: 25, history: []}; a plan:
+//                             {plan: "pro", weekly: 0.12}) (mock only, for the phone screenshots)
 // Mock data only: the prices and amounts here are not Frog Cloud's.
 import { randomBytes } from "node:crypto";
 
@@ -76,12 +81,47 @@ export function accountRoutes() {
         a.account.credit_cents = Number(((await body(req)) ?? {}).cents) || 0;
         return json(res, 200, { account: a.account }), true;
       }
+      if (path === "/v1/billing/subscribe" && req.method === "POST") {
+        const b = (await body(req)) ?? {};
+        if (!PLANS[b.plan]) return json(res, 400, { error: { code: "invalid_plan", message: "plan must be pro, max5 or max" } }), true;
+        if (typeof b.return !== "string") return json(res, 400, { error: { code: "invalid_return", message: "return must be an allowed web app origin" } }), true;
+        setTimeout(() => { a.account.subscription = subscription(b.plan, 0, 0); a.account.plan = b.plan; }, 1500);
+        return json(res, 200, { url: `${b.return.replace(/\/+$/, "")}/?session_id=cs_mock_${randomBytes(6).toString("hex")}` }), true;
+      }
+      if (path === "/v1/mock/account" && req.method === "POST") {
+        const b = (await body(req)) ?? {};
+        if (b.credit_cents != null) a.account.credit_cents = Number(b.credit_cents) || 0;
+        if (Array.isArray(b.history)) a.history = b.history;
+        if (b.plan === null) { a.account.subscription = null; a.account.plan = "free"; }
+        else if (b.plan) { a.account.subscription = subscription(b.plan, Number(b.weekly) || 0, Number(b.fiveHour) || 0); a.account.plan = b.plan; }
+        if (b.handle !== undefined) a.account.handle = b.handle;
+        return json(res, 200, { account: a.account }), true;
+      }
       if (path === "/v1/coupons/redeem" && req.method === "POST") {
         const r = redeem(a, ((await body(req)) ?? {}).code);
         return json(res, r.status, r.body), true;
       }
       return false;
     },
+  };
+}
+
+/** The plans' weekly allowance in micro-USD and their names (mock: the real amounts, Pro $5 a week). */
+const PLANS = { pro: { name: "Pro", weekly: 5e6 }, max5: { name: "Max", weekly: 25e6 }, max: { name: "Ultra", weekly: 50e6 } };
+
+/** A plan's account shape, `weekly` and `fiveHour` the shares used (0…1). The week resets
+ *  Monday; a 5-hour window holds a share of it. */
+function subscription(plan, weekly, fiveHour) {
+  const p = PLANS[plan];
+  const now = new Date();
+  const monday = new Date(now); monday.setUTCHours(0, 0, 0, 0); monday.setUTCDate(monday.getUTCDate() + ((8 - monday.getUTCDay()) % 7 || 7));
+  const five = p.weekly / 4;
+  return {
+    plan, name: p.name, over: weekly >= 1,
+    windows: [
+      { kind: "5h", used: Math.round(fiveHour * five), limit: five, resets_at: new Date(now.getTime() + 3 * 3600_000).toISOString() },
+      { kind: "weekly", used: Math.round(weekly * p.weekly), limit: p.weekly, resets_at: monday.toISOString() },
+    ],
   };
 }
 
