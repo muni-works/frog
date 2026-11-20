@@ -73,7 +73,7 @@ function Pick({ account, loading, more, onSubscribe, onCredit, onSignIn }: PlanS
   </>)
 }
 
-const when = (iso: string, kind: '5h' | 'weekly') => new Date(iso).toLocaleString(undefined, kind === '5h' ? { hour: 'numeric', minute: '2-digit' } : { weekday: 'long' })
+const when = (iso: string, kind: '5h' | 'weekly') => new Date(iso).toLocaleString(undefined, kind === '5h' ? { hour: 'numeric', minute: '2-digit' } : { weekday: 'long', hour: 'numeric', minute: '2-digit' })
 
 function OnPlan({ account, sub, onBilling }: PlanSheetProps & { sub: NonNullable<Account['subscription']> }) {
   return (<>
