@@ -106,18 +106,18 @@ export const EXPLAINERS: Record<CustomizeSection, { lead: string; rest: string; 
     link: 'How connections work',
   },
   rules: {
-    lead: 'Rules are standing instructions Frog reads on every turn.',
-    rest: 'They live in a file in your repo or your home folder, so your team shares them.',
+    lead: 'Rules are standing instructions Frog follows.',
+    rest: 'They live in files in your repo. Most ride on every turn, within a budget; a rule for certain files shows only when those files come up.',
     link: 'How rules work',
   },
   memory: {
-    lead: 'Memory is what Frog noted when you said "remember this".',
-    rest: 'Notes are kept on your Mac and read on every turn. Say "forget that" to remove one.',
+    lead: 'Memory is the notes Frog keeps for you.',
+    rest: 'Save one with /remember, or start a message with "remember that". In a cloud session, a note lasts only for that session.',
     link: 'How memory works',
   },
   automations: {
-    lead: 'An automation is a task Frog repeats without you,',
-    rest: 'at a set time or when CI fails.',
+    lead: 'Automations are coming: tasks Frog repeats without you.',
+    rest: 'Nothing runs on its own yet. You\'ll make one by doing the task once and saying "keep doing this".',
     link: 'How automations work',
   },
 }

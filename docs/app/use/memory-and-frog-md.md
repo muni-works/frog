@@ -10,7 +10,7 @@ Frog also reads `~/.config/frog/FROG.md` and `~/.claude/CLAUDE.md` for instructi
 
 ## Notes
 
-`/remember` followed by a note keeps it. A sentence in a message that starts with "remember that" or "from now on" keeps a note too, and Frog says it did. `/memory` lists the notes and `/forget` deletes one, by its id or its text.
+`/remember` followed by a note keeps it. A message that starts with "remember that" or "from now on" keeps a note too, and Frog says it did. The phrase has to open the message. `/memory` lists the notes and `/forget` deletes one, by its id or its text.
 
 Each session starts with a short index of your notes, marked as possibly out of date. Obvious secrets, such as API keys, tokens and passwords, are taken out before a note is saved.
 

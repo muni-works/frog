@@ -9,9 +9,9 @@
     {"id": "shortcuts", "label": "Shortcuts", "run": 1},
     {"id": "skills", "label": "Skills", "run": 2, "explainer": {"bold": "A skill teaches Frog how to do one task your way.", "rest": "It is a short file of steps, read in full only when that task comes up. Its one-line summary rides along on every turn.", "link": "How skills work", "href": "https://frog.toys/docs/skills", "fallback": "skills-and-mcp"}},
     {"id": "connections", "label": "Connections", "aliases": ["mcp"], "run": 2, "explainer": {"bold": "A connection lets Frog reach something outside your code,", "rest": "like GitHub or a database, through its tools. Each tool you switch on adds a little to every turn.", "link": "How connections work", "href": "https://frog.toys/docs/connections", "fallback": "skills-and-mcp"}},
-    {"id": "rules", "label": "Rules", "aliases": ["instructions"], "run": 2, "explainer": {"bold": "Rules are standing instructions Frog reads on every turn.", "rest": "They live in a file in your repo or your home folder, so your team shares them.", "link": "How rules work", "href": "https://frog.toys/docs/rules", "fallback": "memory-and-frog-md"}},
-    {"id": "memory", "label": "Memory", "run": 2, "explainer": {"bold": "Memory is what Frog has learned from working with you.", "rest": "It notes things on its own, keeps them on this Mac, and brings back only the few that fit the turn.", "link": "How memory works", "href": "https://frog.toys/docs/memory", "fallback": "memory-and-frog-md"}},
-    {"id": "automations", "label": "Automations", "run": 2, "explainer": {"bold": "An automation is a task Frog repeats without you,", "rest": "at a set time or when CI fails. To make one, do the task once in a conversation and say \"keep doing this\".", "link": "How automations work", "href": "https://frog.toys/docs/automations"}},
+    {"id": "rules", "label": "Rules", "aliases": ["instructions"], "run": 2, "explainer": {"bold": "Rules are standing instructions Frog follows.", "rest": "They live in files in your repo or home folder. Most ride on every turn, within a budget; a rule for certain files shows only when those files come up.", "link": "How rules work", "href": "https://frog.toys/docs/rules", "fallback": "memory-and-frog-md"}},
+    {"id": "memory", "label": "Memory", "run": 2, "explainer": {"bold": "Memory is the notes Frog keeps for you.", "rest": "Save one with /remember, or start a message with \"remember that\". Notes stay on this Mac, and only the few that fit come back each turn.", "link": "How memory works", "href": "https://frog.toys/docs/memory", "fallback": "memory-and-frog-md"}},
+    {"id": "automations", "label": "Automations", "run": 2, "explainer": {"bold": "Automations are coming: tasks Frog repeats without you.", "rest": "Nothing runs on its own yet. You'll make one by doing the task once and saying \"keep doing this\".", "link": "How automations work", "href": "https://frog.toys/docs/automations"}},
     {"id": "usage", "label": "Usage", "aliases": ["energy"], "run": 3},
     {"id": "account", "label": "Account", "run": 3},
     {"id": "billing", "label": "Billing", "run": 3}
@@ -114,7 +114,7 @@
 
     { "id": "mcp-servers", "section": "connections", "platform": "both", "control": "list",
       "label": "Servers", "description": "MCP servers give sessions more tools. A project can add its own with a .mcp.json file.",
-      "notYet": { "web": "Cloud sessions don't use MCP servers, and the web can't read the list your Mac has." } },
+      "notYet": { "web": "Cloud sessions try to start the servers in a repo's .mcp.json, but the web can't read the list your Mac has." } },
     { "id": "mcp-sign-in", "section": "connections", "platform": "invite", "control": "button",
       "label": "Sign in to a server", "description": "Servers like Linear and GitHub, with your own account." },
     { "id": "mcp-config", "section": "connections", "platform": "mac", "control": "button",
