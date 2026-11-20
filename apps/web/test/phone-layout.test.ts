@@ -8,6 +8,7 @@
 // run and passes alone is that.
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
+import { fileURLToPath } from "node:url";
 import { chrome } from "./chrome.ts";
 import { pause, until, type Page } from "./cdp.ts";
 import { AUDIT, rig, type Rig } from "./phone-rig.ts";
@@ -20,16 +21,18 @@ const NEW = "frog_layout_bo";
 
 before(async () => {
   if (skip) return;
-  r = await rig();
+  // Every turn plays a recording with a long diff, a wide table and a long code line.
+  r = await rig({ fixture: fileURLToPath(new URL("./mock/wide.jsonl", import.meta.url)) });
   for (const k of [KEY, NEW]) await r.call(k, "/v1/mock/account", { credit_cents: 25, history: [] });
   task = await r.session(KEY, ["Make a tiny pomodoro timer"]);
 });
 after(async () => { await r?.close(); });
 
-type Audit = { over: number; wide: string[]; small: string[] };
+type Audit = { over: number; sideways: string[]; wide: string[]; small: string[] };
 const audit = (p: Page) => p.eval<Audit>(AUDIT);
 const holds = (a: Audit, where: string) => {
   assert.equal(a.over, 0, `${where}: the page scrolls sideways by ${a.over}px`);
+  assert.deepEqual(a.sideways, [], `${where}: a box that scrolls sideways`);
   assert.deepEqual(a.wide, [], `${where}: past the screen's edge`);
   assert.deepEqual(a.small, [], `${where}: controls under 44 px`);
 };
@@ -104,6 +107,16 @@ for (const [w, h] of [[390, 844], [360, 780]] as const) {
       assert.equal(await p.eval<number>("document.querySelectorAll('.ps-plan').length"), 3);
       assert.equal(await text(p, ".ps-go"), "Get Pro, $20 a month");
       holds(await audit(p), "plan sheet");
+      // A swipe down from the handle closes it.
+      const g = await p.eval<{ x: number; y: number }>("(() => { const r = document.querySelector('.sheet-grab').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 } })()");
+      const touch = (type: string, y: number) => p.call("Input.dispatchTouchEvent", { type, touchPoints: type === "touchEnd" ? [] : [{ x: g.x, y }] });
+      await touch("touchStart", g.y);
+      for (let d = 20; d <= 220; d += 40) { await touch("touchMove", g.y + d); await pause(16); }
+      await touch("touchEnd", g.y + 220);
+      assert.ok(await until(async () => !(await p.eval<boolean>("!!document.querySelector('.plan-sheet')")), 5000), "a swipe down closes it");
+      await tap(p, ".cz-meter");
+      assert.ok(await has(p, ".plan-sheet"));
+      await pause(400);
       await tap(p, ".sheet-scrim");
       assert.ok(await until(async () => !(await p.eval<boolean>("!!document.querySelector('.plan-sheet')")), 5000), "a tap outside closes it");
     } finally { await p.close(); }
@@ -116,6 +129,9 @@ for (const [w, h] of [[390, 844], [360, 780]] as const) {
       assert.equal(await p.eval<string>("location.pathname"), "/");
       assert.match((await text(p, ".ps-go")) ?? "", /^Sign in with GitHub to get Pro$/);
       holds(await audit(p), "/pay signed out");
+      await p.eval("history.back()");
+      assert.ok(await until(async () => !(await p.eval<boolean>("!!document.querySelector('.plan-sheet')")), 5000), "Back closes the sheet");
+      assert.equal(await p.eval<string>("location.pathname"), "/", "and leaves the landing, not /pay");
     } finally { await p.close(); }
   });
 
@@ -136,3 +152,31 @@ for (const [w, h] of [[390, 844], [360, 780]] as const) {
     } finally { await p.close(); }
   });
 }
+
+// A plan bought from the credit wall (item 6): See plans, Get Pro through the existing subscribe
+// path (the mock's Checkout comes straight back with ?session_id), the session reopens, the wall
+// says the plan is on, and Resume picks the turn up; the plan pays for it.
+test("phone 390: a plan bought from the wall resumes the stopped turn", { skip }, async () => {
+  const key = "frog_layout_wall";
+  await r.call(key, "/v1/mock/account", { credit_cents: 25, history: [], plan: null });
+  const id = await r.session(key, ["Add a README"]);
+  await r.call(key, "/v1/mock/account", { credit_cents: 2 });
+  await r.play(key, id, ["Now add tests"]);
+  const p = await r.phone(`/s/${id}`, 390, 844, key);
+  try {
+    assert.ok(await has(p, ".wall"), "the wall");
+    await pause(600);
+    await p.eval("[...document.querySelectorAll('.wall button')].find((b) => b.textContent === 'See plans').click()");
+    assert.ok(await has(p, ".plan-sheet"));
+    await pause(400);
+    await tap(p, ".ps-go");
+    // Off to Checkout and back: the bare origin, then the session again.
+    assert.ok(await until(async () => (await p.eval<string>("location.pathname")) === `/s/${id}`, 20000), "back on the session");
+    assert.ok(await until(() => p.eval<boolean>("[...document.querySelectorAll('.wall .det')].some((d) => d.textContent.includes('Your plan is on'))"), 20000), "the wall says the plan is on");
+    await p.eval("[...document.querySelectorAll('.wall button')].find((b) => b.textContent === 'Resume').click()");
+    assert.ok(await until(async () => !(await p.eval<boolean>("!!document.querySelector('.wall')")), 20000), "the turn resumed and the wall went");
+    assert.ok(await has(p, ".cz-card"), "the composer is back");
+    const me = (await r.call(key, "/v1/me")) as { account: { subscription: { name: string } | null } };
+    assert.equal(me.account.subscription?.name, "Pro");
+  } finally { await p.close(); }
+});

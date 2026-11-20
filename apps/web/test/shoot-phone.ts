@@ -11,7 +11,7 @@ const narrow = process.argv.includes("--narrow");
 const [W, H] = narrow ? [360, 780] : [390, 844];
 mkdirSync(out, { recursive: true });
 
-const r = await rig();
+const r = await rig({ fresh: true });
 /** Clicks the first element matching any of these selectors (or a button with this text). */
 const click = (sel: string[], text?: string) => `(() => {
   for (const s of ${JSON.stringify(sel)}) { const el = document.querySelector(s); if (el) { el.click(); return s; } }

@@ -24,8 +24,10 @@ export interface Rig {
   close: () => Promise<void>
 }
 
-export async function rig(): Promise<Rig> {
-  const mock = await startMock({ port: 0, delayMs: 0, autoAllow: true, previewScript: "" });
+/** `fixture`: the recording a turn plays (test/mock/wide.jsonl has a long diff, table and code
+ *  line); `fresh`: a new session's log starts empty, so what it cost is what was played. */
+export async function rig({ fixture, fresh = false }: { fixture?: string; fresh?: boolean } = {}): Promise<Rig> {
+  const mock = await startMock({ port: 0, delayMs: 0, autoAllow: true, previewScript: "", fresh, ...(fixture ? { fixture } : {}) });
   const api = `http://127.0.0.1:${mock.port}`;
   const port = await freePort();
   process.env.GATEWAY = api;
@@ -71,26 +73,30 @@ export async function shot(page: Page, file: string) {
   writeFileSync(file, Buffer.from(r.data, "base64"));
 }
 
-/** What a phone layout must hold: nothing wider than the screen, every visible control at least
- *  44 px tall (`min` for the few that are inline links in running text), and named. */
+/** Boxes that scroll sideways on purpose: code, diffs, tables, a terminal. Everything else fits. */
+export const SIDEWAYS = "pre, .diff, .hunks, .md-table, .md-code, .term, .tp-body, .cz-q";
+
+/** What a phone layout must hold: no box scrolls sideways but SIDEWAYS ones (the transcript, a
+ *  sheet, Settings never do), nothing reaches past the screen's edges outside them, every visible
+ *  control at least 44 px tall (its ::after hit area counts; inline links in running text don't
+ *  need it), and named. */
 export const AUDIT = `(() => {
   const W = innerWidth;
-  const over = document.documentElement.scrollWidth - W;
-  const wide = [...document.querySelectorAll('body *')].filter((el) => {
-    const r = el.getBoundingClientRect();
-    if (!r.width || !r.height) return false;
-    // Inside a box that scrolls on its own (a diff, a table, code): fine.
-    for (let p = el.parentElement; p; p = p.parentElement) { const o = getComputedStyle(p).overflowX; if (o === 'auto' || o === 'scroll' || o === 'hidden') return false; }
-    return r.right > W + 0.5 || r.left < -0.5;
-  }).slice(0, 5).map((el) => el.tagName + '.' + String(el.className).split(' ')[0]);
-  const visible = (el) => { const r = el.getBoundingClientRect(); if (!r.width || !r.height) return false; const s = getComputedStyle(el); return s.visibility !== 'hidden' && s.display !== 'none' && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth; };
+  const SIDEWAYS = ${JSON.stringify("pre, .diff, .hunks, .md-table, .md-code, .term, .tp-body, .cz-q")};
+  const name = (el) => el.tagName + '.' + String(el.className).split(' ').filter(Boolean).slice(0, 2).join('.');
+  const shown = (el) => { const r = el.getBoundingClientRect(); if (!r.width || !r.height) return false; const s = getComputedStyle(el); return s.visibility !== 'hidden' && s.display !== 'none'; };
+  const over = Math.max(0, document.documentElement.scrollWidth - W);
+  const all = [...document.querySelectorAll('body *')];
+  const sideways = all.filter((el) => { const s = getComputedStyle(el); return (s.overflowX === 'auto' || s.overflowX === 'scroll') && el.clientWidth > 0 && el.scrollWidth > el.clientWidth + 1 && !el.matches(SIDEWAYS); }).slice(0, 5).map(name);
+  const wide = all.filter(shown).filter((el) => !el.closest(SIDEWAYS) && !el.closest('.sr, .sr-only')).filter((el) => { const r = el.getBoundingClientRect(); return r.right > W + 0.5 || r.left < -0.5; }).slice(0, 5).map(name);
+  const visible = (el) => { if (!shown(el)) return false; const r = el.getBoundingClientRect(); return r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth; };
   // The tap area: the box, or a larger ::after hit area (app.css's touch insets).
   const tap = (el) => { const h = el.getBoundingClientRect().height; const a = getComputedStyle(el, '::after'); return a.content !== 'none' && a.position === 'absolute' ? Math.max(h, h - (parseFloat(a.top) || 0) - (parseFloat(a.bottom) || 0)) : h; };
   const small = [...document.querySelectorAll('button, a[href], [role=radio], input, select, textarea')]
-    .filter(visible).filter((el) => !el.closest('.ps-credit, .det, p, .md, .tx, [aria-hidden=true]'))
+    .filter(visible).filter((el) => !el.closest('p, .det, .md, [aria-hidden=true]'))
     // A switch inside its row's label: the row is what takes the tap.
     .filter((el) => !(el.tagName === 'INPUT' && el.closest('label') && el.closest('label').getBoundingClientRect().height >= 43.5))
     .filter((el) => tap(el) < 43.5)
     .slice(0, 8).map((el) => (el.getAttribute('aria-label') || el.textContent || el.tagName).trim().slice(0, 30) + ' ' + Math.round(tap(el)));
-  return { over, wide, small };
+  return { over, sideways, wide, small };
 })()`;

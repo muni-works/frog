@@ -58,10 +58,10 @@ export function useWallResume({ session, thread, send, fetchMe, onAccount, openS
     return () => { stop = true }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const resume = useCallback((id: string, turn: number, cents?: number) => {
+  const resume = useCallback((id: string, turn: number, cents?: number, plan = false) => {
     resumed.current.add(`${id}:${turn}`)
     setAdded(null); setWaiting(null)
-    send(id, { op: 'continue', note: resumeNote(cents) })
+    send(id, { op: 'continue', note: resumeNote(cents, plan) })
   }, [send])
 
   useEffect(() => {
@@ -88,7 +88,7 @@ export function useWallResume({ session, thread, send, fetchMe, onAccount, openS
     waiting,
     resumeByHand: (credit: number, planOn = false) => {
       const turn = thread ? stoppedTurn(thread) : null
-      return session && turn != null && (credit > 0 || planOn) ? () => resume(session, turn) : undefined
+      return session && turn != null && (credit > 0 || planOn) ? () => resume(session, turn, undefined, credit <= 0 && planOn) : undefined
     },
   }
 }
