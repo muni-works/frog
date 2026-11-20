@@ -17,6 +17,8 @@ export interface Rig {
   call: (key: string, path: string, body?: unknown) => Promise<unknown>
   /** A session for `key` with these turns played (each a 6¢ mock turn). */
   session: (key: string, turns: string[], repo?: string) => Promise<string>
+  /** More turns in a session. */
+  play: (key: string, id: string, turns: string[]) => Promise<void>
   /** The app at `path`, signed in as `key` (or signed out), on a w × h touch screen. */
   phone: (path: string, w: number, h: number, key?: string | null, theme?: "dark" | "light") => Promise<Page>
   close: () => Promise<void>
@@ -33,16 +35,20 @@ export async function rig(): Promise<Rig> {
   await vite.listen();
   const origin = `http://127.0.0.1:${port}`;
   const call = (key: string, path: string, body?: unknown) => fetch(api + path, { method: body ? "POST" : "GET", headers: { authorization: `Bearer ${key}`, "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined }).then((r) => r.json());
-  const session = async (key: string, turns: string[], repo?: string) => {
-    const s = (await call(key, "/v1/sessions", repo ? { repo } : {})) as { id: string; ws: string };
-    if (!turns.length) return s.id;
-    const ws = new WebSocket(s.ws, ["frog", `bearer.${key}`]);
+  /** Plays these turns in a session (each a 6¢ mock turn, or a stop on credit). */
+  const play = async (key: string, id: string, turns: string[], url = `ws://127.0.0.1:${mock.port}/v1/sessions/${id}/ws`) => {
+    if (!turns.length) return;
+    const ws = new WebSocket(url, ["frog", `bearer.${key}`]);
     const ended: (() => void)[] = [];
     ws.on("message", (d) => { if (JSON.parse(String(d)).event === "turn_ended") ended.shift()?.(); });
     await new Promise((r) => ws.on("open", r));
     ws.send(JSON.stringify({ hello: { protocol: 1, client: "phone-rig", resume_after: 1e9 } }));
     for (const text of turns) await new Promise<void>((r) => { ended.push(r); ws.send(JSON.stringify({ op: "submit", text })); });
     ws.close();
+  };
+  const session = async (key: string, turns: string[], repo?: string) => {
+    const s = (await call(key, "/v1/sessions", repo ? { repo } : {})) as { id: string; ws: string };
+    await play(key, s.id, turns, s.ws);
     return s.id;
   };
   const phone = async (path: string, w: number, h: number, key: string | null = null, theme: "dark" | "light" = "dark") => {
@@ -56,7 +62,7 @@ export async function rig(): Promise<Rig> {
     await until(() => page.eval<boolean>("!!document.querySelector('#root > *')"));
     return page;
   };
-  return { origin, call, session, phone, close: async () => { await vite.close(); await mock.close(); } };
+  return { origin, call, session, play: (k: string, id: string, t: string[]) => play(k, id, t), phone, close: async () => { await vite.close(); await mock.close(); } };
 }
 
 /** A PNG of what's on screen. */

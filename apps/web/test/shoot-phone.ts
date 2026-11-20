@@ -26,6 +26,15 @@ try {
   const bo = await fresh("frog_phone_bo");
   const task = await r.session(ada, ["Make a tiny pomodoro timer"]);
   await r.session(bo, []);
+  // On a plan, 12% of the week used.
+  const cy = "frog_phone_cy";
+  await r.call(cy, "/v1/mock/account", { credit_cents: 500, history: [{ kind: "topup", at: "2026-11-02T18:00:00Z", amount_micro_usd: 5_000_000, status: "succeeded" }], plan: "pro", weekly: 0.12, fiveHour: 0.3 });
+  const planned = await r.session(cy, ["Fix the failing tests"]);
+  // Out of credit mid-task: the wall.
+  const di = await fresh("frog_phone_di");
+  const walled = await r.session(di, ["Add a README"]);
+  await r.call(di, "/v1/mock/account", { credit_cents: 2 });
+  await r.play(di, walled, ["Now add tests for the timer"]);
 
   const scenes: { name: string; path: string; key: string | null; act?: string; wait?: string }[] = [
     { name: "1-home-signed-out", path: "/", key: null },
@@ -36,6 +45,9 @@ try {
     { name: "6-first-result", path: `/s/${task}`, key: ada, wait: ".tx", act: "(() => { const s = document.querySelector('.scroll'); if (s) s.scrollTop = s.scrollHeight; return 1 })()" },
     { name: "7-settings", path: "/settings", key: ada, wait: ".settings-main, .set-list" },
     { name: "8-billing", path: "/settings/billing", key: ada, wait: ".settings-main" },
+    { name: "9-plan-account-meter", path: `/s/${planned}`, key: cy, wait: ".tx" },
+    { name: "10-plan-account-sheet", path: `/s/${planned}`, key: cy, wait: ".tx", act: click([".cz-meter", ".ctx-ring"]) },
+    { name: "11-wall", path: `/s/${walled}`, key: di, wait: ".tx", act: "(() => { const s = document.querySelector('.scroll'); if (s) s.scrollTop = s.scrollHeight; return 1 })()" },
   ];
   for (const s of scenes) {
     const page = await r.phone(s.path, W, H, s.key);

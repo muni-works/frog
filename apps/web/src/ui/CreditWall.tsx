@@ -92,7 +92,7 @@ export function CreditWall({ thread, models, avg, apiKey, onTopUp, onRedeemed, w
         </div>
         <div className="wall-row">
           <button type="button" className={`f-btn ${onPlans ? 'f-btn--bordered' : 'f-btn--prominent'}`} disabled={busy} onClick={pay}>{busy ? 'Opening checkout…' : `Add $${amount} and resume`}</button>
-          <span className="det wrap">Plus a {fee}¢ card fee. Pay per token, no subscription.</span>
+          <span className="det wrap">Plus a {fee}¢ card fee.{onPlans ? '' : ' Pay per token, no subscription.'}</span>
         </div>
         {error && <div role="alert" className="det wrap" style={{ color: 'var(--warn)' }}>Couldn't open checkout ({error}). Try again.</div>}
       </>)}
